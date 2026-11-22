@@ -124,6 +124,8 @@ async function invokeCapturedActionHandler(
 
 export function buildTargetActionInvocationRegistry(params: Readonly<{
     contributes: ResolvedContributionRegistry;
+    admitContributedSessionReadSet?: Parameters<typeof createTargetActionInvocationRegistry>[0]['admitContributedSessionReadSet'];
+    resourceSessionHomeServerId?: string;
     executionRealm?: 'account';
     /** Authenticated scope captured by the Account runtime; absent is unavailable. */
     readAccountScope?(signal: AbortSignal): Promise<PluginAccountActionContext['accountScope']>;
@@ -351,6 +353,8 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
         subjectKinds: params.contributes.subjectKinds ?? [],
         expectedActions,
         readActions,
+        ...(params.admitContributedSessionReadSet ? { admitContributedSessionReadSet: params.admitContributedSessionReadSet } : {}),
+        ...(params.resourceSessionHomeServerId ? { resourceSessionHomeServerId: params.resourceSessionHomeServerId } : {}),
         ...(params.resolveEnvironmentApprovalScope ? { resolveEnvironmentApprovalScope: params.resolveEnvironmentApprovalScope } : {}),
         readMachineLocalDatabaseAgentLevel: params.readMachineLocalDatabaseAgentLevel,
         evaluateCatalogPolicy: ({ pluginId, localId }) => {

@@ -26,7 +26,7 @@ import { readSessionStopConfirmationFailure } from './executor/session/stopConfi
 import { buildApprovalOriginFailure } from '../approvals/approvalStaleReason.js';
 import type { StampedStartV1 } from '../account/settings/admitAgentStartV1.js';
 import { isPluginActionInvokeConfirmationV1 } from './invocationAuthority.js';
-import { isApprovalRequestObservationActionIdV1, isWorkspaceSyncRelationshipWriteActionId, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_INPUT_HANDOFF_ACTION_ID_V1, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 } from './actionIds.js';
+import { ACTION_INVOKE_ACTION_ID_V1, isApprovalRequestObservationActionIdV1, isWorkspaceSyncRelationshipWriteActionId, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_INPUT_HANDOFF_ACTION_ID_V1, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 } from './actionIds.js';
 import { isProjectSourceActionIdV1, PROJECT_SOURCE_UPDATE_ACTION_ID_V1 } from './specs/projectSourcesActionIdsV1.js';
 import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from './filesystemActionIdsV1.js';
 import { COMPUTER_RECORDING_ACTION_IDS_V1 } from './recordingActionIds.js';
@@ -151,13 +151,13 @@ import { SessionArchiveResultSchema, SessionArchiveActionInputV1Schema, SessionA
 import { readSessionManagerSessionIdV1 } from '../sessions/follow/sessionManagerV1.js';
 import { SESSION_LIST_PAGE_MAX_LIMIT } from '../sessions/listing/query.js';
 import { runActionSessionFanout } from './executor/sessionFanout.js';
-import { bindActionSessionTargetOperands, previewActionSessionTargets, projectChildActionSessionTargetsV1, readActionSessionTargetField, readActionSessionTargetOperands, replaceActionSessionTargetField, resolveActionSessionAddress, resolveActionSessionTargets } from './executor/sessionTargets.js';
+import { admitActionSessionReadSet, bindActionSessionTargetOperands, previewActionSessionTargets, projectChildActionSessionTargetsV1, readActionSessionTargetField, readActionSessionTargetOperands, replaceActionSessionTargetField, resolveActionSessionAddress, resolveActionSessionTargets } from './executor/sessionTargets.js';
 import { SessionMessageExplicitReplyV1Schema, SessionMessageReplyMutationResultV1Schema,
   classifySessionMessageReplyPublicationFailureV1, deriveSessionMessageReplyReturnLocalIdV1,
   type SessionMessageReplyAccountMutationV1 } from '../sessions/messages/sessionMessageReplyV1.js';
 import { AutonomousExchangeControlRequestV1Schema } from '../sessions/messages/autonomousExchangeV1.js';
 import { AutonomousExchangeObservedRevisionV1Schema } from '../sessions/messages/autonomousExchangeV1.js';
-import { ActionResolvedSessionTargetsV1Schema, normalizeSessionTargetV1, type ActionSessionTargetDeclarationV1 } from './sessionTargetV1.js';
+import { ActionResolvedSessionTargetsV1Schema, isActionSessionReadSetV1, normalizeSessionTargetV1, type ActionSessionTargetDeclarationV1 } from './sessionTargetV1.js';
 import { TargetActionApprovalRequestV1Schema, projectTargetActionApprovalInvocationV1 } from '../approvals/targetActionApprovalRequestV1.js';
 import { deriveDeploymentEnvironmentApprovalSubjectKeyV1, deriveManagedDeleteApprovalSubjectKeyV1 } from '../approvals/approvalArtifactHeaderV1.js';
 import { executeApprovalObservationAction } from './executor/approvalObservation.js';
@@ -752,6 +752,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   execute: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
   /** Trusted client transport continuation only: its ingress already admitted this exact request. */
   executeAdmittedClientAction: (actionId: ActionId, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>;
+  /** Receiving plugin host admission for an explicitly read-only Session set. */
+  admitContributedSessionReadSet: (declaration: ActionSessionTargetDeclarationV1,
+    input: Readonly<Record<string, unknown>>, context: ActionExecutorContext) => ReturnType<typeof admitActionSessionReadSet>;
   continueConfidentialApprovalRequest: (input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
   replayApprovedApprovalRequest: (args: Readonly<{
     artifactId: string;
@@ -1082,8 +1085,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   // Discovery owns the current declaration. The dispatch wrapper merely
   // projects its operand path into the same input used by host Actions.
   const readActionSessionTargetDeclaration = (id: string, input: unknown, ctx: ActionExecutorContext):
-    (ActionSessionTargetDeclarationV1 & Readonly<{ scopeSideEffectClass?: ActionSpec['sideEffectClass'] }>) | undefined => {
-    if (id === 'action.invoke') {
+    (ActionSessionTargetDeclarationV1 & Readonly<{ scopeSideEffectClass?: ActionSpec['sideEffectClass'];
+      contributedActionId?: QualifiedPluginActionId; executionPlacement?: ActionSpec['executionPlacement'] }>) | undefined => {
+    if (id === ACTION_INVOKE_ACTION_ID_V1) {
       const action = readRecord(readRecord(input).action);
       if (typeof action.pluginId !== 'string' || typeof action.localId !== 'string') return undefined;
       let qualifiedId: QualifiedPluginActionId;
@@ -1094,6 +1098,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       // The contributed dispatcher uses the same safe classification for its
       // read-only admission. A wrapper cannot supply the handler's effect facts.
       return definition && declaration ? { ...declaration, field: `input.${declaration.field}`,
+        contributedActionId: qualifiedId, executionPlacement: definition.executionPlacement,
         scopeSideEffectClass: definition.sideEffectClass ?? (definition.safety === 'safe' ? 'read' : 'external') } : undefined;
     }
     const hostId = ActionIdSchema.safeParse(id);
@@ -1385,6 +1390,29 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       } catch { return failure; }
     }
     return failure;
+  }
+
+  async function admitContributedSessionReadSet(
+    declaration: ActionSessionTargetDeclarationV1,
+    input: Readonly<Record<string, unknown>>,
+    context: ActionExecutorContext,
+    hostInternal = false,
+    workflowSessionScope?: CoreOptions['workflowSessionScope'],
+  ) {
+    const actionId = ACTION_INVOKE_ACTION_ID_V1;
+    const invocation = ActionInvokeInputSchema.safeParse(input);
+    if (!invocation.success) return { ok: false as const, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+    const contributedActionId = formatQualifiedPluginActionId(invocation.data.action);
+    if (context.actionCaller?.kind === 'workflowRun' && workflowSessionScope === undefined) {
+      workflowSessionScope = await resolveActionWorkflowSessionScopeV1(actionId, context, deps);
+    }
+    return admitActionSessionReadSet(deps, {
+      actionId, contributedActionId, declaration, input, context,
+      sameHome: (left, right) => isSameHome(left, right, context),
+      scoped: async sessionId => await resolveActionCurrentSessionScopeFailure(actionId, { sessionId, serverId: context.serverId }, context,
+        { sessionId: 'current_session' }, deps, undefined, 'read', workflowSessionScope)
+        ?? await admitCredentialScope(actionId, context, { ...input, sessionId }, hostInternal, true),
+    });
   }
 
   async function admitDiscussionInvitationTargets(actionId: ActionId, input: unknown, ctx: ActionExecutorContext,
@@ -2709,13 +2737,32 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       admittedInput = home.input;
     }
     const sessionTarget = readActionSessionTargetDeclaration(actionId, admittedInput, ctx);
+    const sessionReadSet = actionId === ACTION_INVOKE_ACTION_ID_V1 && sessionTarget && isActionSessionReadSetV1(sessionTarget);
+    let sessionReadSetFailures = existingAdmission?.sessionReadSetFailures;
     if (ctx.expectedSessionAddress && !sessionTarget && !hostInternal && !options?.sessionTargetLeaf) {
       return { ok: false, errorCode: 'session_address_unsupported', error: 'session_address_unsupported' };
     }
-    if (sessionTarget && !options?.sessionTargetLeaf) {
+    if (sessionReadSet && sessionTarget.scopeSideEffectClass !== 'read') {
+      return { ok: false, errorCode: 'plugin_action_read_only_required', error: 'plugin_action_read_only_required' };
+    }
+    const admitsSessionReadSetHere = sessionTarget?.executionPlacement !== 'machine'
+      && (sessionTarget?.executionPlacement !== 'account' || ctx.localAccountSessionReadSet === true);
+    if (sessionReadSet && !admitsSessionReadSetHere && ctx.expectedSessionAddress && !ctx.sessionTargetsV1) {
+      return { ok: false, errorCode: 'action_scope_restricted', error: 'action_scope_restricted' };
+    }
+    if (sessionReadSet && !existingAdmission && !ctx.sessionTargetsV1 && admitsSessionReadSetHere) {
+      const readSet = await admitContributedSessionReadSet(sessionTarget, readRecord(admittedInput), ctx, hostInternal, workflowSessionScope);
+      if ('ok' in readSet) return readSet;
+      admittedInput = readSet.input;
+      sessionReadSetFailures = readSet.failures;
+      if (readSet.targets) ctx = { ...ctx, sessionTargetsV1: readSet.targets };
+    } else if (sessionTarget && !options?.sessionTargetLeaf && (!sessionReadSet || ctx.sessionTargetsV1)) {
       if (ctx.sessionTargetsV1) {
         const snapshot = ActionResolvedSessionTargetsV1Schema.safeParse(ctx.sessionTargetsV1);
         if (!snapshot.success || snapshot.data.actionId !== actionId || snapshot.data.field !== sessionTarget.field) {
+          return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
+        }
+        if (sessionReadSet && snapshot.data.contributedActionId !== sessionTarget.contributedActionId) {
           return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
         }
       } else {
@@ -3114,7 +3161,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     }
     // Preparation admitted these exact Session operands; later stamping never
     // moves a sessionId, so its dispatch spends that one decision.
-    if (!existingAdmission && !(ctx.sessionTargetsV1 && !ctx.sessionTargetsV1.operands && !options?.sessionTargetLeaf)
+    if (!existingAdmission && !sessionReadSet && !(ctx.sessionTargetsV1 && !ctx.sessionTargetsV1.operands && !options?.sessionTargetLeaf)
       && !selectorGoalMutation && !hasSessionQuestionAnswerOrigin(actionId, ctx)) {
       // A declared operand has the same Session scope regardless of its path
       // within a native input or a dispatch wrapper's input. Selection never
@@ -3269,7 +3316,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // The Action ceiling was checked before target reads. Admit the concrete
     // operand after Role projection, so create grants see its effective Agent.
     // Prepared dispatch spends that admission; group leaves bind only targets.
-    const credentialFailure = existingAdmission || sessionTarget && ctx.sessionTargetsV1 && !options?.sessionTargetLeaf
+    const credentialFailure = existingAdmission || sessionReadSet || sessionTarget && ctx.sessionTargetsV1 && !options?.sessionTargetLeaf
       ? null : await admitCredentialScope(actionId, ctx, admittedInput, hostInternal, options?.sessionTargetLeaf === true);
     if (credentialFailure) return credentialFailure;
     if (!existingAdmission && actionId === SESSION_MESSAGE_SEND_ACTION_ID_V1) {
@@ -3941,6 +3988,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ? { safety: contextualSafety ?? spec.safetyForInput?.(admittedInput) ?? spec.safety } : {};
     const retainPreparedAdmission = (input: unknown, context: ActionExecutorContext): PreparedCoreAdmission => ({
       actionId, input, context,
+      ...(sessionReadSetFailures ? { sessionReadSetFailures } : {}),
       ...(contextualSafety ? { safety: contextualSafety } : {}),
       ...reviewClassification,
       ...(hostInternal ? { hostInternal: true } : {}),
@@ -4371,7 +4419,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       // Prepared invocations capture the admitted operand before they re-enter.
       // Keep the private child proof aligned before either ready path captures it.
       ctx = retainHostReviewedChildAdmissionV1(ctx, actionId, parsed.data, admittedInput) ?? ctx;
-      if (sessionTarget && ctx.sessionTargetsV1 && !ctx.sessionTargetsV1.operands && !options?.sessionTargetLeaf) {
+      if (!sessionReadSet && sessionTarget && ctx.sessionTargetsV1 && !ctx.sessionTargetsV1.operands && !options?.sessionTargetLeaf) {
         const snapshot = ctx.sessionTargetsV1;
         const { actionAutomationAdmission: _groupAutomationAdmission,
           prepareAdmittedExecutionOrigin: _groupExecutionOrigin, onSessionTargetResult: _groupTargetResult,
@@ -4446,6 +4494,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         // Continuations and operations consume every fact already admitted by this owner.
         ...existingAdmission,
         actionId, input: admittedInput, context: ctx,
+        ...(sessionReadSetFailures ? { sessionReadSetFailures } : {}),
         ...(contextualSafety ? { safety: contextualSafety } : {}),
         ...reviewClassification,
         ...(existingAdmission?.operationObserved ? { operationObserved: true as const } : {}),
@@ -6561,6 +6610,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             };
           }
           const invocation = data as z.infer<typeof ActionInvokeInputSchema>;
+          if (sessionReadSetFailures && !ctx.sessionTargetsV1) {
+            return { ok: true, result: { kind: 'sessionReadSet', result: null, failures: sessionReadSetFailures } };
+          }
           if (invocation.expectedContributorOccurrenceId !== undefined) {
             if (ctx.expectedContributedActionOccurrenceId !== undefined
               && ctx.expectedContributedActionOccurrenceId !== invocation.expectedContributorOccurrenceId) {
@@ -6599,6 +6651,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             ? await runActionOperation({ actionId: 'action.invoke', input: data, context: ctx,
               operation: contributedDefinition.operation, execute: invoke })
             : await invoke(ctx);
+          if (sessionReadSetFailures && invoked.ok) {
+            return { ...invoked, result: { kind: 'sessionReadSet', result: invoked.result, failures: sessionReadSetFailures } };
+          }
           // Another Action this press reached needs the person's review before any
           // effect. Carry this press's own review back; its digest-bound re-press
           // admits the whole press once (owner 2026-11-15, option A).
@@ -8545,6 +8600,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     prepare,
     execute,
     executeAdmittedClientAction,
+    async admitContributedSessionReadSet(declaration, input, context) {
+      const failure = credentialScopeFailure(ACTION_INVOKE_ACTION_ID_V1, context, input, true);
+      return failure ?? admitContributedSessionReadSet(declaration, input, context);
+    },
     continueConfidentialApprovalRequest,
     replayApprovedApprovalRequest,
   };

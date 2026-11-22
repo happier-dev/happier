@@ -18,7 +18,7 @@ import { ActionContextualDefaultsSchema } from '../../actions/contextualDefaults
 import { ActionToolExposureSchema, type ActionExecutionPlacement } from '../../actions/metadata.js';
 import { InputPredicateSchema } from '../../inputs/inputPredicates.js';
 import { ActionOperationDeclarationV1Schema } from '../../actions/operations/v1.js';
-import { ActionSessionTargetDeclarationV1Schema } from '../../actions/sessionTargetV1.js';
+import { ActionSessionTargetDeclarationV1Schema, isActionSessionReadSetV1 } from '../../actions/sessionTargetV1.js';
 import {
   createActionInputHintsSchemasWithoutOptionsSource,
   normalizeActionInputHintsText,
@@ -637,8 +637,17 @@ export const PluginActionContributionV2Schema = lazyZodSchema(() => z.strictObje
   }
 
   const inputSchema = value.inputSchema;
+  const sessionReadSet = isActionSessionReadSetV1(value.sessionTarget);
+  if (sessionReadSet && value.readOnly !== true) {
+    ctx.addIssue({
+      code: 'custom', path: ['sessionTarget', 'field'],
+      message: 'Session read sets require an explicitly read-only Action.',
+    });
+  }
   const sessionTargetLeaves = value.sessionTarget && declaresTraversableObjectInput(inputSchema)
-    ? resolveDeclaredInputLeaves(inputSchema!, value.sessionTarget.field, 'conditional-field') : null;
+    ? resolveDeclaredInputLeaves(inputSchema!, sessionReadSet
+        ? `${value.sessionTarget.field.slice(0, -1)}[]` : value.sessionTarget.field,
+      sessionReadSet ? 'review-field' : 'conditional-field') : null;
   // Account-only union arms may omit the operand. Each arm declaring it must
   // declare a string arm for concrete ids supplied by the existing target front door.
   if (value.sessionTarget && (!sessionTargetLeaves?.length

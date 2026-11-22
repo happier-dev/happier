@@ -332,6 +332,7 @@ export type ApprovalsActionResultById = {
                         sessionId: string;
                     }[];
                     selector: boolean;
+                    contributedActionId?: string | undefined;
                     operands?: undefined | {
                         field: string;
                         target: {
@@ -1273,6 +1274,7 @@ export type ApprovalsActionResultById = {
                         sessionId: string;
                     }[];
                     selector: boolean;
+                    contributedActionId?: string | undefined;
                     operands?: undefined | {
                         field: string;
                         target: {
@@ -2193,6 +2195,7 @@ export type ApprovalsActionResultById = {
                         sessionId: string;
                     }[];
                     selector: boolean;
+                    contributedActionId?: string | undefined;
                     operands?: undefined | {
                         field: string;
                         target: {

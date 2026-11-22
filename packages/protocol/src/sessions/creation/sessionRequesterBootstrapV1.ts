@@ -42,7 +42,7 @@ import { DeploymentChildRpcV1Schema, readDeploymentChildRpcV1 } from '../../depl
 import { MachineSetupPlanInputV1Schema, isMachineSetupPlanRpcChildV1 } from '../../machines/managed/actionsV1.js';
 import { WorkflowApprovedOperationParentV1Schema } from '../../actions/approvedOperationV1.js';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1, MANAGED_EXEC_ACTION_ID_V1, isManagedControlAdmissionActionIdV1, isManagedCreationContinuationRootV1, isManagedCreationMutationActionIdV1 } from '../../machines/managed/actionIdsV1.js';
-import { ActionIdSchema, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '../../actions/actionIds.js';
+import { ACTION_INVOKE_ACTION_ID_V1, ActionIdSchema, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '../../actions/actionIds.js';
 import { SessionCreationTagV1Schema, type SessionCreationTagV1 } from './sessionCreationIdentityV1.js';
 import { getActionSpec } from '../../actions/actionSpecs.js';
 import { MACHINE_SERVICE_FRONTDOOR_ACTION_IDS } from '../../local/services/actionIdsV1.js';
@@ -121,10 +121,10 @@ const RequesterAccountContextPurposeV1Schema = lazyZodSchema(() => z.union([
 /** Host-stamped facts inside the existing private box, never a public Action field. */
 export const ExternalActionRequesterInvocationV1Schema = lazyZodSchema(() => z.extend(ExternalActionRequesterInvocationBaseV1Schema, {
   presentUserSessionSend: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  sessionListAccess: z.optional(z.enum(['current_session', 'led_subtree', 'unavailable'])),
   actionRequestAttributionV1: z.optional(ActionRequestAttributionV1Schema),
   callerPermissionMode: z.optional(z.nullable(asProtocolZod(AgentPermissionIntentV1Schema))),
   callerInputConstraints: z.optional(CallerInputConstraintsV1Schema),
-  workspaceWrites: z.optional(z.enum(['allow', 'deny'])),
   defaultSessionId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   /** Creation-owner selection bound to this request by the existing private admission box. */
   sessionCreationDefaults: z.optional(z.strictObject({
@@ -178,7 +178,7 @@ export function projectExternalActionRequesterCallerV1(caller: ActionExecutorCon
 /** Project process-local context without inventing a Session or admitting a review. */
 export function projectExternalActionRequesterInvocationContextV1(
   context: ActionExecutorContext,
-  retained: Readonly<Pick<ExternalActionRequesterInvocationV1, 'actionRequestAttributionV1' | 'reviewedParent' | 'presentUserSessionSend'>
+  retained: Readonly<Pick<ExternalActionRequesterInvocationV1, 'actionRequestAttributionV1' | 'reviewedParent' | 'presentUserSessionSend' | 'sessionListAccess'>
     & Pick<ActionExecutorContext, 'presentUserConfirmation'>> = {},
 ): ExternalActionRequesterInvocationV1 | null {
   const workspaceWrites = context.workspaceWrites === 'deny' || context.agentStartWorkspaceWrites === 'deny'
@@ -225,6 +225,8 @@ export function projectExternalActionRequesterInvocationV1(args: Readonly<{
       ...(reviewedParent ? { reviewedParent } : {}),
       ...(args.actionId === SESSION_MESSAGE_SEND_ACTION_ID_V1 && args.context.presentUserSessionSend
         ? { presentUserSessionSend: args.context.presentUserSessionSend } : {}),
+      ...(args.actionId === ACTION_INVOKE_ACTION_ID_V1 && args.context.sessionListAccess && args.context.sessionListAccess !== 'mounted_ui'
+        ? { sessionListAccess: args.context.sessionListAccess } : {}),
     }) : null;
   if (!provenance) return null;
   const attribution = admitExternalActionRequesterInvocationAttributionV1(provenance, {

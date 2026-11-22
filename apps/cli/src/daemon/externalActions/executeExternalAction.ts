@@ -5,7 +5,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { apiTokenEncryptionAccessRequired, retainApiTokenDeploymentContentAccess } from '@/auth/apiTokenDeploymentCustody';
 import { prepareApiTokenDeploymentAccountProjection } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
-import { isWorkspaceSyncRelationshipWriteActionId, SESSION_MESSAGE_SEND_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_INVOKE_ACTION_ID_V1, isWorkspaceSyncRelationshipWriteActionId, SESSION_MESSAGE_SEND_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { ACTION_OPERATION_CANCEL_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { ActionOperationAddressV1Schema } from '@happier-dev/protocol/actions/operations/addressV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -1008,6 +1008,8 @@ async function executeExternalActionRequest(input: Readonly<{
     ...(pressedSend && actionId.data === SESSION_MESSAGE_SEND_ACTION_ID_V1 && accountPrincipal?.authentication.kind === 'account'
       && !sessionActionOrigin && !workflowActionOrigin && pressedSend === readRecord(decodedInput).sessionId
       ? { presentUserSessionSend: pressedSend } : {}),
+    ...(actionId.data === ACTION_INVOKE_ACTION_ID_V1 && ownInvocation?.sessionListAccess
+      ? { sessionListAccess: ownInvocation.sessionListAccess } : {}),
     ...(invocation ? { callerPermissionMode: invocation.callerPermissionMode,
       ...(invocationAttribution.actionRequestAttributionV1 ? { actionRequestAttributionV1: invocationAttribution.actionRequestAttributionV1 } : {}),
       ...(!envelope.data.managedCreationCodec && invocation.presentUserConfirmation

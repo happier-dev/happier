@@ -2,7 +2,7 @@ import fastify from 'fastify';
 import { resolve } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { definePlugin } from '@happier-dev/plugin-sdk';
-import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolArray, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
@@ -68,6 +68,10 @@ it.each([false, true])('retains local Account custody through Machine Actions an
           actions: {
             start: { title: 'Start', surfaces: ['cli', 'plugin'], dangerLevel: 'safe', run: async () => null },
             link: { title: 'Link', surfaces: ['cli', 'plugin'], dangerLevel: 'safe', run: async () => null },
+            'read-set': { title: 'Read Sessions', surfaces: ['plugin'], dangerLevel: 'safe', readOnly: true,
+                sessionTarget: { field: 'sessionIds.*', cardinality: 'many' },
+                inputSchema: defineProtocolObject({ sessionIds: defineProtocolArray(defineProtocolString()) }, { policy: 'closed' }),
+                run: input => input.sessionIds },
             watch: { title: 'Watch', surfaces: ['cli'], dangerLevel: 'safe',
                 inputSchema: defineProtocolObject({ source: defineProtocolString() }, { policy: 'closed' }),
                 inputHints: { fields: [{ path: 'source', title: 'Source', widget: 'select', inputType: { pluginId: parentId, localId: 'source' } }] },
@@ -78,6 +82,7 @@ it.each([false, true])('retains local Account custody through Machine Actions an
             plugins: [{ manifest: parent.manifest, files: { 'daemon.mjs': `export function activate(api) {
                 api.actions.register('start', (input, context) => context.services.actions.execute({ pluginId: 'acme.machine-placement-parent', localId: 'link' }, input));
                 api.actions.register('link', (input, context) => context.services.actions.execute({ pluginId: 'acme.account-session-source', localId: 'account-only' }, input));
+                api.actions.register('read-set', input => input.sessionIds);
                 api.actions.register('watch', () => null);
                 api.resources.registerDynamicResource('sources', {
                     async read({ readAction, signal }) {
@@ -155,16 +160,26 @@ it.each([false, true])('retains local Account custody through Machine Actions an
             errorCode: 'plugin_action_execution_placement_unavailable' } });
         // Another Account's automation on this Machine carries only its work
         // attribution; it must not borrow the Machine owner's Account either.
+        const attributedWork = (requesterAccountId: string) => ({ requesterWorkAttributionV1: {
+            serverId: 'placement-home', accountId: requesterAccountId, machineId: 'session-machine', installationId: 'installation',
+        } });
         const automation = (requesterAccountId: string) => runWithServerHttpBaseUrl(origin, () => executeContributedAction({
             runtimeRegistry: runtime!.registry,
             actionId: buildQualifiedPluginContributionKey({ pluginId: parent.manifest.id, localId: 'start' }),
             input: { sessionId: 'spawned-on-machine' }, context: { surface: 'cli' },
-            approvalContext: { requesterWorkAttributionV1: { serverId: 'placement-home', accountId: requesterAccountId,
-                machineId: 'session-machine', installationId: 'installation' } },
+            approvalContext: attributedWork(requesterAccountId),
+        }));
+        const readSet = (requesterAccountId: string) => runWithServerHttpBaseUrl(origin, () => registry.targetActionInvocations!.invoke({
+            pluginId: parent.manifest.id, localId: 'read-set', surface: 'plugin', input: { sessionIds: ['spawned-on-machine'] },
+            approvalContext: { ...attributedWork(requesterAccountId), authority: 'account_automation' },
         }));
         expect(await automation('requester-b')).toMatchObject({ matched: true, result: { ok: false,
             errorCode: 'plugin_action_execution_placement_unavailable' } });
         expect(await automation(accountId)).toEqual({ matched: true, result: { ok: true, result: { value: 'account-only' } } });
+        expect(await readSet('requester-b')).toMatchObject({ status: 'unavailable', code: 'session_target_unavailable' });
+        expect(await readSet(accountId)).toMatchObject({ status: 'executed', value: {
+            kind: 'sessionReadSet', result: ['spawned-on-machine'], failures: [],
+        } });
     } finally {
         await runtime?.dispose(); await socket.close(); restore(); await app.close(); fetch.mockRestore(); readCredentials.mockRestore(); resetActiveAccountSettingsSnapshotForTests();
     }

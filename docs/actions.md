@@ -492,6 +492,16 @@ Preparation reads remain signed under the admitted `action.invoke` or
 `session.targets.resolve` root. Selection grants no additional handler or
 Session mutation authority.
 
+An explicitly read-only contributed Action can declare a nonempty exact ID
+array with `sessionTarget: { field: 'sessionIds.*', cardinality: 'many' }`.
+The Session-target owner deduplicates IDs and admits each one on the request's
+Home. It invokes the handler once with the admitted IDs and their host-issued
+addresses. A Session-stamped Resource can admit only its stamped address.
+The host wraps the authored result as `{ kind: 'sessionReadSet', result, failures }`.
+Each refused ID has the same `session_target_unavailable` result for missing,
+foreign, and inaccessible Sessions. When every ID is refused, `result` is
+`null` and the handler does not run.
+
 For Session-placed Actions with exact targets in 0.3 development, original CLI
 invocation reuses the ingress selector owner and the protected-message Session transport lookup
 to derive the owning Machine before delivery. Session Actions enter that

@@ -19,35 +19,53 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { readRuntimeFetchHost } from '@/utils/system/runtimeFetch';
 
-/** The dispatcher places whole Account Actions; provider HTTP and credentials stay together. */
-export function executeAccountActionAtRuntimeHost(params: Readonly<{
+type AccountActionRuntimePlacement = Readonly<{
     accountScope: ServerAccountScope;
     action: PluginContributionIdentityV1;
     execution: Extract<PluginActionExecutionV2, { target: 'account' }>;
     input: unknown;
     /** Machine that supplied the mounted declaration. */
     sourceMachineId?: string;
+    context: ActionExecutorContext;
+}>;
+
+function hasLocalAccountActionPlacement(params: AccountActionRuntimePlacement): boolean {
+    const purpose = params.context.invocationServices?.connectedAccountPurposeBinding;
+    return params.execution.invokingUi === true || !!(purpose?.managedOperation
+        && purpose.identity.pluginId === params.action.pluginId && purpose.identity.localId === params.action.localId
+        && readHostReviewedChildOperationV1(params.context, formatQualifiedPluginActionId(params.action), params.input));
+}
+
+async function hasNativeAccountActionPlacement(params: AccountActionRuntimePlacement): Promise<boolean> {
+    if (params.context.externalActionTarget || params.sourceMachineId) return false;
+    const endpointUrl = getServerProfileById(params.accountScope.serverId)?.serverUrl ?? params.accountScope.serverId;
+    return await readRuntimeFetchHost(endpointUrl) === 'native';
+}
+
+/** Choose the executor before opening any Session operands. */
+export async function resolvesAccountActionLocally(params: AccountActionRuntimePlacement): Promise<boolean> {
+    return hasLocalAccountActionPlacement(params) || await hasNativeAccountActionPlacement(params);
+}
+
+/** The dispatcher places whole Account Actions; provider HTTP and credentials stay together. */
+export function executeAccountActionAtRuntimeHost(params: AccountActionRuntimePlacement & Readonly<{
     expectedContributorOccurrenceId?: string;
     /** The mounted declaration admits these operands as a read. */
     readOnly?: boolean;
-    context: ActionExecutorContext;
     signal: AbortSignal;
     /** Produced only after the mounted presenter approved and its gate admitted. */
     confirmedInvocation?: Readonly<{ input: unknown; inputDigest: string }>;
+    /** The serving Machine was chosen before Session admission. */
+    useSelectedHost?: true;
     executeLocal(): unknown;
 }>): unknown {
-    const purpose = params.context.invocationServices?.connectedAccountPurposeBinding;
     // The managed owner already selected this host for the whole operation.
     // Its private exact child proof retains that placement with its custody.
-    if (purpose?.managedOperation && purpose.identity.pluginId === params.action.pluginId
-        && purpose.identity.localId === params.action.localId && readHostReviewedChildOperationV1(params.context,
-        formatQualifiedPluginActionId(params.action), params.input)) return params.executeLocal();
-    if (params.execution.invokingUi) return params.executeLocal();
+    if (!params.useSelectedHost && hasLocalAccountActionPlacement(params)) return params.executeLocal();
     return executeOnSelectedHost();
 
     async function executeOnSelectedHost() {
-        const endpointUrl = getServerProfileById(params.accountScope.serverId)?.serverUrl ?? params.accountScope.serverId;
-        if (!params.context.externalActionTarget && !params.sourceMachineId && await readRuntimeFetchHost(endpointUrl) === 'native') {
+        if (!params.useSelectedHost && await hasNativeAccountActionPlacement(params)) {
             return await params.executeLocal();
         }
         const account = await captureLazyActionAccountContext(params.accountScope.serverId, params.signal);

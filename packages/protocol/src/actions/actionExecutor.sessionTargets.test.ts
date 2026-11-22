@@ -31,6 +31,45 @@ const context: ActionExecutorContext = {
   actionCaller: { kind: 'host' }, actionRequestId: 'target-test',
 };
 
+it('admits each exact Session in a contributed read set once and preserves readable siblings', async () => {
+  const sessionTarget = { field: 'sessionIds.*', cardinality: 'many' } as const;
+  const definition: ActionDefinitionV1 = {
+    kindVersion: 1, id: 'com.acme.targets/actions/read', title: 'Read', description: 'Read selected Sessions',
+    safety: 'safe', sideEffectClass: 'read', placements: [], slash: null, bindings: null, examples: null, inputHints: null,
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false, api: true, plugin: true },
+    sessionTarget,
+    inputSchema: { type: 'object', properties: { sessionIds: { type: 'array', items: { type: 'string' } } },
+      required: ['sessionIds'], additionalProperties: false },
+  };
+  const lookups: string[] = [];
+  const reads: unknown[] = [];
+  const executor = createActionExecutor({
+    ...harness().deps,
+    listContributedActionDefinitions: () => [definition],
+    resolveSessionReference: async ({ sessionId }) => {
+      lookups.push(sessionId!);
+      if (sessionId === 'foreign') return { kind: 'incomplete' };
+      if (sessionId === 'missing') return { kind: 'none' };
+      return { kind: 'unique', address: { serverId: 'home', sessionId: sessionId! } };
+    },
+    invokeContributedAction: async ({ input, context }) => {
+      reads.push({ input, targets: context.sessionTargetsV1?.targets, lookups: [...lookups] });
+      return { ok: true, result: { slices: [{ sessionId: 'a', value: 1 }, { sessionId: 'b', value: 2 }] } };
+    },
+  } as ActionExecutorDeps);
+  const result = await executor.execute('action.invoke', {
+    action: { pluginId: 'com.acme.targets', localId: 'read' }, input: { sessionIds: ['a', 'foreign', 'missing', 'b'] },
+  }, context);
+  const targets = [{ serverId: 'home', sessionId: 'a' }, { serverId: 'home', sessionId: 'b' }];
+  expect(reads).toEqual([{ input: { sessionIds: ['a', 'b'] }, targets, lookups: ['a', 'foreign', 'missing', 'b'] }]);
+  expect(lookups).toEqual(['a', 'foreign', 'missing', 'b']);
+  const unavailable = { ok: false, errorCode: 'session_target_unavailable', error: 'session_target_unavailable' };
+  expect(result).toEqual({ ok: true, result: { kind: 'sessionReadSet',
+    result: { slices: [{ sessionId: 'a', value: 1 }, { sessionId: 'b', value: 2 }] },
+    failures: [{ sessionId: 'foreign', result: unavailable }, { sessionId: 'missing', result: unavailable }],
+  } });
+});
+
 function harness() {
   let workers = ['a', 'b'];
   let inaccessible: string | null = null;

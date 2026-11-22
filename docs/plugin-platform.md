@@ -7719,6 +7719,12 @@ under its `input` operand and enters the existing shared resolver before plugin
 input parsing and approval. The read-only inspection Action accepts the same
 canonical qualified id advertised by discovery. SDK calls inside the runtime
 consume that same declaration projection; they do not create another resolver.
+
+Read-only contributed Actions may opt into the
+[Session read-set contract](actions.md) with a terminal array
+operand such as `payload.sessionIds.*`. The SDK handler receives the admitted
+IDs and their `sessionTargetsV1` addresses. The Action host adds refusals to
+the returned `sessionReadSet` envelope.
 Read signatures retain the admitted wrapper root, and approval retains concrete
 targets rather than re-expanding selector intent.
 

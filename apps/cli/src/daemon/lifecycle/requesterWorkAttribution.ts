@@ -1,4 +1,5 @@
 import type { RpcHandlerContext, RpcLocalActionContext } from '@/api/rpc/types';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import { projectDaemonSpawnUnavailable, type SpawnSessionOptions, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { rethrowRequesterHomeReadFailure } from '../sessionEncryption/requesterCurrentness';
@@ -65,6 +66,19 @@ export function carriesNonLocalRequesterAuthority(context: Readonly<{
   return context?.callerInputAuthorization !== undefined || context?.externalActionExecutionAuthorization !== undefined
     || context?.externalActionCredential !== undefined || context?.sessionActionOrigin !== undefined
     || context?.rpcSessionAuthorization !== undefined || context?.requesterSessionBootstrap !== undefined;
+}
+
+/** Only work for this runtime's own Account can borrow its local credentials. */
+export async function canUseLocalRuntimeAccount(
+  context: ActionExecutorContext | undefined,
+  localAccountId: string | null,
+  serverId?: string,
+): Promise<boolean> {
+  if (!localAccountId || carriesNonLocalRequesterAuthority(context)) return false;
+  const attributedAccountId = projectRpcRequesterWorkAttribution(context, context?.serverId ?? serverId)?.accountId
+    ?? context?.runtimeAccountId;
+  return (attributedAccountId === undefined || attributedAccountId === localAccountId)
+    && await canUseCustodianAccountForMachineRequest(context);
 }
 
 /** Transient launch currentness supplied by the verified ingress, not by stored attribution. */

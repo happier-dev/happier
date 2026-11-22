@@ -568,6 +568,8 @@ export function createCliActionExecutorHarness(
       return result;
     },
     executor: {
+      admitContributedSessionReadSet: (declaration, input, context) => runOnCapturedHome(() =>
+        executor.admitContributedSessionReadSet(declaration, input, resolveContext(context, 'action.invoke'))),
       prepare: (actionId, input, context) => runOnCapturedHome(() => {
         const resolved = resolveContext(context, actionId);
         const dispatch = prepareControllerDeploymentDispatch(actionId, input, resolved);

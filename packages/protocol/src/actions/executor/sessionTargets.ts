@@ -8,6 +8,7 @@ import { projectActionFailureCauseV1, type ActionExecuteFailure } from '../actio
 import type { ActionExecutorContext, ActionExecutorDeps, ActionSessionAddress, ActionSessionReferenceResolution } from './types.js';
 import { readActionCallerLedSubtreeSessions } from './sessionLedSubtree.js';
 import { readSessionManagerSessionIdV1 } from '../../sessions/follow/sessionManagerV1.js';
+import { isActionSessionReadSetV1, type ActionSessionReadSetFailureV1 } from '../sessionTargetV1.js';
 
 function id(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -19,14 +20,14 @@ export async function resolveActionSessionAddress(
   input: Readonly<{ sessionId?: unknown; sessionTitle?: unknown }>,
   context: ActionExecutorContext,
   actionId?: ActionId,
-  resolveReference = false,
+  resolveReference: boolean | 'scope-admitted' = false,
 ): Promise<ActionSessionReferenceResolution> {
   const sessionId = id(input.sessionId);
   const sessionTitle = id(input.sessionTitle);
   const serverId = id(context.serverId);
   if (sessionId && serverId && !resolveReference) return { kind: 'unique', address: { serverId, sessionId } };
   if (!sessionId && !sessionTitle) return { kind: 'none' };
-  if (resolveReference && context.sessionListAccess === 'current_session' && sessionId
+  if (resolveReference === true && context.sessionListAccess === 'current_session' && sessionId
     && sessionId !== id(context.defaultSessionId)) {
     const root = await resolveActionSessionAddress(deps, { sessionId: context.defaultSessionId }, context, actionId, true);
     if (root.kind !== 'unique') return root;
@@ -341,7 +342,7 @@ export function projectChildActionSessionTargetsV1(params: Readonly<{
 
 /** Replace only the declared target leaf, preserving its surrounding intent. */
 export function replaceActionSessionTargetField(
-  input: Readonly<Record<string, unknown>>, field: string, target: SessionTargetV1,
+  input: Readonly<Record<string, unknown>>, field: string, target: SessionTargetV1 | readonly string[],
 ): Readonly<Record<string, unknown>> {
   const separator = field.indexOf('.');
   if (separator < 0) return { ...input, [field]: target };
@@ -365,6 +366,12 @@ export function replaceActionSessionTargetField(
 export function bindActionSessionTargetOperands(input: Readonly<Record<string, unknown>>, snapshot: ActionResolvedSessionTargetsV1,
   declaration: ActionSessionTargetDeclarationV1, requireConcrete = false): Readonly<Record<string, unknown>> | null {
   if (snapshot.field !== declaration.field) return null;
+  if (isActionSessionReadSetV1(declaration)) {
+    const field = snapshot.field.slice(0, -2);
+    const ids = snapshot.targets.map(target => target.sessionId);
+    const raw = readActionSessionTargetField(input, field);
+    return Array.isArray(raw) && raw.length === ids.length && raw.every((value, index) => value === ids[index]) ? input : null;
+  }
   if (!declaration.field.includes('*')) {
     if (snapshot.operands || declaration.cardinality === 'one' && snapshot.targets.length !== 1) return null;
     if (declaration.cardinality !== 'one') return input;
@@ -386,6 +393,55 @@ export function bindActionSessionTargetOperands(input: Readonly<Record<string, u
   if (targets.length !== snapshot.targets.length || targets.some((target, index) => target.serverId !== snapshot.targets[index].serverId
     || target.sessionId !== snapshot.targets[index].sessionId)) return null;
   return bound;
+}
+
+/** Admit each authored exact ID. The handler receives only canonical addresses and their IDs. */
+export async function admitActionSessionReadSet(
+  deps: ActionExecutorDeps,
+  args: SessionTargetsRequest & Readonly<{
+    contributedActionId: string;
+    sameHome: (left: string, right: string) => boolean;
+    scoped: (sessionId: string) => Promise<ActionExecuteFailure | null>;
+  }>,
+): Promise<ActionExecuteFailure | Readonly<{
+  input: Readonly<Record<string, unknown>>;
+  targets: ActionResolvedSessionTargetsV1 | null;
+  failures: readonly ActionSessionReadSetFailureV1[];
+}>> {
+  const { actionId, context, declaration } = args;
+  const field = declaration.field.slice(0, -2);
+  const raw = readActionSessionTargetField(args.input, field);
+  if (!Array.isArray(raw) || raw.length === 0 || raw.some(value => typeof value !== 'string' || !value.trim())) {
+    return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+  }
+  const targets: ActionSessionAddressV1[] = [];
+  const failures: ActionSessionReadSetFailureV1[] = [];
+  const refused = { ok: false, errorCode: 'session_target_unavailable', error: 'session_target_unavailable' } as const;
+  const cancelled = { ok: false, errorCode: 'cancelled', error: 'cancelled' } as const;
+  const expected = context.expectedSessionAddress;
+  const home = context.serverId;
+  const matchesBoundHome = home && (!expected || args.sameHome(home, expected.serverId));
+  for (const sessionId of new Set<string>(raw.map(value => value.trim()))) {
+    if (context.signal?.aborted) return cancelled;
+    let target: ActionSessionAddressV1 | undefined;
+    try {
+      if (home && matchesBoundHome && (!expected || expected.sessionId === sessionId) && !await args.scoped(sessionId)) {
+        const resolved = await resolveActionSessionAddress(deps, { sessionId }, context, actionId, 'scope-admitted');
+        if (resolved.kind === 'unique' && resolved.address.sessionId === sessionId
+          && args.sameHome(resolved.address.serverId, home)) target = resolved.address;
+      }
+    } catch (error) {
+      recordSessionTargetCause(deps, error, 'action.session_targets.read_set');
+    }
+    if (context.signal?.aborted) return cancelled;
+    if (target) targets.push(target);
+    else failures.push({ sessionId, result: refused });
+  }
+  return {
+    input: replaceActionSessionTargetField(args.input, field, targets.map(target => target.sessionId)),
+    targets: targets.length ? { actionId, contributedActionId: args.contributedActionId, field: declaration.field, targets, selector: false } : null,
+    failures,
+  };
 }
 
 async function readActionSessionTargets(

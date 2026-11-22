@@ -6106,6 +6106,58 @@ describe('client Action declared SessionTarget admission', () => {
         }
     });
 
+    it('gives an Account Resource Action only the Session admitted by its host stamp', async () => {
+        const accountLifetime = clientAccountLifetime();
+        const home = accountLifetime.scope.serverId;
+        const reads: unknown[] = [];
+        const lookups: string[] = [];
+        const activation = createClientActionActivation({ accountPlacement: true, invokingUi: true, accountLifetime,
+            surfaces: ['plugin'], readOnly: true, sessionTarget: { field: 'sessionIds.*', cardinality: 'many' },
+            inputSchema: { type: 'object', properties: { sessionIds: { type: 'array', items: { type: 'string' } } },
+                required: ['sessionIds'], additionalProperties: false },
+            accountHandler(value) {
+                reads.push(value);
+                return value;
+            },
+        });
+        const createPort = (invocationSurface: Parameters<typeof createCurrentUiContextVoiceToolPort>[0]['invocationSurface'],
+            hostAction?: Parameters<typeof createCurrentUiContextVoiceToolPort>[0]['hostAction']) => createCurrentUiContextVoiceToolPort({
+            invocationSurface, hostAction, readProjection: () => activation.projection, readNavigationBinding: () => null,
+            reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+        });
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            listContributedActionDefinitions: () => createPort('plugin').listCurrentContributedActionDefinitions?.('allSurfaces') ?? [],
+            resolveSessionReference: async ({ sessionId }) => {
+                lookups.push(sessionId!);
+                return { kind: 'unique', address: { serverId: home, sessionId: sessionId! } };
+            },
+            invokeContributedAction: request => executeCurrentUiContextContributedAction(request, {
+                execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: request.context,
+            }),
+        }));
+        const unregister = registerCurrentUiContextActionPort(createPort);
+        try {
+            await activation.composition.reconcile([activation.activation]);
+            const sourceCustody = activation.projection.actionsById[`${CALLER_PLUGIN_ID}/${activation.action.id}`]!.hostAccountOrigin!.sourceCustody;
+            const result = await dispatchPluginSurfaceAction({
+                action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id },
+                input: { sessionIds: ['stamped', 'outside', 'stamped'] },
+                invocationSurface: 'plugin', originSurface: 'ui', clientAction: { sessionId: 'stamped' }, callerPluginId: CALLER_PLUGIN_ID,
+                resourceCaller: { pluginId: CALLER_PLUGIN_ID, serverId: home, contributionLocalId: 'status-resource',
+                    occurrenceId: activation.action.occurrenceId, sourceCustody, sessionId: 'stamped' },
+                requiredReadOnly: true,
+                hostAction: { execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: {
+                    serverId: home, authority: 'account_automation',
+                } },
+                pluginUiProjection: activation.projection, resolveContributedAction: resolveExactClientAction(activation.action),
+            });
+            expect(result, JSON.stringify({ result, reads, lookups })).toMatchObject({ ok: true, result: { kind: 'sessionReadSet', result: { sessionIds: ['stamped'] },
+                failures: [{ sessionId: 'outside', result: { ok: false, errorCode: 'session_target_unavailable' } }] } });
+            expect(reads).toEqual([{ sessionIds: ['stamped'] }]);
+            expect(lookups).toEqual(['stamped']);
+        } finally { unregister(); await activation.composition.unload(); accountLifetime.retire(); }
+    });
+
     it.each(['exact', 'manager', 'workers', 'absent', 'external', 'retired', 'presenter'] as const)(
         'uses the canonical executor before client effects (%s)', async selection => {
         let manager = 'reviewed-manager';

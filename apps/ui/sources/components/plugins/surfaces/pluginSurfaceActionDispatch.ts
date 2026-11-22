@@ -19,8 +19,8 @@ import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, isHostAdmitte
 import { projectedActionToDefinition } from '@/components/appShell/currentUiContext/contributedActionDefinition';
 import { resolveAccountMessageActionReference } from '@/sync/api/session/sessionMessageActionReference';
 import { projectMarkdownFindText } from '@/components/markdown/rendering/markdownFindProjection';
-import { readActionSessionTargetField, readActionSessionTargetOperands, registerHostSelectedActionSessionAddressV1, validateActionSessionAddressV1, validateContributedActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
-import { normalizeSessionTargetV1, type ActionSessionAddressV1, type ActionResolvedSessionTargetsV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
+import { bindActionSessionTargetOperands, readActionSessionTargetField, readActionSessionTargetOperands, registerHostSelectedActionSessionAddressV1, validateActionSessionAddressV1, validateContributedActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
+import { isActionSessionReadSetV1, normalizeSessionTargetV1, type ActionSessionAddressV1, type ActionResolvedSessionTargetsV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 import { ACTION_INVOKE_ACTION_ID_V1, SESSION_MESSAGE_SEND_ACTION_ID_V1, isSessionListActionId, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { isPresentUserHostInvocation, resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
@@ -86,7 +86,7 @@ import {
     machinePluginUiTargetedContributionsRead,
 } from '@/sync/ops/machineContributionRegistryProjection';
 import { observeDaemonActionRead } from './daemonActionRead';
-import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import {
@@ -178,7 +178,7 @@ import {
 } from '@/sync/ops/machineContributionRegistryProjectionRevision';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { createPluginSurfaceAccountActionServices } from './pluginSurfaceAccountActionServices';
-import { executeAccountActionAtRuntimeHost } from './accountActionPlacement';
+import { executeAccountActionAtRuntimeHost, resolvesAccountActionLocally } from './accountActionPlacement';
 import { readAccountTargetedContributionSnapshot } from './accountTargetedContributionSnapshot';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { createPluginSurfaceSessionHandlers } from './pluginSurfaceSessionState';
@@ -727,6 +727,7 @@ function nestedClientHostAction(
         actionRequestId: randomUUID(),
         sessionTargetsV1: undefined,
         expectedSessionAddress: undefined,
+        localAccountSessionReadSet: undefined,
         // Only host Action children consume the host's review. Contributed
         // calls keep their own Plugin caller and ordinary approval path.
         hostReviewedChild: hostActionChild ? context.hostReviewedChild : undefined,
@@ -1378,23 +1379,29 @@ async function prepareClientContributedAction(
         occurrenceSignal: initial.registration.lifecycle.signal,
         isCurrent: initial.isCurrent,
     });
-    const preparedInput = invocation.prepare(settledInput ?? null, { ...(input.signal ? { signal: input.signal } : {}) });
+    const sessionReadSet = isActionSessionReadSetV1(declaredSessionTarget);
+    const retained = sessionReadSet && input.hostAction?.context?.sessionTargetsV1?.contributedActionId === formatQualifiedPluginActionId(identity);
+    const preparedInput = invocation.prepare(settledInput ?? null, { signal: input.signal,
+        ...(retained ? { inputAlreadyNormalized: true as const } : {}),
+    });
     if (preparedInput.kind === 'settled') return clientActionFailure(preparedInput.result.code);
     const normalizedInput: unknown = preparedInput.input;
     if (input.readObservation && !readPluginActionReadObserver(initial.registration.registration.value)) {
         return clientActionFailure('plugin_action_read_observation_unavailable');
     }
-    if ((input.requiredReadOnly || input.readObservation)
+    if ((input.requiredReadOnly || input.readObservation || sessionReadSet)
         && !preparedInput.isReadOnly) {
         return clientActionFailure('plugin_action_read_only_required');
     }
-    if (input.resourceCaller && declaredSessionTarget && isPluginActionInputRecord(normalizedInput)) {
+    if (input.resourceCaller && declaredSessionTarget && !sessionReadSet
+        && isPluginActionInputRecord(normalizedInput)) {
         const operands = readActionSessionTargetOperands(normalizedInput, declaredSessionTarget.field);
         if (operands.some(operand => operand.value !== input.resourceCaller!.sessionId)) {
             return clientActionFailure('plugin_action_resource_session_mismatch');
         }
     }
-    if (input.readObservation && declaredSessionTarget && isPluginActionInputRecord(normalizedInput)) {
+    if (input.readObservation && declaredSessionTarget && !sessionReadSet
+        && isPluginActionInputRecord(normalizedInput)) {
         const operands = readActionSessionTargetOperands(normalizedInput, declaredSessionTarget.field);
         try {
             if (operands.some(operand => typeof normalizeSessionTargetV1(operand.value) !== 'string')) {
@@ -1404,7 +1411,16 @@ async function prepareClientContributedAction(
             return clientActionFailure('plugin_action_read_observation_session_unresolved');
         }
     }
-    return { kind: 'prepared' as const, initial, authority, invocationAuthority, invocation, preparedInput, sharedScopeIdentity };
+    let accountReadSetPlacement: 'local' | 'machine' | undefined;
+    if (sessionReadSet && projectedAction.execution.target === 'account') {
+        const lifetime = initial.registration.accountLifetime;
+        if (!lifetime) return clientActionFailure('plugin_surface_account_action_unavailable');
+        const local = input.readObservation || input.hostAction?.context?.localAccountSessionReadSet
+            || await resolvesAccountActionLocally({ accountScope: lifetime.scope, action: identity,
+                execution: projectedAction.execution, input: normalizedInput, context: input.hostAction?.context ?? {} });
+        accountReadSetPlacement = local ? 'local' : 'machine';
+    }
+    return { kind: 'prepared' as const, initial, authority, invocationAuthority, invocation, preparedInput, sharedScopeIdentity, accountReadSetPlacement };
 }
 
 /** Both execution placements enter the same retained canonical Session admission. */
@@ -1414,19 +1430,29 @@ async function admitContributedActionSessionTargets(
     projectedAction: PluginUiActionProjection,
     normalizedInput: PluginUiJsonValueV1 | undefined,
     invocationAuthority: ActionRequiredAuthority,
+    accountReadSetPlacement?: 'local' | 'machine',
 ): Promise<PluginSurfaceActionDispatchOutcome | null> {
     const declaredSessionTarget = projectedAction.sessionTarget;
+    const readSet = isActionSessionReadSetV1(declaredSessionTarget);
+    if (readSet && (projectedAction.execution.target === 'daemon' || accountReadSetPlacement === 'machine')) {
+        return input.resourceCaller?.sessionId ? clientActionFailure('plugin_action_resource_placement_unavailable') : null;
+    }
     const hasSessionOperand = declaredSessionTarget && isPluginActionInputRecord(normalizedInput)
         && (declaredSessionTarget.field.includes('*')
             ? readActionSessionTargetOperands(normalizedInput, declaredSessionTarget.field).length > 0
             : readActionSessionTargetField(normalizedInput, declaredSessionTarget.field) !== undefined);
-    if (hasSessionOperand || input.sessionAddress !== undefined) {
+    if (readSet || hasSessionOperand || input.sessionAddress !== undefined) {
         const snapshot = input.hostAction?.context?.sessionTargetsV1;
         if (snapshot && declaredSessionTarget) {
             if (snapshot.actionId !== 'action.invoke' || snapshot.field !== `input.${declaredSessionTarget.field}`) {
                 return clientActionFailure('approval_stale');
             }
-            if (input.resourceCaller && (snapshot.targets.length !== 1
+            if (readSet && (snapshot.contributedActionId !== formatQualifiedPluginActionId(identity)
+                || !bindActionSessionTargetOperands({ input: normalizedInput }, snapshot,
+                    { ...declaredSessionTarget, field: snapshot.field }, true))) {
+                return clientActionFailure('approval_stale');
+            }
+            if (input.resourceCaller && (!readSet || input.resourceCaller.sessionId !== undefined) && (snapshot.targets.length !== 1
                 || snapshot.targets[0]!.sessionId !== input.resourceCaller.sessionId
                 || !areServerProfileIdentifiersEquivalent(snapshot.targets[0]!.serverId, input.resourceCaller.serverId))) {
                 return clientActionFailure('plugin_action_resource_session_mismatch');
@@ -1438,7 +1464,8 @@ async function admitContributedActionSessionTargets(
                 }
             }
         } else {
-            return prepareContributedActionInvocation(input, identity, projectedAction, normalizedInput, invocationAuthority);
+            return prepareContributedActionInvocation(input, identity, projectedAction, normalizedInput, invocationAuthority,
+                accountReadSetPlacement === 'local');
         }
     }
     return null;
@@ -1451,6 +1478,7 @@ async function prepareContributedActionInvocation(
     projectedAction: PluginUiActionProjection,
     normalizedInput: PluginUiJsonValueV1 | undefined,
     invocationAuthority: ActionRequiredAuthority,
+    localAccountSessionReadSet = false,
 ): Promise<PluginSurfaceActionDispatchOutcome> {
     const prepare = input.hostAction?.execute.prepare;
     if (!prepare) return clientActionFailure('action_prepare_unavailable');
@@ -1465,6 +1493,10 @@ async function prepareContributedActionInvocation(
     if (!originSurface) return clientActionFailure('plugin_action_origin_unavailable');
     const actionContext: PluginSurfaceActionExecutorContext = {
         ...context, surface: invocationSurface, authority: invocationAuthority,
+        ...(localAccountSessionReadSet ? { localAccountSessionReadSet: true as const } : {}),
+        ...(input.resourceCaller?.sessionId && isActionSessionReadSetV1(projectedAction.sessionTarget) ? {
+            expectedSessionAddress: { sessionId: input.resourceCaller.sessionId, serverId: input.resourceCaller.serverId },
+        } : {}),
         expectedContributedActionOccurrenceId: projectedAction.occurrenceId,
         contributedActionInvocation: { contributedAction: input.contributedAction, clientAction: input.clientAction,
             listContributedActionDefinitions: selection => {
@@ -2084,7 +2116,8 @@ async function executeClientContributedAction(
             const invokeHandler = (messageAction?: MessageActionAvailableSnapshotV1) => {
                 // Read observation hooks retain their Account-local dependency
                 // subscriptions. The finite read effect takes this placement path.
-                if (current.action.execution.target !== 'account' || input.readObservation) return executeHandler(messageAction);
+                if (current.action.execution.target !== 'account' || input.readObservation
+                    || preparation.accountReadSetPlacement === 'local') return executeHandler(messageAction);
                 const accountLifetime = current.registration.accountLifetime;
                 if (!accountLifetime) throw new PluginError({ code: 'plugin_surface_account_action_unavailable' });
                 const caller = resolveMountedPluginActionCaller(input);
@@ -2601,11 +2634,44 @@ async function executeContributedAction(
     // Connected-Account reconstruction that a daemon Action must satisfy.
     const settlement = settleSelectedTargetedOperation(input, identity, caller);
     if (!settlement.ok) return settlement;
+    async function runMachineAccountAction(
+        dispatch: DispatchPluginSurfaceActionInput,
+        action: PluginUiActionProjection,
+        accountScope: ServerAccountScope,
+        value: PluginUiJsonValueV1 | undefined,
+        readOnly: boolean,
+        sourceMachineId?: string,
+    ): Promise<PluginSurfaceActionDispatchOutcome> {
+        if (action.execution.target !== 'account') return clientActionFailure('plugin_surface_account_action_unavailable');
+        const execution = action.execution;
+        const run = async (input: DispatchPluginSurfaceActionInput): Promise<PluginSurfaceActionDispatchOutcome> => {
+            const context = mountedHostActionContext(input, caller,
+                input.invocation?.kind === 'clientPluginAction' ? input.invocation.clientActionBinding : null, 'action.invoke');
+            const authority = await contributedInvocationAuthority(input, accountScope.serverId);
+            try {
+                input.onInvocationAdmitted?.();
+                const result = await executeAccountActionAtRuntimeHost({ accountScope, action: identity, execution,
+                    input: value, sourceMachineId, expectedContributorOccurrenceId: action.occurrenceId, readOnly,
+                    ...(isActionSessionReadSetV1(action.sessionTarget) ? { useSelectedHost: true as const } : {}),
+                    signal: input.signal ?? new AbortController().signal,
+                    context: { ...context, surface: input.invocationSurface ?? 'ui',
+                        ...(context.actionCaller?.kind === 'plugin' ? {} : { authority }) },
+                    executeLocal: () => { throw new PluginError({ code: 'plugin_surface_account_action_unavailable' }); } });
+                return { ok: true, result: result as PluginUiJsonValueV1 };
+            } catch (error) { return clientActionPreparationFailure(error); }
+        };
+        return dispatch.spokenActionRequest && (dispatch.invocationSurface ?? 'ui') === 'voice'
+            ? executePreparedPluginSurfaceAction({ input: dispatch, identity, action, normalizedInput: value, run })
+            : run(dispatch);
+    }
     // Machine-hosted Account effects enter their existing whole-Action owner.
     // Browser executable preparation belongs only to Account-local handlers.
     const machineOrigin = readPluginUiContributionOrigin(projectedAction);
     if (projectedAction.execution.target === 'account' && !projectedAction.execution.invokingUi
         && !readPluginUiAccountExecutableOrigin(projectedAction) && machineOrigin && !input.readObservation) {
+        if (input.resourceCaller?.sessionId && isActionSessionReadSetV1(projectedAction.sessionTarget)) {
+            return failure('unavailable', 'plugin_action_resource_placement_unavailable');
+        }
         if (settlement.relay) return failure('unsupported_method', 'plugin_surface_targeted_selection_relay_unsupported');
         const lifetime = input.actionAccountLifetime ?? input.contributedAction?.accountLifetime;
         const serverId = lifetime?.scope.serverId ?? input.hostAction?.context?.serverId ?? machineOrigin.serverId;
@@ -2616,28 +2682,8 @@ async function executeContributedAction(
         if (input.requiredReadOnly && !readOnly) {
             return clientActionFailure('plugin_action_read_only_required');
         }
-        const execution = projectedAction.execution;
-        const occurrenceId = projectedAction.occurrenceId;
-        const run = async (input: DispatchPluginSurfaceActionInput): Promise<PluginSurfaceActionDispatchOutcome> => {
-            const context = mountedHostActionContext(input, caller,
-                input.invocation?.kind === 'clientPluginAction' ? input.invocation.clientActionBinding : null, 'action.invoke');
-            const authority = await contributedInvocationAuthority(input, serverId);
-            try {
-                input.onInvocationAdmitted?.();
-                const result = await executeAccountActionAtRuntimeHost({ accountScope: { serverId, accountId },
-                    action: identity, execution, input: settlement.input,
-                    sourceMachineId: machineOrigin.machineId, expectedContributorOccurrenceId: occurrenceId,
-                    readOnly,
-                    signal: input.signal ?? new AbortController().signal,
-                    context: { ...context, surface: input.invocationSurface ?? 'ui',
-                        ...(context.actionCaller?.kind === 'plugin' ? {} : { authority }) },
-                    executeLocal: () => { throw new PluginError({ code: 'plugin_surface_account_action_unavailable' }); } });
-                return { ok: true, result: result as PluginUiJsonValueV1 };
-            } catch (error) { return clientActionPreparationFailure(error); }
-        };
-        return input.spokenActionRequest && (input.invocationSurface ?? 'ui') === 'voice'
-            ? executePreparedPluginSurfaceAction({ input, identity, action: projectedAction, normalizedInput: settlement.input, run })
-            : run(input);
+        return runMachineAccountAction(input, projectedAction, { serverId, accountId }, settlement.input, readOnly,
+            machineOrigin.machineId);
     }
     // Missing confidential operands enter the existing request producer before
     // either placement's executable schema can reject the value-free input.
@@ -2686,8 +2732,14 @@ async function executeContributedAction(
         }
     }
     const runPrepared = async (input: DispatchPluginSurfaceActionInput): Promise<PluginSurfaceActionDispatchOutcome> => {
-    const admitted = await admitContributedActionSessionTargets(input, identity, projectedAction, normalizedInput, invocationAuthority);
+    const admitted = await admitContributedActionSessionTargets(input, identity, projectedAction, normalizedInput, invocationAuthority,
+        clientPreparation?.accountReadSetPlacement);
     if (admitted) return admitted;
+    if (clientPreparation?.accountReadSetPlacement === 'machine') {
+        return runMachineAccountAction({ ...input, spokenActionRequest: undefined }, projectedAction,
+            clientPreparation.initial.registration.accountLifetime!.scope,
+            normalizedInput, true);
+    }
     if (projectedAction.execution.target !== 'daemon') {
         if (settlement.relay) {
             // The relay carrier is a daemon-request field. A client placement

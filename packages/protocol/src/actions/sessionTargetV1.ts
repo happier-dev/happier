@@ -54,6 +54,11 @@ export const ActionSessionTargetDeclarationV1Schema = lazyZodSchema(() => z.stri
 }));
 export type ActionSessionTargetDeclarationV1 = z.infer<typeof ActionSessionTargetDeclarationV1Schema>;
 
+/** A many declaration over the terminal elements of an exact ID array. */
+export function isActionSessionReadSetV1(declaration: ActionSessionTargetDeclarationV1 | undefined): boolean {
+  return declaration?.cardinality === 'many' && /^(?:[^.*]+\.)+\*$/u.test(declaration.field);
+}
+
 export const ActionSessionAddressV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(ActionSessionAddressV1Schema));
 
 /** Read-only inspection; an unavailable corpus never publishes a sendable subset. */
@@ -68,6 +73,7 @@ export type SessionTargetPreviewV1 = z.infer<typeof SessionTargetPreviewV1Schema
 /** Approval retains exact reviewed addresses, not an intent that can expand again. */
 export const ActionResolvedSessionTargetsV1Schema = lazyZodSchema(() => z.strictObject({
   actionId: z.string().check(z.minLength(1)),
+  contributedActionId: z.optional(z.string().check(z.minLength(1))),
   field: z.string().check(z.trim(), z.minLength(1)),
   targets: z.array(ActionSessionAddressV1Schema).check(z.minLength(1)),
   /** Group result projection: self/manager keep a single result, workers/siblings fan out. */
@@ -79,6 +85,12 @@ export const ActionResolvedSessionTargetsV1Schema = lazyZodSchema(() => z.strict
   })).check(z.minLength(1))),
 }));
 export type ActionResolvedSessionTargetsV1 = z.infer<typeof ActionResolvedSessionTargetsV1Schema>;
+
+/** The host retains refusals outside the handler's admitted operands. */
+export type ActionSessionReadSetFailureV1 = Readonly<{
+  sessionId: string;
+  result: Readonly<{ ok: false; errorCode: 'session_target_unavailable'; error: 'session_target_unavailable' }>;
+}>;
 
 function createSessionFanoutSchema<TSchema extends z.core.$ZodType>(singleSchema: TSchema) {
   return z.strictObject({

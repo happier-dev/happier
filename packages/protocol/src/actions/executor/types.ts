@@ -900,6 +900,8 @@ export type ActionExecutorContext = Readonly<{
   authority?: ActionRequiredAuthority;
   /** Exact Session of a host-admitted person press spent by the built-in plugin Send. */
   presentUserSessionSend?: string;
+  /** The Account surface selected its local executor before Session read admission. */
+  localAccountSessionReadSet?: true;
 
   /**
    * Exact dangerous Action whose direct-surface present-user confirmation has

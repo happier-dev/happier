@@ -40,6 +40,7 @@ import type { SharedManagedProviderGatewayBinding } from './invocation/services/
 import type { ManagedServicesInvocationOwner } from './invocation/services/managedServicesAdapter';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import {
     createPluginRuntimeOccurrenceId,
     type PluginRuntimeOccurrenceId,
@@ -208,7 +209,7 @@ import {
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import { materializePluginSessionAttachment } from '@/session/attachments/materializePluginSessionAttachment';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
-import { carriesNonLocalRequesterAuthority, type RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { canUseLocalRuntimeAccount, carriesNonLocalRequesterAuthority, type RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -3348,14 +3349,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
         // ingress, or a current custodian Machine admission. A guest admission,
         // another Account's attributed work (e.g. its automation), or received
         // requester/Session authority must carry its own requester.
-        const custody = !requester && accountTarget && !params?.accountExecution && sessionCredentials
-            ? await import('@/daemon/lifecycle/requesterWorkAttribution') : null;
-        const attributedAccountId = custody?.projectRpcRequesterWorkAttribution(request.approvalContext,
-            request.approvalContext?.serverId ?? sessionCredentialsServerId)?.accountId;
-        const localAccountCredentials = custody
-            && (attributedAccountId === undefined || attributedAccountId === readAccountIdFromToken(sessionCredentials!.token))
-            && !custody.carriesNonLocalRequesterAuthority(request.approvalContext)
-            && await custody.canUseCustodianAccountForMachineRequest({ ...request.approvalContext, signal: request.signal })
+        const localAccountCredentials = !requester && accountTarget && !params?.accountExecution && sessionCredentials
+            && await canUseLocalRuntimeAccount({ ...request.approvalContext, signal: request.signal },
+                readAccountIdFromToken(sessionCredentials.token), sessionCredentialsServerId)
             ? sessionCredentials : null;
         const accountCredentials = requester?.credentials ?? localAccountCredentials;
         const accountOperation = requester ?? (localAccountCredentials ? savedSecretOperationContext : undefined);
@@ -4625,6 +4621,20 @@ export async function resolveExecutablePluginRuntimeRegistry(
         completeDiagnosticScope: invocationServiceOwners.completeDiagnosticScope,
     });
     targetActionInvocations = buildTargetActionInvocationRegistry({
+        ...(params?.resolveSessionResourceAccess ? {
+            resourceSessionHomeServerId: sessionCredentialsHomeServerIdentityId ?? sessionCredentialsServerId,
+        } : {}),
+        ...(pluginActionExecutor ? { admitContributedSessionReadSet: async (declaration, input, context) => {
+            const authorization = context.externalActionExecutionAuthorization;
+            const requester = readRequesterAccountActionContext(authorization);
+            const ownAccountId = readAccountIdFromToken(sessionCredentials!.token);
+            // The Session transport consumes signed requester custody. A bare Machine
+            // grant can use the runtime's Account only for that same Account.
+            if (!requester && !await canUseLocalRuntimeAccount(context, ownAccountId, sessionCredentialsServerId)) {
+                return { ok: false as const, errorCode: 'session_target_unavailable', error: 'session_target_unavailable' };
+            }
+            return pluginActionExecutor.admitContributedSessionReadSet(declaration, input, context);
+        } } : {}),
         ...(params?.ensureEnvironmentServices ? { ensureEnvironmentServices: params.ensureEnvironmentServices } : {}),
         readDeploymentTargetRoleAdmissionHost,
         async resolveEnvironmentApprovalScope(request) {

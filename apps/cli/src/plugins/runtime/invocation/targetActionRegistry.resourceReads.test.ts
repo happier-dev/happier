@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import { defineProtocolObject, defineProtocolString, defineProtocolNumber } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolArray, defineProtocolObject, defineProtocolString, defineProtocolNumber } from '@happier-dev/plugin-sdk/protocol';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { SessionTargetV1ProtocolSchema } from '@happier-dev/protocol/actions/sessionTargetV1';
+import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import type { ActionDefinitionV1 } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import { readPluginActionReadObserver } from '@happier-dev/cli-common/plugins/registration/actionInputParser';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { createTargetActionHostBindingResolver } from '../hostAccess/resolve';
@@ -16,6 +19,108 @@ import { createStablePluginConnectedAccountsHost } from './services/connectedAcc
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 
 describe('Resource read admission through an external authored Action', () => {
+    it('admits each distinct Session once and gives the external handler only admitted reads', async () => {
+        const lookups: string[] = [];
+        const reads: string[][] = [];
+        const executor = createActionExecutor({
+            resolveSessionReference: async ({ sessionId }) => {
+                lookups.push(sessionId!);
+                if (sessionId === 'missing') return { kind: 'none' };
+                return { kind: 'unique', address: { sessionId: sessionId!, serverId: sessionId === 'foreign' ? 'foreign-home' : 'home' } };
+            },
+        } as Parameters<typeof createActionExecutor>[0]);
+        const plugin = definePlugin({ id: 'acme.session-read-set', version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
+            actions: { read: { title: 'Read Sessions', scopes: ['global'], surfaces: ['plugin'], dangerLevel: 'safe', readOnly: true,
+                sessionTarget: { field: 'payload.sessionIds.*', cardinality: 'many' },
+                inputSchema: defineProtocolObject({ payload: defineProtocolObject({
+                    sessionIds: defineProtocolArray(defineProtocolString()),
+                }, { policy: 'closed' }) }, { policy: 'closed' }),
+                run(input) {
+                    reads.push([...input.payload.sessionIds]);
+                    return input.payload.sessionIds.map(sessionId => ({ sessionId }));
+                },
+            } } });
+        const kit = await createPluginTestkit({ manifest: plugin.manifest, module: { activate: plugin.activate } });
+        const handler = kit.registration('actions', 'read');
+        if (typeof handler !== 'function') throw new Error('Expected external handler');
+        const occurrenceId = 'session-read-set-1' as PluginRuntimeOccurrenceId;
+        const declaration = normalizePluginManifestV2(plugin.manifest).contributes.actions[0]!;
+        const registry = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
+            actions: [{ pluginId: plugin.manifest.id, pluginVersion: '1.0.0', localId: 'read', occurrenceId,
+                sourceCustody: createManagedPluginSourceCustody('session-read-set-generation'),
+                definition: declaration, handler }],
+            admitContributedSessionReadSet: executor.admitContributedSessionReadSet,
+            resourceSessionHomeServerId: 'home',
+            createServices: createUnavailablePluginServicesFactory(), resolveHostBinding: createTargetActionHostBindingResolver(),
+            readCurrentPluginOccurrenceId: () => occurrenceId,
+            resolveAuthorizationFacts: action => ({ generation: { targetGeneration: action.occurrenceId, desiredGeneration: action.occurrenceId,
+                appliedGeneration: action.occurrenceId }, resourceSelections: [], scopedGrants: [], operatingSystemAuthorization: [] }),
+        });
+        const invoke = (sessionIds: string[], resourceSessionId?: string, serverId = resourceSessionId ? undefined : 'home') => registry.invoke({
+            pluginId: plugin.manifest.id, localId: 'read', surface: 'plugin', input: { payload: { sessionIds } },
+            requiredReadOnly: true, resourceSessionId,
+            ...(serverId ? { approvalContext: { serverId, authority: 'account_automation' as const } } : {}),
+        });
+        const definition: ActionDefinitionV1 = {
+            kindVersion: 1, id: `${plugin.manifest.id}/actions/read`, title: 'Read Sessions', description: 'Read selected Sessions',
+            safety: 'safe', sideEffectClass: 'read', placements: [], slash: null, bindings: null, examples: null, inputHints: null,
+            surfaces: { ui: false, voice: false, agent: false, mcp: false, cli: false, rpc: false, api: false, plugin: true },
+            executionPlacement: 'machine', sessionTarget: { field: 'payload.sessionIds.*', cardinality: 'many' },
+            inputSchema: declaration.inputSchema ?? {},
+        };
+        const machineIngress = createActionExecutor({
+            listContributedActionDefinitions: () => [definition],
+            // Replace only the Machine hop. The requester carrier and receiving registry stay real.
+            invokeContributedAction: async ({ input, context }) => {
+                const invocation = projectExternalActionRequesterInvocationV1({ actionId: 'action.invoke', context,
+                    account: { accountId: 'requester', serverId: 'home' }, target: { kind: 'machine', machineId: 'worker' } });
+                if (!invocation) throw new Error('Expected a requester carrier');
+                const result = await registry.invoke({ pluginId: plugin.manifest.id, localId: 'read', surface: 'plugin', input,
+                    approvalContext: { serverId: 'home', authority: invocation.authority, defaultSessionId: invocation.defaultSessionId,
+                        sessionListAccess: invocation.sessionListAccess } });
+                return result.status === 'executed' ? { ok: true, result: result.value }
+                    : { ok: false, errorCode: result.code, error: result.message };
+            },
+        } as Parameters<typeof createActionExecutor>[0]);
+        const refused = { ok: false, errorCode: 'session_target_unavailable', error: 'session_target_unavailable' };
+        try {
+            expect(await invoke(['admitted', 'foreign', 'missing', 'admitted'])).toMatchObject({
+                status: 'executed', value: { kind: 'sessionReadSet', result: [{ sessionId: 'admitted' }],
+                    failures: [{ sessionId: 'foreign', result: refused }, { sessionId: 'missing', result: refused }] },
+            });
+            expect(lookups).toEqual(['admitted', 'foreign', 'missing']);
+            expect(reads).toEqual([['admitted']]);
+            lookups.length = 0;
+            expect(await invoke(['outside-resource', 'admitted'], 'admitted')).toMatchObject({
+                status: 'executed', value: { result: [{ sessionId: 'admitted' }], failures: [{ sessionId: 'outside-resource', result: refused }] },
+            });
+            expect(lookups).toEqual(['admitted']);
+            expect(await invoke(['admitted'], 'admitted', 'foreign-home')).toMatchObject({
+                status: 'executed', value: { result: null, failures: [{ sessionId: 'admitted', result: refused }] },
+            });
+            expect(lookups).toEqual(['admitted']);
+            expect(await invoke(['foreign', 'missing'])).toMatchObject({
+                status: 'executed', value: { result: null,
+                    failures: [{ sessionId: 'foreign', result: refused }, { sessionId: 'missing', result: refused }] },
+            });
+            expect(reads).toEqual([['admitted'], ['admitted']]);
+            const machineInput = { action: { pluginId: plugin.manifest.id, localId: 'read' }, input: { payload: { sessionIds: ['caller', 'admitted'] } } };
+            const machineContext = { surface: 'plugin', authority: 'account_automation',
+                actionCaller: { kind: 'plugin', pluginId: plugin.manifest.id, contributionLocalId: 'read' },
+                serverId: 'home', defaultSessionId: 'caller' } as const;
+            const unrestricted = await machineIngress.execute('action.invoke', machineInput, machineContext);
+            expect(unrestricted, JSON.stringify(unrestricted)).toMatchObject({
+                ok: true, result: { kind: 'sessionReadSet', result: [{ sessionId: 'caller' }, { sessionId: 'admitted' }], failures: [] },
+            });
+            lookups.length = 0;
+            expect(await machineIngress.execute('action.invoke', machineInput, { ...machineContext, sessionListAccess: 'current_session' })).toMatchObject({
+                ok: true, result: { kind: 'sessionReadSet', result: [{ sessionId: 'caller' }], failures: [{ sessionId: 'admitted', result: refused }] },
+            });
+            expect(lookups).toEqual(['caller']);
+            expect(reads).toEqual([['admitted'], ['admitted'], ['caller', 'admitted'], ['caller']]);
+        } finally { registry.dispose(); await kit.dispose(); }
+    });
+
     it('observes only an admitted Action purpose through real credential authority without invoking plugin code', async () => {
         let runs = 0;
         const plugin = definePlugin({ id: 'acme.authority', version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },

@@ -1,6 +1,15 @@
 import { expect, it } from 'vitest';
 
-import { isRequesterLaunchAdmissionCurrent } from './requesterWorkAttribution';
+import { canUseLocalRuntimeAccount, isRequesterLaunchAdmissionCurrent } from './requesterWorkAttribution';
+
+it('denies borrowing the runtime Account for another Account’s attributed work', async () => {
+  const context = { runtimeAccountId: 'local-account', requesterWorkAttributionV1: {
+    serverId: 'home', accountId: 'foreign-account', machineId: 'machine', installationId: 'installation',
+  } };
+  expect(await canUseLocalRuntimeAccount(context, 'local-account', 'home')).toBe(false);
+  expect(await canUseLocalRuntimeAccount({ runtimeAccountId: 'foreign-account' }, 'local-account', 'home')).toBe(false);
+  expect(await canUseLocalRuntimeAccount({ runtimeAccountId: 'local-account' }, 'local-account', 'home')).toBe(true);
+});
 
 it('preserves transient Home failures instead of interpreting them as a rejected launch principal', async () => {
   await expect(isRequesterLaunchAdmissionCurrent({ verifyRequesterMachineAdmissionCurrent: async () => {

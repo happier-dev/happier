@@ -594,6 +594,7 @@ export function createCliActionHost(params: CliActionExecutorParams):
     });
   };
   return { ...harness, executor: {
+    admitContributedSessionReadSet: base.admitContributedSessionReadSet,
     observeRecordedApprovalExecution: harness.observeRecordedApprovalExecution,
     prepareSessionSpawnNewInput: harness.deps.prepareSessionSpawnNewInput,
     resolveReviewServices: async context => {

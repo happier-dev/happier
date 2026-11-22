@@ -9,8 +9,10 @@ import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-commo
 import { runTracedExternalActionInnerStage } from '@/daemon/externalActions/externalActionPhase';
 import { isAgentCaller } from '@happier-dev/protocol/actions/executor/callerContext';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 
 import { ActionOperationProgressV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionActorV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { FileDownloadDestinationV1Schema } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import type { ActionExecuteResult, ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -50,10 +52,11 @@ import {
     type Disposable,
 } from '@happier-dev/plugin-sdk';
 import type { PluginActionReadObserver } from '@happier-dev/plugin-sdk/actions';
-import { readActionSessionTargetOperands } from '@happier-dev/protocol/actions/executor/sessionTargets';
+import { bindActionSessionTargetOperands, readActionSessionTargetOperands } from '@happier-dev/protocol/actions/executor/sessionTargets';
+import type { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createHostReviewedChildPortV1, readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
-import { normalizeSessionTargetV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
+import { isActionSessionReadSetV1, normalizeSessionTargetV1, type ActionSessionReadSetFailureV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 import {
     type ActionHandler,
     type PluginActionHandlerInvocation,
@@ -348,6 +351,8 @@ function unavailable(code: string, message: string): TargetActionInvocationResul
 
 export function createTargetActionInvocationRegistry(params: Readonly<{
     actions: readonly TargetActionInvocationRegistration[];
+    admitContributedSessionReadSet?: ReturnType<typeof createActionExecutor>['admitContributedSessionReadSet'];
+    resourceSessionHomeServerId?: string;
     subjectKinds?: readonly PluginAutomationSubjectKindDeclarationV1[];
     expectedActions?: readonly Readonly<{ pluginId: string; localId: string }>[];
     readActions?: () => readonly TargetActionInvocationRegistration[];
@@ -1080,7 +1085,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
             const qualifiedActionId = formatQualifiedPluginActionId({ pluginId: invocation.pluginId, localId: invocation.localId });
             const admittedEffect = invocation.requireCurrentIntent === true
                 && invocation.approvalContext?.actionAutomationAdmission?.actionId === qualifiedActionId;
-            const preparedInput = indexed.invocation.prepare(invocation.input, {
+            let preparedInput = indexed.invocation.prepare(invocation.input, {
                 ...(invocation.signal ? { signal: invocation.signal } : {}),
                 ...(invocation.requireCurrentIntent === true ? { inputAlreadyNormalized: true as const } : {}),
                 ...(admittedEffect ? { admittedEffect: true as const } : {}),
@@ -1106,7 +1111,62 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 return Object.freeze({ kind: 'settled' as const,
                     result: { ...unavailable('plugin_action_read_only_required', 'This Resource requires an explicitly declared read operand'), actionHandlerInvocation: 'notStarted' as const } });
             }
-            if (invocation.resourceSessionId && indexed.registration.definition.sessionTarget
+            const sessionTarget = indexed.registration.definition.sessionTarget;
+            let readSetFailures: readonly ActionSessionReadSetFailureV1[] | undefined;
+            if (sessionTarget && isActionSessionReadSetV1(sessionTarget)) {
+                const declaration = { ...sessionTarget, field: `input.${sessionTarget.field}` };
+                const snapshot = invocation.approvalContext?.sessionTargetsV1;
+                const wrappedInput = { input: preparedInput.input, action: { pluginId: invocation.pluginId, localId: invocation.localId } };
+                const resourceHome = invocation.resourceSessionId ? params.resourceSessionHomeServerId : undefined;
+                const serverId = invocation.approvalContext?.serverId ?? resourceHome;
+                if (!preparedInput.isReadOnly || invocation.resourceSessionId && !resourceHome) {
+                    await complete();
+                    return { kind: 'settled', result: unavailable('plugin_action_read_only_required', 'Session sets require a bound read Action') };
+                }
+                if (snapshot?.actionId === ACTION_INVOKE_ACTION_ID_V1 && snapshot.field === declaration.field
+                    && snapshot.contributedActionId === qualifiedActionId
+                    && bindActionSessionTargetOperands(wrappedInput, snapshot, declaration, true)
+                    && (!invocation.resourceSessionId || snapshot.targets.length === 1
+                        && snapshot.targets[0]?.sessionId === invocation.resourceSessionId
+                        && areServerProfileIdentifiersEquivalent(snapshot.targets[0].serverId, resourceHome)
+                        && areServerProfileIdentifiersEquivalent(snapshot.targets[0].serverId, serverId))) {
+                    // The outer Action admitted these exact operands. Preserve its single decision.
+                } else {
+                    const admit = params.admitContributedSessionReadSet;
+                    if (!admit) {
+                        await complete();
+                        return { kind: 'settled', result: unavailable('session_target_unavailable', 'Session read admission is unavailable') };
+                    }
+                    const readSet = await admit(declaration, wrappedInput, {
+                        ...invocation.approvalContext,
+                        ...(serverId ? { serverId } : {}),
+                        surface: invocation.surface,
+                        actionCaller: invocation.initiatingActionCaller ?? invocation.approvalContext?.actionCaller,
+                        sessionTargetsV1: undefined,
+                        signal: lifetime.signal,
+                        ...(invocation.resourceSessionId && resourceHome
+                            ? { expectedSessionAddress: { serverId: resourceHome, sessionId: invocation.resourceSessionId } } : {}),
+                    }).catch(error => { if (lifetime.signal.aborted) return { ok: false as const, errorCode: 'cancelled', error: 'cancelled' }; throw error; });
+                    if ('ok' in readSet) {
+                        await complete();
+                        return { kind: 'settled', result: unavailable(readSet.errorCode, readSet.error) };
+                    }
+                    if (!readSet.targets) {
+                        await complete();
+                        return { kind: 'settled', result: { status: 'executed',
+                            value: { kind: 'sessionReadSet', result: null, failures: readSet.failures } } };
+                    }
+                    const filtered = indexed.invocation.prepare(readSet.input.input, { signal: lifetime.signal, inputAlreadyNormalized: true });
+                    if (filtered.kind === 'settled') {
+                        await complete();
+                        return { kind: 'settled', result: filtered.result };
+                    }
+                    preparedInput = filtered;
+                    readSetFailures = readSet.failures;
+                    invocation = { ...invocation, approvalContext: { ...invocation.approvalContext, sessionTargetsV1: readSet.targets } };
+                }
+            }
+            if (!isActionSessionReadSetV1(sessionTarget) && invocation.resourceSessionId && indexed.registration.definition.sessionTarget
                 && preparedInput.input !== null && typeof preparedInput.input === 'object' && !isJsonArray(preparedInput.input)) {
                 const operands = readActionSessionTargetOperands(preparedInput.input, indexed.registration.definition.sessionTarget.field);
                 if (operands.some(operand => operand.value !== invocation.resourceSessionId)) {
@@ -1117,7 +1177,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     } });
                 }
             }
-            if (invocation.readObservation && indexed.registration.definition.sessionTarget
+            if (!isActionSessionReadSetV1(sessionTarget) && invocation.readObservation && indexed.registration.definition.sessionTarget
                 && preparedInput.input !== null && typeof preparedInput.input === 'object' && !isJsonArray(preparedInput.input)) {
                 const operands = readActionSessionTargetOperands(preparedInput.input, indexed.registration.definition.sessionTarget.field);
                 if (operands.some(operand => {
@@ -1441,7 +1501,8 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                                 correlationId: diagnosticScope.correlationId,
                             });
                         }
-                        return result;
+                        return readSetFailures && result.status === 'executed' ? { ...result,
+                            value: { kind: 'sessionReadSet', result: result.value ?? null, failures: readSetFailures } } : result;
                     }, async error => {
                         await complete();
                         throw error;

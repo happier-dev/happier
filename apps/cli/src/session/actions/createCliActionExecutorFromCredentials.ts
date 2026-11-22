@@ -1006,6 +1006,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   const { resolveServerFeaturesSnapshotForCredentials, enrichApprovalRoutingContext, resolveInvocationRoutingContext } =
     createApprovalRoutingContext(params, fixedServerId, approvalServerApiUrl);
   const bindExecutorToActionServer = (source: CliActionExecutor): CliActionExecutor => ({
+    admitContributedSessionReadSet: (...args) => runWithActionServer(() => source.admitContributedSessionReadSet(...args)),
     observeRecordedApprovalExecution: async args => await runWithActionServer(() => source.observeRecordedApprovalExecution(args)),
     resolveReviewServices: async context => await runWithActionServer(async () =>
       await source.resolveReviewServices?.(context) ?? {}),
@@ -2366,6 +2367,17 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       return { context: originalContext, invocation: null, preparedSessionInput };
     };
     return bindExecutorToActionServer({
+      admitContributedSessionReadSet: async (declaration, input, rawContext) => {
+        const requester = readRequesterAccountActionContext(rawContext.externalActionExecutionAuthorization);
+        const credentials = requester?.credentials ?? await readCurrentCredentials();
+        if (!credentials) return actionFailure('not_authenticated');
+        const routing = await resolveInvocationRoutingContext(rawContext, credentials);
+        const signal = combineInvocationSignals(invocationSignal, routing.context?.signal);
+        const executor = requester
+          ? createExecutor(credentials, signal, transcriptFollowLeaseRegistry, undefined, routing.serverIdentityId)
+          : await resolveExecutor(credentials, undefined, routing);
+        return executor.admitContributedSessionReadSet(declaration, input, { ...routing.context, signal });
+      },
       resolveReviewServices: async rawContext => {
         const credentials = await readCurrentCredentials();
         if (!credentials) return {};

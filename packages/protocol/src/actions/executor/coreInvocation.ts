@@ -23,6 +23,8 @@ export type PreparedCoreAdmission = Readonly<{
     /** Post-hook semantic operands before domain preparation creates effect refs. */
     semanticInput?: unknown;
     context: ActionExecutorContext;
+    /** Failed exact IDs stay on the host side of the read-set handler. */
+    sessionReadSetFailures?: readonly import('../sessionTargetV1.js').ActionSessionReadSetFailureV1[];
     /** Core-resolved review classification, including contextual overrides; never caller input. */
     safety?: ActionSpec['safety'];
     /** Exact host-derived scope for this admitted Action; never caller context or persisted. */
