@@ -14,18 +14,26 @@ describe('receiving Services Action credentials', () => {
         let reads = 0;
         expect(await resolveLocalServiceActionCredentials({ credentials, actorAccountId: 'guest',
             requester: { credentials: guest }, readCredentials: async () => { reads++; return credentials; },
-        })).toBe(guest);
+        })).toEqual({ ok: true, credentials: guest });
         expect(reads).toBe(0);
     });
 
     it('refuses a guest without retained custody and preserves the installed owner identity', async () => {
         const credentials = credentialsFor('custodian');
-        const readCredentials = async () => credentials;
+        let reads = 0;
+        const readCredentials = async () => { reads++; return credentials; };
+        // A guest's personal call carries no custody of its own: Services here run as the owner.
         expect(await resolveLocalServiceActionCredentials({ credentials, actorAccountId: 'guest',
-            requester: null, readCredentials })).toBeNull();
+            requester: null, readCredentials })).toEqual({ ok: false, errorCode: 'custodian_only' });
+        expect(reads).toBe(0);
         expect(await resolveLocalServiceActionCredentials({ credentials, actorAccountId: 'custodian',
-            requester: null, readCredentials })).toBe(credentials);
+            requester: null, readCredentials })).toEqual({ ok: true, credentials });
+        // Custody that does not match its actor, or an owner whose stored sign-in changed, is a credential fault.
         expect(await resolveLocalServiceActionCredentials({ credentials, actorAccountId: 'guest',
-            requester: { credentials: credentialsFor('another') }, readCredentials })).toBeNull();
+            requester: { credentials: credentialsFor('another') }, readCredentials }))
+            .toEqual({ ok: false, errorCode: 'requester_credentials_unavailable' });
+        expect(await resolveLocalServiceActionCredentials({ credentials, actorAccountId: 'custodian',
+            requester: null, readCredentials: async () => credentialsFor('custodian-replaced') }))
+            .toEqual({ ok: false, errorCode: 'requester_credentials_unavailable' });
     });
 });

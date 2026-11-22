@@ -9278,18 +9278,15 @@ export async function startDaemonSessionControlRuntime(
             error: 'machine_admission_required',
           };
         const requester = readRequesterAccountActionContext(ingress.callerInputAuthorization);
-        const credentials = await resolveLocalServiceActionCredentials({
+        const selected = await resolveLocalServiceActionCredentials({
           credentials: params.credentials,
           readCredentials: () => readStoredCredentialsForServerId(params.serverId),
           actorAccountId: ingress.machineAdmission.actorAccountId,
           requester,
         });
-        if (!credentials)
-          return {
-            ok: false,
-            errorCode: 'requester_credentials_unavailable',
-            error: 'requester_credentials_unavailable',
-          };
+        if (!selected.ok)
+          return { ok: false, errorCode: selected.errorCode, error: selected.errorCode };
+        const { credentials } = selected;
         await localServicesActionFeatureGate.refresh();
         const apiMachineForSessions = params.getApiMachineForSessions();
         const executor: ReturnType<

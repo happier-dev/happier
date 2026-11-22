@@ -126,6 +126,11 @@ describe('local service public-preview machine RPC client', () => {
                 errorClass: 'UnknownThrownValue', errorCode: null, httpStatus: null } } },
         { refusal: { error: 'Forbidden', errorCode: RPC_ERROR_CODES.FORBIDDEN },
             metadata: { reasonCode: RPC_ERROR_CODES.FORBIDDEN } },
+        // The daemon's refusal of a Machine guest, as its RPC manager sends it.
+        { refusal: { error: 'requester_credentials_unavailable', errorCode: 'custodian_only',
+            failureCause: { phase: 'rpc.handler', errorClass: 'RpcError', errorCode: 'custodian_only', httpStatus: null } },
+            metadata: { reasonCode: 'custodian_only', failureCause: { phase: 'rpc.handler',
+                errorClass: 'RpcError', errorCode: 'custodian_only', httpStatus: null } } },
         ])('recognizes refusal envelopes before success parsing: %j', async ({ refusal, metadata }) => {
         machineRpcWithServerScopeMock.mockResolvedValue(refusal);
         for (const operation of await publicOperations()) {

@@ -268,7 +268,8 @@ it('starts and restarts a native owner Service through Home admission and real d
                 installationId: h.f.installation.installationId, role: 'use', encryptionMode: 'plain' },
             verifyMachineAdmissionCurrent: async () => true,
             externalActionExecutionAuthorization: admitted, externalActionTarget: target,
-        })).toMatchObject({ ok: false, errorCode: 'requester_credentials_unavailable' });
+            // No member custody travelled on this hop: Services here act only as the Machine owner.
+        })).toMatchObject({ ok: false, errorCode: 'custodian_only' });
         expect(original.snapshot().state).toBe('running');
         expect(await readFile(nativeLog, 'utf8')).toBe('owner-native-service\n');
         const restarted = LocalServiceActionResultV1Schema.parse(await relay.invokeUi(restartMethod,

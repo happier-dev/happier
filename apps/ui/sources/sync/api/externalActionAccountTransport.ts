@@ -33,6 +33,7 @@ import { executeRequesterActionOperationV1, readRequesterOperationRequestV1 } fr
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { MachinePublishedRowV1Schema, type MachinePublishedRowV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { readMachineRows } from '@/sync/api/machines/machineRowsApi';
+import type { MachineAccessRefusalCodeV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { prepareUiManagedWorkflowPlacement } from '@/sync/api/machines/managedPresetAcquireOrigin';
 import { readMachineInstallationPublicKey } from '@/sync/domains/machines/machineInstallationPublicKey';
 import { resolveFreshMachineAdministrationExecutionTarget } from '@/sync/domains/machines/administration/useTargetSelection';
@@ -157,14 +158,19 @@ function createTelemetryCollectorKeyPinPorts(account: LazyActionAccountContext, 
     };
 }
 
-/** Account discovery has content; validate the canonical identity projection. */
-export async function readOriginalAccountActionMachine(account: LazyActionAccountContext, machineId: string, signal?: AbortSignal) {
+/** Home's exact read; `notFound` is its answer that this Account sees no such Machine. */
+async function readActionMachineAtHome(account: LazyActionAccountContext, machineId: string, signal?: AbortSignal) {
     const readTransport = account.readTransport;
-    if (!readTransport) return null;
+    if (!readTransport) return { row: null, notFound: false };
     const machines = await withActionAccountRequestSignal(account, signal, ownedSignal => readMachineRows({
         readTransport, machineIds: [machineId], signal: ownedSignal }));
     account.assertCurrent();
-    return projectActionMachine(machines.get(machineId));
+    return { row: projectActionMachine(machines.get(machineId)), notFound: machines.get(machineId) === null };
+}
+
+/** Account discovery has content; validate the canonical identity projection. */
+export async function readOriginalAccountActionMachine(account: LazyActionAccountContext, machineId: string, signal?: AbortSignal) {
+    return (await readActionMachineAtHome(account, machineId, signal)).row;
 }
 
 function readCurrentOwnActionMachine(account: LazyActionAccountContext, machineId: string) {
@@ -563,7 +569,9 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
     const reviewedInvocation = params.invocation !== undefined && !ownTargetIncumbent;
     const currentOwnRow = !telemetryRead && !scopedController && !finite && !runtimeDemand && !reviewedInvocation && !retainedResource
         ? readCurrentOwnActionMachine(account, params.machineId) : null;
-    const row = telemetryRead || scopedController ? null : currentOwnRow ?? await readOriginalAccountActionMachine(account, params.machineId, params.signal);
+    const homeRead = telemetryRead || scopedController || currentOwnRow ? null
+        : await readActionMachineAtHome(account, params.machineId, params.signal);
+    const row = currentOwnRow ?? homeRead?.row ?? null;
     const custody = scopedController ? {
         installationId: scopedController.controller.installationId,
         installationPublicKey: decodeBase64(scopedController.access.installationPublicKey, 'base64url'),
@@ -573,6 +581,9 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
             installationId: row.installationId, installationPublicKey: row.installationPublicKey,
             custodian: row.access.custodian, resourceMode: row.access.resourceMode, managed: Boolean(row.managedMachineRef),
         } : null;
+    // Home shows this Account no such Machine: access was withdrawn or never existed, and the
+    // answer cannot tell which. It is access loss, never an admission to retry.
+    if (homeRead?.notFound) return failure('access_denied' satisfies MachineAccessRefusalCodeV1);
     if (!custody && !telemetryRead) return failure('admission_unavailable');
     const foreignCustody = custody !== null && custody.custodian.accountId !== account.accountId;
     const needsCustody = Boolean(telemetryRead || workflowPlacement) || foreignCustody || finite || runtimeDemand && custody?.managed

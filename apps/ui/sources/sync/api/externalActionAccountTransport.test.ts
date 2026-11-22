@@ -793,6 +793,19 @@ describe('captured Account Action response decoding', () => {
         expect(homes.requestsFor(actionPath)).toHaveLength(1);
     });
 
+    it('answers a Machine Home no longer shows this Account as access loss, not a retryable admission', async () => {
+        // Home's exact read cannot tell a withdrawn grant from a Machine that does not exist; neither can the answer.
+        const resource = { hostRead: 'machines.services.list' as const, input: { serverId, machineId: 'machine-withdrawn' } };
+        homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+            body: await createMachineReadBatchResponseFixture(body, () => null).json(),
+        }) });
+        const before = homes.requests.length;
+        expect(await machinePluginUiResourceRead('machine-withdrawn', { serverId, accountId: 'owner', resource }))
+            .toMatchObject({ supported: true, result: { ok: false, code: 'access_denied' } });
+        expect(homes.requests.slice(before).map(request => new URL(request.path, 'https://plugin-transport.test').pathname))
+            .toEqual(['/v1/machines/read-batch']);
+    });
+
     it('binds native logs continuation and generation into the exact Home-minted original invocation', async () => {
         if (!account) throw new Error('Expected captured Account');
         const logsBinding = { ...binding, actionId: 'machines.services.logs.read', requestId: 'logs-resource-read' };

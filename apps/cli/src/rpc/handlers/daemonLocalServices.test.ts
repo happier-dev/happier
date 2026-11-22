@@ -223,6 +223,10 @@ describe('daemon local services machine rpc handlers', () => {
                 actorAccountId: 'foreign-account', role: 'use' } });
             expect(guest).toHaveProperty('error');
             expect(guest).not.toHaveProperty('errorCode', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
+            // Public links on this Machine are read with its owner's Account: a guest is told that
+            // fact (closed Machine-access vocabulary), before any Home read, whatever the link is.
+            if (kind === 'public') expect(guest).toMatchObject({ errorCode: 'custodian_only',
+                failureCause: { phase: 'rpc.handler', errorCode: 'custodian_only' } });
             expect(statusRequests).toBe(kind === 'public' ? 1 : 0);
             admissionRequests = 0;
             withdrawDuringRead = true;

@@ -144,8 +144,9 @@ it('opens an owner Project and replays native Service Start through the full dae
     const method = getActionSpec('localServices.launcher.start').bindings!.rpcMethod!;
     const launch = createTargetedActionRpcRequestV1({ ...request, expectedEffectDigest: review.reviewedEffectDigest },
         { kind: 'machine', machineId: h.machineId });
+    // A member's personal start carries no custody of its own; Services here act only as the owner.
     for (const member of members) await refuse(member, method, launch, {
-        ok: false, errorCode: 'requester_credentials_unavailable', error: 'requester_credentials_unavailable',
+        ok: false, errorCode: 'custodian_only', error: 'custodian_only',
     });
     await expect(readFile(nativeLog, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(h.invoke(method, launch)).resolves.toMatchObject({ status: 'succeeded' });

@@ -4,6 +4,14 @@ import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import type { StoredCredentials } from '@/persistence';
 import type { RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import type { MachineAccessRefusalCodeV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+
+/** This daemon reads and writes Services with its owner's Account; a guest's raw call is the owner's alone. */
+const CUSTODIAN_ONLY = 'custodian_only' satisfies MachineAccessRefusalCodeV1;
+
+export type LocalServiceActionCredentials =
+    | Readonly<{ ok: true; credentials: StoredCredentials }>
+    | Readonly<{ ok: false; errorCode: typeof CUSTODIAN_ONLY | 'requester_credentials_unavailable' }>;
 
 /** Credential selection for the receiving Services Action factory. */
 export async function resolveLocalServiceActionCredentials(input: Readonly<{
@@ -11,14 +19,17 @@ export async function resolveLocalServiceActionCredentials(input: Readonly<{
     readCredentials: () => Promise<StoredCredentials | null>;
     actorAccountId: string;
     requester: Pick<RequesterAccountActionContext, 'credentials'> | null;
-}>): Promise<StoredCredentials | null> {
+}>): Promise<LocalServiceActionCredentials> {
+    const unavailable = { ok: false, errorCode: 'requester_credentials_unavailable' } as const;
     if (input.requester) {
         return readAccountIdFromToken(input.requester.credentials.token) === input.actorAccountId
-            ? input.requester.credentials : null;
+            ? { ok: true, credentials: input.requester.credentials } : unavailable;
     }
+    // Without the caller's own custody only this daemon's Account can act, which is the owner's.
+    if (readAccountIdFromToken(input.credentials.token) !== input.actorAccountId) return { ok: false, errorCode: CUSTODIAN_ONLY };
     const credentials = await input.readCredentials().catch(() => null);
     return credentials && credentials.token === input.credentials.token
-        && readAccountIdFromToken(credentials.token) === input.actorAccountId ? credentials : null;
+        && readAccountIdFromToken(credentials.token) === input.actorAccountId ? { ok: true, credentials } : unavailable;
 }
 
 type LocalServiceCredentialScope = Readonly<{
@@ -51,7 +62,7 @@ export async function assertLocalServiceReadCustody(
         if (readScope === 'machine_inventory') {
             throw new RpcError('requester_credentials_unavailable', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
         }
-        throw new Error('requester_credentials_unavailable');
+        throw new RpcError('requester_credentials_unavailable', CUSTODIAN_ONLY);
     }
     return requesterOnly ? admission.actorAccountId : undefined;
 }
