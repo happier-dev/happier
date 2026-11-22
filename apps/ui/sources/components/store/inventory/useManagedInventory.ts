@@ -13,6 +13,7 @@ export type ManagedInventoryQuery = StoreInstalledInput & StoreDemand & Readonly
     kinds?: readonly ManagedInventoryKind[];
     /** An addressed Check uses the exact definition reader, independently of the Account's list window. */
     configuredCheck?: ConfiguredCheckSelection;
+    completeConfiguredChecks?: boolean;
 }>;
 const HIDDEN_DEMAND: StoreDemand = Object.freeze({ presented: false });
 const PRESENTED_DEMAND: StoreDemand = Object.freeze({ presented: true });
@@ -69,7 +70,7 @@ export function useManagedInventory(query: ManagedInventoryQuery): ManagedInvent
     const theme = storeKinds.theme.useInstalled(input, demand('theme'), admitted);
     const watchedService = useManagedWatchedServices(input, demand('watchedService'), admitted);
     const setup = useManagedSetup(input, demand('setup'), admitted);
-    const configuredCheck = useManagedConfiguredChecks(input, demand('configuredCheck'), admitted, query.configuredCheck);
+    const configuredCheck = useManagedConfiguredChecks(input, demand('configuredCheck'), admitted, query.configuredCheck, query.completeConfiguredChecks);
     const operationalFamilies = React.useMemo(() => ({ watchedService, setup, configuredCheck, configuredBackup }), [watchedService, setup, configuredCheck, configuredBackup]);
     const families = React.useMemo(() => ({ app, browserExtension, mcpServer, skill, agent, provider, plugin, software, theme }),
         [app, browserExtension, mcpServer, skill, agent, provider, plugin, software, theme]);

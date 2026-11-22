@@ -5,7 +5,6 @@ import {
     useAutomationDefinitionNextCursor,
 } from '@/sync/domains/state/storage';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
-import { sync } from '@/sync/sync';
 
 type PageRequestState = Readonly<{
     scopeKey: string;
@@ -18,7 +17,7 @@ type PageRequestState = Readonly<{
  * The cursor and exact-CAS append stay in the sync/store owners; this hook only
  * prevents duplicate scroll requests and exposes retry state to list hosts.
  */
-export function useAutomationDefinitionPagination() {
+export function useAutomationDefinitionPagination(automatic = false) {
     const accountScope = useActiveServerAccountScope();
     const scopeKey = accountScope ? serverAccountScopeKeySuffix(accountScope) : 'unscoped';
     const nextCursor = useAutomationDefinitionNextCursor();
@@ -39,7 +38,9 @@ export function useAutomationDefinitionPagination() {
         const loadingRequest = { scopeKey, cursor, status: 'loading' as const };
         requestRef.current = loadingRequest;
         setRequest(loadingRequest);
-        void sync.loadMoreAutomations(cursor).then(() => {
+        void import('@/sync/sync').then(({ sync }) => {
+            if (currentScopeRef.current === scopeKey) return sync.loadMoreAutomations(cursor);
+        }).then(() => {
             if (
                 currentScopeRef.current === scopeKey
                 && requestRef.current === loadingRequest
@@ -61,6 +62,9 @@ export function useAutomationDefinitionPagination() {
 
     const isCurrentRequest = request?.scopeKey === scopeKey
         && request.cursor === nextCursor;
+    React.useEffect(() => {
+        if (automatic && nextCursor && !isCurrentRequest) requestPage();
+    }, [automatic, isCurrentRequest, nextCursor, requestPage]);
     return {
         nextCursor,
         hasMore: nextCursor !== null,

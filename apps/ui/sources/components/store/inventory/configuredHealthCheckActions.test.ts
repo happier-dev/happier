@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/ingest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -11,6 +11,42 @@ import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRun
 import * as configured from './configuredHealthResults';
 
 describe('configured saved health public Action bridge', () => {
+    it('exposes a Down check from a later page together with the first page when asked for complete results', async () => {
+        const controller = new AbortController();
+        const published: configured.ConfiguredHealthResultsRead[] = [];
+        const options = {
+            kv: { list: async ({ cursor }: { cursor?: string }) => {
+                const automationId = cursor ? 'later' : 'first';
+                const status = cursor ? 'down' : 'up';
+                return { items: [{ key: automationId, version: 1, value: { current: {
+                    v: 1, members: [{ automationId, triggerId: 'trigger', triggerRevision: 1, sourceSelectorId: 'selector' }],
+                    checks: [{ checkId: 'site', result: { status, observedAt: 1000,
+                        evidence: { v: 1, items: [{ source: { kind: 'alert', label: 'HTTP' }, author: { kind: 'process' }, text: 'Check sample.' }] } } }],
+                } } }], ...(cursor ? {} : { nextCursor: 'next' }) };
+            } },
+            signal: controller.signal,
+            complete: true,
+            subscribe: () => () => {},
+            publish: (value: configured.ConfiguredHealthResultsRead) => published.push(value),
+        };
+        const observation = configured.observeConfiguredHealthResults(options);
+        try {
+            await vi.waitFor(() => {
+                const value = published.at(-1);
+                expect(value).toBeDefined();
+                if (!value || 'kind' in value) throw new Error('Expected a health results page');
+                expect(value.results.get(configured.configuredHealthResultKey('later', 'trigger'))?.state)
+                    .toMatchObject({ kind: 'available', checks: [{ result: { status: 'down' } }] });
+                expect(value.results.get(configured.configuredHealthResultKey('first', 'trigger'))?.state)
+                    .toMatchObject({ kind: 'available', checks: [{ result: { status: 'up' } }] });
+                expect(value.nextCursor).toBeUndefined();
+                expect(value.preceding).toBe(false);
+            });
+        } finally {
+            controller.abort();
+            observation.dispose();
+        }
+    });
     it('preserves the saved source identity for the owning Check page and refreshes it when it changes', async () => {
         let sourceInstanceId = 'health:first';
         const kv = { list: async () => ({ items: [{ key: 'health:saved', version: 1, value: {

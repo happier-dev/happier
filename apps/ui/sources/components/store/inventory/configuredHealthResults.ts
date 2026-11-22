@@ -42,31 +42,36 @@ export function configuredHealthResultsForTrigger(page: ConfiguredHealthResultsP
         : page.preceding || page.nextCursor !== undefined ? NOT_LOADED : NEVER_OBSERVED;
 }
 
-/** One native page per demand. More pages require the person's continuation; no row performs a read. */
+/** A collection may ask for the whole snapshot. No row performs a read. */
 export async function readConfiguredHealthResults(kv: Pick<AccountKvService, 'list'>, signal: AbortSignal,
-    previous: ConfiguredHealthResultsPage, cursor?: string): Promise<ConfiguredHealthResultsPage> {
-    const page = await readHealthResultProjections(kv, { signal, cursor });
+    previous: ConfiguredHealthResultsPage, options: Readonly<{ cursor?: string; complete?: boolean }> = {}): Promise<ConfiguredHealthResultsPage> {
     const next = new Map<string, Readonly<{ revision: number; selector: string; state: ConfiguredHealthResultsState }>>();
-    for (const { projection, source } of page.items) {
-        for (const member of projection.members) {
-            const key = configuredHealthResultKey(member.automationId, member.triggerId);
-            const prior = previous.results.get(key);
-            const retainedSource = retainDeep(prior?.state.kind === 'available' ? prior.state.source : undefined, source);
-            const equal = prior?.state.kind === 'available' && prior.revision === member.triggerRevision
-                && prior.selector === member.sourceSelectorId && prior.state.source === retainedSource
-                && healthResultProjectionIdentity({ ...projection, checks: prior.state.checks }) === healthResultProjectionIdentity(projection);
-            next.set(key, equal ? prior : { revision: member.triggerRevision, selector: member.sourceSelectorId,
-                state: { kind: 'available', checks: projection.checks, ...(retainedSource ? { source: retainedSource } : {}) } });
+    let nextCursor = options.complete ? undefined : options.cursor;
+    do {
+        const page = await readHealthResultProjections(kv, { signal, cursor: nextCursor });
+        for (const { projection, source } of page.items) {
+            for (const member of projection.members) {
+                const key = configuredHealthResultKey(member.automationId, member.triggerId);
+                const prior = previous.results.get(key);
+                const retainedSource = retainDeep(prior?.state.kind === 'available' ? prior.state.source : undefined, source);
+                const equal = prior?.state.kind === 'available' && prior.revision === member.triggerRevision
+                    && prior.selector === member.sourceSelectorId && prior.state.source === retainedSource
+                    && healthResultProjectionIdentity({ ...projection, checks: prior.state.checks }) === healthResultProjectionIdentity(projection);
+                next.set(key, equal ? prior : { revision: member.triggerRevision, selector: member.sourceSelectorId,
+                    state: { kind: 'available', checks: projection.checks, ...(retainedSource ? { source: retainedSource } : {}) } });
+            }
         }
-    }
+        nextCursor = page.nextCursor;
+    } while (options.complete && nextCursor !== undefined);
     const results = next.size === previous.results.size && [...next].every(([key, value]) => previous.results.get(key) === value) ? previous.results : next;
-    const preceding = cursor !== undefined;
-    return results === previous.results && page.nextCursor === previous.nextCursor && preceding === previous.preceding ? previous
-        : { results, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}), preceding };
+    const preceding = !options.complete && options.cursor !== undefined;
+    return results === previous.results && nextCursor === previous.nextCursor && preceding === previous.preceding ? previous
+        : { results, ...(nextCursor ? { nextCursor } : {}), preceding };
 }
 
 /** Share concurrent acquisition. Push returns to the first page; continuation selects one following page. */
 export function observeConfiguredHealthResults(input: Readonly<{ kv: Pick<AccountKvService, 'list'>; signal: AbortSignal;
+    complete?: boolean;
     subscribe(listener: () => void): () => void; publish(snapshot: ConfiguredHealthResultsRead): void }>) {
     let previous: ConfiguredHealthResultsPage = { results: new Map(), preceding: false };
     let published: ConfiguredHealthResultsRead | undefined;
@@ -81,7 +86,7 @@ export function observeConfiguredHealthResults(input: Readonly<{ kv: Pick<Accoun
             while (pending && !input.signal.aborted) {
                 pending = false;
                 try {
-                    const next = await readConfiguredHealthResults(input.kv, input.signal, previous, cursor);
+                    const next = await readConfiguredHealthResults(input.kv, input.signal, previous, { cursor, complete: input.complete });
                     if (!input.signal.aborted) { previous = next; if (published !== next) { published = next; input.publish(next); } }
                 } catch (error) {
                     if (!input.signal.aborted) {

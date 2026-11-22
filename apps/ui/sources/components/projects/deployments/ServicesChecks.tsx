@@ -89,6 +89,7 @@ export function ServicesChecksView(
       projectKey: null,
       presented: props.presented,
       kinds: CHECK_KINDS,
+      completeConfiguredChecks: true,
     }),
     [props.presented, props.scope],
   );
@@ -123,10 +124,13 @@ export function ServicesChecksView(
           );
         }
         const more = servicesFamilyMore(family, isConfiguredCheckResultsPartial);
+        const coverage = family?.result.coverage;
+        const partial = typeof coverage === 'object' && ('unavailable' in coverage
+          || coverage.partial === 'automation_loading' || coverage.partial === 'automation_page' || coverage.partial === 'check_definition');
         return (
           <>
             {pending}
-            <ChecksList rows={rows} scope={props.scope} selection={selection} onCount={props.onCount} partial={more !== null} />
+            <ChecksList rows={rows} scope={props.scope} selection={selection} onCount={props.onCount} partial={partial} />
             <ServicesPaging testID="services.checks.paging" more={more} />
           </>
         );

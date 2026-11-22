@@ -10,7 +10,8 @@ import type { InstalledFamilyResult, StoreDemand, StoreInstalledInput } from '..
 import type { MachineSetupSourceEntryV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { machineSetupSourceOriginKeyV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { isHealthCheckEventSourceV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
-import { useAutomationDefinitionNextCursor, useAutomations, useIsDataReady } from '@/sync/store/hooks';
+import { useAutomations, useIsDataReady } from '@/sync/store/hooks';
+import { useAutomationDefinitionPagination } from '@/components/automations/list/useAutomationDefinitionPagination';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { isPluginEventAutomationTrigger, type AutomationDefinition } from '@/sync/domains/automations/automationTypes';
 import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
@@ -77,7 +78,7 @@ export type ManagedConfiguredCheckRow = Readonly<{
     lastResults: ConfiguredHealthResultsState;
     definitionFacts: ConfiguredCheckDefinitionFacts;
 }>;
-type ConfiguredCheckResult = InstalledFamilyResult<ManagedConfiguredCheckRow, NativeReason | Readonly<{ code: string }> | 'automation_page' | 'check_definition' | 'domain_page' | 'health_result_page' | 'health_result_unavailable' | 'health_result_loading', () => void>;
+type ConfiguredCheckResult = InstalledFamilyResult<ManagedConfiguredCheckRow, NativeReason | Readonly<{ code: string }> | 'automation_page' | 'automation_loading' | 'check_definition' | 'domain_page' | 'health_result_page' | 'health_result_unavailable' | 'health_result_loading', () => void>;
 const EMPTY_CHECK_ROWS: readonly ManagedConfiguredCheckRow[] = Object.freeze([]);
 
 /** P30 records only adopted Machine watches here; Environment services stay with their App. */
@@ -193,18 +194,19 @@ export function isConfiguredCheckResultsPartial(reason: unknown): boolean {
  * watches lives in its private definition, so a Check claims no Machine and is left out of a Machine's own inventory.
  */
 export function useManagedConfiguredChecks(input: StoreInstalledInput, demand: StoreDemand, admitted: InstalledScopeAdmission,
-    selection?: ConfiguredCheckSelection): ConfiguredCheckResult {
+    selection?: ConfiguredCheckSelection, completeCoverage = false): ConfiguredCheckResult {
     const allAutomations = useAutomations();
     const automationId = selection?.automationId;
     const triggerId = selection?.triggerId;
     const automations = React.useMemo(() => automationId === undefined ? allAutomations
         : allAutomations.filter(row => row.id === automationId), [allAutomations, automationId]);
-    const nextCursor = useAutomationDefinitionNextCursor();
     const ready = useIsDataReady();
     const scope = admitted.scope;
     const listed = demand.presented && !!scope && !input.projectKey && !input.machine;
     const lifetime = React.useMemo(() => admitted.binding ? readServerAccountScopeOwnerLifetime(admitted.binding) : null, [admitted.binding]);
     const definitions = useConfiguredCheckDefinitions(lifetime, listed, automations, selection);
+    const complete = completeCoverage && !selection;
+    const { nextCursor, loadMoreFailed, requestPage } = useAutomationDefinitionPagination(complete && listed && ready);
     // A Check is one kind of Automation, paged with all the others: one Show more reads on until the next saved Check
     // arrives or the list ends, so it never answers with nothing (SERVICES-ACCEPT-1116 F4).
     const loadAutomations = React.useCallback(async () => {
@@ -219,7 +221,7 @@ export function useManagedConfiguredChecks(input: StoreInstalledInput, demand: S
         }
     }, [nextCursor]);
     const healthResults = useConfiguredHealthResults(scope, listed && automations.some(native => native.triggers.some(trigger =>
-        isPluginEventAutomationTrigger(trigger) && isHealthCheckEventSourceV1(trigger))));
+        isPluginEventAutomationTrigger(trigger) && isHealthCheckEventSourceV1(trigger))), complete);
     const previous = React.useRef(EMPTY_CHECK_ROWS);
     const rows = React.useMemo(() => {
         if (!listed || !scope || definitions.selected?.kind === 'missing') return EMPTY_CHECK_ROWS;
@@ -244,7 +246,12 @@ export function useManagedConfiguredChecks(input: StoreInstalledInput, demand: S
         if (!demand.presented || !ready) return { rows: EMPTY_CHECK_ROWS, coverage: 'loading' };
         if (selection && !definitions.selected) return { rows, coverage: 'loading' };
         if (definitions.selected?.kind === 'unavailable') return { rows, coverage: { unavailable: definitions.selected.reason }, continuation: definitions.retrySelected };
-        if (!selection && nextCursor !== null) return { rows, coverage: { partial: 'automation_page' }, continuation: loadAutomations };
+        if (!selection && nextCursor !== null) {
+            if (!complete) return { rows, coverage: { partial: 'automation_page' }, continuation: loadAutomations };
+            return loadMoreFailed
+                ? { rows, coverage: { unavailable: { code: 'automation_page_read_failed' } }, continuation: requestPage }
+                : { rows, coverage: { partial: 'automation_loading' } };
+        }
         if (rows.length === 0) return { rows, coverage: 'available' };
         if (rows.some(row => row.definitionFacts.kind !== 'available')) return { rows, coverage: { partial: 'check_definition' } };
         if (definitions.domainsPending || definitions.domainContinuation) return { rows, coverage: { partial: 'domain_page' }, continuation: definitions.domainContinuation };
@@ -253,5 +260,5 @@ export function useManagedConfiguredChecks(input: StoreInstalledInput, demand: S
         const partial = healthResults.value.preceding || healthResults.value.nextCursor !== undefined;
         return { rows, coverage: partial ? { partial: 'health_result_page' } : 'available',
             ...(partial ? { continuation: healthResults.loadNext } : {}) };
-    }, [scope, admitted.coverage, input.projectKey, input.machine, demand.presented, ready, rows, nextCursor, healthResults, loadAutomations, definitions.domainsPending, definitions.domainContinuation, definitions.selected, definitions.retrySelected, selection]);
+    }, [scope, admitted.coverage, input.projectKey, input.machine, demand.presented, ready, rows, nextCursor, complete, loadMoreFailed, requestPage, healthResults, loadAutomations, definitions.domainsPending, definitions.domainContinuation, definitions.selected, definitions.retrySelected, selection]);
 }

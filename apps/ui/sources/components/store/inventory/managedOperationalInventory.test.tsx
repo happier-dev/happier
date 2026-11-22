@@ -316,7 +316,7 @@ it('lists saved Checks from Automation summaries, keeps never-run and off subjec
 
 // SERVICES-ACCEPT-1116 F4: a Check is one kind of Automation, paged with all the others. One Show more brings the
 // next saved Check even when the Automation page after this one holds none, instead of answering with nothing.
-it('follows the Automation pages past ones without a Check when the person asks for more Checks', async () => {
+it.each(['manual', 'complete'] as const)('follows the Automation pages past ones without a Check (%s coverage)', async coverage => {
     const [a, c] = await Promise.all([healthCheckDetail('a'), healthCheckDetail('c')]);
     const { triggers: _triggers, ...plain } = a;
     const other = { ...plain, id: 'other', name: 'Nightly report', triggers: [] };
@@ -330,11 +330,14 @@ it('follows the Automation pages past ones without a Check when the person asks 
     } });
     const scope = storage.getState().settingsScope!;
     await act(async () => { storage.setState({ automations: { a: healthCheckSummary('a') }, isDataReady: true, automationDefinitionNextCursor: 'p2' }); });
-    const query: ManagedInventoryQuery = { scope, machine: null, projectKey: null, presented: true, kinds: ['configuredCheck'] };
+    const query = { scope, machine: null, projectKey: null, presented: true, kinds: ['configuredCheck'] as const,
+        completeConfiguredChecks: coverage === 'complete' };
     const hook = await renderHook(() => useManagedInventory(query), { wrapper: Boundary });
-    await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.coverage).toEqual({ partial: 'automation_page' }));
-    const more = hook.getCurrent().operationalFamilies.configuredCheck.continuation as () => Promise<unknown>;
-    await act(async () => { await more(); });
+    if (coverage === 'manual') {
+        await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.coverage).toEqual({ partial: 'automation_page' }));
+        const more = hook.getCurrent().operationalFamilies.configuredCheck.continuation as () => Promise<unknown>;
+        await act(async () => { await more(); });
+    }
     await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.rows.map(row => row.automationId)).toEqual(['a', 'c']));
     expect(hook.getCurrent().operationalFamilies.configuredCheck.coverage).not.toEqual({ partial: 'automation_page' });
     await hook.unmount();
