@@ -81,6 +81,7 @@ export function projectSessionOwnerDisplayV1(owner: SessionOwnerMetadataV1): Ses
     ...(owner.work?.sessionAgentActivityHeadlineV1 ? { sessionAgentActivityHeadlineV1: SessionAgentActivityHeadlineV1Schema.parse(owner.work.sessionAgentActivityHeadlineV1) } : {}),
     ...(owner.work?.sessionWorkflowActivityHeadlineV1 ? { sessionWorkflowActivityHeadlineV1: SessionWorkflowActivityHeadlineV1Schema.parse(owner.work.sessionWorkflowActivityHeadlineV1) } : {}),
     ...(fork ? { forkV1: { v: 1, parentSessionId: fork.parentSessionId,
+      ...(fork.continuation ? { continuation: fork.continuation } : {}),
       parentCutoffSeqInclusive: fork.parentCutoffSeqInclusive, createdAtMs: fork.createdAtMs, strategy: fork.strategy } } : {}),
     ...(owner.system?.systemSessionV1?.hidden !== undefined ? { hiddenSystemSession: owner.system.systemSessionV1.hidden } : {}),
     ...(isVoiceConversationCustodySessionMetadata(owner.system) ? { systemSessionKind: 'voice_custody' } : {}),

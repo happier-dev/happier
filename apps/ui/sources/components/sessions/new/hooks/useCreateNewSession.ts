@@ -1841,7 +1841,9 @@ export function useCreateNewSession(params: Readonly<{
                         initialMessage: initialMessageText || null,
                         initialStructuredInput: opts?.initialInputStructuredInput,
                         initialReviewComments: opts?.initialInputReviewComments,
-                        sourceContext: current.sourceContext ?? null,
+                        sourceContext: current.sourceContext ? { ...current.sourceContext,
+                            ...(current.continuationSourceSessionId ? { continuation: true as const } : {}),
+                        } : null,
                         agentInstallConsent,
                         secretReferenceOverlay,
                     });

@@ -8698,6 +8698,8 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
             detailDescription: 'Dein bisheriges Gespräch wird als Text übernommen; Bilder und Dateien nicht. Bis zu deiner nächsten Nachricht wird nichts gesendet.',
             detailDescriptionEmpty: 'Es gibt noch kein Gespräch zum Übernehmen. Bis zu deiner nächsten Nachricht wird nichts gesendet.',
             announcement: ({ agent }: { agent: string }) => `${agent} für die nächste Nachricht ausgewählt. Es wurde nichts gesendet.`,
+            continuedTitle: 'Aus früherem Kontext fortgesetzt',
+            continuedTitleWithParent: ({ parent }: { parent: string }) => `Fortgesetzt von ${parent}`,
             dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Diese Session wurde fortgesetzt von ${from_} zu ${to}`,
             /** The transcript divider opens a card explaining what crossed the boundary. */
             handedOver: {

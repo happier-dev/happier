@@ -1214,6 +1214,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           source: {
             sourceSessionId: sourceContext.sourceSessionId,
             forkPoint: sourceContext.forkPoint,
+            ...(sourceContext.continuation ? { continuation: sourceContext.continuation } : {}),
           },
           agentHintAgentId: resolvedAgentTarget.agentId,
           // Source-local media survives only when the source and selected child

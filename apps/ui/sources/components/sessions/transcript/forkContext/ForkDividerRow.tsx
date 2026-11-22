@@ -8,6 +8,7 @@ import { TranscriptSeparatorRow } from '@/components/sessions/transcript/separat
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { useSession } from '@/sync/domains/state/storage';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
@@ -22,14 +23,16 @@ export function ForkDividerRow(props: Readonly<{
   const { theme } = useUnistyles();
   const transcriptSource = useSessionTranscriptSource();
   const parentSession = useSession(props.parentSessionId, props.serverId);
+  const childSession = useSession(props.childSessionId, props.serverId);
+  const continuation = childSession ? readSessionOwnerMetadataView(childSession)?.forkV1?.continuation : undefined;
   const isSessionVisible = useSessionRecordingVisibility();
   const dividerId = `${props.parentSessionId}:${props.childSessionId}`;
   const parentName = parentSession && isSessionVisible({ sessionId: props.parentSessionId, serverId: props.serverId ?? parentSession.serverId })
     ? getSessionName(parentSession) : null;
   const title =
     parentName
-      ? t('session.forking.dividerTitleWithParent', { parent: parentName })
-      : t('session.forking.dividerTitle');
+      ? t(continuation ? 'session.forking.continuedTitleWithParent' : 'session.forking.dividerTitleWithParent', { parent: parentName })
+      : t(continuation ? 'session.forking.continuedTitle' : 'session.forking.dividerTitle');
 
   const parentServerId = props.serverId ?? parentSession?.serverId ?? null;
   const handleOpenParent = React.useCallback(() => {

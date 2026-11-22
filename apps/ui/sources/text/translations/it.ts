@@ -8905,6 +8905,8 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
       detailDescription: 'La conversazione recente resta come testo; immagini e file no. Non viene inviato nulla fino al prossimo messaggio.',
       detailDescriptionEmpty: 'Non c’è ancora una conversazione da conservare. Non viene inviato nulla fino al prossimo messaggio.',
       announcement: ({ agent }: { agent: string }) => `${agent} selezionato per il prossimo messaggio. Non è stato inviato nulla.`,
+      continuedTitle: 'Continuazione del contesto precedente',
+      continuedTitleWithParent: ({ parent }: { parent: string }) => `Continuazione di ${parent}`,
       dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Questa sessione è continuata da ${from_} a ${to}`,
       handedOver: {
           open: "Mostra il contesto trasferito qui",

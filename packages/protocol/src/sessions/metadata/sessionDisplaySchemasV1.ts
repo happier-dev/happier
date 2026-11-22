@@ -115,6 +115,7 @@ export const SessionOwnerDisplayV1Schema = lazyZodSchema(() => z.strictObject({
   sessionWorkflowActivityHeadlineV1: z.optional(WorkflowActivityDisplayV1Schema),
   forkV1: z.optional(z.strictObject({
     v: z.literal(1), parentSessionId: asProtocolZod(SessionIdSchema),
+    continuation: z.optional(z.literal(true)),
     parentCutoffSeqInclusive: z.number().check(z.int(), z.nonnegative()),
     createdAtMs: z.number().check(z.int(), z.nonnegative()), strategy: z.string(),
   })),

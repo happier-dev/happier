@@ -39,7 +39,7 @@ describe('replay seed recipe budget through real source hydration', () => {
     (await import('@/configuration')).reloadConfiguration();
   });
 
-  it.each(['stored small budget', 'minimum seed budget'] as const)('builds a replay fork recipe from real sealed layout-v1 records at the %s', async (scenario) => {
+  it.each(['stored small budget', 'minimum seed budget', 'continuation'] as const)('builds a replay fork recipe from real sealed layout-v1 records at the %s', async (scenario) => {
     const sessionId = scenario === 'minimum seed budget' ? 's' : 'sess_layout_v1_replied';
     const secret = new Uint8Array(32).fill(9);
     const dataKey = new Uint8Array(32).fill(21);
@@ -106,10 +106,10 @@ describe('replay seed recipe budget through real source hydration', () => {
     }).length;
     expect(minimumSeedBudget).toBe(HAPPIER_REPLAY_MIN_SEED_CHARS);
     const maxSeedChars = accountSettingsParse({ sessionReplayMaxSeedChars:
-      scenario === 'stored small budget' ? 1024 : minimumSeedBudget }).sessionReplayMaxSeedChars;
+      scenario !== 'minimum seed budget' ? 1024 : minimumSeedBudget }).sessionReplayMaxSeedChars;
     const result = await buildReplaySeededSpawnRecipe({
       credentials: { token: 't', encryption: { type: 'legacy', secret } },
-      cwd: happyHomeDir, source: { sourceSessionId: sessionId, forkPoint: { type: 'seq', upToSeqInclusive: 2 } },
+      cwd: happyHomeDir, source: { sourceSessionId: sessionId, forkPoint: { type: 'seq', upToSeqInclusive: 2 }, ...(scenario === 'continuation' ? { continuation: true as const } : {}) },
       agentHintAgentId: 'claude', lineageCutoffSeqInclusive: 2,
       maxSeedChars,
     });
@@ -129,6 +129,8 @@ describe('replay seed recipe budget through real source hydration', () => {
     const consumed = SessionOwnerMetadataV1Schema.parse({ v: 1, history: {
       forkV1: result.recipe.metadata.forkV1, replaySeedV1: result.recipe.metadata.replaySeedV1,
     } });
+    expect(consumed.history?.forkV1).toMatchObject(scenario === 'continuation' ? { continuation: true } : { strategy: 'replay' });
+    if (scenario !== 'continuation') expect(consumed.history?.forkV1).not.toHaveProperty('continuation');
     expect(consumed.history?.replaySeedV1?.seedText).toBe(result.recipe.seedText);
     const refused = await buildReplaySeededSpawnRecipe({
       credentials: { token: 't', encryption: { type: 'legacy', secret } }, cwd: happyHomeDir,

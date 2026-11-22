@@ -8520,6 +8520,8 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
       detailDescription: 'Ta conversation récente est conservée sous forme de texte ; les images et les fichiers ne le sont pas. Rien n’est envoyé avant ton prochain message.',
       detailDescriptionEmpty: 'Il n’y a pas encore de conversation à conserver. Rien n’est envoyé avant ton prochain message.',
       announcement: ({ agent }: { agent: string }) => `${agent} sélectionné pour le prochain message. Rien n’a été envoyé.`,
+      continuedTitle: 'Suite du contexte précédent',
+      continuedTitleWithParent: ({ parent }: { parent: string }) => `Suite de ${parent}`,
       dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Cette session a continué de ${from_} à ${to}`,
       handedOver: {
           open: "Afficher le contexte transmis ici",

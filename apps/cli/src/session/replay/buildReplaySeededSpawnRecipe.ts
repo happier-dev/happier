@@ -1,4 +1,4 @@
-import type { SessionForkPoint } from '@happier-dev/protocol';
+import type { SessionSpawnSourceContextV1 } from '@happier-dev/protocol';
 import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
 
 import { configuration } from '@/configuration';
@@ -23,10 +23,9 @@ import type { LlmTaskRunnerConfigV1 } from '@happier-dev/protocol';
  * This owner deliberately does NOT create a Session row, choose a creation
  * identity, or settle a spawn outcome. Those belong to the canonical creator.
  */
-export type ReplaySeededSpawnRecipeSource = Readonly<{
-  sourceSessionId: string;
-  forkPoint: SessionForkPoint;
-}>;
+export type ReplaySeededSpawnRecipeSource = Readonly<Pick<
+  SessionSpawnSourceContextV1, 'sourceSessionId' | 'forkPoint' | 'continuation'
+>>;
 
 export type ReplaySeededSpawnRecipe = Readonly<{
   /** Resolved exact cutoff; this becomes immutable child lineage. */
@@ -179,6 +178,7 @@ export async function buildReplaySeededSpawnRecipe(
           parentCutoffSeqInclusive: cutoffSeqInclusive,
           createdAtMs: nowMs,
           strategy: 'replay',
+          ...(params.source.continuation ? { continuation: params.source.continuation } : {}),
           ...(requestId ? { requestId } : {}),
           agentHint: { agentId: params.agentHintAgentId },
         },

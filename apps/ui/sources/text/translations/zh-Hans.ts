@@ -8368,6 +8368,8 @@ export const zhHans: TranslationStructure = {
       detailDescription: '最近的对话会以文本形式保留；图片和文件不会。在你发送下一条消息前不会发送任何内容。',
       detailDescriptionEmpty: '目前还没有可保留的对话。在你发送下一条消息前不会发送任何内容。',
       announcement: ({ agent }: { agent: string }) => `已选择 ${agent} 用于下一条消息，尚未发送任何内容。`,
+      continuedTitle: '从先前的上下文继续',
+      continuedTitleWithParent: ({ parent }: { parent: string }) => `从${parent}继续`,
       dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `此会话已从 ${from_} 转由 ${to} 继续`,
       handedOver: {
           open: "查看在此处移交的上下文",

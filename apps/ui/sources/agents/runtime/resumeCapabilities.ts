@@ -234,7 +234,7 @@ function canFreshSpawnMissingVendorResumeId(metadata: SessionMetadata): boolean 
     const fork = readForkLineage(record);
     if (!fork) return true;
 
-    // Fork children inherit prior-session context. Without a vendor resume id,
+    // Fork and continuation children inherit prior-session context. Without a vendor resume id,
     // a fresh spawn can only preserve that context while the replay seed is still pending.
     return readNonEmptyString(fork.strategy) === 'replay'
         && hasUnconsumedReplaySeed(record);

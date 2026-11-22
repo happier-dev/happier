@@ -705,7 +705,7 @@ describe('useCreateNewSession permission seeding', () => {
         }
     });
 
-    it('passes a canonical permission mode and timestamp into the strict Action request', async () => {
+    it.each([true, false])('passes continuation intent and canonical permissions into the strict Action request (%s)', async continuation => {
         const { useCreateNewSession, captured, modalAlertSpy } = await setupUseCreateNewSessionHarness();
 
         let handleCreateSession: null | (() => Promise<void>) = null;
@@ -737,6 +737,8 @@ describe('useCreateNewSession permission seeding', () => {
                 modelMode: 'default' as ModelMode,
                 promptStore: createNewSessionPromptStore(''),
                 resumeSessionId: '',
+                sourceContext: { v: 1, kind: 'session_replay', sourceSessionId: 'parent', forkPoint: { type: 'latest' } },
+                continuationSourceSessionId: continuation ? 'parent' : null,
                 agentNewSessionOptions: null,
                 machineEnvPresence,
                 secrets: [],
@@ -772,6 +774,8 @@ describe('useCreateNewSession permission seeding', () => {
         );
         await next.unmount();
         expect(captured.value?.permissionMode).toBe('safe-yolo');
+        expect(captured.value?.sourceContext).toEqual({ v: 1, kind: 'session_replay', sourceSessionId: 'parent',
+            forkPoint: { type: 'latest' }, ...(continuation ? { continuation: true } : {}) });
         expect(typeof captured.value?.configuration?.permissionIntent.updatedAtMs).toBe('number');
         expect(Number.isFinite(captured.value?.configuration?.permissionIntent.updatedAtMs)).toBe(true);
         expect((captured.value?.configuration?.permissionIntent.updatedAtMs ?? 0)).toBeGreaterThan(0);

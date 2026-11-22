@@ -8516,6 +8516,8 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
       detailDescription: 'Ostatnia część rozmowy zostaje zachowana jako tekst; obrazy i pliki nie. Nic nie zostanie wysłane do następnej wiadomości.',
       detailDescriptionEmpty: 'Nie ma jeszcze rozmowy do zachowania. Nic nie zostanie wysłane do następnej wiadomości.',
       announcement: ({ agent }: { agent: string }) => `Wybrano ${agent} do następnej wiadomości. Nic nie zostało wysłane.`,
+      continuedTitle: 'Kontynuacja wcześniejszego kontekstu',
+      continuedTitleWithParent: ({ parent }: { parent: string }) => `Kontynuacja ${parent}`,
       dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Ta sesja została przejęta z ${from_} na ${to}`,
       handedOver: {
           open: "Pokaż kontekst przekazany w tym miejscu",

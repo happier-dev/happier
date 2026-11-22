@@ -8786,6 +8786,8 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
       detailDescription: 'A sua conversa recente mantém-se como texto; as imagens e os arquivos não. Nada é enviado até à próxima mensagem.',
       detailDescriptionEmpty: 'Ainda não há conversa para manter. Nada é enviado até à próxima mensagem.',
       announcement: ({ agent }: { agent: string }) => `${agent} selecionado para a próxima mensagem. Nada foi enviado.`,
+      continuedTitle: 'Continuado do contexto anterior',
+      continuedTitleWithParent: ({ parent }: { parent: string }) => `Continuado de ${parent}`,
       dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Esta sessão continuou de ${from_} para ${to}`,
       handedOver: {
           open: "Mostrar o contexto transferido aqui",

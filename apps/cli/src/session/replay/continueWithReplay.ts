@@ -118,6 +118,7 @@ export async function continueSessionWithReplay(
         source: {
             sourceSessionId: replay.previousSessionId,
             forkPoint: { type: 'latest' },
+            continuation: true,
         },
         agentHintAgentId: resolvedBackend.agentHintAgentId,
         strategy: replayStrategy,

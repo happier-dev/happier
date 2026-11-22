@@ -69,6 +69,26 @@ describe('incidental Session identity during recording', () => {
         expect(navigate).toHaveBeenCalled();
     });
 
+    it.each([true, undefined])('labels continued and forked origins from stored child lineage (%s)', async continuation => {
+        setScreenSharingPrivacyActive(false);
+        const child = createSessionFixture({ id: 'opened-session', serverId: address.serverId,
+            metadata: { ...createSessionFixture().metadata!, forkV1: { v: 1, parentSessionId: address.sessionId,
+                parentCutoffSeqInclusive: 1, createdAtMs: 1, strategy: 'replay',
+                ...(continuation ? { continuation: true } : {}) } } });
+        storage.setState({ sessions: { ...storage.getState().sessions, [child.id]: child } });
+        const { ForkDividerRow } = await import('../forkContext/ForkDividerRow');
+        const screen = await renderWithSessionTranscriptSource(<ForkDividerRow parentSessionId={address.sessionId}
+            childSessionId={child.id} serverId={address.serverId} parentCutoffSeqInclusive={1} />,
+        createTestSessionTranscriptSource({ sessionId: child.id, navigate: vi.fn() }));
+        expect(JSON.stringify(screen.tree.toJSON())).toContain(continuation
+            ? t('session.forking.continuedTitleWithParent', { parent: title })
+            : t('session.forking.dividerTitleWithParent', { parent: title }));
+        await act(async () => setScreenSharingPrivacyActive(true));
+        const masked = JSON.stringify(screen.tree.toJSON());
+        expect(masked).not.toContain(title);
+        expect(masked).toContain(t(continuation ? 'session.forking.continuedTitle' : 'session.forking.dividerTitle'));
+    });
+
     it('masks a fork parent name while retaining its link', async () => {
         const { ForkDividerRow } = await import('../forkContext/ForkDividerRow');
         const screen = await renderWithSessionTranscriptSource(<ForkDividerRow parentSessionId={address.sessionId}

@@ -1208,6 +1208,7 @@ const SessionOwnerHistoryV1Schema = lazyZodSchema(() => z.strictObject({
   forkV1: z.optional(z.strictObject({
     v: z.literal(1),
     parentSessionId: BoundedIdentifierSchema,
+    continuation: z.optional(z.literal(true)),
     parentCutoffSeqInclusive: z.number().check(z.int(), z.nonnegative()),
     createdAtMs: TimestampSchema,
     strategy: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),

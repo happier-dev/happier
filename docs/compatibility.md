@@ -10264,6 +10264,13 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Session replay source context carries optional `continuation: true`.
+The replay recipe writer retains it in the existing owner `forkV1` lineage,
+and its owner display projection carries it to the divider. Omission keeps fork
+semantics. These closed development shapes load together; no migration or
+older-0.3 compatibility adapter is needed. The flag describes origin only and
+does not decide authorization or move Session approval consents.
+
 In unreleased 0.3, the closed deployment target Role Result V1 optionally
 includes a closed `publicAddressFailure` with an HTTP URL and status. The host
 retains this observation in the existing protected Receipt. Earlier receipts

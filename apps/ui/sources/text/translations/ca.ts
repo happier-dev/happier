@@ -8061,6 +8061,8 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
             detailDescription: 'La conversa recent es manté com a text; les imatges i els fitxers no. No s’envia res fins al pròxim missatge.',
             detailDescriptionEmpty: 'Encara no hi ha cap conversa per mantenir. No s’envia res fins al pròxim missatge.',
             announcement: ({ agent }: { agent: string }) => `${agent} seleccionat per al missatge següent. No s’ha enviat res.`,
+            continuedTitle: 'Continuat des del context anterior',
+            continuedTitleWithParent: ({ parent }: { parent: string }) => `Continuat des de ${parent}`,
             dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Aquesta sessió ha continuat de ${from_} a ${to}`,
             handedOver: {
                 open: "Mostra el context transferit aquí",

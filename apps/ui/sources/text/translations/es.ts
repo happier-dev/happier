@@ -8680,6 +8680,8 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
       detailDescription: 'Tu conversación reciente se mantiene como texto; las imágenes y los archivos no. No se envía nada hasta tu próximo mensaje.',
       detailDescriptionEmpty: 'Todavía no hay ninguna conversación que mantener. No se envía nada hasta tu próximo mensaje.',
       announcement: ({ agent }: { agent: string }) => `${agent} seleccionado para el próximo mensaje. No se ha enviado nada.`,
+      continuedTitle: 'Continuado desde el contexto anterior',
+      continuedTitleWithParent: ({ parent }: { parent: string }) => `Continuado desde ${parent}`,
       dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Esta sesión continuó de ${from_} a ${to}`,
       handedOver: {
           open: "Mostrar el contexto transferido aquí",

@@ -22,5 +22,6 @@ export const SessionSpawnSourceContextV1Schema = lazyZodSchema(() => z.strictObj
     kind: z.literal('session_replay'),
     sourceSessionId: z.string().check(z.trim(), z.minLength(1)),
     forkPoint: SessionForkPointSchema,
+    continuation: z.optional(z.literal(true)),
   }));
 export type SessionSpawnSourceContextV1 = z.infer<typeof SessionSpawnSourceContextV1Schema>;
