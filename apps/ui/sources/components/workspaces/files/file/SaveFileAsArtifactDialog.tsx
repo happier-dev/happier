@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 
+import { ArtifactQuotaNotice } from '@/components/artifacts/ArtifactQuotaNotice';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { FileIcon } from '@/components/ui/media/FileIcon';
@@ -65,8 +66,9 @@ export function SaveFileAsArtifactDialog(props: SaveFileAsArtifactDialogProps) {
         { id: 'private' as const, label: t('files.pane.page.artifactOnlyYou') },
     ] : null;
     const shareFailed = status.kind === 'failed' && status.receipt !== undefined && model.team !== null;
+    const quota = status.kind === 'failed' && !status.receipt ? status.failure.quota : undefined;
     const statusLine = shareFailed && model.team ? t('files.pane.page.artifactShareFailed', { team: model.team.name })
-        : status.kind === 'failed' ? t('files.pane.page.artifactFailed')
+        : status.kind === 'failed' && !quota ? t('files.pane.page.artifactFailed')
         : status.kind === 'approval' ? t('files.pane.page.artifactApproval') : null;
     return (
         <ModalCardFrame
@@ -96,6 +98,7 @@ export function SaveFileAsArtifactDialog(props: SaveFileAsArtifactDialogProps) {
             )}
         >
             <View style={styles.body}>
+                {quota ? <ArtifactQuotaNotice testID="save-as-artifact-quota" placement="inline" quota={quota} onOpenUsage={close} /> : null}
                 <View testID="save-as-artifact-source" style={[styles.source, { backgroundColor: theme.colors.surface.inset }]}>
                     {model.folder ? <Icon name="folder" size={20} color={theme.colors.text.secondary} />
                         : <FileIcon fileName={fileName} size={20} appearance="line" />}

@@ -194,6 +194,35 @@ describe('Artifact surface pending approvals', () => {
         await hook.unmount();
     });
 
+    it('shows the storage recovery link when a binary publication exceeds the Account quota', async () => {
+        const { serverId, artifacts } = await serveArtifactAccount('https://file-copy-dialog-quota.test');
+        storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'source-machine' })] } });
+        transport.download.mockImplementation(async (request: { destination: { writeBytes(bytes: Uint8Array): Promise<void> } }) => {
+            await request.destination.writeBytes(Uint8Array.of(0, 255, 3));
+            return { ok: true, name: 'copy.bin', sizeBytes: 3 };
+        });
+        let uploads = 0;
+        machineRoute = async request => {
+            if (request.path !== '/v1/artifacts/content/upload') return undefined;
+            uploads++;
+            return Response.json({ error: 'quota_exceeded', budget: 'account', limitBytes: 100, usedBytes: 125 }, { status: 413 });
+        };
+        const { SaveFileAsArtifactDialog } = await import('@/components/workspaces/files/file/SaveFileAsArtifactDialog');
+        const screen = await renderScreen(React.createElement(SaveFileAsArtifactDialog, {
+            source: { scope: { serverId, accountId: 'owner-1' }, sourceSessionId: null,
+                sourceWorkspace: { machineId: 'source-machine', rootPath: '/repo' }, filePath: 'copy.bin' },
+            sourceFacts: 'Project', onClose: () => {},
+        }));
+        try {
+            await vi.waitFor(() => expect(screen.findByTestId('save-as-artifact-save')?.props.disabled).toBe(false));
+            await screen.pressByTestIdAsync('save-as-artifact-save');
+            await vi.waitFor(() => expect(uploads).toBe(1));
+            await vi.waitFor(() => expect(screen.findByTestId('save-as-artifact-quota.action')).not.toBeNull());
+            expect(screen.findByTestId('save-as-artifact-title')).not.toBeNull();
+            expect(artifacts.list()).toHaveLength(0);
+        } finally { await screen.unmount(); }
+    });
+
     it('keeps the mounted UI publication pending through byte acquisition and saves its real receipt without an agent approval', async () => {
         const { serverId, artifacts } = await serveArtifactAccount('https://file-copy-dialog-approval.test', 'artifact.publish_from_file', true);
         storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'source-machine' })] } });

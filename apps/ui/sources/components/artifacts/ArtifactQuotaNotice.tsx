@@ -38,6 +38,7 @@ export function ArtifactQuotaNotice(
     placement?: 'page-section' | 'inline';
     /** The Account budget's action in place of opening Storage (the Storage view lists its biggest Artifacts). */
     usageAction?: AttentionBannerAction;
+    onOpenUsage?: () => void;
   }>,
 ): React.ReactElement {
   const router = useRouter();
@@ -45,7 +46,10 @@ export function ArtifactQuotaNotice(
   const document = props.quota.budget === 'document';
   const action: AttentionBannerAction | undefined = document ? undefined : props.usageAction ?? {
     label: t('artifacts.browser.storageView.seeUsage'),
-    onPress: () => router.push(accountStorageViewRoute('artifacts') as never),
+    onPress: () => {
+      props.onOpenUsage?.();
+      router.push(accountStorageViewRoute('artifacts') as never);
+    },
   };
   return (
     <AttentionBanner
