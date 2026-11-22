@@ -63,6 +63,60 @@ describe('resolveSharedStateRequiredSwitchContinuity', () => {
     });
   });
 
+  describe('a session whose provider conversation never started', () => {
+    // After a cross-Agent switch whose target failed to start (for example because the target's
+    // default account needed reconnecting), the Session is committed to the target Agent but no
+    // conversation was ever created under it. There is no resume id and no session file, so there
+    // is nothing to prove reachable. Reporting that as "provider session state unavailable" left
+    // the owner unable to move the Session to a working account at all.
+    const sharedCodexSettings = () => accountSettingsParse({
+      connectedServicesProviderStateSharingSettingsV1: {
+        v: 1,
+        defaults: { configMode: 'linked', stateMode: 'isolated' },
+        byAgentId: { codex: { stateMode: 'shared' } },
+      },
+    });
+    const baseInput = {
+      agentId: 'codex' as const,
+      serviceId: 'openai-codex',
+      targetMaterializedRoot: '/tmp/materialized',
+      targetMaterializedEnv: {},
+      materializationIdentity: { v: 1 as const, id: 'csm_1' },
+      cwd: '/tmp/project',
+    };
+
+    it('lets the switch proceed, because there is no state to carry', async () => {
+      await expect(resolveSharedStateRequiredSwitchContinuity({
+        ...baseInput,
+        accountSettings: sharedCodexSettings(),
+        warnings: ['codex_shared_state_required'],
+      } as any)).resolves.toEqual({
+        mode: 'restart_rematerialize',
+        warnings: ['codex_shared_state_required'],
+      });
+    });
+
+    it('does not need the rest of the target context when there is nothing to carry', async () => {
+      await expect(resolveSharedStateRequiredSwitchContinuity({
+        agentId: 'codex',
+        accountSettings: sharedCodexSettings(),
+      } as any)).resolves.toMatchObject({ mode: 'restart_rematerialize' });
+    });
+
+    it('still fails closed when a session file is referenced without a resume id', async () => {
+      // A referenced session file means a conversation does exist; only its id is unknown, which is
+      // exactly the state loss this check exists to refuse to paper over.
+      await expect(resolveSharedStateRequiredSwitchContinuity({
+        ...baseInput,
+        accountSettings: sharedCodexSettings(),
+        candidatePersistedSessionFile: '/tmp/project/session.jsonl',
+      } as any)).resolves.toMatchObject({
+        mode: 'unsupported',
+        errorCode: 'provider_session_state_unavailable_for_resume',
+      });
+    });
+  });
+
   it('allows a rematerializing restart when Codex shared-state reachability is proven', async () => {
     const accountSettings = accountSettingsParse({
       connectedServicesProviderStateSharingSettingsV1: {

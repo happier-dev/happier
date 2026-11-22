@@ -3,6 +3,7 @@ import {
   ConnectedServiceUxDiagnosticCodeV1Schema,
   SPAWN_SESSION_ERROR_CODES,
   SPAWN_SESSION_ERROR_DETAIL_KINDS,
+  isConnectedServiceUxDiagnosticSpawnErrorDetail,
   type ConnectedServiceUxDiagnosticV1,
   type SpawnSessionResult,
 } from '@happier-dev/protocol';
@@ -133,6 +134,26 @@ export function buildConnectedServiceCredentialRefreshSpawnErrorResult(input: Re
       },
     }),
   });
+}
+
+/**
+ * The identifying fields of a connected-service spawn failure, for the daemon log. The result's
+ * message is only the generic code, so without these a refusal caused by one account among several
+ * cannot be traced to it. Ids and reasons only; never credential material.
+ */
+export function readConnectedServiceSpawnFailureLogFields(
+  result: Extract<SpawnSessionResult, { type: 'error' }>,
+): Readonly<Record<string, string | null>> {
+  if (!isConnectedServiceUxDiagnosticSpawnErrorDetail(result.errorDetail)) return {};
+  const diagnostic = result.errorDetail.uxDiagnostic;
+  const details = readRecord(diagnostic.diagnostics);
+  return {
+    serviceId: readString(diagnostic.serviceId) || null,
+    profileId: readString(diagnostic.profileId) || null,
+    reason: readStringField(details, 'reason') || null,
+    refreshStatus: readStringField(details, 'refreshStatus') || null,
+    refreshCategory: readStringField(details, 'refreshCategory') || null,
+  };
 }
 
 export function buildConnectedServiceMaterializationSpawnErrorResult(input: Readonly<{
