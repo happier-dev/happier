@@ -4,7 +4,7 @@ import type { AgentBackend } from '@/agent/core';
 import { createCatalogDefinedAcpBackend, type CatalogDefinedAcpBackendOptions } from '@/agent/acp/catalog/createCatalogDefinedAcpBackend';
 import { createAgyBackgroundContinuationSource } from './agyBackgroundContinuationSource';
 import { ensureAgyAcpServerForLaunch } from './ensureAgyAcpServerForLaunch';
-import { isPinnedAgyAcpServerConversation, usesPinnedAgyAcpServer } from './pinnedAgyAcpServer';
+import { resolveAgyAcpRuntime } from './pinnedAgyAcpServer';
 
 // ACP 1.3.0 lets these inherited values override the selected account's endpoint/project.
 const ACCOUNT_ENDPOINT_OVERRIDES = ['AGY_ACP_CCPA_BASE_URL', 'AGY_ACP_CCPA_PROJECT'] as const;
@@ -21,33 +21,27 @@ export async function createAgyAcpBackend(options: AgyAcpBackendOptions): Promis
     env: options.env,
     ...(readinessOnly ? { readinessOnly: true } : {}),
   });
-  const backendOptions: CatalogDefinedAcpBackendOptions = {
+  return createCatalogDefinedAcpBackend('agy', {
     ...catalogOptions,
     // ACP 1.3.0 distinguishes failed token refresh/onboarding from generic missing authentication.
     isAuthenticationSetupFailure: ({ code, data }) =>
       code === -32000 && data !== null && typeof data === 'object' && !Array.isArray(data)
       && 'reason' in data && data.reason === 'onboarding_failed',
-  };
-  if (!usesPinnedAgyAcpServer(options.env)) {
-    return createCatalogDefinedAcpBackend('agy', {
-      ...backendOptions,
-      // Only `agy acp` has been observed resuming a conversation on its own after a background command.
-      providerTurnSource: createAgyBackgroundContinuationSource(),
-      // `agy acp` opens an empty session for ids it does not know, so conversations the pinned
-      // server created for native login in earlier releases must resume on that server.
-      prepareProcessLaunch: async ({ loadSessionId }) => {
-        const pinnedConversation = loadSessionId !== null
-          && await isPinnedAgyAcpServerConversation({ sessionId: loadSessionId, cwd: options.cwd, env: options.env });
-        return pinnedConversation ? await ensurePinnedServer() : {};
-      },
-    });
-  }
-  const env = Object.fromEntries(Object.entries(options.env ?? {}).filter(([key]) =>
-    !ACCOUNT_ENDPOINT_OVERRIDES.some((override) => key.toUpperCase() === override)));
-  return createCatalogDefinedAcpBackend('agy', {
-    ...backendOptions,
-    env,
-    unsetEnv: [...options.unsetEnv ?? [], ...ACCOUNT_ENDPOINT_OVERRIDES],
-    launch: await ensurePinnedServer(),
+    launch: async ({ loadSessionId, resolveDefaultLaunch }) => {
+      const runtime = await resolveAgyAcpRuntime({
+        vendorResumeId: loadSessionId,
+        cwd: options.cwd,
+        env: options.env,
+      });
+      if (runtime === 'native') {
+        return {
+          ...resolveDefaultLaunch(),
+          requireListedSessionOnLoad: true,
+          providerTurnSource: createAgyBackgroundContinuationSource(),
+        };
+      }
+      const launch = await ensurePinnedServer();
+      return runtime === 'connected' ? { ...launch, unsetEnv: ACCOUNT_ENDPOINT_OVERRIDES } : launch;
+    },
   });
 }

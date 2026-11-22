@@ -13,10 +13,16 @@ const CONNECTED_ACCOUNT_ENV = {
   HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{ kind: 'profile', serviceId: 'antigravity', profileId: 'selected' }]),
 };
 
-function discover(entryPoint: 'catalog' | 'backend' | 'session', home: string, env: NodeJS.ProcessEnv) {
-  return entryPoint === 'catalog'
-    ? probeAcpCatalogs({ agentId: 'agy', cwd: home, timeoutMs: 10_000, processEnv: env })
-    : createCatalogAcpBackend('agy', { cwd: home, env, ...(entryPoint === 'session' ? {} : { readinessOnly: true }) });
+async function discover(entryPoint: 'catalog' | 'backend' | 'session', home: string, env: NodeJS.ProcessEnv) {
+  if (entryPoint === 'catalog') {
+    return await probeAcpCatalogs({ agentId: 'agy', cwd: home, timeoutMs: 10_000, processEnv: env });
+  }
+  const { backend } = await createCatalogAcpBackend('agy', { cwd: home, env, readinessOnly: entryPoint === 'backend' });
+  try {
+    return await backend.startSession();
+  } finally {
+    await backend.dispose();
+  }
 }
 
 describe('ACP catalog prerequisite readiness', () => {

@@ -8,6 +8,13 @@ import type { AgentBackend, AgentFactoryOptions, AgentSessionOpenOptions, McpSer
 import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
 import { resolveAcpCatalogTransportHandler } from './transport/resolveAcpCatalogTransportHandler';
 
+type CatalogLaunch = Readonly<{ command: string; args: readonly string[] }>;
+type PreparedCatalogLaunch = Awaited<ReturnType<NonNullable<AcpBackendOptions['prepareProcessLaunch']>>> & CatalogLaunch;
+type PrepareCatalogLaunch = (context: Readonly<{
+  loadSessionId: string | null;
+  resolveDefaultLaunch: () => CatalogLaunch;
+}>) => Promise<PreparedCatalogLaunch>;
+
 export type CatalogDefinedAcpBackendOptions = AgentFactoryOptions & Readonly<{
   mcpServers?: Record<string, McpServerConfig>;
   happierSessionId?: string;
@@ -20,7 +27,7 @@ export type CatalogDefinedAcpBackendOptions = AgentFactoryOptions & Readonly<{
   isAuthenticationSetupFailure?: AcpBackendOptions['isAuthenticationSetupFailure'];
   sessionModelAdapter?: AcpBackendOptions['sessionModelAdapter'];
   initialSessionModeId?: AcpBackendOptions['initialSessionModeId'];
-  launch?: Readonly<{ command: string; args: readonly string[] }>;
+  launch?: CatalogLaunch | PrepareCatalogLaunch;
 }>;
 
 /** Compose catalog transport policy with launch/source ownership, applying the configured permission mode after native open or resume. */
@@ -32,19 +39,25 @@ export function createCatalogDefinedAcpBackend(
   if (!config) {
     throw new Error(`Agent '${agentId}' is not a built-in generic ACP agent`);
   }
-  const launch = options.launch
-    ?? requireProviderCliLaunchSpec(agentId, { processEnv: { ...process.env, ...options.env } });
+  const resolveDefaultLaunch = (): CatalogLaunch => {
+    const launch = requireProviderCliLaunchSpec(agentId, { processEnv: { ...process.env, ...options.env } });
+    return { command: launch.command, args: [...launch.args, ...config.launcher.args] };
+  };
+  const prepareLaunch = typeof options.launch === 'function' ? options.launch : undefined;
+  const launch = typeof options.launch === 'function' ? undefined : options.launch ?? resolveDefaultLaunch();
 
   const env = { ...options.env, NODE_ENV: 'production', DEBUG: '' };
   const backend: AgentBackend = createAcpBackend({
     agentName: agentId,
     cwd: options.cwd,
-    command: launch.command,
-    args: options.launch ? [...launch.args] : [...launch.args, ...config.launcher.args],
+    command: launch?.command,
+    args: launch ? [...launch.args] : undefined,
     env: options.happierSessionId !== undefined
       ? withCurrentHappierSessionId(env, options.happierSessionId)
       : env,
-    prepareProcessLaunch: options.prepareProcessLaunch,
+    prepareProcessLaunch: prepareLaunch
+      ? (context) => prepareLaunch({ ...context, resolveDefaultLaunch })
+      : options.prepareProcessLaunch,
     unsetEnv: options.happierSessionId !== undefined
       ? [...(options.unsetEnv ?? []), HAPPIER_SESSION_ID_ENV_KEY]
       : options.unsetEnv,

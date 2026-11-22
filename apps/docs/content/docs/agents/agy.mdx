@@ -28,7 +28,7 @@ You can also open this login flow from **Settings → AI & Agents → AI backend
 
 ## Connected accounts and the pinned ACP server
 
-Connected Antigravity accounts run on the official pinned `agy_acp_server` v1.3.0, because it reads the per-account credential home Happier prepares for each account. When Antigravity's default authentication is a connected account, development builds background-install the platform archive when you select Antigravity; otherwise the first connected launch installs it. Launch reuses that same install instead of downloading twice.
+Connected Antigravity accounts run on the official pinned `agy_acp_server` v1.3.0, because it reads the per-account credential home Happier prepares for each account. When you select a connected account in New Session, development builds background-install the platform archive; otherwise the first connected launch installs it. Launch reuses that same install instead of downloading twice.
 Integrity is verified by SHA-256 on every download, extraction reuses the shared
 archive helpers, and the executable bit is set on Unix. A corrupt or missing artifact
 fails visibly, and the next launch re-runs the authoritative ensure to recover.
@@ -85,11 +85,11 @@ sessions. For shared MCP setup and session selection, see [MCP servers](/extendi
 
 - Run `agy --version` on the agent machine to confirm the CLI is installed. If launch reports `unexpected argument "acp"`, run `agy update`.
 - For `Authentication required` in a native-login session on `agy acp`, run `happier agy auth login` on that machine
-  and wait for it to finish. Native-login sessions created before Happier used `agy acp` keep the pinned server's
-  earlier login, which this command does not refresh; start a new session instead.
+  and wait for it to finish.
+- For a session created with the older pinned server, run `happier agy auth login --pinned` and retry resume.
+  To refresh a specific pinned login method, pass `--method <method>`.
 - For `Authentication required` with a connected account, sign in to that account again in
   **Settings -> Connected services** (or with `happier connect agy`), then retry launch.
-  `happier agy auth login` refreshes only the native CLI login.
 - For a connected account, if the pinned ACP server is missing, reselect Antigravity in the app
   and watch the install progress, then retry launch.
 - If a model is unavailable, retry after the ACP handshake completes; the model list is

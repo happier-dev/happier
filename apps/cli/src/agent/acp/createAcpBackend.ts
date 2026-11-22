@@ -34,8 +34,8 @@ export interface CreateAcpBackendOptions {
   /** Working directory for the agent */
   cwd: string;
 
-  /** Command to spawn the ACP agent */
-  command: string;
+  /** Command to spawn when the provider does not supply one at launch. */
+  command?: string;
 
   /** Arguments for the agent command */
   args?: string[];

@@ -1,9 +1,17 @@
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createAgyAcpBackend } from './backend';
 import { installPinnedAgyAcpServerFixture, withIsolatedHappierHome } from './pinnedAgyAcpServer.testkit';
+
+vi.mock('cross-spawn', async (importOriginal) => {
+  const actual = await importOriginal<{ default: typeof import('cross-spawn') }>();
+  if (process.platform !== 'win32') return actual;
+  const { wrapPinnedFixtureSpawn } = await import('./pinnedAgyAcpServer.testkit');
+  return { ...actual, default: wrapPinnedFixtureSpawn(actual.default) };
+});
+
 
 const CONNECTED_ACCOUNT_SELECTIONS = [{ kind: 'profile', serviceId: 'antigravity', profileId: 'selected' }];
 
@@ -13,8 +21,14 @@ function acpAgentSource(dir: string, runtime: string): string {
       JSON.stringify({ runtime: ${JSON.stringify(runtime)}, args: process.argv.slice(2) }) + '\\n');
     require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
       const request = JSON.parse(line);
-      const result = request.method === 'initialize' ? { protocolVersion: 1, agentCapabilities: { loadSession: true } }
-        : request.method === 'session/new' ? { sessionId: 'new-session' } : {};
+      const result = request.method === 'initialize'
+        ? { protocolVersion: 1, agentCapabilities: { loadSession: true, sessionCapabilities: { list: {} } } }
+        : request.method === 'session/list'
+          ? { sessions: [{ sessionId: 'cli-conversation', cwd: ${JSON.stringify(dir)} }] }
+          : request.method === 'session/new' ? { sessionId: 'new-session' } : {};
+      if (request.method === 'session/load') {
+        require('node:fs').appendFileSync(${JSON.stringify(join(dir, 'loads.jsonl'))}, JSON.stringify(request.params.sessionId) + '\\n');
+      }
       process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\\n');
     });
   `;
@@ -43,7 +57,7 @@ describe('Antigravity ACP runtime selection', () => {
       await writeFile(agy, acpAgentSource(dir, 'agy'));
       await chmod(agy, 0o755);
       const backend = await createAgyAcpBackend({ cwd: dir, env: {
-        HAPPIER_AGY_PATH: agy,
+        HAPPIER_AGY_PATH: runtime === 'agy' ? agy : join(dir, 'missing-native-agy'),
         GEMINI_HOME: geminiHome,
         HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify(connected ? CONNECTED_ACCOUNT_SELECTIONS : []),
       } });
@@ -52,6 +66,23 @@ describe('Antigravity ACP runtime selection', () => {
         const launches = (await readFile(join(dir, 'launches.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
         expect(launches).toEqual([{ runtime, args: runtime === 'agy' ? ['acp'] : pinnedServer.args }]);
       } finally { await backend.dispose(); }
+    });
+  });
+  it('does not ask the native CLI to open an unknown conversation as an empty session', async () => {
+    await withIsolatedHappierHome(async dir => {
+      const agy = join(dir, 'agy.cjs');
+      await writeFile(agy, acpAgentSource(dir, 'agy'));
+      await chmod(agy, 0o755);
+      const backend = await createAgyAcpBackend({
+        cwd: dir,
+        env: { HAPPIER_AGY_PATH: agy, GEMINI_HOME: dir },
+      });
+      try {
+        await expect(backend.loadSession!('missing-pinned-conversation')).rejects.toThrow(/could not find/i);
+        await expect(readFile(join(dir, 'loads.jsonl'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      } finally {
+        await backend.dispose();
+      }
     });
   });
 });

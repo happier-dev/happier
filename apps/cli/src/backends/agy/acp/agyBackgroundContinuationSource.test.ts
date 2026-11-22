@@ -309,6 +309,28 @@ describe('createAgyBackgroundContinuationSource', () => {
   });
 });
 
+describe('Antigravity continuation transcript', () => {
+  it('publishes a mirrored chunk once inside a continuation', async () => {
+    await fixture(async ({ backend, events, permissionSession }) => {
+      await promptBuild(backend, permissionSession);
+      const resumed = backend.requestExtension('test/finish-build', {});
+      await expect.poll(() => pendingPermissionIds(permissionSession)).toHaveLength(1);
+      await (backend as unknown as { handleSessionUpdate(notification: unknown): Promise<void> }).handleSessionUpdate({
+        sessionId: SESSION_ID,
+        updates: [
+          { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'mirrored' } },
+          { messageChunk: { textDelta: 'mirrored' } },
+        ],
+      });
+      await approvePendingPermission(permissionSession);
+      expect(await resumed).toEqual({ resumed: true });
+      await expect.poll(() => finishedTurns(events)).toHaveLength(2);
+      expect(events.filter(event => event.type === 'model-output' && event.textDelta === 'mirrored')).toHaveLength(1);
+    });
+  });
+
+});
+
 describe('createAgyBackgroundContinuationSource while the host refuses admission', () => {
   it('hands claimed updates to the prompt that starts first and keeps following the calls they started', async () => {
     const released: SessionUpdate[] = [];
@@ -349,5 +371,29 @@ describe('createAgyBackgroundContinuationSource while the host refuses admission
     expect(source.claimLiveUpdate?.(testsSettled, { foregroundActive: false })).toBe(true);
     expect(host.beginContinuation).toHaveBeenCalledTimes(4);
     await source.dispose();
+  });
+
+  it('keeps the stall deadline when only session metadata arrives and reports a timeout', async () => {
+    vi.useFakeTimers();
+    const finish = vi.fn(async () => {});
+    const host: AcpProviderTurnSourceHost = {
+      sessionId: SESSION_ID, cwd: '/', env: {}, signal: new AbortController().signal,
+      registerContinuation: () => true,
+      beginContinuation: () => ({ update: async () => {}, finish }),
+      releaseToolCalls() {}, releaseClaimedUpdates() {}, fail: vi.fn(),
+    };
+    const source = await createAgyBackgroundContinuationSource({ generationSettleMs: 20, stallMs: 100 })(host);
+    try {
+      source.claimLiveUpdate?.({ sessionUpdate: 'tool_call', toolCallId: 'call_build', status: 'in_progress' }, { foregroundActive: true });
+      await source.catchUp({ foregroundActive: false });
+      source.claimLiveUpdate?.({ sessionUpdate: 'tool_call_update', toolCallId: 'call_build', status: 'completed' }, { foregroundActive: false });
+      await vi.advanceTimersByTimeAsync(75);
+      source.claimLiveUpdate?.({ sessionUpdate: 'current_mode_update', currentModeId: 'default' }, { foregroundActive: false });
+      await vi.advanceTimersByTimeAsync(25);
+      expect(finish).toHaveBeenCalledWith(expect.objectContaining({ kind: 'timed_out' }));
+    } finally {
+      await source.dispose();
+      vi.useRealTimers();
+    }
   });
 });

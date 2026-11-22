@@ -1,3 +1,4 @@
+import type { ConnectedServiceBindingsV1 } from '@happier-dev/protocol';
 import type { ReactNode } from 'react';
 import type {
     AccountProfile,
@@ -283,6 +284,7 @@ export type NewSessionRelevantInstallableDepsContext = Readonly<{
     agentId: AgentId;
     settings: Settings;
     experiments: AgentResumeExperiments;
+    connectedServices?: ConnectedServiceBindingsV1 | null;
     resumeSessionId: string;
 }>;
 

@@ -6,6 +6,14 @@ import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
 import { createAgyAcpBackend } from './backend';
 import { installPinnedAgyAcpServerFixture, withIsolatedHappierHome } from './pinnedAgyAcpServer.testkit';
 
+vi.mock('cross-spawn', async (importOriginal) => {
+  const actual = await importOriginal<{ default: typeof import('cross-spawn') }>();
+  if (process.platform !== 'win32') return actual;
+  const { wrapPinnedFixtureSpawn } = await import('./pinnedAgyAcpServer.testkit');
+  return { ...actual, default: wrapPinnedFixtureSpawn(actual.default) };
+});
+
+
 afterEach(() => vi.unstubAllEnvs());
 
 describe('Antigravity ACP selected-account process environment', () => {

@@ -1,11 +1,12 @@
 import { ensureAgyAcpServerForLaunch } from '@/backends/agy/acp/ensureAgyAcpServerForLaunch';
-import { usesPinnedAgyAcpServer } from '@/backends/agy/acp/pinnedAgyAcpServer';
+import { resolveAgyAcpRuntime } from '@/backends/agy/acp/pinnedAgyAcpServer';
 import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
 import { validateProviderCliSpawn } from '@/runtime/managedTools/validateProviderCliSpawn';
 
 export const agyDaemonSpawnHooks: DaemonSpawnHooks = {
-  validateSpawn: async ({ environmentVariables, readinessOnly }) => {
-    if (!usesPinnedAgyAcpServer(environmentVariables)) {
+  validateSpawn: async ({ directory, vendorResumeId, environmentVariables, readinessOnly }) => {
+    const runtime = await resolveAgyAcpRuntime({ cwd: directory, vendorResumeId, env: environmentVariables });
+    if (runtime === 'native') {
       return await validateProviderCliSpawn({ agentId: 'agy', processEnv: environmentVariables });
     }
     try {

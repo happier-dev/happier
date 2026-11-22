@@ -1,4 +1,5 @@
-import { dirname } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { installPinnedAgyAcpServerFixture, withIsolatedHappierHome } from '@/backends/agy/acp/pinnedAgyAcpServer.testkit';
@@ -31,6 +32,27 @@ describe('agyDaemonSpawnHooks', () => {
       });
       tempDirs.add(dirname(agyPath));
       await expect(validateSpawn({ ...isolated, PATH: dirname(agyPath) })).resolves.toEqual({ ok: true });
+      expect(downloadRequest).not.toHaveBeenCalled();
+    });
+  });
+
+  it('admits an existing pinned conversation without the native CLI', async () => {
+    await withIsolatedHappierHome(async (home, downloadRequest) => {
+      const id = 'old-conversation';
+      const store = join(home, 'antigravity-acp');
+      await mkdir(join(store, 'conversations'), { recursive: true });
+      await mkdir(join(store, 'brain', id), { recursive: true });
+      await writeFile(join(store, 'conversations', `${id}.db`), 'conversation');
+      await writeFile(join(store, 'conversations', `${id}.meta`), '{}');
+      await installPinnedAgyAcpServerFixture(`#!${process.execPath}\n`);
+
+      await expect(agyDaemonSpawnHooks.validateSpawn!({
+        directory: home,
+        vendorResumeId: id,
+        environmentVariables: {
+          GEMINI_HOME: home, PATH: home, HAPPIER_AGY_PATH: join(home, 'missing-native-agy'),
+        },
+      })).resolves.toEqual({ ok: true });
       expect(downloadRequest).not.toHaveBeenCalled();
     });
   });

@@ -10,22 +10,21 @@ export function resolvePinnedAgyAcpServerHome(env: NodeJS.ProcessEnv): string {
   return configured ? expandHomeDirPath(configured, env) : join(resolveHomeDirFromEnvironment(env), '.gemini');
 }
 
-/** Connected accounts keep the pinned server because it reads the credential home Happier materializes per account. */
-export function usesPinnedAgyAcpServer(env?: NodeJS.ProcessEnv): boolean {
-  return findConnectedServiceChildSelection({ ...process.env, ...env }, 'antigravity') !== null;
-}
-
-export async function isPinnedAgyAcpServerConversation(params: Readonly<{
-  sessionId: string;
-  cwd: string;
+/** Resolve against the same auth binding and released conversation store for admission and launch. */
+export async function resolveAgyAcpRuntime(params: Readonly<{
+  vendorResumeId?: string | null;
+  cwd?: string;
   env?: NodeJS.ProcessEnv;
-}>): Promise<boolean> {
-  const home = resolvePinnedAgyAcpServerHome({ ...process.env, ...params.env });
+}>): Promise<'native' | 'pinned' | 'connected'> {
+  const env = { ...process.env, ...params.env };
+  if (findConnectedServiceChildSelection(env, 'antigravity')) return 'connected';
+  if (!params.vendorResumeId) return 'native';
+  const home = resolvePinnedAgyAcpServerHome(env);
   const reachable = await verifyResumeReachableAgy({
     targetMaterializedRoot: home,
     targetMaterializedEnv: { GEMINI_HOME: home },
-    vendorResumeId: params.sessionId,
-    cwd: params.cwd,
+    vendorResumeId: params.vendorResumeId,
+    cwd: params.cwd ?? process.cwd(),
   });
-  return reachable.ok;
+  return reachable.ok ? 'pinned' : 'native';
 }

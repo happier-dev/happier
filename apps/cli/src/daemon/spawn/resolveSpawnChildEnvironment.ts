@@ -204,6 +204,7 @@ export async function resolveSpawnChildEnvironment(params: {
     runtimeSelection: {
       experimentalCodexAcp: effectiveExperimentalCodexAcp,
       codexBackendMode: effectiveCodexBackendMode,
+      vendorResumeId: explicitResumeId,
       ...validationContext,
     },
   });

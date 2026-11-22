@@ -742,8 +742,8 @@ export interface AcpBackendOptions {
   /** Working directory for the agent */
   cwd: string;
 
-  /** Command to spawn the ACP agent */
-  command: string;
+  /** Command to spawn when the provider does not supply one at launch. */
+  command?: string;
 
   /** Arguments for the agent command */
   args?: string[];
@@ -759,6 +759,10 @@ export interface AcpBackendOptions {
     command?: string;
     args?: readonly string[];
     env?: NodeJS.ProcessEnv;
+    unsetEnv?: readonly string[];
+    providerTurnSource?: AcpProviderTurnSourceFactory;
+    /** Some providers accept unknown ids in session/load and silently open empty history. */
+    requireListedSessionOnLoad?: boolean;
     cleanup?: () => void | Promise<void>;
   }>>;
 
@@ -917,6 +921,8 @@ export class AcpBackend implements AgentBackend {
   private readonly providerTurnEventListeners = new Set<() => void>();
   private process: ChildProcess | null = null;
   private spawnedProcessEnv: NodeJS.ProcessEnv = {};
+  private spawnedProviderTurnSource?: AcpProviderTurnSourceFactory;
+  private requireListedSessionOnLoad = false;
   private processLaunchCleanup: (() => void | Promise<void>) | null = null;
   private stderrAppender: BoundedTextFileAppender | null = null;
   private readonly summarizeStderrForLogs = createAcpStderrLogSummarizer();
@@ -1099,14 +1105,24 @@ export class AcpBackend implements AgentBackend {
       return updateCandidates;
     }
     const foregroundActive = this.isForegroundPromptTurnActive();
-    return updateCandidates.filter((candidate) =>
-      typeof asRecord(candidate)?.sessionUpdate !== 'string'
-      || !source.claimLiveUpdate?.(candidate as SessionUpdate, { foregroundActive }));
+    const claimed: SessionUpdate[] = [];
+    const unclaimed = updateCandidates.filter((candidate) => {
+      if (typeof asRecord(candidate)?.sessionUpdate !== 'string'
+        || !source.claimLiveUpdate?.(candidate as SessionUpdate, { foregroundActive })) return true;
+      claimed.push(candidate as SessionUpdate);
+      return false;
+    });
+    if (claimed.length === 0) return unclaimed;
+    const mirrors = buildStructuredAgentMessageChunkMirrorSet(claimed);
+    return mirrors.size === 0 ? unclaimed : unclaimed.filter((candidate) => {
+      const update = asRecord(candidate);
+      return !update || !shouldSkipLegacyMessageChunkMirror(update as SessionUpdate, mirrors);
+    });
   }
 
   /** Reject filesystem requests outside the active admitted turn, including the cancellation/reload interval. */
   private assertClientFsRequestOwnership(sessionId: string): void {
-    if (!this.options.providerTurnSource) return;
+    if (!this.spawnedProviderTurnSource) return;
     if (
       this.disposed || sessionId !== this.acpSessionId || this.providerCancellation
       || !this.providerSource || !this.activePermissionContext
@@ -1118,7 +1134,7 @@ export class AcpBackend implements AgentBackend {
 
   /** Recheck originating turn authority after filesystem awaits, including cancellation and successor turns. */
   private captureClientFsRequestOwnership(sessionId: string): (() => void) | undefined {
-    if (!this.options.providerTurnSource) return;
+    if (!this.spawnedProviderTurnSource) return;
     this.assertClientFsRequestOwnership(sessionId);
     const generation = this.turnGeneration;
     const lifetime = this.providerSourceLifetime;
@@ -1142,14 +1158,14 @@ export class AcpBackend implements AgentBackend {
    * Every callback is bound to this lifetime; source failure retires the native connection.
    */
   private async startProviderTurnSource(): Promise<void> {
-    if (!this.options.providerTurnSource || !this.acpSessionId) return;
+    if (!this.spawnedProviderTurnSource || !this.acpSessionId) return;
     await this.stopProviderTurnSource();
     const lifetime = new AbortController();
     this.providerSourceLifetime = lifetime;
     const sessionId = this.acpSessionId;
     const current = () => !this.disposed && !lifetime.signal.aborted
       && this.providerSourceLifetime === lifetime && this.acpSessionId === sessionId;
-    const source = await this.options.providerTurnSource({
+    const source = await this.spawnedProviderTurnSource({
       sessionId, cwd: this.options.cwd, env: { ...this.spawnedProcessEnv }, signal: lifetime.signal,
       registerContinuation: ({ id, parentToolCallId }) => {
         const context = this.providerToolContexts.get(parentToolCallId);
@@ -1412,6 +1428,8 @@ export class AcpBackend implements AgentBackend {
     const cleanup = this.processLaunchCleanup;
     this.processLaunchCleanup = null;
     this.spawnedProcessEnv = {};
+    this.spawnedProviderTurnSource = undefined;
+    this.requireListedSessionOnLoad = false;
     if (!cleanup) return;
     try {
       await cleanup();
@@ -1420,7 +1438,7 @@ export class AcpBackend implements AgentBackend {
     }
   }
 
-  private buildSpawnEnv(): NodeJS.ProcessEnv {
+  private buildSpawnEnv(launchUnsetEnv: readonly string[] = []): NodeJS.ProcessEnv {
     const inheritedEnv: NodeJS.ProcessEnv = { ...process.env };
     const unsetEnvKeys = new Set(
       (this.options.unsetEnv ?? [])
@@ -1434,7 +1452,14 @@ export class AcpBackend implements AgentBackend {
         }
       }
     }
-    return { ...inheritedEnv, ...this.options.env };
+    const env = { ...inheritedEnv, ...this.options.env };
+    const launchUnsetKeys = new Set(launchUnsetEnv.map((key) => key.toLowerCase()));
+    if (launchUnsetKeys.size > 0) {
+      for (const key of Object.keys(env)) {
+        if (launchUnsetKeys.has(key.toLowerCase())) delete env[key];
+      }
+    }
+    return env;
   }
 
   private resetExtensionAbortControllerForTurn(): void {
@@ -1522,12 +1547,16 @@ export class AcpBackend implements AgentBackend {
         throw new Error('Backend has been disposed');
       }
 
-      this.spawnedProcessEnv = { ...this.buildSpawnEnv(), ...preparedLaunch?.env };
+      const command = preparedLaunch?.command ?? this.options.command;
+      if (!command) throw new Error('ACP process launch did not provide a command');
+      this.spawnedProviderTurnSource = preparedLaunch?.providerTurnSource ?? this.options.providerTurnSource;
+      this.requireListedSessionOnLoad = preparedLaunch?.requireListedSessionOnLoad === true;
+      this.spawnedProcessEnv = { ...this.buildSpawnEnv(preparedLaunch?.unsetEnv), ...preparedLaunch?.env };
 
       // Spawn the ACP agent process.
       // Use cross-spawn so Windows quoting/.cmd resolution is handled safely without joining args.
       const spec = buildAcpSpawnSpec({
-        command: preparedLaunch?.command ?? this.options.command,
+        command,
         args: preparedLaunch?.args ? [...preparedLaunch.args] : (this.options.args || []),
         cwd: this.options.cwd,
         env: this.spawnedProcessEnv,
@@ -2316,6 +2345,10 @@ export class AcpBackend implements AgentBackend {
         );
       }
 
+      if (this.requireListedSessionOnLoad) {
+        await this.assertSessionIsListed(normalized, initTimeout);
+      }
+
       const loadSessionRequest: LoadSessionRequest = {
         sessionId: normalized,
         cwd: this.options.cwd,
@@ -2359,6 +2392,36 @@ export class AcpBackend implements AgentBackend {
       });
       await this.cleanupInitializedProcessConnection({ graceMs: 250 });
       throw error;
+    }
+  }
+
+  private async assertSessionIsListed(sessionId: string, timeoutMs: number): Promise<void> {
+    const connection = this.connection;
+    const scan = async () => {
+      let cursor: string | null = null;
+      const visitedCursors = new Set<string>();
+      for (;;) {
+        // Do not reopen a connection if the startup deadline or disposal closed this one.
+        if (!connection || connection !== this.connection) throw new Error('ACP connection closed while finding the session');
+        const page = await this.listSessions({ cursor });
+        if (page.sessions.some((entry) => entry.sessionId === sessionId)) return;
+        cursor = page.nextCursor;
+        if (!cursor) break;
+        if (visitedCursors.has(cursor)) throw new Error('ACP session/list returned a repeated cursor');
+        visitedCursors.add(cursor);
+      }
+      throw new Error(`Could not find the requested session in the ${this.options.agentName} runtime`);
+    };
+    let timeoutHandle: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        scan(),
+        new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(() => reject(this.createStartupTimeoutError('Find existing session', timeoutMs)), timeoutMs);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeoutHandle);
     }
   }
 
@@ -3537,7 +3600,7 @@ export class AcpBackend implements AgentBackend {
     }
 
     this.emit({ type: 'status', status: 'running' });
-    this.beginResponseTurn(this.options.providerTurnSource ? Object.freeze({
+    this.beginResponseTurn(this.spawnedProviderTurnSource ? Object.freeze({
       permissionMode: this.options.getPermissionMode?.() ?? this.options.permissionMode ?? 'default',
     }) : undefined);
     const turnGeneration = this.turnGeneration;

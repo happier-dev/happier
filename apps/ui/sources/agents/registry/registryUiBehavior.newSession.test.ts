@@ -37,16 +37,8 @@ describe('getNewSessionRelevantInstallableDepKeys', () => {
         })).toEqual([]);
     });
 
-    it('returns the pinned Agy ACP server only when Agy defaults to a connected account', () => {
-        const native = makeSettings();
-        expect(getNewSessionRelevantInstallableDepKeys({
-            agentId: 'agy',
-            settings: native,
-            experiments: getAgentResumeExperimentsFromSettings('agy', native),
-            resumeSessionId: '',
-        })).toEqual([]);
-
-        const connected = makeSettings({
+    it('uses the effective Antigravity binding for the install prerequisite', () => {
+        const settings = makeSettings({
             connectedServicesAdditionalDefaultAuthByAgentIdV1: {
                 v: 1,
                 bindingsByAgentId: {
@@ -54,11 +46,19 @@ describe('getNewSessionRelevantInstallableDepKeys', () => {
                 },
             },
         });
-        expect(getNewSessionRelevantInstallableDepKeys({
+        const context = {
             agentId: 'agy',
-            settings: connected,
-            experiments: getAgentResumeExperimentsFromSettings('agy', connected),
+            settings,
+            experiments: getAgentResumeExperimentsFromSettings('agy', settings),
             resumeSessionId: '',
+        } as const;
+        expect(getNewSessionRelevantInstallableDepKeys({
+            ...context,
+            connectedServices: { v: 1, bindingsByServiceId: { antigravity: { source: 'native' } } },
+        })).toEqual([]);
+        expect(getNewSessionRelevantInstallableDepKeys({
+            ...context,
+            connectedServices: { v: 1, bindingsByServiceId: { antigravity: { source: 'connected', selection: 'profile', profileId: 'work' } } },
         })).toEqual([INSTALLABLE_KEYS.AGY_ACP_SERVER]);
     });
 });

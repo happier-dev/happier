@@ -34,7 +34,7 @@ import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { isAgentAuthProbeSafeForBackgroundChecks } from '@happier-dev/agents';
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV1, ConnectedServiceBindingsV1 } from '@happier-dev/protocol';
 import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 
 import { useStableValueBySignature } from '@/hooks/ui/useStableValueBySignature';
@@ -64,6 +64,8 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     resumeSessionId: string | null;
     enabledAgentIds: ReadonlyArray<AgentId>;
     agentNewSessionOptionStateByAgentId: Readonly<Record<string, Record<string, unknown>>>;
+    connectedServices?: ConnectedServiceBindingsV1 | null;
+    resolveConnectedServicesForAgent?: (agentId: AgentId) => ConnectedServiceBindingsV1 | null;
     resolvedBackendEntries: readonly ResolvedBackendCatalogEntry[];
     selectedBackendEntry: ResolvedBackendCatalogEntry | null;
     setBackendTarget: React.Dispatch<React.SetStateAction<BackendTargetRefV1>>;
@@ -151,6 +153,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
             settings: params.settings,
             experiments,
             resumeSessionId: params.resumeSessionId ?? '',
+            connectedServices: params.connectedServices,
         });
         if (relevantKeys.length === 0) return [];
 
@@ -163,6 +166,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
         });
     }, [
         params.agentType,
+        params.connectedServices,
         params.resumeSessionId,
         params.selectedMachineId,
         params.settings,
@@ -178,11 +182,12 @@ export function useNewSessionAvailabilityState(params: Readonly<{
                 settings: params.settings,
                 experiments,
                 resumeSessionId: params.resumeSessionId ?? '',
+                connectedServices: id === params.agentType ? params.connectedServices : params.resolveConnectedServicesForAgent?.(id),
             });
             out[id] = relevantKeys.length;
         }
         return out;
-    }, [params.enabledAgentIds, params.resumeSessionId, params.settings]);
+    }, [params.agentType, params.connectedServices, params.enabledAgentIds, params.resolveConnectedServicesForAgent, params.resumeSessionId, params.settings]);
 
     const selectableWithoutCliByAgentId = React.useMemo(() => {
         const out: Partial<Record<AgentId, boolean>> = {};
@@ -313,6 +318,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
                     serverId: params.capabilityServerId,
                     settings: params.settings,
                     resumeSessionId: params.resumeSessionId,
+                    connectedServices: params.connectedServices,
                 }),
                 { tag: `NewSessionScreenModel.installables.ensure.${params.agentType}` },
             );
@@ -320,6 +326,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     }, [
         params.agentType,
         params.capabilityServerId,
+        params.connectedServices,
         params.machines,
         params.resumeSessionId,
         params.selectedMachineId,

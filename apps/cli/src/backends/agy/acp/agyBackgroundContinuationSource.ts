@@ -107,7 +107,7 @@ export function createAgyBackgroundContinuationSource(
       open.stallTimer = null;
     };
 
-    const finish = (open: Continuation, reason: string) => {
+    const finish = (open: Continuation, outcome: AcpTurnOutcome, reason: string) => {
       if (continuation !== open || open.pendingFinish) return;
       clearTimers(open);
       const request = {};
@@ -119,13 +119,13 @@ export function createAgyBackgroundContinuationSource(
         logger.debug(`[AgyContinuation] Finished ${open.turnId}: ${reason}`);
         // Earlier deliveries have settled, so the host has witnessed every tool call the continuation started.
         retainBackgroundTasks(open.toolCalls);
-        await open.sink.finish(COMPLETED_CONTINUATION);
+        await open.sink.finish(outcome);
       });
     };
 
     const armSettleTimer = (open: Continuation) => {
       clearSettleTimer(open);
-      open.settleTimer = startTimer(generationSettleMs, () => finish(open, 'no output followed the last generation'));
+      open.settleTimer = startTimer(generationSettleMs, () => finish(open, COMPLETED_CONTINUATION, 'no output followed the last generation'));
     };
 
     const restartStallTimer = (open: Continuation) => {
@@ -136,7 +136,7 @@ export function createAgyBackgroundContinuationSource(
           return;
         }
         logger.warn('[AgyContinuation] Agy stopped reporting progress; ending its continuation');
-        finish(open, 'stalled');
+        finish(open, { kind: 'timed_out', capMs: stallMs }, 'stalled');
       };
       open.stallTimer = startTimer(stallMs, onStall);
     };
@@ -233,6 +233,7 @@ export function createAgyBackgroundContinuationSource(
         }
         settleForegroundTurn();
         if (continuation) {
+          if (update.sessionUpdate !== 'usage_update' && !GENERATION_PROGRESS_UPDATES.has(update.sessionUpdate ?? '')) return false;
           reopen(continuation);
           deliver(continuation, update);
           return true;

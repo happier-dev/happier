@@ -1,3 +1,4 @@
+import { resolveNewSessionConnectedServicesBindingsForAgent } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import React from 'react';
 import { View, useWindowDimensions, InteractionManager } from 'react-native';
 import { useLaunchSelectionMachines, useSessionRecentPathEntries, storage, useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
@@ -763,6 +764,39 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
     const composerWorkspace = React.useMemo(() => resolveNewSessionFileSuggestionScope({
         targetServerId, selectedMachineId, selectedMachineHomeDir, selectedPath,
     }), [selectedMachineId, selectedMachineHomeDir, selectedPath, targetServerId]);
+    const agentOptionState = agentNewSessionOptionStateByAgentId[selectedBackendTargetKey] ?? null;
+    const agentCore = React.useMemo(() => getAgentCore(agentType), [agentType]);
+
+    const setAgentOptionStateForCurrentAgent = React.useCallback((key: string, value: unknown) => {
+        setAgentNewSessionOptionStateByAgentId((prev) => {
+            const current = prev[selectedBackendTargetKey] ?? {};
+            const nextForTarget = { ...current, [key]: value };
+            return { ...prev, [selectedBackendTargetKey]: nextForTarget };
+        });
+    }, [selectedBackendTargetKey]);
+
+    const { connectedServicesBindingsPayload, connectedServicesAuthChip } = useNewSessionConnectedServices({
+        agentCore,
+        agentOptionState,
+        settings,
+        targetServerId,
+        targetMachineId: selectedMachineId,
+        router,
+        setAgentOptionStateForCurrentAgent,
+    });
+
+    const resolveConnectedServicesForAgent = React.useCallback((id: AgentId) => (
+        resolveNewSessionConnectedServicesBindingsForAgent({
+            agentId: id,
+            agentCore: getAgentCore(id),
+            agentOptionState: agentNewSessionOptionStateByAgentId[id],
+            accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
+            settings,
+            connectedServicesFeatureEnabled,
+            accountGroupsFeatureEnabled: connectedServicesAccountGroupsFeatureEnabled,
+        }).connectedServicesBindingsPayload
+    ), [accountProfile?.connectedServicesV2, agentNewSessionOptionStateByAgentId, connectedServicesAccountGroupsFeatureEnabled, connectedServicesFeatureEnabled, settings]);
+
     const {
         cliAvailability,
         selectedMachineCapabilities,
@@ -788,6 +822,8 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         resumeSessionId,
         enabledAgentIds,
         agentNewSessionOptionStateByAgentId,
+        connectedServices: connectedServicesBindingsPayload,
+        resolveConnectedServicesForAgent,
         resolvedBackendEntries,
         selectedBackendEntry,
         setBackendTarget,
@@ -826,27 +862,6 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         }
         setSelectedProfileId(nextProfileId);
     }, [initialImplicitProfileId, selectedProfileId, useProfiles]);
-
-    const agentOptionState = agentNewSessionOptionStateByAgentId[selectedBackendTargetKey] ?? null;
-    const agentCore = React.useMemo(() => getAgentCore(agentType), [agentType]);
-
-    const setAgentOptionStateForCurrentAgent = React.useCallback((key: string, value: unknown) => {
-        setAgentNewSessionOptionStateByAgentId((prev) => {
-            const current = prev[selectedBackendTargetKey] ?? {};
-            const nextForTarget = { ...current, [key]: value };
-            return { ...prev, [selectedBackendTargetKey]: nextForTarget };
-        });
-    }, [selectedBackendTargetKey]);
-
-    const { connectedServicesBindingsPayload, connectedServicesAuthChip } = useNewSessionConnectedServices({
-        agentCore,
-        agentOptionState,
-        settings,
-        targetServerId,
-        targetMachineId: selectedMachineId,
-        router,
-        setAgentOptionStateForCurrentAgent,
-    });
 
     const agentNewSessionOptions = React.useMemo(() => {
         const base = buildNewSessionOptionsFromUiState({ agentId: agentType, agentOptionState }) ?? {};

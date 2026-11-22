@@ -2,7 +2,16 @@ import { chmod, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { installPinnedAgyAcpServerFixture, withIsolatedHappierHome } from '../acp/pinnedAgyAcpServer.testkit';
 import { handleAgyCliCommand } from './command';
+
+vi.mock('cross-spawn', async (importOriginal) => {
+  const actual = await importOriginal<{ default: typeof import('cross-spawn') }>();
+  if (process.platform !== 'win32') return actual;
+  const { wrapPinnedFixtureSpawn } = await import('../acp/pinnedAgyAcpServer.testkit');
+  return { ...actual, default: wrapPinnedFixtureSpawn(actual.default) };
+});
+
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -20,6 +29,31 @@ describe('happier agy auth login', () => {
       await handleAgyCliCommand({ args: ['agy', 'auth', 'login'], rawArgv: [], terminalRuntime: null });
 
       expect(JSON.parse(await readFile(argvPath, 'utf8'))).toEqual(['acp', '--login']);
+    });
+  });
+  it.each([
+    { flags: ['--pinned'], method: 'oauth-personal' },
+    { flags: ['--method', 'oauth-business'], method: 'oauth-business' },
+  ])('can refresh the released pinned login using $method', async ({ flags, method }) => {
+    await withIsolatedHappierHome(async dir => {
+      const capturePath = join(dir, 'method.json');
+      await installPinnedAgyAcpServerFixture(`#!${process.execPath}
+        const fs = require('node:fs');
+        const input = require('node:readline').createInterface({ input: process.stdin });
+        input.on('line', (line) => {
+          const request = JSON.parse(line);
+          const result = request.method === 'initialize' ? {
+            protocolVersion: 1,
+            authMethods: [{ id: 'oauth-personal', name: 'Personal' }, { id: 'oauth-business', name: 'Business' }],
+          } : {};
+          if (request.method === 'authenticate') {
+            fs.writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify(request.params.methodId));
+          }
+          process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\\n');
+        });
+      `);
+      await handleAgyCliCommand({ args: ['agy', 'auth', 'login', ...flags], rawArgv: [], terminalRuntime: null });
+      expect(JSON.parse(await readFile(capturePath, 'utf8'))).toBe(method);
     });
   });
 });
