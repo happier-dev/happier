@@ -11,6 +11,7 @@ import type { ManagedMachinePresetRecipientCensusResultV1 } from '@happier-dev/p
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { readMachinePresetRecipientCensus } from '@/app/machines/managed/machinePresetService';
 import { storeOpaquePresetLaunch } from '@/app/machines/managed/managedRows';
+import { databaseQueryDurationHistogram } from '@/app/monitoring/metrics/databaseDriverMetrics';
 import { db } from '@/storage/db';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
@@ -26,7 +27,7 @@ describe('Machine preset owed recipient delivery', () => {
 
     beforeAll(async () => {
         database = await createLightSqliteHarness({ tempDirPrefix: 'happier-preset-owed-', initAuth: false,
-            env: { HAPPIER_SERVER_IDENTITY_ID: homeId, HAPPIER_FEATURE_TEAMS__ENABLED: '1' } });
+            env: { HAPPIER_SERVER_IDENTITY_ID: homeId, HAPPIER_FEATURE_TEAMS__ENABLED: '1', METRICS_ENABLED: '1' } });
         app = createAuthenticatedTestApp();
         registerMachinePresetRoutes(app);
         await app.ready();
@@ -68,15 +69,30 @@ describe('Machine preset owed recipient delivery', () => {
             accountKey: managerKey, recipientCensus: current.recipients, randomBytes: nacl.randomBytes });
         if (!prepared) throw new Error('Expected current recipients');
         const preparedLaunch = storeOpaquePresetLaunch({ contentEncryptionMode: 'e2ee', content: sealed.content, recipients: prepared });
+        const request = (url: string, accountId: string, payload?: object) => app.inject({ url, method: payload ? 'POST' : 'GET',
+            headers: { 'x-test-user-id': accountId }, ...(payload ? { payload } : {}) });
+        const statementCount = async () => {
+            const metric = await databaseQueryDurationHistogram.get();
+            return metric.values.find(sample => sample.metricName === `${metric.name}_count`)?.value ?? 0;
+        };
+        const requestManagerCensus = async () => {
+            const before = await statementCount();
+            const response = await request(path, manager);
+            return { response, statements: (await statementCount()) - before };
+        };
+        const single = await requestManagerCensus();
+        expect(single.response.statusCode, single.response.body).toBe(200);
+        expect(single.response.json().items.map((item: { id: string }) => item.id)).toEqual([id]);
+        expect(single.statements).toBeGreaterThan(0);
+
         await db.managedMachinePreset.createMany({ data: Array.from({ length: 1_000 },
             (_, index) => ({ ...row, id: `preset-prepared-${index}`, launch: preparedLaunch })) });
 
-        const request = (url: string, accountId: string, payload?: object) => app.inject({ url, method: payload ? 'POST' : 'GET',
-            headers: { 'x-test-user-id': accountId }, ...(payload ? { payload } : {}) });
         const parses = vi.spyOn(ManagedMachinePresetEnvelopeV1Schema, 'parse');
         const verifies = vi.spyOn(accountKeyBinding, 'verifyAccountContentKeyBindingV1');
         try {
-            const owed = await request(path, manager);
+            const { response: owed, statements } = await requestManagerCensus();
+            expect(statements).toBe(single.statements);
             expect(owed.statusCode, owed.body).toBe(200);
             const { items } = owed.json<{ items: { homeId: string; id: string; expectedRevision: number;
                 recipients: ManagedMachinePresetRecipientsV1; census: Extract<ManagedMachinePresetRecipientCensusResultV1, { kind: 'ready' }> }[] }>();

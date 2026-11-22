@@ -143,19 +143,24 @@ function projectPreset(row: StoredPreset, lastUsedAt?: number): ManagedMachinePr
     });
 }
 
+type PresetAccessOperation = 'read' | 'manage' | 'archive';
+
+function permitsTeamPresetOperation(actor: TeamActorContext, operation: PresetAccessOperation): boolean {
+    if (operation === 'read') return actor.teamCapabilities.viewTeam;
+    if (operation === 'archive' && actor.team.archivedAt !== null) return actor.teamCapabilities.restoreTeam;
+    return actor.teamCapabilities.manageSettings;
+}
+
 async function resolvePresetAccessInTx(tx: Tx, context: PresetContext, owner: ManagedMachinePresetV1["owner"],
-    operation: 'read' | 'manage' | 'archive', admittedTeamActor?: TeamActorContext): Promise<Readonly<{ teamArchivedAt: Date | null }> | null> {
+    operation: PresetAccessOperation, admittedTeamActor?: TeamActorContext): Promise<Readonly<{ teamArchivedAt: Date | null }> | null> {
     if (owner.kind === "account") {
         if (owner.accountId !== context.accountId) return null;
         return (await tx.account.findUnique({ where: { id: context.accountId }, select: { status: true } }))?.status === AccountStatus.active
             ? { teamArchivedAt: null } : null;
     }
     const actor = admittedTeamActor ?? await resolveTeamActorContextInTx(tx, { teamId: owner.teamId, actorAccountId: context.accountId });
-    if (!actor) return null;
-    const permitted = operation === 'read' ? actor.teamCapabilities.viewTeam
-        : operation === 'archive' && actor.team.archivedAt !== null ? actor.teamCapabilities.restoreTeam
-            : actor.teamCapabilities.manageSettings;
-    if (!permitted || !(await qualifyTeamOperationAuthenticationInTx(tx, { ...context.authentication, context: actor })).ok) return null;
+    if (!actor || !permitsTeamPresetOperation(actor, operation)
+        || !(await qualifyTeamOperationAuthenticationInTx(tx, { ...context.authentication, context: actor })).ok) return null;
     return { teamArchivedAt: actor.team.archivedAt };
 }
 
@@ -542,7 +547,7 @@ export async function readOwedMachinePresetRecipientCensuses(params: PresetConte
         });
         const actorContexts = await resolveTeamActorContextsInTx(tx, { actorAccountId: params.accountId,
             teamIds: memberships.map(member => member.teamId) });
-        const manageable = [...actorContexts.values()].filter(context => context.teamCapabilities.manageSettings);
+        const manageable = [...actorContexts.values()].filter(actor => permitsTeamPresetOperation(actor, 'manage'));
         const qualified = await qualifyTeamOperationAuthenticationsInTx(tx, { ...params.authentication, contexts: manageable });
         const teamIds = manageable.filter(context => qualified.get(context.team.id)?.ok === true).map(context => context.team.id);
         const { memberIdsByTeam, accountsById } = await readTeamResourceRecipientAccountsInTx(tx, teamIds);
