@@ -1147,6 +1147,35 @@ describe('workspace sync broker authentication and attach rules', () => {
     } finally { await client.close(); }
   });
 
+  it.each([
+    { nativeCode: 'git_selection_unavailable', expectedCode: 'git_selection_unavailable' },
+    { nativeCode: 'engine_unavailable', expectedCode: 'peer_unavailable' },
+  ] as const)('settles attached carrier EOF using the native resume verdict ($nativeCode)', async ({ nativeCode, expectedCode }) => {
+    const operationId = 'resume-after-carrier-eof';
+    const alphaId = deriveWorkspaceSyncEndpointId(operationId, 'alpha');
+    const betaId = deriveWorkspaceSyncEndpointId(operationId, 'beta');
+    const alpha = new PeerStream();
+    const fixture = await useFixture(await startBroker({
+      openExternalStream: async ({ endpointId }) => {
+        if (endpointId === alphaId) return alpha;
+        throw new BrokerProtocolError('peer_unavailable', 'beta peer unavailable');
+      },
+    }));
+    const client = await connectClient(fixture);
+    client.onCommand(async () => {
+      const pipe = await client.openStream(alphaId);
+      alpha.destroy();
+      await pipe.done;
+      // The native manager attempts beta even when alpha initialization failed.
+      await expect(client.openStream(betaId)).rejects.toMatchObject({ code: 'peer_unavailable' });
+      throw new BrokerProtocolError(nativeCode, 'Native resume failed');
+    });
+    try {
+      await expect(fixture.broker.command({ t: 'resume', requestId: 'resume-eof', sessionIdentifier: 'session' },
+        { operationId })).rejects.toMatchObject({ code: expectedCode });
+    } finally { await client.close(); }
+  });
+
   it.each(['resume', 'pause', 'terminate'] as const)('allows %s to retire an already attached endpoint', async commandType => {
     const fixture = await useFixture(await startBroker());
     const client = await connectClient(fixture);

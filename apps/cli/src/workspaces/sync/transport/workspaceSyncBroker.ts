@@ -107,10 +107,12 @@ type PendingStream = {
 };
 
 type PendingCommand = {
+  type: MutagenControlCommandV1['t'];
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
   abortCleanup?: () => void;
   endpointIds?: readonly string[];
+  resumeCarrierFailure?: BrokerProtocolError;
   trace?: WebLatencyTracePoint;
 };
 
@@ -289,7 +291,7 @@ export class WorkspaceSyncBroker {
         );
         const abortCleanup = options.signal ? () => options.signal?.removeEventListener('abort', abort) : undefined;
         options.signal?.addEventListener('abort', abort, { once: true });
-        this.commands.set(command.requestId, { resolve, reject, abortCleanup,
+        this.commands.set(command.requestId, { type: command.t, resolve, reject, abortCleanup,
           trace: readWebLatencyTracePoint(),
           ...(options.operationId && (command.t === 'create' || command.t === 'resume' || command.t === 'flush') ? { endpointIds: [
             deriveWorkspaceSyncEndpointId(options.operationId, 'alpha'),
@@ -525,10 +527,15 @@ export class WorkspaceSyncBroker {
     const socket = stream.control;
     const failExternal = (failure: BrokerProtocolError): void => {
       if (stream.closed) return;
-      // The endpoint failure is already terminal for these transfer commands.
-      // Cancel native work so its per-session queue can also advance.
       for (const [requestId, command] of this.commands) {
         if (!command.endpointIds?.includes(message.endpointId)) continue;
+        // Resume tries both endpoints before reporting the first initialization
+        // refusal. Closing the stream lets it finish and report that refusal.
+        if (command.type === 'resume') {
+          command.resumeCarrierFailure ??= failure;
+          continue;
+        }
+        // The endpoint failure is terminal for the other transfer commands.
         this.settleCommand(requestId, undefined, failure);
         const control = this.authenticatedControl;
         if (control && !control.destroyed) this.send(control, { t: 'cancel', requestId });
@@ -736,12 +743,12 @@ export class WorkspaceSyncBroker {
     }
   }
 
-  private settleCommand(requestId: string, result: unknown, error?: Error): void {
+  private settleCommand(requestId: string, result: unknown, error?: BrokerProtocolError): void {
     const command = this.commands.get(requestId);
     if (!command) return;
     this.commands.delete(requestId);
     command.abortCleanup?.();
-    if (error) command.reject(error);
+    if (error) command.reject(error.code === 'engine_unavailable' ? command.resumeCarrierFailure ?? error : error);
     else command.resolve(result);
   }
 

@@ -770,6 +770,32 @@ describe.skipIf(runInstalledArtifactIntegration)(
   'daemon workspace sync runtime with source-built Mutagen processes',
   { timeout: 150_000 },
   () => {
+    it('reports Git worktree refusal after the native agent closes its data stream', async () => {
+      const binaries = await requireLiveBinaries();
+      await withLiveRuntime({ binaries, relationship: null }, async ({ runtime, alphaRoot, betaRoot }) => {
+        await writeFile(join(alphaRoot, 'ordinary.txt'), 'ordinary workspace\n');
+        const copy = {
+          v: 1 as const,
+          controllerMachineId: 'local-machine',
+          alphaWorkspaceRefId: 'alpha-ref',
+          betaWorkspaceRefId: 'beta-ref',
+        };
+        await runtime.managedWorkspaceSync.copyOnce({
+          ...copy,
+          operationId: 'native-ordinary-folder-copy',
+          contentPolicy: { ...contentPolicy, policyDigest: computeWorkspaceSyncPolicyDigest(contentPolicy) },
+        });
+        await expect(readFile(join(betaRoot, 'ordinary.txt'), 'utf8')).resolves.toBe('ordinary workspace\n');
+
+        const worktreePolicy = { ...contentPolicy, selection: 'git_worktree' as const };
+        await expect(runtime.managedWorkspaceSync.copyOnce({
+          ...copy,
+          operationId: 'native-git-worktree-refusal',
+          contentPolicy: { ...worktreePolicy, policyDigest: computeWorkspaceSyncPolicyDigest(worktreePolicy) },
+        })).rejects.toMatchObject({ code: 'git_selection_unavailable' });
+      });
+    });
+
     it('preserves a carrier refusal through the real .11 manager command response', async () => {
       const binaries = await requireLiveBinaries();
       const root = await realpath(await mkdtemp(join(tmpdir(), 'hwse-')));
