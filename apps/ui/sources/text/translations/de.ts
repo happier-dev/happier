@@ -12060,7 +12060,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
             previewsFrom: ({ machine }: { machine: string }) => `Vorschauen von ${machine}`,
             previews: 'Vorschauen von diesem Rechner',
         },
-        refreshing: 'Browser-Ziele werden aktualisiert',
+        refreshing: 'Laufende Vorschauen werden gesucht…',
         sections: {
             running: 'Laufende Vorschauen',
             managed: 'Verwaltete Dienste',

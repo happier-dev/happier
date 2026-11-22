@@ -11824,7 +11824,7 @@ export const zhHans: TranslationStructure = {
       previewsFrom: ({ machine }: { machine: string }) => `来自 ${machine} 的预览`,
       previews: '来自这台机器的预览',
     },
-    refreshing: '正在刷新浏览器目标',
+    refreshing: '正在查找运行中的预览…',
     sections: {
       running: '正在运行的预览',
       managed: '托管服务',

@@ -12410,7 +12410,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
       previewsFrom: ({ machine }: { machine: string }) => `Anteprime da ${machine}`,
       previews: 'Anteprime da questa macchina',
     },
-    refreshing: 'Aggiornamento destinazioni browser',
+    refreshing: 'Ricerca delle anteprime in esecuzione…',
     sections: {
       running: 'Anteprime in esecuzione',
       managed: 'Servizi gestiti',

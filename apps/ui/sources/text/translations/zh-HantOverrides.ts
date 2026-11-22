@@ -9959,7 +9959,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             previewsFrom: ({ machine }: { machine: string }) => `來自 ${machine} 的預覽`,
             previews: '來自這台機器的預覽',
         },
-        refreshing: '正在重新整理瀏覽器目標',
+        refreshing: '正在尋找執行中的預覽…',
         sections: {
             running: '執行中的預覽',
             managed: '受管理服務',

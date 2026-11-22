@@ -438,8 +438,21 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingRight: B.tabPaddingEndPx,
         paddingLeft: theme.space.s2,
     },
+    // The pills scroll; the rail's trailing fact (Synced) keeps its own place at the end and never scrolls away.
     railViewport: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    railScrollFrame: {
         position: 'relative',
+        flexGrow: 1,
+        flexShrink: 1,
+        flexBasis: 0,
+        minWidth: 0,
+    },
+    railTrailing: {
+        flexShrink: 0,
+        paddingRight: theme.space.s12,
     },
     /**
      * The virtualized rail places each pill absolutely along its axis, so neither the list nor its content
@@ -1162,6 +1175,7 @@ function DocumentRail<T extends DocumentTabItem>(props: Readonly<{
         <View style={styles.railViewport} accessibilityRole="tablist" role={Platform.OS === 'web' ? 'presentation' : undefined}
             accessibilityLabel={Platform.OS === 'web' ? undefined : strip.accessibilityLabel}>
             <DocumentTabAccessibilityList label={strip.accessibilityLabel} tabIds={mountedTabs.map(tab => strip.tabNativeId(tab.key))} />
+            <View style={styles.railScrollFrame}>
             <VirtualizedList
                 ref={listRef}
                 horizontal
@@ -1174,7 +1188,6 @@ function DocumentRail<T extends DocumentTabItem>(props: Readonly<{
                 style={[styles.railScroll, webEdgeMask]}
                 contentContainerStyle={styles.railListContent}
                 showsHorizontalScrollIndicator={false}
-                ListFooterComponent={strip.railTrailing ?? null}
                 viewabilityConfig={RAIL_VIEWABILITY}
                 onViewableItemsChanged={onViewableItemsChanged}
                 onLayout={(event) => {
@@ -1189,6 +1202,8 @@ function DocumentRail<T extends DocumentTabItem>(props: Readonly<{
                 scrollEventThrottle={32}
             />
             {Platform.OS === 'web' ? null : <ScrollEdgeFades color={theme.colors.chrome.header.background} size={RAIL_EDGE_FADE_PX} edges={fades.visibility} />}
+            </View>
+            {strip.railTrailing ? <View style={styles.railTrailing}>{strip.railTrailing}</View> : null}
         </View>
     );
 }

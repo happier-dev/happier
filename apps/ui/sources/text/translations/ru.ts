@@ -12041,7 +12041,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
       previewsFrom: ({ machine }: { machine: string }) => `Предпросмотры с ${machine}`,
       previews: 'Предпросмотры с этой машины',
     },
-    refreshing: 'Обновление целей браузера',
+    refreshing: 'Поиск запущенных предпросмотров…',
     sections: {
       running: 'Запущенные предпросмотры',
       managed: 'Управляемые сервисы',

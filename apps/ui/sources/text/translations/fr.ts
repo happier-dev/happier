@@ -12027,7 +12027,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
       previewsFrom: ({ machine }: { machine: string }) => `Aperçus depuis ${machine}`,
       previews: 'Aperçus depuis cette machine',
     },
-    refreshing: 'Actualisation des cibles de navigateur',
+    refreshing: 'Recherche des aperçus en cours…',
     sections: {
       running: 'Aperçus en cours',
       managed: 'Services gérés',

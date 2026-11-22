@@ -12486,7 +12486,7 @@ localTailscale: {
       previewsFrom: ({ machine }: { machine: string }) => `${machine} からのプレビュー`,
       previews: 'このマシンからのプレビュー',
     },
-    refreshing: 'ブラウザーターゲットを更新中',
+    refreshing: '実行中のプレビューを探しています…',
     sections: {
       running: '実行中のプレビュー',
       managed: '管理対象サービス',

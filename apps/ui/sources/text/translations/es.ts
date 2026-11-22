@@ -12189,7 +12189,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
       previewsFrom: ({ machine }: { machine: string }) => `Vistas previas de ${machine}`,
       previews: 'Vistas previas de esta máquina',
     },
-    refreshing: 'Actualizando destinos del navegador',
+    refreshing: 'Buscando vistas previas en ejecución…',
     sections: {
       running: 'Vistas previas en ejecución',
       managed: 'Servicios gestionados',

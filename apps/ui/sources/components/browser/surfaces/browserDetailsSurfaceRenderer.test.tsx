@@ -182,6 +182,25 @@ describe('browser-view details surface renderer — launchpad (new-tab) empty st
         expect(host?.props.onOpenTarget).toBe(onOpenTarget);
     });
 
+    it('titles the launchpad tab after the page it opened in place, keeping the tab and its resource', async () => {
+        const replaceTab = vi.fn();
+        const renderer = createBrowserViewDetailsSurfaceRenderer({ platform: 'web' });
+        const input = { ...launchpadInput(), callbacks: { replaceTab } };
+
+        const screen = await renderScreen(<>{renderer.render(input)}</>);
+        screen.findByTestId('browser-view-details-surface')?.props.onViewStateChange?.({
+            browserSessionId: 'browser_session_launchpad',
+            viewId: 'browser_view:checkout',
+            title: 'Checkout - Wikipedia',
+            currentUrl: 'https://en.wikipedia.org/wiki/Checkout',
+        });
+
+        expect(replaceTab).toHaveBeenCalledTimes(1);
+        const [oldTabKey, nextTab] = replaceTab.mock.calls[0] ?? [];
+        expect(oldTabKey).toBe(BROWSER_LAUNCHPAD_DETAILS_TAB_KEY);
+        expect(nextTab).toMatchObject({ key: BROWSER_LAUNCHPAD_DETAILS_TAB_KEY, title: 'Checkout - Wikipedia', resource: input.tab.resource });
+    });
+
     it('requests a durable tab replacement when the launchpad retargets to a browser view', async () => {
         const replaceTab = vi.fn();
         const renderer = createBrowserViewDetailsSurfaceRenderer({ platform: 'web' });

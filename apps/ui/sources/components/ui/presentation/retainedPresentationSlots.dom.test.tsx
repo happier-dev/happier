@@ -161,3 +161,32 @@ it('names the presented body as a page region from the portal, without remountin
     expect(container.querySelector('[data-testid="retained-control"]')).toBe(control);
     expect(control.closest('[role="region"]')?.getAttribute('aria-label')).toBe('Browser');
 });
+
+it('a hidden binder of the same slot never takes the body from the binder that presents it', async () => {
+    // A desktop pane kept mounted (hidden) after the window narrows to a phone, and the phone pane that now
+    // presents the same slot: the hidden binder committing again, or unmounting, must not park the body.
+    let rerenderHidden!: () => void;
+    function HiddenPane(props: Readonly<{ children: React.ReactNode }>) {
+        const [, setTick] = React.useState(0);
+        rerenderHidden = () => setTick(tick => tick + 1);
+        return <RetainedPresentationSlotBinder slotId="pane" enabled visible={false} windowGeometry={null} accessibilityLabel="Browser">{props.children}</RetainedPresentationSlotBinder>;
+    }
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanups.push(async () => { await act(async () => root.unmount()); container.remove(); });
+    const render = async (withHidden: boolean) => act(async () => root.render(
+        <RetainedPresentationSlotsProvider>
+            {withHidden ? <HiddenPane><Body /></HiddenPane> : null}
+            <RetainedPresentationSlotBinder slotId="pane" enabled windowGeometry={{ x: 0, y: 144, width: 390, height: 700 }} accessibilityLabel="Browser">
+                <Body />
+            </RetainedPresentationSlotBinder>
+        </RetainedPresentationSlotsProvider>,
+    ));
+    await render(true);
+    expect(paintedAt(container)).toEqual({ x: 0, width: 390 });
+    await act(async () => { rerenderHidden(); });
+    expect(paintedAt(container)).toEqual({ x: 0, width: 390 });
+    await render(false);
+    expect(paintedAt(container)).toEqual({ x: 0, width: 390 });
+});

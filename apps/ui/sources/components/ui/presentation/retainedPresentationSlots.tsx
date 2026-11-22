@@ -169,9 +169,12 @@ export type RetainedPresentationSlotsStore = Readonly<{
      * every binder commit so the node + geometry stay fresh; the entry SURVIVES the binder's unmount
      * (that is the keep-alive) and is removed only by `removePortalEntry` or a `closed` lifecycle.
      */
-    upsertPortalEntry: (entry: RetainedPresentationSlotEntry) => void;
-    /** Preserve the body and last placement, but park it off-screen without a visible binder. */
-    parkPortalEntry: (slotId: string) => void;
+    upsertPortalEntry: (entry: RetainedPresentationSlotEntry, binder?: object) => void;
+    /**
+     * Preserve the body and last placement, but park it off-screen without a visible binder. With
+     * `binder`, only that binder's own registration is parked: another binder may present the slot now.
+     */
+    parkPortalEntry: (slotId: string, binder?: object) => void;
     /** Explicit close; a retiring rendered owner must not remove a newer binding of the same slot. */
     removePortalEntry: (slotId: string, expected?: Readonly<{ node: React.ReactNode }>) => void;
     /** Refresh only presented entries; parked sources have no active geometry owner. */
@@ -211,6 +214,9 @@ export function createRetainedPresentationSlotsStore(): RetainedPresentationSlot
     const portalBySlot = new Map<string, RetainedPresentationSlotEntry>();
     const portalListeners = new Set<() => void>();
     let portalSnapshot: readonly RetainedPresentationSlotEntry[] = [];
+    // Two binders can hold one slot at once (a pane kept mounted, hidden, beside the pane that now
+    // presents the slot after a layout change). The slot remembers which binder registered it last.
+    const binderBySlot = new Map<string, object>();
 
     function rebuildPortalSnapshot(): void {
         portalSnapshot = Array.from(portalBySlot.values());
@@ -222,13 +228,15 @@ export function createRetainedPresentationSlotsStore(): RetainedPresentationSlot
     function removePortalEntry(slotId: string, expected?: Readonly<{ node: React.ReactNode }>): void {
         if (expected && portalBySlot.get(slotId)?.node !== expected.node) return;
         if (!portalBySlot.delete(slotId)) return;
+        binderBySlot.delete(slotId);
         rebuildPortalSnapshot();
         notifyPortal();
     }
 
-    function parkPortalEntry(slotId: string): void {
+    function parkPortalEntry(slotId: string, binder?: object): void {
         const existing = portalBySlot.get(slotId);
         if (!existing) return;
+        if (binder && binderBySlot.get(slotId) !== binder) return;
         const next = {
             ...existing,
             visible: false,
@@ -240,8 +248,11 @@ export function createRetainedPresentationSlotsStore(): RetainedPresentationSlot
     }
 
     return {
-        upsertPortalEntry(entry) {
+        upsertPortalEntry(entry, binder) {
             const existing = portalBySlot.get(entry.slotId);
+            // A hidden binder never takes the body from another binder that presents it.
+            if (binder && existing?.visible && !entry.visible && binderBySlot.get(entry.slotId) !== binder) return;
+            if (binder) binderBySlot.set(entry.slotId, binder);
             const rect = entry.geometry;
             // A binder can present before its frame is measured or drawn where it stands (a handoff, a
             // reopened pane). The body keeps its last size so it does not reflow, but it is placed, and
@@ -610,7 +621,7 @@ export function useRetainedPresentationSlot(
             nativeMotion: input.nativeMotion ?? null,
             floating,
             accessibilityLabel: input.accessibilityLabel,
-        });
+        }, registration);
     });
 
     React.useLayoutEffect(() => {
@@ -618,9 +629,9 @@ export function useRetainedPresentationSlot(
         return () => {
             // Do not remove the entry: keep the webview mounted, but make it non-interactive while no
             // route/panel binder owns its visible geometry.
-            store.parkPortalEntry(input.slotId);
+            store.parkPortalEntry(input.slotId, registration);
         };
-    }, [enabled, input.slotId, store]);
+    }, [enabled, input.slotId, registration, store]);
 
     React.useEffect(() => {
         if (!enabled || !store) return;

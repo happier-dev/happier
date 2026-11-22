@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform } from 'react-native';
+import { Platform, type LayoutChangeEvent } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 import {
@@ -33,6 +33,42 @@ const HOST: RemoteViewerControlBarHost = {
  * brings the bar. It always floats over the live picture, so it takes that picture's coat: a white page
  * never washes a dark bar out.
  */
+type Size = Readonly<{ width: number; height: number }>;
+type Theme = ReturnType<typeof useUnistyles>['theme'];
+
+/** The bar's gap to the stage's foot and between its controls: one value for the bar and the room it takes. */
+function controlBarSpacing(theme: Theme) {
+    return { inset: theme.space.s12, gap: theme.space.s8 };
+}
+
+/**
+ * The finger's control bar has its own row at the foot of the stage: the picture fits above it, with the bar's own
+ * gap, so the bar never covers the page or screen and its labels never stand on remote pixels. The tallest bar seen
+ * while it stands holds that room (closing a panel never slides the picture back under it); without the bar (a mouse,
+ * or a viewer who only watches) the picture has the whole stage. One rule for every remote viewer.
+ */
+export function useRemoteViewerControlsRoom(viewport: Size | null, barShown: boolean): Readonly<{
+    pictureArea: Size | null;
+    onControlsLayout: (event: LayoutChangeEvent) => void;
+}> {
+    const { theme } = useUnistyles();
+    const [room, setRoom] = React.useState(0);
+    if (!barShown && room !== 0) setRoom(0);
+    const stageHeight = viewport?.height ?? 0;
+    // The bar's own height with its gap above and below: never derived from where the stage stood when the bar
+    // was measured (taking control brings the presence capsule in under the stage, which shortens it).
+    const inset = controlBarSpacing(theme).inset;
+    const onControlsLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const next = event.nativeEvent.layout.height + 2 * inset;
+        setRoom(current => next > current ? next : current);
+    }, [inset]);
+    const width = viewport?.width ?? 0;
+    const pictureArea = React.useMemo(() => !viewport ? null
+        : barShown && room > 0 && room < stageHeight ? { width, height: stageHeight - room } : viewport,
+    [barShown, room, stageHeight, viewport, width]);
+    return { pictureArea, onControlsLayout };
+}
+
 export function RemoteViewerControlBar(props: Pick<RemoteViewerControlBarProps, 'actions' | 'controls' | 'enabled' | 'testID' | 'onLayout'>) {
     const touch = useHappierTouchPrimaryPointer(Platform.OS);
     if (!touch || !props.enabled) return null;
@@ -42,7 +78,7 @@ export function RemoteViewerControlBar(props: Pick<RemoteViewerControlBarProps, 
 function TouchRemoteViewerControlBar(props: Pick<RemoteViewerControlBarProps, 'actions' | 'controls' | 'enabled' | 'testID' | 'onLayout'>) {
     const { theme } = useUnistyles();
     return <GlassLivePictureBackdropContext.Provider value><SharedRemoteViewerControlBar {...props} host={HOST}
-        spacing={{ inset: theme.space.s12, gap: theme.space.s8 }} labels={{
+        spacing={controlBarSpacing(theme)} labels={{
             directMode: t('browserPresence.stream.directMode'),
             trackpadMode: t('browserPresence.stream.trackpadMode'),
             resetZoom: t('browserPresence.stream.resetZoom'),

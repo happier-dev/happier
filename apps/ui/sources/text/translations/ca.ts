@@ -11370,7 +11370,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
             previewsFrom: ({ machine }: { machine: string }) => `Previsualitzacions de ${machine}`,
             previews: 'Previsualitzacions d’aquesta màquina',
         },
-        refreshing: 'Actualitzant destinacions del navegador',
+        refreshing: 'Cercant previsualitzacions en marxa…',
         sections: {
             running: 'Previsualitzacions en execució',
             managed: 'Serveis gestionats',

@@ -17,7 +17,7 @@ import { BrowserAgentCursor } from '@/components/browser/copresence/BrowserAgent
 import { BrowserFrameStatusCapsule } from '@/components/browser/frame/BrowserFrameStatusCapsule';
 import { RemoteViewerStage, remoteViewerFillTransform, useRemoteViewerFillsPane, type RemoteViewerStageControls, type RemoteViewerHostActions } from '@/components/stream/RemoteViewerStage';
 import { useRemoteViewerActions } from '@happier-dev/plugin-ui/presentation';
-import { RemoteViewerControlBar } from '@/components/stream/RemoteViewerControlBar';
+import { RemoteViewerControlBar, useRemoteViewerControlsRoom } from '@/components/stream/RemoteViewerControlBar';
 import { useBrowserSoftKeyboard } from '@/components/browser/streamed/useBrowserSoftKeyboard';
 import { LiveStreamInputLayer } from '@/components/stream/LiveStreamInputLayer';
 import { LiveStreamPlayer } from '@/components/stream/LiveStreamPlayer';
@@ -339,16 +339,6 @@ function ComputerScreenViewerBody(props: ComputerScreenViewerProps): React.React
         if (width > 0 && height > 0) setViewport((current) => (current && current.width === width && current.height === height ? current : { width, height }));
     }, []);
     const frameSize = stream.frameSize;
-    // A finger's input bar stands at the foot of the stage. The picture fits above it, with the bar's own
-    // gap, so its labels stand on the stage and never on the remote screen, whatever glass the person chose.
-    // The tallest bar seen holds that room: closing a panel never slides the picture back under it.
-    const [controlsRoom, setControlsRoom] = React.useState(0);
-    const onControlsLayout = React.useCallback((event: LayoutChangeEvent) => {
-        const { y, height } = event.nativeEvent.layout;
-        const stageHeight = viewport?.height ?? 0;
-        const room = stageHeight > 0 ? 2 * (stageHeight - y) - height : 0;
-        setControlsRoom(current => room > current ? room : current);
-    }, [viewport?.height]);
     const failure = props.failure ?? stream.diagnosticCode;
     const failureCause = props.failure ? props.failureCause : undefined;
     const recovery = failure ? resolveComputerRecovery({ kind: 'failed', code: failure, details: props.failureDetails }, resolveComputerAccess(props.access)) : null;
@@ -406,8 +396,9 @@ function ComputerScreenViewerBody(props: ComputerScreenViewerProps): React.React
             : undefined;
     const inputOpen = surfaceState === 'live' && !hasRecovery
         && props.presence.kind !== 'unconfirmed' && props.presence.kind !== 'stopping';
-    const pictureArea = viewport && inputOpen && stream.input && controlsRoom > 0 && controlsRoom < viewport.height
-        ? { width: viewport.width, height: viewport.height - controlsRoom } : viewport;
+    // A finger's control bar has its own row: the picture fits above it (the one room rule).
+    const { pictureArea, onControlsLayout } = useRemoteViewerControlsRoom(viewport,
+        inputOpen && Boolean(stream.input) && props.presence.kind === 'human');
     // A shared window is a small picture: it fits down to the stage but is never drawn past its own
     // pixels, so a small window stays sharp, centred on the neutral stage, instead of being blown up.
     const pageRect = pictureUp && pictureArea ? containRect(pictureArea, frameSize, 1 / PixelRatio.get()) : null;

@@ -7,7 +7,7 @@ import { BrowserInputModifierV1Schema, type BrowserInputEventV1, type BrowserInt
 
 import { RemoteViewerStage, remoteViewerFillTransform, useRemoteViewerFillsPane, type RemoteViewerStageControls, type RemoteViewerHostActions } from '@/components/stream/RemoteViewerStage';
 import { useRemoteViewerActions, type RemoteViewerKeyboard } from '@happier-dev/plugin-ui/presentation';
-import { RemoteViewerControlBar } from '@/components/stream/RemoteViewerControlBar';
+import { RemoteViewerControlBar, useRemoteViewerControlsRoom } from '@/components/stream/RemoteViewerControlBar';
 import type { RemoteViewerClipboardShortcut } from '@happier-dev/plugin-ui/presentation';
 import { LiveStreamInputLayer } from '@/components/stream/LiveStreamInputLayer';
 import { LiveStreamPlayer, type LiveStreamPlayerDisplayState } from '@/components/stream/LiveStreamPlayer';
@@ -239,6 +239,7 @@ function BrowserStreamInput(props: Readonly<{
     controls: RemoteViewerStageControls;
     keyboard: RemoteViewerKeyboard;
     onRemoteActionsChange?: (actions: RemoteViewerHostActions | null) => void;
+    onControlsLayout(event: LayoutChangeEvent): void;
     testID: string;
 }>): React.ReactElement {
     const { viewport, content, probeEditable } = props;
@@ -296,7 +297,8 @@ function BrowserStreamInput(props: Readonly<{
                 accessibilityLabel={t('browserPresence.stream.inputA11y')}
                 testID={props.testID}
             />
-            <RemoteViewerControlBar actions={published} controls={props.controls} enabled={controlling} testID={`${props.testID}-controls`} />
+            <RemoteViewerControlBar actions={published} controls={props.controls} enabled={controlling}
+                onLayout={props.onControlsLayout} testID={`${props.testID}-controls`} />
         </View>
     );
 }
@@ -387,13 +389,16 @@ export function BrowserStreamedTarget(props: Readonly<{
     // Never larger than the page itself: its own CSS size once the daemon reports it, else one frame pixel per
     // device pixel (as the Computer viewer holds a window). A smaller page sits whole in the middle, sharp.
     const pageCap = input?.viewport ? 1 : 1 / PixelRatio.get();
-    const pageRect = pictureUp && viewport ? { ...containRect(viewport, pageShape, pageCap, 'top'), pageSize: frameSize } : null;
     const controlling = input?.viewerInput?.controlling === true;
+    // A finger's control bar has its own row: the page fits above it, and a controlling viewer sizes the remote
+    // page to what stays visible (the one room rule, shared with the Computer viewer).
+    const { pictureArea, onControlsLayout } = useRemoteViewerControlsRoom(viewport, controlling && surfaceState === 'live');
+    const pageRect = pictureUp && pictureArea ? { ...containRect(pictureArea, pageShape, pageCap, 'top'), pageSize: frameSize } : null;
     const sendInput = input?.sendInput;
     // The controlling viewer's screen sets the page's size; everyone else letterboxes it.
     useBrowserViewerViewport({
         controlling: controlling && Boolean(sendInput),
-        viewport: viewport ? { width: Math.round(viewport.width), height: Math.round(viewport.height), deviceScaleFactor: PixelRatio.get() } : null,
+        viewport: pictureArea ? { width: Math.round(pictureArea.width), height: Math.round(pictureArea.height), deviceScaleFactor: PixelRatio.get() } : null,
         sendViewport: next => sendInput?.({ kind: 'viewport', ...next }),
     });
     const phone = useSurfaceStateSize() === 'phone';
@@ -414,8 +419,8 @@ export function BrowserStreamedTarget(props: Readonly<{
     // On a phone a viewer who only watches sees the page fill the pane (the stage owns that view); the remote
     // page keeps the size its controller gave it.
     const fillsPane = useRemoteViewerFillsPane(!controlling);
-    const letterboxed = !fillsPane && pageRect !== null && viewport !== null
-        && (pageRect.width < viewport.width - 1 || pageRect.height < viewport.height - 1);
+    const letterboxed = !fillsPane && pageRect !== null && pictureArea !== null
+        && (pageRect.width < pictureArea.width - 1 || pageRect.height < pictureArea.height - 1);
     const otherViewerControls = props.humanInControl === true && !controlling;
     const onPageRectChange = props.onPageRectChange;
     React.useEffect(() => {
@@ -474,7 +479,7 @@ export function BrowserStreamedTarget(props: Readonly<{
                 enabled={Boolean(input && viewport && pageRect && surfaceState === 'live')}
                 testID={props.testID} renderInput={controls => input && viewport && pageRect && surfaceState === 'live' ? (
                     <BrowserStreamInput input={input} viewport={viewport} content={pageRect} controls={controls} keyboard={keyboardActions}
-                        onRemoteActionsChange={onRemoteActionsChange} probeEditable={phone} testID={`${props.testID}-input`} />
+                        onRemoteActionsChange={onRemoteActionsChange} onControlsLayout={onControlsLayout} probeEditable={phone} testID={`${props.testID}-input`} />
                 ) : null}>
             <StreamedPicture stalled={surfaceState === 'stalled'}
                 frame={pageRect && pageShape ? { left: pageRect.x, top: pageRect.y, width: pageRect.width, height: pageRect.height } : null}>

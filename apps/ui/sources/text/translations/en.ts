@@ -13951,7 +13951,7 @@ const enBrowserLaunchpad = {
       `Previews from ${machine}`,
     previews: 'Previews from this machine',
   },
-  refreshing: 'Refreshing browser targets',
+  refreshing: 'Looking for running previews…',
   sections: {
     running: 'Running previews',
     managed: 'Managed services',

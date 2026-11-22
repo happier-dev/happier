@@ -12018,7 +12018,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
       previewsFrom: ({ machine }: { machine: string }) => `Podglądy z ${machine}`,
       previews: 'Podglądy z tej maszyny',
     },
-    refreshing: 'Odświeżanie celów przeglądarki',
+    refreshing: 'Szukanie działających podglądów…',
     sections: {
       running: 'Działające podglądy',
       managed: 'Usługi zarządzane',

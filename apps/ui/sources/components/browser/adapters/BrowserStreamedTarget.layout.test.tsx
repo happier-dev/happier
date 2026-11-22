@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 
@@ -9,6 +9,16 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock, createMeasuredImageMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({ Image: createMeasuredImageMock({ width: 1280, height: 800 }) });
 });
+
+// The primary-pointer media queries are the platform boundary: the control bar stands only for a finger.
+const pointer = vi.hoisted(() => ({ coarse: false }));
+Object.defineProperty(globalThis, 'matchMedia', { configurable: true, value: (query: string) => ({
+  matches: query === '(pointer: coarse)' || query === '(hover: none)' ? pointer.coarse
+    : query === '(pointer: fine)' || query === '(hover: hover)' ? !pointer.coarse : false,
+  media: query, onchange: null, addListener: () => {}, removeListener: () => {},
+  addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => true,
+}) });
+afterEach(() => { pointer.coarse = false; });
 
 import {
   BrowserStreamedTarget,
@@ -83,5 +93,37 @@ describe('BrowserStreamedTarget page placement', () => {
       });
     });
     expect(rects.filter(Boolean).at(-1)).toMatchObject({ x: 104, y: 130, width: 390, height: 500 });
+  });
+
+  it('fits a controlled page above the finger\'s control bar, so the bar has its own row and covers no page', async () => {
+    pointer.coarse = true;
+    const rects: (BrowserStreamedPageRect | null)[] = [];
+    const runtime = watchedRuntime({ width: 390, height: 700, deviceScaleFactor: 3 });
+    const controlled: BrowserStreamedSurfaceRuntime = { ...runtime, input: { ...runtime.input!,
+      viewerInput: { controlling: true, controlEpoch: 1 } as NonNullable<NonNullable<BrowserStreamedSurfaceRuntime['input']>['viewerInput']>,
+      sendInput: vi.fn() } };
+    const screen = await renderScreen(
+      <BrowserStreamedTarget runtime={controlled} agentName="Agent" onPageRectChange={rect => { rects.push(rect); }} testID="stream" />,
+    );
+    await act(async () => {
+      screen.findHostByTestId('stream-live')?.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 700 } } });
+    });
+    // The bar stands 12 above the stage's foot and is 128 tall: its top edge is at 560.
+    await act(async () => {
+      screen.findHostByTestId('stream-input-controls')!.props.onLayout({ nativeEvent: { layout: { x: 12, y: 560, width: 366, height: 128 } } });
+    });
+    const rect = rects.filter(Boolean).at(-1)!;
+    expect(rect.y + rect.height).toBeLessThanOrEqual(560);
+    // Taking control brings the presence capsule in under the stage: the stage shortens to 470, and the bar
+    // reports its new place before the stage does. The page still ends above the bar.
+    await act(async () => {
+      screen.findHostByTestId('stream-input-controls')!.props.onLayout({ nativeEvent: { layout: { x: 12, y: 330, width: 366, height: 128 } } });
+    });
+    await act(async () => {
+      screen.findHostByTestId('stream-live')?.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 470 } } });
+    });
+    const shortened = rects.filter(Boolean).at(-1)!;
+    expect(shortened.y + shortened.height).toBeLessThanOrEqual(330);
+    await screen.unmount();
   });
 });

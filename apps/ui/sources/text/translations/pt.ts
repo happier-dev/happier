@@ -12306,7 +12306,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
       previewsFrom: ({ machine }: { machine: string }) => `Pré-visualizações de ${machine}`,
       previews: 'Pré-visualizações desta máquina',
     },
-    refreshing: 'Atualizando destinos do navegador',
+    refreshing: 'Procurando prévias em execução…',
     sections: {
       running: 'Prévias em execução',
       managed: 'Serviços gerenciados',
