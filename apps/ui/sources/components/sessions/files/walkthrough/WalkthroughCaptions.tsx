@@ -186,8 +186,9 @@ function placeCaptions(
   for (const caption of captions) {
     const ids: string[] = [];
     for (const line of lines) {
-      if (line.hunkIndex !== caption.hunkIndex || line.renderIsHeaderLine)
-        continue;
+      // A line's side and number name it in any drawn patch of this file: the whole captured diff (Files) or a stop's
+      // own hunks (the Walkthrough card), whose hunks are renumbered.
+      if (line.renderIsHeaderLine) continue;
       const number =
         caption.side === 'after'
           ? line.kind === 'remove'
@@ -379,6 +380,8 @@ function CaptionCellColumn(
 export function WalkthroughCaptionLane(
   props: Readonly<{
     path: string;
+    /** The pairing record's key when one path is drawn in several places (a Walkthrough stop's card); defaults to the path. */
+    focusKey?: string;
     captions: readonly WalkthroughLetteredCaption[];
     focus: WalkthroughCaptionFocus;
     unifiedDiff: string;
@@ -387,6 +390,7 @@ export function WalkthroughCaptionLane(
   }>,
 ) {
   const { path, captions, focus } = props;
+  const focusKey = props.focusKey ?? path;
   const lines = React.useMemo(
     () =>
       buildCodeLinesFromUnifiedDiff({
@@ -419,17 +423,17 @@ export function WalkthroughCaptionLane(
   const pinned = React.useRef(false);
 
   React.useLayoutEffect(() => {
-    focus.publish(path, { placed: new Set(placement.lineIds.keys()) });
-  }, [focus, path, placement]);
-  React.useLayoutEffect(() => () => focus.publish(path, IDLE), [focus, path]);
+    focus.publish(focusKey, { placed: new Set(placement.lineIds.keys()) });
+  }, [focus, focusKey, placement]);
+  React.useLayoutEffect(() => () => focus.publish(focusKey, IDLE), [focus, focusKey]);
   const activeKey = hover.mode === 'closed' ? null : hover.target;
   React.useLayoutEffect(() => {
-    focus.publish(path, {
+    focus.publish(focusKey, {
       active: activeKey
         ? { key: activeKey, mode: hover.mode === 'open' ? 'open' : 'preview' }
         : null,
     });
-  }, [activeKey, focus, hover.mode, path]);
+  }, [activeKey, focus, focusKey, hover.mode]);
 
   const { triggerHoverProps, open, close } = hover;
   const show = React.useCallback(
@@ -466,9 +470,9 @@ export function WalkthroughCaptionLane(
     [placement, show, triggerHoverProps],
   );
   React.useLayoutEffect(() => {
-    focus.drive(path, driver);
-    return () => focus.drive(path, null);
-  }, [driver, focus, path]);
+    focus.drive(focusKey, driver);
+    return () => focus.drive(focusKey, null);
+  }, [driver, focus, focusKey]);
 
   const registerAnchor = React.useCallback(
     (key: string, node: View | null, kind: 'marker' | 'last') => {
@@ -504,7 +508,7 @@ export function WalkthroughCaptionLane(
   const renderLeadingLane = React.useCallback(
     (line: CodeLine) => (
       <CaptionCell
-        path={path}
+        path={focusKey}
         entries={placement.cells.get(line.id)}
         columns={placement.columns}
         focus={focus}
@@ -519,7 +523,7 @@ export function WalkthroughCaptionLane(
       onMarkerBlur,
       onMarkerFocus,
       onMarkerPress,
-      path,
+      focusKey,
       placement,
       registerAnchor,
     ],

@@ -43,6 +43,7 @@ import {
   WalkthroughOtherChanges,
 } from './WalkthroughLifecycle';
 import { WalkthroughEvidencePresentation, WalkthroughStopSection, type WalkthroughFindProps } from './WalkthroughStopSection';
+import { createWalkthroughCaptionFocus } from './WalkthroughCaptions';
 import { isWalkthroughOtherFindKey, useWalkthroughFind } from './walkthroughFind';
 import { ChangedFilesReviewFindSurface } from '@/components/workspaces/scm/review/ChangedFilesReviewFind';
 import type { ReviewFindTarget } from '@/components/workspaces/scm/review/useChangedFilesReviewFind';
@@ -231,6 +232,10 @@ export const WalkthroughView = React.memo(function WalkthroughView(
   // into an other change opens its code in place of its row; those stay open until Find closes, so nothing above the
   // reader jumps as they step on.
   const [findTarget, setFindTarget] = React.useState<ReviewFindTarget | null>(null);
+  // The reading's caption pairing; each stop card draws the captions located in its own hunks.
+  const [captionFocus] = React.useState(createWalkthroughCaptionFocus);
+  const captions = React.useMemo(() => reading.captionsByPath.size > 0 ? { byPath: reading.captionsByPath, focus: captionFocus } : null,
+    [captionFocus, reading.captionsByPath]);
   const [revealedOthers, setRevealedOthers] = React.useState<ReadonlySet<string>>(EMPTY_KEYS);
   const revealFindTarget = React.useCallback((target: ReviewFindTarget | null) => {
     setFindTarget((previous) => previous?.filePath === target?.filePath && previous?.lineId === target?.lineId ? previous : target);
@@ -717,6 +722,7 @@ export const WalkthroughView = React.memo(function WalkthroughView(
         proseReferences={findings?.proseReferences}
         explanation={findings?.explanation}
         find={findProps}
+        captions={captions}
       />
     );
     // Only a stop written while the reader watches fades in; a restored saved reading is hydrated data and

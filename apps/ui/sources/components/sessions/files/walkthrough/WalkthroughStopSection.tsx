@@ -25,7 +25,8 @@ import { RAIL_STOP_NUMBER_PX, WalkthroughStopNumber } from './WalkthroughAtoms';
 import { WalkthroughStopExchangeList } from './WalkthroughStopExchanges';
 import { ScmChangeRow } from '@/components/workspaces/scm/changes/ScmChangeRow';
 import { scmFileStatusFromChange } from '@/scm/scmStatusFiles';
-import type { WalkthroughStop, WalkthroughStopFile } from './walkthroughReading';
+import type { WalkthroughLetteredCaption, WalkthroughStop, WalkthroughStopFile } from './walkthroughReading';
+import { WalkthroughCaptionLane, type WalkthroughCaptionFocus } from './WalkthroughCaptions';
 import type { ChangedFilesReviewFindModel } from '@/components/workspaces/scm/review/useChangedFilesReviewFind';
 import { ChangedFilesReviewFindCount } from '@/components/workspaces/scm/review/ChangedFilesReviewFind';
 import { walkthroughStopFindKey } from './walkthroughFind';
@@ -96,6 +97,22 @@ function reservedDiffRows(unifiedDiff: string): number {
     return rows;
 }
 
+/** A stop card's captions: the stop's located captions in that file and the reading's caption pairing. */
+export type WalkthroughCardCaptions = Readonly<{
+    captions: readonly WalkthroughLetteredCaption[];
+    focus: WalkthroughCaptionFocus;
+    /** One file can be drawn by several stops: each card pairs its own captions. */
+    focusKey: string;
+}>;
+
+/** A card with captions draws its code through their lane (the same renderer Files' Explain uses); others draw it alone. */
+function renderWithCaptions(captions: WalkthroughCardCaptions | null | undefined, file: Pick<WalkthroughStopFile, 'path' | 'unifiedDiff'>,
+    renderDiff: (lane: Readonly<{ renderLeadingLane?: React.ComponentProps<typeof DiffViewer>['renderLeadingLane']; highlightLineIds?: ReadonlySet<string> }> | null) => React.ReactNode) {
+    if (!captions || captions.captions.length === 0) return renderDiff(null);
+    return <WalkthroughCaptionLane path={file.path} focusKey={captions.focusKey} captions={captions.captions} focus={captions.focus}
+        unifiedDiff={file.unifiedDiff}>{renderDiff}</WalkthroughCaptionLane>;
+}
+
 /** One file's exact hunks for a stop, as a quiet card: path, range, counts and the shared diff renderer. */
 export const WalkthroughHunkCard = React.memo(function WalkthroughHunkCard(props: Readonly<{
     file: Pick<WalkthroughStopFile, 'path' | 'changeKind' | 'unifiedDiff' | 'rangeLabel' | 'added' | 'removed' | 'unavailableReason'> & Partial<Pick<WalkthroughStopFile, 'previousPath' | 'deferred'>>;
@@ -104,6 +121,8 @@ export const WalkthroughHunkCard = React.memo(function WalkthroughHunkCard(props
     /** This card's Find key and the reading's Find state; absent draws the code without Find. */
     findKey?: string;
     find?: WalkthroughFindProps | null;
+    /** The stop's located captions in this file (lettered as in Files' Explain), drawn in the code's leading lane. */
+    captions?: WalkthroughCardCaptions | null;
     testID?: string;
 }>) {
     const { theme } = useUnistyles();
@@ -162,24 +181,28 @@ export const WalkthroughHunkCard = React.memo(function WalkthroughHunkCard(props
                         when Find lands on it. Find, counts and the contents read the captured evidence, never the drawn rows. */}
                     <LazyMountOnScreen initiallyVisible={findTargetLineId !== undefined} style={{ minHeight: 'inherit' }}>
                     <HunkEvidenceBoundary key={file.unifiedDiff} fallback={evidence('render_failed')}>
-                        <DiffViewer
-                            mode="unified"
-                            unifiedDiff={file.unifiedDiff}
-                            filePath={file.path}
-                            showLineNumbers
-                            showPrefix
-                            wrapLines={props.phone === true}
-                            presentationStyleOverride="unified"
-                            lineInfoSeparators
-                            errorFallback={evidence('render_failed')}
-                            findActive={find?.active}
-                            precomputedLines={find?.active ? findSnapshot?.lines : undefined}
-                            registerFindRefold={find ? registerFindRefold : undefined}
-                            findRangesByLineId={findSnapshot?.ranges}
-                            scrollToLineId={findTargetLineId}
-                            highlightLineId={findTargetLineId}
-                            onScrollToLine={findTargetLineId ? find?.onScrollToLine : undefined}
-                        />
+                        {renderWithCaptions(props.captions, file, (lane) => (
+                            <DiffViewer
+                                renderLeadingLane={lane?.renderLeadingLane}
+                                highlightLineIds={lane?.highlightLineIds}
+                                mode="unified"
+                                unifiedDiff={file.unifiedDiff}
+                                filePath={file.path}
+                                showLineNumbers
+                                showPrefix
+                                wrapLines={props.phone === true}
+                                presentationStyleOverride="unified"
+                                lineInfoSeparators
+                                errorFallback={evidence('render_failed')}
+                                findActive={find?.active}
+                                precomputedLines={find?.active ? findSnapshot?.lines : undefined}
+                                registerFindRefold={find ? registerFindRefold : undefined}
+                                findRangesByLineId={findSnapshot?.ranges}
+                                scrollToLineId={findTargetLineId}
+                                highlightLineId={findTargetLineId}
+                                onScrollToLine={findTargetLineId ? find?.onScrollToLine : undefined}
+                            />
+                        ))}
                     </HunkEvidenceBoundary>
                     </LazyMountOnScreen>
                 </View>
@@ -223,6 +246,8 @@ export type WalkthroughStopSectionProps = Readonly<{
     explanation?: React.ReactNode;
     /** Find over the whole reading, painted into this stop's code. */
     find?: WalkthroughFindProps | null;
+    /** The reading's lettered captions by file and its caption pairing; a stop's cards draw their own. */
+    captions?: Readonly<{ byPath: ReadonlyMap<string, readonly WalkthroughLetteredCaption[]>; focus: WalkthroughCaptionFocus }> | null;
 }>;
 
 /** A stop: number, title and reading hint, the prose, then exactly its hunks, then the person's controls. */
@@ -231,6 +256,15 @@ export const WalkthroughStopSection = React.memo(function WalkthroughStopSection
     const stop = useWalkthroughReviewedStop(props.reviewedSource, props.stop);
     const importance = props.phone ? null : resolveWalkthroughImportanceLabel(stop);
     const phone = props.phone === true;
+    const captionsByFile = React.useMemo(() => {
+        const out = new Map<string, WalkthroughCardCaptions>();
+        if (!props.captions) return out;
+        for (const file of props.stop.files) {
+            const own = props.captions.byPath.get(file.path)?.filter((caption) => caption.stopId === props.stop.id) ?? [];
+            if (own.length > 0) out.set(file.path, { captions: own, focus: props.captions.focus, focusKey: `${props.stop.id}:${file.path}` });
+        }
+        return out;
+    }, [props.captions, props.stop.files, props.stop.id]);
     return (
         <View
             testID={`walkthrough-stop-${stop.id}`}
@@ -279,7 +313,7 @@ export const WalkthroughStopSection = React.memo(function WalkthroughStopSection
                             </View>
                         ) : null}
                         <WalkthroughHunkCard file={file} phone={phone} onOpenFile={props.onOpenFile}
-                            findKey={walkthroughStopFindKey(stop.id, file.path)} find={props.find} />
+                            findKey={walkthroughStopFindKey(stop.id, file.path)} find={props.find} captions={captionsByFile.get(file.path)} />
                     </React.Fragment>
                 ))}
                 {props.findingCards}
