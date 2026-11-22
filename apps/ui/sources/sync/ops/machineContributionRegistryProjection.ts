@@ -8,6 +8,7 @@ import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/action
 import { bindPresentUserActionConfirmation } from '@/sync/ops/actions/presentUserConfirmation';
 import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonPluginUiTargetedContributionsReadRequestSchema, DaemonPluginSettingsGetRequestSchema, DaemonPluginSettingsGetResponseSchema, DaemonPluginSettingsSetRequestSchema, DaemonPluginSettingsSetResponseSchema, DaemonPluginSecretStatusRequestSchema, DaemonPluginSecretStatusResponseSchema, DaemonPluginSecretSetRequestSchema, DaemonPluginSecretSetResponseSchema, DaemonPluginSecretDeleteRequestSchema, DaemonPluginSecretDeleteResponseSchema, DaemonPluginStructuredMessageActionExecuteResponseSchema, DaemonPluginActionFormConnectedAccountOptionsResolveRequestSchema, DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema, DaemonPluginActionSchemasReadRequestSchema, DaemonPluginActionSchemasReadResponseSchema, DaemonPluginUiResourceReadRequestSchema, DaemonPluginUiResourceReadResponseSchema, DaemonPluginUiResourceWatchOpenRequestSchema, DaemonPluginUiResourceWatchOpenResponseSchema, DaemonPluginUiResourceWatchNextRequestSchema, DaemonPluginUiResourceWatchNextResponseSchema, DaemonPluginUiResourceWatchCloseRequestSchema, DaemonPluginUiResourceWatchCloseResponseSchema, type DaemonPluginSettingsSnapshot, type DaemonPluginSettingsMutation, type DaemonPluginSettingsSetResponse, type DaemonPluginSecretStatusResponse, type DaemonPluginSecretSetResponse, type DaemonPluginSecretDeleteResponse, type DaemonPluginStructuredMessageActionExecuteResponse, type DaemonPluginActionFormConnectedAccountOptionsResolveRequest, type DaemonPluginActionFormConnectedAccountOptionsResolveResponse, type DaemonPluginActionSchemasReadRequest, type DaemonPluginActionSchemasReadResponse, type DaemonPluginUiResourceReadRequest, type DaemonPluginUiResourceReadResponse, type DaemonPluginUiResourceWatchOpenRequest, type DaemonPluginUiResourceWatchOpenResponse, type DaemonPluginUiResourceWatchNextRequest, type DaemonPluginUiResourceWatchNextResponse, type DaemonPluginUiResourceWatchCloseRequest, type DaemonContributionRegistryProjectionAutomationEligibleEventsV1, type DaemonPluginUiComposerSurfaceCatalogEntryV1, type DaemonPluginUiTargetedSurfaceMountV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { DaemonPluginStructuredMessageActionExecuteRequest } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
+import { readPluginActionFailureHandlerInvocation } from '@happier-dev/protocol/plugins/actions/invocation';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resumeActionExecutionResult, type ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
@@ -948,11 +949,18 @@ export async function machinePluginSecretDelete(
 }
 
 function projectMachinePluginActionExecutionResponse(result: ActionExecuteResult): DaemonPluginStructuredMessageActionExecuteResponse {
-    return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse(result.ok
-        ? { ok: true, result: result.result }
-        : { ok: false, code: result.errorCode, message: result.error,
-            details: StrictJsonValueSchema.safeParse(result.details).data,
-            failureCause: result.failureCause, requestId: result.requestId, effectAttempted: result.effectAttempted });
+    if (result.ok) return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({ ok: true, result: result.result });
+    const actionHandlerInvocation = readPluginActionFailureHandlerInvocation({
+        code: result.errorCode,
+        message: result.error,
+        data: result.details,
+    });
+    return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
+        ok: false, code: result.errorCode, message: result.error,
+        details: StrictJsonValueSchema.safeParse(result.details).data,
+        failureCause: result.failureCause, requestId: result.requestId, effectAttempted: result.effectAttempted,
+        ...(actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation }),
+    });
 }
 
 export async function machinePluginStructuredMessageActionExecute(

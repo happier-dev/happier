@@ -3385,6 +3385,47 @@ describe('Account Action placement through the executable dispatcher', () => {
         expect(environmentReads).toBe(0);
     });
 
+    it.each([true, false])('lets a Home Environment Action ask for confirmation only with handler refusal proof (%s)', async hasProof => {
+        const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+        const home = rpcHomes.get('server-client-action')!;
+        const code = 'plugin_action_current_intent_unavailable';
+        const action = { pluginId: 'acme.releases', localId: 'publish' };
+        const input = { environmentId: 'preview-child' };
+        let publications = 0;
+        const boundary = await createExternalActionAccountHttpBoundary({
+            serverUrl: home.serverUrl, serverIdentityId: 'srv_client_action', accountId: home.accountId,
+            machineId: 'machine-local', actionId: 'action.invoke', tokenEpoch: 0, requesterInvocation: 'optional',
+            execute: (_value, context) => {
+                if (!context.invocation?.presentUserConfirmation) return { refused: true };
+                publications++;
+                return { published: true };
+            },
+            failure: result => result && typeof result === 'object' && 'refused' in result ? {
+                errorCode: code, error: code, effectAttempted: false,
+                details: { name: 'PluginError', code, message: code, ...(hasProof ? { actionHandlerInvocation: 'notStarted' } : {}) },
+            } : null,
+        });
+        network.setHttpResponder(async (url, init) => await boundary.handle(new URL(String(url)), init)
+            ?? createEmptyAccountBootstrapHttpResponse(new URL(String(url)).pathname, init));
+        const requestCurrentIntent = vi.fn(async ({ fingerprint }: Readonly<{ fingerprint: string }>) => {
+            expect(publications).toBe(0);
+            return { status: 'approved' as const, fingerprint };
+        });
+        const outcome = await dispatchPluginSurfaceAction({ action, input,
+            resolveContributedAction: identity => ({ ...resolveConfirmedDaemonTargetAction(identity), approvalScope: 'environment' as const }),
+            requestCurrentIntent, contributedAction: { machineId: boundary.machine.id, serverId: home.id },
+        });
+        if (hasProof) {
+            expect(outcome).toEqual({ ok: true, result: { published: true } });
+            expect(requestCurrentIntent).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ input }));
+            expect(publications).toBe(1);
+        } else {
+            expect(outcome).toMatchObject({ ok: false, code, effectAttempted: false });
+            expect(requestCurrentIntent).not.toHaveBeenCalled();
+            expect(publications).toBe(0);
+        }
+    });
+
     it.each([
         { coldBinding: false, settlement: 'ready' },
         { coldBinding: true, settlement: 'ready' },
