@@ -8284,6 +8284,8 @@ export const zhHans: TranslationStructure = {
         skills_unavailable: "技能分发不可用。请检查目标机器，然后重试会话。",
         team_credential_provider_selection_not_current: "所选的 Team 提供商不可用。请检查 Team 的模型选择，然后重试会话。",
         team_credential_model_selection_required: "请先选择一个 Team 模型，再启动此会话。",
+        team_credential_binding_not_current: "此机器上的 Team 模型连接已重置。请重新发送消息。",
+        ACCOUNT_SETTINGS_SCOPE_CHANGED: "此会话启动期间你的账户设置发生了变化。请重新启动会话。",
         resource_corrupt: "所选 Team 凭据需要修复。请让其所有者修复后，再重试此会话。",
         policy_denied: "Team 策略不允许使用此凭据。请先检查 Team 策略，再重试此会话。",
         connected_account_purpose_catalog_unavailable: "默认关联账户暂时不可用。请重试启动会话。",

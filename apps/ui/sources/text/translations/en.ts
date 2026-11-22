@@ -10008,6 +10008,8 @@ const enSession = {
       skills_unavailable: 'Skill delivery is unavailable. Check the target machine, then retry the session.',
       team_credential_provider_selection_not_current: 'The selected Team provider is unavailable. Review the Team model selection, then retry the session.',
       team_credential_model_selection_required: 'Choose a Team model before starting this session.',
+      team_credential_binding_not_current: "The Team model connection on this machine was reset. Send your message again.",
+      ACCOUNT_SETTINGS_SCOPE_CHANGED: "Your account settings changed while this session was starting. Start the session again.",
       resource_corrupt: 'The selected Team credential needs repair. Ask its owner to repair it, then retry the session.',
       policy_denied: 'Team policy does not permit this credential use. Review the Team policy before retrying the session.',
       connected_account_purpose_catalog_unavailable: "Default Connected Accounts are temporarily unavailable. Retry starting the session.",
