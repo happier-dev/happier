@@ -180,10 +180,12 @@ function normalizeDimensionEnvValue(value: unknown): string | undefined {
 
 function buildPythonRelayEnv(params: Readonly<{
   baseEnv?: NodeJS.ProcessEnv;
+  name?: string;
   cols?: number;
   rows?: number;
 }>): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...(params.baseEnv ?? {}) };
+  if (params.name) env.TERM = params.name;
   const cols = normalizeDimensionEnvValue(params.cols);
   const rows = normalizeDimensionEnvValue(params.rows);
   if (cols !== undefined) env.HAPPIER_PYTHON_PTY_RELAY_COLS = cols;
@@ -381,6 +383,7 @@ export function createPythonPtyRelayProvider(params?: Readonly<{
         cwd: spawnParams.options.cwd,
         env: buildPythonRelayEnv({
           baseEnv: spawnParams.options.env ?? params?.env ?? process.env,
+          name: spawnParams.options.name,
           cols: spawnParams.options.cols,
           rows: spawnParams.options.rows,
         }),
