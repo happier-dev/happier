@@ -17,6 +17,8 @@ export interface DesktopGlassState {
 export interface DesktopGlassMaterialRequest {
     enabled: boolean;
     blur: 'off' | 'light' | 'regular' | 'strong';
+    /** The appearance the native material renders in: the app's pinned theme, or null (or absent) to follow the system. */
+    theme?: 'light' | 'dark' | null;
     /** The main window's glass settings, which native relays to the panels that follow it. */
     settings?: GlassMaterialSettings;
 }

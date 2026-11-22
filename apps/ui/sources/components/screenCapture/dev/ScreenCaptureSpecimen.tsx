@@ -104,7 +104,7 @@ function useStandInDesktopGlass() {
     const reduceTransparency = useReduceTransparency() || runtime.reduceTransparency === true;
     const environment = React.useMemo(() => ({
         ...runtime, desktopWindow: true, reduceTransparency,
-        nativeWindowMaterialLive: resolveDesktopGlassMaterialRequest(settings).enabled && !reduceTransparency,
+        nativeWindowMaterialLive: resolveDesktopGlassMaterialRequest(settings, 'adaptive').enabled && !reduceTransparency,
     }), [reduceTransparency, runtime, settings]);
     const variables = React.useMemo(() => Platform.OS === 'web'
         ? resolveGlassPresentationVariables(settings, environment) as unknown as ViewStyle : null, [environment, settings]);

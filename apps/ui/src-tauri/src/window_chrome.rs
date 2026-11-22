@@ -44,11 +44,31 @@ pub enum DesktopGlassBlur {
     Strong,
 }
 
+/// The app's own theme when the person pinned one; None while the app follows the system.
+#[cfg(desktop)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DesktopGlassTheme {
+    Light,
+    Dark,
+}
+
+#[cfg(desktop)]
+impl From<DesktopGlassTheme> for tauri::Theme {
+    fn from(theme: DesktopGlassTheme) -> Self {
+        match theme {
+            DesktopGlassTheme::Light => tauri::Theme::Light,
+            DesktopGlassTheme::Dark => tauri::Theme::Dark,
+        }
+    }
+}
+
 #[cfg(desktop)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct DesktopGlassMaterialRequest {
     enabled: bool,
     blur: DesktopGlassBlur,
+    theme: Option<DesktopGlassTheme>,
 }
 
 /// Floating panels show the main window's material behind their one rounded card.
@@ -73,6 +93,8 @@ pub struct DesktopGlassPanelFrame {
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct DesktopGlassApplied {
     blur: DesktopGlassBlur,
+    /// The appearance the material renders in; a change re-applies it.
+    theme: Option<DesktopGlassTheme>,
     radius: Option<f64>,
     frame: Option<DesktopGlassPanelFrame>,
 }
@@ -200,9 +222,18 @@ fn glass_platform_supported(window: &WebviewWindow, panel: bool) -> bool {
 fn apply_native_glass(
     window: &WebviewWindow,
     applied: Option<DesktopGlassApplied>,
-    _panel: bool,
+    panel: bool,
 ) -> Result<(), String> {
     use window_vibrancy::{NSVisualEffectMaterial as Material, NSVisualEffectState};
+    // The material renders in the app's appearance, which otherwise follows the system: an app pinned to Light
+    // under a Dark system showed a dark material through its light coats (owner 2026-11-22, light glass veil). The
+    // pin lives only while material is applied, so an app that follows the system is never left pinned. On macOS
+    // the theme is app-wide, so only app windows own it: a panel clears its material whenever its card moves.
+    if !panel {
+        window
+            .set_theme(applied.and_then(|applied| applied.theme).map(Into::into))
+            .map_err(|error| error.to_string())?;
+    }
     let blur = applied.map(|applied| applied.blur);
     let material = match blur {
         None | Some(DesktopGlassBlur::Off) => {
@@ -358,6 +389,7 @@ fn refresh_desktop_glass(window: &WebviewWindow, announce: bool) -> Result<Deskt
     );
     let desired = wants_material.then_some(DesktopGlassApplied {
         blur: inner.request.blur,
+        theme: inner.request.theme,
         radius: entry.panel_radius,
         frame: entry.panel_frame,
     });
@@ -634,9 +666,10 @@ pub async fn desktop_apply_glass_material(
     window: WebviewWindow,
     enabled: bool,
     blur: DesktopGlassBlur,
+    theme: Option<DesktopGlassTheme>,
     settings: Option<serde_json::Value>,
 ) -> Result<DesktopGlassStateView, String> {
-    update_desktop_glass(window, Some((DesktopGlassMaterialRequest { enabled, blur }, settings))).await
+    update_desktop_glass(window, Some((DesktopGlassMaterialRequest { enabled, blur, theme }, settings))).await
 }
 
 /// Clears a panel's material while its card moves; resting shapes arrive with the frame that fits them.
@@ -1497,6 +1530,7 @@ pub fn register(app: &mut App) -> tauri::Result<()> {
         request: DesktopGlassMaterialRequest {
             enabled: false,
             blur: DesktopGlassBlur::Off,
+            theme: None,
         },
         settings: None,
         windows: std::collections::HashMap::new(),
@@ -1634,6 +1668,7 @@ mod tests {
         let request = DesktopGlassMaterialRequest {
             enabled: true,
             blur: DesktopGlassBlur::Strong,
+            theme: None,
         };
         assert!(desktop_glass_material_requested(request, true, false));
         assert!(!desktop_glass_material_requested(request, false, false));
@@ -1655,6 +1690,19 @@ mod tests {
             true,
             false
         ));
+    }
+
+    #[test]
+    fn glass_theme_reads_the_app_theme_and_none_while_the_app_follows_the_system() {
+        let read = |value| serde_json::from_value::<Option<DesktopGlassTheme>>(value).unwrap();
+        assert_eq!(read(serde_json::json!("light")), Some(DesktopGlassTheme::Light));
+        assert_eq!(read(serde_json::json!("dark")), Some(DesktopGlassTheme::Dark));
+        assert_eq!(read(serde_json::Value::Null), None);
+        assert_eq!(tauri::Theme::from(DesktopGlassTheme::Light), tauri::Theme::Light);
+        assert_eq!(tauri::Theme::from(DesktopGlassTheme::Dark), tauri::Theme::Dark);
+        // A theme change alone is a different material, so the window re-applies it.
+        let applied = DesktopGlassApplied { blur: DesktopGlassBlur::Regular, theme: Some(DesktopGlassTheme::Light), radius: None, frame: None };
+        assert_ne!(applied, DesktopGlassApplied { theme: Some(DesktopGlassTheme::Dark), ..applied });
     }
 
     #[test]

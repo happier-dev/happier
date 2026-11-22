@@ -121,4 +121,24 @@ describe('desktop window material projection', () => {
             expect(host.invoke).toHaveBeenLastCalledWith('desktop_apply_glass_material', expect.objectContaining({ enabled: true, blur: 'light' }));
         } finally { standardCleanup(); act(() => storage.setState(before, true)); }
     });
+    // Owner 2026-11-22, light glass veil: the native material follows the app's theme. A pinned Light or Dark app
+    // pins the window appearance; Adaptive leaves it to the system, which the app follows too.
+    it('carries the app theme to the native window material, and none when the app follows the system', async () => {
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { GlassMaterialRuntime } = await import('./GlassMaterialRuntime');
+        const before = storage.getState();
+        host.invoke.mockResolvedValue({ supported: true, materialLive: true, reduceTransparency: false, highContrast: false, windowActive: true });
+        const lastTheme = () => host.invoke.mock.calls.filter(([name]) => name === 'desktop_apply_glass_material').at(-1)?.[1]?.theme;
+        try {
+            act(() => storage.setState({ localSettings: { ...before.localSettings, themePreference: 'light' } }));
+            await renderScreen(<GlassMaterialRuntime><React.Fragment /></GlassMaterialRuntime>);
+            expect(lastTheme()).toBe('light');
+            act(() => storage.setState({ localSettings: { ...storage.getState().localSettings, themePreference: 'dark' } }));
+            await act(async () => {});
+            expect(lastTheme()).toBe('dark');
+            act(() => storage.setState({ localSettings: { ...storage.getState().localSettings, themePreference: 'adaptive' } }));
+            await act(async () => {});
+            expect(lastTheme()).toBeNull();
+        } finally { standardCleanup(); act(() => storage.setState(before, true)); }
+    });
 });

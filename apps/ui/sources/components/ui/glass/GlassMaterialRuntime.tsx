@@ -6,6 +6,8 @@ import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { resolveDesktopWindowContext, resolveDesktopGlassPanelLabel } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
 import { applyDesktopGlassMaterial, subscribeDesktopGlassState, type DesktopGlassState } from '@/utils/platform/desktopGlassMaterial';
 import { useWebRootCanvasPresentation } from '@/theme/useWebRootCanvasPresentation';
+import { useLocalSetting } from '@/sync/store/hooks';
+import type { ThemePreference } from '@/components/ui/layout/statusBarStyle';
 
 import { GLASS_SURFACE_GROUPS, readGlassMaterials, type GlassAtmosphereTone, type GlassMaterialEnvironment, type GlassMaterialSettings } from './glassMaterial';
 import { GlassMaterialSettingsProvider, useGlassMaterialSettings } from './useGlassMaterialSettings';
@@ -15,13 +17,15 @@ export { useGlassRuntimeEnvironment } from './glassRuntimeEnvironment';
 
 /**
  * The one window material request, owned by chrome: macOS/Windows expose one window material. Other
- * groups retain their renderer filters; floating and Elements never change the backing.
+ * groups retain their renderer filters; floating and Elements never change the backing. The material renders in
+ * the app's theme (owner 2026-11-22, light glass veil): a pinned Light or Dark app pins the window's appearance,
+ * and Adaptive leaves it to the system (null), which the app itself follows, so the window never freezes it.
  */
-export function resolveDesktopGlassMaterialRequest(settings: GlassMaterialSettings) {
+export function resolveDesktopGlassMaterialRequest(settings: GlassMaterialSettings, themePreference: ThemePreference) {
     const materials = readGlassMaterials(settings);
     const enabled = GLASS_SURFACE_GROUPS.some(group => group !== 'floating' && group !== 'card'
         && (materials[group].blur !== 'off' || materials[group].opacity < 1));
-    return { enabled, blur: materials.chrome.blur };
+    return { enabled, blur: materials.chrome.blur, theme: themePreference === 'adaptive' ? null : themePreference };
 }
 
 /**
@@ -31,6 +35,7 @@ export function resolveDesktopGlassMaterialRequest(settings: GlassMaterialSettin
  */
 export function GlassMaterialRuntime(props: Readonly<{ children: React.ReactNode }>) {
     const storedSettings = useGlassMaterialSettings();
+    const themePreference = useLocalSetting('themePreference');
     const reduceTransparency = useReduceTransparency();
     const panelLabel = Platform.OS === 'web' && isDesktopHost() ? resolveDesktopGlassPanelLabel() : null;
     const panelWindow = panelLabel !== null;
@@ -67,11 +72,11 @@ export function GlassMaterialRuntime(props: Readonly<{ children: React.ReactNode
         if (!mainWindow) return;
         let current = true;
         // Native relays the settings to the panels that follow this window.
-        void applyDesktopGlassMaterial({ ...resolveDesktopGlassMaterialRequest(storedSettings), settings: storedSettings }).then(state => {
+        void applyDesktopGlassMaterial({ ...resolveDesktopGlassMaterialRequest(storedSettings, themePreference), settings: storedSettings }).then(state => {
             if (current) setNativeState(state);
         }).catch(() => { if (current) setNativeState(null); });
         return () => { current = false; };
-    }, [mainWindow, storedSettings]);
+    }, [mainWindow, storedSettings, themePreference]);
 
     React.useLayoutEffect(() => {
         if (Platform.OS !== 'web' || typeof document === 'undefined') return;
