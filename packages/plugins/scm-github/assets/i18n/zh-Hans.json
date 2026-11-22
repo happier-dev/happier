@@ -1173,5 +1173,22 @@
   "plugins.github.ui.preview.prUpdating": "正在更新 PR…",
   "plugins.github.ui.preview.retryPrUpdate": "重试 PR 更新",
   "plugins.github.releases.published.refreshWarning": "已发布。无法刷新最新的发布详情。请重新打开此发布以刷新。({code})",
-  "plugins.triage.readPartial": "已显示已读取的内容"
+  "plugins.triage.readPartial": "已显示已读取的内容",
+  "plugins.github.ui.reviewSkip.title": "已跳过审查",
+  "plugins.github.ui.reviewSkip.reason.baseRef": "基础分支 {base} 不属于 {patterns}，即按{source}审查的分支。",
+  "plugins.github.ui.reviewSkip.reason.baseRefUnknown": "基础分支不属于 {patterns}，即按{source}审查的分支。",
+  "plugins.github.ui.reviewSkip.reason.authorKind": "作者是{actual}，而按{source}只审查{allowed}提交的拉取请求。",
+  "plugins.github.ui.reviewSkip.reason.authorKindUnknown": "按{source}只审查{allowed}提交的拉取请求。",
+  "plugins.github.ui.reviewSkip.reason.draft": "这是草稿，而按{source}会跳过草稿。",
+  "plugins.github.ui.reviewSkip.reason.noReviewablePaths": "每个已更改的文件都匹配按{source}忽略的路径。",
+  "plugins.github.ui.reviewSkip.source.baseCommit": "仓库的审查规则",
+  "plugins.github.ui.reviewSkip.source.projectAutomation": "此自动化",
+  "plugins.github.ui.reviewSkip.author.human": "人",
+  "plugins.github.ui.reviewSkip.author.bot": "机器人",
+  "plugins.github.ui.reviewSkip.author.unsupported": "Happier 无法归类的账号",
+  "plugins.github.ui.reviewSkip.authors.human": "人",
+  "plugins.github.ui.reviewSkip.authors.bot": "机器人",
+  "plugins.github.ui.reviewSkip.authors.unsupported": "其他账号",
+  "plugins.github.ui.reviewSkip.reviewAnyway": "仍然审查",
+  "plugins.github.ui.reviewSkip.editAutomation": "编辑自动化"
 }

@@ -19,6 +19,11 @@ export function useTriageDetailFixPullRequestNavigation(): TriageDetailFixPullRe
   return React.useContext(TriageDetailPanelNavigationContext)?.fixPullRequest ?? null;
 }
 
+/** The frame's manual Review start for this entry, or `null` where the frame offers none (a standalone page). */
+export function useTriageDetailReviewAnyway(): (() => void) | null {
+  return React.useContext(TriageDetailPanelNavigationContext)?.reviewAnyway ?? null;
+}
+
 /** Only the association owner can establish that an entry has no linked fix. */
 export function useTriageDetailFixPullRequestsEmpty(): boolean {
   return React.useContext(TriageDetailPanelNavigationContext)?.fixPullRequestsEmpty === true;
@@ -43,6 +48,11 @@ export type TriageDetailPanelNavigationV1 = Readonly<{
   fixPullRequest?: TriageDetailFixPullRequestNavigationV1;
   /** The fix owner answered with no primary association; navigation readiness is independent. */
   fixPullRequestsEmpty?: boolean;
+  /**
+   * The frame's own manual Review start for this entry (its action row's Review press), offered only while that
+   * press can start. A source never starts a Review itself; "Review anyway" on a skipped Review borrows this one.
+   */
+  reviewAnyway?: () => void;
 }>;
 
 /** A complete file walk supplies the badge without another provider request. */

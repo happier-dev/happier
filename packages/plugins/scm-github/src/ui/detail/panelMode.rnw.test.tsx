@@ -215,6 +215,7 @@ const EMPTY_FINDINGS_WINDOW = { status: 'loaded', cursor: null, pending: {}, com
 async function mountPanel(panel: string | (() => string), options: Readonly<{
   direct?: boolean;
   admittedReview?: () => Readonly<{ reviewId: string; roundOrdinal: number }> | undefined;
+  reviewSkip?: JsonValue;
   openedResources?: unknown[];
   navigation?: Array<PluginUiPageNavigationV1 | null>;
   reads?: string[];
@@ -249,6 +250,7 @@ async function mountPanel(panel: string | (() => string), options: Readonly<{
           ...(context.launchInput as Record<string, JsonValue>),
           ...(typeof panel === 'function' ? { panel: panel() } : {}),
           ...(options.admittedReview === undefined ? {} : { admittedReview: options.admittedReview() }),
+          ...(options.reviewSkip === undefined ? {} : { reviewSkip: options.reviewSkip }),
         } });
         // The SDK artifact boundary returns an opaque UI element; the RNW host requires a real React element.
         if (body !== null && !React.isValidElement(body)) throw new Error('Expected a React-native author surface');
@@ -410,12 +412,48 @@ describe('the GitHub detail as Triage panels', () => {
     expect(openedResources).toEqual([{ kind: 'artifact', artifactId: 'owned-pr-review' }]);
   });
 
+  const skipRules = { baseRefs: ['main', 'release/*'], authorKinds: ['human'], skipDrafts: true, ignorePaths: ['docs/**'],
+    baseRevision: 'a'.repeat(40), provenance: { baseRefs: 'baseCommit', authorKinds: 'baseCommit', skipDrafts: 'baseCommit',
+      ignorePaths: 'projectAutomation' } };
+  const skipCases = [
+    ['baseRef', { baseRef: 'feature/relay-v2' }, 'The base branch feature/relay-v2 isn’t main or release/*, the branches reviewed under the repository’s review rules.'],
+    ['authorKind', { authorKind: 'bot' }, 'The author is a bot, and only pull requests by people are reviewed under the repository’s review rules.'],
+    ['draft', {}, 'It’s a draft, and drafts are skipped under the repository’s review rules.'],
+    ['noReviewablePaths', {}, 'Every changed file matches a path ignored under this automation.'],
+  ] as const;
+  it.each(skipCases.flatMap(([reason, occurrence, why]) => [false, true].map(direct => [reason, direct, occurrence, why] as const)))(
+    'says why the Review was skipped (%s) with its two ways on (direct=%s)', async (reason, direct, occurrence, why) => {
+      const openedResources: unknown[] = [];
+      let started = 0;
+      const reads: string[] = [];
+      const fixture = await mountPanel('overview', { direct, openedResources, reads,
+        reviewSkip: { headSha: HEAD_REVISION, reason, rules: skipRules, occurrence, automationId: 'automation-review-prs' },
+        panelNavigation: { panels: ['overview'], select: () => {}, reviewAnyway: () => { started += 1; } },
+      });
+      await expect(fixture.getByText('Review skipped')).resolves.toBeDefined();
+      await expect(fixture.getByText(why)).resolves.toBeDefined();
+      expect(reads).not.toContain('review.get');
+      await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Review anyway' })); });
+      expect(started).toBe(1);
+      await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Edit the automation' })); });
+      expect(openedResources).toEqual([{ kind: 'automation', automationId: 'automation-review-prs' }]);
+    });
+
+  it('offers no Review start where the frame cannot start one, and no automation link for a skip no automation asked for', async () => {
+    const fixture = await mountPanel('overview', { direct: true,
+      reviewSkip: { headSha: HEAD_REVISION, reason: 'draft', rules: skipRules, occurrence: {} } });
+    await expect(fixture.getByText('Review skipped')).resolves.toBeDefined();
+    expect(await fixture.queryAllByRole('button', { name: 'Review anyway' })).toHaveLength(0);
+    expect(await fixture.queryAllByRole('button', { name: 'Edit the automation' })).toHaveLength(0);
+  });
+
   it('does not scan Reviews when this PR has no admitted Review relation', async () => {
     const reads: string[] = [];
     const fixture = await mountPanel('overview', { reads });
     expect(reads).not.toContain('review.get');
     expect(reads).not.toContain('reviews.list');
     expect(await fixture.queryAllByRole('button', { name: 'Open review' })).toHaveLength(0);
+    expect(await fixture.queryByText('Review skipped')).toBeUndefined();
   });
 
   it('clears the prior Review on relation replacement and retries through the page refresh when refused', async () => {

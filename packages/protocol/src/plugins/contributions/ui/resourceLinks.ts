@@ -19,6 +19,7 @@ export type PluginUiResourceIntentV1 = ReturnType<typeof PluginUiResourceIntentV
 export const PluginUiOpenResourceIntentV1Schema = defineProtocolUnion([
   PluginUiResourceIntentV1Schema,
   defineProtocolObject({ kind: defineProtocolLiteral('artifact'), artifactId: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' }),
+  defineProtocolObject({ kind: defineProtocolLiteral('automation'), automationId: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' }),
 ]);
 export type PluginUiOpenResourceIntentV1 = ReturnType<typeof PluginUiOpenResourceIntentV1Schema.parse>;
 

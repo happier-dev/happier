@@ -15,7 +15,7 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 import { resolveExternalUrlTargetFromInput } from '@/sync/domains/browser/shell/address';
 import { selectChatLinkEngineOverride } from '@/sync/domains/browser/adapters/selection';
 import { BrowserWorkspaceOpenResultV1Schema } from '@happier-dev/protocol/browser/control/v1';
-import { artifactResourceRoute } from './resourceRoute';
+import { artifactResourceRoute, automationResourceRoute } from './resourceRoute';
 
 const execute = createFrontDoorActionExecute();
 let chatLinkSequence = 0;
@@ -120,9 +120,10 @@ export async function requestOpenResource(resource: PluginUiOpenResourceIntentV1
 
 /** Preserve the actual destination for Actions; an external recovery did not open a workspace tab. */
 export async function requestOpenResourceOutcome(resource: PluginUiOpenResourceIntentV1, context?: OpenResourceContext): Promise<OpenResourceOutcome> {
-  if (resource.kind === 'artifact') {
+  if (resource.kind === 'artifact' || resource.kind === 'automation') {
     const { router } = await import('expo-router');
-    router.push(artifactResourceRoute(resource, context?.serverId) as never);
+    router.push((resource.kind === 'artifact' ? artifactResourceRoute(resource, context?.serverId)
+      : automationResourceRoute(resource, context?.serverId)) as never);
     return { status: 'inApp' };
   }
   return openResourceUrl(resource.url, resource.kind, context);

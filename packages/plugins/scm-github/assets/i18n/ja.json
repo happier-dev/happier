@@ -1173,5 +1173,22 @@
   "plugins.github.ui.preview.prUpdating": "PRを更新中…",
   "plugins.github.ui.preview.retryPrUpdate": "PRの更新を再試行",
   "plugins.github.releases.published.refreshWarning": "公開しました。最新のリリース詳細を更新できませんでした。リリースを開き直して更新してください。({code})",
-  "plugins.triage.readPartial": "これまでに読み取ったものを表示しています"
+  "plugins.triage.readPartial": "これまでに読み取ったものを表示しています",
+  "plugins.github.ui.reviewSkip.title": "レビューはスキップされました",
+  "plugins.github.ui.reviewSkip.reason.baseRef": "ベースブランチ {base} は、{source}でレビュー対象のブランチ（{patterns}）ではありません。",
+  "plugins.github.ui.reviewSkip.reason.baseRefUnknown": "ベースブランチは、{source}でレビュー対象のブランチ（{patterns}）ではありません。",
+  "plugins.github.ui.reviewSkip.reason.authorKind": "作成者は{actual}ですが、{source}では{allowed}のプルリクエストだけがレビュー対象です。",
+  "plugins.github.ui.reviewSkip.reason.authorKindUnknown": "{source}では{allowed}のプルリクエストだけがレビュー対象です。",
+  "plugins.github.ui.reviewSkip.reason.draft": "ドラフトのため、{source}ではスキップされます。",
+  "plugins.github.ui.reviewSkip.reason.noReviewablePaths": "変更されたすべてのファイルが、{source}で無視されるパスに一致します。",
+  "plugins.github.ui.reviewSkip.source.baseCommit": "リポジトリのレビュールール",
+  "plugins.github.ui.reviewSkip.source.projectAutomation": "このオートメーション",
+  "plugins.github.ui.reviewSkip.author.human": "人",
+  "plugins.github.ui.reviewSkip.author.bot": "ボット",
+  "plugins.github.ui.reviewSkip.author.unsupported": "Happier が分類できないアカウント",
+  "plugins.github.ui.reviewSkip.authors.human": "人",
+  "plugins.github.ui.reviewSkip.authors.bot": "ボット",
+  "plugins.github.ui.reviewSkip.authors.unsupported": "その他のアカウント",
+  "plugins.github.ui.reviewSkip.reviewAnyway": "それでもレビュー",
+  "plugins.github.ui.reviewSkip.editAutomation": "オートメーションを編集"
 }

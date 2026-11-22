@@ -181,6 +181,7 @@ async function readTriageEntryDetailStateThrough(
     observation: source.observation,
     ...(source.detailData === undefined ? {} : { detailData: source.detailData }),
     ...(result.admittedReview === undefined ? {} : { admittedReview: result.admittedReview }),
+    ...(result.reviewSkip === undefined ? {} : { reviewSkip: result.reviewSkip }),
     linkedSessions: result.linkedSessions,
     linkedSessionsHasMore: result.linkedSessionsNextCursor !== undefined,
   });
@@ -310,6 +311,7 @@ export function useTriageEntryDetail(
         observation,
         ...(detailData === undefined ? {} : { detailData }),
         ...(result.admittedReview === undefined ? {} : { admittedReview: result.admittedReview }),
+        ...(result.reviewSkip === undefined ? {} : { reviewSkip: result.reviewSkip }),
         linkedSessions: result.linkedSessions,
         linkedSessionsHasMore: result.linkedSessionsNextCursor !== undefined,
       });
@@ -450,6 +452,7 @@ export function useTriageEntryDetail(
         observation,
         ...(detailData === undefined ? {} : { detailData }),
         ...(state.input.admittedReview === undefined ? {} : { admittedReview: state.input.admittedReview }),
+        ...(state.input.reviewSkip === undefined ? {} : { reviewSkip: state.input.reviewSkip }),
         linkedSessions: state.input.linkedSessions,
         linkedSessionsHasMore: state.input.linkedSessionsHasMore,
       });

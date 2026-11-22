@@ -3,7 +3,7 @@ import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { pluginJsonValuesEqual, projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { produceScmPullRequestReviewScope, type ScmPullRequestReviewScopeV1 } from '@happier-dev/plugin-sdk/reviews';
 import { ScmComparisonSchema, type ScmComparison, type ScmComparisonSource } from '@happier-dev/plugin-sdk/scm';
-import { projectTriagePrepareReviewWorkspaceInputV1, type TriagePrepareReviewWorkspaceInputV1, type TriageVerifyReviewWorkspaceResultV1 } from '@happier-dev/triage-protocol/v1';
+import { projectTriagePrepareReviewWorkspaceInputV1, projectTriageReviewSkipRulesV1, type TriagePrepareReviewWorkspaceInputV1, type TriageVerifyReviewWorkspaceResultV1 } from '@happier-dev/triage-protocol/v1';
 import { projectTriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
@@ -11,7 +11,10 @@ import { indexTriageAdmittedSourcesV1 } from '../corpus/configuration/accountDat
 import { observedReviewWorkspacePreparationFor, prepareEntryReviewWorkspace, preparedReviewWorkspaceFactsFor, type TriageReviewWorkspacePreparationDepsV1 } from '../sessions/entrySessionWorkspace.js';
 import type { TriageStartEntrySessionInputV1, TriageStartPullRequestReviewInputV1, TriageStartPullRequestReviewResultV1, TriagePreparePullRequestReviewInputV1, TriagePreparePullRequestReviewResultV1 } from './entrySessionProtocol.js';
 import { TriageReobserveEntryResultV1Schema, TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1 } from './reobserveEntryProtocol.js';
-import { readPullRequestReviewRules, selectPullRequestReviewPaths } from './pullRequestReviewRules.js';
+import { readPullRequestReviewRules, selectPullRequestReviewPaths, type PullRequestReviewResolvedRulesV1, type PullRequestReviewRuleOccurrenceV1 } from './pullRequestReviewRules.js';
+import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
+import { setReviewSkip } from '../corpus/marks/setPinned.js';
+import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 
 type TriageReviewWorkspaceRequestV1 = Extract<
     Extract<TriageStartEntrySessionInputV1['destination'], Readonly<{ kind: 'new' }>>['materialization'],
@@ -244,6 +247,41 @@ async function captureTriagePullRequestReviewComparison(
     return { status: 'verified', scope: scope.scope };
 }
 
+type SkipReason = Extract<TriagePreparePullRequestReviewResultV1, { status: 'skipped' }>['reason'];
+
+/**
+ * The PR shows why its Review was skipped from this one record of Prepare's own result (the head it judged,
+ * the occurrence facts the rule compared, the Automation whose run asked). The Run keeps the authoritative
+ * step result, so a failed projection write leaves the skip readable there and never fails the step.
+ */
+async function recordReviewSkip(
+    context: PluginInvocationContext,
+    review: Readonly<{ entryRef: TriagePreparePullRequestReviewInputV1['reviewTarget']['entryRef'];
+        lastKnownLocator: { displayPath?: string }; observed: { headSha: string } }>,
+    occurrence: PullRequestReviewRuleOccurrenceV1 | undefined,
+    reason: SkipReason,
+    rules: PullRequestReviewResolvedRulesV1,
+): Promise<void> {
+    const automationId = context.caller?.kind === 'automationRun' ? context.caller.automationId : undefined;
+    try {
+        await setReviewSkip({
+            collections: bindCorpusCollections(requireTriageAccountStorage(context)),
+            entryRef: review.entryRef,
+            displayAtMark: { title: review.lastKnownLocator.displayPath ?? review.entryRef.entryId, scopeLabel: review.entryRef.collisionScope },
+            reviewSkip: { headSha: review.observed.headSha, reason, rules: projectTriageReviewSkipRulesV1(rules),
+                occurrence: {
+                    ...(occurrence?.baseRef === undefined ? {} : { baseRef: occurrence.baseRef }),
+                    ...(occurrence?.author?.kind === undefined ? {} : { authorKind: occurrence.author.kind }),
+                },
+                ...(automationId === undefined ? {} : { automationId }) },
+            nowMs: Date.now(),
+            ...(context.signal === undefined ? {} : { signal: context.signal }),
+        });
+    } catch {
+        // The Run's step result remains the readable record of this skip.
+    }
+}
+
 /** Selected-source preparation never creates a Session or starts a reviewer. */
 export function createTriagePreparePullRequestReviewActionHandler(): ActionHandler<
     TriagePreparePullRequestReviewInputV1, TriagePreparePullRequestReviewResultV1
@@ -286,7 +324,11 @@ export function createTriagePreparePullRequestReviewActionHandler(): ActionHandl
         if (resolved?.kind === 'invalid' || resolved?.kind === 'unavailable') return {
             v: 1, status: 'unavailable', reason: resolved.kind === 'invalid' ? 'invalidReviewRules' : 'reviewRulesUnavailable',
         };
-        if (resolved?.kind === 'skipped') return { v: 1, status: 'skipped', reason: resolved.reason, rules: resolved.rules };
+        const skip = async (reason: SkipReason, rules: PullRequestReviewResolvedRulesV1) => {
+            await recordReviewSkip(context, review, input.ruleOccurrence, reason, rules);
+            return { v: 1 as const, status: 'skipped' as const, reason, rules };
+        };
+        if (resolved?.kind === 'skipped') return await skip(resolved.reason, resolved.rules);
         const targetSource = input.reviewTarget.comparisonSource;
         const comparisonSource = targetSource.kind === 'pullRequest' ? { ...targetSource,
             locator: { ...targetSource.locator, baseOid: request.observed.baseSha, headOid: request.observed.headSha } } : targetSource;
@@ -297,7 +339,7 @@ export function createTriagePreparePullRequestReviewActionHandler(): ActionHandl
         const selectedPaths = rules?.ignorePaths?.length
             ? selectPullRequestReviewPaths(verified.inventory?.files.map(file => file.path) ?? [], rules.ignorePaths) : undefined;
         if (rules && selectedPaths?.length === 0) return verified.inventory?.state === 'complete'
-            ? { v: 1, status: 'skipped', reason: 'noReviewablePaths', rules }
+            ? await skip('noReviewablePaths', rules)
             : { v: 1, status: 'unavailable', reason: 'sourceUnavailable' };
         return { v: 1, status: 'prepared', review: { ...review,
             ...(selectedPaths === undefined ? {} : { selectedPaths }),

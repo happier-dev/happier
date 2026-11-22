@@ -1173,5 +1173,22 @@
   "plugins.github.ui.preview.prUpdating": "Updating PR…",
   "plugins.github.ui.preview.retryPrUpdate": "Retry PR update",
   "plugins.github.releases.published.refreshWarning": "Published. The latest release details could not be refreshed. Open the release again to refresh. ({code})",
-  "plugins.triage.readPartial": "Showing what was read so far"
+  "plugins.triage.readPartial": "Showing what was read so far",
+  "plugins.github.ui.reviewSkip.title": "Review skipped",
+  "plugins.github.ui.reviewSkip.reason.baseRef": "The base branch {base} isn’t {patterns}, the branches reviewed under {source}.",
+  "plugins.github.ui.reviewSkip.reason.baseRefUnknown": "The base branch isn’t {patterns}, the branches reviewed under {source}.",
+  "plugins.github.ui.reviewSkip.reason.authorKind": "The author is {actual}, and only pull requests by {allowed} are reviewed under {source}.",
+  "plugins.github.ui.reviewSkip.reason.authorKindUnknown": "Only pull requests by {allowed} are reviewed under {source}.",
+  "plugins.github.ui.reviewSkip.reason.draft": "It’s a draft, and drafts are skipped under {source}.",
+  "plugins.github.ui.reviewSkip.reason.noReviewablePaths": "Every changed file matches a path ignored under {source}.",
+  "plugins.github.ui.reviewSkip.source.baseCommit": "the repository’s review rules",
+  "plugins.github.ui.reviewSkip.source.projectAutomation": "this automation",
+  "plugins.github.ui.reviewSkip.author.human": "a person",
+  "plugins.github.ui.reviewSkip.author.bot": "a bot",
+  "plugins.github.ui.reviewSkip.author.unsupported": "an account Happier can’t classify",
+  "plugins.github.ui.reviewSkip.authors.human": "people",
+  "plugins.github.ui.reviewSkip.authors.bot": "bots",
+  "plugins.github.ui.reviewSkip.authors.unsupported": "other accounts",
+  "plugins.github.ui.reviewSkip.reviewAnyway": "Review anyway",
+  "plugins.github.ui.reviewSkip.editAutomation": "Edit the automation"
 }

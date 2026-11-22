@@ -44,6 +44,7 @@ export const CORPUS_USER_MARKS_FIELD = {
     originError: 'originError',
     originReview: 'originReview',
     admittedReview: 'admittedReview',
+    reviewSkip: 'reviewSkip',
 } as const;
 
 export const CORPUS_SOURCE_INSTANCES_INDEX_ID = {

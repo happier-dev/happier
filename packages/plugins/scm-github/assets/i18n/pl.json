@@ -1173,5 +1173,22 @@
   "plugins.github.ui.preview.prUpdating": "Aktualizowanie PR…",
   "plugins.github.ui.preview.retryPrUpdate": "Ponów aktualizację PR",
   "plugins.github.releases.published.refreshWarning": "Opublikowano. Nie udało się odświeżyć szczegółów wydania. Otwórz wydanie ponownie, aby je odświeżyć. ({code})",
-  "plugins.triage.readPartial": "Pokażemy, co udało nam się odczytać do tej pory"
+  "plugins.triage.readPartial": "Pokażemy, co udało nam się odczytać do tej pory",
+  "plugins.github.ui.reviewSkip.title": "Przegląd pominięty",
+  "plugins.github.ui.reviewSkip.reason.baseRef": "Gałąź bazowa {base} to nie {patterns}, czyli gałęzie przeglądane według {source}.",
+  "plugins.github.ui.reviewSkip.reason.baseRefUnknown": "Gałąź bazowa to nie {patterns}, czyli gałęzie przeglądane według {source}.",
+  "plugins.github.ui.reviewSkip.reason.authorKind": "Autor to {actual}, a według {source} przeglądane są tylko pull requesty od {allowed}.",
+  "plugins.github.ui.reviewSkip.reason.authorKindUnknown": "Według {source} przeglądane są tylko pull requesty od {allowed}.",
+  "plugins.github.ui.reviewSkip.reason.draft": "To wersja robocza, a według {source} wersje robocze są pomijane.",
+  "plugins.github.ui.reviewSkip.reason.noReviewablePaths": "Każdy zmieniony plik pasuje do ścieżki ignorowanej według {source}.",
+  "plugins.github.ui.reviewSkip.source.baseCommit": "reguł przeglądu repozytorium",
+  "plugins.github.ui.reviewSkip.source.projectAutomation": "tej automatyzacji",
+  "plugins.github.ui.reviewSkip.author.human": "osoba",
+  "plugins.github.ui.reviewSkip.author.bot": "bot",
+  "plugins.github.ui.reviewSkip.author.unsupported": "konto, którego Happier nie umie sklasyfikować",
+  "plugins.github.ui.reviewSkip.authors.human": "osób",
+  "plugins.github.ui.reviewSkip.authors.bot": "botów",
+  "plugins.github.ui.reviewSkip.authors.unsupported": "innych kont",
+  "plugins.github.ui.reviewSkip.reviewAnyway": "Przejrzyj mimo to",
+  "plugins.github.ui.reviewSkip.editAutomation": "Edytuj automatyzację"
 }

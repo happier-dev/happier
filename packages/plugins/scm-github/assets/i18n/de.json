@@ -1173,5 +1173,22 @@
   "plugins.github.ui.preview.prUpdating": "PR wird aktualisiert…",
   "plugins.github.ui.preview.retryPrUpdate": "PR-Aktualisierung erneut versuchen",
   "plugins.github.releases.published.refreshWarning": "Veröffentlicht. Die neuesten Release-Details konnten nicht aktualisiert werden. Öffne das Release erneut, um sie zu aktualisieren. ({code})",
-  "plugins.triage.readPartial": "Bisher gelesene Inhalte werden angezeigt"
+  "plugins.triage.readPartial": "Bisher gelesene Inhalte werden angezeigt",
+  "plugins.github.ui.reviewSkip.title": "Review übersprungen",
+  "plugins.github.ui.reviewSkip.reason.baseRef": "Der Basis-Branch {base} ist nicht {patterns}, die Branches, die laut {source} geprüft werden.",
+  "plugins.github.ui.reviewSkip.reason.baseRefUnknown": "Der Basis-Branch ist nicht {patterns}, die Branches, die laut {source} geprüft werden.",
+  "plugins.github.ui.reviewSkip.reason.authorKind": "Der Autor ist {actual}, und laut {source} werden nur Pull Requests von {allowed} geprüft.",
+  "plugins.github.ui.reviewSkip.reason.authorKindUnknown": "Laut {source} werden nur Pull Requests von {allowed} geprüft.",
+  "plugins.github.ui.reviewSkip.reason.draft": "Es ist ein Entwurf, und laut {source} werden Entwürfe übersprungen.",
+  "plugins.github.ui.reviewSkip.reason.noReviewablePaths": "Jede geänderte Datei passt zu einem Pfad, der laut {source} ignoriert wird.",
+  "plugins.github.ui.reviewSkip.source.baseCommit": "den Review-Regeln des Repositorys",
+  "plugins.github.ui.reviewSkip.source.projectAutomation": "dieser Automatisierung",
+  "plugins.github.ui.reviewSkip.author.human": "eine Person",
+  "plugins.github.ui.reviewSkip.author.bot": "ein Bot",
+  "plugins.github.ui.reviewSkip.author.unsupported": "ein Konto, das Happier nicht einordnen kann",
+  "plugins.github.ui.reviewSkip.authors.human": "Personen",
+  "plugins.github.ui.reviewSkip.authors.bot": "Bots",
+  "plugins.github.ui.reviewSkip.authors.unsupported": "anderen Konten",
+  "plugins.github.ui.reviewSkip.reviewAnyway": "Trotzdem prüfen",
+  "plugins.github.ui.reviewSkip.editAutomation": "Automatisierung bearbeiten"
 }

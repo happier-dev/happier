@@ -1,6 +1,6 @@
 import type { TriageTaskOriginReviewV1 } from '../../actions/taskReviewProtocol.js';
 import { isPluginError, PluginError, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
-import type { TriageAdmittedReviewV1, TriageEntryRefV1, TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
+import type { TriageAdmittedReviewV1, TriageEntryRefV1, TriageReviewSkipV1, TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { CorpusCollectionsV1 } from '../collections/bindCorpusCollections.js';
 import { putCorpusRowOnce } from '../collections/putRowOnce.js';
@@ -114,9 +114,9 @@ async function deleteLiveMark(collections: MarkCollections, markTag: string, rev
 }
 
 /** An unpinned mark stays live only while it carries one of the user's or a Review's relationships. */
-function carriesRelationship(row: Pick<CorpusUserMarkRowV1, 'fixPullRequests' | 'originError' | 'originReview' | 'admittedReview'>): boolean {
+function carriesRelationship(row: Pick<CorpusUserMarkRowV1, 'fixPullRequests' | 'originError' | 'originReview' | 'admittedReview' | 'reviewSkip'>): boolean {
     return row.fixPullRequests !== undefined || row.originError !== undefined
-        || row.originReview !== undefined || row.admittedReview !== undefined;
+        || row.originReview !== undefined || row.admittedReview !== undefined || row.reviewSkip !== undefined;
 }
 
 function withoutFixPullRequests(row: CorpusUserMarkRowV1): CorpusUserMarkRowV1 {
@@ -363,9 +363,42 @@ export async function setTaskOriginReview(input: Readonly<{
 export async function readAdmittedReview(input: Readonly<{
     collections: MarkCollections; entryRef: TriageEntryRefV1; signal?: AbortSignal;
 }>): Promise<TriageAdmittedReviewV1 | null> {
+    return (await readReviewOutcome(input)).admittedReview ?? null;
+}
+
+/** The entry's latest admitted Review and, when a later Prepare skipped one, that skip; one mark read. */
+export async function readReviewOutcome(input: Readonly<{
+    collections: MarkCollections; entryRef: TriageEntryRefV1; signal?: AbortSignal;
+}>): Promise<Readonly<{ admittedReview?: TriageAdmittedReviewV1; reviewSkip?: TriageReviewSkipV1 }>> {
     const options = input.signal ? { signal: input.signal } : undefined;
     const markTag = await deriveUserMarkTag(input.collections.userMarks, input.entryRef, options);
-    return (await readLiveMark(input.collections, markTag, options))?.value.admittedReview ?? null;
+    const value = (await readLiveMark(input.collections, markTag, options))?.value;
+    return {
+        ...(value?.admittedReview === undefined ? {} : { admittedReview: value.admittedReview }),
+        ...(value?.reviewSkip === undefined ? {} : { reviewSkip: value.reviewSkip }),
+    };
+}
+
+/** Records Prepare's typed skip on the entry's mark; the latest skip replaces an earlier one. */
+export async function setReviewSkip(input: Readonly<{
+    collections: MarkCollections; entryRef: TriageEntryRefV1; displayAtMark: CorpusUserMarkDisplayV1;
+    reviewSkip: TriageReviewSkipV1; nowMs: number; signal?: AbortSignal;
+}>): Promise<CorpusSetFixPullRequestResultV1> {
+    const options = input.signal ? { signal: input.signal } : undefined;
+    const markTag = await deriveUserMarkTag(input.collections.userMarks, input.entryRef, options);
+    const existing = await readLiveMark(input.collections, markTag, options);
+    if (existing) {
+        return await rewriteLiveMark(input.collections, existing.revision,
+            { ...existing.value, reviewSkip: input.reviewSkip }, input.signal)
+            ? { status: 'linked' } : { status: 'conflict' };
+    }
+    const written = await putCorpusRowOnce<CorpusUserMarkRowV1>({
+        collection: input.collections.userMarks, rowId: markTag,
+        row: { markTag, pinned: false, markedAtMs: input.nowMs, entryRef: input.entryRef,
+            displayAtMark: input.displayAtMark, reviewSkip: input.reviewSkip },
+        ...(input.signal ? { signal: input.signal } : {}),
+    });
+    return written.status === 'written' ? { status: 'linked' } : { status: 'conflict' };
 }
 
 /** Records the receipt's Review and round on the entry's mark; the latest admission replaces the earlier one. */
@@ -381,11 +414,14 @@ export async function setAdmittedReview(input: Readonly<{
     const existing = await readLiveMark(input.collections, markTag, options);
     if (existing) {
         const current = existing.value.admittedReview;
-        if (current?.reviewId === input.admittedReview.reviewId && current.roundOrdinal === input.admittedReview.roundOrdinal) {
+        if (current?.reviewId === input.admittedReview.reviewId && current.roundOrdinal === input.admittedReview.roundOrdinal
+            && existing.value.reviewSkip === undefined) {
             return { status: 'linked' };
         }
+        // An admitted Review supersedes any earlier skip of this entry.
+        const { reviewSkip: _supersededSkip, ...retained } = existing.value;
         return await rewriteLiveMark(input.collections, existing.revision,
-            { ...existing.value, admittedReview: input.admittedReview }, input.signal)
+            { ...retained, admittedReview: input.admittedReview }, input.signal)
             ? { status: 'linked' } : { status: 'conflict' };
     }
     const written = await putCorpusRowOnce<CorpusUserMarkRowV1>({

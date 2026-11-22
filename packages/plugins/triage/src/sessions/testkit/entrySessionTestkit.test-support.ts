@@ -390,6 +390,8 @@ export async function createTriagePullRequestReviewActionTestkit(options: Readon
     signal?: AbortSignal;
     executeReview?: (input: unknown) => Promise<unknown>;
     baseRules?: Record<string, unknown>;
+    /** The host-stamped caller, as a workflow run's Action invocation carries it. */
+    caller?: Readonly<{ kind: 'automationRun'; runId: string; automationId: string; cause: unknown }>;
 }> = {}) {
     const start = createTriageSelectedPrStartApprovalInput();
     if (start.destination.kind !== 'new' || start.destination.materialization.kind !== 'reviewWorkspace'
@@ -421,7 +423,7 @@ export async function createTriagePullRequestReviewActionTestkit(options: Readon
     const preparedWorkspace = { kind: 'prepared' as const, repositoryPath: TESTKIT_SELECTED_WORKSPACE.rootPath,
         branch: 'pr-17', created: false, pullRequest: { number: 17 }, currentness: { kind: 'currentAtObservedHead' as const } };
     const signal = options.signal ?? new AbortController().signal;
-    const context = { surface: 'cli', signal, services: {
+    const context = { surface: 'cli', signal, ...(options.caller === undefined ? {} : { caller: options.caller }), services: {
         storage: { account: { collection: (definition: { id: string }) => definition.id === CORPUS_SOURCE_INSTANCES_COLLECTION_ID
             ? collections.sourceInstances : collections.userMarks } },
         targetedContributions: { observeForSelf: () => ({

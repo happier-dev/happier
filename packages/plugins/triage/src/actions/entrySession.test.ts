@@ -23,7 +23,7 @@ import { fromCorpusStoredRow, toCorpusStoredValue } from '../corpus/collections/
 import type { CorpusSessionLinkRowV1 } from '../corpus/collections/rows.js';
 import { deriveSessionLinkTag } from '../corpus/identity/tags.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
-import { readAdmittedReview } from '../corpus/marks/setPinned.js';
+import { readAdmittedReview, readReviewOutcome } from '../corpus/marks/setPinned.js';
 import { administerConfiguredSourceInstance } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import {
     TESTKIT_SOURCE_INSTANCE_ID,
@@ -969,6 +969,21 @@ describe('the registered formal Review transition', () => {
             expect(JSON.stringify(h.savedInput)).toBe(savedBytes);
         }
         expect(h.prepareInputs).toHaveLength(2);
+    });
+
+    it('records a skipped Prepare on the entry for the judged head and the Automation that asked', async () => {
+        const caller = { kind: 'automationRun' as const, runId: 'run-1', automationId: 'automation-review-prs', cause: { kind: 'event' } };
+        const h = await createTriagePullRequestReviewActionTestkit({ baseRules: { baseRefs: ['release/*'] }, caller });
+        const result = TriagePreparePullRequestReviewResultV1Schema.parse(await h.invoke('entries/prepare-pull-request-review-v1', {
+            ...h.savedInput, expectedHeadSha: TESTKIT_OBSERVED_REVISION.headSha,
+            ruleOccurrence: { baseRef: 'feature/relay-v2', author: { kind: 'human' }, draft: false },
+        }));
+        expect(result).toMatchObject({ status: 'skipped', reason: 'baseRef' });
+        expect(await readReviewOutcome({ collections: h.collections, entryRef: h.savedInput.reviewTarget.entryRef })).toEqual({
+            reviewSkip: { headSha: TESTKIT_OBSERVED_REVISION.headSha, reason: 'baseRef',
+                rules: { baseRefs: ['release/*'], baseRevision: TESTKIT_OBSERVED_REVISION.baseSha, provenance: { baseRefs: 'baseCommit' } },
+                occurrence: { baseRef: 'feature/relay-v2', authorKind: 'human' }, automationId: 'automation-review-prs' },
+        });
     });
 
     it('admits an editable PR composition through the canonical Review owner and retains its keyed receipt', async () => {

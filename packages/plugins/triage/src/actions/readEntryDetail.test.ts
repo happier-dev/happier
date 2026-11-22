@@ -29,7 +29,7 @@ import {
     testkitSnapshot,
     testkitViewer,
 } from '../corpus/testkit/observations.test-support.js';
-import { setAdmittedReview } from '../corpus/marks/setPinned.js';
+import { setAdmittedReview, setReviewSkip } from '../corpus/marks/setPinned.js';
 import { linkEntryToSession } from '../sessions/entrySessionLinks.js';
 import {
     TriageReadEntryDetailInputV1Schema,
@@ -392,6 +392,26 @@ describe('the entry detail read', () => {
             displayAtMark: { title: 'example/repository#17', scopeLabel: 'example/repository' }, nowMs: 2_000 });
         const after = await read();
         expect(after.kind === 'ready' ? after.input.admittedReview : 'unread').toEqual(admittedReview);
+    });
+
+    it('carries the entry\'s skipped Review only while it judged the observed head', async () => {
+        const { collections } = await seedTwoConnections();
+        const head = 'a'.repeat(40);
+        const reviewSkip = { headSha: head, reason: 'draft' as const, occurrence: {}, automationId: 'automation-1',
+            rules: { skipDrafts: true, baseRevision: 'b'.repeat(40), provenance: { skipDrafts: 'baseCommit' as const } } };
+        await setReviewSkip({ collections, entryRef: ENTRY_REF, reviewSkip,
+            displayAtMark: { title: 'example/repository#17', scopeLabel: 'example/repository' }, nowMs: 2_000 });
+        const read = async (headSha: string) => await readTriageEntryDetailState({ executeAction: async (_action, input) => (
+            await createTriageReadEntryDetailActionHandler()(TriageReadEntryDetailInputV1Schema.parse(input), createContext({ collections }))
+        ) }, { selection: { entryRef: ENTRY_REF, sourceInstanceId: INSTANCE_A }, observation: {
+            entryRef: ENTRY_REF, observedAtMs: 2_000, locator: testkitLocator(), viewer: testkitViewer(),
+            snapshot: testkitSnapshot({ reviewRevision: { baseSha: 'b'.repeat(40), headSha, nativeRevision: headSha } }),
+        } });
+
+        const current = await read(head);
+        expect(current.kind === 'ready' ? current.input.reviewSkip : 'unread').toEqual(reviewSkip);
+        const pushed = await read('c'.repeat(40));
+        expect(pushed.kind === 'ready' ? pushed.input.reviewSkip : 'unread').toBeUndefined();
     });
 
     it('refuses a retired connection instead of opening it', async () => {

@@ -24,6 +24,7 @@ import {
     TriageSourceEntrySnapshotV1Schema,
     TriageSourceViewerFactsV1Schema,
 } from './observations.js';
+import { TriageReviewSkipV1Schema } from './reviewSkip.js';
 
 /**
  * One retained Triage entry-to-Session link. A link whose generic Session
@@ -96,6 +97,8 @@ export const TriageDetailSurfaceInputV1Schema = defineProtocolObject({
     }),
     /** Outside the closed linked-Session item so a source pinned to an older copy stays renderable. */
     admittedReview: TriageAdmittedReviewV1Schema.optional(),
+    /** The entry's latest skipped Review, present only while it judged the observed head. */
+    reviewSkip: TriageReviewSkipV1Schema.optional(),
     /**
      * The one detail tab the target asks the source to render as a panel
      * (r0.42): a shared tab id or one of the source's own declared tab ids.

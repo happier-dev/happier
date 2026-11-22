@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createTestkitCorpusCollections } from '../testkit/corpusCollections.test-support.js';
 import { testkitEntryRef } from '../testkit/observations.test-support.js';
-import { readAdmittedReview, setAdmittedReview, setPinned } from './setPinned.js';
+import { readAdmittedReview, readReviewOutcome, setAdmittedReview, setPinned, setReviewSkip } from './setPinned.js';
 
 describe('the admitted Review relation at the user-mark owner', () => {
     it('refuses an empty Review ID without changing the mark', async () => {
@@ -33,5 +33,27 @@ describe('the admitted Review relation at the user-mark owner', () => {
         expect((await collections.userMarks.query({ index: 'by-pinned', order: 'asc' })).rows).toEqual(before);
         await setAdmittedReview({ ...input, admittedReview: { reviewId: 'review-1', roundOrdinal: 2 }, nowMs: 30 });
         expect(await readAdmittedReview({ collections, entryRef })).toEqual({ reviewId: 'review-1', roundOrdinal: 2 });
+    });
+
+    it.each(['plain', 'e2ee'] as const)('keeps the latest skipped Review until a Review is admitted (%s)', async accountEncryptionMode => {
+        const { collections } = createTestkitCorpusCollections({ accountEncryptionMode });
+        const entryRef = testkitEntryRef();
+        const input = { collections, entryRef, displayAtMark: { title: 'Pull request 17', scopeLabel: 'example/repository' }, nowMs: 10 };
+        const skip = { headSha: 'a'.repeat(40), reason: 'baseRef' as const, occurrence: { baseRef: 'feature/relay-v2' },
+            rules: { baseRefs: ['main'], baseRevision: 'b'.repeat(40), provenance: { baseRefs: 'baseCommit' as const } },
+            automationId: 'automation-1' };
+
+        expect(await readReviewOutcome({ collections, entryRef })).toEqual({});
+        expect(await setReviewSkip({ ...input, reviewSkip: skip })).toEqual({ status: 'linked' });
+        expect(await setPinned({ ...input, pinned: true })).toMatchObject({ status: 'pinned' });
+        expect(await readReviewOutcome({ collections, entryRef })).toEqual({ reviewSkip: skip });
+
+        const draft = { ...skip, headSha: 'c'.repeat(40), reason: 'draft' as const, occurrence: {} };
+        await setReviewSkip({ ...input, reviewSkip: draft, nowMs: 20 });
+        expect(await readReviewOutcome({ collections, entryRef })).toEqual({ reviewSkip: draft });
+
+        await setAdmittedReview({ ...input, admittedReview: { reviewId: 'review-1', roundOrdinal: 1 }, nowMs: 30 });
+        expect(await readReviewOutcome({ collections, entryRef })).toEqual({ admittedReview: { reviewId: 'review-1', roundOrdinal: 1 } });
+        expect(await readAdmittedReview({ collections, entryRef })).toEqual({ reviewId: 'review-1', roundOrdinal: 1 });
     });
 });

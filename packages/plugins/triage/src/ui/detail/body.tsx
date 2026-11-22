@@ -115,6 +115,7 @@ function SourceDetailInstance(props: Readonly<{
   overviewLead?: React.ReactNode;
   overviewTail?: React.ReactNode;
   navigation: TriageDetailPanelNavigationV1;
+  reviewAnyway?: () => void;
   publishVisiblePanels(panels: readonly string[] | null): void;
   publishFilesCount(count: number | null): void;
   /** The phone detail scrolls as one page (D21): source Lists join it instead of owning a bounded scroller. */
@@ -130,8 +131,9 @@ function SourceDetailInstance(props: Readonly<{
   const pageScroll = props.pageScroll === true;
   const ownsScroller = !pageScroll && triageDetailPanelOwnsScrollerV1(scrollOwner);
   const navigation = React.useMemo(() => ({ ...props.navigation,
-    publishVisiblePanels: props.publishVisiblePanels, publishFilesCount: props.publishFilesCount }),
-    [props.navigation, props.publishVisiblePanels, props.publishFilesCount]);
+    publishVisiblePanels: props.publishVisiblePanels, publishFilesCount: props.publishFilesCount,
+    ...(props.reviewAnyway === undefined ? {} : { reviewAnyway: props.reviewAnyway }) }),
+    [props.navigation, props.publishVisiblePanels, props.publishFilesCount, props.reviewAnyway]);
   // The source declares whether its List owns scrolling. Keep ancestry stable across ownership changes so
   // retained panels keep their state and viewport while the frame only bounds source-owned Lists (QB-55/81).
   // A parked source withdraws its shared scroller so the retained tab can save its offset before hiding.
@@ -177,6 +179,8 @@ export function TriageDetailTabbedBody(props: Readonly<{
   fixPullRequest: TriageDetailSourceMountV1 | null;
   fixPullRequestNavigation?: TriageDetailFixPullRequestNavigationV1 | null;
   fixPullRequestsEmpty?: boolean;
+  /** The action row's manual Review start, offered to this entry's own source panels only (never the fix PR's). */
+  reviewAnyway?: () => void;
   /** Above the rail: a waiting agent's permission card. */
   overviewLead?: React.ReactNode;
   /** After the source's steps: Triage's own — the fix PR and ③ the agent. */
@@ -286,6 +290,7 @@ export function TriageDetailTabbedBody(props: Readonly<{
                   overviewLead={props.overviewLead}
                   overviewTail={props.overviewTail}
                   navigation={navigation}
+                  {...(props.reviewAnyway === undefined ? {} : { reviewAnyway: props.reviewAnyway })}
                   publishVisiblePanels={publishEntryPanels}
                   publishFilesCount={publishEntryFilesCount}
                   pageScroll={props.pushed === true}

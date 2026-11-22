@@ -1,7 +1,15 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { decodeBase64, defineProtocolArray, defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
+import { decodeBase64, defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import { SCM_OPERATION_ERROR_CODES, ScmFileAtRevisionResponseSchema } from '@happier-dev/plugin-sdk/scm';
-import { ReviewFindingSeverityProtocolSchema } from '@happier-dev/plugin-sdk/reviews';
+import {
+    PULL_REQUEST_REVIEW_BASE_FILE_RULE_MEMBERS_V1,
+    PULL_REQUEST_REVIEW_STEP_RULE_MEMBERS_V1,
+    PullRequestReviewAuthorKindV1Schema,
+    PullRequestReviewResolvedRulesV1Schema,
+    PullRequestReviewSkipReasonV1Schema,
+    type PullRequestReviewResolvedRulesV1,
+    type PullRequestReviewSkipReasonV1,
+} from '@happier-dev/triage-protocol/v1';
 
 /** The Account artifact shares these path and ref globs across browser and Node runtimes. */
 function compileGlob(pattern: string): RegExp {
@@ -28,45 +36,26 @@ function compileGlob(pattern: string): RegExp {
 }
 
 const nonempty = defineProtocolString({ minLength: 1 });
-const patterns = defineProtocolArray(nonempty, { minItems: 1 });
 const bool = defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]);
-const authorKind = defineProtocolUnion([defineProtocolLiteral('human'), defineProtocolLiteral('bot'), defineProtocolLiteral('unsupported')]);
+
+export { PullRequestReviewResolvedRulesV1Schema, PullRequestReviewSkipReasonV1Schema };
+export type { PullRequestReviewResolvedRulesV1 };
 
 export const PullRequestReviewRuleOccurrenceV1Schema = defineProtocolObject({
     baseRef: nonempty.optional(),
-    author: defineProtocolObject({ kind: authorKind }, { policy: 'additive-open/drop' }).optional(),
+    author: defineProtocolObject({ kind: PullRequestReviewAuthorKindV1Schema }, { policy: 'additive-open/drop' }).optional(),
     draft: bool.optional(),
 }, { policy: 'additive-open/drop' });
-type Occurrence = ReturnType<typeof PullRequestReviewRuleOccurrenceV1Schema.parse>;
+export type PullRequestReviewRuleOccurrenceV1 = ReturnType<typeof PullRequestReviewRuleOccurrenceV1Schema.parse>;
+type Occurrence = PullRequestReviewRuleOccurrenceV1;
 
 // Project trigger filters use AutomationEventFilterV1. Only the review step's
 // own options are carried here, alongside the optional base-commit fallback.
-const stepOptions = { ignorePaths: defineProtocolArray(nonempty).optional(), inlineThreshold: ReviewFindingSeverityProtocolSchema.optional() };
-export const PullRequestReviewStepRulesV1Schema = defineProtocolObject(stepOptions, { policy: 'closed' });
+export const PullRequestReviewStepRulesV1Schema = defineProtocolObject(PULL_REQUEST_REVIEW_STEP_RULE_MEMBERS_V1, { policy: 'closed' });
 export type PullRequestReviewStepRulesV1 = ReturnType<typeof PullRequestReviewStepRulesV1Schema.parse>;
 
-const baseFileOptions = {
-    ...stepOptions,
-    baseRefs: patterns.optional(),
-    authorKinds: defineProtocolArray(authorKind, { minItems: 1 }).optional(),
-    skipDrafts: bool.optional(),
-};
-const BaseFileRulesV1Schema = defineProtocolObject(baseFileOptions, { policy: 'closed' });
-
-const provenance = defineProtocolUnion([defineProtocolLiteral('projectAutomation'), defineProtocolLiteral('baseCommit')]);
-export const PullRequestReviewResolvedRulesV1Schema = defineProtocolObject({
-    ...baseFileOptions,
-    baseRevision: nonempty,
-    provenance: defineProtocolObject({
-        ignorePaths: provenance.optional(), inlineThreshold: provenance.optional(),
-        baseRefs: provenance.optional(), authorKinds: provenance.optional(), skipDrafts: provenance.optional(),
-    }, { policy: 'closed' }),
-}, { policy: 'closed' });
-export type PullRequestReviewResolvedRulesV1 = ReturnType<typeof PullRequestReviewResolvedRulesV1Schema.parse>;
-export const PullRequestReviewSkipReasonV1Schema = defineProtocolUnion([
-    defineProtocolLiteral('baseRef'), defineProtocolLiteral('authorKind'), defineProtocolLiteral('draft'), defineProtocolLiteral('noReviewablePaths'),
-]);
-type SkipReason = ReturnType<typeof PullRequestReviewSkipReasonV1Schema.parse>;
+const BaseFileRulesV1Schema = defineProtocolObject(PULL_REQUEST_REVIEW_BASE_FILE_RULE_MEMBERS_V1, { policy: 'closed' });
+type SkipReason = PullRequestReviewSkipReasonV1;
 
 export async function readPullRequestReviewRules(params: Readonly<{
     repositoryPath: string;

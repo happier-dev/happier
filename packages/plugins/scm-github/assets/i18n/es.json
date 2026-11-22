@@ -1173,5 +1173,22 @@
   "plugins.github.ui.preview.prUpdating": "Actualizando la PR…",
   "plugins.github.ui.preview.retryPrUpdate": "Reintentar actualización de la PR",
   "plugins.github.releases.published.refreshWarning": "Publicado. No se pudieron actualizar los detalles de la versión. Vuelve a abrirla para actualizarlos. ({code})",
-  "plugins.triage.readPartial": "Mostrando lo leído hasta ahora"
+  "plugins.triage.readPartial": "Mostrando lo leído hasta ahora",
+  "plugins.github.ui.reviewSkip.title": "Revisión omitida",
+  "plugins.github.ui.reviewSkip.reason.baseRef": "La rama base {base} no es {patterns}, las ramas que se revisan según {source}.",
+  "plugins.github.ui.reviewSkip.reason.baseRefUnknown": "La rama base no es {patterns}, las ramas que se revisan según {source}.",
+  "plugins.github.ui.reviewSkip.reason.authorKind": "El autor es {actual}, y según {source} solo se revisan pull requests de {allowed}.",
+  "plugins.github.ui.reviewSkip.reason.authorKindUnknown": "Según {source}, solo se revisan pull requests de {allowed}.",
+  "plugins.github.ui.reviewSkip.reason.draft": "Es un borrador, y según {source} los borradores se omiten.",
+  "plugins.github.ui.reviewSkip.reason.noReviewablePaths": "Cada archivo modificado coincide con una ruta ignorada según {source}.",
+  "plugins.github.ui.reviewSkip.source.baseCommit": "las reglas de revisión del repositorio",
+  "plugins.github.ui.reviewSkip.source.projectAutomation": "esta automatización",
+  "plugins.github.ui.reviewSkip.author.human": "una persona",
+  "plugins.github.ui.reviewSkip.author.bot": "un bot",
+  "plugins.github.ui.reviewSkip.author.unsupported": "una cuenta que Happier no puede clasificar",
+  "plugins.github.ui.reviewSkip.authors.human": "personas",
+  "plugins.github.ui.reviewSkip.authors.bot": "bots",
+  "plugins.github.ui.reviewSkip.authors.unsupported": "otras cuentas",
+  "plugins.github.ui.reviewSkip.reviewAnyway": "Revisar de todos modos",
+  "plugins.github.ui.reviewSkip.editAutomation": "Editar la automatización"
 }

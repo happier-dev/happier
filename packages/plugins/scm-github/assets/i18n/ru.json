@@ -1173,5 +1173,22 @@
   "plugins.github.ui.preview.prUpdating": "Обновление PR…",
   "plugins.github.ui.preview.retryPrUpdate": "Повторить обновление PR",
   "plugins.github.releases.published.refreshWarning": "Опубликовано. Не удалось обновить сведения о релизе. Откройте релиз снова, чтобы обновить их. ({code})",
-  "plugins.triage.readPartial": "Показано, что было прочитано"
+  "plugins.triage.readPartial": "Показано, что было прочитано",
+  "plugins.github.ui.reviewSkip.title": "Ревью пропущено",
+  "plugins.github.ui.reviewSkip.reason.baseRef": "Базовая ветка {base} — не {patterns}, то есть не ветка, которую проверяют согласно {source}.",
+  "plugins.github.ui.reviewSkip.reason.baseRefUnknown": "Базовая ветка — не {patterns}, то есть не ветка, которую проверяют согласно {source}.",
+  "plugins.github.ui.reviewSkip.reason.authorKind": "Автор — {actual}, а согласно {source} проверяются только пул-реквесты от {allowed}.",
+  "plugins.github.ui.reviewSkip.reason.authorKindUnknown": "Согласно {source} проверяются только пул-реквесты от {allowed}.",
+  "plugins.github.ui.reviewSkip.reason.draft": "Это черновик, а согласно {source} черновики пропускаются.",
+  "plugins.github.ui.reviewSkip.reason.noReviewablePaths": "Каждый изменённый файл попадает под путь, игнорируемый согласно {source}.",
+  "plugins.github.ui.reviewSkip.source.baseCommit": "правилам ревью репозитория",
+  "plugins.github.ui.reviewSkip.source.projectAutomation": "этой автоматизации",
+  "plugins.github.ui.reviewSkip.author.human": "человек",
+  "plugins.github.ui.reviewSkip.author.bot": "бот",
+  "plugins.github.ui.reviewSkip.author.unsupported": "аккаунт, который Happier не может определить",
+  "plugins.github.ui.reviewSkip.authors.human": "людей",
+  "plugins.github.ui.reviewSkip.authors.bot": "ботов",
+  "plugins.github.ui.reviewSkip.authors.unsupported": "других аккаунтов",
+  "plugins.github.ui.reviewSkip.reviewAnyway": "Всё равно проверить",
+  "plugins.github.ui.reviewSkip.editAutomation": "Изменить автоматизацию"
 }

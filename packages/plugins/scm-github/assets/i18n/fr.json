@@ -1173,5 +1173,22 @@
   "plugins.github.ui.preview.prUpdating": "Mise à jour de la PR…",
   "plugins.github.ui.preview.retryPrUpdate": "Réessayer la mise à jour de la PR",
   "plugins.github.releases.published.refreshWarning": "Publié. Les derniers détails de la version n’ont pas pu être actualisés. Rouvrez la version pour les actualiser. ({code})",
-  "plugins.triage.readPartial": "Affiche ce qui a été lu jusqu'à présent"
+  "plugins.triage.readPartial": "Affiche ce qui a été lu jusqu'à présent",
+  "plugins.github.ui.reviewSkip.title": "Revue ignorée",
+  "plugins.github.ui.reviewSkip.reason.baseRef": "La branche de base {base} n’est pas {patterns}, les branches examinées selon {source}.",
+  "plugins.github.ui.reviewSkip.reason.baseRefUnknown": "La branche de base n’est pas {patterns}, les branches examinées selon {source}.",
+  "plugins.github.ui.reviewSkip.reason.authorKind": "L’auteur est {actual}, et seules les pull requests de {allowed} sont examinées selon {source}.",
+  "plugins.github.ui.reviewSkip.reason.authorKindUnknown": "Seules les pull requests de {allowed} sont examinées selon {source}.",
+  "plugins.github.ui.reviewSkip.reason.draft": "C’est un brouillon, et les brouillons sont ignorés selon {source}.",
+  "plugins.github.ui.reviewSkip.reason.noReviewablePaths": "Chaque fichier modifié correspond à un chemin ignoré selon {source}.",
+  "plugins.github.ui.reviewSkip.source.baseCommit": "les règles de revue du dépôt",
+  "plugins.github.ui.reviewSkip.source.projectAutomation": "cette automatisation",
+  "plugins.github.ui.reviewSkip.author.human": "une personne",
+  "plugins.github.ui.reviewSkip.author.bot": "un bot",
+  "plugins.github.ui.reviewSkip.author.unsupported": "un compte que Happier ne sait pas classer",
+  "plugins.github.ui.reviewSkip.authors.human": "personnes",
+  "plugins.github.ui.reviewSkip.authors.bot": "bots",
+  "plugins.github.ui.reviewSkip.authors.unsupported": "autres comptes",
+  "plugins.github.ui.reviewSkip.reviewAnyway": "Examiner quand même",
+  "plugins.github.ui.reviewSkip.editAutomation": "Modifier l’automatisation"
 }

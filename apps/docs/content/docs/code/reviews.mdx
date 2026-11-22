@@ -87,6 +87,12 @@ in the pull request but leave the review scope. When you publish a verdict,
 findings below `inlineThreshold` go in its summary. The supported thresholds
 are `blocker`, `high`, `medium`, `low`, and `nit`.
 
+When these rules skip a pull request, its GitHub Overview says **Review
+skipped** and names the rule and where it was set. **Review anyway** starts the
+same manual Review you would start from the pull request's action row, and
+**Edit the automation** opens the workflow whose run skipped it. A new push
+clears the note until the workflow judges the new head.
+
 ## Read findings and coverage
 
 Open **Reviews** to return to retained Reviews. Read each reviewer's completion

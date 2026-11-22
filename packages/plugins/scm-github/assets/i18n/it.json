@@ -1173,5 +1173,22 @@
   "plugins.github.ui.preview.prUpdating": "Aggiornamento della PR…",
   "plugins.github.ui.preview.retryPrUpdate": "Riprova l’aggiornamento della PR",
   "plugins.github.releases.published.refreshWarning": "Pubblicato. Impossibile aggiornare i dettagli della versione. Riapri la versione per aggiornarli. ({code})",
-  "plugins.triage.readPartial": "Mostrando ciò che è stato letto finora"
+  "plugins.triage.readPartial": "Mostrando ciò che è stato letto finora",
+  "plugins.github.ui.reviewSkip.title": "Revisione saltata",
+  "plugins.github.ui.reviewSkip.reason.baseRef": "Il branch di base {base} non è {patterns}, i branch revisionati secondo {source}.",
+  "plugins.github.ui.reviewSkip.reason.baseRefUnknown": "Il branch di base non è {patterns}, i branch revisionati secondo {source}.",
+  "plugins.github.ui.reviewSkip.reason.authorKind": "L’autore è {actual}, e secondo {source} si revisionano solo le pull request di {allowed}.",
+  "plugins.github.ui.reviewSkip.reason.authorKindUnknown": "Secondo {source} si revisionano solo le pull request di {allowed}.",
+  "plugins.github.ui.reviewSkip.reason.draft": "È una bozza, e secondo {source} le bozze si saltano.",
+  "plugins.github.ui.reviewSkip.reason.noReviewablePaths": "Ogni file modificato corrisponde a un percorso ignorato secondo {source}.",
+  "plugins.github.ui.reviewSkip.source.baseCommit": "le regole di revisione del repository",
+  "plugins.github.ui.reviewSkip.source.projectAutomation": "questa automazione",
+  "plugins.github.ui.reviewSkip.author.human": "una persona",
+  "plugins.github.ui.reviewSkip.author.bot": "un bot",
+  "plugins.github.ui.reviewSkip.author.unsupported": "un account che Happier non sa classificare",
+  "plugins.github.ui.reviewSkip.authors.human": "persone",
+  "plugins.github.ui.reviewSkip.authors.bot": "bot",
+  "plugins.github.ui.reviewSkip.authors.unsupported": "altri account",
+  "plugins.github.ui.reviewSkip.reviewAnyway": "Revisiona comunque",
+  "plugins.github.ui.reviewSkip.editAutomation": "Modifica l’automazione"
 }

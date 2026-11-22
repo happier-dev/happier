@@ -55,6 +55,14 @@ describe('open resource intent', () => {
       payload: { kind: 'artifact', artifactId: 'review/one' } })).toBeNull();
     expect(router.push).toHaveBeenCalledWith('/artifacts/review%2Fone?serverId=home');
   });
+  it('opens an Automation in the bound Home through its trigger editor route', async () => {
+    const surface = createSurfaceContextFixture();
+    const host = createPluginSurfaceLocalHostHandlers({ surfaceContext: surface,
+      deviceScope: { serverId: 'home', accountId: 'person' } });
+    expect(await host.openResource({ version: 1, requestId: 'open-automation', surface, method: 'openResource',
+      payload: { kind: 'automation', automationId: 'review prs' } })).toBeNull();
+    expect(router.push).toHaveBeenCalledWith('/automations/review%20prs?serverId=home');
+  });
   it.each(['happier', 'github', 'unavailable'] as const)('phone person and agent report the %s destination outcome', async scenario => {
     const preference = scenario === 'github' ? 'github' : 'happier';
     storage.setState({ settings: { ...initialSettings, scmResourceOpenLocation: preference } });

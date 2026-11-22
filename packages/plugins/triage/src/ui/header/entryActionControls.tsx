@@ -141,6 +141,11 @@ export type TriageEntryActionControlsPropsV1 = Readonly<{
    * story's agent chapter offers the same press through this one controller rather than a second start path.
    */
   onAgentEntry?: (entry: TriageAgentEntryV1 | null) => void;
+  /**
+   * Receives this row's Review action press while it can start (`null` otherwise), so a source's "Review anyway"
+   * (a pull request whose automated Review was skipped) starts the same manual Review through this one controller.
+   */
+  onReviewEntry?: (entry: Readonly<{ start(): void }> | null) => void;
   /** Quiet context at the end of the action row (the entry's attention reason). */
   trailing?: React.ReactNode;
   /**
@@ -370,6 +375,24 @@ export function TriageEntryActionControls(
     onAgentEntry(agentAvailable ? agentHandle : null);
     return () => onAgentEntry(null);
   }, [agentAvailable, agentHandle, onAgentEntry]);
+
+  // The manual Review start, lent the same way: the first Review action this row offers and could press now.
+  const reviewAction = target.kind === 'refused' ? null : offered.find((action) => readTriageActionIntentV1(action) === 'review'
+    && action.enabled && !isTriageActionBlockedV1(action, reviewPreparation)) ?? null;
+  const reviewRequest = target.kind === 'refused' || reviewAction === null ? null
+    : { action: reviewAction, entryRef: target.entryRef, sourceInstanceId: target.sourceInstanceId };
+  const latestReview = React.useRef({ request: reviewRequest, press });
+  latestReview.current = { request: reviewRequest, press };
+  const reviewHandle = React.useMemo(() => ({
+    start: () => { const { request, press: run } = latestReview.current; if (request !== null) run(request); },
+  }), []);
+  const onReviewEntry = props.onReviewEntry;
+  const reviewAvailable = reviewRequest !== null;
+  React.useEffect(() => {
+    if (onReviewEntry === undefined) return undefined;
+    onReviewEntry(reviewAvailable ? reviewHandle : null);
+    return () => onReviewEntry(null);
+  }, [reviewAvailable, reviewHandle, onReviewEntry]);
 
   // No selection is a stated refusal, never a fallback to the focused or first
   // row: a control here would start a Session from whichever row a keyboard

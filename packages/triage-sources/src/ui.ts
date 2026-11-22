@@ -74,6 +74,7 @@ export {
   useTriageDetailFilesCount,
   useTriageDetailFixPullRequestNavigation,
   useTriageDetailFixPullRequestsEmpty,
+  useTriageDetailReviewAnyway,
   type TriageDetailFixPullRequestNavigationV1,
   type TriageDetailPanelNavigationV1,
 } from './ui/detailPanelNavigation.js';

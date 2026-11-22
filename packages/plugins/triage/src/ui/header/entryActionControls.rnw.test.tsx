@@ -171,6 +171,42 @@ describe('the mounted configured entry action controls', () => {
     expect(requests[1]).toMatchObject({ action: requests[0]!.action, destinationChoice: 'existingSession' });
   });
 
+  it('lends its Review action\'s own press to the frame, and withdraws it while the workspace cannot be prepared', async () => {
+    const requests: TriageEntryActionRequestV1[] = [];
+    const lent: Array<{ start(): void } | null> = [];
+    let preparation: 'ready' | 'unsupported' = 'ready';
+    const surface = defineUiSurface(() => (
+      <TriageEntryActionControls
+        target={{ kind: 'entry', sectionId: 'open',
+          entryRef: testkitEntryRef({ entryId: '17', kindId: 'pull-request' }),
+          sourceInstanceId: '11111111-1111-4111-8111-111111111111' }}
+        actions={[formalAction('formal-review-one', 'Review')]}
+        workflowSubject="pullRequest"
+        viewerIsAuthor={false}
+        reviewPreparation={preparation}
+        onAction={(request) => { requests.push(request); }}
+        onReviewEntry={(entry) => { lent.push(entry); }}
+      />
+    ));
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'fixture-instance-review-entry', mountNonce: 'fixture-mount-review-entry' },
+      authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+      surface,
+      surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
+    });
+    mounted.push(fixture);
+
+    const entry = lent.at(-1);
+    expect(entry).not.toBeNull();
+    await act(async () => { entry?.start(); });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ action: { actionId: 'formal-review-one' }, sourceInstanceId: '11111111-1111-4111-8111-111111111111' });
+    preparation = 'unsupported';
+    await act(async () => { await fixture.updateSurface(createSurfaceContextFixture()); });
+    expect(lent.at(-1)).toBeNull();
+  });
+
   it('offers no Fix on an entry with nothing to fix, in its row or its More menu (T2)', async () => {
     const surface = defineUiSurface(() => (
       <TriageEntryActionControls

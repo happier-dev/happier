@@ -7,6 +7,7 @@ import {
     TriageConfiguredSourceInstanceV1JsonSchema,
     TriageAdmittedReviewV1Schema,
     TriageEntryRefV1JsonSchema,
+    TriageReviewSkipV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
 import {
@@ -238,6 +239,8 @@ export const CORPUS_USER_MARKS_COLLECTION = defineAccountCollection({
                     reviewId: { type: 'string' },
                 },
             },
+            // Private payload beside the admitted Review: never projected or indexed, sealed on an E2EE Account.
+            [CORPUS_USER_MARKS_FIELD.reviewSkip]: TriageReviewSkipV1Schema.jsonSchema,
             [CORPUS_USER_MARKS_FIELD.originError]: {
                 type: 'object',
                 properties: { entryRef: TriageEntryRefV1JsonSchema, display: MARK_DISPLAY_SCHEMA },

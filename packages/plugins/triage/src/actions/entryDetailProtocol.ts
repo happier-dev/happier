@@ -11,6 +11,7 @@ import {
     TriageConfiguredSourceInstanceV1Schema,
     TriageEntryRefV1Schema,
     TriageLinkedSessionProjectionV1Schema,
+    TriageReviewSkipV1Schema,
     TriageSourceInstanceIdV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -78,6 +79,8 @@ export const TriageReadEntryDetailResultV1Schema = defineProtocolUnion([
         linkedSessionsNextCursor: ProtocolCollectionOpaqueCursorV1Schema.optional(),
         /** The entry's latest admitted PR Review and round; absent when none was admitted through Triage. */
         admittedReview: TriageAdmittedReviewV1Schema.optional(),
+        /** The entry's latest skipped Review, recorded from Prepare's typed result; absent when none or a Review was admitted since. */
+        reviewSkip: TriageReviewSkipV1Schema.optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('unavailable'),

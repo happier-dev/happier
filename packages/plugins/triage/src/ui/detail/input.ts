@@ -48,6 +48,8 @@ export type TriageDetailSurfaceInputBuildInputV1 = Readonly<{
   linkedSessionsHasMore?: boolean;
   /** The entry's latest admitted PR Review and round, recorded by Triage; absent when none. */
   admittedReview?: TriageDetailSurfaceInputV1['admittedReview'];
+  /** The entry's latest skipped Review as recorded; carried only while it judged the observed head. */
+  reviewSkip?: TriageDetailSurfaceInputV1['reviewSkip'];
   /** Transient source-owned facts from this exact opening read. */
   detailData?: TriageDetailSurfaceInputV1['detailData'];
   /** The panel rendered by this physical mount. */
@@ -77,6 +79,9 @@ export function buildTriageDetailSurfaceInputV1(
       observation: input.observation,
       ...(input.detailData === undefined ? {} : { detailData: input.detailData }),
       ...(input.admittedReview === undefined ? {} : { admittedReview: input.admittedReview }),
+      // A push after the skip is a head no Prepare judged yet: its skip no longer describes this pull request.
+      ...(input.reviewSkip === undefined || input.reviewSkip.headSha !== input.observation.snapshot.reviewRevision?.headSha
+        ? {} : { reviewSkip: input.reviewSkip }),
       linkedSessions: sessions.slice(0, MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1),
       linkedSessionsHasMore: input.linkedSessionsHasMore || sessions.length > MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
       ...(input.panel === undefined ? {} : { panel: input.panel }),

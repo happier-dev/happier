@@ -3,6 +3,7 @@ import type {
     TriageAdmittedReviewV1,
     TriageConfiguredSourceInstanceV1,
     TriageEntryRefV1,
+    TriageReviewSkipV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import type {
@@ -124,4 +125,6 @@ export type CorpusUserMarkRowV1 = Readonly<{
     originReview?: TriageTaskOriginReviewV1;
     /** The exact Review and round this entry's latest PR review start admitted, from its receipt. */
     admittedReview?: TriageAdmittedReviewV1;
+    /** The entry's latest skipped Review from Prepare's typed result; an admitted Review clears it. */
+    reviewSkip?: TriageReviewSkipV1;
 }>;

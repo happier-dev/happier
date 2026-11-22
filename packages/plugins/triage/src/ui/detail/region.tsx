@@ -343,6 +343,7 @@ function TriageEntryScopedActionRegion(props: Readonly<{
   editTask?: TriageEditTaskPlacementV1['edit'];
   /** Publishes the row's agent Start/Send for the story's agent chapter (one start controller, two places). */
   onAgentEntry?: (entry: TriageAgentEntryV1 | null) => void;
+  onReviewEntry?: (entry: Readonly<{ start(): void }> | null) => void;
   /** Opens the page's actions editor on one action (the start chevron's "Edit action…"). */
   onEditAction?: (actionId: string) => void;
   /** Place the controls without moving the selected entry's pending action owner. */
@@ -580,6 +581,7 @@ function TriageEntryScopedActionRegion(props: Readonly<{
           section: props.sourceChangesOpen ? props.sourceActions : null,
         })}
         {...(props.onAgentEntry === undefined ? {} : { onAgentEntry: props.onAgentEntry })}
+        {...(props.onReviewEntry === undefined ? {} : { onReviewEntry: props.onReviewEntry })}
       /> : (
         <Stack gap="small">
           <Form.TextField labelKey="plugins.triage.surface.orchestrate.prompt" label="Orchestration prompt"
@@ -1104,6 +1106,8 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   const isTask = declaredKind?.task === true;
   // The action row's agent Start/Send, published by its one start controller, offered again in the empty agent chapter.
   const [agentEntry, setAgentEntry] = React.useState<TriageAgentEntryV1 | null>(null);
+  // The action row's manual Review start, lent to the source's Overview for a pull request whose Review was skipped.
+  const [manualReviewStart, setManualReviewStart] = React.useState<Readonly<{ start(): void }> | null>(null);
   // Action-local state (including prompt typing) must not rerender the source's detail body: the body is built here,
   // under the task's edit owner, and handed to the action region's placement as an already-made element.
   const renderDetailBody = (task: TriageEditTaskPlacementV1) => {
@@ -1212,6 +1216,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
               fixPullRequest={fixPullRequest.mount}
               fixPullRequestNavigation={fixPullRequest.navigation}
               fixPullRequestsEmpty={fixPullRequest.state?.kind === 'ready' && fixPullRequest.state.primary === null}
+              {...(manualReviewStart === null ? {} : { reviewAnyway: manualReviewStart.start })}
               overviewLead={liveState === null || liveSessionId === null ? null : (
                 liveState.pendingPermissions.map((request) => (
                   <TriagePermissionCard
@@ -1424,6 +1429,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
           withoutRepository={isTask && repository === undefined}
           editTask={isTask && composition.kind === 'whole' ? null : task.edit}
           onAgentEntry={setAgentEntry}
+          onReviewEntry={setManualReviewStart}
           {...(props.onEditAction === undefined ? {} : { onEditAction: props.onEditAction })}
         >{(actionRegion) => renderDetail(actionRegion, task, detailBody)}</TriageEntryScopedActionRegion>
       );

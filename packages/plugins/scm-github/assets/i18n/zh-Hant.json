@@ -1173,5 +1173,22 @@
   "plugins.github.ui.preview.prUpdating": "正在更新 PR…",
   "plugins.github.ui.preview.retryPrUpdate": "重試 PR 更新",
   "plugins.github.releases.published.refreshWarning": "已發佈。無法重新整理最新的發佈詳細資料。請重新開啟此發佈以重新整理。({code})",
-  "plugins.triage.readPartial": "顯示到目前為止已讀取的內容"
+  "plugins.triage.readPartial": "顯示到目前為止已讀取的內容",
+  "plugins.github.ui.reviewSkip.title": "已略過審查",
+  "plugins.github.ui.reviewSkip.reason.baseRef": "基礎分支 {base} 不屬於 {patterns}，即依{source}審查的分支。",
+  "plugins.github.ui.reviewSkip.reason.baseRefUnknown": "基礎分支不屬於 {patterns}，即依{source}審查的分支。",
+  "plugins.github.ui.reviewSkip.reason.authorKind": "作者是{actual}，而依{source}只審查{allowed}提交的拉取請求。",
+  "plugins.github.ui.reviewSkip.reason.authorKindUnknown": "依{source}只審查{allowed}提交的拉取請求。",
+  "plugins.github.ui.reviewSkip.reason.draft": "這是草稿，而依{source}會略過草稿。",
+  "plugins.github.ui.reviewSkip.reason.noReviewablePaths": "每個已變更的檔案都符合依{source}忽略的路徑。",
+  "plugins.github.ui.reviewSkip.source.baseCommit": "儲存庫的審查規則",
+  "plugins.github.ui.reviewSkip.source.projectAutomation": "此自動化",
+  "plugins.github.ui.reviewSkip.author.human": "人",
+  "plugins.github.ui.reviewSkip.author.bot": "機器人",
+  "plugins.github.ui.reviewSkip.author.unsupported": "Happier 無法分類的帳號",
+  "plugins.github.ui.reviewSkip.authors.human": "人",
+  "plugins.github.ui.reviewSkip.authors.bot": "機器人",
+  "plugins.github.ui.reviewSkip.authors.unsupported": "其他帳號",
+  "plugins.github.ui.reviewSkip.reviewAnyway": "仍然審查",
+  "plugins.github.ui.reviewSkip.editAutomation": "編輯自動化"
 }

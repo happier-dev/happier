@@ -1173,5 +1173,22 @@
   "plugins.github.ui.preview.prUpdating": "S’està actualitzant la PR…",
   "plugins.github.ui.preview.retryPrUpdate": "Torna a provar d’actualitzar la PR",
   "plugins.github.releases.published.refreshWarning": "Publicat. No s’han pogut actualitzar els detalls de la versió. Torna a obrir-la per actualitzar-los. ({code})",
-  "plugins.triage.readPartial": "Mostrant el que s'ha llegit fins avui"
+  "plugins.triage.readPartial": "Mostrant el que s'ha llegit fins avui",
+  "plugins.github.ui.reviewSkip.title": "Revisió omesa",
+  "plugins.github.ui.reviewSkip.reason.baseRef": "La branca base {base} no és {patterns}, les branques que es revisen segons {source}.",
+  "plugins.github.ui.reviewSkip.reason.baseRefUnknown": "La branca base no és {patterns}, les branques que es revisen segons {source}.",
+  "plugins.github.ui.reviewSkip.reason.authorKind": "L’autor és {actual}, i segons {source} només es revisen pull requests de {allowed}.",
+  "plugins.github.ui.reviewSkip.reason.authorKindUnknown": "Segons {source}, només es revisen pull requests de {allowed}.",
+  "plugins.github.ui.reviewSkip.reason.draft": "És un esborrany, i segons {source} els esborranys s’ometen.",
+  "plugins.github.ui.reviewSkip.reason.noReviewablePaths": "Cada fitxer modificat coincideix amb un camí ignorat segons {source}.",
+  "plugins.github.ui.reviewSkip.source.baseCommit": "les regles de revisió del repositori",
+  "plugins.github.ui.reviewSkip.source.projectAutomation": "aquesta automatització",
+  "plugins.github.ui.reviewSkip.author.human": "una persona",
+  "plugins.github.ui.reviewSkip.author.bot": "un bot",
+  "plugins.github.ui.reviewSkip.author.unsupported": "un compte que Happier no pot classificar",
+  "plugins.github.ui.reviewSkip.authors.human": "persones",
+  "plugins.github.ui.reviewSkip.authors.bot": "bots",
+  "plugins.github.ui.reviewSkip.authors.unsupported": "altres comptes",
+  "plugins.github.ui.reviewSkip.reviewAnyway": "Revisa igualment",
+  "plugins.github.ui.reviewSkip.editAutomation": "Edita l’automatització"
 }
