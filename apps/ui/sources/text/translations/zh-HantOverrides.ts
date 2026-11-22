@@ -13761,6 +13761,7 @@ settingsSession: {
             coverageReason_ranked_truncation: '排名結果不完整',
             coverageReason_unknown_token_categories: '部分 token 類別不明',
         }, coach: {
+            summarySessions: "教練讀取的工作階段",
             digestTitle: "定期摘要",
             why: "為什麼？",
             methodTitle: "方法",

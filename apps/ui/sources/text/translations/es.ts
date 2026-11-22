@@ -17590,7 +17590,7 @@ settingsSession: {
             insufficientRow: ({ missing }: { missing: string | number }) => `Necesita: ${missing}`,
             showChecks: "Mostrar todas las comprobaciones",
             summaryOfChecks: ({ count }: { count: string | number }) => `de ${count} comprobaciones`,
-            summarySessions: "Sesiones revisadas",
+            summarySessions: "Sesiones leídas por Coach",
             summaryClearCaption: ({ count }: { count: string | number }) => `${count} revisadas, sin hallazgos`,
             moreFindings: ({ count }: { count: string | number }) => `${count} más en Coach`,
             hiddenSnoozed: ({ time }: { time: string | number }) => `Pospuesto hasta ${time}`,

@@ -17537,7 +17537,7 @@ settingsSession: {
             insufficientRow: ({ missing }: { missing: string | number }) => `Нужно: ${missing}`,
             showChecks: "Показать все проверки",
             summaryOfChecks: ({ count }: { count: string | number }) => `из ${count} проверок`,
-            summarySessions: "Проверено сессий",
+            summarySessions: "Прочитанные сессии",
             summaryClearCaption: ({ count }: { count: string | number }) => `${count} проверено, ничего не найдено`,
             moreFindings: ({ count }: { count: string | number }) => `Ещё ${count} в Coach`,
             hiddenSnoozed: ({ time }: { time: string | number }) => `Отложено до ${time}`,

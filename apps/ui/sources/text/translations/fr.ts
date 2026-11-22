@@ -17464,7 +17464,7 @@ settingsSession: {
             insufficientRow: ({ missing }: { missing: string | number }) => `Il faut : ${missing}`,
             showChecks: "Afficher toutes les vérifications",
             summaryOfChecks: ({ count }: { count: string | number }) => `sur ${count} vérifications`,
-            summarySessions: "Sessions vérifiées",
+            summarySessions: "Sessions lues par Coach",
             summaryClearCaption: ({ count }: { count: string | number }) => `${count} vérifiées, rien trouvé`,
             moreFindings: ({ count }: { count: string | number }) => `${count} de plus dans Coach`,
             hiddenSnoozed: ({ time }: { time: string | number }) => `Reporté jusqu’à ${time}`,

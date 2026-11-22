@@ -17328,7 +17328,7 @@ settingsSession: {
       insufficientRow: ({ missing }: { missing: string | number }) => `Potrzebne: ${missing}`,
       showChecks: "Pokaż wszystkie sprawdzenia",
       summaryOfChecks: ({ count }: { count: string | number }) => `ze sprawdzeń: ${count}`,
-      summarySessions: "Sprawdzone sesje",
+      summarySessions: "Odczytane sesje",
       summaryClearCaption: ({ count }: { count: string | number }) => `Sprawdzono: ${count}, bez uwag`,
       moreFindings: ({ count }: { count: string | number }) => `Więcej w Doradcy: ${count}`,
       hiddenSnoozed: ({ time }: { time: string | number }) => `Odłożone do ${time}`,

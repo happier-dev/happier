@@ -17234,7 +17234,7 @@ settingsSession: {
             insufficientRow: ({ missing }: { missing: string | number }) => `需要：${missing}`,
             showChecks: "显示所有检查",
             summaryOfChecks: ({ count }: { count: string | number }) => `共 ${count} 项检查`,
-            summarySessions: "已检查会话",
+            summarySessions: "教练读取的会话",
             summaryClearCaption: ({ count }: { count: string | number }) => `${count} 项已检查，无发现`,
             moreFindings: ({ count }: { count: string | number }) => `Coach 中还有 ${count} 项`,
             hiddenSnoozed: ({ time }: { time: string | number }) => `已暂停至 ${time}`,

@@ -17760,7 +17760,7 @@ settingsSession: {
             insufficientRow: ({ missing }: { missing: string | number }) => `Braucht: ${missing}`,
             showChecks: "Alle Prüfungen zeigen",
             summaryOfChecks: ({ count }: { count: string | number }) => `von ${count} Prüfungen`,
-            summarySessions: "Geprüfte Sitzungen",
+            summarySessions: "Gelesene Sitzungen",
             summaryClearCaption: ({ count }: { count: string | number }) => `${count} geprüft, nichts gefunden`,
             moreFindings: ({ count }: { count: string | number }) => `${count} weitere im Coach`,
             hiddenSnoozed: ({ time }: { time: string | number }) => `Pausiert bis ${time}`,

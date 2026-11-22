@@ -17961,7 +17961,7 @@ settingsSession: {
             insufficientRow: ({ missing }: { missing: string | number }) => `Serve: ${missing}`,
             showChecks: "Mostra tutti i controlli",
             summaryOfChecks: ({ count }: { count: string | number }) => `su ${count} controlli`,
-            summarySessions: "Sessioni controllate",
+            summarySessions: "Sessioni lette dal Coach",
             summaryClearCaption: ({ count }: { count: string | number }) => `${count} controllati, nulla trovato`,
             moreFindings: ({ count }: { count: string | number }) => `Altri ${count} in Coach`,
             hiddenSnoozed: ({ time }: { time: string | number }) => `Posticipata fino a ${time}`,

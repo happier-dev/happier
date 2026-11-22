@@ -21042,7 +21042,7 @@ const enUsage = {
       insufficientRow: ({ missing }: { missing: string | number }) => `Needs ${missing}`,
       showChecks: "Show all checks",
       summaryOfChecks: ({ count }: { count: string | number }) => `of ${count} checks`,
-      summarySessions: "Sessions checked",
+      summarySessions: "Sessions read for Coach",
       summaryClearCaption: ({ count }: { count: string | number }) => `${count} checked, nothing found`,
       moreFindings: ({ count }: { count: string | number }) => `${count} more in Coach`,
       hiddenSnoozed: ({ time }: { time: string | number }) => `Snoozed until ${time}`,

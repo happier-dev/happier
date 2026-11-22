@@ -17698,7 +17698,7 @@ settingsSession: {
             insufficientRow: ({ missing }: { missing: string | number }) => `Precisa de: ${missing}`,
             showChecks: "Mostrar todas as verificações",
             summaryOfChecks: ({ count }: { count: string | number }) => `de ${count} verificações`,
-            summarySessions: "Sessões verificadas",
+            summarySessions: "Sessões lidas pelo Coach",
             summaryClearCaption: ({ count }: { count: string | number }) => `${count} verificadas, nada encontrado`,
             moreFindings: ({ count }: { count: string | number }) => `Mais ${count} no Coach`,
             hiddenSnoozed: ({ time }: { time: string | number }) => `Adiada até ${time}`,

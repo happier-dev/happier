@@ -17869,7 +17869,7 @@ settingsSession: {
             insufficientRow: ({ missing }: { missing: string | number }) => `必要: ${missing}`,
             showChecks: "すべてのチェックを表示",
             summaryOfChecks: ({ count }: { count: string | number }) => `${count} 件のチェック中`,
-            summarySessions: "確認したセッション",
+            summarySessions: "コーチが読んだセッション",
             summaryClearCaption: ({ count }: { count: string | number }) => `${count} 件は問題なし`,
             moreFindings: ({ count }: { count: string | number }) => `Coach に他 ${count} 件`,
             hiddenSnoozed: ({ time }: { time: string | number }) => `${time} までスヌーズ`,
