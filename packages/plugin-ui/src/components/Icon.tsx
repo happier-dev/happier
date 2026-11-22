@@ -9,6 +9,7 @@ import {
 } from '../presentation/content/Icon.js';
 import { HAPPIER_TONE_COLOR_TOKEN, type HappierTone } from '../presentation/semantics.js';
 import { usePluginTheme } from './PluginUiProvider.js';
+import { usePageHeaderMarkGlyphPx } from './pageHeaderMark.js';
 
 /** Closed portable concepts. The app privately maps them to its incumbent pack. */
 export type IconName = HappierIconName;
@@ -28,7 +29,10 @@ export type IconProps = Readonly<{
 export const PluginUiLeadingGlyphInkContext = createContext<string | null>(null);
 
 export function Icon({ name, size = 'medium', tone, accessibilityLabel, testID }: IconProps): ReactElement {
-  return <PluginUiIconGlyph name={name} size={resolveHappierIconSize(size)} tone={tone} accessibilityLabel={accessibilityLabel} testID={testID} />;
+  // A glyph that is a page header's mark draws at the header's mark step, as a `BrandMark` there does: the header
+  // owns its mark's footprint, so a page never picks a mark size of its own.
+  const pageHeaderGlyphPx = usePageHeaderMarkGlyphPx();
+  return <PluginUiIconGlyph name={name} size={pageHeaderGlyphPx ?? resolveHappierIconSize(size)} tone={tone} accessibilityLabel={accessibilityLabel} testID={testID} />;
 }
 
 /**

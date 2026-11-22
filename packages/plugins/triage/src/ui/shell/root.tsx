@@ -2837,8 +2837,10 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                     // A bare account name ("leeroybrun") does not say what it is: the source's own name does.
                     const sourceName = readSourceDescriptor(source.configured.instance.source)?.displayName;
                     // The connection's own handle tells two accounts of one source apart.
-                    const subtitle = sourceName !== undefined && source.displayPath !== undefined && source.displayPath !== source.displayLabel
+                    const named = sourceName !== undefined && source.displayPath !== undefined && source.displayPath !== source.displayLabel
                       ? `${sourceName} · ${source.displayPath}` : source.displayPath ?? sourceName;
+                    // A built-in source is already named by its title ("Happier tasks"): a subtitle never repeats it.
+                    const subtitle = named === source.displayLabel ? undefined : named;
                     // Each connection says its own health on its row: a quiet word and its reason, its fix at the end.
                     const health = sourceHealthRows.get(source.sourceInstanceId) ?? null;
                     const repair = health?.fix === 'connection'

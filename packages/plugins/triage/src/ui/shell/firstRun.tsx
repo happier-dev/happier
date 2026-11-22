@@ -5,6 +5,7 @@ import {
   Card,
   Column,
   Columns,
+  Icon,
   Item,
   ItemGroup,
   PageHeader,
@@ -100,7 +101,8 @@ export function TriageTasksFirstRun(props: Readonly<{
           'plugins.triage.tasks.firstRun.description',
           'Everything you have to do, from your trackers and your own list, next to the agents doing it.',
         )}
-        leading={<BrandMark size="large" externallyLabelled />}
+        // Tasks wears the task mark (lab tasks-firstrun), never the PRs & Issues pull-request mark of the plugin.
+        leading={<Icon name="task" />}
       />
       <ItemGroup
         title={text('plugins.triage.tasks.firstRun.own.title', 'Start with your own list')}
@@ -109,7 +111,8 @@ export function TriageTasksFirstRun(props: Readonly<{
       >
         <Card padding="medium">
           <Row gap="medium" align="center" justify="space-between" wrap>
-            <BrandMark size="small" externallyLabelled />
+            {/* Personal tasks live in the reader's Happier Account, so they wear Happier's mark (as their rows do). */}
+            <BrandMark host size="small" externallyLabelled />
             <Stack gap="xsmall" style={PERSONAL_TASKS_COPY_STYLE_V1}>
               <Text variant="label" value={text('plugins.triage.tasks.firstRun.own.row', 'Personal tasks')} />
               <Text
