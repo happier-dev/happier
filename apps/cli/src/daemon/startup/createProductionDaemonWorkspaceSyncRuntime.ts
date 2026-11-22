@@ -2822,11 +2822,12 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       }
     }
   };
-  // An Agent's Action from a Session reaches this SOURCE with requester
-  // transport custody only, never requester Account rows. When the asker is
-  // this daemon's own Account, its installed rows are the asker's rows, so the
-  // destination inspection resolves the named source there. Any other asker
-  // keeps the requester read and its refusal.
+  // A transport-only root (requester transport custody without requester
+  // Account rows; an Agent's Action from a Session is the usual one) cannot
+  // read requester rows at this SOURCE. When the asker is this daemon's own
+  // Account, its installed rows are the asker's rows, so the destination
+  // inspection resolves the named source there. Any other asker keeps the
+  // requester read and its refusal.
   const readSessionAskerSourceSnapshot = async (sourceWorkspaceRefId: string, context: RpcHandlerContext) => {
     const authorization = context.callerInputAuthorization;
     if (!authorization || readRequesterAccountActionContext(authorization)
