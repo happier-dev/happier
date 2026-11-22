@@ -32,6 +32,8 @@ import { createCapabilitiesService } from '@/capabilities/service';
 import { executionRunsCapability } from '@/capabilities/registry/toolExecutionRuns';
 import { CHECKLIST_IDS } from '@/capabilities/checklistIds';
 import { enableLocalSessionRpcCalls, registerLocalSessionRpcTarget } from '@/session/transport/rpc/localSessionRpcChannel';
+import { scmRpcOperationContextStorage } from '@/scm/rpc/operationContext';
+import { runWithScmAccountScope } from '@/scm/accountScope';
 
 const {
   callMachineRpc,
@@ -93,6 +95,15 @@ function serveSessionRecord(row: Readonly<{ id: string; active: boolean; machine
 
 const SCM_TEST_MACHINE_ID = 'machine-scm';
 const SCM_TEST_HOME_ID = 'scm-capture-home';
+
+function receivingScmOperation<T>(workingDirectory: string, run: () => T): T {
+  return runWithScmAccountScope('scm-fixture-account', () => scmRpcOperationContextStorage.run({
+    context: { signal: new AbortController().signal },
+    workingDirectory,
+    accessPolicy: { kind: 'restrictedRoots', roots: [workingDirectory] },
+  }, run));
+}
+
 /**
  * SCM Actions run on the Session's Machine. This host is that Machine: the installed plugin runtime
  * (real Git backend) and the Machine identity are the real owners, so capture runs unchanged beneath the Action.
@@ -790,7 +801,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       ctx: null,
     });
 
-    const observed = await deps.scmActionExecute?.({
+    const observed = await receivingScmOperation(fixture.rootPath, () => deps.scmActionExecute?.({
       actionId: 'scm.diffSummary.generate',
       input: {
         cwd: fixture.rootPath,
@@ -803,12 +814,13 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
             sourceKind: 'configured',
             configuredBackendId: 'fixture-model',
           }),
+          modelId: 'fixture-model-v1',
         },
       },
       context: { defaultSessionId: 'session-1' },
       executeCanonicalAction,
-    });
-    expect(observed).toMatchObject({ success: true, runId: 'run-1',
+    }));
+    expect(observed, JSON.stringify(observed)).toMatchObject({ success: true, runId: 'run-1',
       comparison: { inventory: { state: 'complete', files: [expect.objectContaining({ path: fixture.trackedPath })] } },
       outputs: { summary: { state: 'pending' } },
     });
@@ -863,10 +875,10 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
     try {
       await writeFile(join(fixture.rootPath, fixture.trackedPath), 'Inventory before prose\n');
-      await expect(deps.scmActionExecute?.({ actionId: 'scm.diffSummary.capture',
+      await expect(receivingScmOperation(fixture.rootPath, () => deps.scmActionExecute?.({ actionId: 'scm.diffSummary.capture',
         input: { cwd: fixture.rootPath, source: { kind: 'workingTree' } },
         context: { defaultSessionId: 'session-1' }, executeCanonicalAction,
-      })).resolves.toMatchObject({ success: true, comparison: { inventory: { state: 'complete',
+      }))).resolves.toMatchObject({ success: true, comparison: { inventory: { state: 'complete',
         files: [expect.objectContaining({ path: fixture.trackedPath })],
       } } });
       expect(executeCanonicalAction).not.toHaveBeenCalled();
@@ -880,8 +892,8 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     serveSessionRecord({ id: 'session-1', active: true, machineId: SCM_TEST_MACHINE_ID, path: fixture.rootPath, local: true });
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
     const executeCanonicalAction = vi.fn(async () => { throw new Error('Pinned reads must not admit another action'); });
-    const execute = (input: unknown) => deps.scmActionExecute?.({ actionId: 'scm.diffSummary.capture', input,
-      context: { defaultSessionId: 'session-1' }, executeCanonicalAction });
+    const execute = (input: unknown) => receivingScmOperation(fixture.rootPath, () => deps.scmActionExecute?.({ actionId: 'scm.diffSummary.capture', input,
+      context: { defaultSessionId: 'session-1' }, executeCanonicalAction }));
     await writeFile(join(fixture.rootPath, fixture.trackedPath), 'Captured first version\n');
     const captured = ScmComparisonCaptureOutputSchema.parse(await execute({ cwd: fixture.rootPath, source: { kind: 'workingTree' } }));
     if (!captured.success) throw new Error('Fixture comparison capture failed');
@@ -918,7 +930,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     });
     const canonical = createActionExecutor({ invokeContributedAction } as unknown as ActionExecutorDeps);
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
-    await expect(deps.scmActionExecute?.({ actionId: 'scm.diffSummary.capture',
+    await expect(receivingScmOperation(fixture.rootPath, () => deps.scmActionExecute?.({ actionId: 'scm.diffSummary.capture',
       input: { cwd: fixture.rootPath, source: { kind: 'pullRequest', locator: {
         providerId: 'fixture', repository: 'owner/repo', number: 1,
         sourceAction: { action: { pluginId: 'acme.source', localId: 'changed-files' },
@@ -926,7 +938,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
             comparison: false, continuation: 'client-midpage' } },
       } } }, context: { defaultSessionId: 'session-1' },
       executeCanonicalAction: (actionId, input, options) => canonical.execute(actionId, input, { surface: 'api', ...options }),
-    })).resolves.toMatchObject({ success: true, comparison: { endpoints: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+    }))).resolves.toMatchObject({ success: true, comparison: { endpoints: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
       inventory: { state: 'complete', files: [expect.objectContaining({ path: 'first.ts' }), expect.objectContaining({ path: 'second.ts' })] },
     } });
     expect(invokeContributedAction).toHaveBeenNthCalledWith(1, expect.objectContaining({
