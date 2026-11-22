@@ -54,6 +54,7 @@ import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalAct
 import { createCliApprovalsArtifactStore } from './approvals/artifactStore';
 import { createTargetActionCurrentIntentAdapter } from './approvals/targetActionCurrentIntent';
 import { retainWorkflowRequesterCredentials } from '@/daemon/workflows/requesterCustody';
+import { createCredentialedWorkflowActionAdmissionReader } from '@/daemon/workflows/workflowActionAdmission';
 import { WorkflowAcceptedSnapshotV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { createWorkflowRunStorageTestkit } from '@/daemon/workflows/workflowRunStorage.testkit';
@@ -99,6 +100,8 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
     const approvalHome = approvalShape ? Fastify() : null;
     const approvalChannel = approvalHome ? await createRequesterCurrentnessSocketHarness() : null;
     const approvalPaths: string[] = [];
+    const workflowOperations: WorkflowRunStorageOperation['operation'][] = [];
+    const originWorkflowOperations: WorkflowRunStorageOperation['operation'][] = [];
     let workflowStorage: ReturnType<typeof createWorkflowRunStorageTestkit> | undefined;
     const accountManifest = normalizePluginManifestV2(createPluginManifestV2Fixture({ id: 'example.account-review', entrypoints: {}, contributes: {
       actions: [{ id: 'verify', title: 'Verify accepted workspace', scopes: ['global'], surfaces: ['cli', 'agent'], dangerLevel: 'safe',
@@ -118,8 +121,10 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
       });
       const features = registerAccountHomeHttp(approvalHome, { accountId, serverId: 'srv_review_home' });
       registerPlainArtifactRoutes(approvalHome, accountId);
-      if (workflowChild) approvalHome.post<{ Body: WorkflowRunStorageOperation }>(WORKFLOW_RUN_STORAGE_HTTP_PATH,
-        async call => { if (!workflowStorage) return { runs: [] }; return await workflowStorage.execute(call.body); });
+      if (workflowChild) approvalHome.post<{ Body: WorkflowRunStorageOperation }>(WORKFLOW_RUN_STORAGE_HTTP_PATH, async call => {
+        workflowOperations.push(call.body.operation);
+        return workflowStorage ? await workflowStorage.execute(call.body) : { runs: [] };
+      });
       approvalHome.get('/v1/features', async () => features);
       approvalHome.get('/v1/features/authenticated', async () => features);
       approvalHome.get('/v1/machines', async () => [machine]);
@@ -420,13 +425,20 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
                 readInstallationIdentity: () => ({ version: 1, installationId: 'review-installation', createdAt: 1,
                   publicKey: Buffer.from(keys.publicKey).toString('base64url'), privateKey: Buffer.from(keys.secretKey).toString('base64url') }),
                 acquireRuntimeRegistryLease: async () => lease, targetActionApprovals: store,
-                isApprovalExecutionOriginCurrent: async request => createDaemonApprovalExecutionOriginCurrentness({ accountId, machineId, serverId,
-                  resolveCurrentMachineExecutionOriginContext: async () => ({ machineId, serverIdentityId: 'srv_review_home' }),
-                  resolveTarget: createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: 'https://review-home.test' }),
-                  isAccountCurrent: async () => true,
-                  resolveCurrentSessionAgentSpawnPolicyV1: async () => approvalContext.sessionAgentSpawnPolicyV1 ?? null,
-                  listAccountApiTokens: async () => { throw new Error('Workflow source has no PAT'); } })({ ...request, reportStale: reason => {
-                    sourceStaleReasons.push(reason); request.reportStale?.(reason); } }) });
+                isApprovalExecutionOriginCurrent: async request => {
+                  const start = workflowOperations.length;
+                  const current = await createDaemonApprovalExecutionOriginCurrentness({ accountId, machineId, serverId,
+                    resolveCurrentMachineExecutionOriginContext: async () => ({ machineId, serverIdentityId: 'srv_review_home' }),
+                    resolveTarget: createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: 'https://review-home.test' }),
+                    isAccountCurrent: async () => true,
+                    readWorkflowActionAdmission: createCredentialedWorkflowActionAdmissionReader({ credentials, serverHttpBaseUrl: 'https://review-home.test' }),
+                    resolveCurrentSessionAgentSpawnPolicyV1: async () => approvalContext.sessionAgentSpawnPolicyV1 ?? null,
+                    listAccountApiTokens: async () => { throw new Error('Workflow source has no PAT'); },
+                  })({ ...request, reportStale: reason => {
+                    sourceStaleReasons.push(reason); request.reportStale?.(reason); } });
+                  originWorkflowOperations.push(...workflowOperations.slice(start));
+                  return current;
+                } });
               return { matched: true as const, result };
             };
           }
@@ -475,12 +487,15 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
           serverId, serverIdentityId: 'srv_review_home', serverHttpBaseUrl: 'https://review-home.test' },
           sourceReplay ? { targetActionApprovalReplay: sourceReplay } : undefined);
         const decision = shape.endsWith('reject') ? 'reject' : shape.endsWith('cancel') ? 'cancel' : 'approve';
+        const workflowReplayStart = workflowOperations.length;
         const decided = await decider.executor.execute('approval.request.decide', { artifactId: receipt.artifactId, decision },
           { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: accountId,
             serverId, serverIdentityId: 'srv_review_home', actionRequestId: 'approve-review-workspace' });
         expect(decided, JSON.stringify({ decided, sourceStaleReasons })).toMatchObject({ ok: true });
         if (workflowSourceApproval) {
           expect(decided, JSON.stringify({ decided, sourceStaleReasons })).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+          expect(workflowOperations.slice(workflowReplayStart)).toEqual(['get', 'invocations.get']);
+          expect(originWorkflowOperations).toEqual(['get', 'invocations.get']);
           const store = createCliApprovalsArtifactStore({ credentials, serverId, serverHttpBaseUrl: 'https://review-home.test' });
           const settled = await store.targetActionApprovalsGet({ artifactId: receipt.artifactId });
           if (!settled?.execution?.ok) throw new Error('Expected source approval execution');

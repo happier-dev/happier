@@ -21,7 +21,7 @@ import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { configuration } from '@/configuration';
 import type { StoredCredentials } from '@/persistence';
 import { logger } from '@/ui/logger';
-import type { DaemonApprovalExecutionOriginCurrentness } from './daemonExternalActionTargetResolver';
+import type { AdmittedWorkflowApprovalRequester, DaemonApprovalExecutionOriginCurrentness } from './daemonExternalActionTargetResolver';
 import {
   executeContributedAction,
 } from '@/plugins/runtime/invocation/actions/executeContributedAction';
@@ -185,18 +185,19 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
 
       const approvalRequest = projectTargetApprovalRequest(approved);
       if (!approvalRequest) return targetActionReplayFailure('approval_invalid');
-      const source: { currentness?: DaemonApprovalExecutionOriginCurrentness } = {};
+      let admittedWorkflowRequester: AdmittedWorkflowApprovalRequester | undefined;
       const currentness = await classifyApprovalExecutionOriginCurrentness({
         check: async reportStale => {
           preparedSource = await prepareRequesterSource(originalAuthorization, signal);
           if (preparedSource === null) { reportStale('credential_changed'); return false; }
-          source.currentness = preparedSource
+          const checkCurrentness = preparedSource
             ? input.resolvePreparedApprovalExecutionOriginCurrentness?.(preparedSource.authorization)
             : input.isApprovalExecutionOriginCurrent;
-          return source.currentness ? await source.currentness({
+          return checkCurrentness ? await checkCurrentness({
               origin,
               request: approvalRequest,
               reportStale,
+              onWorkflowRequesterAdmitted: requester => { admittedWorkflowRequester = requester; },
               ...(signal ? { signal } : {}),
             })
           : (reportStale('currentness_owner_unavailable'), false);
@@ -228,16 +229,11 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
         const persistenceFailure = await persist(terminal);
         return persistenceFailure ?? targetActionReplayFailure('approval_stale');
       }
-      const sourceCurrentness = source.currentness;
-      if (!sourceCurrentness) return targetActionReplayFailure('approval_stale');
-
-      if (origin.caller.kind === 'workflowRun' && origin.caller.authorization.principal.kind === 'host'
-        && !origin.externalActionExecutionAuthorization) {
+      if (admittedWorkflowRequester) {
         const installation = readInstallationIdentity();
-        if (installation) workflowRequester = await acquireWorkflowApprovalRequester({ credentials: input.credentials,
+        if (installation) workflowRequester = await acquireWorkflowApprovalRequester({ requester: admittedWorkflowRequester,
           serverHttpBaseUrl: resolveServerHttpBaseUrl(), happyHomeDir: configuration.happyHomeDir,
-          installationId: installation.installationId, origin, qualifiedActionId: approved.qualifiedActionId,
-          actionInput: approved.input, ...(signal ? { signal } : {}) });
+          installationId: installation.installationId, ...(signal ? { signal } : {}) });
       }
       const executionClaim: TargetActionApprovalRequestV1 = {
         ...approved,

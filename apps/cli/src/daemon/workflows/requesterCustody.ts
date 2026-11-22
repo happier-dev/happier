@@ -1,7 +1,7 @@
-import type { ActionExecutorContext, ApprovalExecutionOriginV1 } from '@happier-dev/protocol';
-import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { createCredentialedWorkflowActionAdmissionReader, readWorkflowActionInvocationEffect } from './workflowActionAdmission';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import type { AdmittedWorkflowApprovalRequester } from '../externalActions/daemonExternalActionTargetResolver';
 import type { StoredCredentials } from '@/persistence';
 import { AsyncLock } from '@/utils/lock';
 import { z } from 'zod/mini';
@@ -357,32 +357,18 @@ export async function acquireWorkflowRequesterCredentials(input: ScopeBinding & 
 
 /** Durable native consent reopens the original Run's private custody, never the deciding person's context. */
 export async function acquireWorkflowApprovalRequester(input: Readonly<{
-  credentials: StoredCredentials; serverHttpBaseUrl: string; happyHomeDir: string; installationId: string;
-  origin: ApprovalExecutionOriginV1; qualifiedActionId: string; actionInput: unknown; signal?: AbortSignal;
+  requester: AdmittedWorkflowApprovalRequester; serverHttpBaseUrl: string; happyHomeDir: string; installationId: string; signal?: AbortSignal;
 }>): Promise<Readonly<{ context: Pick<ActionExecutorContext, 'admittedHostWorkflowRequester' | 'verifyMachineAdmissionCurrent'
   | 'executionRunWorkflowRunId' | 'actionRequestId'>; release(): Promise<void> }> | null> {
-  const origin = input.origin;
-  if (origin.caller.kind !== 'workflowRun' || origin.caller.authorization.principal.kind !== 'host'
-    || origin.externalActionExecutionAuthorization || !origin.accountId || !origin.machineId || !origin.serverIdentityId) return null;
-  const runId = origin.caller.runId;
-  const context = { runtimeAccountId: origin.accountId, actionCaller: origin.caller, executionRunWorkflowRunId: runId,
-    actionRequestId: origin.requestId, ...(input.signal ? { signal: input.signal } : {}) };
-  const admission = await createCredentialedWorkflowActionAdmissionReader(input)({ runId, context, phase: 'approval_replay' });
-  const invocation = await admission?.readActionInvocation('approval_replay');
-  const execution = invocation?.progress.execution;
-  const effect = readWorkflowActionInvocationEffect(execution);
-  if (!admission || admission.run.machineId !== origin.machineId || execution?.kind !== 'action'
-    || execution.actionRequestId !== origin.requestId || effect?.actionId !== input.qualifiedActionId
-    || !sameStrictJsonValue(effect.input, input.actionInput)) return null;
-  const retained = await acquireWorkflowRequesterCredentials({ happyHomeDir: input.happyHomeDir, serverId: origin.serverId,
-    machineId: origin.machineId, installationId: input.installationId, scopeId: runId,
-    accountId: origin.accountId, homeServerIdentityId: origin.serverIdentityId,
+  const { serverId, machineId, runId, accountId, homeServerIdentityId, requestId } = input.requester;
+  const retained = await acquireWorkflowRequesterCredentials({ happyHomeDir: input.happyHomeDir, serverId,
+    machineId, installationId: input.installationId, scopeId: runId, accountId, homeServerIdentityId,
     serverHttpBaseUrl: input.serverHttpBaseUrl, signal: input.signal });
   if (!retained) return null;
   if (!retained.machineAdmission?.role) { await retained.release(); return null; }
-  return { context: { executionRunWorkflowRunId: runId, actionRequestId: origin.requestId,
+  return { context: { executionRunWorkflowRunId: runId, actionRequestId: requestId,
     admittedHostWorkflowRequester: { ...retained.machineAdmission, role: retained.machineAdmission.role,
       machineId: retained.attribution.machineId, installationId: retained.attribution.installationId },
-    // The exact admitted Run was opened above. Finite replay follows its local cancellation signal.
+    // Origin currentness verified the exact admission. Replay follows its local cancellation signal.
     verifyMachineAdmissionCurrent: async signal => !input.signal?.aborted && !signal?.aborted }, release: retained.release };
 }

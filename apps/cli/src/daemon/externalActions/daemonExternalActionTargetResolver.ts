@@ -14,6 +14,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readAuthoritativePluginSlotOccurrence } from '@/plugins/runtime/reload/runtimeLease';
 import { resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
 import type {
+  ActionExecutorContext,
   AccountApiTokensListActionOutputV1,
   ApprovalExecutionOriginV1,
   SessionAgentSpawnPolicyV1,
@@ -45,6 +46,15 @@ type CurrentMachineExecutionOrigin = Readonly<{
 /** Closed diagnostic codes only; never log origin, policy, or credential content. */
 export type DaemonApprovalExecutionOriginStaleReason = ApprovalStaleReason;
 
+export type AdmittedWorkflowApprovalRequester = Readonly<{
+  serverId: string;
+  homeServerIdentityId: string;
+  accountId: string;
+  machineId: string;
+  runId: string;
+  requestId: string;
+}>;
+
 export type DaemonApprovalExecutionOriginCurrentness = (args: Readonly<{
   origin: ApprovalExecutionOriginV1;
   request?: Parameters<NonNullable<ActionExecutorDeps['isApprovalExecutionOriginCurrent']>>[0]['request'];
@@ -52,6 +62,7 @@ export type DaemonApprovalExecutionOriginCurrentness = (args: Readonly<{
   actionInput?: unknown;
   signal?: AbortSignal;
   reportStale?: (reason: DaemonApprovalExecutionOriginStaleReason) => void;
+  onWorkflowRequesterAdmitted?: (requester: AdmittedWorkflowApprovalRequester) => void;
 }>) => Promise<boolean>;
 
 function doesCurrentPermissionModeAdmitApprovedMode(origin: ApprovalExecutionOriginV1, currentMode: string | null): boolean {
@@ -136,13 +147,25 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
   now?: () => number;
 }>): DaemonApprovalExecutionOriginCurrentness {
   const now = input.now ?? Date.now;
-  return async ({ origin, request, actionInput, signal, reportStale }) => withApprovalActionTrace(request ? 'approval.request.decide' : origin.actionId,
+  return async ({ origin, request, actionInput, signal, reportStale, onWorkflowRequesterAdmitted }) => withApprovalActionTrace(request ? 'approval.request.decide' : origin.actionId,
     () => timeApprovalPhase('approval.origin.currentness', async () => {
     const phase = <T>(name: string, read: () => T | Promise<T>): Promise<T> =>
       timeApprovalPhase(`approval.origin.${name}`, read);
     const stale = (reason: DaemonApprovalExecutionOriginStaleReason) => {
       reportStale?.(reason);
       return false;
+    };
+    const readApprovedWorkflowInvocation = async (runId: string, context: ActionExecutorContext, actionId: string) => {
+      const admission = await input.readWorkflowActionAdmission?.({ runId, phase: 'approval_replay',
+        context: { ...context, actionRequestId: origin.requestId, ...(signal ? { signal } : {}) } });
+      if (!admission || admission.run.ownerAccountId !== input.accountId) return null;
+      const invocation = await admission.readActionInvocation('approval_replay');
+      const execution = invocation?.progress.execution;
+      if (execution?.kind !== 'action' || execution.actionRequestId !== origin.requestId) return null;
+      const effect = readWorkflowActionInvocationEffect(execution);
+      const approved = readWorkflowActionInvocationEffect({ kind: 'action', actionId,
+        input: request?.v === 2 ? request.actionArgs : actionInput });
+      return effect && approved && effect.actionId === approved.actionId ? { admission, effect, approved } : null;
     };
     try {
       // Descriptive PAT ids from legacy API approvals are never sufficient to
@@ -248,22 +271,15 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
             ?? (workflow && !workflow.sessionLeaf && !workflow.sessionAuthority ? workflow.runId : undefined);
           if (runId) {
             if (!input.readWorkflowActionAdmission) return stale('workflow_authorization_unavailable');
-            const admission = await input.readWorkflowActionAdmission({ runId, phase: 'approval_replay',
-              context: { actionRequestId: origin.requestId, externalActionExecutionAuthorization: externalAuthorization,
-                ...(retainedCaller ? { actionCaller: retainedCaller, executionRunWorkflowRunId: runId } : {}),
-                ...(signal ? { signal } : {}) } });
-            const invocation = await admission?.readActionInvocation('approval_replay');
-            const execution = invocation?.progress.execution;
-            const effect = readWorkflowActionInvocationEffect(execution);
-            const approvedEffect = readWorkflowActionInvocationEffect({ kind: 'action', actionId: origin.actionId,
-              input: request?.v === 2 ? request.actionArgs : actionInput });
-            if (!admission || admission.run.ownerAccountId !== input.accountId || execution?.kind !== 'action'
-              || !effect || effect.actionId !== approvedEffect?.actionId
-              || execution.actionRequestId !== origin.requestId) return stale('workflow_authorization_changed');
+            const approved = await readApprovedWorkflowInvocation(runId, {
+              externalActionExecutionAuthorization: externalAuthorization,
+              ...(retainedCaller ? { actionCaller: retainedCaller, executionRunWorkflowRunId: runId } : {}),
+            }, origin.actionId);
+            if (!approved) return stale('workflow_authorization_changed');
             // The signature above binds the prepared effect. This read recovers
             // only its accepted ceiling, never fresh authority over its operands.
             if (origin.callerPermissionMode === undefined || !doesCurrentPermissionModeAdmitApprovedMode(origin,
-              admission.accepted.authorization.admittedPermissionCeiling)) return stale('permission_changed');
+              approved.admission.accepted.authorization.admittedPermissionCeiling)) return stale('permission_changed');
           }
           return true;
         }
@@ -360,19 +376,25 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
       // availability (including its separate rate limit) is not Account
       // eligibility; the authenticated Account owner must prove that instead.
       if (origin.credentialId === undefined) {
-        try { return await input.isAccountCurrent(signal) || stale('account_changed'); }
+        try { if (!await input.isAccountCurrent(signal)) return stale('account_changed'); }
         catch (error) { rethrowRequesterHomeReadFailure(error); return stale('account_unavailable'); }
+      } else {
+        const tokenList = await input.listAccountApiTokens(signal);
+        if (origin.accountId !== input.accountId || origin.principalId !== input.accountId) return stale('account_changed');
+        const token = tokenList.tokens.find((candidate) => candidate.tokenId === origin.credentialId);
+        if (!token) return stale('credential_changed');
+        if (token.expiresAt !== null && Date.parse(token.expiresAt) <= now()) return stale('credential_expired');
       }
-      const tokenList = await input.listAccountApiTokens(signal);
-      if (
-        origin.accountId !== input.accountId
-        || origin.principalId !== input.accountId
-      ) {
-        return stale('account_changed');
+      if (onWorkflowRequesterAdmitted && origin.caller.kind === 'workflowRun' && origin.caller.authorization.principal.kind === 'host'
+        && !externalAuthorization && origin.accountId && origin.machineId && origin.serverIdentityId && request?.v === 2) {
+        const runId = origin.caller.runId;
+        const approved = await readApprovedWorkflowInvocation(runId, { runtimeAccountId: origin.accountId,
+          actionCaller: origin.caller, executionRunWorkflowRunId: runId }, request.actionId);
+        if (approved?.admission.run.machineId === origin.machineId && sameStrictJsonValue(approved.effect.input, approved.approved.input)) {
+          onWorkflowRequesterAdmitted({ serverId: origin.serverId, homeServerIdentityId: origin.serverIdentityId,
+            accountId: origin.accountId, machineId: origin.machineId, runId, requestId: origin.requestId });
+        }
       }
-      const token = tokenList.tokens.find((candidate) => candidate.tokenId === origin.credentialId);
-      if (!token) return stale('credential_changed');
-      if (token.expiresAt !== null && Date.parse(token.expiresAt) <= now()) return stale('credential_expired');
       return true;
     } catch (error) {
       rethrowRequesterHomeReadFailure(error);
