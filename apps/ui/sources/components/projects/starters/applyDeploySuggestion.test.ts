@@ -3,6 +3,7 @@ import { createActionExecutor } from '@happier-dev/protocol/actions';
 import type { DeploySuggestionCatalogV1, DeploySuggestionRecommendationV1 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
 import { renderDeployPlanBriefV1 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
 import { DEPLOY_BUILD_PREVIEW_OWN_SERVER_RULES_V1 } from '@happier-dev/protocol/deployments/deploymentValidationV1';
+import { renderStarterSessionMessageV1 } from '@happier-dev/protocol/projects/starters/createV1';
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => {
@@ -83,6 +84,8 @@ it.each(['starter', 'scratch'] as const)('resumes %s creation and opens ordinary
         { providerKind: 'github', owner: 'alice', name: 'bakery', visibility: 'private' }, catalog.targets[0]);
     // The chosen target is Own server, so its brief carries the Compose and own-server input.
     expect(expectedBrief).toContain(DEPLOY_BUILD_PREVIEW_OWN_SERVER_RULES_V1);
-    expect(execute.mock.calls[1]![1]).toMatchObject({ seed: { prompt: expectedBrief, placement: {
+    // The Session's first message is the brief plus the Project this creation made (the starter Action's handoff).
+    expect(execute.mock.calls[1]![1]).toMatchObject({ seed: { prompt: renderStarterSessionMessageV1(expectedBrief,
+        { projectId: 'project', sourceId: 'source', repositoryUrl: 'https://github.com/alice/bakery' }), placement: {
         kind: 'exactTarget', serverId: 'home', machineId: 'machine', directory: '/projects/bakery' } } });
 });
