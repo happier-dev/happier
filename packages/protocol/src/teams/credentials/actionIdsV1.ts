@@ -1,5 +1,6 @@
 export const TEAM_CREDENTIAL_CREATE_ACTION_ID_V1 = 'teams.credentials.create';
 export const TEAM_CREDENTIAL_GET_ACTION_ID_V1 = 'teams.credentials.get';
+export const TEAM_CREDENTIAL_ENTITLED_LIST_ACTION_ID_V1 = 'teams.credentials.entitled.list';
 export const TEAM_CREDENTIAL_UPDATE_ACTION_ID_V1 = 'teams.credentials.update';
 export const TEAM_CREDENTIAL_EXTERNAL_KEY_CREATE_ACTION_ID_V1 = 'teams.credentials.externalKeys.create';
 
@@ -17,7 +18,7 @@ export const TEAM_CREDENTIAL_HOME_ACTION_IDS_V1 = [
   'teams.credentials.requestPolicySupport.get',
   'teams.credentials.sourceResources.list',
   TEAM_CREDENTIAL_GET_ACTION_ID_V1,
-  'teams.credentials.entitled.list',
+  TEAM_CREDENTIAL_ENTITLED_LIST_ACTION_ID_V1,
   TEAM_CREDENTIAL_CREATE_ACTION_ID_V1,
   TEAM_CREDENTIAL_UPDATE_ACTION_ID_V1,
   'teams.credentials.audience.set',
@@ -54,7 +55,7 @@ const TEAM_CREDENTIAL_MCP_ACTION_IDS_V1: ReadonlySet<TeamCredentialHomeActionIdV
   TEAM_CREDENTIAL_GET_ACTION_ID_V1,
   'teams.credentials.preparation.get',
   TEAM_CREDENTIAL_CREATE_ACTION_ID_V1,
-  'teams.credentials.entitled.list',
+  TEAM_CREDENTIAL_ENTITLED_LIST_ACTION_ID_V1,
   'teams.credentials.delete',
   'teams.credentials.limits.delete',
   'teams.credentials.externalKeys.revoke',

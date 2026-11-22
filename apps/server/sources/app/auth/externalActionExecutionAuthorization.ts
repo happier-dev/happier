@@ -25,7 +25,9 @@ import { isScmRunStartRpcPurpose } from '@happier-dev/protocol/actions/actionSpe
 import { homeDomainActionHttpWireInputSchemaV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { TEAM_GROUP_CREATE_ACTION_ID_V1, isTeamGroupUpdateActionIdV1 } from '@happier-dev/protocol/teams/actionIdsV1';
 import { TEAM_CREDENTIAL_CREATE_ACTION_ID_V1, TEAM_CREDENTIAL_GET_ACTION_ID_V1,
-    isTeamCredentialRetainedLabelActionIdV1 } from '@happier-dev/protocol/teams/credentials/actionIdsV1';
+    TEAM_CREDENTIAL_ENTITLED_LIST_ACTION_ID_V1, isTeamCredentialRetainedLabelActionIdV1 } from '@happier-dev/protocol/teams/credentials/actionIdsV1';
+import { TEAM_CREDENTIAL_ACTION_PATHS_V1 } from '@happier-dev/protocol/teams/credentials/actionsV1';
+import { TeamCredentialResourceReadInputV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { MachinePresetActionInputSchemasV1, MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { isMachinePresetFiniteOperationActionIdV1, MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 import { MACHINE_ISOLATION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineIsolationActionIdsV1';
@@ -1648,6 +1650,18 @@ async function isAdmittedManagedExecWakeInTx(reader: Tx, binding: ExternalAction
     }
 }
 
+function isSpawnTeamCredentialCatalogRead(
+    binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string, proof: ExternalActionExecutionRequestProof,
+): boolean {
+    const teamId = binding.projectSessionDefaultsAdmission?.primaryTeamId;
+    if (!teamId || binding.actionId !== SESSION_SPAWN_NEW_ACTION_ID_V1
+        || effectActionId !== TEAM_CREDENTIAL_ENTITLED_LIST_ACTION_ID_V1
+        || proof.method.toUpperCase() !== 'POST'
+        || proof.path !== TEAM_CREDENTIAL_ACTION_PATHS_V1[TEAM_CREDENTIAL_ENTITLED_LIST_ACTION_ID_V1]) return false;
+    const request = TeamCredentialResourceReadInputV1Schema.safeParse(proof.body);
+    return request.success && request.data.teamId === teamId;
+}
+
 /** One signed binding decides sibling eligibility and the credential ceiling together. */
 async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string, target: ExternalActionTargetV1, proof: ExternalActionExecutionRequestProof, signerAccountId: string,
@@ -1714,6 +1728,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         teamUsage: isTeamCredentialUsageExportReadEffect(binding.actionId, effectActionId),
         archiveStop: isSessionArchiveStopEffect(binding.actionId, effectActionId),
         deploymentRead: isDeploymentReadPreparation(binding, effectActionId),
+        spawnTeamCredentialCatalog: isSpawnTeamCredentialCatalogRead(binding, effectActionId, proof),
         projectPrepareReview: isProjectPrepareReviewEffect(binding.actionId, effectActionId),
         reviewWorkflowAction: binding.actionId === REVIEW_START_ACTION_ID_V1 && effectActionId === WORKFLOW_RUN_START_ACTION_ID_V1
             || binding.actionId === REVIEW_NEW_ROUND_ACTION_ID_V1
@@ -3632,6 +3647,9 @@ function isCollectionSharingHttpPurpose(actionId: string, proof: ExternalActionE
 async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof, snapshotBatch: SessionReadBatchRequestV1 | null): Promise<boolean | null> {
     const root = verified.binding.actionId;
+    // The admitted spawn already bound the Team operand. The catalog route owns
+    // requester membership, sign-in qualification and disclosure.
+    if (verified.signedChildPurpose.sibling.spawnTeamCredentialCatalog) return true;
     if (isPluginCollectionSharingActionIdV1(root))
         return verified.effectActionId === root && isCollectionSharingHttpPurpose(root, proof);
     if (verified.signedChildPurpose.sibling.projectSetupSet) {
@@ -4946,13 +4964,14 @@ export async function verifyExternalActionDomainExecutionRequest(
     // All root-credential paths use their admitted root ceiling, including qualified
     // effects absent from the built-in catalog. The signed-child purpose above
     // must pin the effect and HTTP route before selecting that ceiling.
-    if (!credentialAction.success || !resolveCredentialActionAdmissionV1({
+    if (!verified.signedChildPurpose.sibling.spawnTeamCredentialCatalog
+        && (!credentialAction.success || !resolveCredentialActionAdmissionV1({
         spec: getActionSpec(credentialAction.data),
         authority: verified.effectiveAuthority, grant: 'grant' in verified.binding ? verified.binding.grant : null,
         // Codec preparation retains the admitted Session proposal; it cannot
         // confer the human authority required by the actual mutation route.
         surface: isDiscussionActionHttpPreparation(verified, proof)
-            ? readExternalActionSessionProposalSurface(verified.binding) : undefined }).ok) return refuse('credential_action_admission');
+            ? readExternalActionSessionProposalSurface(verified.binding) : undefined }).ok)) return refuse('credential_action_admission');
     if (setupMachineReadId) {
         const admitted = await readAdmittedExternalActionMachineInTx(db, verified.binding, setupMachineReadId,
             setupMachineReadId === verified.binding.machineId ? verified.binding.installationId : undefined);

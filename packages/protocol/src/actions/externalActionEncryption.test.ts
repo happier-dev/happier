@@ -42,6 +42,21 @@ const binding = {
 const randomBytes = (length: number) => new Uint8Array(length).fill(2);
 
 describe('whole external Action encryption', () => {
+  it('carries an authored primary Team for signed spawn and rejects a substituted Team', () => {
+    const spawnBinding = { ...binding, actionId: 'session.spawn_new' };
+    const input = { primaryTeamId: 'authored-team' };
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: spawnBinding, input, material, randomBytes });
+    expect(request.projectSessionDefaultsAdmission).toEqual({ primaryTeamId: input.primaryTeamId });
+    const open = (envelope: unknown) => openExternalActionRequestV2({
+      projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding: spawnBinding, material,
+    });
+    expect(open(request)).toEqual({ input });
+    expect(open({ ...request, projectSessionDefaultsAdmission: { primaryTeamId: 'substituted-team' } })).toBeNull();
+    const { projectSessionDefaultsAdmission: _scope, ...legacy } = request;
+    expect(open(legacy)).toEqual({ input });
+  });
+
   it('keeps the finite theme-content read intent inside its authenticated requester envelope', () => {
     const themeBinding = { ...binding, actionId: 'registries.items.read' };
     const input = { kind: 'theme', sourceId: 'private-open-vsx', itemId: 'sample/palette' };

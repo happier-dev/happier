@@ -7496,6 +7496,13 @@ can read. A plaintext Account never receives fabricated Account E2EE material. S
 credential revision, configuration revision, authentication mode, and encryption binding are
 rechecked when material is written and read so a stale preparation cannot replace current material.
 
+In 0.3 development, a signed `session.spawn_new` can read the requester's entitled
+credential catalog for the primary Team authored in that spawn. Home signs the
+Team ID as routing metadata even when the request has no Project or Source. For
+an E2EE spawn, the executor compares that metadata with the sealed input. A
+request without the signed Team operand carries no catalog scope. The catalog
+still applies Team membership, sign-in qualification, and resource entitlement.
+
 The 0.3 development user-facing preparation read is the canonical
 `teams.credentials.preparation.get` Action, used by the UI and exposed to session
 agents and MCP. It aggregates the existing recipient census decisions into a

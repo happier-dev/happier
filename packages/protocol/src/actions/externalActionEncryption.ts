@@ -3,7 +3,7 @@ import { projectExternalActionBrowserSessionIdV1 } from './executor/browser.js';
 import { projectWorkspaceSyncAdmissionInputV1 } from '../workspaces/workspaceSyncAdmissionV1.js';
 import { MachineServiceLogsResourceContinuationV1Schema, MachineServiceLogsGenerationV1Schema } from '../daemon/machineServiceLogsResource.js';
 import { z } from '../zodRuntimePolicy.js';
-import { WORKFLOW_RUN_START_ACTION_ID_V1 } from './actionIds.js';
+import { SESSION_SPAWN_NEW_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from './actionIds.js';
 
 import { AccountApiTokenCredentialV1Schema, AccountApiTokenEncryptionAccessV1Schema, AccountApiTokenSummaryV1Schema } from '../auth/accountApiTokens.js';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
@@ -314,8 +314,13 @@ export function openExternalActionRequestV2(params: Readonly<{
     if (!sameStrictJsonValue(projectRegistryAppUpdateAdmissionV1(decoded.data.actionId, decoded.data.input),
       envelope.registryAppUpdateAdmission)) return refused();
     phase = 'project_session_defaults_admission';
-    if (!sameStrictJsonValue(projectExternalActionProjectSessionDefaultsAdmissionV1(decoded.data.actionId, decoded.data.input),
-      envelope.projectSessionDefaultsAdmission)) return refused();
+    const sessionDefaults = projectExternalActionProjectSessionDefaultsAdmissionV1(decoded.data.actionId, decoded.data.input);
+    // Earlier spawn envelopes omitted a primary Team without a Project or Source.
+    // Opening those bytes does not put the absent Team operand into the Home proof.
+    const legacyTeamOnly = decoded.data.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
+      && envelope.projectSessionDefaultsAdmission === undefined && sessionDefaults?.primaryTeamId != null
+      && sessionDefaults.projectRef === undefined && sessionDefaults.sourceRef === undefined;
+    if (!legacyTeamOnly && !sameStrictJsonValue(sessionDefaults, envelope.projectSessionDefaultsAdmission)) return refused();
     if (projectExternalActionProjectSourceCheckoutIdV1(decoded.data.actionId, decoded.data.input)
       !== envelope.projectSourceCheckoutId) return refused();
     phase = 'plaintext_limit';

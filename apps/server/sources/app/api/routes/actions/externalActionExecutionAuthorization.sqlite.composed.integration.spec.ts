@@ -11792,6 +11792,80 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
+    it('admits the signed spawn default-preparation Team credential catalog read', async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const otherTeam = await db.team.create({ data: { name: 'Other member Team' } });
+        await db.teamMembership.create({ data: { teamId: otherTeam.id, accountId: fixture.account.id, role: 'member' } });
+        await db.teamMembership.updateMany({ where: { teamId: fixture.team.id, accountId: fixture.account.id },
+            data: { role: 'member' } });
+        await db.teamMembership.create({ data: { teamId: fixture.team.id, accountId: custodian.id, role: 'owner' } });
+        await db.team.update({ where: { id: fixture.team.id }, data: { authenticationPolicy: { v: 1, mode: 'inherit' } } });
+        const resource = await db.teamCredentialResource.create({ data: { teamId: fixture.team.id, custodianAccountId: custodian.id,
+            displayName: 'Spawn default', sourceBindingJson: '{}', disclosureCeiling: 'brokered_only',
+            sessionUsePolicy: 'personal_allowed', allMembersDeliveryMode: 'brokered' } });
+        await db.teamCredentialResource.create({ data: { teamId: fixture.team.id, custodianAccountId: custodian.id,
+            displayName: 'Unentitled credential', sourceBindingJson: '{}', disclosureCeiling: 'brokered_only',
+            sessionUsePolicy: 'personal_allowed' } });
+        vi.stubEnv('HAPPIER_FEATURE_TEAMS__ENABLED', '1');
+        vi.stubEnv('HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED', '1');
+        const app = await createRealTeamApp();
+        try {
+            const actionId = 'session.spawn_new';
+            const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+            const input = SessionSpawnNewInputV2Schema.parse({
+                executionTarget: { serverId: await getOrCreateServerIdentityId(), machineId: fixture.machine.id },
+                directory: { kind: 'path', path: '/workspace/signed-spawn' },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+                primaryTeamId: fixture.team.id,
+            });
+            const read = (teamId: string, makeHeaders: (request: ReturnType<typeof bindHomeDomainActionHttpRequestV1>) => Record<string, string>) => {
+                const request = bindHomeDomainActionHttpRequestV1('teams.credentials.entitled.list', { teamId });
+                return app.inject({ method: 'POST', url: request.path, payload: request.body, headers: makeHeaders(request) });
+            };
+            const accountHeaders = () => ({ authorization: `Bearer ${token}` });
+            const control = await read(fixture.team.id, accountHeaders);
+            expect(control.statusCode, control.body).toBe(200);
+            expect(control.json().resources.map((row: { id: string }) => row.id)).toEqual([resource.id]);
+            const otherControl = await read(otherTeam.id, accountHeaders);
+            expect(otherControl.statusCode, otherControl.body).toBe(200);
+
+            const unrelated = await mint(app, fixture, 'agents.models.list', {
+                ...fixture.envelope, input: { purpose: 'scm_diff_summary', machineId: fixture.machine.id },
+            }, token);
+            const signedRead = (authorization: typeof unrelated, teamId = fixture.team.id) => read(teamId, request => machineHeaders({
+                authorizationToken: authorization.token, effectActionId: 'teams.credentials.entitled.list',
+                method: request.method, path: request.path, body: request.body, privateKey: fixture.keyPair.secretKey,
+            }));
+            const expectEffectFamilyRefusal = async (pending: ReturnType<typeof signedRead>) => {
+                const refused = await pending;
+                expect(refused.statusCode, refused.body).toBe(401);
+                expect(refused.json()).toMatchObject({ authorizationRefusal: 'effect_family' });
+            };
+            await expectEffectFamilyRefusal(signedRead(unrelated));
+
+            const spawn = await mint(app, fixture, actionId, { ...fixture.envelope, input }, token);
+            const response = await signedRead(spawn);
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json().resources.map((row: { id: string }) => row.id)).toEqual([resource.id]);
+            await expectEffectFamilyRefusal(signedRead(spawn, otherTeam.id));
+
+            const unscoped = await mint(app, fixture, actionId, { ...fixture.envelope,
+                input: { ...input, primaryTeamId: undefined } }, token);
+            await expectEffectFamilyRefusal(signedRead(unscoped));
+
+            await db.team.update({ where: { id: fixture.team.id }, data: { authenticationPolicy: {
+                v: 1, mode: 'restricted', accepted: [{ kind: 'home_method', methodId: 'key_challenge' }],
+            } } });
+            const restricted = await signedRead(spawn);
+            expect(restricted.statusCode, restricted.body).toBe(403);
+            expect(restricted.json()).toMatchObject({ error: 'team_authentication_required' });
+        } finally {
+            await app.close();
+            vi.unstubAllEnvs();
+        }
+    });
+
     it.each([1, 2] as const)('admits a terminal Session start V%s without granting present-user authority and revokes its exact root on epoch change', async version => {
         const fixture = await createFixture({ qualifiedPat: false });
         const material = version === 2 ? { type: 'dataKey' as const, machineKey: tweetnacl.randomBytes(32) } : undefined;

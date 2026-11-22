@@ -1109,11 +1109,14 @@ export function projectExternalActionProjectSessionDefaultsAdmissionV1(actionId:
     ? Reflect.get(input, 'creation') : input;
   if (creation === null || typeof creation !== 'object' || Array.isArray(creation)) return undefined;
   const projectContext = ProjectSessionDefaultsContextSelectionV1Schema.parse(Reflect.get(creation, 'projectContext') ?? {});
-  if (!projectContext.projectRef && !projectContext.sourceRef) return undefined;
+  const primaryTeamId = Reflect.get(creation, 'primaryTeamId');
+  if (!projectContext.projectRef && !projectContext.sourceRef) {
+    return actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && primaryTeamId != null
+      ? ProjectSessionDefaultsAdmissionV1Schema.parse({ primaryTeamId }) : undefined;
+  }
   const initialAccess = Reflect.get(creation, 'initialAccess');
   const sharedTeamIds = initialAccess === undefined ? undefined : SessionInitialAccessDraftV1Schema.parse(initialAccess).grants
     .flatMap(grant => grant.subject.kind === 'account' ? [] : [grant.subject.teamId]);
-  const primaryTeamId = Reflect.get(creation, 'primaryTeamId');
   return ProjectSessionDefaultsAdmissionV1Schema.parse({ ...projectContext,
     ...(primaryTeamId === undefined ? {} : { primaryTeamId }), ...(sharedTeamIds === undefined ? {} : { sharedTeamIds }) });
 }
@@ -1669,7 +1672,8 @@ export type ExternalActionExecutionAuthorizationBindingV1 = z.infer<typeof Exter
 export function isExternalActionProjectSessionDefaultsReadAdmittedV1(
   binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string,
 ): boolean {
-  return (binding.projectSessionDefaultsAdmission !== undefined
+  const selection = binding.projectSessionDefaultsAdmission;
+  return ((selection?.projectRef !== undefined || selection?.sourceRef !== undefined)
     && isProjectSessionDefaultsPreparationReadActionIdV1(effectActionId))
     || ('authentication' in binding && isSessionSpawnHomeDefaultsReadEffectV1(binding.actionId, effectActionId));
 }
