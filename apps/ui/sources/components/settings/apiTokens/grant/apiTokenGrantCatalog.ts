@@ -140,7 +140,9 @@ export function buildApiTokenGrantModelOptions(input: Readonly<{
     }
     for (const group of input.providerGroups) {
         const connection = providerModelConnectionTitle(group);
-        for (const row of group.rows) add(row.ref, row.descriptor.name || row.ref.modelId, connection);
+        for (const row of group.rows) {
+            if ('providerConnectionId' in row.ref) add(row.ref, row.descriptor.name || row.ref.modelId, connection);
+        }
     }
     for (const ref of input.granted ?? []) add(ref, ref.modelId, null);
     return options;

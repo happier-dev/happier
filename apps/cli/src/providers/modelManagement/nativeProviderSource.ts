@@ -144,7 +144,7 @@ export function createTeamCredentialNativeSourceServices(input: Readonly<{
         const rows = [];
         for (const row of group.rows) {
           if (request.currentSelection && row.ref.modelId !== request.currentSelection.modelId) continue;
-          if (!row.application || row.catalog.stale) continue;
+          if (!row.application || row.catalog.stale || !('providerConnectionId' in row.ref)) continue;
           const prepared = await createFromProjection({ ...request, currentSelection: row.ref, application: row.application },
             projection, resource, lease, agentId, signal, metadataDns);
           if (!prepared.ok) continue;

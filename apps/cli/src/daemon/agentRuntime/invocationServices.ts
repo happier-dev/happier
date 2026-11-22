@@ -20,6 +20,7 @@ import { SESSION_RPC_METHODS } from "@happier-dev/protocol/rpc/methods";
 import type { RunnerDaemonPluginServicesPreparationCauseV1 } from "@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol";
 import { logger } from "@/ui/logger";
 import { assessProviderEndpoint } from "@happier-dev/protocol/providers/safety/url";
+import { projectSessionModelRefToExecutionModelSelection } from "@happier-dev/protocol/providers/selection/v2";
 import type { ProviderRuntimeBindingBasisV1 } from "@happier-dev/protocol";
 import { pluginSourceCustodyV1Equal } from "@happier-dev/protocol/plugins/runtime/sourceCustody";
 import { acquireAuthoritativePluginRuntimeRegistryLease } from "@/plugins/runtime/reload/runtimeLease";
@@ -288,12 +289,13 @@ getApiMachineForSessions: () => ApiMachineClient | null;
           const revalidateAdoptedManagedProviderPolicy = async (
             runtimeBindingBasis: ProviderRuntimeBindingBasisV1,
           ): Promise<boolean> => {
-            const trackedSelection =
-              tracked.spawnOptions?.modelSelection?.ref ?? null;
+            const trackedRef = tracked.spawnOptions?.modelSelection?.ref;
+            const trackedSelection = trackedRef && projectSessionModelRefToExecutionModelSelection(trackedRef).modelSelection;
             const trackedMetadata =
               tracked.spawnOptions?.providerBindingMetadataV1 ?? null;
             if (
               !trackedSelection ||
+              !('providerConnectionId' in trackedSelection) ||
               trackedSelection.providerConnectionId === null ||
               !trackedMetadata
             )
@@ -720,25 +722,28 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                 isCurrent: isRetainedProviderCurrent,
               });
             }
-            const trackedSelection =
-              tracked.spawnOptions?.modelSelection?.ref ?? null;
+            const trackedRef = tracked.spawnOptions?.modelSelection?.ref;
+            const trackedSelection = trackedRef && projectSessionModelRefToExecutionModelSelection(trackedRef).modelSelection;
             const trackedBindingMetadata =
               tracked.spawnOptions?.providerBindingMetadataV1 ?? null;
             const trackedRuntimeBindingBasis =
               trackedBindingMetadata?.runtimeBindingBasis ?? null;
             if (
               !trackedSelection ||
+              !('providerConnectionId' in trackedSelection) ||
               trackedSelection.providerConnectionId === null ||
               !trackedRuntimeBindingBasis ||
               trackedRuntimeBindingBasis.deployment.kind !== 'managedLocal'
             ) {
               return null;
             }
-            const requestedModelSelection = resolveModelSelectionIntentFromSessionMetadata(
+            const requestedRef = resolveModelSelectionIntentFromSessionMetadata(
               await readSessionMetadata(sessionId),
               trackedSelection.agentTargetKey,
             )?.selection ?? trackedSelection;
-            if (requestedModelSelection.providerConnectionId === null) {
+            const requestedModelSelection = projectSessionModelRefToExecutionModelSelection(requestedRef).modelSelection;
+            if (!requestedModelSelection || !('providerConnectionId' in requestedModelSelection)
+              || requestedModelSelection.providerConnectionId === null) {
               throw createManagedProviderAuthorityError('authorization_binding');
             }
             const authority = resolveDaemonSessionModelTransitionAuthority({

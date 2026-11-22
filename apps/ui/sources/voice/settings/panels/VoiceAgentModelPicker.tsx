@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/selection/v1';
 import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 
 import { SessionModelPicker, type SessionModelPickerProps } from '@/components/sessions/modelPicker/SessionModelPicker';
@@ -19,7 +20,9 @@ import { teamCredentialDetailPath } from '@/components/settings/teams/teamsRoute
 export function VoiceAgentModelPicker(props: Readonly<{
   machineId: string | null;
   serverId: string | null;
-  picker: Omit<SessionModelPickerProps, 'providerGroups' | 'providerProjectionAuthoritative' | 'declarationContext'>;
+  picker: Omit<SessionModelPickerProps, 'providerGroups' | 'providerProjectionAuthoritative' | 'declarationContext' | 'onSelect'> & Readonly<{
+    onSelect: (selection: ProviderBoundModelRef | null) => void;
+  }>;
   onSelectTeamCredentialModel: (selection: TeamCredentialProviderModelSelectionV1) => void;
 }>) {
   const providersEnabled = useFeatureEnabled('providers');
@@ -55,6 +58,9 @@ export function VoiceAgentModelPicker(props: Readonly<{
     if (outcome.kind === 'continue') current.current.props.onSelectTeamCredentialModel(outcome.selection);
   };
   return <SessionModelPicker {...props.picker}
+    onSelect={selection => {
+      if (!selection || 'providerConnectionId' in selection) props.picker.onSelect(selection);
+    }}
     declarationContext={providerDeclarationContext(props.machineId, declarationProjection)}
     providerGroups={projection.data?.groups ?? []}
     hiddenSources={projection.data?.hiddenSources}

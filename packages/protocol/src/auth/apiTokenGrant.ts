@@ -364,11 +364,12 @@ export function isModelRefGrantedByConstraintsV1(
   return constraints.every(constraint => constraint === undefined || isModelRefGrantedV1(constraint, ref));
 }
 /** Keep a permitted selection, or use the first permitted model in grant order. */
-export function resolveEffectiveApiTokenModelRefV1(
+export function resolveEffectiveApiTokenModelRefV1<Current extends ProviderBoundModelRef | SessionModelRefV2 | 'automatic' = 'automatic'>(
   constraints: Pick<CallerInputConstraintsV1, 'models'>,
-  current: ProviderBoundModelRef | 'automatic' = 'automatic',
+  ref?: Current,
   agentTargetKey?: string,
-): ProviderBoundModelRef | 'automatic' | null {
+): ProviderBoundModelRef | Current | 'automatic' | null {
+  const current = ref ?? 'automatic';
   const models = constraints.models === null ? null
     : constraints.models.filter((ref) => agentTargetKey === undefined || ref.agentTargetKey === agentTargetKey);
   if (models === null) return current === 'automatic' || agentTargetKey === undefined

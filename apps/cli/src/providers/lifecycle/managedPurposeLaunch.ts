@@ -1,4 +1,4 @@
-import type { PersonalSessionModelRef, SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import type { ConnectedAccountSessionModelRefV2, SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { join } from 'node:path';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { createProviderErrorV1, ProviderErrorV1Schema, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
@@ -59,7 +59,7 @@ export type PreparedManagedPurposeLaunch = Readonly<{
   ok: true;
   kind: 'managedPurpose';
   agentTargetKey: string;
-  selection: PersonalSessionModelRef;
+  selection: ConnectedAccountSessionModelRefV2;
   model: AgentSessionProviderBinding['model'];
   connectedServices: ConnectedServiceBindingsV2;
   materialize(scope: Extract<PluginExecutionScopeV1, { kind: 'session' | 'execution_run' }>, exposeEndpoint?: ExposeManagedProviderConsumerEndpoint): Promise<MaterializedManagedPurposeLaunch | Readonly<{ ok: false; error: ProviderErrorV1 }>>;

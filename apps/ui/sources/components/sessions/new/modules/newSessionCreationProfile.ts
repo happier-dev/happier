@@ -1,25 +1,26 @@
 import * as React from 'react';
 import { resolveEffectiveApiTokenModelRefV1, resolveEffectiveApiTokenPermissionModeV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
-import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { createPersonalSessionModelSelection, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 
 import type { NewSessionSimplePanelProps } from '@/components/sessions/new/components/NewSessionSimplePanel';
 import type { NewSessionCreationProfile } from '@/components/sessions/new/navigation/newSessionHost';
 import { SessionModelPicker } from '@/components/sessions/modelPicker/SessionModelPicker';
+import { isTeamCredentialProviderModelPickerValue, sessionModelPickerValueFromRef } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { narrowSessionModelPickerToAllowedModels, toModelVisibilityKey } from '@/components/sessions/shell/embedded/embeddedSessionPresentation';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 
 /** The same effective choices at presentation and launch, without editing the remembered draft. */
 export function resolveNewSessionCreationProfileAuthoringInput(
-    input: Readonly<{ modelMode: ModelMode; permissionMode: PermissionMode; modelSelection: SessionModelSelectionV1 | null }>,
+    input: Readonly<{ modelMode: ModelMode; permissionMode: PermissionMode; modelSelection: SessionModelSelection | null }>,
     profile: NewSessionCreationProfile | undefined,
 ): typeof input {
     if (!profile) return input;
     const effectiveModel = profile.allowedModels
         ? resolveEffectiveApiTokenModelRefV1({ models: [...profile.allowedModels] }, input.modelSelection?.ref, profile.agentTargetKey)
         : input.modelSelection?.ref;
-    const modelSelection = effectiveModel && effectiveModel !== 'automatic'
-        ? effectiveModel === input.modelSelection?.ref ? input.modelSelection : { v: 1 as const, updatedAt: 0, ref: effectiveModel }
-        : input.modelSelection;
+    const modelSelection = effectiveModel && effectiveModel !== 'automatic' && !('source' in effectiveModel)
+        && effectiveModel !== input.modelSelection?.ref
+        ? createPersonalSessionModelSelection(effectiveModel, 0) : input.modelSelection;
     const permissionMode = profile.permissionModes
         ? resolveEffectiveApiTokenPermissionModeV1({ permissionModes: [...profile.permissionModes] }, input.permissionMode) ?? input.permissionMode
         : input.permissionMode;
@@ -41,9 +42,10 @@ export function useNewSessionPanelPropsForCreationProfile(
     const effective = resolveNewSessionCreationProfileAuthoringInput({
         modelMode: props.modelMode ?? 'default',
         permissionMode: props.permissionMode ?? 'default',
-        modelSelection: selected ? { v: 1, updatedAt: 0, ref: selected } : null,
+        modelSelection: selected && !isTeamCredentialProviderModelPickerValue(selected)
+            ? createPersonalSessionModelSelection(selected, 0) : null,
     }, profile ? { ...profile, agentTargetKey } : undefined);
-    const effectiveSelection = effective.modelSelection?.ref ?? null;
+    const effectiveSelection = sessionModelPickerValueFromRef(effective.modelSelection?.ref) ?? selected;
     const narrowedPicker = React.useMemo(() => {
         if (!profile || !picker) return null;
         const narrowed = narrowSessionModelPickerToAllowedModels({
@@ -54,9 +56,9 @@ export function useNewSessionPanelPropsForCreationProfile(
             hiddenNativeModelKeys: picker.hiddenNativeModelKeys ?? new Set(),
         });
         const providerGroups = narrowed?.providerGroups ?? picker.providerGroups;
-        const providerRow = effectiveSelection?.providerConnectionId
+        const providerRow = effectiveSelection && 'providerConnectionId' in effectiveSelection && effectiveSelection.providerConnectionId
             ? providerGroups.flatMap((group) => group.rows).find((row) => (
-                toModelVisibilityKey(row.ref) === toModelVisibilityKey(effectiveSelection)
+                'providerConnectionId' in row.ref && toModelVisibilityKey(row.ref) === toModelVisibilityKey(effectiveSelection)
             )) : null;
         // The fixed agent's chip names the model the profile resolves to.
         const modelLabel = providerRow?.descriptor.name

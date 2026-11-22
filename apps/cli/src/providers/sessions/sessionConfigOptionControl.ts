@@ -72,7 +72,7 @@ async function readEffectiveConfigChoices(metadata: Record<string, unknown>, env
   let model: ModelDescriptor | null | undefined;
   if (ref && isSessionModelRefSourceBound(ref)) {
     const connectionId = readSessionModelRefProviderConnectionId(ref);
-    const team = active?.v === 2 ? active.teamCredentialModel : null;
+    const team = active && 'teamCredentialModel' in active ? active.teamCredentialModel : null;
     const exactTeam = team && 'source' in ref && ref.source === 'team_resource'
       && team.teamId === ref.teamId && team.resourceId === ref.resourceId
       && team.expectedResourceRevision === ref.expectedResourceRevision && team.deliveryMode === ref.deliveryMode

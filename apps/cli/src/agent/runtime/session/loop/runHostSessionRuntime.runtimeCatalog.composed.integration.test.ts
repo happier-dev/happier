@@ -5688,23 +5688,26 @@ describe('runHostSessionRuntime', () => {
     }
   });
 
-  it.each(['environment', 'runtime', 'runtime-successor', 'runtime-mismatched-selection'] as const)('uses only the exact Connected Account Provider handoff for a native model selection (%s)', async (admission) => {
+  it.each(['environment', 'runtime', 'runtime-successor', 'runtime-mismatched-selection'] as const)('uses only the exact Connected Account Provider handoff for a qualified model selection (%s)', async (admission) => {
     const harness = createHarness();
     harness.queue.pushIsolate({ text: 'Original request', localId: 'connected-account-original' }, { permissionMode: 'default' });
     const selection = { agentTargetKey: 'agent:happier.agent.qwen/qwen', providerConnectionId: null,
       modelId: 'subscription/native-model' } as const;
+    const purpose = { consumer: { pluginId: 'happier.agent.qwen', localId: 'qwen' }, purpose: 'inference' } as const;
+    const qualifiedSelection = { source: 'connected_account', agentTargetKey: selection.agentTargetKey,
+      modelId: selection.modelId, purpose, endpointTemplateId: 'subscription' } as const;
     const materialization = { v: 1, kind: 'spawnEnv' } as const;
-    const handoff = { v: 1, materialization, selection, providerBinding: {
+    const handoff = { v: 1, materialization, selection: qualifiedSelection, providerBinding: {
       source: { kind: 'connected_account',
-        purpose: { consumer: { pluginId: 'happier.agent.qwen', localId: 'qwen' }, purpose: 'inference' },
+        purpose,
         account: { service: { pluginId: 'happier.accounts', localId: 'subscription' }, accountId: 'account-1' } },
       model: { id: 'native-model', name: 'Native model' },
       upstream: { protocol: 'openai-responses', normalizedUrl: 'http://127.0.0.1:43123/v1', credential: 'apiKey' },
       materialization,
     } } as const;
     harness.opts.backendTarget = { kind: 'backend', backendId: 'qwen', sourceKind: 'built_in' };
-    harness.opts.modelSelection = { v: 1, updatedAt: 1, ref: admission === 'runtime-mismatched-selection'
-      ? { ...selection, modelId: 'subscription/other-model' } : selection };
+    harness.opts.modelSelection = { v: 2, updatedAt: 1, ref: admission === 'runtime-mismatched-selection'
+      ? { ...qualifiedSelection, endpointTemplateId: 'other-subscription' } : qualifiedSelection };
     let runtimeOpens = 0;
     const createRuntime = vi.fn(() => {
       const admittedHandoff = ++runtimeOpens > 1 ? { ...handoff,
@@ -5748,7 +5751,7 @@ describe('runHostSessionRuntime', () => {
       });
       if (admission === 'runtime-successor') {
         if (!params.transitionModelSelectionBeforePrompt) throw new Error('Model transition owner missing');
-        await expect(params.transitionModelSelectionBeforePrompt(selection, async transfer => {
+        await expect(params.transitionModelSelectionBeforePrompt(qualifiedSelection, async transfer => {
           await transfer({ abortSignal: new AbortController().signal, dispatch: async () => {} });
         }, { required: true,
           run: () => params.runtime.resetOrDisposeRuntime('runtime_recovery', { kind: 'create' }),

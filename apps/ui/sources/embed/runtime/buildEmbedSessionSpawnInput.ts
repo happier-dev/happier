@@ -39,7 +39,7 @@ export function buildEmbedSessionSpawnInput(input: Readonly<{
     let modelSelection = input.draft.modelSelection;
     const model = resolveEffectiveApiTokenModelRefV1(grant, modelSelection?.ref, binding.agentTargetKey);
     if (model === null) throw new EmbedSessionSpawnInputError();
-    if (model !== 'automatic' && model !== modelSelection?.ref) {
+    if (model !== 'automatic' && !('source' in model) && model !== modelSelection?.ref) {
         modelSelection = { v: 1, ref: model, updatedAt: input.draft.modelSelection?.updatedAt ?? 0 };
     }
     const permissionMode = resolveEffectiveApiTokenPermissionModeV1(grant, input.draft.permissionMode);

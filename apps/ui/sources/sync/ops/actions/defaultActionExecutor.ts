@@ -232,7 +232,7 @@ import {
   isInactiveModelIntentSessionActiveError,
   runModelIntentAtAuthoritativeDisposition,
 } from '@happier-dev/agents/session/state/metadataWriters';
-import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
+import { projectSessionModelRefToExecutionModelSelection, SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
 import { isModelRefGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { AccountApiTokenDeploymentInputV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import type { ApiTokenDeploymentAuthoringHost } from '@happier-dev/protocol/actions/executor/workflowRunActions';
@@ -1577,7 +1577,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       const resolveServiceTitle = (service: Parameters<typeof resolveQualifiedConnectedServiceRegistryDisplayName>[1]) =>
         resolveQualifiedConnectedServiceRegistryDisplayName(targetRegistry, service, t);
       const signInPurposes: string[] = [];
-      const selection = parsed.data.modelSelection?.ref;
+      const modelRef = parsed.data.modelSelection?.ref;
+      const projectedModel = modelRef && projectSessionModelRefToExecutionModelSelection(modelRef).modelSelection;
+      const selection = projectedModel && 'providerConnectionId' in projectedModel ? projectedModel : null;
       const selectedConnectionId = selection?.providerConnectionId;
       let nativePurposesKnown = !selectedConnectionId;
       let suppressedServiceIds: readonly string[] | undefined;

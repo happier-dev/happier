@@ -69,8 +69,8 @@ export async function resolveDetachedRunManagedDefaults(params: ExecutionRunMana
     });
     const model = resolved.modelSelection
       ? projectSessionModelRefToExecutionModelSelection(resolved.modelSelection.ref)
-      : {};
-    return { ...resolved, childSelection: undefined, modelSelection: model.modelSelection,
-      teamCredentialModel: model.teamCredentialModel ?? params.teamCredentialModel };
+      : undefined;
+    return { ...resolved, childSelection: undefined, modelSelection: model?.modelSelection,
+      teamCredentialModel: model?.teamCredentialModel ?? params.teamCredentialModel };
   });
 }

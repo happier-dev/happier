@@ -16,7 +16,8 @@ import { ProviderOperationAbandonedError } from '../operationLifetime';
 import { createProviderRedactionLease } from '../spawn/redaction';
 import type { ManagedPurposeLaunchContext } from './managedPurposeLaunch';
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
-import type { ProviderBoundModelRef, SessionEnvOverlayV1 } from '@happier-dev/protocol';
+import type { SessionEnvOverlayV1 } from '@happier-dev/protocol';
+import type { ConnectedAccountSessionModelRefV2 } from '@happier-dev/protocol/providers/selection/v2';
 
 type ProviderLaunchPrerequisiteContext = Readonly<{
   agentTargetKey: string;
@@ -103,7 +104,7 @@ export type DirectProviderLaunchResult<PrerequisiteFailure extends Readonly<{ ok
       ok: true;
       kind: 'managedPurpose';
       agentTargetKey: string;
-      selection: ProviderBoundModelRef;
+      selection: ConnectedAccountSessionModelRefV2;
       connectedServices: ConnectedServiceBindingsV2;
       environment: Readonly<Record<string, string>>;
       unsetEnvKeys: readonly string[];

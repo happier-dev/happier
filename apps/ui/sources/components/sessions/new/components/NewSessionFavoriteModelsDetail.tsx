@@ -31,7 +31,7 @@ import {
 import { computeAcpConfigOptionControlsForProvider } from '@/sync/domains/sessionControl/configOptionsControl';
 import { useProviderSettingsForServer } from '@/providers/hooks/useProviderSettings';
 import { serializeModelVisibilityRefV1, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
-import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import { readSessionModelRefProviderConnectionId, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type {
     SessionConfigOptionControl,
@@ -535,9 +535,11 @@ function FavoriteBackendModelsCollector(props: Readonly<{
         : '';
     const selectedOption = options.find((option) => option.value === selectedValue) ?? null;
     const selectedModelOption = modelOptionByValue.get(selectedValue) ?? null;
+    const selectedProviderConnectionId = selectedModelSelection
+        ? readSessionModelRefProviderConnectionId(selectedModelSelection.ref) : null;
     const selectedOptionControls = React.useMemo(() => {
         const modelConfigOptions = selectedValue
-            && selectedModelSelection?.ref.providerConnectionId
+            && selectedProviderConnectionId
             ? modelByValue.get(selectedValue)?.modelConfigOptions
             : selectedModelOption?.modelOptions;
         const baseControls = modelConfigOptions?.length
@@ -564,7 +566,7 @@ function FavoriteBackendModelsCollector(props: Readonly<{
         modelByValue,
         selectedModelOption,
         selectedModelSelection?.ref.modelId,
-        selectedModelSelection?.ref.providerConnectionId,
+        selectedProviderConnectionId,
         selectedValue,
     ]);
     const favoritesReady = matchingFavorites.length > 0 && staleFavorites.length === 0;

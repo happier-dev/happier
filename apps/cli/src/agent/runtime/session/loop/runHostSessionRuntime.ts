@@ -1,6 +1,6 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { resolvePermissionModeForQueueingUserMessage } from '@/agent/runtime/permissions/modeFromUserMessage';
-import { areConnectedAccountSessionModelRefsEqual, createPersonalSessionModelSelection, SessionModelSelectionSchema, readSessionModelSelectionProviderConnectionId, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import { areConnectedAccountSessionModelRefsEqual, createPersonalSessionModelSelection, SessionModelSelectionSchema, readSessionModelSelectionProviderConnectionId, type ConnectedAccountSessionModelRefV2, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { createProviderErrorV1, ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
 import { resolveSessionMcpNativeLaunchMaterial } from '@/mcp/runtime/sessionMcpNativeLaunchMaterial';
 import { randomUUID } from 'node:crypto';
@@ -1022,16 +1022,17 @@ function readPersistedTakeoverAdmission(
 
 function assertProviderBindingHandoffMatchesSelection(input: Readonly<{
   selection: ProviderBoundModelRef;
+  connectedAccountSelection?: ConnectedAccountSessionModelRefV2;
   handoff: ProviderBindingLaunchHandoffV1;
 }>): void {
   if (input.handoff.providerBinding) {
-    const admittedSelection = input.handoff.selection;
-    if (input.selection.agentTargetKey !== admittedSelection.agentTargetKey
-      || input.selection.providerConnectionId !== admittedSelection.providerConnectionId
-      || input.selection.modelId !== admittedSelection.modelId) {
+    if (!areConnectedAccountSessionModelRefsEqual(input.connectedAccountSelection, input.handoff.selection)) {
       throw new Error('Provider binding handoff model does not match the selected model');
     }
     return;
+  }
+  if (input.connectedAccountSelection) {
+    throw new Error('Provider binding handoff model does not match the selected model');
   }
   const connectionId = input.selection.providerConnectionId;
   if (connectionId === null) {
@@ -1232,10 +1233,11 @@ async function runHostedSessionRuntime(
   const launchModelRef = runtimeOpts.modelSelection ? resolveHostActiveModelSelection({
     agentTargetKey: runtimeOpts.modelSelection.ref.agentTargetKey, runtimeSelection: runtimeOpts.modelSelection,
   }) : undefined;
+  const launchConnectedAccountSelection = runtimeOpts.modelSelection?.v === 2
+    && runtimeOpts.modelSelection.ref.source === 'connected_account' ? runtimeOpts.modelSelection.ref : undefined;
   const selectedProviderConnectionId = launchModelRef?.providerConnectionId;
   if (
-    selectedProviderConnectionId !== null
-    && selectedProviderConnectionId !== undefined
+    (selectedProviderConnectionId || launchConnectedAccountSelection)
     && !hasLateEnvironmentAdmission
   ) {
     if (!providerBindingHandoff) {
@@ -1243,6 +1245,7 @@ async function runHostedSessionRuntime(
     }
     assertProviderBindingHandoffMatchesSelection({
       selection: launchModelRef!,
+      connectedAccountSelection: launchConnectedAccountSelection,
       handoff: providerBindingHandoff,
     });
   } else if (
@@ -1255,6 +1258,7 @@ async function runHostedSessionRuntime(
     }
     assertProviderBindingHandoffMatchesSelection({
       selection: launchModelRef!,
+      connectedAccountSelection: launchConnectedAccountSelection,
       handoff: providerBindingHandoff,
     });
   }
@@ -3439,21 +3443,18 @@ async function runHostedSessionRuntime(
     agentTargetKey: modelTargetKey,
     runtimeSelection: startupSeed.modelSelection ?? undefined,
   });
+  const initialConnectedAccountSelection = startupSeed.modelSelection?.v === 2
+    && startupSeed.modelSelection.ref.source === 'connected_account' ? startupSeed.modelSelection.ref : undefined;
   const activeProviderBindingHandoff =
     admittedProviderBindingHandoff ?? providerBindingHandoff;
-  if (initialActiveSelection.providerConnectionId !== null) {
-    if (!activeProviderBindingHandoff) {
-      throw new Error('Provider-bound model selection requires a validated provider binding handoff');
-    }
+  if (activeProviderBindingHandoff) {
     assertProviderBindingHandoffMatchesSelection({
       selection: initialActiveSelection,
+      connectedAccountSelection: initialConnectedAccountSelection,
       handoff: activeProviderBindingHandoff,
     });
-  } else if (activeProviderBindingHandoff) {
-    assertProviderBindingHandoffMatchesSelection({
-      selection: initialActiveSelection,
-      handoff: activeProviderBindingHandoff,
-    });
+  } else if (initialActiveSelection.providerConnectionId !== null || initialConnectedAccountSelection) {
+    throw new Error('Provider-bound model selection requires a validated provider binding handoff');
   }
   const initialActiveTargetBasis: AuthorizedSessionModelTransitionTarget = {
     selection: initialActiveSelection,
@@ -3925,6 +3926,7 @@ async function runHostedSessionRuntime(
     const activeTarget = coordinator.readReplacementTarget();
     assertProviderBindingHandoffMatchesSelection({
       selection: activeTarget.selection,
+      connectedAccountSelection: activeTarget.connectedAccountSelection ?? undefined,
       handoff,
     });
     const admittedTarget = authorizeModelTransition.bindCurrentAuthorizationProof({

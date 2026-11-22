@@ -1,4 +1,5 @@
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { readSessionModelSelectionProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 import { resolveProviderSecretBindingIdV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
 import type { ProviderBindingAuthorizationTicketV1, ProviderCredentialTransportV1, ProviderErrorV1, ProviderBrokerApplicationBindingV1 } from '@happier-dev/protocol';
 import type { TeamCredentialDeliveryPolicyV1, TeamCredentialResourceSummaryV1, TeamCredentialSourceBindingV1 } from '@happier-dev/protocol/teams';
@@ -103,7 +104,7 @@ export async function prepareTeamCredentialNativeProviderSource(
       || !resource.deliveryPolicy.preferredAllowedModes.includes('vendor-native')
       || JSON.stringify(resource.source) !== expectedSource) return fail();
     if (resource.source.kind !== 'provider_connection') return fail('provider_credential_transport_unavailable');
-    if (input.binding.selection.ref.providerConnectionId !== resource.source.connectionId
+    if (readSessionModelSelectionProviderConnectionId(input.binding.selection) !== resource.source.connectionId
       || input.binding.agentTargetKey !== input.application.agentTargetKey) return fail();
     const initial = input.getAccountSettingsSnapshot();
     if (!initial || initial.scopeKey !== input.accountScopeKey || initial.providerConnectionsCatalog?.status !== 'ready') return fail();

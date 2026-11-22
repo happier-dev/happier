@@ -559,7 +559,7 @@ const ModelDefaultRow = React.memo(function ModelDefaultRow(
   const inheriting = stored === undefined && restore !== null;
   const shownRef = stored?.ref ?? (inheriting ? restore.ref : undefined);
   const pickerSelection = React.useMemo(() => sessionModelPickerValueFromRef(shownRef), [shownRef]);
-  const selected = isTeamCredentialProviderModelPickerValue(pickerSelection) ? null : pickerSelection;
+  const selected = pickerSelection && 'providerConnectionId' in pickerSelection ? pickerSelection : null;
   const selectedTeamCredentialModel = isTeamCredentialProviderModelPickerValue(pickerSelection) ? pickerSelection : null;
   const placement = state.defaults.placement;
   const machineId = placement?.kind === 'machine' && placement.target.serverId === state.serverId
