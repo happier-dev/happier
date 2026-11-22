@@ -1,13 +1,19 @@
 import { execFile } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import type { ScmBranchWorkEvidence, ScmPullRequestWorkEvidence } from '@happier-dev/protocol/scm';
+import { ScmWorkEvidenceReadResponseSchema, type ScmBranchWorkEvidence, type ScmPullRequestSummary, type ScmPullRequestWorkEvidence } from '@happier-dev/protocol/scm';
+import { createDeploymentGitRegistry } from '@/deployments/targets/ownServer/exactCommitRelease.testkit';
+import { createGithubForgeHttpFixture } from '@/testkit/scm/githubForgeHttp';
+
+import { gitCheckpointAdapter } from '../checkpoints/gitCheckpointAdapter';
+import { buildRepositoryCheckpointRefs } from '../checkpoints/refs';
+import { retainRepositoryCheckpointTurnEvidence } from '../checkpoints/sessionEvidence';
 
 import { runWithScmCommandRunner, type ScmCommandInput, type ScmExecResult } from '../runtime';
-import { createGitWorkspace, createTestGitRpcManager, runGit } from '../rpc/__tests__/testRpcHarness';
+import { createGitWorkspace, createTestGitRpcManager, createTestRpcManager, runGit } from '../rpc/__tests__/testRpcHarness';
 import { combineScmWorkEvidenceSession } from './readScmWorkEvidence';
 
 const checkpoint = {
@@ -43,17 +49,17 @@ describe('SCM batched work evidence', () => {
         const evidence = states.map(state => ({ ...pullRequest, pullRequest: { ...pullRequest.pullRequest, state } }));
         expect(combineScmWorkEvidenceSession({ sessionId: 'session', turnIds: ['turn'],
             branchSource: { status: 'error', errorCode: 'FEATURE_UNSUPPORTED' },
-            prSources: evidence.map(row => ({ status: 'partial', evidence: [row] })), })).toEqual({ sessionId: 'session', status: 'partial', evidence, branchEvidence: [], pullRequestsRead: true });
+            prSources: evidence.map(row => ({ status: 'partial', evidence: [row], allPullRequestsEvaluated: true })), })).toEqual({ sessionId: 'session', status: 'partial', evidence, branchEvidence: [], pullRequestsRead: true });
         expect(combineScmWorkEvidenceSession({ sessionId: 'session', turnIds: ['other-turn'],
-            branchSource: { status: 'partial', branchEvidence: [branch] }, prSources: [{ status: 'partial', evidence }], })).toEqual({ sessionId: 'session', status: 'partial', evidence: [], branchEvidence: [], pullRequestsRead: true });
+            branchSource: { status: 'partial', branchEvidence: [branch] }, prSources: [{ status: 'partial', evidence, allPullRequestsEvaluated: true }], })).toEqual({ sessionId: 'session', status: 'partial', evidence: [], branchEvidence: [], pullRequestsRead: true });
     });
 
     it('distinguishes a successful empty PR read from independent branch evidence', () => {
-        const combine = (prSource: { status: 'partial'; evidence: [] } | { status: 'unsupported' }) =>
+        const combine = (prSource: { status: 'partial'; evidence: []; allPullRequestsEvaluated: true } | { status: 'unsupported' }) =>
             combineScmWorkEvidenceSession({ sessionId: 'session', turnIds: ['turn'],
                 branchSource: { status: 'partial', branchEvidence: [branch] },
                 prSources: [prSource, prSource, prSource] });
-        expect(combine({ status: 'partial', evidence: [] })).toMatchObject({
+        expect(combine({ status: 'partial', evidence: [], allPullRequestsEvaluated: true })).toMatchObject({
             status: 'partial', branchEvidence: [branch], pullRequestsRead: true,
         });
         expect(combine({ status: 'unsupported' })).toMatchObject({ status: 'partial', branchEvidence: [branch] });
@@ -101,6 +107,75 @@ describe('SCM batched work evidence', () => {
             expect(commands.some(command => command.cwd === sessions[3].cwd)).toBe(false);
         } finally { rmSync(cwd, { recursive: true, force: true }); rmSync(other, { recursive: true, force: true }); }
     });
+
+    it.each(['empty', 'complete', 'missing graph', 'invalid endpoint'] as const)(
+        'reports answered current-head Work only when all returned PRs can be evaluated (%s)',
+        async scenario => {
+            const cwd = realpathSync(createGitWorkspace('happier-work-scope-'));
+            try {
+                const git = (args: string[]) => runGit(cwd, args);
+                git(['symbolic-ref', 'HEAD', 'refs/heads/main']);
+                writeFileSync(join(cwd, 'file'), 'before\n');
+                git(['add', 'file']);
+                git(['commit', '-m', 'base']);
+                const baseSha = git(['rev-parse', 'HEAD']);
+                const branchName = 'main';
+
+                const sessionId = 'work-scope-fixture';
+                const turnId = 'turn';
+                const scopeId = `${sessionId}:${git(['rev-parse', '--show-toplevel'])}`;
+                const refs = buildRepositoryCheckpointRefs({ scopeId, turnId });
+                const context = { cwd, projectKey: 'repo', detection: { isRepo: true, rootPath: cwd, mode: '.git' as const } };
+                const before = await gitCheckpointAdapter.capture({ context, checkpointRef: refs.turnStart! });
+                writeFileSync(join(cwd, 'file'), 'after\n');
+                const after = await gitCheckpointAdapter.capture({ context, checkpointRef: refs.turnFinal! });
+                if (!before.success || !after.success) throw new Error('Checkpoint fixture capture failed');
+                await retainRepositoryCheckpointTurnEvidence({ cwd, scopeId, turnChangeSet: {
+                    sessionId, turnId, seqRange: { startSeqInclusive: 1, endSeqInclusive: 2 },
+                    status: 'completed', files: [], provider: 'agent', derivedAt: 1,
+                    repositoryCheckpoint: {
+                        version: 1, scopeId, startRef: refs.turnStart!.ref, finalRef: refs.turnFinal!.ref,
+                        baseRefSource: 'turn_start', contentConfidence: 'exact', attributionScope: 'shared_worktree',
+                        receipts: [...before.receipts, ...after.receipts],
+                    },
+                } });
+                git(['add', 'file']);
+                git(['commit', '-m', 'feature change']);
+                const headSha = git(['rev-parse', 'HEAD']);
+
+                const nameWithOwner = 'owner/repository';
+                const cloneUrl = `https://github.com/${nameWithOwner}.git`;
+                const listings: { head: string | null; state: string | null }[] = [];
+                const forge = createGithubForgeHttpFixture({ nameWithOwner, cloneUrl, listPullRequests: query => {
+                    const head = query.get('head');
+                    const state = query.get('state');
+                    listings.push({ head, state });
+                    if (head !== branchName || state !== 'closed' || scenario === 'empty') return [];
+                    const row: ScmPullRequestSummary = {
+                        provider: forge.provider, number: 1, title: 'Merged change', state: 'merged',
+                        url: `https://github.com/${nameWithOwner}/pull/1`,
+                        baseBranch: 'release', headBranch: branchName, baseSha, headSha,
+                    };
+                    if (scenario === 'complete') return [row];
+                    return [row, { ...row, number: 2, url: `https://github.com/${nameWithOwner}/pull/2`,
+                        headSha: scenario === 'missing graph' ? 'f'.repeat(40) : 'invalid-oid' }];
+                } });
+                git(['remote', 'add', 'origin', cloneUrl]);
+                git(['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+                git(['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']);
+
+                const registry = createDeploymentGitRegistry({ resolveScmHostingProviderRegistry: async () => forge.hosting });
+                const { call } = createTestRpcManager({ workingDirectory: cwd, registry });
+                const response = ScmWorkEvidenceReadResponseSchema.parse(await call(RPC_METHODS.SCM_WORK_EVIDENCE_READ,
+                    { sessions: [{ sessionId, cwd, turnIds: [turnId] }] },
+                    { kind: 'scm.workEvidence.admitted', admissions: [{ kind: 'session.write', sessionId }] }));
+                expect(new Set(listings.map(({ head, state }) => `${head}:${state}`))).toEqual(new Set(['main:closed', 'main:open']));
+                const result = response.sessions[0];
+                expect(result.status).toBe('partial');
+                expect(new Set(result.evidence?.map(row => row.pullRequest.number))).toEqual(new Set(scenario === 'empty' ? [] : [1]));
+                expect(result.pullRequestsRead).toBe(scenario === 'complete' || scenario === 'empty' ? true : undefined);
+            } finally { rmSync(cwd, { recursive: true, force: true }); }
+        });
 
     it('stops after real non-repository detection without discovering PRs', async () => {
         const cwd = mkdtempSync(join(tmpdir(), 'happier-work-batch-nonrepo-'));

@@ -10,6 +10,7 @@ export function createGithubForgeHttpFixture(input: Readonly<{
   nameWithOwner: string; cloneUrl: string; repositoryExists?: boolean; pullRequestWriteStatus?: number;
   repositoryVisibility?: 'private' | 'public';
   omitRestMergeCommit?: boolean;
+  listPullRequests?: (query: URLSearchParams) => readonly ScmPullRequestSummary[];
 }>) {
   const provider = { id: GITHUB_SCM_HOSTING_PROVIDER_ID, kind: 'github' as const, displayName: 'GitHub', baseUrl: 'https://github.com',
     nameWithOwner: input.nameWithOwner, remoteName: 'origin', urlSafety: { allowedSchemes: ['https:'] } };
@@ -19,9 +20,9 @@ export function createGithubForgeHttpFixture(input: Readonly<{
   const httpRequests: { method: string; path: string }[] = [];
   const response = (body: unknown, status = 200) => ({ ok: status >= 200 && status < 300, status, statusText: 'Fixture',
     json: async () => body, text: async () => JSON.stringify(body) });
-  const rawPullRequest = () => pullRequest && ({ number: pullRequest.number, title: pullRequest.title, html_url: pullRequest.url,
+  const rawPullRequest = (pullRequest: ScmPullRequestSummary | null) => pullRequest && ({ number: pullRequest.number, title: pullRequest.title, html_url: pullRequest.url,
     state: pullRequest.state === 'merged' ? 'closed' : pullRequest.state, merged: pullRequest.state === 'merged',
-    merge_commit_sha: input.omitRestMergeCommit ? null : pullRequest.mergeCommitSha, base: { ref: pullRequest.baseBranch }, head: { ref: pullRequest.headBranch,
+    merge_commit_sha: input.omitRestMergeCommit ? null : pullRequest.mergeCommitSha, base: { ref: pullRequest.baseBranch, sha: pullRequest.baseSha }, head: { ref: pullRequest.headBranch,
       sha: pullRequest.headSha, repo: { full_name: input.nameWithOwner } } });
   const fetcher: NonNullable<Parameters<typeof createGithubRestAdapter>[0]>['fetcher'] = async (url, init) => {
     const parsed = new URL(url);
@@ -36,13 +37,14 @@ export function createGithubForgeHttpFixture(input: Readonly<{
       const request = JSON.parse(String(init.body)) as { base: string; head: string; title: string };
       pullRequest = { provider, number: 4, title: request.title, url: `https://github.com/${input.nameWithOwner}/pull/4`,
         baseBranch: request.base, headBranch: request.head, headRepositoryNameWithOwner: input.nameWithOwner, state: 'open' };
-      return response(rawPullRequest());
+      return response(rawPullRequest(pullRequest));
     }
     if (parsed.pathname === `/repos/${input.nameWithOwner}/pulls`) {
+      if (input.listPullRequests) return response(input.listPullRequests(parsed.searchParams).map(rawPullRequest));
       const closed = pullRequest?.state === 'merged' || pullRequest?.state === 'closed';
-      return response(pullRequest && closed === (parsed.searchParams.get('state') === 'closed') ? [rawPullRequest()] : []);
+      return response(pullRequest && closed === (parsed.searchParams.get('state') === 'closed') ? [rawPullRequest(pullRequest)] : []);
     }
-    if (parsed.pathname === `/repos/${input.nameWithOwner}/pulls/4`) return pullRequest ? response(rawPullRequest()) : response({}, 404);
+    if (parsed.pathname === `/repos/${input.nameWithOwner}/pulls/4`) return pullRequest ? response(rawPullRequest(pullRequest)) : response({}, 404);
     if (init?.method === 'POST' && (parsed.pathname === '/user/repos' || /^\/orgs\/[^/]+\/repos$/.test(parsed.pathname)))
       repositoryCreated = true;
     else if (parsed.pathname !== `/repos/${input.nameWithOwner}`) throw new Error(`Unexpected Forge fixture request: ${parsed.pathname}`);

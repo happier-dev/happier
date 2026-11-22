@@ -99,10 +99,20 @@ export async function readRepositoryCheckpointBranchEvidence(input: Readonly<{
         })));
 }
 
-export async function readRepositoryCheckpointPullRequestEvidence(input: Readonly<{
+type PullRequestCheckpointJoinInput = Readonly<{
     cwd: string; sessionId: string; pullRequests: readonly ScmPullRequestSummary[]; signal?: AbortSignal;
-}>): Promise<ScmPullRequestWorkEvidence[]> {
+}>;
+
+export async function readRepositoryCheckpointPullRequestEvidence(input: PullRequestCheckpointJoinInput): Promise<ScmPullRequestWorkEvidence[]> {
+    return (await joinRepositoryCheckpointPullRequestEvidence(input)).evidence;
+}
+
+export async function joinRepositoryCheckpointPullRequestEvidence(input: PullRequestCheckpointJoinInput): Promise<Readonly<{
+    evidence: ScmPullRequestWorkEvidence[];
+    allEvaluated: boolean;
+}>> {
     const evidence: ScmPullRequestWorkEvidence[] = [];
+    let allEvaluated = true;
     const refs = await runGitCheckpointCommand({ cwd: input.cwd, signal: input.signal,
         args: ['--no-replace-objects', 'for-each-ref', '--format=%(refname)%00%(objectname)%00%(objecttype)', 'refs/heads/'] });
     input.signal?.throwIfAborted();
@@ -120,11 +130,17 @@ export async function readRepositoryCheckpointPullRequestEvidence(input: Readonl
         const repository = readScmHostingRepositoryIdentity(provider);
         // Identity and endpoints come from the existing hosting reader, not branch labels.
         if (!repository || !ScmCommitOidSchema.safeParse(headSha).success
-            || !ScmCommitOidSchema.safeParse(baseSha).success) continue;
+            || !ScmCommitOidSchema.safeParse(baseSha).success) {
+            allEvaluated = false;
+            continue;
+        }
         const graph = await runGitCheckpointCommand({ cwd: input.cwd, signal: input.signal,
             args: ['--no-replace-objects', 'rev-list', `${baseSha}..${headSha}`] });
         input.signal?.throwIfAborted();
-        if (!graph.success) continue;
+        if (!graph.success) {
+            allEvaluated = false;
+            continue;
+        }
         const commits = new Set(graph.stdout.trim().split('\n').filter(oid => ScmCommitOidSchema.safeParse(oid).success));
         const repositoryKey = JSON.stringify(repository);
         let group = repositories.get(repositoryKey);
@@ -151,7 +167,7 @@ export async function readRepositoryCheckpointPullRequestEvidence(input: Readonl
         }
     }
     input.signal?.throwIfAborted();
-    return evidence;
+    return { evidence, allEvaluated };
 }
 
 export async function readRepositoryCheckpointCommitEvidence(input: Readonly<{

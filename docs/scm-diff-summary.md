@@ -824,10 +824,13 @@ selector. The host admits that Session and filesystem scope before reading and
 again before returning private evidence. Older readers can omit this optional
 projection; absence is unavailable evidence, never a complete empty ledger.
 
-The batched Work read reports `pullRequestsRead` for a Session when its PR
-listings and checkpoint joins answer. Branch evidence can succeed independently.
-A response without the PR marker can still supply witnessed links, while an
-empty PR evidence list alone leaves PR coverage unknown.
+The batched Work read searches for links on the current head of each checkout.
+Work counts the pull requests Happier could link to the selected checkpoints.
+The batch reports `pullRequestsRead` for a Session when its current-head listings
+answer and all returned pull requests can be evaluated. An incomplete read can
+still carry witnessed links and local branch evidence. A pull request on a
+previous branch can be missed after the checkout moves, because checkpoints
+do not retain their historical branch and forge repository selector.
 
 In 0.3 development, the existing `scm.branch.list` read accepts the same
 selector and returns exact checkpoint/commit witnesses for local branch heads.

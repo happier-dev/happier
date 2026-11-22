@@ -13,13 +13,14 @@ import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationEr
 
 import { resolveCwd } from '@/scm/runtime';
 import { resolveFilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
-import { readRepositoryCheckpointBranchEvidence, readRepositoryCheckpointPullRequestEvidence } from '../checkpoints/sessionEvidence';
+import { joinRepositoryCheckpointPullRequestEvidence, readRepositoryCheckpointBranchEvidence } from '../checkpoints/sessionEvidence';
 import { notRepositoryResponse, runScmRoute } from '../rpc/dispatch';
 import { executeScmActionOperation, type ExecuteScmActionOperationParams } from './executeScmActionOperation';
 
 type SourceResult = Readonly<{
     status: 'partial' | 'unsupported' | 'error';
     evidence?: ScmPullRequestWorkEvidence[];
+    allPullRequestsEvaluated?: boolean;
     branchEvidence?: ScmBranchWorkEvidence[];
     errorCode?: string;
 }>;
@@ -59,7 +60,7 @@ export function combineScmWorkEvidenceSession(input: Readonly<{
             : sources.some(source => source.status === 'error') ? 'error' : 'unsupported',
         evidence: sources.flatMap(source => source.evidence ?? []).filter(witness => witness.sessionId === sessionId && turns.has(witness.turnId)),
         branchEvidence: sources.flatMap(source => source.branchEvidence ?? []).filter(witness => witness.sessionId === sessionId && turns.has(witness.turnId)),
-        ...(input.prSources.length > 0 && input.prSources.every(source => source.status === 'partial')
+        ...(input.prSources.length > 0 && input.prSources.every(source => source.allPullRequestsEvaluated === true)
             ? { pullRequestsRead: true } : {}),
         ...(errorCode ? { errorCode } : {}),
     };
@@ -127,8 +128,10 @@ export async function readScmWorkEvidence(input: Readonly<{
                 if (!response.success) return failedSource(SCM_OPERATION_ERROR_CODES.INVALID_REQUEST);
                 if (!response.data.success) return failedSource(response.data.errorCode);
                 if (!response.data.pullRequests) return { status: 'unsupported' };
-                return readRepositoryCheckpointPullRequestEvidence({ ...scope, pullRequests: response.data.pullRequests })
-                    .then(evidence => ({ status: 'partial' as const, evidence }))
+                return joinRepositoryCheckpointPullRequestEvidence({ ...scope, pullRequests: response.data.pullRequests })
+                    .then(({ evidence, allEvaluated }) => ({
+                        status: 'partial' as const, evidence, allPullRequestsEvaluated: allEvaluated,
+                    }))
                     .catch(() => ({ status: 'unsupported' as const }));
             }));
             input.signal?.throwIfAborted();
