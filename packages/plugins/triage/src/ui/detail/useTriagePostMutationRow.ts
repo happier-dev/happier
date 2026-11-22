@@ -56,6 +56,7 @@ export function useTriagePostMutationRow(
   const reobserveRow = React.useCallback(async (
     candidate: TriageListRowV1 | null,
     keepViewerFacts = false,
+    shareOpeningRead = false,
   ): Promise<void> => {
     if (entryRef === undefined || sourceInstanceId === undefined) return;
     const lifecycleGeneration = state.generation;
@@ -76,7 +77,7 @@ export function useTriagePostMutationRow(
       includeTaskFieldChoices: capabilities?.fieldChoices === true,
       // Mounts share their opening read; an explicit refresh or completed write
       // must observe after that action, even while another mount is still opening.
-      ...(keepViewerFacts ? { sharedScope } : {}),
+      ...(shareOpeningRead ? { sharedScope } : {}),
       keepViewerFacts,
       onExactRead: (read, observation) => {
         exactRead = read;
@@ -107,7 +108,7 @@ export function useTriagePostMutationRow(
   }, [entryRef, hostApi, lanes, ownerKey, publication, sharedScope, sourceInstanceId, state.generation, targetedContributions, windowRow]);
   const completePostMutation = React.useCallback(() => reobserveRow(row === null ? row
     : publication?.getRow(triageEntryRowKey(row.entryRef)) ?? row), [publication, reobserveRow, row]);
-  const reobserveSelection = React.useEffectEvent(() => reobserveRow(windowRow, true));
+  const reobserveSelection = React.useEffectEvent((opening: boolean) => reobserveRow(windowRow, true, opening));
   React.useEffect(() => {
     setState((current) => current.ownerKey === ownerKey && (current.row !== null || current.readFailed)
       ? { ...current, row: null, readFailed: false } : current);
@@ -116,7 +117,7 @@ export function useTriagePostMutationRow(
     // Opening a selected owner reads its exact facts once. Later retained publications
     // are those facts, including this read's own result; explicit refresh and source
     // completion already invoke the shared callback rather than reopening this lifecycle.
-    void reobserveSelection();
+    void reobserveSelection(true);
     return () => {
       reobservation.current?.abort();
       reobservation.current = null;
@@ -133,7 +134,7 @@ export function useTriagePostMutationRow(
     if ((sourceUpdatedAtMs !== undefined && (read.sourceUpdatedAtMs === undefined || sourceUpdatedAtMs > read.sourceUpdatedAtMs))
       || (nativeRevision !== undefined && nativeRevision !== read.nativeRevision
         && observedAtMs !== undefined && (read.observedAtMs === undefined || observedAtMs > read.observedAtMs))) {
-      void reobserveSelection();
+      void reobserveSelection(false);
     }
   }, [ownerKey, sourceUpdatedAtMs, nativeRevision, observedAtMs, state.exactRead]);
   return { row, completePostMutation, exactRead: state.ownerKey === ownerKey ? state.exactRead : null,

@@ -31,6 +31,8 @@ import { TRIAGE_ENTRY_DETAIL_DESTINATION_V1 } from '../../composer/openEntryDeta
 import { parseTriageRouteSubPathV1 } from '../../ui/navigation/location.js';
 import type { PluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui';
 import { Button, Text, defineUiSurface } from '@happier-dev/plugin-ui';
+import { useTriagePostMutationRow } from '../../ui/detail/useTriagePostMutationRow.js';
+import { TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1, TriageReobserveEntryInputV1Schema } from '../../actions/reobserveEntryProtocol.js';
 import { useLinkedPullRequestStatus } from './useLinkedPullRequestStatus.js';
 import { useTriageScmPullRequestCardV1 } from '../scmPullRequestCard.js';
 import { TriageScmPullRequestCard } from '../../ui/scmPullRequestCard.js';
@@ -283,6 +285,7 @@ async function mountCockpit(
     observeResource = false,
     surface = renderSessionLinkedEntriesSurface,
     executeUnlink?: (input: unknown) => Promise<unknown>,
+    readExactEntry?: (input: unknown) => Promise<unknown>,
 ): Promise<PluginUiTestkit> {
     let fixture!: PluginUiTestkit;
     let resourceReady: ((digest: string) => void) | undefined;
@@ -376,6 +379,7 @@ async function mountCockpit(
                 ...(observeResource ? { watchResource: async () => ({ digest: await firstResource }) } : {}),
                 executeAction: async ({ action, input }) => {
                     actionCalls.push({ action: String(action), input });
+                    if (String(action) === TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1 && readExactEntry !== undefined) return await readExactEntry(input) as never;
                     if (String(action) === 'sessions/unlink-entry-v1' && executeUnlink !== undefined) return await executeUnlink(input) as never;
                     if (String(action) === 'sessions/read-source-links-v1') {
                         return await (sourceLinks ?? harness.readRelations)() as never;
@@ -917,6 +921,69 @@ describe('the Session tab, round 2', () => {
 });
 
 describe('the mounted Session cockpit', () => {
+    it.each([false, true])('opens linked rows without extra exact reads when already acquired: %s', async (warm) => {
+        const scope = createTriageEphemeralSharedScopeFixture();
+        const refs = ['42', '56'].map(entryId => ({ ...linkRow().entryRef, entryId }));
+        const observations = refs.map(entryRef => testkitObservation({ entryRef, outcome: {
+            kind: 'present', locator: { v: 1, displayPath: `example/repository#${entryRef.entryId}` },
+            snapshot: testkitSnapshot({ title: `Resolved change ${entryRef.entryId}` }), viewer: { involvement: [] },
+        } }));
+        const sourceInstanceId = observations[0]!.sourceInstanceId;
+        const links = refs.map(entryRef => ({ entryRef, sourceInstanceId, sessionId: SESSION_ID,
+            linkedAtMs: 1_000, displayPath: `example/repository#${entryRef.entryId}` }));
+        const lanes = [{ sourceInstanceId, source: refs[0]!.source, health: { kind: 'walkFinished' as const }, exhausted: true }];
+        if (warm) {
+            const seedHost = { executeAction: async () => TriageListEntriesResultV1Schema.parse({
+                v: 1, configuredSourcesStatus: 'complete',
+                configuredSources: [{ sourceInstanceId, configurationRowId: sourceInstanceId, source: refs[0]!.source, available: true }],
+                window: { v: 1, assembledAtMs: observations[0]!.observedAtMs, coverage: 'complete', lanes,
+                    rows: toTriageListWireRows(foldTriageListWindow({ observations, lanes, activeSourceInstanceIds: [sourceInstanceId],
+                        configuredSourcesStatus: 'complete', lens: TRIAGE_LIST_DEFAULT_LENS_V1, assembledAtMs: observations[0]!.observedAtMs })),
+                },
+            }) };
+            const lease = acquireTriageListWindow(seedHost, scope);
+            await refreshTriageListWindow('manual', seedHost, scope);
+            lease.release();
+        }
+        const reads: string[] = [];
+        const readExactEntry = async (input: unknown) => {
+            const request = TriageReobserveEntryInputV1Schema.parse(input);
+            reads.push(request.entryRef.entryId);
+            expect(request.sourceInstanceId).toBe(sourceInstanceId);
+            const { entryRef, ...observation } = observations.find(result => result.entryRef.entryId === request.entryRef.entryId)!;
+            return { kind: 'observed', entryRef, observation };
+        };
+        const harness = createDataHarness({ snapshot: { status: 'ready', rows: [], hasMore: false } });
+        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID }, null, true, null,
+            undefined, true, undefined, async () => ({ kind: 'complete', links }), () => scope, false, false,
+            renderSessionLinkedEntriesSurface, undefined, readExactEntry);
+        await vi.waitFor(() => expect(document.body.textContent).toContain('Resolved change 56'));
+        await expect(fixture.getByText('Resolved change 42')).resolves.toBeDefined();
+        expect(reads.toSorted()).toEqual(warm ? [] : ['42', '56']);
+        if (warm) return;
+
+        // Open follows the canonical entry route once the pane's exact reads have settled.
+        await openRow(fixture, 'Resolved change 56');
+        await fixture.press(await fixture.findByRole('button', { name: 'Open' }));
+        const entryRef = parseTriageRouteSubPathV1(surfaceOpens[0]?.subPath).selection;
+        expect(entryRef).toEqual(refs[1]);
+        if (entryRef === null) throw new Error('Missing linked entry route');
+        const detail = defineUiSurface(() => {
+            const read = useTriagePostMutationRow(null, lanes, { entryRef, sourceInstanceId, sectionId: null });
+            return <Text value={read.row === null ? 'Detail reading' : 'Detail settled'} />;
+        });
+        await act(async () => {
+            mounted.push(await createPluginUiTestkit({
+                authorPlugin: { id: PLUGIN_ID, version: '0.0.0' }, surface: detail, surfaceContext: createSurfaceContextFixture(),
+                identity: { instanceId: 'linked-detail', mountNonce: 'linked-detail' },
+                adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: scope }),
+                handlers: { executeAction: async ({ input }) => await readExactEntry(input) as never },
+            }));
+        });
+        await vi.waitFor(() => expect(document.body.textContent).toContain('Detail settled'));
+        expect(reads.toSorted()).toEqual(['42', '56']);
+    });
+
     it('discloses the original whole-read failure and request identity', async () => {
         const harness = createDataHarness({ snapshot: { status: 'ready', rows: [], hasMore: false } });
         const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID },

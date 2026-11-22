@@ -594,7 +594,7 @@ function TriageSessionLinkedEntriesPanel(
     const text = usePluginTranslation();
     const host = usePluginHostApi();
     const { spacing } = usePluginTheme();
-    const { view, refresh, loadMore } = useTriageSessionLinkedEntries(props.sessionId);
+    const { view, refresh, loadMore } = useTriageSessionLinkedEntries(props.sessionId, true);
     const { targetedContributions } = useSurfaceContext();
     const mounted = React.useRef(true);
     const [loadingMore, setLoadingMore] = React.useState(false);

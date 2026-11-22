@@ -41,6 +41,8 @@ export async function reobserveTriagePostMutationRow(
   sourceInstanceId: string,
   options: PluginCancellationOptions & Readonly<{
     sharedScope?: PluginEphemeralSharedScope | null;
+    /** A mounted linked row borrows its opening read until it can hand it off to detail. */
+    linkedRowLifetime?: AbortSignal;
     keepViewerFacts?: boolean;
     /** The source declares a directory for this kind: the opened detail asks for it in this one read. */
     includeTaskFieldChoices?: boolean;
@@ -49,7 +51,8 @@ export async function reobserveTriagePostMutationRow(
     publishObservation?: (observation: CorpusQualifiedObservationV1, keepViewerFacts?: boolean) => TriageListRowV1 | null;
   }>,
 ): Promise<TriageListRowV1 | null> {
-  const { keepViewerFacts, includeTaskFieldChoices, onReadFailure, onExactRead, publishObservation, sharedScope, ...cancellation } = options;
+  const { keepViewerFacts, includeTaskFieldChoices, onReadFailure, onExactRead, publishObservation, sharedScope, linkedRowLifetime, ...cancellation } = options;
+  const signal = linkedRowLifetime ?? cancellation.signal;
   const previous = 'observations' in row ? row : null;
   const prior = previous?.observations.find(
     (observation) => observation.sourceInstanceId === sourceInstanceId,
@@ -67,19 +70,18 @@ export async function reobserveTriagePostMutationRow(
         v: 1,
         entryRef: row.entryRef,
         sourceInstanceId,
-        ...(onExactRead === undefined ? {} : { includeTaskFields: true, ...(includeTaskFieldChoices === true ? { includeTaskFieldChoices: true } : {}) }),
+        ...(onExactRead === undefined && linkedRowLifetime === undefined ? {} : { includeTaskFields: true, ...(includeTaskFieldChoices === true ? { includeTaskFieldChoices: true } : {}) }),
         ...(lastKnownLocator === undefined ? {} : { lastKnownLocator }),
       },
       options,
     ));
     if (sharedScope == null) {
-      result = await read(cancellation);
+      result = await read({ ...cancellation, signal });
     } else {
-      cancellation.signal?.throwIfAborted();
-      // Detail and companion artifacts share the pending exact read, never a
-      // settled result. The existing host scope supplies Account and plugin
-      // generation identity; the mount key supplies the exact entry
-      // and configured connection. The last borrower cancels the source read.
+      signal?.throwIfAborted();
+      // The host scope supplies Account and plugin generation identity, and
+      // the mount key supplies the entry and its configured connection.
+      // A visible linked row owns its successful opening result until it leaves.
       const lease = sharedScope.acquire(
         `triage.entry-read.v1:${deriveTriageDetailMountInstanceKey(row.entryRef, sourceInstanceId)}`,
         () => {
@@ -89,12 +91,17 @@ export async function reobserveTriagePostMutationRow(
       );
       if (lease == null) throw new PluginError({ code: 'unavailable' });
       const release = () => lease.release();
-      cancellation.signal?.addEventListener('abort', release, { once: true });
+      signal?.addEventListener('abort', release, { once: true });
+      let keepLease = false;
       try {
         result = await lease.value;
+        keepLease = linkedRowLifetime !== undefined && result.kind === 'observed'
+          && result.observation.outcome.kind === 'present';
       } finally {
-        cancellation.signal?.removeEventListener('abort', release);
-        release();
+        if (!keepLease) {
+          signal?.removeEventListener('abort', release);
+          release();
+        }
       }
     }
   } catch (error) {
@@ -105,7 +112,7 @@ export async function reobserveTriagePostMutationRow(
     const failure = result.kind === 'unavailable' ? result.failure
       : result.kind === 'observed' && result.observation.outcome.kind === 'unresolved'
         ? result.observation.outcome.failure : undefined;
-    if (result.kind === 'observed' && !options.signal?.aborted) {
+    if (result.kind === 'observed' && !signal?.aborted) {
       publishObservation?.({ entryRef: result.entryRef, ...result.observation }, keepViewerFacts);
     }
     onReadFailure?.(new PluginError({ code: failure?.code ?? (result.kind === 'rejected' ? 'denied' : result.kind),
@@ -118,7 +125,7 @@ export async function reobserveTriagePostMutationRow(
     entryRef: result.entryRef,
     ...result.observation,
   };
-  if (options.signal?.aborted) return null;
+  if (signal?.aborted) return null;
   onExactRead?.({ ...(result.taskFields === undefined ? {} : { taskFields: result.taskFields }),
     ...(result.taskFieldChoices === undefined ? {} : { taskFieldChoices: result.taskFieldChoices }),
     ...(result.detailData === undefined ? {} : { detailData: result.detailData }) }, observation);

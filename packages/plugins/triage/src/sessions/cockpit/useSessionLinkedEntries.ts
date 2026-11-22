@@ -1,9 +1,11 @@
 import * as React from 'react';
-import { useLivePluginResourceProjection, usePluginUiEphemeralSharedScope, useSurfaceContext, type PluginUiResourceProjectionSnapshot } from '@happier-dev/plugin-ui';
+import { useLivePluginResourceProjection, usePluginHostApi, usePluginSurfaceActivity, usePluginUiEphemeralSharedScope, useSurfaceContext, type PluginUiResourceProjectionSnapshot } from '@happier-dev/plugin-ui';
 
-import { triageEntryRowKey } from '../../projection/listWindow.js';
+import { triageEntryRowKey, type TriageListRowV1 } from '../../projection/listWindow.js';
 import { useTriageListWindow } from '../../ui/window/useTriageListWindow.js';
-import { resolveTriageSourceWorkflowSubjectV1 } from '../../ui/detail/sourceSurface.js';
+import { deriveTriageDetailMountInstanceKey } from '../../ui/detail/mountKey.js';
+import { reobserveTriagePostMutationRow } from '../../ui/detail/postMutationReobservation.js';
+import { resolveTriageSourceDescriptorV1, resolveTriageSourceWorkflowSubjectV1 } from '../../ui/detail/sourceSurface.js';
 import type { TriageReadSourceSessionLinksResultV1, TriageSourceSessionLinksLaneV1 } from '../../actions/sessionLinksProtocol.js';
 import { TRIAGE_SESSION_LINKS_RESOURCE_LOCAL_ID_V1 } from '../sessionLinksResource.js';
 import { TRIAGE_SESSION_LINKS_RESOURCE_PROJECTION_V1 } from '../sessionLinksResourceProjection.js';
@@ -26,8 +28,10 @@ const selectRelationSnapshot = (snapshot: PluginUiResourceProjectionSnapshot<Tri
  * Account Action owns source/corpus selection and paging; qualified Action
  * dependencies keep it live without another raw corpus reader in the UI.
  */
-export function useTriageSessionLinkedEntries(sessionId: string): TriageSessionLinkedEntriesV1 {
+export function useTriageSessionLinkedEntries(sessionId: string, resolveEntries = false): TriageSessionLinkedEntriesV1 {
     const owner = usePluginUiEphemeralSharedScope();
+    const host = usePluginHostApi();
+    const { active } = usePluginSurfaceActivity();
     const summaryScope = React.useRef<{
         owner: typeof owner;
         sessionId: string;
@@ -54,10 +58,54 @@ export function useTriageSessionLinkedEntries(sessionId: string): TriageSessionL
         const stop = links.map(link => readOwner.subscribeRow(triageEntryRowKey(link.entryRef), rowChanged));
         return () => { for (const unsubscribe of stop) unsubscribe(); };
     }, [links, readOwner]);
+    // These leases belong to rendered links. Keep them through a detail open
+    // and drop them when the link, pane, or host scope leaves.
+    const openingReads = React.useMemo(() => new Map<string, {
+        controller: AbortController; row: TriageListRowV1 | null;
+    }>(), [host, owner, sessionId]);
+    const [exactRevision, exactChanged] = React.useReducer(revision => revision + 1, 0);
+    React.useEffect(() => () => {
+        for (const read of openingReads.values()) read.controller.abort();
+        openingReads.clear();
+    }, [openingReads]);
+    const readMissingEntries = React.useEffectEvent(() => {
+        if (!active) return;
+        const needed = new Set<string>();
+        if (resolveEntries && links !== undefined) {
+            for (const { entryRef, sourceInstanceId } of links) {
+                if (sourceInstanceId === undefined || readOwner?.getRow(triageEntryRowKey(entryRef)) != null) continue;
+                const key = deriveTriageDetailMountInstanceKey(entryRef, sourceInstanceId);
+                needed.add(key);
+                if (openingReads.has(key)) continue;
+                const controller = new AbortController();
+                const read: { controller: AbortController; row: TriageListRowV1 | null } = { controller, row: null };
+                openingReads.set(key, read);
+                const kind = resolveTriageSourceDescriptorV1(targetedContributions, entryRef.source)
+                    ?.kinds.find(candidate => candidate.id === entryRef.kindId);
+                const lanes = window.snapshot.window?.lanes ?? [];
+                void reobserveTriagePostMutationRow(host, { entryRef }, lanes, sourceInstanceId, {
+                    sharedScope: owner, linkedRowLifetime: controller.signal,
+                    includeTaskFieldChoices: kind?.taskCapabilities?.fieldChoices === true,
+                }).then(row => {
+                    if (controller.signal.aborted || row === null) return;
+                    read.row = row;
+                    exactChanged();
+                });
+            }
+        }
+        for (const [key, read] of openingReads) {
+            if (needed.has(key)) continue;
+            read.controller.abort();
+            openingReads.delete(key);
+        }
+    });
+    React.useEffect(() => { readMissingEntries(); }, [resolveEntries, active, openingReads, links, readOwner, rowRevision]);
     const view = React.useMemo(() => {
         // The Session relation names the entries. The list lens only names which ones it is displaying.
         const entries = links?.flatMap(link => {
-            const row = readOwner?.getRow(triageEntryRowKey(link.entryRef));
+            const row = readOwner?.getRow(triageEntryRowKey(link.entryRef))
+                ?? (link.sourceInstanceId === undefined ? null
+                    : openingReads.get(deriveTriageDetailMountInstanceKey(link.entryRef, link.sourceInstanceId))?.row);
             return row == null ? [] : [row];
         });
         const projected = projectTriageSessionLinkedEntries({
@@ -75,7 +123,7 @@ export function useTriageSessionLinkedEntries(sessionId: string): TriageSessionL
         });
         summaryScope.current.view = projected;
         return projected;
-    }, [admitted, owner, sessionId, resource.error, resource.pending, resource.value, targetedContributions, links, readOwner, rowRevision]);
+    }, [admitted, owner, sessionId, resource.error, resource.pending, resource.value, targetedContributions, links, readOwner, rowRevision, openingReads, exactRevision]);
 
     // Every selected corpus page is already included by the relation owner.
     const sourceHealth = resource.error === undefined && resource.pending === 'idle' ? admitted?.lanes : undefined;
