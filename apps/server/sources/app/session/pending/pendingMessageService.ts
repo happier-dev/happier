@@ -48,7 +48,7 @@ import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier
 import { rejectUnavailableSessionInputV1, SessionInputAdmissionReceiptV1Schema, SessionInputRequestEqualityEvidenceV1Schema, SESSION_INPUT_REQUEST_META_KEY, SESSION_INPUT_AUTHORITY_META_KEY, SESSION_MESSAGE_PROVENANCE_META_KEY, readSessionInputAuthority, readSessionInputRequest, readSessionMessageProvenance, requiresAuthenticatedMachineAdmissionForSessionInput, settleSessionInputRequestV1, settleSessionInputRequestV2, settleSessionMessageProvenanceV1, settleSessionMessageProvenanceV2, withSessionInputAuthority, deriveWorkflowSessionInputLocalIdV2, type SessionInputAdmissionReceiptV1, type SessionInputAdmissionResultV1, type SessionInputEnqueueResultV1, type SessionInputRequestEqualityEvidenceV1, type SessionInputMachineTargetV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { deriveSessionMessageAuthorAccountIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
-import { SessionInputAdmissionRejectionCodeV1Schema, type SessionInputAdmissionRejectionCodeV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
+import { isPreDispatchInputRejectionCodeV1, SessionInputAdmissionRejectionCodeV1Schema, type SessionInputAdmissionRejectionCodeV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
 import { createDeliveryMuteReaderInTx } from '@/app/session/follow/sessionDeliveryMuteService';
 import { readSessionFollowInputSuppressionInTx, retainSuppressedFollowInputInTx, retainSuppressedSessionFollowInputInTx } from '@/app/session/follow/sessionFollowSuppression';
 import { reconcileAutonomousExchangeAcceptedTurnInTx } from '@/app/session/pending/reconcileAutonomousExchangeAcceptedTurnInTx';
@@ -2330,14 +2330,15 @@ async function rejectQueuedPendingInputInTx(params: Readonly<{
 
     let requestEqualityEvidenceV1: StoredPendingRequestEqualityEvidenceV1 | undefined;
     // A publisher refusing this exact claim leaves its original content and equality evidence intact.
-    if (params.code !== "permission_mode_not_granted" && requestContent.t === "plain") {
+    const preDispatchRefusal = isPreDispatchInputRejectionCodeV1(params.code);
+    if (!preDispatchRefusal && requestContent.t === "plain") {
         const derived = derivePlainRequestEqualityEvidence({
             content: requestContent,
             requestedAction: requestedAction.data,
         });
         if (!derived) return null;
         requestEqualityEvidenceV1 = derived;
-    } else if (params.code !== "permission_mode_not_granted" && (requestContent.t !== "encrypted"
+    } else if (!preDispatchRefusal && (requestContent.t !== "encrypted"
         || params.code !== "session_input_cancelled" || params.existing.requestEqualityEvidenceV1 != null)) {
         const parsed = StoredPendingRequestEqualityEvidenceV1Schema.safeParse(
             params.existing.requestEqualityEvidenceV1,
@@ -2636,12 +2637,12 @@ export async function settlePendingInputAdmission(params: Readonly<{
             }
             // Domain validation writes only the exchange root's transcript row, never this Pending row.
             const progress = existing.replyProgress == null ? null : SessionMessageReplyProgressV1Schema.safeParse(existing.replyProgress);
-            const permissionRefusal = params.decision.kind === "reject" && params.decision.code === "permission_mode_not_granted";
-            if (permissionRefusal && (existing.targetExecutionRunId !== null || existing.turnStartWitnessId !== null)) {
+            const preDispatchRefusal = params.decision.kind === "reject" && isPreDispatchInputRejectionCodeV1(params.decision.code);
+            if (preDispatchRefusal && (existing.targetExecutionRunId !== null || existing.turnStartWitnessId !== null)) {
                 return { ok: false, error: "conflict" } as const;
             }
             // A current publisher's refusal of the exact claim does not change its original reply intent.
-            if (progress && (!progress.success || (!permissionRefusal || params.decision.validation?.reply !== undefined)
+            if (progress && (!progress.success || (!preDispatchRefusal || params.decision.validation?.reply !== undefined)
                 && !matchesOriginalReplyAdmission(progress.data, params.decision.validation?.reply, existing.content))
                 || !progress && params.decision.validation?.reply !== undefined) return { ok: false, error: 'conflict' } as const;
             if (!domainValidation.ok && !domainValidation.rejectionCode) {

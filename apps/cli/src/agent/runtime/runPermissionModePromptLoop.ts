@@ -79,7 +79,7 @@ import {
   resetAssistantTextSnapshotTurnScope,
   type AssistantTextSnapshotTurnScope,
 } from '@/agent/runtime/turns/assistantTextSnapshotTurnScope';
-import type { StructuredInputCatalogReaders, StructuredInputComposerReferenceResolver } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
+import { StructuredInputComposerAttachmentResolutionError, type StructuredInputCatalogReaders, type StructuredInputComposerReferenceResolver } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
 import { prepareSessionInputForProviderDispatch, renderSessionInputProviderPrompt, resolveSessionInputForProviderDispatch, readStructuredInputPreparationFailure, type ComposerAttachmentDispatchResolver } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
 import { logger } from '@/ui/logger';
 import { projectProviderFailureSourceLocations } from '@/providers/diagnostics';
@@ -1941,8 +1941,10 @@ export async function runPermissionModePromptLoop(opts: {
             startupPhase: 'turn_start',
           })
           : null;
+        const dependencyFailureReason = error instanceof StructuredInputComposerAttachmentResolutionError && !error.retryable
+          ? 'attachment_unavailable' : 'runtime_config_blocked';
         const settlement: PreTurnFailure = { ...(issue?.source === 'dependency_failure'
-            ? { ...preTurnFailure, reason: 'runtime_config_blocked' as const }
+            ? { ...preTurnFailure, reason: dependencyFailureReason }
             : issue ? { ...preTurnFailure, code: issue.code, message: issue.sanitizedPreview }
               : preTurnFailure), ...(issue ? { diagnostic: {
                 code: issue.source === 'dependency_failure'

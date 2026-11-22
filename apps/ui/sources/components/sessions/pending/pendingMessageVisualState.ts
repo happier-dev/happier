@@ -270,6 +270,7 @@ const sessionInputFailureLabelKeys = {
     session_input_invalid: 'session.pendingMessages.admissionRejected.invalid',
     model_not_granted: 'session.pendingMessages.admissionRejected.modelNotGranted',
     permission_mode_not_granted: 'session.pendingMessages.admissionRejected.permissionModeNotGranted',
+    attachment_unavailable: 'files.transfers.failureReasons.sourceUnavailable',
     session_input_archived: 'session.pendingMessages.admissionRejected.archived',
     session_input_unauthorized: 'session.pendingMessages.admissionRejected.unauthorized',
     session_access_forbidden: 'session.pendingMessages.admissionRejected.steerAccessRequired',

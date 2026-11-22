@@ -763,6 +763,11 @@ queue entries so one cancellation cannot reject a valid peer. This applies to
 bundled and installed Agents; context-only host inputs retain their existing
 separate admission owner.
 
+In 0.3 development, a definitive attachment refusal during foreground prompt
+preparation settles the exact Pending input as `attachment_unavailable` before
+native dispatch. The input remains visible as undelivered, and the next queued
+input can advance. A retryable preparation failure keeps its recovery path.
+
 The host's native foreground assistant projection waits for Home acknowledgement
 before publishing terminal Turn anchors. The lifecycle joins the exact input's
 existing Pending settlement attempt before reading acknowledged user sequences,

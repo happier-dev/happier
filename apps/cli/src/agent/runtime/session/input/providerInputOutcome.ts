@@ -1,4 +1,5 @@
 import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { PreDispatchInputRejectionCodeV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
 
 type NativeInputAcceptedEvent = Extract<
     AgentSessionRuntimeEvent,
@@ -65,7 +66,7 @@ export type SessionProviderInputOutcomeIdentity = Readonly<{
 
 export type SessionProviderInputRejectedBeforeEffectReason =
     | 'provider_rejected_before_acceptance'
-    | 'permission_mode_not_granted'
+    | PreDispatchInputRejectionCodeV1
     | 'terminal_composer_draft'
     | 'runtime_config_blocked'
     | 'provider_unavailable_before_acceptance'

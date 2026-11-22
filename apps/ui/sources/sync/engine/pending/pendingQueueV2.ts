@@ -60,7 +60,7 @@ import { readSessionInputContextDisplayTextV1 } from '@happier-dev/protocol/sess
 import { SessionMediaMessageMetaV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
 import { SessionStoredMessageContentSchema, StrictSessionStoredMessageContentEnvelopeSchema, type SessionStoredMessageContent, type StrictSessionStoredMessageContentEnvelope } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { SessionAccessErrorCodeV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
-import { SessionInputAdmissionRejectionCodeV1Schema, type SessionInputAdmissionRejectionCodeV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
+import { isPreDispatchInputRejectionCodeV1, SessionInputAdmissionRejectionCodeV1Schema, type SessionInputAdmissionRejectionCodeV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
 import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
 import {
     admitMentionRefsV1ForText,
@@ -1060,7 +1060,7 @@ function withPendingDeliveryState<T extends PendingMessage>(row: PendingRow, mes
 }
 
 function coerceDiscardReason(value: string | null): DiscardedPendingMessage['discardedReason'] {
-    if (value === 'switch_to_local' || value === 'resume_failed' || value === 'permission_mode_not_granted') return value;
+    if (value === 'switch_to_local' || value === 'resume_failed' || isPreDispatchInputRejectionCodeV1(value)) return value;
     if (value === 'dismissed_uncertain' || value === 'resent_as_new') return value;
     return 'manual';
 }

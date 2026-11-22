@@ -5,6 +5,7 @@ import { z } from "zod/mini";
 import type { PermissionMode, ModelMode } from "@/sync/domains/permissions/permissionTypes";
 import type {
     PendingDeliveryBlockedReason} from "@happier-dev/protocol/sessions/messages/pendingDeliveryBlockedReason";
+import type { PreDispatchInputRejectionCodeV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
 import type {
     PendingActivationAuthorizationV1, PendingActivationFailureDetailsV1} from "@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1";
 import type {
@@ -264,7 +265,7 @@ export interface PendingMessage extends TranscriptAccountActorMetadata {
 
 export interface DiscardedPendingMessage extends PendingMessage {
     discardedAt: number;
-    discardedReason: 'switch_to_local' | 'manual' | 'dismissed_uncertain' | 'resent_as_new' | 'resume_failed' | 'permission_mode_not_granted';
+    discardedReason: 'switch_to_local' | 'manual' | 'dismissed_uncertain' | 'resent_as_new' | 'resume_failed' | PreDispatchInputRejectionCodeV1;
     pendingFailure?: import('@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1').PendingDeliveryFailureV1;
 }
 

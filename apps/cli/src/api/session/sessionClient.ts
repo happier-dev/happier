@@ -308,6 +308,7 @@ import {
     resolveAcceptedPendingExecutionRunDelivery,
     type PendingQueueV2DeliveryStatusEntry,
 } from './pendingQueueV2Transport';
+import { isPreDispatchInputRejectionCodeV1, type PreDispatchInputRejectionCodeV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
 import { sendSessionMessage } from '@/session/services/sendSessionMessage';
 import { delayUnrefAbortable } from '@/utils/time';
 import type { SessionProviderInputConsumerSession } from '@/agent/runtime/session/input/_types';
@@ -5340,7 +5341,7 @@ export class ApiSessionClient extends EventEmitter {
 
     private async rejectPendingInputBeforeProviderDispatch(
         localId: string,
-        code: 'session_input_cancelled' | 'permission_mode_not_granted',
+        code: 'session_input_cancelled' | PreDispatchInputRejectionCodeV1,
         socket: ApiSessionClient['socket'],
         signal: AbortSignal,
     ): Promise<boolean> {
@@ -5587,7 +5588,7 @@ export class ApiSessionClient extends EventEmitter {
                 try {
                     const accepted = this.terminalPendingSettlementLocalIds.get(localId);
                     if (accepted?.kind === 'rejected_before_effect') {
-                        if (accepted.outcome.reason === 'permission_mode_not_granted' && !authority.executionRun
+                        if (isPreDispatchInputRejectionCodeV1(accepted.outcome.reason) && !authority.executionRun
                             && !this.dispatchedPendingProviderInputLocalIds.has(localId)) {
                             if (await this.rejectPendingInputBeforeProviderDispatch(
                                 localId, accepted.outcome.reason, authority.socket, authority.abortSignal,
@@ -5833,7 +5834,7 @@ export class ApiSessionClient extends EventEmitter {
     ): Promise<boolean> {
         const localId = outcome.localId;
         const reason = outcome.kind !== 'rejected_before_effect' ? 'delivery_outcome_uncertain'
-            : outcome.reason === 'permission_mode_not_granted' ? 'provider_rejected_before_acceptance' : outcome.reason;
+            : isPreDispatchInputRejectionCodeV1(outcome.reason) ? 'provider_rejected_before_acceptance' : outcome.reason;
         const didRequeueConditionalSteer = await this.blockPendingProviderInputDeliveryByReason(localId, reason, executionRun, signal);
         if (executionRun && !executionRun.isCurrent()) return false;
         if (didRequeueConditionalSteer) {

@@ -68,19 +68,19 @@ describe('pendingQueueV2 decrypt mapping', () => {
         expect(SessionFollowInputV1Schema.safeParse(follow).success).toBe(false);
     });
 
-    it('retains the server refusal cause on the decrypted failed input', async () => {
+    it.each(['resume_failed', 'attachment_unavailable'] as const)('retains %s on the decrypted failed input', async discardedReason => {
         const sessionId = 'resume-failure-projection';
         const encryption = await createPendingQueueEncryption({ sessionId });
         const content = { t: 'encrypted', c: await encryptRawRecordForPending({ encryption, sessionId,
             rawRecord: { role: 'user', content: { type: 'text', text: 'Keep my refused input' } } }) };
-        const failure = { code: 'resume_failed', errorDetail: { kind: 'connected_service_resume_unreachable', uxDiagnostic: { code: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity', source: 'spawn_resume', retryable: false, suggestedActions: ['start_fresh_under_selected_account', 'resume_current_account', 'open_connected_accounts'] } } };
+        const failure = discardedReason === 'resume_failed' ? { code: 'resume_failed', errorDetail: { kind: 'connected_service_resume_unreachable', uxDiagnostic: { code: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity', source: 'spawn_resume', retryable: false, suggestedActions: ['start_fresh_under_selected_account', 'resume_current_account', 'open_connected_accounts'] } } } : undefined;
         await fetchAndApplyPendingMessagesV2({ sessionId, encryption,
             request: async () => Response.json({ pending: [{ localId: 'refused', messageRole: 'user', content,
-                status: 'discarded', discardedReason: 'resume_failed', discardedAt: 2, failure,
+                status: 'discarded', discardedReason, discardedAt: 2, failure,
                 position: 0, createdAt: 1, updatedAt: 2 }] }) });
         expect(storage.getState().sessionPending[sessionId]?.messages).toHaveLength(0);
         expect(storage.getState().sessionPending[sessionId]?.discarded).toMatchObject([
-            { text: 'Keep my refused input', pendingFailure: failure, discardedReason: 'resume_failed' },
+            { text: 'Keep my refused input', discardedReason, ...(failure ? { pendingFailure: failure } : {}) },
         ]);
     });
 

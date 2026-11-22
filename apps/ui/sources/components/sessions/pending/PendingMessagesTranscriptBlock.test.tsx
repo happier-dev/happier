@@ -347,12 +347,15 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(renderedText).toContain(t('connectedServices.diagnostics.body.provider_session_state_unavailable_for_resume'));
     });
 
-    it('presents a permission mode refusal on the undelivered input', async () => {
-        const message = { ...queuedMessage('refused', 1), discardedAt: 2, discardedReason: 'permission_mode_not_granted' as const };
+    it.each([
+        ['permission_mode_not_granted', 'session.pendingMessages.admissionRejected.permissionModeNotGranted'],
+        ['attachment_unavailable', 'files.transfers.failureReasons.sourceUnavailable'],
+    ] as const)('presents %s on the undelivered input', async (discardedReason, label) => {
+        const message = { ...queuedMessage('refused', 1), discardedAt: 2, discardedReason };
         const Component = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(Component, { sessionId: 's1', pendingMessages: [], discardedMessages: [message] }));
         const renderedText = screen.findByTestId('pendingMessages.discarded.message:refused')?.findAll(node => String(node.type) === 'Text').flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
-        expect(renderedText).toContain(t('session.pendingMessages.admissionRejected.permissionModeNotGranted'));
+        expect(renderedText).toContain(t(label));
     });
 
     it('presents a retained launch refusal from its typed cause alone', async () => {

@@ -2,6 +2,16 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import type { SessionAccessErrorCodeV1 } from '../access/sessionAccessOperationsV1.js';
 
+const PRE_DISPATCH_INPUT_REJECTION_CODES = [
+  'permission_mode_not_granted',
+  'attachment_unavailable',
+] as const;
+export type PreDispatchInputRejectionCodeV1 = (typeof PRE_DISPATCH_INPUT_REJECTION_CODES)[number];
+
+export function isPreDispatchInputRejectionCodeV1(code: unknown): code is PreDispatchInputRejectionCodeV1 {
+  return PRE_DISPATCH_INPUT_REJECTION_CODES.some(candidate => candidate === code);
+}
+
 /**
  * Dependency-light owner for rejection codes shared by Session input and
  * Session creation settlement. Keeping this leaf outside the full admission
@@ -10,7 +20,7 @@ import type { SessionAccessErrorCodeV1 } from '../access/sessionAccessOperations
 export const SESSION_INPUT_ADMISSION_REJECTION_CODES_V1 = [
   'session_input_invalid',
   'model_not_granted',
-  'permission_mode_not_granted',
+  ...PRE_DISPATCH_INPUT_REJECTION_CODES,
   'session_input_archived',
   'session_input_unauthorized',
   'session_access_forbidden' satisfies SessionAccessErrorCodeV1,

@@ -67,6 +67,10 @@ import { sendFileReviewNoteToSession } from '../../../../../cli/src/session/serv
 import { runWithServerHttpBaseUrl } from '../../../../../cli/src/api/client/serverHttpBaseUrl';
 import { prepareSessionInputForProviderDispatch } from '../../../../../cli/src/agent/runtime/turns/prepareSessionInputForProviderDispatch';
 
+import { runPermissionModePromptLoop } from '../../../../../cli/src/agent/runtime/runPermissionModePromptLoop';
+import { MessageBuffer } from '../../../../../cli/src/ui/ink/messageBuffer';
+import { HappierStructuredInputV1Schema } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+
 describe('consumed ACP input → host turn → Pending', () => {
     let harness: LightSqliteHarness;
     let app: AppFastify;
@@ -96,7 +100,10 @@ describe('consumed ACP input → host turn → Pending', () => {
         vi.unstubAllEnvs();
     });
 
-    it('observes a committed input refusal through real HTTP and advances the next ordinary input', async () => {
+    it.each([
+        { scenario: 'team', title: 'observes a committed input refusal through real HTTP and advances the next ordinary input' },
+        { scenario: 'attachment', title: 'observes a committed attachment refusal and advances the next ordinary input' },
+    ] as const)('$title', async ({ scenario }) => {
         harness.resetEnv();
         const authentication = createPresentUserSessionAccessAuthentication();
         const accountSecret = new Uint8Array(32).fill(7);
@@ -107,7 +114,9 @@ describe('consumed ACP input → host turn → Pending', () => {
         const resource = await createResourceDataKey({ credentials, mode: 'e2ee' });
         if (resource.mode !== 'e2ee') throw new Error('Expected fixture E2EE resource');
         const sessionKey = resource.dataKey;
-        const sealInput = (text: string) => encodeBase64(encrypt(sessionKey, 'dataKey', { role: 'user', content: { type: 'text', text } }));
+        const sealInput = (text: string, meta?: Record<string, unknown>) => encodeBase64(encrypt(sessionKey, 'dataKey', {
+            role: 'user', content: { type: 'text', text }, ...(meta ? { meta } : {}),
+        }));
         const session = await db.session.create({ data: { tag: randomUUID(), accountId: owner.id,
             metadata: encodeBase64(encrypt(sessionKey, 'dataKey', metadata)) } });
         expect(await inTx(tx => writeSessionDataKeyEnvelopeInTx(tx, { sessionId: session.id,
@@ -137,7 +146,20 @@ describe('consumed ACP input → host turn → Pending', () => {
 
         const localId = 'withdrawn-' + randomUUID();
         const request = { actorUserId: owner.id, sessionId: session.id, localId, authentication };
-        expect(await enqueuePendingMessage({ ...request, ciphertext: sealInput('No tools. Reply QA_TEAM_DENIED.'),
+        const structuredInput = scenario === 'attachment' ? HappierStructuredInputV1Schema.parse({
+            v: 1,
+            composerAttachments: ['available', 'unavailable'].map(instanceId => ({
+                v: 1, instanceId, key: instanceId, attachment: { pluginId: 'acme.issues', localId: 'issue' },
+                value: { sourceInstance: { sourceInstanceId: instanceId } }, presentation: { label: 'Issue', typeLabel: 'Issue' },
+            })),
+        }) : null;
+        const queueForDispatch = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(
+            mode => JSON.stringify(mode), { batcher: combinePermissionModeQueuedPrompts });
+        if (structuredInput) registerPermissionModeMessageQueueBinding({ session: client, queue: queueForDispatch,
+            getCurrentPermissionMode: () => 'default', setCurrentPermissionMode() {} });
+        expect(await enqueuePendingMessage({ ...request, ciphertext: sealInput(
+            structuredInput ? 'Review the selected references.' : 'No tools. Reply QA_TEAM_DENIED.',
+            structuredInput ? { happierStructuredInputV1: structuredInput } : undefined),
             requestedAction: { v: 1, kind: 'enqueue' } }))
             .toMatchObject({ ok: true });
         expect(await client.materializeNextPendingMessageSafely({ reconcileWhenEmpty: 'force',
@@ -147,6 +169,62 @@ describe('consumed ACP input → host turn → Pending', () => {
         expect(await db.sessionMessage.findUniqueOrThrow({
             where: { sessionId_localId: { sessionId: session.id, localId } },
         })).toMatchObject({ localId, messageRole: 'user' });
+        if (structuredInput) {
+            const nextId = localId + '-next';
+            expect((await axios.post(origin + '/v2/sessions/' + session.id + '/pending', {
+                localId: nextId, ciphertext: sealInput('Next ordinary input'), requestedAction: { v: 1, kind: 'enqueue' },
+            }, { headers: { Authorization: 'Bearer ' + token } })).data).toMatchObject({ didWrite: true });
+
+            const runtime = createNativeAgentSessionOperations({
+                send: async () => { throw new Error('Unexpected native send'); },
+                watch: () => ({ dispose() {} }),
+                dispose: async () => {},
+            }, session.id, undefined, undefined, undefined, undefined, undefined, {
+                context: { signal: new AbortController().signal } as AgentSessionRuntimeContext,
+                cwd: harness.baseDir, connectedAccounts: [], capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
+                cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
+            });
+            const stop = new AbortController();
+            const resolveComposerAttachmentForDispatch = vi.fn(async () => ({ attachments: [
+                { instanceId: 'available', status: 'ready' as const },
+                { instanceId: 'unavailable', status: 'unavailable' as const, retryable: false },
+            ] }));
+            const onPromptFailure = vi.fn();
+            const consumer = createSessionProviderInputConsumer({ messageQueue: queueForDispatch,
+                session: createSessionProviderInputConsumerSessionAdapter(client),
+                pendingQueueDeliveryTiming: 'after_foreground_ready' });
+            await runPermissionModePromptLoop({
+                providerName: 'Fixture', agentMessageType: 'claude', explicitPermissionMode: undefined,
+                session: client, runtime, messageQueue: queueForDispatch, inputConsumer: consumer,
+                permissionHandler: { setPermissionMode() {}, reset() {} },
+                createOverrideSynchronizer: () => ({ syncFromMetadata() {}, async flushPendingAfterStart() {} }),
+                messageBuffer: new MessageBuffer(), shouldExit: () => stop.signal.aborted, getAbortSignal: () => stop.signal,
+                keepAlive() {}, setThinking() {}, sendReady: () => stop.abort(),
+                currentPermissionModeUpdatedAt: 0, setCurrentPermissionMode() {}, setCurrentPermissionModeUpdatedAt() {},
+                formatPromptErrorMessage: String, registerProviderAcceptedEffect: () => undefined,
+                resolveComposerAttachmentForDispatch, onPromptFailure,
+            });
+
+            expect(resolveComposerAttachmentForDispatch).toHaveBeenCalledWith(expect.objectContaining({
+                request: expect.objectContaining({ localId, attachments: [
+                    expect.objectContaining({ instanceId: 'available' }),
+                    expect.objectContaining({ instanceId: 'unavailable' }),
+                ] }),
+            }));
+            expect(onPromptFailure).toHaveBeenCalledWith(expect.objectContaining({
+                code: 'composer_attachment_resolution_unavailable', retryable: false,
+            }), expect.objectContaining({ preparingPrompt: true }));
+            const receipt = await axios.get<{ pending: { localId: string; status: string; discardedReason: string | null }[] }>(
+                origin + '/v2/sessions/' + session.id + '/pending?includeDiscarded=true',
+                { headers: { Authorization: 'Bearer ' + token } },
+            );
+            const refused = receipt.data.pending.find(row => row.localId === localId);
+            expect({ status: refused?.status, discardedReason: refused?.discardedReason })
+                .toEqual({ status: 'discarded', discardedReason: 'attachment_unavailable' });
+            const next = await consumer.waitForNextInput({ abortSignal: AbortSignal.timeout(5_000) });
+            expect(next?.message).toMatchObject({ localId: nextId, text: 'Next ordinary input' });
+            return;
+        }
         await runWithServerHttpBaseUrl(origin, async () => {
             let observedPending!: () => void;
             const firstPendingRead = new Promise<void>(resolve => { observedPending = resolve; });
