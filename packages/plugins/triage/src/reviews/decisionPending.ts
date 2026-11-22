@@ -11,12 +11,13 @@ const reviewRead: PluginUiResourceProjection<ReviewRead> = {
   decode: (content) =>
     JSON.parse(new TextDecoder().decode(content.bytes)) as ReviewRead,
 };
-const pendingOf = (snapshot: PluginUiResourceProjectionSnapshot<ReviewRead>) =>
-  snapshot.value?.human.needsYou.pendingDecisions;
+// The owner's `needsYou`: a finding waits for the reader's decision, or the reader's verdict is requested.
+const needsYouOf = (snapshot: PluginUiResourceProjectionSnapshot<ReviewRead>) =>
+  snapshot.value?.human.needsYou.needsYou;
 
 /**
- * Whether a Review entry still waits for the reader to decide its findings, from the Review owner's own
- * `pendingDecisions` fact (the Inbox byline's fact family). Until that read lands a Review is taken to wait, so the
+ * Whether a Review entry still waits for the reader (a finding to decide, or a verdict they were asked for), from the
+ * Review owner's own `needsYou` fact (the Inbox byline's fact family). Until that read lands a Review is taken to wait, so the
  * agent action draws quiet from first paint rather than filling and then quieting. `false` for any other entry.
  */
 export function useReviewWaitsForDecisionV1(
@@ -25,7 +26,7 @@ export function useReviewWaitsForDecisionV1(
   const pending = useLivePluginResourceProjection(
     { hostRead: 'review.get', input: { reviewId: reviewId ?? '' } },
     reviewRead,
-    pendingOf,
+    needsYouOf,
     { enabled: reviewId !== undefined },
   ).value;
   return reviewId !== undefined && pending !== false;
