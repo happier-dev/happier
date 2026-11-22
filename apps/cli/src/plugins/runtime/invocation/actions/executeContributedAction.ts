@@ -1112,7 +1112,11 @@ export async function executeContributedAction(params: Readonly<{
       }
       const validatedResult = targetResult.status !== 'executed' || targetProtocol === undefined || params.readObservation !== undefined
         ? null
-        : validateTargetedOperationResult(targetProtocol, targetResult.value);
+        // A retained outer admission attaches its refusals after this dispatch.
+        : validateTargetedOperationResult(targetProtocol, targetResult.value,
+          targetInvocation.approvalContext?.sessionTargetsV1?.contributedActionId === contributedActionSettingsId
+            ? undefined
+            : { declaration: action.definition.sessionTarget, input: targetInvocation.input });
       if (validatedResult !== null && !validatedResult.ok) return validatedResult.result;
       if (targetResult.status === 'executed') {
         // Origin and routing were decided once at admission, before the effect.

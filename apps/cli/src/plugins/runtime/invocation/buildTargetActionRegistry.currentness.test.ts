@@ -14,7 +14,9 @@ import {
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import {
+    defineProtocolArray,
     defineProtocolJsonValue,
+    defineProtocolString,
     defineProtocolLiteral,
     defineProtocolObject,
 } from '@happier-dev/plugin-sdk/protocol';
@@ -60,6 +62,7 @@ function actionManifest(
     pluginId: string,
     localId: string,
     surfaces: readonly ('cli' | 'plugin')[],
+    sessionReadSet = false,
 ) {
     const manifest = readCanonicalPluginManifest(createPluginManifestV2Fixture({
         id: pluginId,
@@ -75,6 +78,13 @@ function actionManifest(
                 execution: { target: 'daemon' },
                 placementBindings: ['commandPalette'],
                 dangerLevel: 'safe',
+                ...(sessionReadSet ? {
+                    readOnly: true,
+                    sessionTarget: { field: 'sessionIds.*', cardinality: 'many' },
+                    inputSchema: defineProtocolObject({
+                        sessionIds: defineProtocolArray(defineProtocolString()),
+                    }, { policy: 'closed' }).jsonSchema,
+                } : {}),
             }],
         },
     }));
@@ -86,9 +96,10 @@ function resolvedAction(params: Readonly<{
     pluginId: string;
     localId: string;
     surfaces: readonly ('cli' | 'plugin')[];
+    manifest?: ReturnType<typeof actionManifest>;
 }>): ResolvedActionContribution {
     const target = activationTarget({ pluginId: params.pluginId,
-        manifest: actionManifest(params.pluginId, params.localId, params.surfaces) });
+        manifest: params.manifest ?? actionManifest(params.pluginId, params.localId, params.surfaces) });
     const loadedPlugin = {
         pluginId: target.pluginId,
         pluginRootPath: target.sourceSpec.locator,
@@ -506,9 +517,11 @@ type AdmittedOperation = ReturnType<
     typeof createAdmittedTargetedOperationExecutionHandle
 >;
 
-async function createComposedAdmittedOperationFixture() {
+async function createComposedAdmittedOperationFixture(sessionReadSet?: Readonly<{ resolveSessionReference: NonNullable<
+    Parameters<typeof createActionExecutor>[0]['resolveSessionReference']
+> }>) {
     const callerManifest = actionManifest('acme.caller', 'request', ['cli']);
-    const contributorManifest = actionManifest('acme.contributor', 'publish', ['plugin']);
+    const contributorManifest = actionManifest('acme.contributor', 'publish', ['plugin'], sessionReadSet !== undefined);
     const callerAction = resolvedAction({
         pluginId: 'acme.caller',
         localId: 'request',
@@ -518,6 +531,7 @@ async function createComposedAdmittedOperationFixture() {
         pluginId: 'acme.contributor',
         localId: 'publish',
         surfaces: ['plugin'],
+        manifest: contributorManifest,
     });
     const currentOccurrenceIds = new Map<string, PluginRuntimeOccurrenceId>([
         ['acme.caller', 'immutable-caller' as PluginRuntimeOccurrenceId],
@@ -642,6 +656,10 @@ async function createComposedAdmittedOperationFixture() {
         },
     });
     targetActionInvocations = buildTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
+        ...(sessionReadSet ? { admitContributedSessionReadSet: createActionExecutor({
+            ...createUnavailableActionTransportDeps(),
+            resolveSessionReference: sessionReadSet.resolveSessionReference,
+        }).admitContributedSessionReadSet } : {}),
         contributes,
         readCurrentPluginOccurrenceId: (pluginId: string) => (
             currentOccurrenceIds.get(pluginId) ?? null
@@ -759,6 +777,7 @@ async function createComposedAdmittedOperationFixture() {
                 runtimeRegistry: runtimeRegistry!,
                 actionId: 'acme.contributor/publish',
                 input: params.input,
+                ...(sessionReadSet ? { approvalContext: { serverId: 'home' } } : {}),
                 admittedTargetedOperation: {
                     action: { pluginId: 'acme.contributor', localId: 'publish' },
                     target: {
@@ -810,6 +829,46 @@ async function createComposedAdmittedOperationFixture() {
 }
 
 describe('admitted targeted-operation currentness through production Actions', () => {
+    it('validates the authored Session slice and returns both mixed and wholly refused read sets', async () => {
+        const lookups: string[] = [];
+        const fixture = await createComposedAdmittedOperationFixture({
+            async resolveSessionReference({ sessionId }) {
+                if (!sessionId) throw new Error('Expected the exact Session operand');
+                lookups.push(sessionId);
+                if (sessionId === 'missing') return { kind: 'none' };
+                return { kind: 'unique', address: { sessionId, serverId: sessionId === 'foreign' ? 'away' : 'home' } };
+            },
+        });
+        const handler = vi.fn<TargetActionHandler>(async (input) => input);
+        fixture.publishContributor(handler);
+        const execute = (sessionIds: string[]) => fixture.dispatchAdmittedTargetedOperation({
+            targetOccurrenceId: 'immutable-caller',
+            contributorOccurrenceId: 'immutable-contributor-g',
+            targetProtocol: {
+                role: 'publish', input: { kind: 'contributorDefined' },
+                resultSchema: defineProtocolObject({ sessionIds: defineProtocolArray(defineProtocolString()) }, { policy: 'closed' }),
+            },
+            input: { sessionIds },
+        });
+        const failures = ['foreign', 'missing'].map(sessionId => ({ sessionId,
+            result: { ok: false, errorCode: 'session_target_unavailable', error: 'session_target_unavailable' } }));
+        try {
+            await expect(execute(['healthy', 'foreign', 'missing', 'healthy'])).resolves.toEqual({
+                matched: true, result: { ok: true, result: { kind: 'sessionReadSet', result: { sessionIds: ['healthy'] }, failures } },
+            });
+            expect(lookups.splice(0)).toEqual(['healthy', 'foreign', 'missing']);
+            await expect(execute(['foreign', 'missing'])).resolves.toEqual({
+                matched: true, result: { ok: true, result: { kind: 'sessionReadSet', result: null, failures } },
+            });
+            expect(lookups.splice(0)).toEqual(['foreign', 'missing']);
+            expect(handler).toHaveBeenCalledOnce();
+
+            handler.mockResolvedValueOnce(null);
+            await expect(execute(['healthy', 'foreign'])).resolves.toMatchObject({
+                matched: true, result: { ok: false, errorCode: 'plugin_targeted_operation_result_invalid' },
+            });
+        } finally { await fixture.dispose(); }
+    });
     it.each(['settled', 'thrown'] as const)('reports retirement when demand activation is %s without publishing H', async (settlement) => {
         const fixture = await createComposedAdmittedOperationFixture();
         fixture.setDemandContributorActivation(() => {

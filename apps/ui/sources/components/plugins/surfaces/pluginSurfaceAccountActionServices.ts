@@ -110,19 +110,19 @@ export function createPluginSurfaceAccountActionServices(input: Readonly<{
         options: AdmittedTargetedOperationExecutionOptions | undefined, signal: AbortSignal,
     ) => {
         const seed = { plugin: { id: input.pluginId }, occurrenceId: input.occurrenceId, sourceCustody: input.sourceCustody };
-        const requireCurrent = () => {
+        const requireCurrent = (currentDeclarations = declarations()) => {
             assertCurrent();
             if (signal.aborted) throw new PluginError({ code: 'plugin_action_aborted' });
-            return requireAdmittedTargetedOperationExecutionBinding(operation, seed, declarations());
+            return requireAdmittedTargetedOperationExecutionBinding(operation, seed, currentDeclarations);
         };
-        await readCurrentDeclarations(signal);
-        const binding = requireCurrent();
+        const { declarations: currentDeclarations } = await readCurrentDeclarations(signal);
+        const binding = requireCurrent(currentDeclarations);
         const selected = await resolveAdmittedTargetedOperationInput({ seed, binding, input: value,
             expectedSelectedConnectedAccountRef: options?.expectedSelectedConnectedAccountRef,
             selectedActionInputClaimed: { current: false }, signal, assertCurrent: requireCurrent });
         const parsed = validateTargetedOperationInput(binding.targetProtocol, selected);
         if (!parsed.ok) throw createPluginActionHandlerNotStartedError({ code: parsed.result.errorCode, message: parsed.result.error });
-        return { binding, value: parsed.value as JsonValue,
+        return { binding, currentDeclarations, value: parsed.value as JsonValue,
             isCurrent() { try { requireCurrent(); return true; } catch { return false; } } };
     };
 
@@ -134,14 +134,19 @@ export function createPluginSurfaceAccountActionServices(input: Readonly<{
         const cancellation = mergeAbortSignals([invocation.signal, options?.signal]);
         try {
             const admitted = await prepareAdmittedTargetedOperation(operation, value, options, cancellation.signal);
+            const declaration = admitted.currentDeclarations.find(row => row.manifest.id === admitted.binding.action.pluginId
+                && row.occurrenceId === admitted.binding.contributorOccurrenceId)?.manifest.contributes.actions
+                .find(action => action.id === admitted.binding.action.localId)?.sessionTarget;
             const result = await input.execute(admitted.binding.action, admitted.value, {
                 signal: cancellation.signal, expectedContributorOccurrenceId: admitted.binding.contributorOccurrenceId,
                 machineAvailability: options?.machineAvailability,
                 isCurrent: admitted.isCurrent,
             });
-            const accepted = validateTargetedOperationResult(admitted.binding.targetProtocol, result);
+            const accepted = validateTargetedOperationResult(admitted.binding.targetProtocol, result, {
+                declaration, input: admitted.value,
+            });
             if (!accepted.ok) throw new PluginError({ code: accepted.result.errorCode, message: accepted.result.error });
-            // The target-owned parser proves the exact public handle result relationship.
+            // The handle's result schema describes the authored part of a Session read set.
             return accepted.value as TResult;
         } finally { cancellation.dispose(); }
     };

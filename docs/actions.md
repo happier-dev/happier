@@ -498,7 +498,9 @@ The Session-target owner deduplicates IDs and admits each one on the request's
 Home. It invokes the handler once with the admitted IDs and their host-issued
 addresses. A Session-stamped Resource can admit only its stamped address.
 The host wraps the authored result as `{ kind: 'sessionReadSet', result, failures }`.
-Each refused ID has the same `session_target_unavailable` result for missing,
+For a targeted contribution, the operation's result schema validates the
+authored `result` when the handler runs. The host returns the admission failures
+alongside it. Each refused ID has the same `session_target_unavailable` result for missing,
 foreign, and inaccessible Sessions. When every ID is refused, `result` is
 `null` and the handler does not run. An Action schema can also offer another
 selector that omits the array. That call resolves zero Session targets and

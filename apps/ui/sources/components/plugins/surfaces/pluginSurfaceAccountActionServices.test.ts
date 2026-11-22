@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { definePlugin, type JsonValue } from '@happier-dev/plugin-sdk';
 import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contributions';
-import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, type ProtocolComposableSchema } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolArray, defineProtocolLiteral, defineProtocolObject, defineProtocolString, type ProtocolComposableSchema } from '@happier-dev/plugin-sdk/protocol';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { buildQualifiedPluginContributionKey} from '@happier-dev/protocol/plugins/contribution-key';
@@ -95,6 +95,22 @@ const source = definePlugin({ id: 'example.machine-source', version: '1.0.0', ac
         inputSchema, resultSchema, run: async () => ({ accepted: true as const }) },
 }, contributesTo: { 'example.account-target': { sources: {
     personal: protocol.contribute({ operations: { inspect: protocol.operations.inspect.bind('inspect') } }),
+} } } });
+
+const readSetInput = defineProtocolObject({ sessionIds: defineProtocolArray(defineProtocolString()) }, { policy: 'closed' });
+const readSetResult = defineProtocolObject({ accepted: defineProtocolArray(defineProtocolString()) }, { policy: 'closed' });
+const readSetProtocol = defineContributionProtocol({ id: 'session-read-source', version: 1, operations: {
+    readSessions: { required: true, input: { kind: 'protocolDefined', schema: readSetInput }, resultSchema: readSetResult,
+        action: { surfaces: ['plugin'], dangerLevel: 'safe' } },
+} });
+const readSetTarget = definePlugin({ id: 'example.read-set-target', version: '1.0.0',
+    contributionPoints: { sources: readSetProtocol.point() } });
+const readSetSource = definePlugin({ id: 'example.read-set-source', version: '1.0.0', actions: {
+    'read-sessions': { title: 'Read Sessions', surfaces: ['plugin'], dangerLevel: 'safe', execution: { target: 'daemon' }, readOnly: true,
+        sessionTarget: { field: 'sessionIds.*', cardinality: 'many' }, inputSchema: readSetInput, resultSchema: readSetResult,
+        run: async input => ({ accepted: input.sessionIds }) },
+}, contributesTo: { 'example.read-set-target': { sources: {
+    personal: readSetProtocol.contribute({ operations: { readSessions: readSetProtocol.operations.readSessions.bind('read-sessions') } }),
 } } } });
 
 describe('Account Action targeted-contribution services', () => {
@@ -637,6 +653,93 @@ describe('Account Action targeted-contribution services', () => {
             expect(result.targetedContributions.points[0]?.protocols[0]?.contributions[0]?.operations[0]?.contributor.occurrenceId)
                 .toBe(declarations[1]!.occurrenceId);
         } finally { machineRpc.mockReset(); resetMachineProjectionReadsForTests(); await home.dispose(); }
+    });
+
+    it('returns the validated targeted Session read set through the Account Action service', async () => {
+        const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://account-targeted-read-set.test', accountId: 'alice' }],
+            route: () => undefined });
+        let owner: ReturnType<typeof createPluginSurfaceAccountActionServices> | undefined;
+        try {
+            resetMachineProjectionReadsForTests();
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            if (!lifetime) throw new Error('Expected Account lifetime');
+            const [targetManifest, sourceManifest] = [readSetTarget.manifest, readSetSource.manifest].map(value => {
+                const parsed = ingestPluginManifestV2(value);
+                if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));
+                return parsed.manifest;
+            });
+            replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: {
+                availabilityCursor: 1, materializations: [], snapshots: [], intentReads: [{ pluginId: targetManifest!.id, response: {
+                    availabilityCursor: 1, hostingCapability: { enabled: false }, packageAssets: [], uiArtifacts: [],
+                    intent: { pluginId: targetManifest!.id, desiredVersion: targetManifest!.version, enabled: true,
+                        offlineUiHosting: 'disabled', writableCollections: [], revision: 'one' },
+                    release: { ref: { pluginId: targetManifest!.id, version: targetManifest!.version },
+                        archiveDigestSha256: `sha256:${'a'.repeat(64)}`, normalizedManifest: targetManifest!,
+                        collectionContracts: [], uiSlots: [], packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } },
+                } }],
+            } });
+            const selected = readPluginAccountAvailability(lifetime.scope).readCurrentAccountExecution(readSetTarget.manifest.id);
+            if (selected.kind !== 'available') throw new Error('Expected current Account execution');
+            const { createSessionReadSetMachineFixture } = await import('../../../../../cli/src/plugins/testkit/sessionReadSetMachine');
+            let handlerCalls = 0;
+            const invokeMachine = createSessionReadSetMachineFixture({
+                manifest: readSetSource.manifest, localId: 'read-sessions', occurrenceId: 'machine-source-current', serverId: lifetime.scope.serverId,
+                resolveSessionReference: async ({ sessionId }) => sessionId === 'missing' || !sessionId ? { kind: 'none' }
+                    : { kind: 'unique', address: { sessionId, serverId: sessionId === 'foreign' ? 'away' : lifetime.scope.serverId } },
+                handler: async input => {
+                    handlerCalls++;
+                    return { accepted: readSetInput.parse(input).sessionIds };
+                },
+            });
+            machineRpc.mockImplementation(async request => {
+                if (request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) {
+                    const received = DaemonPluginStructuredMessageActionExecuteRequestSchema.parse(request.payload);
+                    expect(received.qualifiedActionId).toBe(buildQualifiedPluginContributionKey({ pluginId: readSetSource.manifest.id, localId: 'read-sessions' }));
+                    expect(received.expectedContributorOccurrenceId).toBe('machine-source-current');
+                    request.onIssued?.();
+                    return invokeMachine(received.input);
+                }
+                if (request.method !== RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ) throw new Error('Unexpected Machine RPC');
+                return { status: 'sourceDeclarations', pluginId: readSetTarget.manifest.id, sourceDeclarations: [{
+                    occurrenceId: 'machine-source-current', sourceCustody: { kind: 'development', registeredRootId: 'machine-source-root' },
+                    manifest: { id: sourceManifest!.id, contributes: { actions: sourceManifest!.contributes.actions,
+                        pluginContributionPoints: [], targetedPluginContributions: sourceManifest!.contributes.targetedPluginContributions,
+                        ui: { renderers: sourceManifest!.contributes.ui.renderers } } },
+                }] };
+            });
+            owner = createPluginSurfaceAccountActionServices({ pluginId: readSetTarget.manifest.id,
+                occurrenceId: selected.custodyId, sourceCustody: selected.sourceCustody, accountLifetime: lifetime,
+                signal: new AbortController().signal, isCurrent: () => true,
+                machine: { machineId: 'machine-1', serverId: lifetime.scope.serverId },
+                execute: async (action, value, options) => {
+                    if (typeof action === 'string') throw new Error('Expected an admitted source Action');
+                    const result = await machinePluginStructuredMessageActionExecute('machine-1', {
+                        serverId: lifetime.scope.serverId, accountLifetime: lifetime,
+                        qualifiedActionId: buildQualifiedPluginContributionKey(action), input: PluginJsonValueV2Schema.parse(value),
+                        expectedContributorOccurrenceId: options.expectedContributorOccurrenceId,
+                        executionSurface: 'ui', signal: options.signal, isCurrent: options.isCurrent,
+                        invocation: { kind: 'clientPluginAction', clientActionBinding: {
+                            pluginId: readSetTarget.manifest.id, pluginVersion: readSetTarget.manifest.version,
+                            contributionLocalId: 'request', occurrenceId: selected.custodyId, sourceCustody: selected.sourceCustody,
+                        } },
+                    });
+                    if (!result.supported || !result.result.ok) throw new Error(`Machine Action transport refused: ${JSON.stringify(result)}`);
+                    return result.result.result;
+                },
+            });
+            const observation = owner.services.targetedContributions.observeForSelf(readSetTarget.contributionPoints.sources, { onInvalidated() {} });
+            try {
+                const snapshot = await observation.readCurrent();
+                const operation = snapshot.contributions[0]!.operations.readSessions;
+                const failures = ['foreign', 'missing'].map(sessionId => ({ sessionId,
+                    result: { ok: false, errorCode: 'session_target_unavailable', error: 'session_target_unavailable' } }));
+                await expect(owner.services.actions.executeAdmittedTargetedOperation(operation, { sessionIds: ['healthy', 'foreign', 'missing'] }))
+                    .resolves.toEqual({ kind: 'sessionReadSet', result: { accepted: ['healthy'] }, failures });
+                await expect(owner.services.actions.executeAdmittedTargetedOperation(operation, { sessionIds: ['foreign', 'missing'] }))
+                    .resolves.toEqual({ kind: 'sessionReadSet', result: null, failures });
+                expect(handlerCalls).toBe(1);
+            } finally { observation.dispose(); }
+        } finally { await owner?.dispose(); machineRpc.mockReset(); resetMachineProjectionReadsForTests(); await home.dispose(); }
     });
 
     it('does not retire a current Machine operation when a separate declaration read is canceled', async () => {
