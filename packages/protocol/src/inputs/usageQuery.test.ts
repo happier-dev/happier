@@ -74,6 +74,14 @@ describe('shared UsageQuery', () => {
     expect(usageQueryToAnalyticsRequest(query, 0).filters?.projectKeys).toEqual(['payments']);
   });
 
+  it('uses the same whole-Session accounting read for equivalent Session selections', () => {
+    const single = normalizeUsageQuery({ session: 'session' });
+    const repeated = normalizeUsageQuery({ session: ['session', 'session'] });
+    expect(usageQueryToAnalyticsRequest(repeated, 123)).toEqual(usageQueryToAnalyticsRequest(single, 123));
+    expect(usageQueryToAnalyticsRequest(repeated, 123).dateRange).toEqual({ endMs: 123 });
+    expect(getUsageQueryKey(repeated)).toEqual(getUsageQueryKey(single));
+  });
+
   it('reuses only owner-normalized immutable identities while mutable caller values remain live', () => {
     const raw = { period: { startMs: 100, endMs: 200 }, agents: ['b', 'a'] };
     const query = normalizeUsageQuery(raw);
