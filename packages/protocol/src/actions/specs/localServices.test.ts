@@ -31,7 +31,7 @@ describe('local-services runtime Action specs', () => {
     expect(restart.safety).toBe('danger');
     expect(restart.approval?.result).toBe('required');
   });
-  it('keeps CLI Copy on its Machine and UI Copy with its answering client', () => {
+  it('resolves the Copy destination on the Machine for both CLI and UI callers', () => {
     const copy = getActionSpec('localServices.actions.copyUrl');
     const input = copy.inputSchema.parse({
       requestId: 'copy_1',
@@ -39,7 +39,7 @@ describe('local-services runtime Action specs', () => {
       target: { kind: 'inventory_entry', inventoryEntryId: 'inventory_1', machineId: 'machine_1' },
     });
     expect(resolveActionExecutionPlacementForInput(copy, input, undefined, 'cli')).toBe('machine');
-    expect(resolveActionExecutionPlacementForInput(copy, input, undefined, 'ui')).toBe('client');
+    expect(resolveActionExecutionPlacementForInput(copy, input, { kind: 'host' }, 'ui')).toBe('machine');
   });
 
   it('advertises managed-service private preview operands while preserving the inventory target alias', () => {

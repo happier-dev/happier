@@ -223,9 +223,9 @@ function createRuntimeActionSpecFor<
     ...(requiresAnsweringClient ? { executionPlacement: 'client' as const } : {}),
     ...(controlKind === 'copy_url' ? {
       executionPlacements: ['client', 'machine'] as const,
-      // CLI Copy returns the Machine's URL as data. The UI still copies on its answering client.
+      // The Machine resolves the destination. The invoking UI writes the returned URL.
       executionPlacementForInput: (_input: unknown, _caller: Readonly<{ kind: string }> | undefined, surface: keyof PreNormalizedActionSurfaces) =>
-        surface === 'rpc' || surface === 'cli' ? 'machine' as const : 'client' as const,
+        surface === 'rpc' || surface === 'cli' || surface === 'ui' ? 'machine' as const : 'client' as const,
     } : {}),
     ...(actionId === 'projects.service.relocate' ? {
       executionPlacement: 'machine' as const,

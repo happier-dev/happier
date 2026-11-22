@@ -8971,7 +8971,7 @@ export async function startDaemonSessionControlRuntime(
   }
   const projectManagedServices: Pick<
     ReturnType<typeof createManagedServicesOwner>,
-    'listProjectServices' | 'resolveProjectService' | 'readProcessRoots'
+    'listProjectServices' | 'resolveProjectService' | 'resolveProjectServiceDeclaration' | 'readProcessRoots'
   > & Partial<Pick<ReturnType<typeof createManagedServicesOwner>, 'activity' | 'restoreProjectServices'>> = {
     ...(params.projectManagedServiceActivity ? { activity: params.projectManagedServiceActivity } : {}),
     readProcessRoots: () =>
@@ -8983,6 +8983,8 @@ export async function startDaemonSessionControlRuntime(
       if (!owner) throw Object.assign(new Error('Project service native owner is unavailable'), { code: 'project_service_bindings_unavailable' });
       return await owner.restoreProjectServices();
     },
+    resolveProjectServiceDeclaration: (targetId) =>
+      pluginRuntimeController.getState().activeRegistry?.projectManagedServices.resolveProjectServiceDeclaration(targetId) ?? null,
     resolveProjectService: (target) =>
       pluginRuntimeController
         .getState()

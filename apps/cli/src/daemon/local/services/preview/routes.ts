@@ -101,8 +101,7 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
     server?: LocalServicePreviewServerInput;
     registry: LocalServicePreviewRegistry;
     inventoryRegistry?: LocalServiceInventoryRegistry;
-    projectManagedServices?: Pick<ReturnType<typeof createManagedServicesOwner>, 'resolveProjectService'>
-        & Partial<Pick<ReturnType<typeof createManagedServicesOwner>, 'resolveProjectServiceDeclaration'>>;
+    projectManagedServices?: Pick<ReturnType<typeof createManagedServicesOwner>, 'resolveProjectService' | 'resolveProjectServiceDeclaration'>;
     endpointEnricher?: LocalServiceEndpointEnricher;
     signal?: AbortSignal;
     now?: () => number;
@@ -223,7 +222,7 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
             }
 
             if (request.launchTargetId && !request.serviceTarget) {
-                const declaration = input.projectManagedServices?.resolveProjectServiceDeclaration?.(request.launchTargetId);
+                const declaration = input.projectManagedServices?.resolveProjectServiceDeclaration(request.launchTargetId);
                 if (!declaration && isProjectServiceDeclarationTargetIdV1(request.launchTargetId)) return { ok: false, reasonCode: 'service_not_listening' };
                 if (declaration?.kind === 'workspace') request = { ...request, serviceTarget: {
                     kind: 'managed_service', managedServiceId: declaration.instanceId, machineId: declaration.workspace.machineId,
