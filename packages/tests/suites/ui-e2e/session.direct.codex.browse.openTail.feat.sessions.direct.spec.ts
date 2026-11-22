@@ -181,12 +181,21 @@ test.describe('ui e2e: direct Codex sessions browse/open/tail', () => {
       }), timeoutMs: 20_000,
     });
     expect(write.status).toBe(200);
-    await createPlainSession({ baseUrl: server.baseUrl, token: auth.token, machineId,
+    const earlierSessionId = await createPlainSession({ baseUrl: server.baseUrl, token: auth.token, machineId,
       title: 'Earlier Codex usage evidence', rootPath: '/tmp/direct-codex-ui-project', tagPrefix: 'native-usage',
       metadata: { flavor: 'codex', providerAccountUsageRefsV1: { v: 1, recordIds: [snapshot.recordId], updatedAtMs: Date.now() } },
     });
 
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/`);
+    const earlierSession = page.getByTestId(`session-list-item-${earlierSessionId}`);
+    await expect(earlierSession).toBeVisible({ timeout: 120_000 });
+    await earlierSession.click();
+    await expect.poll(() => new URL(page.url()).pathname).toBe(`/session/${earlierSessionId}`);
+    const usageBadge = page.getByTestId('agent-input-provider-usage-badge');
+    await expect(usageBadge).toBeVisible();
+    // Navigate within the app so the loaded quota remains in its in-memory cache.
+    await page.goBack();
+
     await expect(page.getByTestId('sessions-list-storage-tab:direct')).toHaveCount(1, { timeout: 120_000 });
     await page.getByTestId('sessions-list-storage-tab:direct').click();
 
@@ -208,7 +217,6 @@ test.describe('ui e2e: direct Codex sessions browse/open/tail', () => {
     await expect(transcript.getByText('older direct codex ui message')).toHaveCount(1, { timeout: 60_000 });
     await expect(transcript.getByText('latest direct codex ui reply')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId('session-chatFooter-directControl')).toBeVisible();
-    await expect(page.getByTestId('agent-input-provider-usage-badge')).toHaveCount(0);
 
     await appendFile(
       rolloutFile,
@@ -220,6 +228,7 @@ test.describe('ui e2e: direct Codex sessions browse/open/tail', () => {
     );
 
     await expect(transcript.getByText('tail appended direct codex ui message')).toHaveCount(1, { timeout: 60_000 });
+    await expect(usageBadge).toHaveCount(0);
     } catch (error) {
       throw appendBrowserDiagnostics(error, diagnostics());
     }
