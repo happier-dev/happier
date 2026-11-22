@@ -1,7 +1,9 @@
 import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
 import { deriveSessionCreationTagV1, deriveWorkflowSessionCreationTag, SessionCreationKeyV1Schema, type SessionCreationKeyV1 } from '../../sessions/creation/sessionCreationIdentityV1.js';
 import { readNonEmptyString, readRecord } from '../../inputs/inputRecords.js';
-import { SessionSpawnNewInputV2Schema, SessionSpawnNewActionInputV2Schema, type SessionSpawnNewActionInputV2 } from '../../sessions/creation/sessionSpawnNewInputV2.js';
+import { SessionSpawnNewInputV2Schema, SessionSpawnNewActionInputV2BaseSchema, SessionSpawnNewActionInputV2Schema, type SessionSpawnNewActionInputV2 } from '../../sessions/creation/sessionSpawnNewInputV2.js';
+import { lazyZodSchema } from '../../lazyZodSchema.js';
+import * as z from '../../zodRuntimePolicy.js';
 import { projectDiscussionModelParticipantLaunchV1, type DiscussionModelParticipantLaunchV1 } from '../../discussions/modelParticipantLaunch.js';
 import { SessionDiscussionParticipantV1Schema } from '../../sessions/creation/sessionDiscussionParticipantV1.js';
 import { normalizeId, assignIfDefined } from './inputReading.js';
@@ -48,19 +50,24 @@ export function readSessionSpawnModelChoice(
   return undefined;
 }
 
+const capturedModelOperand = lazyZodSchema(() => z.object(z.pick(SessionSpawnNewActionInputV2BaseSchema, {
+  agentTarget: true, sourceContext: true, configuration: true, projectContext: true, roleId: true,
+  discussionParticipant: true, modelSelection: true, teamCredentialBindings: true,
+}).shape));
+
 /** Freeze the current applied parent model into the admitted operand, including Machine RPC replay. */
 export function projectCapturedSessionSpawnModel(
-  input: Readonly<Record<string, unknown>> & SpawnConfigurationInput & Pick<SessionSpawnNewActionInputV2,
-    'modelSelection' | 'teamCredentialBindings' | 'agentTarget'>,
+  input: Readonly<Record<string, unknown>>,
   context: AgentStartContextV1,
 ): Readonly<Record<string, unknown>> {
-  const parent = context.caller.kind === 'session' ? context.caller.sessionId : undefined;
   const captured = context.baseline.configuration?.modelSelection;
-  const target = input.agentTarget;
-  if (readSessionSpawnConfigurationSource(input, parent) !== 'parent' || !captured || !target
-    || readSessionSpawnModelChoice(input, target) !== undefined) return input;
+  if (context.caller.kind !== 'session' || !captured) return input;
+  const operand = capturedModelOperand.safeParse(input);
+  if (!operand.success || !operand.data.agentTarget
+    || readSessionSpawnConfigurationSource(operand.data, context.caller.sessionId) !== 'parent'
+    || readSessionSpawnModelChoice(operand.data, operand.data.agentTarget) !== undefined) return input;
   const selection = 'ref' in captured ? captured : createPersonalSessionModelSelection(captured, 0);
-  return selection.ref.agentTargetKey === buildBackendTargetKeyV2(target) ? { ...input, modelSelection: selection } : input;
+  return selection.ref.agentTargetKey === buildBackendTargetKeyV2(operand.data.agentTarget) ? { ...input, modelSelection: selection } : input;
 }
 
 function resolveSessionSpawnNewCreationKey(
