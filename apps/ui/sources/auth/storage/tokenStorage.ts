@@ -2365,6 +2365,30 @@ async function getAccountDirectoryCredentialsForTarget(
     return record.kind === 'absent' ? record : { kind: record.kind };
 }
 
+export async function readEmailPasswordSignInCustody(target: Readonly<{
+    endpointUrl: string;
+    serverIdentityId: string;
+    credentialTarget?: 'account_directory';
+}>): Promise<AccountE2eeCustody> {
+    // A contact endpoint can differ from the saved Home's address.
+    const homeUrl = findServerProfileForIdentifier(target.serverIdentityId)?.serverUrl ?? target.endpointUrl;
+    const credentials = await readHomeCredentials(homeUrl, {
+        serverId: target.serverIdentityId,
+        storageReadFailure: 'surface',
+    });
+    const homeCustody = credentials ? readAccountE2eeCustody(credentials) : 'absent';
+    if (homeCustody === 'active' || target.credentialTarget !== 'account_directory') return homeCustody;
+
+    const directory = await getAccountDirectoryCredentialRecordForTarget({
+        endpoint: target.endpointUrl,
+        serverIdentityId: target.serverIdentityId,
+    });
+    if (directory.kind === 'absent') return homeCustody;
+    if (directory.kind !== 'valid') throw new AccountDirectoryStorageReadError(directory.kind);
+    const directoryCustody = readAccountDirectoryE2eeCustody(directory.value);
+    return directoryCustody === 'absent' ? homeCustody : directoryCustody;
+}
+
 async function commitAccountDirectoryOAuthCredentialValue(input: Readonly<{
     expectedPending: PendingAccountDirectoryAuth;
     credentials: TokenOnlyAuthCredentials;

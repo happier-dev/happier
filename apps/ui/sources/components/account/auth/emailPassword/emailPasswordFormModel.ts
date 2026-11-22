@@ -1,5 +1,6 @@
 import { acceptPasswordTextV1 } from '@happier-dev/protocol/auth/accountPasswordCredential';
 import { normalizeVerifiedEmail } from '@happier-dev/protocol/auth/verifiedEmail';
+import { isAccountModeDowngradeUnverifiedError } from '@happier-dev/sync-client';
 
 import { t, tLoose } from '@/text';
 import {
@@ -128,6 +129,9 @@ export function describeEmailPasswordFailure(
 ): EmailPasswordProblem {
     if (error instanceof Error && error.name === 'AbortError') {
         return { field: 'form', messageKey: 'settingsAccount.nativePassword.cancelled' };
+    }
+    if (isAccountModeDowngradeUnverifiedError(error)) {
+        return { field: 'form', messageKey: 'machineDetailPage.recovery.enrollmentRequired' };
     }
     if (readErrorCode(error) === 'outcome_unknown') {
         return { field: 'form', messageKey: OUTCOME_UNCONFIRMED_MESSAGE_KEY };

@@ -1,7 +1,8 @@
-import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { readEmailPasswordSignInCustody, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { ResolvedHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import { acceptPasswordTextV1, encodePasswordCredentialFieldV1 } from '@happier-dev/protocol/auth/accountPasswordCredential';
+import { admitReportedAccountMode } from '@happier-dev/sync-client';
 import { authenticatePlainPassword, preloginEmailPassword, unlockEmailPassword } from '@/sync/api/auth/emailPassword';
 import { createServerFetchAtEndpoint, type ServerFetch } from '@/sync/http/client';
 import { HappyError } from '@/utils/errors/errors';
@@ -53,6 +54,13 @@ export async function loginEmailPassword(input: EmailPasswordLoginInput): Promis
     const prelogin = await preloginEmailPassword(request, input.email);
     assertCurrent();
     if (prelogin.kind === 'plain_password') {
+        // Prelogin names no Account, so the target's active custody governs password disclosure.
+        const custody = await readEmailPasswordSignInCustody({
+            endpointUrl: input.target.endpointUrl,
+            serverIdentityId: input.target.serverIdentityId,
+            credentialTarget: input.credentialTarget,
+        });
+        admitReportedAccountMode({ reported: 'plain', custody });
         const credentials = await authenticatePlainPassword(request, {
             v: 1,
             email: input.email,

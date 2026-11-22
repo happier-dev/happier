@@ -3136,6 +3136,11 @@ writers keep consuming those owners and add no check of their own. Custody comes
 the credential the caller holds; a CLI caller that holds only a bearer reads the
 stored credential for that bearer.
 
+In 0.3 development, app email sign-in applies this decision before sending a
+password when prelogin reports `plain_password`. Prelogin carries no Account
+identity, so active keys for the target Home block the POST. Account Service
+sign-in also considers active keys retained for the selected service.
+
 In 0.3 development, the app opens live Account Settings under the mode held by
 the matching Home's Account observation. If the observation has no held mode,
 including on predecessor Homes, a Plain envelope goes through the same admission
