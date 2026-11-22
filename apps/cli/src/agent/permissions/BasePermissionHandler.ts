@@ -2112,7 +2112,7 @@ export abstract class BasePermissionHandler {
                 turnId: turnId.data,
                 createdAtMs: context.createdAt,
                 allowedScopes,
-                ...(context.nativeChoices ? { nativeChoices: context.nativeChoices,
+                ...(context.nativeChoices ? { nativeChoices: { ...context.nativeChoices, choices: [...context.nativeChoices.choices] },
                     nativeChoiceAvailability: context.nativeChoices.choices.map(choice => ({ choiceId: choice.id,
                         ...evaluatePermissionResponseAuthorityV1({ response: choice.response, nativeScope: choice.scope }),
                     })),

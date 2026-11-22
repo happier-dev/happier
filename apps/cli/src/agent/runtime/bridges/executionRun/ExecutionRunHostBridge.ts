@@ -2048,7 +2048,9 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       ? [...controller.backend.readPendingPermissionRequests?.() ?? []].sort((left, right) => left.requestId < right.requestId ? -1 : left.requestId > right.requestId ? 1 : 0) : [];
     const requests = pending.flatMap(request => typeof request.createdAt === 'number' && Number.isSafeInteger(request.createdAt) && request.createdAt >= 0
       ? [{ requestId: request.requestId, createdAt: request.createdAt,
-        ...(request.nativeChoices === undefined ? {} : { nativeChoices: request.nativeChoices }) }] : []);
+        ...(request.nativeChoices === undefined ? {} : {
+          nativeChoices: request.nativeChoices === null ? null : { ...request.nativeChoices, choices: [...request.nativeChoices.choices] },
+        }) }] : []);
     return pending.length ? { kind: 'permission_required', requestIds: pending.map(request => request.requestId),
       ...(requests.length === pending.length ? { requests } : {}) } : undefined;
   }

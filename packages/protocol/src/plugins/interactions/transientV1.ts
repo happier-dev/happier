@@ -8,7 +8,7 @@ import { PluginIdSchema } from '../pluginId.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 import { PluginExecutionScopeV1Schema } from '../invocationScopeV1.js';
 import { PluginUiRuntimeOccurrenceIdV1Schema } from '../ui/runtimeOccurrenceV1.js';
-import { NativePermissionChoicesV1Schema, NativePermissionChoiceAnswerV1Schema } from '../../sessions/permissions/nativeChoicesV1.js';
+import { NativePermissionChoicesV1Schema, NativePermissionChoiceAnswerV1Schema, type NativePermissionChoicesV1 } from '../../sessions/permissions/nativeChoicesV1.js';
 import {
   MAX_INTERACTION_TRANSIENT_QUESTIONS_V1,
   MAX_INTERACTION_TRANSIENT_CHOICES_V1,
@@ -418,10 +418,16 @@ export const InteractionTransientAuthorRequestV1Schema = lazyZodSchema(() => z.d
   ApprovalAuthorRequestV1Schema,
   ConfirmationAuthorRequestV1Schema,
 ]).check(z.superRefine((request, context) => issueForInvalidPayload(request, context, 'Interaction author requests'))));
-export type InteractionTransientAuthorRequestV1 = z.infer<typeof InteractionTransientAuthorRequestV1Schema>;
-export type InteractionTransientQuestionsAuthorRequestV1 = Extract<InteractionTransientAuthorRequestV1, { kind: 'questions' }>;
-export type InteractionTransientApprovalAuthorRequestV1 = Extract<InteractionTransientAuthorRequestV1, { kind: 'approval' }>;
-export type InteractionTransientConfirmationAuthorRequestV1 = Extract<InteractionTransientAuthorRequestV1, { kind: 'confirmation' }>;
+type ParsedInteractionTransientAuthorRequestV1 = z.infer<typeof InteractionTransientAuthorRequestV1Schema>;
+export type InteractionTransientQuestionsAuthorRequestV1 = Extract<ParsedInteractionTransientAuthorRequestV1, { kind: 'questions' }>;
+export type InteractionTransientApprovalAuthorRequestV1 =
+  Omit<Extract<ParsedInteractionTransientAuthorRequestV1, { kind: 'approval' }>, 'nativeChoices'>
+  & { nativeChoices?: NativePermissionChoicesV1 };
+export type InteractionTransientConfirmationAuthorRequestV1 = Extract<ParsedInteractionTransientAuthorRequestV1, { kind: 'confirmation' }>;
+export type InteractionTransientAuthorRequestV1 =
+  | InteractionTransientQuestionsAuthorRequestV1
+  | InteractionTransientApprovalAuthorRequestV1
+  | InteractionTransientConfirmationAuthorRequestV1;
 
 export type InteractionTransientRequestNormalizationV1 =
   | Readonly<{ ok: true; value: InteractionTransientRequestV1 }>

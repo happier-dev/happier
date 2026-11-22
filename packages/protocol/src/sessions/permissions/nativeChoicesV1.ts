@@ -51,14 +51,10 @@ export const NativePermissionChoicesV1Schema = lazyZodSchema(() => z.strictObjec
   origin: z.optional(z.strictObject({ sessionId: z.string(), subagentId: z.optional(z.string()), subagentLabel: z.optional(z.string()) })),
   choices: z.array(NativePermissionChoiceV1Schema),
 }));
-type NativePermissionChoiceV1 = z.infer<typeof NativePermissionChoicesV1Schema>['choices'][number];
-export type NativePermissionChoicesV1 = Readonly<{
-  requirementId: string;
-  source: string;
-  origin?: Readonly<{ sessionId: string; subagentId?: string; subagentLabel?: string }>;
-  choices: readonly Readonly<Omit<NativePermissionChoiceV1, 'response'> & {
-    response: NativePermissionChoiceV1['response'];
-  }>[];
+type NativePermissionChoices = z.infer<typeof NativePermissionChoicesV1Schema>;
+export type NativePermissionChoicesV1 = Readonly<Omit<NativePermissionChoices, 'origin' | 'choices'> & {
+  origin?: Readonly<NativePermissionChoices['origin']>;
+  choices: readonly Readonly<NativePermissionChoices['choices'][number]>[];
 }>;
 
 /** Caller-specific authority projection; it is never persisted as an offered native fact. */
