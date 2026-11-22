@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { makeToolCall, makeToolViewProps, renderScreen } from '@/dev/testkit';
+import { makeToolCall, renderScreen } from '@/dev/testkit';
 import { DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentSuggestionActionInputSchemasV1 } from '@happier-dev/protocol/deployments/suggestions/actionsV1';
 import {
@@ -27,7 +27,7 @@ vi.mock('../../shell/presentation/ToolSectionView', () => ({
     React.createElement(React.Fragment, null, children),
 }));
 
-await import('./MCPToolView');
+await import('@/components/sessions/transcript/references/TranscriptToolResultCard');
 
 const catalog = DeploySuggestionCatalogV1Schema.parse({
   starters: [
@@ -110,18 +110,16 @@ function checkCall(suggestion: unknown, description?: string) {
 }
 
 async function render(suggestion: unknown) {
-  const { MCPToolView } = await import('./MCPToolView');
+  const { TranscriptToolResultCard } = await import('@/components/sessions/transcript/references/TranscriptToolResultCard');
   return renderScreen(
-    <MCPToolView
-      {...makeToolViewProps(checkCall(suggestion), { detailLevel: 'summary' })}
-    />,
+    <TranscriptToolResultCard tool={checkCall(suggestion)} mediaPreviewEnabled={false} />,
   );
 }
 
 describe('a Session agent’s checked deploy suggestion (deploy auto-mode U10, F7)', () => {
   it('reads a completed check call into the validator’s recommendations and the checked catalog', async () => {
     const { readTranscriptDeploySuggestionCheck } = await import('@/components/sessions/transcript/references/transcriptDeploySuggestionReference');
-    const tool = checkCall({ recommendations: [site, invented, analytics], questions: null }, '  Make me a bakery landing page  ');
+    const tool = checkCall({ recommendations: [site, invented, analytics] }, '  Make me a bakery landing page  ');
     const read = readTranscriptDeploySuggestionCheck(tool);
     expect(read?.recommendations.map((row) => row.whatToBuild)).toEqual(['A bakery landing page', 'Self-hosted analytics']);
     expect(read?.catalog.targets.map((row) => row.id)).toEqual(['pages', 'own']);
@@ -132,7 +130,6 @@ describe('a Session agent’s checked deploy suggestion (deploy auto-mode U10, F
   it('renders the validator’s admitted recommendations as setup cards, the first recommended and chosen, never the dropped ones', async () => {
     const screen = await render({
       recommendations: [site, invented, analytics],
-      questions: null,
     });
     try {
       expect(screen.findByTestId('deploy-suggestion-check'), screen.getTextContent()).not.toBeNull();
@@ -153,7 +150,6 @@ describe('a Session agent’s checked deploy suggestion (deploy auto-mode U10, F
   it('a result that admitted nothing stays the ordinary tool row, with no cards', async () => {
     const screen = await render({
       recommendations: [invented],
-      questions: null,
     });
     try {
       expect(screen.findByTestId('deploy-suggestion-check')).toBeNull();
@@ -167,10 +163,9 @@ describe('Use this setup from a transcript card (deploy auto-mode U10, F4/F7)', 
   async function useFirstCard(description?: string) {
     execute.mockReset();
     showModal.mockReset();
-    const { MCPToolView } = await import('./MCPToolView');
+    const { TranscriptToolResultCard } = await import('@/components/sessions/transcript/references/TranscriptToolResultCard');
     const screen = await renderScreen(
-      <MCPToolView {...makeToolViewProps(checkCall({ recommendations: [site, analytics], questions: null }, description),
-        { detailLevel: 'summary' })} />,
+      <TranscriptToolResultCard tool={checkCall({ recommendations: [site, analytics] }, description)} mediaPreviewEnabled={false} />,
     );
     try {
       expect(execute, 'rendering checked cards reads nothing (F7)').not.toHaveBeenCalled();
@@ -205,13 +200,13 @@ describe('a card\u2019s platform plan facts (deploy auto-mode U3, review D1)', (
         source: { url: 'https://forged.example.test/pricing', checkedAt: '2026-11-16' },
       }] }),
     });
-    const { MCPToolView } = await import('./MCPToolView');
-    const suggestion = { recommendations: [site, analytics], questions: null };
+    const { TranscriptToolResultCard } = await import('@/components/sessions/transcript/references/TranscriptToolResultCard');
+    const suggestion = { recommendations: [site, analytics] };
     const call = makeToolCall({ name: 'mcp__happier__action_execute', state: 'completed',
       input: { actionId: DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1,
         input: DeploymentSuggestionActionInputSchemasV1[DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1].parse({ suggestion }) },
       result: { ok: true, result: checkDeploySuggestionV1(suggestion, forged) } });
-    const screen = await renderScreen(<MCPToolView {...makeToolViewProps(call, { detailLevel: 'summary' })} />);
+    const screen = await renderScreen(<TranscriptToolResultCard tool={call} mediaPreviewEnabled={false} />);
     try {
       expect(screen.findByTestId('deploy-suggestion-check'), screen.getTextContent()).not.toBeNull();
       const text = screen.getTextContent();

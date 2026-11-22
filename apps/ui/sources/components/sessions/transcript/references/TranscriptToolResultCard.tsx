@@ -10,7 +10,9 @@ import { ComputerActionResultReference } from './ComputerActionResultReference';
 import { SessionBoardActionResultReference } from './SessionBoardActionResultReference';
 import { WorkflowDefinitionActionResultReference } from './WorkflowDefinitionActionResultReference';
 import { WorkflowRunActionResultReference } from './WorkflowRunActionResultReference';
-import { readTranscriptToolResultCardKind } from './transcriptToolResultCard';
+import { readTranscriptToolResultCardKind } from './transcriptToolResultCardModel';
+import { readTranscriptDeploySuggestionCheck } from './transcriptDeploySuggestionReference';
+import { DeploySuggestionCheckResult } from '@/components/tools/renderers/system/DeploySuggestionCheckToolBody';
 
 /** A tool's result is a reply block, outside both its own disclosure and tool groups. */
 export function TranscriptToolResultCard(props: Readonly<{
@@ -28,6 +30,11 @@ export function TranscriptToolResultCard(props: Readonly<{
         case 'workflow-definition': return <WorkflowDefinitionActionResultReference tool={props.tool} serverId={props.serverId} />;
         case 'browser': return <BrowserActionResultReference {...props} />;
         case 'computer': return <ComputerActionResultReference {...props} />;
+        case 'deploy-suggestion': {
+            // The checked setup cards (deploy auto-mode U10): a check that admitted none shows nothing beyond its row.
+            const check = readTranscriptDeploySuggestionCheck(props.tool);
+            return check ? <DeploySuggestionCheckResult check={check} /> : null;
+        }
         case 'board': return <SessionBoardActionResultReference {...props} contentDemand={contentDemand} visualContext={visualContext} />;
         default: return null;
     }

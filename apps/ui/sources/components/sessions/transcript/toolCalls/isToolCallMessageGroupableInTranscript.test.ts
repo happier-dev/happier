@@ -5,6 +5,9 @@ import { ScmDiffSummaryGenerateSuccessSchema } from '@happier-dev/protocol/scm/d
 import { isToolCallMessageGroupableInTranscript } from './isToolCallMessageGroupableInTranscript';
 import { buildChatListItems } from '@/components/sessions/chatListItems';
 import { buildTranscriptTurns } from '@/components/sessions/transcript/turnGrouping/buildTranscriptTurns';
+import { DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentSuggestionActionInputSchemasV1 } from '@happier-dev/protocol/deployments/suggestions/actionsV1';
+import { DeploySuggestionCatalogV1Schema, checkDeploySuggestionV1 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
 
 describe('transcript tool group admission', () => {
     const runRef = { runId: 'run', callId: 'call', backendId: 'b1' };
@@ -29,6 +32,31 @@ describe('transcript tool group admission', () => {
             expect(turns.flatMap(turn => turn.content.map(item => item.kind === 'tool_calls' ? item.toolMessageIds : item.messageId)))
                 .toEqual([['before'], 'card']);
         }
+    });
+
+    // AUTO-FIX-W16 live 11-22 (Session cmwr5kh5…): a Session agent's checked setup cards sat inside a collapsed Tool calls
+    // group, so the person saw a one-line row while the agent said "choose the card above". A check call is a result
+    // card: it stays in the reply column from the call onward.
+    it('keeps a Session agent’s deploy suggestion check outside collapsed groups', () => {
+        const catalog = DeploySuggestionCatalogV1Schema.parse({ starters: [{ id: 'static', title: 'Static website', deploy: { framework: 'html', output: 'static' } }],
+            apps: [], machines: [], stores: [], forges: [], targets: [{ id: 'own', title: 'Own server', targetClass: 'ownServer', availability: 'available',
+                accepts: ['static'], needs: [] }] });
+        const suggestion = { recommendations: [{ source: { kind: 'starter', starterId: 'static' }, targetId: 'own', title: 'Static invoice page',
+            why: 'A static page needs no server code.', whatToBuild: 'A tiny invoice page', stack: { framework: 'html', output: 'static' },
+            data: { kind: 'none' }, variables: [] }] };
+        const input = { actionId: DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1, input: DeploymentSuggestionActionInputSchemasV1[DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1]
+            .parse({ description: 'make me a tiny invoice app', suggestion }) };
+        const before = createToolCallMessageFixture({ id: 'before', createdAt: 1 });
+        const check = createToolCallMessageFixture({ id: 'check', createdAt: 2, tool: { name: 'mcp__happier__action_execute', state: 'completed',
+            input, result: { ok: true, result: checkDeploySuggestionV1(suggestion, catalog) }, createdAt: 2, startedAt: 2, completedAt: 3, description: null } });
+        const running = createToolCallMessageFixture({ id: 'running', createdAt: 2, tool: { name: 'mcp__happier__action_execute', state: 'running',
+            input, createdAt: 2, startedAt: 2, completedAt: null, description: null } });
+        expect(isToolCallMessageGroupableInTranscript(check)).toBe(false);
+        expect(isToolCallMessageGroupableInTranscript(running), 'the call keeps its place while its result arrives').toBe(false);
+        const turns = buildTranscriptTurns({ messageIdsOldestFirst: [before.id, check.id], messagesById: { [before.id]: before, [check.id]: check },
+            groupToolCalls: true, toolCallsGroupStrategy: 'all_tools_in_turn' });
+        expect(turns.flatMap(turn => turn.content.map(item => item.kind === 'tool_calls' ? item.toolMessageIds : item.messageId)))
+            .toEqual([['before'], 'check']);
     });
 
     it('keeps malformed card metadata and an unsaved SCM result in ordinary tool disclosure', () => {

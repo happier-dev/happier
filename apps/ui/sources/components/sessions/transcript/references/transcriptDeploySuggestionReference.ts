@@ -22,6 +22,14 @@ const CHECK = createHappierActionToolNameIndex<CheckActionId>([
 const isCheck = (id: string): id is CheckActionId =>
   id === DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1;
 
+/**
+ * A Session agent's setup check call, from the call onward: its result is a reply card (the setup cards), so it never
+ * sits inside a collapsed tool group and keeps its place while the result arrives.
+ */
+export function isTranscriptDeploySuggestionCheckCall(tool: Pick<ToolCall, 'name' | 'input'>): boolean {
+  return (readHappierActionId(tool.name, CHECK) ?? readHappierActionExecuteActionId(tool.name, tool.input, isCheck)) !== null;
+}
+
 /** A Session agent's checked setup suggestion: the validator's admitted recommendations and the catalog rows the check returned for them. */
 export type TranscriptDeploySuggestionCheck = Readonly<{
   description: string | null;

@@ -1,5 +1,5 @@
 import { readTurnChangeToolMetadataFromToolCall } from '@happier-dev/protocol/sessions/messages/canonicalTurnDiffTool';
-import { readTranscriptToolResultCardKind } from '../references/transcriptToolResultCard';
+import { readTranscriptToolResultCardKind } from '../references/transcriptToolResultCardModel';
 import { readReviewToolRunId } from '@/components/sessions/reviews/messages/projectReviewToolMessage';
 import { isSessionMessageInvocationAnchor } from '../references/readSessionMessageInvocation';
 import { hasToolCarriedStructuredResultCard } from '../structured/structuredToolResultCards';
