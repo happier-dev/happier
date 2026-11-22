@@ -205,4 +205,19 @@ describe('shared live stream gesture mapping', () => {
         expect(moved.transform.x).toBeLessThan(0);
         expect(moved.pointer.x).toBeLessThanOrEqual(1);
     });
+    it('a pinch out stops at the whole picture across the pane, never smaller, and a small window keeps its resting size', () => {
+        // A passive phone viewer: a desktop page held at its own size (258×162 in a 390×588 pane) rests filled.
+        const phone = { viewport: { width: 390, height: 588 }, content: { x: 66, y: 0, width: 258, height: 162 }, orientation: 'portrait' } as const;
+        const watch = { ...phone, mode: 'direct' as const, localZoom: true, dragPans: true, supports: () => false };
+        const mapper = createLiveStreamGestureMapper();
+        mapper.setRestTransform(fillViewTransform(phone.viewport, phone.content, { width: 774, height: 486 }, 3));
+        mapper.map(event('start', 195, 300, 0, [{ x: 55, y: 300 }, { x: 335, y: 300 }]), watch);
+        const out = mapper.map(event('move', 195, 300, 40, [{ x: 175, y: 300 }, { x: 215, y: 300 }]), watch);
+        expect(out.transform.scale * phone.content.width).toBeCloseTo(phone.viewport.width, 0);
+        // A small shared window rests whole at its own pixels: pinching out never blows it up to the pane.
+        const tiny = { viewport: { width: 390, height: 588 }, content: { x: 160, y: 270, width: 70, height: 15 }, orientation: 'portrait' } as const;
+        const small = createLiveStreamGestureMapper();
+        small.map(event('start', 195, 300, 0, [{ x: 55, y: 300 }, { x: 335, y: 300 }]), { ...tiny, mode: 'direct', localZoom: true, supports: () => false });
+        expect(small.map(event('move', 195, 300, 40, [{ x: 175, y: 300 }, { x: 215, y: 300 }]), { ...tiny, mode: 'direct', localZoom: true, supports: () => false }).transform.scale).toBe(1);
+    });
 });

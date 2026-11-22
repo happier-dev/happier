@@ -20,7 +20,7 @@ export type RemoteViewerControlBarHost = Readonly<{
         onPress(): void;
         testID: string;
     }> & (Readonly<{ icon: React.ReactNode; iconName?: never }>
-        | Readonly<{ iconName: 'keyboard'; icon?: never }>)>;
+        | Readonly<{ iconName: 'keyboard' | 'arrows-in'; icon?: never }>)>;
     SegmentedTabBar: <T extends string>(props: Readonly<{
         tabs: readonly Readonly<{ id: T; label: string }>[];
         activeTabId: T;
@@ -94,7 +94,8 @@ export function RemoteViewerControlBar(props: RemoteViewerControlBarProps) {
                         { id: 'direct' as const, label: props.labels.directMode },
                         { id: 'trackpad' as const, label: props.labels.trackpadMode },
                     ]} activeTabId={controls.mode} onSelectTab={controls.setMode} testIDPrefix={`${testID}-mode`} compact />
-                    <Button emphasis="plain" title={props.labels.resetZoom} onPress={controls.resetZoom} testID={`${testID}-reset-zoom`} />
+                    <IconButton variant="plain" iconName="arrows-in" accessibilityLabel={props.labels.resetZoom}
+                        onPress={controls.resetZoom} testID={`${testID}-reset-zoom`} />
                 </> : null}
                 {panel === 'modifiers' ? modifiers.map(modifier => <IconButton key={modifier}
                     icon={<KeyHint label={modifier === 'control' ? 'Ctrl' : modifier} />} variant="plain"

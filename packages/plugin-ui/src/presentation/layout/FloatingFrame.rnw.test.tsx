@@ -240,8 +240,9 @@ describe('FloatingFrame', () => {
     expect(samples.every((value, index) => value <= 1 && (index === 0 || value >= samples[index - 1]!))).toBe(true);
     const { view, byId } = mount();
     expect(byId('frame').style.transitionTimingFunction).toBe(settle.easingCss);
-    // Its place is a compositor transform (lab `b-watch`: travel, not layout); only a size change lays out.
-    expect(settle.properties).toBe('transform, width, height');
+    // Its place is a compositor transform (lab `b-watch`: travel, not layout). Its size is never interpolated:
+    // a growing frame would reflow its content every frame (DESIGN-ACCEPT-140 item 13), so size lays out once.
+    expect(settle.properties).toBe('transform');
     expect(byId('frame').style.transitionProperty).toBe(settle.properties);
     expect(byId('frame').style.left).toBe('0px');
     expect(byId('frame').style.transform).toBe(`translateX(${START.x}px) translateY(${START.y}px)`);

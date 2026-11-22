@@ -63,6 +63,15 @@ export function createLiveStreamGestureMapper() {
         x: boundAxis(next.x, next.scale, context.viewport.width, context.content.x, context.content.width),
         y: boundAxis(next.y, next.scale, context.viewport.height, context.content.y, context.content.height),
     });
+    /**
+     * A pinch out stops at the whole picture across the pane (the picture drawn at its own size can be smaller
+     * than the pane), never below it, and never below where the view rests: a small window resting whole at
+     * its own pixels is not blown up to the pane by a pinch out.
+     */
+    const minimumScale = (context: Context) => {
+        const whole = Math.min(context.viewport.width / context.content.width, context.viewport.height / context.content.height);
+        return Math.min(rest.scale, Number.isFinite(whole) ? Math.max(1, whole) : 1);
+    };
     const normalize = (point: Point, context: Context): Point => ({
         x: (point.x - transform.x) / transform.scale / context.viewport.width,
         y: (point.y - transform.y) / transform.scale / context.viewport.height,
@@ -130,7 +139,7 @@ export function createLiveStreamGestureMapper() {
                     if (!current.intent && Math.abs(endDistance - startDistance) >= 8) current.intent = 'pinch';
                     if (!current.intent && distance(center(current.multiStart), latestCenter) >= HAPPIER_GESTURE_TIMING.slopPx) current.intent = 'scroll';
                     if (current.intent === 'pinch' && context.localZoom && startDistance > 0) {
-                        const scale = Math.max(1, current.transformStart.scale * endDistance / startDistance);
+                        const scale = Math.max(minimumScale(context), current.transformStart.scale * endDistance / startDistance);
                         const anchor = center(current.multiStart);
                         transform = boundTransform({ scale,
                             x: latestCenter.x - (anchor.x - current.transformStart.x) * scale / current.transformStart.scale,

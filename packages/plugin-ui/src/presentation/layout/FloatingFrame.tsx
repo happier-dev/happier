@@ -158,8 +158,11 @@ const SETTLE_SPRING_EASING_CSS = `linear(${Array.from(
   },
 ).join(', ')})`;
 
-/** On web a frame travels by transform (the compositor); only a size change lays it out again. */
-const FLOATING_FRAME_SETTLE_PROPERTIES = 'transform, width, height';
+/**
+ * On web a frame travels by transform (the compositor). Its size is never interpolated: a size change lays it out
+ * once, so its content never reflows frame by frame on entry or resize.
+ */
+const FLOATING_FRAME_SETTLE_PROPERTIES = 'transform';
 
 /**
  * Where a floating frame stands inside its container. On web its place is a transform so the settle
@@ -186,7 +189,7 @@ export function resolveFloatingFramePlacementStyle(rect: FrameRect): HappierPort
 
 /**
  * How a released frame travels to where it settles: one critically damped spring curve (it arrives
- * without overshoot or wobble), on `properties` (`transform` for its place, then its size). A host that
+ * without overshoot or wobble), on `properties` (`transform`: its place; its size lays out at once). A host that
  * draws the frame's body in another layer places it with `resolveFloatingFramePlacementStyle` and
  * applies this same transition, so the two cannot drift apart.
  */
