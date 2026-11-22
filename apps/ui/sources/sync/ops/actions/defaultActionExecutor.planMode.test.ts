@@ -66,6 +66,7 @@ vi.mock('@/modal', async () => {
 });
 import nacl from 'tweetnacl';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken';
 import { ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -2370,16 +2371,29 @@ describe('default Action executor mode and catalog contracts', () => {
     expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'present_user_required' });
     expect(outgoing).toEqual([]);
   });
-  it.each(['narrowed_voice', 'cli'] as const)('uses the admitted permission authority for %s', async actor => {
+  it('refuses a narrowed Voice permission decision before dispatch', async () => {
     installSession('voice-permission', { machineId: 'machine-a', flavor: 'claude' });
-    daemonAnswer = () => ({ ok: true });
     const result = await createDefaultActionExecutor().execute('session.permission.respond', {
       sessionId: 'voice-permission', requestId: 'permission-1', turnId: 'turn-1', decision: 'approved',
-    }, actor === 'narrowed_voice'
-      ? { surface: 'voice', serverId, authority: 'account_automation' }
-      : { surface: 'cli', serverId, authority: 'present_user' });
-    expect(result).toMatchObject(actor === 'cli' ? { ok: true } : { ok: false, errorCode: 'present_user_required' });
-    expect(outgoing).toHaveLength(actor === 'cli' ? 1 : 0);
+    }, { surface: 'voice', serverId, authority: 'account_automation' });
+    expect(result).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    expect(outgoing).toEqual([]);
+  });
+  it('uses the admitted permission authority for cli', async () => {
+    const provenance = AuthTokenProvenanceSchema.parse({ v: 1, kind: 'terminal', authority: 'account_automation' });
+    const token = `e30.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'alice', provenance, tokenEpoch: 0 })), 'base64url')}.signature`;
+    await homes.switchAccount(serverId, 'alice', { token });
+    const sessionId = 'cli-permission';
+    installSession(sessionId, { machineId: 'machine-a', flavor: 'claude' });
+    daemonAnswer = () => ({ ok: true });
+
+    // The terminal confirmation enters with completed consent for this exact response.
+    const result = await createDefaultActionExecutor().executeConfirmed('session.permission.respond', {
+      sessionId, requestId: 'permission-1', turnId: 'turn-1', decision: 'approved',
+    }, { surface: 'cli', serverId });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { ok: true } });
+    expect(outgoing).toEqual([{ method: `${sessionId}:${RPC_METHODS.SESSION_PERMISSION_RESPOND}`,
+      params: expect.objectContaining({ id: 'permission-1', turnId: 'turn-1', decision: 'approved', approved: true }) }]);
   });
   it('requires confirmation before admitting a Voice permission approval', async () => {
     await installRevocableVoiceSettings();
@@ -2579,23 +2593,68 @@ describe('default Action executor mode and catalog contracts', () => {
       serverIdentityId: 'srv_mode_home', originServerId: serverId }]);
     expect(outgoing).toEqual([]);
   });
-  it('keeps permission feedback and title state unchanged while explicit UI approval is pending', async () => {
-    const read = installSession('approval-session', { path: '/repo', machineId: 'machine-a', flavor: 'claude' });
-    storage.getState().updateSessionPermissionMode('approval-session', 'read-only');
+  it('holds permission feedback and title changes until their explicit UI confirmations', async () => {
+    const sessionId = 'approval-session';
+    const metadata = { path: '/repo', host: 'tester.local', machineId: 'machine-a', flavor: 'claude',
+      summary: { text: 'Original title', updatedAt: 1 } };
+    const read = installSession(sessionId, metadata, serverId, 1,
+      createPlainSessionCurrentProjectionRecordFixture({ id: sessionId, active: true, metadata }));
+    const originalRow = read();
+    storage.getState().updateSessionPermissionMode(sessionId, 'read-only');
     installActionSettings({
       'session.permission.respond': { approvalRequiredSurfaces: ['ui'] },
       'session.title.set': { approvalRequiredSurfaces: ['ui'] },
     });
+
+    const { Modal } = await import('@/modal');
+    const confirm = vi.spyOn(Modal, 'confirm');
+    const withHeldReview = async <T>(start: () => Promise<T>, assertHeld: () => void) => {
+      const presented = createDeferred<void>();
+      const answer = createDeferred<boolean>();
+      confirm.mockImplementationOnce(() => {
+        presented.resolve();
+        return answer.promise;
+      });
+      const pending = start();
+      try {
+        await Promise.race([presented.promise, pending.then(result => {
+          throw new Error('Action settled before native review: ' + JSON.stringify(result));
+        })]);
+        assertHeld();
+        answer.resolve(true);
+        return await pending;
+      } finally {
+        answer.resolve(false);
+        await Promise.allSettled([pending]);
+      }
+    };
+
+    daemonAnswer = () => ({ ok: true });
     const { createAppSessionTranscriptActions } = await import('@/components/sessions/transcript/source/appSessionTranscriptActions');
-    await expect(createAppSessionTranscriptActions('approval-session', serverId).respondToPermission({
-      id: 'p1', approved: true, mode: 'acceptEdits',
-    })).rejects.toMatchObject({ code: 'approval_request_created' });
+    const transcript = createAppSessionTranscriptActions(sessionId, serverId);
+    await withHeldReview(() => transcript.respondToPermission({ id: 'p1', approved: true, mode: 'acceptEdits' }), () => {
+      expect(outgoing).toEqual([]);
+      expect(storage.getState().sessions[sessionId]?.permissionMode).toBe('read-only');
+      expect(read()).toEqual(originalRow);
+    });
+
+    const permissionEffect = { method: `${sessionId}:${RPC_METHODS.SESSION_PERMISSION_RESPOND}`,
+      params: { id: 'p1', approved: true, mode: 'acceptEdits' } };
+    expect(outgoing).toMatchObject([permissionEffect]);
+    expect(storage.getState().sessions[sessionId]?.permissionMode).toBe('safe-yolo');
+    expect(read()).toEqual(originalRow);
+
     const { executeSessionLifecycleAction } = await import('@/components/sessions/actions/sessionActionExecution');
-    expect(await executeSessionLifecycleAction('session.title.set', 'approval-session', { serverId }, 'Pending title'))
-      .toMatchObject({ success: false, code: 'approval_request_created' });
-    expect(storage.getState().sessions['approval-session']?.permissionMode).toBe('read-only');
-    expect(read().metadataVersion).toBe(1);
-    expect(outgoing).toEqual([]);
+    const renamed = await withHeldReview(
+      () => executeSessionLifecycleAction('session.title.set', sessionId, { serverId }, 'Reviewed title'),
+      () => {
+        expect(outgoing).toMatchObject([permissionEffect]);
+        expect(read()).toEqual(originalRow);
+      });
+    expect(renamed).toEqual({ success: true });
+    expect(read().metadataVersion).toBe(originalRow.metadataVersion + 1);
+    expect(JSON.parse(read().metadata!).summary.text).toBe('Reviewed title');
+    expect(outgoing).toMatchObject([permissionEffect]);
   });
 
   it('refuses disabled session-delete before reaching its HTTP transport', async () => {
