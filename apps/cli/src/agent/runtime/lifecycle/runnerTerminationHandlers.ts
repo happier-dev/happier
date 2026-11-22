@@ -1,4 +1,5 @@
 import type { EventEmitter } from 'node:events';
+import { readSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 import { writeSessionExitReportSync } from '@/session/diagnostics/sessionExitReport';
 import { logger } from '@/ui/logger';
@@ -80,11 +81,32 @@ type ProcessTerminationHost = {
 };
 const processTerminationHosts = new WeakMap<ProcessLike, ProcessTerminationHost>();
 
-function reportUnattributedFatal(failure: unknown): void {
+type RunnerFatalEvent = Extract<RunnerTerminationEvent, { kind: 'unhandledRejection' | 'uncaughtException' }>;
+
+function readFatalError(event: RunnerFatalEvent): unknown {
+  return event.kind === 'unhandledRejection' ? event.reason : event.error;
+}
+
+function retainHostedFatalCause(scope: HostedSessionScope | undefined, failure: unknown): boolean {
+  if (!scope?.end) return false;
+  const cause = readSessionRuntimeFailureCause(failure);
+  if (!cause) return false;
+  scope.failureCause = cause;
+  return true;
+}
+
+function reportUnattributedFatal(event: RunnerFatalEvent, scope: HostedSessionScope | undefined): void {
+  const failure = readFatalError(event);
   try {
     logger.fatal(failure);
   } catch {
     // Fatal diagnostics must never stop the other hosted Sessions.
+  }
+  // A Session's startup can refuse before its runtime installs a process
+  // listener. It still owns its command exit and any startup cleanup already bound.
+  if (scope?.end && retainHostedFatalCause(scope, failure)) {
+    requestHostedSessionTermination(scope, event);
+    scope.end(computeRunnerTerminationOutcome(event).exitCode);
   }
 }
 
@@ -92,21 +114,21 @@ function attachProcessTerminationHost(processLike: ProcessLike): ProcessTerminat
   const existing = processTerminationHosts.get(processLike);
   if (existing) return existing;
   const sessions = new Set<SessionRegistration>();
-  // A failure raised inside a Session's work belongs to it. With exactly one
-  // Session every failure is that Session's (today's runner). With several, an
-  // unattributable failure is reported and no Session is ended for it.
-  const owningSession = (): SessionRegistration | null => {
-    const scoped = readHostedSessionScope()?.termination;
-    for (const session of sessions) if (session === scoped) return session;
-    if (sessions.size === 1) return sessions.values().next().value ?? null;
+  // A failure raised inside a hosted Session belongs to that Session, even
+  // before registration. Without a hosted scope a sole runner owns the failure.
+  const owningSession = (scope: HostedSessionScope | undefined): SessionRegistration | null => {
+    for (const session of sessions) if (session === scope?.termination) return session;
+    if (!scope?.end && sessions.size === 1) return sessions.values().next().value ?? null;
     return null;
   };
   const onSigterm = () => { for (const session of [...sessions]) session.terminate({ kind: 'signal', signal: 'SIGTERM' }); };
   const onSigint = () => { for (const session of [...sessions]) session.terminate({ kind: 'signal', signal: 'SIGINT' }); };
   const onUnhandledRejection = (reason: unknown) => {
-    const session = owningSession();
+    const event = { kind: 'unhandledRejection', reason } as const;
+    const scope = readHostedSessionScope();
+    const session = owningSession(scope);
     if (!session) {
-      reportUnattributedFatal(reason);
+      reportUnattributedFatal(event, scope);
       return;
     }
     const shouldTerminate = session.shouldTerminateOnUnhandledRejection;
@@ -119,15 +141,17 @@ function attachProcessTerminationHost(processLike: ProcessLike): ProcessTerminat
         // Defensive: if policy throws, treat as fatal.
       }
     }
-    session.terminate({ kind: 'unhandledRejection', reason });
+    session.terminate(event);
   };
   const onUncaughtException = (error: unknown) => {
-    const session = owningSession();
+    const event = { kind: 'uncaughtException', error } as const;
+    const scope = readHostedSessionScope();
+    const session = owningSession(scope);
     if (!session) {
-      reportUnattributedFatal(error);
+      reportUnattributedFatal(event, scope);
       return;
     }
-    session.terminate({ kind: 'uncaughtException', error });
+    session.terminate(event);
   };
   processLike.on('SIGTERM', onSigterm);
   processLike.on('SIGINT', onSigint);
@@ -171,11 +195,13 @@ export function endSessionCommand(exitCode: number): void {
 export function bindHostedSessionStop(stop: () => Promise<void>, processLifecycleOwnership?: 'self' | 'caller'): void {
   const scope = readHostedSessionScope();
   if (!scope?.end || processLifecycleOwnership === 'caller') return;
-  scope.termination = { terminate: () => {
+  const registration = { terminate: () => {
     void stop().catch((error: unknown) => {
       logger.infoFile('[RunnerTermination] Hosted Stop failed', { cause: formatErrorForUi(error) });
     });
   } } satisfies SessionRegistration;
+  scope.termination = registration;
+  if (scope.failureCause) registration.terminate();
 }
 
 /** Request termination of the Session whose scope this is (a host's per-Session Stop); false before it registered. */
@@ -221,7 +247,9 @@ export function registerRunnerTerminationHandlers(params: Readonly<{
 
     if (event.kind === 'unhandledRejection' || event.kind === 'uncaughtException') {
       try {
-        logger.fatal(event.kind === 'unhandledRejection' ? event.reason : event.error);
+        const failure = readFatalError(event);
+        retainHostedFatalCause(sessionScope, failure);
+        logger.fatal(failure);
       } catch {
         // Fatal diagnostics must never replace runner cleanup and exit semantics.
       }

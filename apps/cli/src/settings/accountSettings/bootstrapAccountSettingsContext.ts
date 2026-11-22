@@ -46,6 +46,7 @@ import {
   writeAccountSettingsCacheAtomic,
 } from './accountSettingsCache';
 import {
+  captureAccountSettingsBootstrapIncumbent,
   commitActiveAccountSettingsSnapshot,
   getActiveAccountSettingsSnapshot,
   getActiveAccountSettingsSnapshotLifetimeToken,
@@ -122,7 +123,10 @@ function createAccountSettingsScopeChangedError(
   message: string,
 ) {
   logger.infoFile('[accountSettings] Scope refused', { branch });
-  return Object.assign(createAccountSettingsLiveApplyError('ACCOUNT_SETTINGS_SCOPE_CHANGED', message), { branch });
+  const error = createAccountSettingsLiveApplyError('ACCOUNT_SETTINGS_SCOPE_CHANGED', message);
+  return Object.assign(error, { branch }, branch.startsWith('bootstrap_') ? {
+    failureCause: { code: error.code, phase: 'client_start', failureReason: 'account_changed', retryable: true },
+  } : {});
 }
 
 function isAccountSettingsContentUnavailableError(error: unknown): boolean {
@@ -669,8 +673,11 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
 
   const cachePath = deps.resolveCachePath(params.credentials);
   const scopeKey = createAccountSettingsScopeKey({ cachePath, token: params.credentials.token });
-  const activeAtBootstrapStart = getActiveAccountSettingsSnapshot();
-  const activeLifetimeTokenAtBootstrapStart = getActiveAccountSettingsSnapshotLifetimeToken();
+  const readIncumbent = captureAccountSettingsBootstrapIncumbent(params.publication === 'invocation' ? undefined : scopeKey);
+  const initialIncumbent = readIncumbent();
+  const incumbentUsesDifferentKeys = initialIncumbent.snapshot?.scopeKey === scopeKey
+    && initialIncumbent.snapshot !== getActiveAccountSettingsSnapshot()
+    && !isDeepStrictEqual(initialIncumbent.snapshot.settingsSecretsReadKeys, settingsSecretsReadKeys);
   type PublishedAccountSettingsContext = Readonly<{
     context: AccountSettingsContext;
     didCommit: boolean;
@@ -680,7 +687,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   const currentPublicationForScope = (): PublishedAccountSettingsContext | null => {
     const active = getActiveAccountSettingsSnapshot();
     if (!active || active.scopeKey !== scopeKey
-      || settingsKeyMaterialChangedDuringRead(activeAtBootstrapStart, active, settingsSecretsReadKeys)) return null;
+      || !isDeepStrictEqual(active.settingsSecretsReadKeys, settingsSecretsReadKeys)) return null;
     return {
       context: contextFromActiveSnapshot(active),
       didCommit: false,
@@ -719,19 +726,14 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     );
     return publication;
   };
-  const publishContext = (candidate: AccountSettingsContext): Readonly<{
-    context: AccountSettingsContext;
-    didCommit: boolean;
-    snapshot: NonNullable<ReturnType<typeof getActiveAccountSettingsSnapshot>>;
-    lifetimeToken: number;
-  }> => {
+  const publishContext = (candidate: AccountSettingsContext, start = initialIncumbent): PublishedAccountSettingsContext => {
     if (params.publication === 'invocation') {
       if (params.shouldCommit?.() === false) {
         throw createAccountSettingsLiveApplyError('ACCOUNT_SETTINGS_SOURCE_STALE', 'Requester policy admission is no longer current.');
       }
       const context = { ...candidate, scopeKey };
       return { context, didCommit: false, snapshot: context,
-        lifetimeToken: activeLifetimeTokenAtBootstrapStart };
+        lifetimeToken: start.lifetimeToken };
     }
     if (params.shouldCommit?.() === false) {
       throw createAccountSettingsLiveApplyError(
@@ -739,8 +741,8 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
         'The Account Settings publication lifetime ended before Settings bootstrap could be committed.',
       );
     }
-    const activeBeforeCommit = getActiveAccountSettingsSnapshot();
-    const lifetimeBeforeCommit = getActiveAccountSettingsSnapshotLifetimeToken();
+    const { snapshot: activeBeforeCommit, lifetimeToken: lifetimeBeforeCommit } = readIncumbent();
+    const { snapshot: activeAtBootstrapStart, lifetimeToken: activeLifetimeTokenAtBootstrapStart } = start;
     const firstSameScopePublication = isFirstSameScopePublication({
       activeAtStart: activeAtBootstrapStart, active: activeBeforeCommit,
       activeLifetimeTokenAtStart: activeLifetimeTokenAtBootstrapStart, activeLifetimeToken: lifetimeBeforeCommit,
@@ -781,6 +783,12 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
       settingsSecretsReadKeys: candidate.settingsSecretsReadKeys,
       scopeKey,
     });
+    if (!isDeepStrictEqual(committed.snapshot.settingsSecretsReadKeys, settingsSecretsReadKeys)) {
+      throw createAccountSettingsScopeChangedError(
+        'bootstrap_scope_before_commit',
+        'The current Account Settings require different encryption material.',
+      );
+    }
     const context = contextFromActiveSnapshot(committed.snapshot);
     if (!shouldTreatVersionAsFresh(context.settingsVersion, minSettingsVersion)) {
       throw new AccountSettingsStaleError();
@@ -838,7 +846,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
       : applyPublicationSideEffects(currentPublication).context;
   }
 
-  const readCache = await observePhase('cache_read', () => deps.readCache(cachePath));
+  const readCache = incumbentUsesDifferentKeys ? null : await observePhase('cache_read', () => deps.readCache(cachePath));
   const cache =
     readCache?.version === 2 && readCache.settingsContent?.t === 'plain'
       ? null
@@ -899,7 +907,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
         ? { t: 'encrypted', c: (cache as any).settingsCiphertext as string }
         : null);
 
-  const useCache = async (): Promise<AccountSettingsContext> => {
+  const useCache = async (): Promise<PublishedAccountSettingsContext> => {
     const parsed = await parseFromContent(cacheContent);
     const settingsVersion = cache?.settingsVersion ?? 0;
     const ctx: AccountSettingsContext = {
@@ -917,7 +925,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
       rememberInMemoryAccountSettingsContext(scopeKey, publication.context, publication.lifetimeToken,
         publication.snapshot, cache.cachedAt);
     }
-    return publication.context;
+    return publication;
   };
 
   const fetchAndParse = async (signal?: AbortSignal): Promise<RequesterSettingsRead> => {
@@ -966,7 +974,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     }
   };
 
-  const fetchAndPersist = async (): Promise<AccountSettingsContext> => {
+  const fetchAndPersist = async (start = initialIncumbent): Promise<AccountSettingsContext> => {
     const { settingsContent, settingsVersion, parsed } = await (params.publication === 'invocation'
       ? readRequesterSettings() : fetchAndParse(params.signal));
     params.signal?.throwIfAborted();
@@ -986,7 +994,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     const recordPublication = beginPhase('publication');
     let publication: ReturnType<typeof publishContext>;
     try {
-      publication = publishContext(candidate);
+      publication = publishContext(candidate, start);
       recordPublication('completed');
     } catch (error) {
       recordPublication('failed');
@@ -1013,7 +1021,8 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
       }
     }
     const activeAfterWrite = getActiveAccountSettingsSnapshot();
-    if (activeAfterWrite?.scopeKey === scopeKey) {
+    if (activeAfterWrite?.scopeKey === scopeKey
+      && isDeepStrictEqual(activeAfterWrite.settingsSecretsReadKeys, settingsSecretsReadKeys)) {
       const context = contextFromActiveSnapshot(activeAfterWrite);
       if (activeAfterWrite === publication.snapshot && activeAfterWrite.settingsVersion === settingsVersion
         && activeSnapshotPublicationIsCurrent(publication) && params.shouldCommit?.() !== false) {
@@ -1039,15 +1048,18 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
       err instanceof AccountSettingsV2RequestError ? err.retryAfterMs : undefined);
     logger.debug(message, { ...serializeAxiosErrorForLog(err), consecutiveFailures, retryInMs: nextAttemptAtMs - nowMs });
   };
-  const effectiveMode = minSettingsVersion !== null ? 'blocking' : mode;
+  const effectiveMode = minSettingsVersion !== null || incumbentUsesDifferentKeys ? 'blocking' : mode;
 
   if (effectiveMode === 'fast') {
-    const base = await useCache();
+    const basePublication = await useCache();
+    const base = basePublication.context;
     const needsRefresh = shouldForceFetch || !cacheFresh;
     if (!needsRefresh || refreshBackedOff) return base;
 
     // Fire refresh immediately; expose promise for long-running processes.
-    const whenRefreshed = fetchAndPersist().catch(async (err) => {
+    // The cache publication establishes this Session's Account incumbent. Fence
+    // the later refresh against that publication's lifetime.
+    const whenRefreshed = fetchAndPersist(basePublication).catch(async (err) => {
       params.signal?.throwIfAborted();
       if (isClientE2eeRequiredError(err)) throw err;
       if (params.allowCacheFallback === false || minSettingsVersion !== null || isAccountSettingsContentUnavailableError(err)) {
@@ -1060,8 +1072,8 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   }
 
   // blocking mode
-  if ((!shouldForceFetch && cacheFresh) || refreshBackedOff) {
-    return useCache();
+  if (!incumbentUsesDifferentKeys && ((!shouldForceFetch && cacheFresh) || refreshBackedOff)) {
+    return (await useCache()).context;
   }
 
   try {
@@ -1069,10 +1081,10 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   } catch (err) {
     params.signal?.throwIfAborted();
     if (isClientE2eeRequiredError(err)) throw err;
-    if (params.allowCacheFallback === false || minSettingsVersion !== null || isAccountSettingsContentUnavailableError(err)) {
+    if (incumbentUsesDifferentKeys || params.allowCacheFallback === false || minSettingsVersion !== null || isAccountSettingsContentUnavailableError(err)) {
       throw err;
     }
     logRefreshFailure('[accountSettings] fetch failed; falling back to cache', err);
-    return useCache();
+    return (await useCache()).context;
   }
 }

@@ -338,6 +338,19 @@ describe('Session launch cause transport', () => {
     }
   });
 
+  it('keeps a pre-webhook Account Settings refusal actionable through the public launch result', () => {
+    const failureCause = { code: 'ACCOUNT_SETTINGS_SCOPE_CHANGED', phase: 'client_start',
+      failureReason: 'account_changed', retryable: true } as const;
+    const child = buildChildExitBeforeWebhookFailure({ pid: 123, code: 1, signal: null, failureCause });
+    expect(child.errorDetail).toMatchObject({ code: failureCause.code, failureCause });
+    const response = SpawnSessionControlErrorResponseSchema.parse(projectSpawnSessionControlErrorResponse(child));
+    const result = SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({
+      errorCode: response.errorCode!, errorMessage: response.error, errorDetail: response.errorDetail,
+    }));
+    expect(result).toMatchObject({ type: 'error', retryable: true,
+      launchError: { code: failureCause.code, failureCause, message: expect.stringMatching(/account settings.*retry/i) } });
+  });
+
   it('preserves a typed launch cause through the daemon response and strict public creation result', () => {
     const cause = normalizeSpawnSessionErrorDetail({ kind: 'launch_error', code: 'ACP_CATALOG_UNAVAILABLE',
       message: 'Configured ACP catalog is unavailable: definition-required' });

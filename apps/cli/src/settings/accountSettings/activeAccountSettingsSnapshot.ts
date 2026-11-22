@@ -141,6 +141,19 @@ function slotFor(scopeKey: string): AccountSettingsSlot {
   return (readSharedHostSession() && hostedAccountSlots.get(scopeKey)) || currentSlot();
 }
 
+/** Bootstrap can inspect a warm Account before its first commit binds the Session. */
+export function captureAccountSettingsBootstrapIncumbent(scopeKey?: string) {
+  const own = currentSlot();
+  const incumbent = scopeKey && readSharedHostSession() && own.scopeKey === undefined
+    ? hostedAccountSlots.get(scopeKey)
+    : undefined;
+  return () => {
+    const current = currentSlot();
+    const slot = current === own && current.scopeKey === undefined ? incumbent ?? current : current;
+    return { snapshot: slot.active, lifetimeToken: slot.lifetimeToken };
+  };
+}
+
 /**
  * A hosted Session's first Account commit binds it to that Account's incumbent.
  * A bound Session never moves: a commit for another Account reaches that Account only.

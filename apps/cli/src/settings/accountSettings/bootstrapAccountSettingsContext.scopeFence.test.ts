@@ -1,5 +1,6 @@
 import { accountSettingsParse, type AccountSettings } from '@happier-dev/protocol';
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { readSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +11,7 @@ import type { Credentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { createActiveAccountSettingsConnectedAccountPurposeBindingStore } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { runAddedHostedSession, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { __resetApplyAccountSettingsToProcessEnvStateForTests } from '@/settings/applyAccountSettingsToProcessEnv';
 import { deriveSettingsSecretsReadKeysForCredentials } from '@/settings/secrets/settingsSecretsKey';
 import {
@@ -64,6 +66,73 @@ describe('bootstrapAccountSettingsContext active Account scope fence', () => {
     vi.restoreAllMocks();
     Object.assign(configuration, { activeServerDir: originalServerDir });
     await rm(serverDir, { recursive: true, force: true });
+  });
+
+  it('publishes both fast refreshes when two Sessions share the same Account lifetime', async () => {
+    let enterFirstRead!: () => void;
+    let releaseFirstRead!: () => void;
+    const firstReadStarted = new Promise<void>(resolve => { enterFirstRead = resolve; });
+    const firstReadHeld = new Promise<void>(resolve => { releaseFirstRead = resolve; });
+    const start = (settingsVersion: number, workingDirectory: string, beforeFetch: () => Promise<void>, env: NodeJS.ProcessEnv) => runAddedHostedSession({
+      environment: { HAPPIER_ACCOUNT_SETTINGS_MODE: 'auto', ...env },
+      workingDirectory, end() {},
+    }, async () => {
+      const base = await bootstrapAccountSettingsContext({
+        credentials: { token: accountToken('hosted-account', settingsVersion), encryption: null },
+        mode: 'fast', refresh: 'force',
+        deps: { readCache: async () => null, fetchFromServer: async () => {
+          await beforeFetch();
+          return { settingsContent: { t: 'plain', v: { scmIncludeCoAuthoredBy: true } }, settingsVersion };
+        } },
+      });
+      const refreshed = await base.whenRefreshed;
+      return { refreshed, active: getActiveAccountSettingsSnapshot(), includeCoAuthors: sessionProcessEnvironment().HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY };
+    });
+    // A different Account can already be present in the same process.
+    await bootstrapAccountSettingsContext({
+      credentials: { token: accountToken('other-account', 1), encryption: null },
+      refresh: 'force',
+      deps: { fetchFromServer: async () => ({ settingsContent: { t: 'plain', v: {} }, settingsVersion: 1 }) },
+    });
+    const first = start(2, join(serverDir, 'first'), () => {
+      enterFirstRead();
+      return firstReadHeld;
+    }, {});
+    await firstReadStarted;
+    try {
+      const second = await start(3, join(serverDir, 'second'), async () => {}, { HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY: '0' });
+      expect(second).toMatchObject({ refreshed: { settingsVersion: 3 }, active: { settingsVersion: 3 }, includeCoAuthors: '0' });
+    } finally {
+      releaseFirstRead();
+      await expect(first).resolves.toMatchObject({
+        refreshed: { settingsVersion: 3 }, active: { settingsVersion: 3 }, includeCoAuthors: '1',
+      });
+    }
+  });
+
+  it('re-reads Settings for a later hosted Session with new material for the same Account', async () => {
+    const start = (secretByte: number, settingsVersion: number) => runAddedHostedSession({
+      environment: { HAPPIER_ACCOUNT_SETTINGS_MODE: 'auto' },
+      workingDirectory: join(serverDir, String(settingsVersion)), end() {},
+    }, async () => {
+      const credentials = createCredentials(accountToken('hosted-encrypted-account', settingsVersion), secretByte);
+      const base = await bootstrapAccountSettingsContext({
+        credentials, mode: 'fast', refresh: 'force', expectedAccountEncryptionMode: 'e2ee',
+        deps: { readCache: async () => null, writeCache: async () => {}, fetchFromServer: async () => ({
+          settingsContent: { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'account_settings',
+            material: { type: 'legacy', secret: new Uint8Array(32).fill(secretByte) },
+            payload: { themePreference: secretByte === 1 ? 'light' : 'dark' },
+            randomBytes: length => new Uint8Array(length).fill(1) }) }, settingsVersion,
+        }) },
+      });
+      const refreshed = base.whenRefreshed ? await base.whenRefreshed : base;
+      return { base, refreshed, active: getActiveAccountSettingsSnapshot() };
+    });
+    const first = await start(1, 1);
+    const second = await start(2, 2);
+    expect(first.refreshed).toMatchObject({ settingsVersion: 1, settings: { themePreference: 'light' } });
+    expect(second).toMatchObject({ base: { settingsVersion: 2 }, refreshed: { settingsVersion: 2 }, active: { settingsVersion: 2 } });
+    expect(second.base.settingsSecretsReadKeys).not.toEqual(first.refreshed.settingsSecretsReadKeys);
   });
 
   it.each([
@@ -139,7 +208,13 @@ describe('bootstrapAccountSettingsContext active Account scope fence', () => {
     const incumbent = change === 'retirement' ? null : await bootstrapAccountSettingsContext({ credentials: credentialsB, refresh: 'force',
       deps: { fetchFromServer: async () => response(credentialsB, 3) } });
     release();
-    expect(await outcome).toMatchObject({ error: { code: 'ACCOUNT_SETTINGS_SCOPE_CHANGED' } });
+    const result = await outcome;
+    expect(result).toMatchObject({ error: { code: 'ACCOUNT_SETTINGS_SCOPE_CHANGED' } });
+    if ('error' in result) {
+      expect(readSessionRuntimeFailureCause(result.error)).toMatchObject({
+        code: 'ACCOUNT_SETTINGS_SCOPE_CHANGED', phase: 'client_start', failureReason: 'account_changed',
+      });
+    }
     expect(getActiveAccountSettingsSnapshot()?.settingsVersion ?? null).toBe(incumbent?.settingsVersion ?? null);
     expect(getActiveAccountSettingsSnapshot()?.settingsSecretsReadKeys ?? null).toEqual(incumbent?.settingsSecretsReadKeys ?? null);
   });

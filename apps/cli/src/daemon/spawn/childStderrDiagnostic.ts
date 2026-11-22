@@ -1,4 +1,5 @@
 import { trimBugReportTextHeadToMaxBytes, trimBugReportTextToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
+import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { isSessionSpawnBrokerUnavailable, SESSION_SPAWN_CHILD_STDERR_MAX_BYTES, type SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
 import { sanitizeConnectedServiceDiagnosticString } from '../connectedServices/runtimeAuth/sanitizeConnectedServiceDiagnosticString';
 import { readSessionRunnerFailureCause, SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
@@ -75,10 +76,14 @@ export function buildChildExitBeforeWebhookFailure(
     ...(stderrHead ? { stderrHead } : {}),
     ...(cause ? { cause } : {}),
   };
-  const message = formatChildExitBeforeWebhookMessage({ ...input, stderrTail: childExit.stderrHead })
-    + (childExit.cause ? `; ${childExit.cause.kind}: ${childExit.cause.specifierBasename}` : '');
+  const settingsRefusal = input.failureCause?.failureReason === 'account_changed'
+    ? readSessionStartupFailurePreview(input.failureCause.code)
+    : null;
+  const message = settingsRefusal ?? (formatChildExitBeforeWebhookMessage({ ...input, stderrTail: childExit.stderrHead })
+    + (childExit.cause ? `; ${childExit.cause.kind}: ${childExit.cause.specifierBasename}` : ''));
   const errorDetail = {
-    kind: 'launch_error', code: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
+    kind: 'launch_error',
+    code: (settingsRefusal && input.failureCause?.code) || SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
     message, childExit,
     ...(input.failureCause ? { failureCause: input.failureCause } : {}),
   } satisfies SessionSpawnLaunchErrorV1;

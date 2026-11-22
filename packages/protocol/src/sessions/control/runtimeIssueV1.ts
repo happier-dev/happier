@@ -131,6 +131,7 @@ export function isAgentIsolationLaunchMaterialFailureCode(value: unknown): value
  * their schema at lookup time so cyclic Protocol entry graphs can initialize. */
 export const SESSION_PREPARATION_FAILURE_PREVIEWS = {
   ...AGENT_ISOLATION_LAUNCH_MATERIAL_FAILURE_PREVIEWS,
+  ACCOUNT_SETTINGS_SCOPE_CHANGED: 'Account Settings changed during startup. Retry starting the session.',
   no_eligible_member: 'No eligible Connected Account is available. Review Connected Accounts, then retry the session.',
   no_eligible_group_member: 'No eligible Connected Account is available. Review Connected Accounts, then retry the session.',
   connected_account_purpose_catalog_unavailable: 'Default Connected Accounts are temporarily unavailable. Retry starting the session.',

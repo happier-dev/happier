@@ -103,14 +103,24 @@ describe('session host', () => {
     expect(await settledWithin(running.whenEnded)).toBeUndefined();
   });
 
-  it('preserves the failing Session cause over its local endpoint without borrowing another Session stderr', async () => {
-    const failureCause = { code: 'RUNNER_AGENT_SESSION_RUNTIME_SOURCE_MISSING', phase: 'client_start' as const,
-      failureReason: 'unknown' as const };
+  it.each(['command', 'background', 'before registration'] as const)('preserves a %s failure cause without ending the sibling Session', async delivery => {
+    const failureCause = { code: 'ACCOUNT_SETTINGS_SCOPE_CHANGED', phase: 'client_start' as const,
+      failureReason: 'account_changed' as const };
     const turn = deferred();
+    const startupStop = vi.fn(async () => {});
     await startHost(async argv => {
       if (argv[0] === 'healthy') return await turn.promise;
       const error = Object.assign(new Error('PRIVATE_BODY'), { failureCause });
-      endSessionCommand(reportSessionRunnerFailure(error));
+      if (delivery === 'command') {
+        endSessionCommand(reportSessionRunnerFailure(error));
+      } else if (delivery === 'background') {
+        const termination = registerRunnerTerminationHandlers({ process: hostProcess, exit: hostExit, onTerminate: () => undefined });
+        hostProcess.emit('unhandledRejection', error);
+        await termination.whenTerminated;
+      } else {
+        hostProcess.emit('unhandledRejection', error);
+        bindHostedSessionStop(startupStop);
+      }
     });
     const healthy = add('healthy');
     const failed = addLocalSessionHostSession({ hostPid: process.pid, request: {
@@ -120,6 +130,7 @@ describe('session host', () => {
       expect(await failed.admitted).toBe(true);
       expect(await failed.ended).toMatchObject({ exitCode: 1, failureCause });
       expect(await settledWithin(healthy, 50)).toBe('pending');
+      if (delivery === 'before registration') expect(startupStop).toHaveBeenCalledOnce();
     } finally {
       turn.resolve();
       await healthy;
