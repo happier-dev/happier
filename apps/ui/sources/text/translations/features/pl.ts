@@ -3603,7 +3603,7 @@ const artifactsBrowserTranslations = { pl: {
                     teamLogos: 'Logo zespołów',
                 },
                 facts: {
-                    artifacts: 'Dokumenty, tablice i pliki ze starymi wersjami',
+                    artifacts: 'Dokumenty, tablice i pliki',
                     artifactOldVersions: 'Historia przechowywana dla twoich artefaktów',
                     pluginArtifacts: 'Zapisane dla ciebie przez wtyczki',
                     discussionAttachments: 'Pliki w dyskusjach, których jesteś właścicielem',

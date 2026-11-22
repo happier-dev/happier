@@ -146,7 +146,7 @@ function DiscussionStorage(props: Readonly<{
     const failed = read.status === 'failed';
     return (
         <DiscussionStorageView totalBytes={read.inventory?.totalBytes ?? null} accountTotalBytes={props.accountTotalBytes}
-            files={files} presentation={props.presentation} onRetry={failed ? read.retry : null} onMore={read.more}
+            files={files} presentation={props.presentation} discussionTitle={source.title} onRetry={failed ? read.retry : null} onMore={read.more}
             loadingMore={read.loadingMore} busy={removal.busy} onShowInMessage={showInMessage} onRemove={remove} />
     );
 }

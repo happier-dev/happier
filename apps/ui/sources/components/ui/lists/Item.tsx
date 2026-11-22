@@ -312,6 +312,11 @@ export interface ItemProps {
      */
     keepChevronWithRightElement?: boolean;
     /**
+     * Keep the chevron's place, empty, when this row does not navigate, so a section whose rows mix navigating and
+     * static rows (Settings › Storage's kinds) keeps its trailing figures in one column.
+     */
+    reservesChevron?: boolean;
+    /**
      * Render `rightElement` as a sibling of the row Pressable. Use this
      * when the right accessory contains its own Pressable/Switch/menu controls;
      * this keeps one activation owner per control on every platform and avoids
@@ -930,6 +935,7 @@ function ItemRow(props: ItemProps & Readonly<{
         detailStyle,
         showChevron = true,
         keepChevronWithRightElement = false,
+        reservesChevron = false,
         rightElementOutsidePressable = false,
         rightElementPassive = false,
         pressTargetEndFadePx,
@@ -1309,8 +1315,9 @@ function ItemRow(props: ItemProps & Readonly<{
             fieldSaturatedAtPx,
         });
     }, [fieldAccessory, fieldAccessorySiblingPx, fieldSaturatedAtPx, isPageRow, measuresFieldLabel, measuresTitle, pageRowInsetPx, rowWidthPx, described, theme.space.s8, titleAccessory, titleNaturalWidthPx, titleTrailingWidthPx]);
-    const detailTrailingPx = theme.space.s8 + (rightElement != null || showAccessory ? 8 : 0)
-        + (showAccessory ? ITEM_CHEVRON_SIZE[resolvedIconDensity] + theme.space.s4 : 0);
+    const chevronSlotShown = showAccessory || reservesChevron;
+    const detailTrailingPx = theme.space.s8 + (rightElement != null || chevronSlotShown ? 8 : 0)
+        + (chevronSlotShown ? ITEM_CHEVRON_SIZE[resolvedIconDensity] + theme.space.s4 : 0);
     // A page section reserves the leading column for all its rows when any row has an icon or mark.
     const reservesLeadingColumn = useSectionLeadingColumn(isPageRow && reservesSectionLeadingColumn && (icon != null || leftElement != null));
     const { beneath: detailBeneath, inlineMaxWidthPx: detailInlineMaxWidthPx } = resolveHappierPageRowDetailLayout({
@@ -1645,7 +1652,8 @@ function ItemRow(props: ItemProps & Readonly<{
         <View key="title-trailing-measure" style={styles.titleTrailingMeasure} onLayout={handleTitleTrailingLayout}>{titleAccessory}</View>
     ) : titleAccessory;
     const chevronAccessory = React.useMemo(() => {
-        if (!showAccessory) return null;
+        // A reserved slot is layout only: the chevron's own width and gap, empty.
+        if (!showAccessory) return reservesChevron ? <View style={{ marginLeft: theme.space.s4, width: chevronSize }} /> : null;
         // A disclosure header's caret turns to show whether the row is open; a destination's points onward.
         if (accessibilityExpanded !== undefined) {
             return (
@@ -1662,7 +1670,7 @@ function ItemRow(props: ItemProps & Readonly<{
                 style={{ marginLeft: theme.space.s4 }}
             />,
         );
-    }, [accessibilityExpanded, chevronSize, showAccessory, theme.colors.text.secondary, theme.space.s4]);
+    }, [accessibilityExpanded, chevronSize, reservesChevron, showAccessory, theme.colors.text.secondary, theme.space.s4]);
 
     // A sheet row's hairline is the sheet's: its divider colour, from the row's text to the sheet's trailing edge
     // (`happierPageRowDividerInset`). A page row outside a sheet (a bare or columned section) draws the same

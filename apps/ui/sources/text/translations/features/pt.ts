@@ -3585,7 +3585,7 @@ const artifactsBrowserTranslations = { pt: {
                     teamLogos: 'Logos de equipe',
                 },
                 facts: {
-                    artifacts: 'Documentos, quadros e arquivos, com as versões antigas',
+                    artifacts: 'Documentos, quadros e arquivos',
                     artifactOldVersions: 'Histórico guardado dos seus artefatos',
                     pluginArtifacts: 'Salvos por plugins para você',
                     discussionAttachments: 'Arquivos em discussões que são suas',

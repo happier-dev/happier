@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Dimensions } from 'react-native';
 import { act } from 'react-test-renderer';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -52,7 +53,9 @@ vi.mock('@/text', async () => {
   return createTextModuleMock();
 });
 
+import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { DiscussionDetailsPanel } from '@/components/discussions/DiscussionDetailsPanel';
+import { buildDiscussionStorageRouteHref } from '@/components/discussions/discussionRoutes';
 import { WorkspaceRouteBody as DiscussionStorageRoute } from '@/app/(app)/discussions/storage';
 import type { DiscussionStorageSource } from './DiscussionStorage';
 
@@ -521,6 +524,48 @@ describe('Storage from a Discussion’s Details (storage-view lab scene 5 A)', (
         // The phone page has no share of the Account, so it reads nothing else.
         expect(page.findHostByTestId('storage:discussion:share')).toBeNull();
         expect(rowMenus(page).get(VIDEO)).not.toContain('remove');
+        expect(rowMenus(page).get(TRACE)).toContain('remove');
+      } finally {
+        await page.unmount();
+      }
+    } finally {
+      await disconnect();
+    }
+  });
+
+  it('heads the phone’s pushed page with a Back that names the Discussion, and keeps each file’s “…”', async () => {
+    // A phone window: the workspace hosts the pushed page under its own navigation bar.
+    vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 2, fontScale: 1 });
+    const disconnect = await serve();
+    try {
+      const scope = getActiveServerAccountScope();
+      if (!scope) throw new Error('No active Account');
+      const url = new URL(buildDiscussionStorageRouteHref({ serverId: scope.serverId, discussionId: DISCUSSION }), 'https://app.test');
+      const params = Object.fromEntries(url.searchParams);
+      routerMock.state = { pathname: url.pathname, params };
+      const back = vi.fn();
+      const page = await renderScreen(
+        <AppPaneProvider>
+          <DestinationInstanceHost tabId="discussion-storage" phone ref={{ kind: 'discussionStorage', params }}
+            pathname={url.pathname} focused visible
+            navigation={{ push: () => {}, replace: () => {}, back, canGoBack: () => true }}>
+            <DiscussionStorageRoute />
+          </DestinationInstanceHost>
+        </AppPaneProvider>,
+      );
+      try {
+        await layOut(page);
+        await vi.waitFor(() => expect(page.findHostByTestId(`storage:discussion:file:${TRACE}`)).not.toBeNull());
+        // The bar names where Back returns (a Discussion this device has not loaded goes by its kind).
+        const bar = page.findHostByTestId('workspace-destination-header');
+        expect(bar).not.toBeNull();
+        expect(textOf(bar)).toContain('session.collaboration.discussion.title');
+        const backButton = bar!.findAll((node) => node.props.accessibilityLabel === 'common.back'
+          && typeof node.props.onPress === 'function').at(0);
+        expect(backButton).toBeDefined();
+        await act(async () => { invokeTestInstanceHandler(backButton!, 'onPress'); });
+        expect(back).toHaveBeenCalledTimes(1);
+        expect(rowMenus(page).get(VIDEO)).toEqual(expect.arrayContaining(['show']));
         expect(rowMenus(page).get(TRACE)).toContain('remove');
       } finally {
         await page.unmount();

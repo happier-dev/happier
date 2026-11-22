@@ -3595,7 +3595,7 @@ const artifactsBrowserTranslations = { ru: {
                     teamLogos: 'Логотипы команд',
                 },
                 facts: {
-                    artifacts: 'Документы, доски и файлы со старыми версиями',
+                    artifacts: 'Документы, доски и файлы',
                     artifactOldVersions: 'История ваших артефактов',
                     pluginArtifacts: 'Сохранены плагинами для вас',
                     discussionAttachments: 'Файлы в ваших обсуждениях',

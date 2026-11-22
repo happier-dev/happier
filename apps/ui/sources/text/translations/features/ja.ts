@@ -3549,7 +3549,7 @@ const artifactsBrowserTranslations = { ja: {
                     teamLogos: 'チームのロゴ',
                 },
                 facts: {
-                    artifacts: 'ドキュメント、ボード、ファイルと古いバージョン',
+                    artifacts: 'ドキュメント、ボード、ファイル',
                     artifactOldVersions: 'アーティファクトの保存された履歴',
                     pluginArtifacts: 'プラグインが保存したもの',
                     discussionAttachments: '所有するディスカッションのファイル',

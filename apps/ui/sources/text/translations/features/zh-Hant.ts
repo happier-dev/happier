@@ -3495,7 +3495,7 @@ const artifactsBrowserTranslations = { 'zh-Hant': {
                     teamLogos: '團隊標誌',
                 },
                 facts: {
-                    artifacts: '文件、看板和檔案，含舊版本',
+                    artifacts: '文件、看板和檔案',
                     artifactOldVersions: '為你的成品保留的歷史',
                     pluginArtifacts: '外掛為你儲存的內容',
                     discussionAttachments: '你擁有的討論中的檔案',

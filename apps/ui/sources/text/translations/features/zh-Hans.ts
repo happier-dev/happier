@@ -3494,7 +3494,7 @@ const artifactsBrowserTranslations = { 'zh-Hans': {
                     teamLogos: '团队标志',
                 },
                 facts: {
-                    artifacts: '文档、看板和文件，含旧版本',
+                    artifacts: '文档、看板和文件',
                     artifactOldVersions: '为你的工件保留的历史',
                     pluginArtifacts: '插件为你保存的内容',
                     discussionAttachments: '你拥有的讨论中的文件',

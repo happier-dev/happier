@@ -590,7 +590,7 @@ export const artifactsBrowserTranslationsEnglish = { en: {
                     teamLogos: 'Team logos',
                 },
                 facts: {
-                    artifacts: 'Documents, boards and files, with their old versions',
+                    artifacts: 'Documents, boards and files',
                     artifactOldVersions: 'History kept for your Artifacts',
                     pluginArtifacts: 'Saved by plugins for you',
                     discussionAttachments: 'Files in Discussions you own',

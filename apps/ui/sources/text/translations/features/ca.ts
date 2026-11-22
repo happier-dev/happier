@@ -3591,7 +3591,7 @@ const artifactsBrowserTranslations = { ca: {
                     teamLogos: 'Logotips d’equip',
                 },
                 facts: {
-                    artifacts: 'Documents, taulers i fitxers, amb les seves versions antigues',
+                    artifacts: 'Documents, taulers i fitxers',
                     artifactOldVersions: 'Historial desat dels teus artefactes',
                     pluginArtifacts: 'Desats per connectors per a tu',
                     discussionAttachments: 'Fitxers en discussions que són teves',

@@ -3598,7 +3598,7 @@ const artifactsBrowserTranslations = { it: {
                     teamLogos: 'Loghi dei team',
                 },
                 facts: {
-                    artifacts: 'Documenti, bacheche e file, con le loro versioni precedenti',
+                    artifacts: 'Documenti, bacheche e file',
                     artifactOldVersions: 'Cronologia conservata dei tuoi artefatti',
                     pluginArtifacts: 'Salvati per te dai plugin',
                     discussionAttachments: 'File nelle discussioni di tua proprietà',

@@ -74,6 +74,8 @@ export function DiscussionStorageView(props: Readonly<{
     accountTotalBytes: number | null;
     files: readonly DiscussionStorageFile[];
     presentation: 'pane' | 'page';
+    /** The Discussion's title, for the page's Back; `null` while this device has not loaded it. */
+    discussionTitle?: string | null;
     /** The read failed and nothing is kept: the sentence says so and offers Try again. */
     onRetry?: (() => void) | null;
     /** Reads the owner's next page; `null` when it has none. */
@@ -115,7 +117,9 @@ export function DiscussionStorageView(props: Readonly<{
         {/* The page's header starts it on the page's edge; in the pane the list keeps its own leading space. */}
         <ItemList testID="storage:discussion" style={props.presentation === 'page' ? PAGE_LIST_STYLE : stylesheet.paneList}>
             {props.presentation === 'page' ? (
-                <PageHeader title={t('artifacts.browser.storageView.title')} description={t('artifacts.browser.storageView.discussion.description')} />
+                // The bar above the large title names where Back returns: the Discussion (lab "‹ Checkout bug triage").
+                <PageHeader title={t('artifacts.browser.storageView.title')} description={t('artifacts.browser.storageView.discussion.description')}
+                    navigationTitle={props.discussionTitle || t('session.collaboration.discussion.title')} alwaysShowBack />
             ) : null}
             {props.onRetry ? (
                 <StorageSaySection testID="storage:discussion:say" lead={t('artifacts.browser.storageView.say.failed')}

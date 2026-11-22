@@ -19,6 +19,7 @@ const NARROW_BAR_WIDTH = 56;
  * glyph, name, evidence; a bar against the largest kind; its size; and what can go or a quiet fact. On a phone the
  * size rides the title line and the bar and the trailing fact sit beneath (lab `rs` Hp). Machines › Storage's kinds
  * and the Account's kinds are each one of these; the caller owns what the trailing column says and what a press opens.
+ * A row that opens nothing keeps the chevron's place, so its size stays in the column of the rows that do.
  */
 export const StorageBreakdownRow = React.memo(function StorageBreakdownRow(
   props: Readonly<{
@@ -68,6 +69,7 @@ export const StorageBreakdownRow = React.memo(function StorageBreakdownRow(
         subtitleLines={1}
         showChevron={props.onPress !== undefined}
         keepChevronWithRightElement
+        reservesChevron
         onPress={props.onPress}
         showDivider={props.showDivider}
         selected={props.selected}
@@ -92,6 +94,7 @@ export const StorageBreakdownRow = React.memo(function StorageBreakdownRow(
       subtitleLines={1}
       showChevron={props.onPress !== undefined}
       keepChevronWithRightElement
+      reservesChevron
       onPress={props.onPress}
       showDivider={props.showDivider}
       selected={props.selected}
