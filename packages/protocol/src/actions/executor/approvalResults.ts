@@ -1,4 +1,5 @@
 import { buildApprovalOriginFailure } from '../../approvals/approvalStaleReason.js';
+import { buildApprovalAutomaticCheckRefusal } from '../../approvals/approvalAutomaticChecks.js';
 import { ActionIdSchema, type ActionId } from '../actionIds.js';
 import type { ActionExecuteResult, ActionExecutorContext } from './types.js';
 import { getActionSpec } from '../actionSpecs.js';
@@ -190,7 +191,13 @@ export function buildApprovalDecisionResult(request: ApprovalRequest, freshExecu
       return withNotices(buildApprovalOriginFailure(details.data.reason));
     }
   }
-  const observedExecution = projectApprovalExecutionForObservation(request);
+  // A denied Override keeps its decision status and the already recorded check
+  // failure. Reuse the Wait refusal envelope without adding a stored execution.
+  const observedExecution = request.v === 2 && request.status === 'rejected'
+    && request.automaticChecks?.phase === 'override' && request.decision?.kind === 'reject'
+    ? projectApprovalExecutionFailureV2({ request, executedAtMs: request.decision.decidedAtMs,
+        failure: buildApprovalAutomaticCheckRefusal(request.automaticChecks.results) })
+    : projectApprovalExecutionForObservation(request);
   try {
     return withNotices({
       ok: true,

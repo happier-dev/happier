@@ -1,6 +1,7 @@
 import type { ApprovalRequestV2, StoredApprovalRequestV2 } from '../../approvals/approvalRequestV1.js';
 import { ApprovalRequestV2Schema } from '../../approvals/approvalRequestV1.js';
-import { ApprovalAutomaticChecksV1Schema, actionAutomationTriggerKeyV1, type ActionAutomationResultV1, type ApprovalAutomaticChecksV1 } from '../../approvals/approvalAutomaticChecks.js';
+import { ApprovalAutomaticChecksV1Schema, actionAutomationTriggerKeyV1, buildApprovalAutomaticCheckRefusal,
+  type ActionAutomationResultV1, type ApprovalAutomaticChecksV1 } from '../../approvals/approvalAutomaticChecks.js';
 import { settleApprovalRequestReplayInputs, resolveApprovalRequestExecutionInput } from '../../approvals/approvalRequestTransition.js';
 import { projectApprovalExecutionFailureV2, readApprovalExecutionFailure } from '../../approvals/approvalExecutionFailure.js';
 import { WorkflowFinalResultV1Schema, projectWorkflowFinalResultDeliverableTextV1 } from '../../workflows/workflowProgressV1.js';
@@ -241,9 +242,7 @@ export function createApprovalAutomaticContinuationV1<Read extends AutomaticAppr
       const failure = await write(artifactId, next, context);
       return failure ?? { kind: 'pending', request: next };
     }
-    const failure: ActionExecuteFailure = { ok: false, effectAttempted: false,
-      errorCode: 'action_interception_rejected', error: 'action_interception_rejected',
-      details: { message: failed.map(result => result.reason).filter(Boolean).join('\n') } };
+    const failure = buildApprovalAutomaticCheckRefusal(failed);
     const next = owner.refusal(request, updatedAtMs, { ...checks, phase: 'refused', results }, failure);
     const writeFailure = await write(artifactId, next, context);
     return writeFailure ?? { kind: 'refused', request: next, failure };

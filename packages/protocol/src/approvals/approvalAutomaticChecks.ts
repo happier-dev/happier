@@ -3,7 +3,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { AutomationSubjectV1Schema, AutomationSubjectContextV1Schema } from '../automations/automationSubjectV1.js';
 import { ActionAutomationTriggerReferenceV1Schema, AutomationActionConsentTriggerSchema } from '../automations/automationActionTriggerV1.js';
 import { ApprovalDecisionV2Schema } from './approvalRequestV1.js';
-import { ActionAutomationNoticeV1Schema } from '../actions/actionExecutionResult.js';
+import { ActionAutomationNoticeV1Schema, type ActionExecuteFailure } from '../actions/actionExecutionResult.js';
 
 const id = () => z.string().check(z.minLength(1));
 const triggerRef = () => AutomationActionConsentTriggerSchema.shape.consentFor.shape;
@@ -36,6 +36,12 @@ export const ActionAutomationResultV1Schema = lazyZodSchema(() => z.strictObject
   resultId: z.optional(id()), reason: z.optional(id()),
 }));
 export type ActionAutomationResultV1 = z.infer<typeof ActionAutomationResultV1Schema>;
+
+export function buildApprovalAutomaticCheckRefusal(results: readonly ActionAutomationResultV1[]): ActionExecuteFailure {
+  const message = results.flatMap(result => result.outcome !== 'passed' && result.reason ? [result.reason] : []).join('\n');
+  return { ok: false, effectAttempted: false,
+    errorCode: 'action_interception_rejected', error: 'action_interception_rejected', details: { message } };
+}
 
 export function actionAutomationTriggerKeyV1(ref: Readonly<{ automationId: string; triggerId: string }>): string {
   return JSON.stringify([ref.automationId, ref.triggerId]);

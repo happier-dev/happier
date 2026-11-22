@@ -287,6 +287,16 @@ describe('approval result delivery is a receipt beside the run record', () => {
       expect(flow.effects).toEqual([]);
       expect(flow.deliveries).toEqual([expect.objectContaining({ sessionId: 'origin-session',
         localId: 'approval-result:title-proposal' })]);
-      expect(JSON.parse(flow.deliveries[0]!.message)).toMatchObject({ status });
+      expect(JSON.parse(flow.deliveries[0]!.message)).toMatchObject({
+        artifactId: 'title-proposal',
+        actionId: 'session.title.set',
+        status,
+        execution: {
+          ok: false,
+          effectAttempted: false,
+          errorCode: 'action_interception_rejected',
+          details: { message: 'command_failed' },
+        },
+      });
   });
 });
