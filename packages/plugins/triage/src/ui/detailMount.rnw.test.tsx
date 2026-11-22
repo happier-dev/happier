@@ -951,6 +951,7 @@ async function mountShell(
         deferLinkedEntry?: boolean;
         linkedSessionCount?: number;
         sessionTitle?: string;
+        archivedSessionId?: string;
         hostedDetail?: boolean;
         offerPrimaryWrite?: boolean;
         tabbedDetail?: boolean;
@@ -1095,7 +1096,8 @@ async function mountShell(
                 } }),
                 readSession: ({ sessionId }) => ({
                     sessionId, title: options.sessionTitle ?? harness.readSessionTitle(sessionId),
-                    lifecycle: 'active', runtime: 'waiting', operational: 'ready',
+                    lifecycle: sessionId === options.archivedSessionId ? 'archived' : 'active',
+                    runtime: 'waiting', operational: 'ready',
                     workStatus: { state: 'ready', bucket: 'idle', tone: 'neutral', attentionType: null, word: 'Ready' }, pendingPermissions: [],
                 }),
                 notify: async (notification) => { options.onNotification?.(notification); },
@@ -2563,6 +2565,17 @@ describe('opening a row into the source detail', () => {
         expect(properties()).toBeNull();
         await act(async () => { await shell.press(await shell.getByRole('tab', { name: 'Overview' })); });
         await vi.waitFor(() => expect(properties()).not.toBeNull());
+    });
+
+    it('selects an archived linked Session from its card with a query in the selected detail route', async () => {
+        const sessionId = 'session-linked-002';
+        const shell = await mountShell({ subPath: buildTriageRouteSubPathV1({
+            ...TRIAGE_ROUTE_DEFAULT_LENS_V1, query: '56',
+            selection: { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' },
+        }), noScannedEntries: true, linkedSessionCount: 2, activeSurface: true, archivedSessionId: sessionId });
+        const card = await shell.findByRole('button', { name: `Linked ${sessionId}` });
+        await act(async () => { await shell.press(card); });
+        await expect(shell.getByRole('group', { name: `Session ${sessionId}` })).resolves.toBeDefined();
     });
 
     it('rereads the relationship after unlink and stops presenting the removed Session', async () => {
