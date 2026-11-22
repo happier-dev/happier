@@ -680,6 +680,72 @@ it.each(['surface', 'Action control', 'Review New Task control', 'Review selecti
     }
 });
 
+it.each([false, true])('settles a cold contributed Action after its demanded Machine declaration read (absent=%s)', async absent => {
+    const { acquireCurrentContributedAction } = await import('@/components/appShell/currentUiContext/contributedActionInvocation');
+    const { useAppShellPluginUiProjectionSubscription } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+    const { resolvePluginUiClientExecutablePlatform } = await import('@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness');
+    let releaseProjection!: () => void;
+    const projectionGate = new Promise<void>(resolve => { releaseProjection = resolve; });
+    const { accountId, pluginId, machines, home, requestsByMachineId } = await serveSourceFleet({
+        writeAction: true, projectionGate,
+    });
+    let tree: Awaited<ReturnType<typeof renderWithAppProviders>> | undefined;
+    let subscription: ReturnType<typeof useAppShellPluginUiProjectionSubscription> | undefined;
+    const controller = new AbortController();
+    try {
+        await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
+        const serverId = home.homes.home!.id;
+        storage.getState().applyMachines(machines, true, { sourceServerId: serverId });
+        observeMachinePresenceForTest({ serverId, accountId }, machines.map(machine => machine.id));
+        const { sync } = await import('@/sync/sync');
+        await sync.refreshPluginAccountAvailability();
+        const lifetime = captureActiveServerAccountScopeLifetime()!;
+        function Probe() { subscription = useAppShellPluginUiProjectionSubscription(); return null; }
+        tree = await renderWithAppProviders(<AppShellPluginUiProjectionProvider>
+            <PluginSurfaceProjectionDemand pluginId={pluginId} accountScope={lifetime.scope} />
+            <Probe />
+        </AppShellPluginUiProjectionProvider>);
+        await waitForHomeGovernance(() => {
+            expect(requestsByMachineId.size).toBe(1);
+            expect(readCurrentAppShellPluginUiExecutionOriginCandidates(pluginId, {
+                scope: lifetime.scope, declarationsOnly: true,
+            }).establishingTargets).toHaveLength(machines.length);
+        });
+        if (!subscription) throw new Error('Expected AppShell subscription');
+        const publication = subscription;
+        const readProjection = () => readCurrentAppShellPluginUiProjection({ scope: lifetime.scope, declarationsOnly: true });
+        expect(readProjection()?.actionsById[`${pluginId}/write`]).toBeUndefined();
+        const admission = {
+            read: () => {
+                const value = publication.getSnapshot();
+                return { projection: value.pluginUiProjection, platform: resolvePluginUiClientExecutablePlatform(),
+                    accountCensusPending: false, activation: value.clientExecutableActivation,
+                    mountedActionProjections: value.mountedActionProjections, accountLifetime: value.accountLifetime };
+            },
+            subscribe: publication.subscribe,
+        };
+        // Another plugin's read is not a reason to hold an unknown Action.
+        expect(await acquireCurrentContributedAction({ readProjection, admission, scope: lifetime.scope,
+            identity: { pluginId: 'unknown.plugin', localId: 'write' }, isCurrent: lifetime.isCurrent })).toBeNull();
+        let outcome: Awaited<ReturnType<typeof acquireCurrentContributedAction>> | undefined;
+        const pending = acquireCurrentContributedAction({ readProjection, admission, scope: lifetime.scope,
+            identity: { pluginId, localId: absent ? 'absent' : 'write' }, signal: controller.signal,
+            isCurrent: lifetime.isCurrent }).then(value => { outcome = value; });
+        await flushHookEffects({ cycles: 3 });
+        expect(outcome).toBeUndefined();
+        releaseProjection();
+        await pending;
+        if (absent) expect(outcome).toBeNull();
+        else expect(outcome?.action).toMatchObject({ pluginId, id: 'write' });
+        expect(requestsByMachineId.size).toBe(1);
+    } finally {
+        controller.abort();
+        releaseProjection();
+        if (tree) await act(async () => tree.unmount());
+        await home.dispose();
+    }
+});
+
 it('repopulates the shipped Channels Settings catalog from a restored stale origin after a cold reload', async () => {
     const { accountId, pluginId, machines, home, requestsByMachineId, manifestReadsByMachineId } = await serveSourceFleet({ machineOnly: true, channels: true });
     let tree: Awaited<ReturnType<typeof renderWithAppProviders>> | undefined;

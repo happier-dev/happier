@@ -15,6 +15,7 @@ type CommittedProjectionBinding = Readonly<{
     translationRuntime?: PluginUiTranslationRuntime;
     getVoiceProviderActivation?: (providerId: string) => Promise<void> | null;
     readRegistrySourcesPending?: (input?: AppShellPluginUiProjectionRead) => boolean;
+    readExecutionOriginSelectionPending?: (pluginId: string, input: AppShellPluginUiProjectionRead) => boolean;
     disposeSource(): void;
 }>;
 let committed: CommittedProjectionBinding | null = null;
@@ -61,6 +62,11 @@ export function readCurrentAppShellPluginUiProjection(input?: AppShellPluginUiPr
     return committed?.read(input) ?? null;
 }
 
+/** Administration owns whether this plugin's selected source is still being discovered. */
+export function readCurrentAppShellPluginUiExecutionOriginSelectionPending(pluginId: string, input: AppShellPluginUiProjectionRead): boolean {
+    return committed?.readExecutionOriginSelectionPending?.(pluginId, input) ?? false;
+}
+
 /** The publication's fact that a registry source may still arrive; without a published app shell nothing will. */
 export function readCurrentAppShellRegistrySourcesPending(input?: AppShellPluginUiProjectionRead): boolean {
     return committed?.readRegistrySourcesPending?.(input) ?? false;
@@ -86,6 +92,7 @@ export function publishCommittedAppShellPluginUiProjection(
     getVoiceProviderActivation?: (providerId: string) => Promise<void> | null,
     readRegistrySourcesPending?: (input?: AppShellPluginUiProjectionRead) => boolean,
     acquireCandidates?: (pluginId: string) => () => void,
+    readExecutionOriginSelectionPending?: (pluginId: string, input: AppShellPluginUiProjectionRead) => boolean,
 ): () => void {
     let unsubscribe: (() => void) | undefined;
     const binding: CommittedProjectionBinding = {
@@ -95,6 +102,7 @@ export function publishCommittedAppShellPluginUiProjection(
         translationRuntime,
         getVoiceProviderActivation,
         readRegistrySourcesPending,
+        readExecutionOriginSelectionPending,
         disposeSource() { unsubscribe?.(); unsubscribe = undefined; },
     };
     committed?.disposeSource();

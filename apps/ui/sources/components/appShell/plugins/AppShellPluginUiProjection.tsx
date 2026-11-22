@@ -389,13 +389,19 @@ export function AppShellPluginUiProjectionValueProvider(props: Readonly<{
             const snapshot = props.publication.getSnapshot();
             return snapshot.accountLifetime !== lifetime || snapshot.registrySourcesPending;
         };
+        const readExecutionOriginSelectionPending = (pluginId: string, input: AppShellPluginUiProjectionRead) => {
+            if (!lifetime?.isCurrent() || !areServerAccountScopesEqual(input.scope, lifetime.scope)) return false;
+            const snapshot = props.publication?.getSnapshot();
+            return snapshot?.accountLifetime === lifetime
+                && snapshot.executionOriginReportsByPluginId.get(pluginId)?.loading === true;
+        };
         // The publication owner replaces the incumbent binding atomically.
         // Withdrawing it before replacement would notify readers twice.
         const publication = props.publication;
         committedProjectionCleanup.current = publishCommittedAppShellPluginUiProjection(read, readCandidates,
             publication ? listener => publication.subscribe(listener, 'committed') : undefined, translationRuntime,
             providerId => valueRef.current.getVoiceProviderActivation?.(providerId) ?? null, readRegistrySourcesPending,
-            publication?.acquireExecutionOriginDemand);
+            publication?.acquireExecutionOriginDemand, readExecutionOriginSelectionPending);
     }, [lifetime, props.publication, standaloneProjection, standalonePhase, standaloneDeclarationReady, standaloneCandidates, standaloneSkills, translationRuntime]);
     React.useLayoutEffect(() => () => {
         committedProjectionCleanup.current?.();
@@ -473,11 +479,12 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         pluginId: string, reportLifetime: ActiveServerAccountScopeLifetime | null,
         origin: PluginMachineExecutionOriginV1 | null, selectableOrigins: readonly PluginMachineExecutionOriginV1[],
         hasStoredTarget = false,
+        loading = false,
     ) => {
         // The unscoped bootstrap has no Account lifetime to distinguish Homes.
         // An old child's effect must not publish into another Home's sources.
         if (projectionPublication.readActiveServerId() !== activeServer.serverId) return;
-        projectionPublication.publishExecutionOrigin(pluginId, reportLifetime, origin, selectableOrigins, hasStoredTarget);
+        projectionPublication.publishExecutionOrigin(pluginId, reportLifetime, origin, selectableOrigins, hasStoredTarget, loading);
     }, [activeServer.serverId, projectionPublication]);
     const accountArtifactProjectionSource = React.useRef<PluginUiReactNativeRuntimeProjectionSource | null>(null);
     React.useLayoutEffect(() => {
@@ -1001,6 +1008,7 @@ const AppShellPluginExecutionOriginSelection = React.memo(function AppShellPlugi
         origin: PluginMachineExecutionOriginV1 | null,
         selectableOrigins: readonly PluginMachineExecutionOriginV1[],
         hasStoredTarget: boolean,
+        loading: boolean,
     ) => void;
 }>): null {
     const classifyRelease = useActivePluginAccountAvailabilityReleaseClassifier(props.pluginId);
@@ -1023,8 +1031,8 @@ const AppShellPluginExecutionOriginSelection = React.memo(function AppShellPlugi
         .filter(isPluginMachineExecutionOriginCandidateSelectable)
         .map(getPluginExecutionOriginCandidateOrigin)), [selection.candidates]);
     React.useEffect(() => {
-        props.onOrigin(props.pluginId, props.accountLifetime, origin, selectableOrigins, hasStoredTarget);
-    }, [origin, selectableOrigins, hasStoredTarget, props.accountLifetime, props.onOrigin, props.pluginId]);
+        props.onOrigin(props.pluginId, props.accountLifetime, origin, selectableOrigins, hasStoredTarget, selection.loading);
+    }, [origin, selectableOrigins, hasStoredTarget, selection.loading, props.accountLifetime, props.onOrigin, props.pluginId]);
     return null;
 });
 

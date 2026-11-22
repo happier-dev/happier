@@ -37,6 +37,7 @@ export type AppShellAccountScopedPluginExecutionOriginReport = Readonly<{
     origin: PluginMachineExecutionOriginV1 | null;
     selectableOrigins?: readonly PluginMachineExecutionOriginV1[];
     hasStoredTarget?: boolean;
+    loading?: boolean;
 }>;
 type InstalledMachineDeclarations = Readonly<{
     models: readonly PluginUiProjectionModel[];
@@ -92,6 +93,7 @@ export type AppShellPluginUiProjectionSnapshot = Readonly<{
     destinationSurfacePlacements: ReturnType<typeof selectPluginDestinationSurfacePlacements>;
     settingsPages: readonly PluginUiProjectionModel['settingsPagesById'][string][];
     candidateFactsByPluginId: ReadonlyMap<string, PluginUiExecutionOriginCandidateFacts>;
+    executionOriginReportsByPluginId: ReadonlyMap<string, AppShellAccountScopedPluginExecutionOriginReport>;
     /**
      * Whether a registry source may still arrive: nothing published yet, the Account census pending, or a Machine
      * still establishing whose registry sources are unread. A Machine that answered them, or whose read failed, no
@@ -160,6 +162,7 @@ export const EMPTY_APP_SHELL_PLUGIN_UI_PROJECTION_SNAPSHOT: AppShellPluginUiProj
     currentnessForActiveAccountByMachineId: NO_CURRENTNESS,
     projectionUnion: EMPTY_UNION, pluginUiProjection: null, mountedActionProjections: EMPTY_MOUNTED_CLIENT_ACTION_PROJECTIONS,
     skillSourceIdentity: EMPTY_PLUGIN_SKILL_SOURCE_IDENTITY, candidateFactsByPluginId: NO_FACTS,
+    executionOriginReportsByPluginId: new Map(),
     destinationSurfacePlacements: NO_DESTINATION_PLACEMENTS, settingsPages: NO_SETTINGS_PAGES,
     connectedAccountResolution: Object.freeze({ kind: 'loading', descriptors: Object.freeze([]), conflicts: Object.freeze([]) }),
     registrySourcesPending: true, registrySourcesPendingTargets: NO_TARGETS });
@@ -173,7 +176,7 @@ export type AppShellPluginUiProjectionPublication = Readonly<{
         source: PluginUiClientExecutableProjectionSource | null): void;
     publishMachineCurrentness(machineId: string, lifetime: ActiveServerAccountScopeLifetime | null, currentness: PluginUiProjectionCurrentness): void;
     publishExecutionOrigin(pluginId: string, lifetime: ActiveServerAccountScopeLifetime | null, origin: PluginMachineExecutionOriginV1 | null,
-        selectableOrigins: readonly PluginMachineExecutionOriginV1[], hasStoredTarget?: boolean): void;
+        selectableOrigins: readonly PluginMachineExecutionOriginV1[], hasStoredTarget?: boolean, loading?: boolean): void;
     acquireExecutionOriginDemand(pluginId: string): () => void;
     prepareExecutionOriginSelection(pluginId: string, lifetime: ActiveServerAccountScopeLifetime): Promise<Readonly<{
         snapshot: AppShellPluginUiProjectionSnapshot;
@@ -258,6 +261,7 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             || previous.activeServerId !== snapshot.activeServerId
             || previous.pluginUiProjection !== snapshot.pluginUiProjection
             || previous.candidateFactsByPluginId !== snapshot.candidateFactsByPluginId
+            || previous.executionOriginReportsByPluginId !== snapshot.executionOriginReportsByPluginId
             || previous.projectionUnion.phase !== snapshot.projectionUnion.phase
             || previous.projectionUnion.interactionEnabled !== snapshot.projectionUnion.interactionEnabled
             || (previous.accountUiProjection === null) !== (snapshot.accountUiProjection === null)
@@ -717,6 +721,7 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             currentnessForActiveAccountByMachineId: currentness, projectionUnion, pluginUiProjection,
             mountedActionProjections: previous.mountedActionProjections, skillSourceIdentity,
             destinationSurfacePlacements, settingsPages, candidateFactsByPluginId, connectedAccountResolution,
+            executionOriginReportsByPluginId: originReports,
             registrySourcesPending, registrySourcesPendingTargets });
         if ((Object.keys(next) as (keyof AppShellPluginUiProjectionSnapshot)[]).every(key => next[key] === previous[key])) return;
         snapshot = next;
@@ -777,7 +782,7 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             schedulePublication();
         },
         publishExecutionOrigin(pluginId: string, accountLifetime: ActiveServerAccountScopeLifetime | null, origin: PluginMachineExecutionOriginV1 | null,
-            selectableOrigins: readonly PluginMachineExecutionOriginV1[], hasStoredTarget = false) {
+            selectableOrigins: readonly PluginMachineExecutionOriginV1[], hasStoredTarget = false, loading = false) {
             if (!sources || sources.accountLifetime !== accountLifetime || !isCurrent(accountLifetime)) return;
             // The pending Machine wave may introduce this plugin. The shared
             // derivation filters reports against the resulting admitted set.
@@ -785,9 +790,10 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             const current = originReports.get(pluginId);
             const sameOrigin = current?.origin === origin;
             if (current?.accountLifetime === accountLifetime && sameOrigin && (current.hasStoredTarget === true) === hasStoredTarget
+                && (current.loading === true) === loading
                 && (current.selectableOrigins?.length ?? 0) === selectableOrigins.length
                 && selectableOrigins.every((candidate, index) => candidate === current.selectableOrigins![index])) return;
-            originReports = new Map(originReports).set(pluginId, Object.freeze({ accountLifetime, origin, selectableOrigins, hasStoredTarget }));
+            originReports = new Map(originReports).set(pluginId, Object.freeze({ accountLifetime, origin, selectableOrigins, hasStoredTarget, loading }));
             if (!sameOrigin && (current?.origin || origin)) {
                 const next = new Map(selections);
                 if (origin) next.set(pluginId, origin);

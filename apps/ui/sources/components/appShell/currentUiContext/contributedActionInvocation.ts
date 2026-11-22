@@ -15,7 +15,8 @@ import { readPluginUiContributionOrigin, resolvePluginUiExecutionDeclaration, ty
 import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { areServerAccountScopesEqual, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { readCurrentAppShellPluginUiProjection } from '../plugins/committedPluginUiProjection';
+import { readCurrentAppShellPluginUiExecutionOriginSelectionPending, readCurrentAppShellPluginUiProjection,
+    subscribeCommittedAppShellPluginUiProjection } from '../plugins/committedPluginUiProjection';
 
 export type CurrentContributedAction = Readonly<{ action: PluginUiActionProjection }> & (
     | Readonly<{ kind: 'machine'; origin: PluginUiContributionOriginV1 }>
@@ -67,8 +68,14 @@ export async function acquireCurrentContributedAction(input: Readonly<{
         // declaration through replacement, including a temporary discovery gap;
         // only the returned registration pins an observation to an occurrence.
         if (resolveCurrentContributedAction(input.readProjection, input.identity)) return false;
-        // Only the Account census can supply a missing declaration here. An
-        // unread Machine catalog might never be requested by any surface.
+        // Administration's selected source can still be answering the surface's
+        // declaration demand. Unopened alternative Machines never hold this wait.
+        if (readCurrentAppShellPluginUiExecutionOriginSelectionPending(input.identity.pluginId, {
+            scope: owner.scope, declarationsOnly: true,
+        })) return true;
+        // A committed Machine publication can precede the AppShell value that
+        // owns its executable activation. Borrow that publication's settlement.
+        if (action && action !== createPluginUiProjectedActionResolver(admission?.projection?.actionsById)(input.identity)) return true;
         if (admission?.accountCensusPending) {
             return !action || !resolvePluginUiClientActionRefusal({ action, platform: admission.platform });
         }
@@ -77,12 +84,14 @@ export async function acquireCurrentContributedAction(input: Readonly<{
     const settlement = createPluginConnectionSettlement();
     let unsubscribeAdmission: (() => void) | undefined;
     let unsubscribeRegistration: (() => void) | undefined;
+    let unsubscribeProjection: (() => void) | undefined;
     const retirement = owner.onRetire(settlement.notify);
     try {
         const pending = settlement.wait({ isPending, isCurrent, signal: input.signal });
         if (pending) {
             unsubscribeAdmission = source.subscribe(settlement.notify);
             unsubscribeRegistration = getInstalledPluginUiClientExecutableComposition().subscribe(settlement.notify);
+            unsubscribeProjection = subscribeCommittedAppShellPluginUiProjection(settlement.notify);
             // Close the read/subscribe gap through the same push-driven waiter.
             settlement.notify();
             await pending;
@@ -94,6 +103,7 @@ export async function acquireCurrentContributedAction(input: Readonly<{
     } finally {
         unsubscribeAdmission?.();
         unsubscribeRegistration?.();
+        unsubscribeProjection?.();
         retirement.dispose();
         settlement.dispose();
     }
