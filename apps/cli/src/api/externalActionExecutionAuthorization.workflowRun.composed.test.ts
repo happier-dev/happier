@@ -76,9 +76,11 @@ describe('guest Workflow Run through public external Action ingress', () => {
       .map(transport => [mode, transport] as const)),
     ...(['plain', 'e2ee'] as const).flatMap(mode => (['managed-project-files', 'managed-project-files-override'] as const)
       .map(transport => [mode, transport] as const)),
+    ['e2ee', 'managed-without-project-files'] as const,
   ])('returns the actual guest admission or workspace failure (%s/%s)', async (mode, selectedTransport) => {
     const projectFilesCase = selectedTransport === 'managed-project-files' || selectedTransport === 'managed-project-files-override';
-    const transport = projectFilesCase ? 'managed' : selectedTransport;
+    const withoutProjectFiles = selectedTransport === 'managed-without-project-files';
+    const transport = projectFilesCase || withoutProjectFiles ? 'managed' : selectedTransport;
     const currentness = await createRequesterCurrentnessSocketHarness();
     onTestFinished(() => currentness.close());
     const secret = new Uint8Array(32).fill(63);
@@ -176,7 +178,9 @@ describe('guest Workflow Run through public external Action ingress', () => {
     const accountKey = deriveAccountMachineKeyFromRecoverySecret(secret);
     const contentPublicKey = nacl.box.keyPair.fromSecretKey(accountKey).publicKey;
     const authored = sealManagedMachinePresetContentV1({ presetId: 'preset', mode,
-      content: { v: 1, name: 'Workflow preset', launch, projectFiles: { kind: 'copy_once' } },
+      content: { v: 1, name: 'Workflow preset', launch,
+        ...(withoutProjectFiles ? {} : { projectFiles: { kind: 'copy_once' } }),
+      },
       ...(mode === 'e2ee' ? { recipientCensus: [{
         account: { kind: 'account' as const, accountId: 'account', firstName: 'Account', lastName: null, username: 'account', avatarUrl: null },
         readiness: { status: 'available' as const, contentPublicKey: Buffer.from(contentPublicKey).toString('base64'),
@@ -240,7 +244,7 @@ describe('guest Workflow Run through public external Action ingress', () => {
           installationId: managedCreation.controller.installationId, privateKey: controllerKeys.secretKey,
           serverHttpBaseUrl: 'https://home.example', ...(machineMaterial ? { material: machineMaterial } : {}),
         };
-        if (!checkedNegativeContinuations && transport === 'managed' && !projectFilesCase) {
+        if (!checkedNegativeContinuations && selectedTransport === 'managed') {
           checkedNegativeContinuations = true;
           for (const changedProject of [
             { ...project, directory: '/guest/another-project' },
@@ -456,14 +460,13 @@ describe('guest Workflow Run through public external Action ingress', () => {
       const key = resolveWorkflowRunDataKeyV1({ encryption,
         census: { ...keyCensus, dataEncryptionKey: ownerEnvelope, callerDataEncryptionKey: ownerEnvelope } });
       if (key.kind !== 'available') throw new Error('Missing accepted Workflow key');
-      expect(openWorkflowAcceptedSnapshotStoredEnvelopeV1({ ...key.encryption.runCrypto,
+      const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ ...key.encryption.runCrypto,
         binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account', runId },
-        envelope: parseWorkflowStoredContentEnvelopeV1(String(storage.acceptedEnvelope())) })).toMatchObject({
-        kind: 'available', content: { workspaceTarget: {
-          sessionPlacement: authoredProject.sessionPlacement,
-          projectFiles: authoredProject.sessionPlacement.projectFiles ?? { kind: 'copy_once' },
-        } },
-      });
+        envelope: parseWorkflowStoredContentEnvelopeV1(String(storage.acceptedEnvelope())) });
+      if (opened.kind !== 'available') throw new Error('Could not open the accepted Workflow');
+      expect(opened.content.workspaceTarget.sessionPlacement).toEqual(authoredProject.sessionPlacement);
+      expect(opened.content.workspaceTarget.projectFiles).toEqual(withoutProjectFiles ? undefined
+        : authoredProject.sessionPlacement.projectFiles ?? { kind: 'copy_once' });
     }
     const preparedWorkspaces = workspaceEntries;
     const dispatchedGuests = guestRequests;

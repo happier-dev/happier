@@ -470,8 +470,10 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                 runCreationContinuation: async ({ machine, projectFiles }) => {
                     if (!machine.enrolledMachineId) throw new ManagedMachineControllerError('intent_changed');
                     const { workspaceRefId: _previousWorkspace, ...authoredProject } = preparation.project;
-                    const result = await executeWorkflow({ ...request.start,
-                        managedProjectFiles: request.start.managedProjectFiles ?? projectFiles,
+                    const { managedProjectFiles: authoredProjectFiles, ...start } = request.start;
+                    const managedProjectFiles = authoredProjectFiles ?? projectFiles;
+                    const result = await executeWorkflow({ ...start,
+                        ...(managedProjectFiles === undefined ? {} : { managedProjectFiles }),
                         managedCreation: { homeId: machine.homeId, managedId: machine.id, controller: machine.controller },
                     }, { ...authoredProject, machineId: machine.enrolledMachineId }, continuationContext, machine);
                     workflowResult = result.ok ? { ...result, result: WorkflowRunStartResultV1Schema.parse(result.result) } : result;
