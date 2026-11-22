@@ -98,6 +98,8 @@ export function useExecutableParticipantSections(
     preferredMachineId?: string | null;
     /** The Session this choice is for: an added agent starts on its Machine and folder. */
     consumerSessionId?: string | null;
+    /** The launch profile an added agent starts from (the New Session profile intent), still editable in its recipe. */
+    seedProfileId?: string | null;
     /** How the viewer's sessions take part here; said once beside the section title, not on every row. */
     sessionsContext: string;
     onChoose: (selection: ExecutableParticipantSelectionV1) => void;
@@ -357,6 +359,7 @@ export function useExecutableParticipantSections(
   // else the first launchable one. Read once at the press; nothing here subscribes to the Session.
   const consumerSessionId = input.consumerSessionId ?? null;
   const preferredMachineId = input.preferredMachineId ?? null;
+  const seedProfileId = input.seedProfileId ?? null;
   const addAgent = React.useMemo(() => launchMachines.length === 0 ? null : () => {
     const session = consumerSessionId
       ? selectHomeQualifiedSession(getStorage().getState(), consumerSessionId, serverId, getActiveServerSnapshot().serverId) : null;
@@ -364,9 +367,10 @@ export function useExecutableParticipantSections(
     const machineId = [metadata?.machineId, preferredMachineId].find(id => id && launchMachines.some(machine => machine.id === id))
       ?? launchMachines[0]!.id;
     const directory = metadata?.machineId === machineId && metadata.path ? metadata.path : undefined;
-    setRecipe({ seed: { permissionMode: 'read-only', ...(directory ? { directory } : {}) },
+    setRecipe({ seed: { permissionMode: 'read-only', ...(directory ? { directory } : {}),
+      ...(seedProfileId ? { profileId: seedProfileId } : {}) },
       target: { serverId, machineId }, onChoose });
-  }, [consumerSessionId, launchMachines, onChoose, preferredMachineId, serverId]);
+  }, [consumerSessionId, launchMachines, onChoose, preferredMachineId, seedProfileId, serverId]);
   const recipeEditor = input.enabled && recipe ? <SessionServerStartDraftRecipeEditor
     seed={recipe.seed} target={recipe.target}
     requireWorkspaceWriteDenial={input.requireWorkspaceWriteDenial}

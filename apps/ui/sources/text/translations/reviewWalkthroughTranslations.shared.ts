@@ -162,6 +162,13 @@ export type ReviewWalkthroughTranslations = {
         emptyTitle: string;
         emptyReason: string;
         startReview: string;
+        reviewHabitTitle: string;
+        reviewHabitEachTurn: string;
+        reviewHabitEachTurnDescription: string;
+        reviewHabitOffDescription: string;
+        reviewHabitReviewers: string;
+        reviewHabitReviewersDetail: string;
+        reviewAfterEachTurn: string;
         round: (params: Readonly<{ round: number }>) => string;
         rounds: string;
         failedTitle: string;
@@ -419,6 +426,13 @@ export const en: ReviewWalkthroughTranslations = {
         emptyTitle: 'No reviews yet',
         emptyReason: 'Ask reviewers to check a session, a branch or a pull request before you merge. Findings land here, and fixes go back to a session.',
         startReview: 'Start a review',
+        reviewHabitTitle: 'Review my changes',
+        reviewHabitEachTurn: 'Each turn',
+        reviewHabitEachTurnDescription: 'A review when a turn ends with changes.',
+        reviewHabitOffDescription: 'You can still start one any time.',
+        reviewHabitReviewers: 'Who reviews',
+        reviewHabitReviewersDetail: 'Findings land in Reviews',
+        reviewAfterEachTurn: 'Review after each turn',
         round: ({ round }) => `Round ${round}`,
         rounds: 'Rounds',
         failedTitle: 'This review didn’t open',

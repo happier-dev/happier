@@ -593,6 +593,46 @@ describe('the Session Info page Automations section', () => {
     expect(screen.findByTestId('subject-triggers:set-1:trig-2-switch')?.props.value).toBe(true);
   });
 
+  it('draws the Session trigger that runs the built-in review as "Review my changes", and Off turns that trigger off (U8-R2 SH2)', async () => {
+    answer([triggerSet([lifecycleTrigger('trig-1', true)])]);
+    // The Session's trigger links the built-in review (a saved workflow), so its recipe holds no inline steps.
+    rows = rows.map(row => {
+      const recipe = row.executionRecipe as { workflow: { t: 'plain'; v: Record<string, unknown> } };
+      const { inlineDefinition: _steps, ...workflow } = recipe.workflow.v;
+      return AutomationDefinitionDetailSchema.parse({ ...row, workflowDefinitionId: 'builtin:review-and-converge',
+        executionRecipe: { ...recipe, workflow: { t: 'plain', v: workflow } } });
+    });
+    const screen = await renderScreen(<SessionInfoSetup sessionId="session-1" />);
+    await settle();
+    await vi.waitFor(() => expect(screen.findByTestId('review-habit:eachTurn')?.props.accessibilityState).toMatchObject({ checked: true }));
+    // The habit is one control, not also a trigger row beside it.
+    expect(screen.findByTestId(ROW)).toBeNull();
+    expect(screen.findByTestId('review-habit-reviewers')).not.toBeNull();
+    await screen.pressByTestIdAsync('review-habit:off');
+    await settle();
+    await vi.waitFor(() => expect(automationHttp.mock.calls.some(([url, init]) => url.pathname === '/v3/automations/set-1'
+      && init?.method === 'PUT')).toBe(true));
+    const mutation = automationHttp.mock.calls.find(([url, init]) => url.pathname === '/v3/automations/set-1' && init?.method === 'PUT');
+    expect(AutomationDefinitionReconcileRequestSchema.parse(JSON.parse(String(mutation?.[1]?.body)))).toMatchObject({
+      triggers: [{ kind: 'existing', triggerId: 'trig-1', enabled: false }],
+    });
+    await vi.waitFor(() => expect(screen.findByTestId('review-habit:off')?.props.accessibilityState).toMatchObject({ checked: true }));
+    expect(screen.findByTestId('review-habit-reviewers')).toBeNull();
+  });
+
+  it('offers "Review my changes" off when no review trigger is set up, and Each turn asks who reviews first', async () => {
+    answer([triggerSet([lifecycleTrigger('trig-1', true)])]);
+    const screen = await renderScreen(<SessionInfoSetup sessionId="session-1" />);
+    await settle();
+    await vi.waitFor(() => expect(screen.findByTestId('review-habit:off')?.props.accessibilityState).toMatchObject({ checked: true }));
+    // An ordinary turn trigger stays an ordinary row.
+    expect(screen.findByTestId(ROW)).not.toBeNull();
+    await screen.pressByTestIdAsync('review-habit:eachTurn');
+    await settle();
+    expect(screen.findByTestId('review-habit-reviewer-setup')).not.toBeNull();
+    expect(automationHttp.mock.calls.some(([url, init]) => url.pathname === '/v3/automations' && init?.method === 'POST')).toBe(false);
+  });
+
   it('stays on the Info page with its section and a way to add the first automation', async () => {
     answer([]);
     const screen = await renderScreen(<SessionInfoSetup sessionId="session-1" />);

@@ -23,6 +23,12 @@ import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server
 import { useSessionDisplayTitles } from '@/utils/sessions/sessionDisplayTitle';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { projectScheduledWorkflowRows } from '@/components/workflows/triggers/scheduledWorkflowRows';
+import type { AccountTriggerRow } from '@/components/workflows/triggers/accountTriggerRows';
+import { buildReviewHabitTriggerRequest, findReviewHabitRow } from '@/components/reviews/habit/reviewHabit';
+import { ReviewHabitControl, ReviewHabitReviewerSetup, alertReviewHabitWriteFailed } from '@/components/reviews/habit/ReviewHabitSetup';
+import type { ReviewReviewerSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useWorkflowRunWindow } from '@/components/workflows/library/workflowLibraryReads';
 import { useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -205,8 +211,14 @@ function SessionHabitsContent(props: SessionHabitsSectionProps & Readonly<{ home
   React.useEffect(() => {
     if (machineReachable && retryRef.current.status === 'failed') retryRef.current.retry();
   }, [machineReachable]);
+  // "Review my changes" is one of this Session's own triggers, drawn as its habit control rather than a row.
+  const habitRow = React.useMemo(() => findReviewHabitRow(automations.rows), [automations.rows]);
+  const triggerRows = React.useMemo(() => habitRow ? automations.rows.filter(row => row !== habitRow) : automations.rows,
+    [automations.rows, habitRow]);
   // Retry and the pending/failed treatment cover the section's own read and the readers of what writes here.
-  const combined = React.useMemo(() => ({ ...automations, read: { ...read, status, retry } }), [automations, read, status, retry]);
+  const combined = React.useMemo(() => ({ ...automations, rows: triggerRows, read: { ...read, status, retry } }),
+    [automations, triggerRows, read, status, retry]);
+  const habit = useSessionReviewHabit({ sessionId, homeId: props.homeId, automations, habitRow, ready: read.status === 'ready' });
   // Session Info folds an empty Habits into "Add to this session" from this read, without another.
   const summaryScope = useActiveServerAccountScope(props.serverId);
   useReportSessionInfoSectionSummary('habits.startsHere', summaryScope ? {
@@ -228,7 +240,8 @@ function SessionHabitsContent(props: SessionHabitsSectionProps & Readonly<{ home
             actionsRef={props.actionsRef} exactTurnPrefill={exactTurnPrefill}
             offlineStatedAbove={props.offlineStatedAbove}
             {...(typeof params.trigger === 'string' ? { revealAutomationId: params.trigger } : {})}
-            hasRetainedContent={scheduledRows.length > 0 || destination.runIds.length > 0}>
+            leading={habit}
+            hasRetainedContent={habitRow !== null || scheduledRows.length > 0 || destination.runIds.length > 0}>
             {props.onOpenAllAutomations ? (
               <Item
                 testID="session-habits-all-automations"
@@ -245,5 +258,52 @@ function SessionHabitsContent(props: SessionHabitsSectionProps & Readonly<{ home
         </View>
       </SessionTriggerHistoryScope>
     </WorkSectionPlacementProvider>
+  );
+}
+
+/**
+ * The Session's review habit (lab `session-habit`): its one trigger switches through the section's trigger editor;
+ * the first Each turn opens who reviews, then writes the trigger through the same editor's writer.
+ */
+function useSessionReviewHabit(params: Readonly<{
+  sessionId: string;
+  homeId: string;
+  automations: ReturnType<typeof useResourceAutomationsSection>;
+  habitRow: AccountTriggerRow | null;
+  ready: boolean;
+}>): React.ReactNode {
+  const { sessionId, homeId, habitRow } = params;
+  const { editor, accountLifetime } = params.automations;
+  const [setupLifetime, setSetupLifetime] = React.useState<ServerAccountScopeLifetime | null>(null);
+  const [saving, setSaving] = React.useState(false);
+  const toggle = React.useCallback((row: AccountTriggerRow, next: boolean) => { void editor.toggle(row, next); }, [editor]);
+  const openReviewers = React.useCallback((row: AccountTriggerRow, anchor: React.RefObject<View | null>) => {
+    void editor.open(row, anchor);
+  }, [editor]);
+  const setUp = React.useCallback(() => {
+    const lifetime = accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : accountLifetime;
+    if (lifetime?.isCurrent()) setSetupLifetime(lifetime);
+  }, [accountLifetime]);
+  const cancel = React.useCallback(() => setSetupLifetime(null), []);
+  const choose = React.useCallback(async (reviewer: ReviewReviewerSelectionV1) => {
+    const lifetime = setupLifetime;
+    setSetupLifetime(null);
+    const request = buildReviewHabitTriggerRequest({ kind: 'session', homeId, sessionId }, [reviewer]);
+    if (!request || !lifetime?.isCurrent()) return;
+    setSaving(true);
+    try {
+      await editor.add(request, lifetime);
+    } catch (error) {
+      alertReviewHabitWriteFailed(error);
+    } finally {
+      setSaving(false);
+    }
+  }, [editor, homeId, sessionId, setupLifetime]);
+  return (
+    <ReviewHabitControl status={params.ready ? 'ready' : 'loading'} row={habitRow}
+      pending={saving || (habitRow !== null && editor.pending.has(habitRow.automationId))}
+      onToggle={toggle} onSetUp={setUp} onOpenReviewers={openReviewers}
+      setup={setupLifetime ? <ReviewHabitReviewerSetup accountLifetime={setupLifetime} consumerSessionId={sessionId}
+        onChoose={(reviewer) => { void choose(reviewer); }} onCancel={cancel} /> : null} />
   );
 }

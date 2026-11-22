@@ -38,6 +38,7 @@ import {
     type ReviewsCollectionView,
 } from './list/useReviewsCollectionView';
 import { reviewRowFact, ReviewRowFactText } from './list/reviewRowFact';
+import { ReviewsEmptyInvitation } from './habit/ReviewsEmptyInvitation';
 
 const keyOf = (item: ReviewListItemV1) => item.reviewId;
 const passThrough = (children: React.ReactNode) => children;
@@ -146,10 +147,8 @@ export function ReviewsListHost({ surface = 'home' }: Readonly<{ surface?: 'home
             // The column beside the page says one line; the page owns the invitation and its Start a review (lab list-empty).
             : surface === 'column' ? <SurfaceStateCard testID="reviews:empty" kind="empty" size="line" layout="inline"
                 title={t('reviewWalkthrough.collection.columnEmpty')} />
-            : <SurfaceStateCard testID="reviews:empty" kind="empty" iconName={REVIEWS_GLYPH} title={t('reviewWalkthrough.detail.emptyTitle')}
-                reason={t('reviewWalkthrough.detail.emptyReason')} replacesContent
-                action={scope ? { testID: 'reviews:empty:start', label: t('reviewWalkthrough.detail.startReview'),
-                    onPress: startReview } : undefined} />)} /></ReviewRowActionsContext.Provider>;
+            // Start a review, and the all-sessions review habit set up in place (lab list-empty, LE3).
+            : <ReviewsEmptyInvitation iconName={REVIEWS_GLYPH} startReview={scope ? startReview : undefined} />)} /></ReviewRowActionsContext.Provider>;
     if (surface !== 'home') return <CoreCollectionScope>
         {list.items?.length ? failure : null}{collection}
     </CoreCollectionScope>;

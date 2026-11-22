@@ -107,6 +107,8 @@ export type SubjectTriggersSectionProps = Readonly<{
       exactTurnPrefill?: ExactTurnAutomationPrefill;
       /** A deep link to one of this resource's automations opens its editor once. */
       revealAutomationId?: string;
+      /** A host-owned habit the sheet leads with, before its triggers (a Session's "Review my changes"). */
+      leading?: React.ReactNode;
       /** Rows the host composes into the same sheet after the triggers (a Session's "writes here"). */
       children?: React.ReactNode;
       /** The host's own rows are held, so the section is neither pending nor empty without triggers. */
@@ -312,6 +314,7 @@ export const SubjectTriggersSectionContent = React.memo(
     );
     const section = (
       <SubjectTriggersSectionFrame testID={props.testID} widget={widget} description={description} action={sectionActions}>
+        {props.leading}
         {unsettled ? (
           <SubjectTriggersReadState status={status === 'failed' ? 'failed' : 'loading'} onRetry={read.retry} />
         ) : empty
