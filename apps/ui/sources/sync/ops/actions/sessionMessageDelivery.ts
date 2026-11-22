@@ -7,6 +7,8 @@ import { rejectUnavailableSessionInputV1, supportsAccountPendingForSessionInput 
 import { readMachineRows } from '@/sync/api/machines/machineRowsApi';
 import { isSessionAccessRecipient } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { storage } from '@/sync/domains/state/storage';
 import type { readMachineControlTargetForSessionAuthority } from '@/sync/ops/sessionMachineTarget';
 import { projectServerScopedSessionSendMessageResult, sendSessionMessageWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
@@ -39,6 +41,7 @@ export type SessionMessageTargetContext = ActionExecutorContext & {
 
 export async function deliverSessionMessageToAccountPending(
   args: Parameters<SessionMessageDelivery>[0],
+  resumeWhenAvailable?: true,
 ) {
   const { sessionId, message, serverId, recipient, requestedAction, displayText, messageMeta, permissionModeOverride, localId, signal } = args;
   const hostAdmissionOrigin = args.inputAdmission
@@ -48,7 +51,7 @@ export async function deliverSessionMessageToAccountPending(
   return projectServerScopedSessionSendMessageResult(await sendSessionMessageWithServerScope({
     sessionId, message, messageLocalId: localId, serverId, recipient, requestedAction, displayText,
     metaOverrides: args.modelSelection ? withSessionMessageModelSelectionV1(metaOverrides, args.modelSelection) : metaOverrides,
-    hostAdmissionOrigin, signal,
+    hostAdmissionOrigin, signal, resumeWhenAvailable,
   }));
 }
 
@@ -102,7 +105,10 @@ export function createSessionMessageDelivery(params: Readonly<{
         && prepared.serverId === account.serverId && prepared.accountId === account.accountId
         && prepared.endpointUrl === account.endpointUrl && prepared.credentialAuthorityKind === account.credentialAuthorityKind
         ? prepared.facts : projectSessionMessageTarget(await readAccountSessionControlTarget(account, sessionId, signal));
-      if (isRecipient
+      const pendingDuringStart = !isRecipient && machineId !== null
+        && resolveServerScopedMachine(storage.getState(), account.serverId, machineId)?.managedInputRuntime?.state === 'starting'
+        && args.requestedAction?.kind !== 'reset_start';
+      if ((isRecipient || pendingDuringStart)
         && account.credentialAuthorityKind === 'account'
         && (!args.actionCaller || args.actionCaller.kind === 'host')
         && args.context.authority !== 'account_automation'
@@ -110,9 +116,12 @@ export function createSessionMessageDelivery(params: Readonly<{
         && !args.context.externalActionExecutionAuthorization && !args.context.actionRequestAttributionV1
         && !args.sessionInputSource && !composerSubmission?.legacyAttachments
         && 'message' in args.authoredInput
+        && (!pendingDuringStart || args.authoredInput.forgeEvidence === undefined)
         && supportsAccountPendingForSessionInput({ ...args.authoredInput, request: args.inputAdmission?.request })) {
+        // Home owns exact placement and activation. A published Start allows
+        // Account Pending to accept this Send before guest RPC registration.
         return await withActionAccountRequestSignal(account, signal, pendingSignal =>
-          deliverSessionMessageToAccountPending({ ...args, serverId: account.serverId, signal: pendingSignal }));
+          deliverSessionMessageToAccountPending({ ...args, serverId: account.serverId, signal: pendingSignal }, pendingDuringStart ? true : undefined));
       }
       if (!machineId) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
       if (requiresReplyCustody) {

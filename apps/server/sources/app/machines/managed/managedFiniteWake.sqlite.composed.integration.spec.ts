@@ -43,6 +43,7 @@ import { defineMachineProvisionerSchemas, MachineProvisionerCheckResultProtocolV
     MachineProvisionerPowerResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { registerSocketRpcHandlers } from '@/app/api/socket/rpc/registerSocketRpcHandlers';
+import { registerSocketRoomDiscovery } from '@/app/api/socket/socketRoomDiscovery';
 import { createFakeSocket, createSocketRoomDiscoveryHarness, getSocketHandler } from '@/app/api/testkit/socketHarness';
 import { qualifyCurrentAccountStoredContentSocket } from '@/app/api/testkit/accountStoredContentCompatibility';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
@@ -1157,6 +1158,76 @@ describe('finite managed wake original Action authority (real storage)', () => {
             expect(staleAdmission.json()).toMatchObject({ code: 'permission_denied' });
             expect(await db.managedMachine.findUniqueOrThrow({ where: { id: test.row.id } })).toEqual(beforeAdmission);
         } finally { await app.close(); }
+    });
+
+    it('keeps a Use-only member Send pending while the admitted Start is bringing up its guest', async () => {
+        const test = await setup();
+        const member = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: test.account.id, machineId: test.guest.id,
+            principal: { kind: 'account', accountId: member.id }, level: 'view' }));
+        await db.machine.update({ where: { id: test.guest.id }, data: { operationProtocolCapabilities: {
+            externalActionExecutionAuthorization: { protocolVersions: [1] }, requesterExecutionIsolation: { protocolVersions: [1] },
+            sessionInputAdmission: { protocolVersions: [1, 2] },
+        } } });
+        const session = await db.session.create({ data: { accountId: member.id, tag: randomUUID(), encryptionMode: 'plain',
+            active: false, metadata: '{}' } });
+        expect(await inTx(tx => createSessionMachineAccessKeyInTx(tx, { accountId: member.id, sessionId: session.id,
+            machineId: test.guest.id, data: 'private-session-key' }))).toMatchObject({ ok: true });
+        const wakingGuest = await db.managedMachine.update({ where: { id: test.row.id }, data: { desired: 'start', admittedInput: { submittedEffect: {
+            homeId, managedId: test.row.id, controller: test.target.controller, requestId: randomUUID(),
+            expectedIntentRevision: test.row.intentRevision, intent: 'start',
+        } } } });
+        expect(projectManagedMachine(wakingGuest).submittedNativeEffect).toMatchObject({ intent: 'start' });
+        const localId = randomUUID();
+        const input = { sessionId: session.id, message: 'Send during the admitted Start', localId,
+            requestedAction: { v: 1, kind: 'send_now' }, reply: 'none' } as const;
+        const actionId = SESSION_MESSAGE_SEND_ACTION_ID_V1;
+        const method = `${test.guest.id}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`;
+        const methodRoom = `rpc:${test.account.id}:${method}`;
+        const firstDiscovery = Promise.withResolvers<void>();
+        const deliveries: string[] = [];
+        let guestReady = false;
+        const guest = createFakeSocket({ id: 'waking-guest', data: { clientType: 'machine-scoped', userId: test.account.id,
+            machineId: test.guest.id, verifiedMachineInstallationId: test.guest.installationId }, timeout: () => ({
+            emitWithAck: async (_event: string, request: { method: string; params: unknown }) => {
+                const packet = ExternalActionDaemonDispatchRequestSchema.parse(request.params);
+                expect(packet.executionAuthorization?.binding.accountId).toBe(member.id);
+                deliveries.push(request.method);
+                return createExternalActionDaemonDispatchResponseV1(prepareExternalActionResponseEnvelopeV1({
+                    v: 1, actionId, requestId: test.requestId,
+                    execution: { ok: true, result: { status: 'accepted', localId } },
+                }));
+            },
+        }) });
+        qualifyCurrentAccountStoredContentSocket(guest);
+        const io = new Server();
+        registerSocketRoomDiscovery(io);
+        const transport = createSocketRoomDiscoveryHarness(async room => {
+            if (room === methodRoom) firstDiscovery.resolve();
+            return guestReady && (room === methodRoom || room === guest.id) ? [guest] : [];
+        });
+        const discovery = vi.spyOn(io, 'in').mockImplementation(transport.in);
+        const dispatch = createExternalActionDaemonDispatcher({ io });
+        const cancel = new AbortController();
+        const pending = dispatch({ actionId, principal: { accountId: member.id, authority: 'present_user',
+            authentication: { kind: 'account', tokenEpoch: member.tokenEpoch } }, envelope: { v: 1,
+            requestId: test.requestId, target: { kind: 'machine', machineId: test.guest.id }, input } }, { signal: cancel.signal });
+        try {
+            expect(await Promise.race([firstDiscovery.promise.then(() => 'guest-discovery'), pending]))
+                .toBe('guest-discovery');
+            expect(deliveries).toEqual([]);
+            guestReady = true;
+            await db.machine.update({ where: { id: test.guest.id }, data: { active: true, lastActiveAt: new Date() } });
+            io.sockets.adapter.emit('join-room', methodRoom, guest.id);
+            expect(await pending).toMatchObject({ kind: 'response', prepared: { response: {
+                execution: { ok: true, result: { status: 'accepted', localId } },
+            } } });
+            expect(deliveries).toEqual([method]);
+        } finally {
+            cancel.abort();
+            await pending;
+            discovery.mockRestore();
+        }
     });
 
     it('admits a stopped guest only under its actual signed original finite Action request', async () => {

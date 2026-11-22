@@ -141,6 +141,51 @@ describe('submitSessionDraft', () => {
         expect(homes.requestsFor('/v1/actions/session.message.send')).toHaveLength(0);
     });
 
+    it('accepts an ordinary member Send into Home Pending while its managed guest is starting', async () => {
+        const features = createRootLayoutFeaturesResponse({ capabilities: {
+            serverIdentity: { serverIdentityId: 'srv_capture_home' },
+        } });
+        features.capabilities.session.pendingInput = { protocolVersion: PENDING_INPUT_PROTOCOL_VERSION_V5 };
+        homes.answer(serverId, '/v1/features', { body: features });
+        homes.answer(serverId, '/v1/features/authenticated', { body: features });
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+        const runtime = { nativeReady: false, wakeState: 'starting', state: 'starting' } as const;
+        const ref = { homeId: 'srv_capture_home', managedId: 'retained-guest' };
+        const machine = createHydratedPlainMachineFixture({ id: 'machine_1', accountId: 'alice', machine: {
+            active: false, presenceProtocolVersion: 1, managedMachineRef: ref, managedInputRuntime: runtime,
+        } });
+        storage.setState({ machines: { ...storage.getState().machines, [machine.id]: machine },
+            machineListByServerId: { ...storage.getState().machineListByServerId, [serverId]: [machine] } });
+        const session = installSessionActionFixture({ homes, storage, serverId, session: {
+            id: sessionId, active: false, pendingVersion: 2,
+            metadata: { machineId: machine.id, path: '/repo', flavor: 'claude', claudeSessionId: 'retained-session' },
+        } });
+        const pending = createSessionPendingHttpBoundary(sessionId);
+        homes.answer(serverId, `POST /v2/sessions/${sessionId}/pending`, { select: async (body, request) => {
+            expect(body).toMatchObject({ resumeWhenAvailable: true });
+            const response = pending.handle(request.url, request.init);
+            if (!response) throw new Error('Expected Account Pending enqueue');
+            return { status: response.status, body: await response.json() };
+        } });
+        homes.answer(serverId, '/v1/actions/session.message.send', { select: body => {
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            const refusal = projectExternalActionHttpError('target_unavailable', request.envelope.requestId);
+            return { status: refusal.statusCode, body: refusal.payload };
+        } });
+        const { submitAppSessionComposerMessage } = await import('@/components/sessions/transcript/source/appSessionTranscriptActions');
+        const { createSyncBackedSubmitPort } = await import('@/sync/domains/session/input/syncBackedSubmitPort');
+        const text = 'One Send while the guest starts';
+        const localId = 'managed-starting-input';
+        const result = await submitAppSessionComposerMessage(createSyncBackedSubmitPort(), {
+            session, sessionId, serverId, text, localId, configuredMode: 'agent_queue',
+            sessionInactiveResumePolicy: 'online_only', resumeCapabilityOptions: {},
+        });
+        expect(result, JSON.stringify(result)).toMatchObject({ type: 'success', persistence: 'pending', localId });
+        expect(pending.enqueued.get(localId)).toMatchObject({ content: { t: 'plain', v: { content: { text } } } });
+        expect(homes.requestsFor('/v1/actions/session.message.send')).toHaveLength(0);
+    });
+
     it.each(['composer', 'composer-direct', 'composer-held', 'composer-direct-held', 'composer-settings', 'composer-team-asleep', 'composer-team-predecessor', 'sync', 'sync-direct', 'voice', 'draft', 'public'] as const)('keeps %s Send on the Home Action delivery owner', async entry => {
         const direct = entry.includes('-direct');
         const held = entry.endsWith('-held');

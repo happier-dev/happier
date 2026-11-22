@@ -67,7 +67,8 @@ export type ServerScopedSessionSendMessageDeps = Readonly<{
     message: string,
     displayText: string | undefined,
     metaOverrides: Record<string, unknown> | undefined,
-    options: Readonly<{ localId: string; requestedAction: PendingRequestedActionV1; recipient?: ParticipantRecipientV1; hostAdmissionOrigin?: SessionMessageHostAdmissionOrigin }>,
+    options: Readonly<{ localId: string; requestedAction: PendingRequestedActionV1; recipient?: ParticipantRecipientV1;
+      hostAdmissionOrigin?: SessionMessageHostAdmissionOrigin; resumeWhenAvailable?: true }>,
   ) => Promise<Readonly<{ localId: string; accepted: boolean; cancelled?: true; terminal?: true }>>;
   schedulePendingOutboxRetry: (params: Readonly<{
     sessionId: string;
@@ -130,6 +131,7 @@ export function createServerScopedSessionSendMessage(deps?: Partial<ServerScoped
     messageLocalId?: string | null;
     providerDeliveryIntent?: 'immediate' | 'first_turn' | null;
     requestedAction?: PendingRequestedActionV1;
+    resumeWhenAvailable?: true;
     recipient?: ParticipantRecipientV1;
     hostAdmissionOrigin?: SessionMessageHostAdmissionOrigin;
     signal?: AbortSignal;
@@ -205,6 +207,7 @@ export function createServerScopedSessionSendMessage(deps?: Partial<ServerScoped
             requestedAction,
             ...(args.recipient ? { recipient: args.recipient } : {}),
             ...(args.hostAdmissionOrigin ? { hostAdmissionOrigin: args.hostAdmissionOrigin } : {}),
+            ...(args.resumeWhenAvailable ? { resumeWhenAvailable: args.resumeWhenAvailable } : {}),
           },
         );
       } else {
@@ -279,6 +282,7 @@ export function createServerScopedSessionSendMessage(deps?: Partial<ServerScoped
           displayText,
           localId,
           requestedAction,
+          ...(args.resumeWhenAvailable ? { resumeWhenAvailable: args.resumeWhenAvailable } : {}),
           hostAdmissionOrigin: args.hostAdmissionOrigin,
           metaOverrides: Object.keys(metaOverrides).length > 0 ? metaOverrides : undefined,
           encryption: {

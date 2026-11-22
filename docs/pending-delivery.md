@@ -1078,7 +1078,11 @@ Machine, a disabled preference yields `target_unavailable` before Home takes inp
 custody. Opening, viewing and prefetching never request power. An explicit app Send
 that needs an approved wake reviews its wake child under the original Action.
 Existing-Session input invokes that exact child after enqueue ACK without a
-second review. New-Session Send uses
+second review. During an admitted native Start, an ordinary Account Send can
+enter Pending immediately and arm delivery when its guest is available. A Send
+that needs the installed Action receiver waits on the original invocation for
+guest registration. Both paths use the existing Pending admission and issue no
+additional Start. New-Session Send uses
 the verified Session-spawn Action as its accepted input before the Session exists;
 the server keeps the encrypted first-message content opaque.
 Null-controller resources use the canonical managed-role custodian decision;

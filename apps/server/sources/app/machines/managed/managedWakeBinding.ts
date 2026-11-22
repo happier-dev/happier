@@ -47,7 +47,7 @@ function projectWakeBinding(homeId: string, row: StoredManagedMachine | undefine
         expectedIntentRevision: row.intentRevision, controller: controllerBinding, reason: 'admitted-work' as const },
         controllerAccountId: controllerBinding ? controller?.accountId : undefined,
         controllerRole: resolveManagedMachineRole(row, target.actorAccountId, controllerRole, guestRole),
-        wakeOnAcceptedMessage: row.wakeOnAcceptedMessage, inspectionRequired: runtime.inspectionRequired };
+        wakeOnAcceptedMessage: row.wakeOnAcceptedMessage, inspectionRequired: runtime.inspectionRequired, wakeState: runtime.wakeState };
 }
 
 /** Point admission and publication use one eligibility projection over exact current facts. */

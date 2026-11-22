@@ -1,6 +1,7 @@
 import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { ManagedWakeTargetV1Schema, type ManagedWakeTargetV1, type ManagedWakeTargetsReadRequestV1, ManagedIntentResultSchema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { isExternalActionManagedWakeRootV1, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { ManagedFiniteWakeRequestV1Schema, MANAGED_FINITE_WAKE_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { MachineInstallationPublicKeySchema } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -103,12 +104,18 @@ export async function prepareManagedFiniteActionWake(input: Readonly<{
             || binding.accountEncryptionMode === undefined) return null;
         const guest = await tx.machine.findUnique({ where: { id: binding.machineId }, select: { active: true, lastActiveAt: true } });
         if (guest && isMachineReachableV1({ machine: serializeMachinePresence(guest) })) return { online: true as const };
-        const wake = await resolveManagedWakeTargetInTx(tx, { actorAccountId: binding.accountId, machineId: binding.machineId,
-            origin: { kind: 'finite-command', actionRequestId: binding.requestId }, finiteActionId: binding.actionId, requireInspection: true });
-        return { online: false as const, wake, controllerCustodianAccountId: admission.custodianAccountId };
+        const wakeInput = { actorAccountId: binding.accountId, machineId: binding.machineId,
+            origin: { kind: 'finite-command' as const, actionRequestId: binding.requestId }, finiteActionId: binding.actionId, requireInspection: true };
+        const placement = await readManagedWakeTargetBindingInTx(tx, wakeInput);
+        const joiningStart = binding.actionId === SESSION_MESSAGE_SEND_ACTION_ID_V1 && placement?.wakeState === 'starting';
+        return { online: false as const, joiningStart, wake: projectManagedWakeTarget(wakeInput, placement),
+            controllerCustodianAccountId: admission.custodianAccountId };
     });
     if (!initial || input.signal.aborted) return { kind: 'unavailable' };
     if (initial.online) return { kind: 'not-needed', isCurrent };
+    // An admitted Start already owns power. Keep this Send's original invocation
+    // waiting for guest registration, then let its ordinary Pending owner take input.
+    if (initial.joiningStart) return { kind: 'ready', isCurrent };
     const target = initial.wake;
     if (!target) return { kind: 'unavailable' };
     const finiteWake = resolveManagedFiniteWakeControllerV1(target);
