@@ -542,6 +542,11 @@ describe('one selected money basis across Usage bodies', () => {
     expect(claude[0]![0]).toBe(usageAgentTitle('claude'));
     expect(claude[0]![1]).toContain(usageSourceTitle('claude-assistant-usage'));
     expect(claude[0]![1]).toContain(usageSourceTitle('claude-sdk-result'));
+    // One Agent with a single capture still names that capture in its detail ("Measured" says how, not which).
+    const summaries = await rowsOf([{ ...source, source: 'claude-sdk-result' }]);
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]![0]).toBe(usageAgentTitle('claude'));
+    expect(summaries[0]![1]).toContain(usageSourceTitle('claude-sdk-result'));
   });
   it('lists source coverage as a short led list: identical captures across machines say so once with a count, distinct ones fold behind Show all', async () => {
     const props = mountedCosts();

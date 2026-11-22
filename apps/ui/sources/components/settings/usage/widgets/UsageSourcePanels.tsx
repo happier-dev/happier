@@ -61,7 +61,7 @@ type CoverageGroup = { agentId: string | null; title: string; captures: Set<stri
 
 /**
  * Coverage shows one row per Agent (its routing identity, through the source's declaration; the title is display
- * only), with the captures it reports through named in the row's detail. A capture that names no Agent keeps its
+ * only), with the capture or captures it reports through named in the row's detail. A capture that names no Agent keeps its
  * own row. Several capture paths can share an Agent and a Machine.
  */
 function groupCoverageRows(sources: readonly UsageAnalyticsCoverage['sources'][number][], partialSaid: boolean) {
@@ -90,7 +90,8 @@ function groupCoverageRows(sources: readonly UsageAnalyticsCoverage['sources'][n
   return groups.map(({ title, captures, kinds, status, machines, unbound }) => {
     const kind = kinds.size === 1 ? [...kinds][0] : null;
     const capture = kind && (kind !== 'measured' || status === 'available') ? t(captureKeys[kind]) : null;
-    return { title, label: [captures.size > 1 ? [...captures].join(', ') : null,
+    // Which capture(s) the Agent's usage comes from: one capture its name, several the list (how is a separate fact).
+    return { title, label: [captures.size > 0 ? [...captures].join(', ') : null,
       !unbound && machines.size > 1 ? t('usage.board.page.machinesCount', { count: machines.size }) : null,
       capture, shared ? null : t(statusKeys[status])].filter(Boolean).join(' · ') };
   });
