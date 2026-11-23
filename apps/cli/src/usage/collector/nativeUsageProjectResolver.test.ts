@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProjectAccountOrganizationV1Schema, ProjectAccountRowMutationRequestV1Schema,
     StoredProjectAccountRowPayloadV1Schema, type ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
-import { withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
+import { holdSessionProjectAccountRows, withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { mockProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
 import { createNativeUsageProjectResolver } from './nativeUsageProjectResolver';
 import { UsageEventIngestRequestSchema } from '@happier-dev/protocol';
@@ -90,6 +90,41 @@ describe('native accounting Account Project resolution', () => {
                 { kinds: ['workspace-ref'], serverId: 'home' }, { kinds: ['workspace-ref'], serverId: 'home' },
             ]);
         });
+    });
+    it('reads a Session\'s Project association once per held Account and again after a project-row change', async () => {
+        const rows: ProjectAccountRowV1[] = [];
+        const transport = accountBoundary(rows);
+        const modeReads = () => vi.mocked(axios.get).mock.calls.length;
+        const directory = await mkdtemp(join(tmpdir(), 'happier-native-project-held-'));
+        // The live Session owner that receives this Account's project-row wakes.
+        const hold = holdSessionProjectAccountRows({ serverHttpBaseUrl: 'https://home.test/', accountId: authority.accountId });
+        try {
+            const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
+            const resolve = createNativeUsageProjectResolver({ authority, storage, serverHttpBaseUrl: 'https://home.test',
+                readCredentials: async () => ({ token, encryption: null }),
+                sessionCustody: { serverId: 'home', accountId: authority.accountId, serverHttpBaseUrl: 'https://home.test',
+                    isCurrent: async () => true } });
+            const turn = async () => {
+                const before = { rows: transport.mock.calls.length, modes: modeReads() };
+                const result = await resolve({ rootPath: '/work/native', label: 'Native repository' }, new AbortController().signal);
+                return { result, rows: transport.mock.calls.length - before.rows, modes: modeReads() - before.modes };
+            };
+            const first = await turn();
+            expect(first.rows).toBeGreaterThan(0);
+            // The label write retires the held reads it changed; the next Turn re-reads once.
+            await turn();
+            const steady = [await turn(), await turn()];
+            expect(steady.map(({ rows, modes }) => ({ rows, modes }))).toEqual([{ rows: 0, modes: 0 }, { rows: 0, modes: 0 }]);
+            expect(steady[0]!.result).toEqual(first.result);
+            // A project-row change announced on the Account socket drops the held reads.
+            hold.invalidate();
+            const after = await turn();
+            expect(after.rows).toBeGreaterThan(0);
+            expect(after.result).toEqual(first.result);
+        } finally {
+            hold.release();
+            await rm(directory, { recursive: true, force: true });
+        }
     });
     it('does not invent another Project anchor when an accepted exact checkout is ambiguous', async () => {
         const rows = ['one', 'two'].map((id): ProjectAccountRowV1 => {
