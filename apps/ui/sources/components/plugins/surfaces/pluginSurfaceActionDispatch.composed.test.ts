@@ -11534,11 +11534,11 @@ describe('composed React Native host API to canonical plugin-surface dispatcher'
         await expect(adapter.api.executeAction(HOST_ACTION_ID, {
             pluginId: CALLER_PLUGIN_ID,
         })).rejects.toMatchObject({
-            code: 'unavailable',
+            code: 'plugins_reload_failed',
             diagnostics: [{ code: 'plugins_reload_failed', severity: 'error' }],
         });
         await expect(adapter.api.executeAction('refresh-index', {})).rejects.toMatchObject({
-            code: 'unavailable',
+            code: 'plugin_action_surface_unavailable',
             message: 'Reconnect the integration account before continuing.',
             diagnostics: [{ code: 'plugin_action_surface_unavailable', severity: 'error' }],
         });
