@@ -88,7 +88,10 @@ const stylesheet = StyleSheet.create((theme) => ({
  * also the more restrained separator between a white rail and a grey content field.
  */
 
-export const SettingsShell = React.memo(function SettingsShell(props: Readonly<{ children: React.ReactNode }>) {
+export const SettingsShell = React.memo(function SettingsShell(props: Readonly<{
+    children: React.ReactNode;
+    showAccountNavigation?: boolean;
+}>) {
     const horizontalArea = useHorizontalSafeArea();
     const hosted = useDestinationInstanceKey() !== null;
     const styles = stylesheet;
@@ -98,7 +101,7 @@ export const SettingsShell = React.memo(function SettingsShell(props: Readonly<{
     const { width: windowWidth, height: windowHeight } = useWindowDimensions();
     const settingsNavSidebarEnabled = useLocalSetting('settingsNavSidebarEnabled');
     const isTabletViewport = resolveViewportMinEdgePx({ width: windowWidth, height: windowHeight }) >= VIEWPORT_CLASS_MIN_EDGE_BREAKPOINTS_PX.tabletMin;
-    const enabled = isTabletViewport && settingsNavSidebarEnabled !== false;
+    const enabled = props.showAccountNavigation !== false && isTabletViewport && settingsNavSidebarEnabled !== false;
     const [sidebarFallbackActive, setSidebarFallbackActive] = React.useState(false);
     const sidebarWidthPx = useLocalSetting('settingsNavSidebarWidthPx') ?? SETTINGS_NAV_SIDEBAR_DEFAULT_WIDTH_PX;
     const preferredSidebarWidthPx = typeof sidebarWidthPx === 'number' ? sidebarWidthPx : SETTINGS_NAV_SIDEBAR_DEFAULT_WIDTH_PX;

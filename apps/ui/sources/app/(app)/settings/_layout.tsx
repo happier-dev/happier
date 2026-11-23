@@ -3,6 +3,7 @@ import { Stack } from '@/components/appShell/workspace/destinationRoute';
 import { useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useUnistyles } from 'react-native-unistyles';
 
+import { useOptionalAuth } from '@/auth/context/AuthContext';
 import { SettingsShell } from '@/components/settings/shell/SettingsShell';
 import { NavigationTitleChromeProvider, useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/PageHeader';
 import { NavigationLargeTitleProvider, useNavigationTitleChromePublisher } from '@/components/ui/layout/navigationTitleChrome';
@@ -15,6 +16,7 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { getPreferredLanguage, t } from '@/text';
 
 function SettingsLayoutBody() {
+    const showAccountNavigation = useOptionalAuth()?.isAuthenticated === true;
     const hosted = useDestinationInstanceKey() !== null;
     const hostedShowsTitle = useNavigationTitleChromeShowsTitle();
     const publisher = useNavigationTitleChromePublisher();
@@ -50,7 +52,7 @@ function SettingsLayoutBody() {
             {/* A phone's bar names the parent and each page names itself with a large title; the modal has no bar. */}
             <NavigationLargeTitleProvider largeTitle={deviceType === 'phone'}>
             <NavigationTitleChromeProvider showsTitle={hosted ? hostedShowsTitle : !isModalPresentation} publisher={publisher ?? undefined}>
-            <SettingsShell>
+            <SettingsShell showAccountNavigation={showAccountNavigation}>
                 {navigator}
             </SettingsShell>
             </NavigationTitleChromeProvider>

@@ -18,6 +18,7 @@ import { resolveDesktopOverlayPolicy } from '@/activity/adapters/desktop/runtime
 
 const routeState = vi.hoisted(() => ({
     outlet: null as React.ReactNode | null,
+    pathname: '/settings/desktop',
 }));
 const isRunningOnMacMock = vi.hoisted(() => vi.fn(() => false));
 const getDesktopActivityOverlayWindowStateMock = vi.hoisted(
@@ -47,7 +48,7 @@ vi.mock('react-native-svg', async (importOriginal) => ({
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     const mock = createExpoRouterMock({
-        pathname: () => '/settings/desktop',
+        pathname: () => routeState.pathname,
         router: {
             push: vi.fn(),
             back: vi.fn(),
@@ -118,6 +119,7 @@ describe('/settings/desktop route', () => {
         vi.stubGlobal('__TAURI_EVENT_PLUGIN_INTERNALS__', { unregisterListener: () => {} });
         account = await createSecretSettingsTestHarness({ settings: settingsParse({}) });
         routeState.outlet = null;
+        routeState.pathname = '/settings/desktop';
         isRunningOnMacMock.mockReset();
         isRunningOnMacMock.mockReturnValue(false);
         getDesktopActivityOverlayWindowStateMock.mockReset();
@@ -157,6 +159,16 @@ describe('/settings/desktop route', () => {
         expect(screen.findByTestId('settings-shell.sidebarPane')).toBeTruthy();
         expect(screen.findByTestId('settings-desktop-autostart-enabled')).toBeTruthy();
         expect(screen.findByTestId('settings-desktop-overlay-enabled')).toBeTruthy();
+    });
+
+    it('renders the public Homes outlet without Account navigation on a signed-out wide viewport', async () => {
+        routeState.pathname = '/settings/server';
+        routeState.outlet = React.createElement('View', { testID: 'public-homes-outlet' });
+        const { default: SettingsLayoutRoute } = await import('@/app/(app)/settings/_layout');
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><SettingsLayoutRoute /></InjectedAuthProvider>);
+
+        expect(screen.findByTestId('public-homes-outlet')).not.toBeNull();
+        expect(screen.findByTestId('settings-sidebar')).toBeNull();
     });
 
     it('does not crash after the overlay bridge resolves desktop runtime state on mac desktop', async () => {
