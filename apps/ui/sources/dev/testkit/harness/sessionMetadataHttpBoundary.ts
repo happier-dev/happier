@@ -10,6 +10,7 @@ import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol
 import { SessionTurnsProjectionV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import { SessionInitialAccessMaterializedV1Schema } from '@happier-dev/protocol/sessions';
 import { SessionOrganizationPlacementV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { SessionSpawnNewSelectionV2BaseSchema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewSelectionV2';
 import { SessionTeamCredentialBindingIntentsV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 
 export interface SessionMetadataHttpBoundary {
@@ -48,6 +49,7 @@ export function createSessionMetadataHttpBoundary(readSessions: () => Readonly<R
                 agentState: z.null(), dataEncryptionKey: z.nullable(z.string()), encryptionMode: z.enum(['plain', 'e2ee']),
                 usageTimingV1: z.optional(UsageSessionTimingV1Schema),
                 organizationPlacement: z.optional(SessionOrganizationPlacementV1Schema), initialAccess: z.optional(SessionInitialAccessMaterializedV1Schema),
+                primaryTeamId: SessionSpawnNewSelectionV2BaseSchema.shape.primaryTeamId,
                 teamCredentialBindings: z.optional(SessionTeamCredentialBindingIntentsV1Schema) }).parse(JSON.parse(String(init.body)));
             const current = records.get(sessionId);
             if (current?.metadataLayoutVersion === 1) return Response.json({ created: false, session: current });

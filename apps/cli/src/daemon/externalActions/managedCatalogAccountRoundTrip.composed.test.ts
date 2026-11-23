@@ -198,6 +198,8 @@ import { projectAgentRuntimeDaemonServiceTurnWitnessV1 } from '@/agent/runtime/s
 import { resolveTrackedAgentRuntimeDaemonServiceAuthority } from '@/daemon/controlServer';
 import { createRequesterSessionCredentialCustody, createRequesterSessionRuntimeContextResolver, resolveRequesterSessionBootstrapFromCustody, releaseUnretainedRequesterSessionRuntimeContext, type ResolveRequesterSessionRuntimeContext } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { createRequesterSessionRuntimeContext } from '@/daemon/sessionEncryption/createRequesterSessionRuntimeContext';
+import { updateSessionMetadataForTarget } from '@/session/services/updateSessionMetadataForTarget';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { auth } from '../../../../server/sources/app/auth/auth';
 import { eventRouter, type UserScopedConnection } from '../../../../server/sources/app/events/eventRouter';
@@ -531,6 +533,9 @@ describe('managed catalog original Account transport', () => {
     const app = Fastify().withTypeProvider<ZodTypeProvider>();
     let approvalRootToken: string | undefined;
     let diagnosticPatBearer: string | undefined;
+    let watchOwnedCopyBirth = false;
+    let ownedCopyChildId: string | undefined;
+    let interveningMetadataVersion: number | undefined;
     const httpOutcomes: Array<{ method: string; url: string; status: number; error?: unknown;
       effectActionId?: string; authorityCeiling?: string | null; usedInstalledAccountBearer?: boolean;
       usedOriginalPatRoot?: boolean; hasAuthorizationBearer?: boolean; usedRawPatBearer?: boolean;
@@ -552,6 +557,24 @@ describe('managed catalog original Account transport', () => {
     let signalWorkflowAdmitted = () => {};
     let workflowAdmitted = new Promise<void>(resolve => { signalWorkflowAdmitted = resolve; });
     app.addHook('onSend', async (request, reply, payload) => {
+      if (watchOwnedCopyBirth && request.method === 'POST' && request.url === '/v1/sessions'
+        && reply.statusCode === 200 && typeof payload === 'string') {
+        const sessionId: unknown = JSON.parse(payload).session?.id;
+        if (typeof sessionId === 'string') ownedCopyChildId = sessionId;
+      }
+      if (ownedCopyChildId && watchOwnedCopyBirth && request.method === 'POST' && request.url === '/v1/artifacts'
+        && reply.statusCode === 200) {
+        // A second Account client changes a different Session field while the
+        // reviewed Copy awaits the instructions Doc acknowledgement.
+        watchOwnedCopyBirth = false;
+        const sessionId = ownedCopyChildId;
+        const changed = await runWithServerHttpBaseUrl(serverUrl, () => updateSessionMetadataForTarget({
+          credentials: software.credentials, idOrPrefix: sessionId, expectedSessionId: sessionId,
+          updater: metadata => ({ ...metadata, work: { ...readRecord(metadata.work), memoryEnabled: true } }),
+        }));
+        if (!changed.ok) throw new Error(`Competing metadata update failed: ${changed.code}`);
+        interveningMetadataVersion = changed.version;
+      }
       let error: unknown;
       if (reply.statusCode >= 400 && typeof payload === 'string') {
         try { const body = JSON.parse(payload); error = { code: body.code, error: body.error, ...(body.diagnostic ? { diagnostic: body.diagnostic } : {}) }; } catch {}
@@ -1797,6 +1820,7 @@ describe('managed catalog original Account transport', () => {
         await vi.waitFor(() => expect(liveParent?.mcpSession.getActiveTurnAdmissionWitness?.()).toBeFalsy(),
           { timeout: 15_000 });
         const homeRequestsBeforeCopyApproval = httpOutcomes.length;
+        watchOwnedCopyBirth = useHomeRpc;
         const replaying = ui.executeConfirmed('approval.request.decide', {
           artifactId: proposed.artifactId, decision: 'approve',
         }, context);
@@ -1864,6 +1888,8 @@ describe('managed catalog original Account transport', () => {
         const ownerMetadata = tryDecryptSessionOwnerMetadataView({ credentials: software.credentials, accountEncryptionMode: mode, rawSession: created });
         expect((await stat(String(ownerMetadata?.path))).isDirectory()).toBe(true);
         if (useHomeRpc) {
+          expect(ownedCopyChildId).toBe(creation.sessionId);
+          expect(interveningMetadataVersion).toBeGreaterThan(0);
           expect(copyRpcOutcomes).toContainEqual(expect.objectContaining({
             method: `${machineId}:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`, status: 'admitted',
           }));
@@ -1881,7 +1907,9 @@ describe('managed catalog original Account transport', () => {
           ]));
           expect(ownerMetadata).toMatchObject({ sessionConfigOptionOverridesV1: {
             overrides: { reasoning_effort: { value: 'minimal' } },
-          } });
+          }, work: { memoryEnabled: true, promptStack: expect.arrayContaining([expect.objectContaining({
+            ref: expect.objectContaining({ kind: 'doc' }),
+          })]) } });
         }
         expect(agentStarts, 'Accepted Copy must reach the daemon runner launch before returning success').toBe(1);
         if (!realRunner) return;

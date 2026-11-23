@@ -149,17 +149,20 @@ export async function prepareBotTemplateInstantiationV1(port: BotTemplateOperati
               knownSessionId = birth.sessionId;
               const ref = { serverId, sessionId: birth.sessionId };
               context.operationProgress?.update({ phase: 'content' });
-              const snapshot = await recipient.readSession(ref, context);
-              const existing = readBotTemplateInstanceV1(readRecord(snapshot.metadata.work).templateInstance);
-              if (existing) {
-                if (existing.acceptedVersion !== resolved.release.version || !sameStrictJsonValue(existing.source, resolved.source)) return fail('creation_conflict');
-                acceptedInstance = existing; return;
+              if (birth.disposition === 'rejoined') {
+                const snapshot = await recipient.readSession(ref, context);
+                const existing = readBotTemplateInstanceV1(readRecord(snapshot.metadata.work).templateInstance);
+                if (existing) {
+                  if (existing.acceptedVersion !== resolved.release.version || !sameStrictJsonValue(existing.source, resolved.source)) return fail('creation_conflict');
+                  acceptedInstance = existing; return;
+                }
               }
               const instructions = readRecord(await invoke('prompt_doc.create', 'create_instructions', {
                 title: `${spawnInput.title} instructions`, markdown: content.instructions.markdown,
               }));
               if (typeof instructions.artifactId !== 'string') return fail('invalid_action_output');
               resourceIds.push(instructions.artifactId);
+              const snapshot = await recipient.readSession(ref, context);
               const attached = readRecord(await invoke('session.instructions.set', 'attach_instructions', { ...ref,
                 expectedMetadataRevision: snapshot.revision, ref: { kind: 'doc', serverId, artifactId: instructions.artifactId } }));
               let memoryTarget: { ref: NonNullable<ReturnType<typeof MemoryMutationResultV1Schema.parse>['ref']>;

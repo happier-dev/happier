@@ -158,6 +158,25 @@ describe('MachineRpcRoutePolicyV1', () => {
     expect(getActionSpec(MACHINE_CAPABILITIES_DETECT_ACTION_ID).sideEffectClass).toBe('read');
     expect(isReadOnlyMachineRpcMethod(RPC_METHODS.CAPABILITIES_DETECT)).toBe(true);
   });
+  it('requires the custodian Account and a native Session origin for Copy readiness detection', async () => {
+    const { resolveMachineRpcExternalActionEffectV1: resolve } = await import('./routePolicyV1');
+    const { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } = await import('../../../../bots/templates/botTemplateActionIdsV1.js');
+    const target = { machineId: 'machine', installationId: 'installation' };
+    const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'copy-root', binding: {
+      ...target, accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+      serverIdentityId: 'home', actionId: BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, requestId: 'copy',
+      requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: target.machineId },
+      sessionActionSource: target,
+      sessionActionOrigin: { v: 1, requestId: 'copy', caller: { kind: 'session', sessionId: 'session', starterDepth: 1, turnDepth: 2 },
+        sourceTurnId: 'turn', callerPermissionMode: 'default',
+        causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } },
+    } }).binding;
+    const method = RPC_METHODS.CAPABILITIES_DETECT;
+    expect(resolve(method, binding, target)).toBe(BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1);
+    expect(resolve(method, { ...binding, accountId: 'team-member' }, target)).toBeNull();
+    // Home refuses this effect under a Copy root because it requires a separate Action.
+    expect(resolve(method, { ...binding, sessionActionOrigin: undefined }, target)).toBe(MACHINE_CAPABILITIES_DETECT_ACTION_ID);
+  });
   it('keeps held Agent terminal attachment on the authenticated Session-owner route', async () => {
     const { resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
     for (const method of [SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_OPEN,
