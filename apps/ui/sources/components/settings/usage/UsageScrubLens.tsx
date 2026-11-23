@@ -22,6 +22,7 @@ import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { useDeviceType, usePresentationWindowDimensions } from '@/utils/platform/responsive';
 import { useCurrentUiContextLocalCommands, type CurrentUiContextLocalCommand, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import { t } from '@/text';
 
 import {
@@ -302,7 +303,7 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
     key: 'values', title: commandTitle(t('usage.board.charts.commandValues')),
     description: t('usage.board.charts.commandValuesInput'),
     invoke: input => {
-      if (input !== undefined && (input === null || typeof input !== 'object' || Array.isArray(input))) return false;
+      if (input !== undefined && !isJsonObject(input)) return false;
       const index = input?.bucket;
       const mode = input?.mode ?? 'read';
       if (mode !== 'read' && mode !== 'select' && mode !== 'hover' && mode !== 'scrub' && mode !== 'toggle') return false;
@@ -335,7 +336,7 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
     key: 'choose', title: commandTitle(t('usage.board.charts.commandChoose')),
     description: t('usage.board.charts.commandChooseInput'),
     invoke: (input, context, invocation) => {
-      if (!held || !content || input === null || typeof input !== 'object' || Array.isArray(input)) return false;
+      if (!held || !content || !isJsonObject(input)) return false;
       const row = content.rows.find(row => (row.id ?? row.label) === input.row);
       return row?.onPress ? row.onPress(context, invocation) : false;
     },
