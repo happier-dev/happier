@@ -21,7 +21,7 @@ export async function readPublishedProjectSetup(input: Readonly<{
     const requester = readRequesterAccountActionContext(authorization);
     const credentials = authorization ? requester?.credentials : input.account.credentials;
     if (!credentials) throw Object.assign(new Error('project_requester_credentials_unavailable'), { code: 'project_requester_credentials_unavailable' });
-    const headers = async (request: Readonly<{ method: string; path: string; body?: unknown }>) => {
+    const headers = async (request: Readonly<{ method: string; path: string; body?: unknown }>): Promise<Readonly<Record<string, string>>> => {
         if (!authorization) return { Authorization: `Bearer ${credentials.token}` };
         const result = await authorization.requesterHttpProjection?.createRequestHeaders({ ...request,
             effectActionId: input.account.effectActionId ?? authorization.binding.actionId, signal: input.signal });

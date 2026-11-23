@@ -29,11 +29,11 @@ const correspondence = buildSessionCreationCorrespondence({
 describe('observeExternalSessionBirth', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it.each(['different submission', 'matching submission', 'no Session'] as const)('settles %s using only the committed row', async scenario => {
+  it.each(['different submission', 'matching submission', 'no Session', 'unknown Account mode'] as const)('settles %s using only the committed row', async scenario => {
     const fields = buildSessionMetadataEnvelopeCreateFields({ credentials, accountEncryptionMode: 'plain',
       storedContentMode: 'plain', agentState: null, metadata: { path: '/guest/session', host: 'guest', machineId: 'guest',
         sessionCreationCorrespondenceV1: { ...correspondence,
-          externalActionRequestDigest: scenario === 'matching submission' ? digest : 'b'.repeat(43) } } });
+          externalActionRequestDigest: scenario === 'different submission' ? 'b'.repeat(43) : digest } } });
     const session = createCurrentSessionProjectionRecordFixture({ ...createSessionNotificationContextFixture('committed-session'),
       encryptionMode: 'plain', share: null, active: false, archivedAt: null, dataEncryptionKey: null,
       metadataLayoutVersion: fields.metadataLayoutVersion, metadata: fields.sharedMetadata.ciphertext,
@@ -43,13 +43,17 @@ describe('observeExternalSessionBirth', () => {
       expect(body).toEqual({ tags: [correspondence.sessionCreationTag] });
       return { status: 200, data: { sessions: scenario === 'no Session' ? [] : [session] } };
     });
+    const externalActionExecutionAuthorization = scenario === 'unknown Account mode'
+      ? { ...authorization, binding: { ...authorization.binding, accountEncryptionMode: undefined } }
+      : authorization;
     const result = await observeExternalSessionBirth({ credentials, actionInput,
-      context: { authority: 'present_user', externalActionExecutionAuthorization: authorization } });
+      context: { authority: 'present_user', externalActionExecutionAuthorization } });
     if (scenario === 'different submission') expect(result).toBeNull();
     if (scenario === 'matching submission') expect(result).toMatchObject({ type: 'success', sessionId: 'committed-session',
       initialInput: { status: 'outcomeUnknown', localId: expect.any(String) } });
     if (scenario === 'no Session') expect(result).toMatchObject({ type: 'error', code: 'spawn_failed', retryable: true,
       failureCause: { nativeErrorReason: 'daemon_reconnected_before_session_birth_confirmed' } });
-    expect(request).toHaveBeenCalledTimes(1);
+    if (scenario === 'unknown Account mode') expect(result).toBeNull();
+    expect(request).toHaveBeenCalledTimes(scenario === 'unknown Account mode' ? 0 : 1);
   });
 });

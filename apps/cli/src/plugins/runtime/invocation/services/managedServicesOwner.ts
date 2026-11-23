@@ -3017,6 +3017,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
     /** Exact original generation only, including an observation still establishing. */
     readEnvironmentServiceLogRedactionLease(serverId: string, identity: MachineServiceIdentityV1,
         generation: Readonly<{ deploymentId: string; containerIds: readonly string[] }>): ReturnType<NonNullable<ProjectBuiltinNativeLifecycle['readLogRedactionLease']>>;
+    resolveProjectServiceDeclaration(targetId: string): ProjectManagedServiceHandle | null;
     listProjectServices(): readonly ProjectManagedServiceHandle[];
     listProjectServices(options: Readonly<{ requireComplete: true; workspaceRoot?: string }>): Promise<readonly ProjectManagedServiceHandle[]>;
     /** Confirmed stopped custody for a physical worktree, including nested service cwd. */

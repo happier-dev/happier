@@ -26,7 +26,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readSessionSpawnMemberDefaults } from './readSessionSpawnMemberDefaults';
 import { readSessionCreationAgentTarget, type ReadMachineAgentProjection } from './resolveSessionCreationAgentTarget';
 import { prepareOriginalAccountManagedPresetAcquire } from '@/api/managedPresetOrigination';
-import type { ManagedAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { isManagedPresetAcquireInputV1, type ManagedAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedControllerAccessV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 function unavailable(reason: string): never {
@@ -115,7 +115,7 @@ export function createPrepareSessionSpawnInput(params: CliActionDepsParams, home
         requestId: context.actionRequestId ?? input.creationKey ?? '', credentials: presetCustody.credentials,
         serverHttpBaseUrl: requesterServerHttpBaseUrl, ...(context.signal ? { signal: context.signal } : {}) });
       if (!bound || bound.kind === 'refused') return unavailable(bound?.code ?? 'controller_unavailable');
-      if (!bound.input.controller) return unavailable('controller_unavailable');
+      if (!isManagedPresetAcquireInputV1(bound.input) || !bound.input.controller) return unavailable('controller_unavailable');
       managedPresetAcquisition = bound.input;
       managedPresetControllerAccess = bound.controllerAccess;
       executionTarget = { serverId: placement.homeId, machineId: bound.input.controller.machineId };

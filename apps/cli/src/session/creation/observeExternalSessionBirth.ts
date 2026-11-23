@@ -20,7 +20,7 @@ export async function observeExternalSessionBirth(params: Readonly<{
   const { credentials, context } = params;
   const binding = context.externalActionExecutionAuthorization?.binding;
   const actionInput = SessionSpawnNewActionInputV2Schema.safeParse(params.actionInput);
-  if (binding?.actionId !== 'session.spawn_new' || !actionInput.success) return null;
+  if (binding?.actionId !== 'session.spawn_new' || binding.accountEncryptionMode === undefined || !actionInput.success) return null;
   const target = actionInput.data.executionTarget ?? { serverId: binding.serverIdentityId, machineId: binding.machineId };
   const args = buildSessionSpawnNewArgs({ ...actionInput.data, executionTarget: target }, context);
   const tag = args?.sessionCreationTag;

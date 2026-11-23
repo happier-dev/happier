@@ -9,6 +9,7 @@ import type { AgentExecutionTargetV1 } from '../agents/executionTargetV1.js';
 import { buildBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
 import { ProjectSessionDefaultsV1Schema, type ProjectSessionDefaultsV1 } from '../projects/projectSessionDefaultsV1.js';
 import type { MachineIsolationPolicyV1, MachineIsolationV1 } from '../machines/machineIsolationV1.js';
+import type { SessionPlacementSelectionV1 } from '../sessions/creation/sessionPlacementSelectionV1.js';
 import { ManagedConnectedServiceDefaultV1Schema, ManagedSessionDefaultsV1Schema,
   type ManagedConnectedServiceDefaultV1, type ManagedSessionDefaultsV1, type ManagedSessionPlacementV1,
 } from './managedSessionDefaultsV1.js';
@@ -22,8 +23,13 @@ export {
   type ManagedSessionDefaultsV1,
 } from './managedSessionDefaultsV1.js';
 
-/** Request-only choices can explicitly retain the Agent's Automatic model. */
-export type ManagedSessionExplicitChoicesV1 = Readonly<Omit<ManagedSessionDefaultsV1, 'modelByAgentTargetKey'> & {
+type ManagedSessionRequestPlacementV1 =
+  ManagedSessionPlacementV1 | Extract<SessionPlacementSelectionV1, { kind: 'in_place' }>;
+
+/** Request-only choices can retain the exact checkout or the Agent's Automatic model. */
+export type ManagedSessionExplicitChoicesV1<Placement extends ManagedSessionRequestPlacementV1 = ManagedSessionPlacementV1> =
+Readonly<Omit<ManagedSessionDefaultsV1, 'modelByAgentTargetKey' | 'placement'> & {
+  placement?: Placement;
   modelByAgentTargetKey?: Readonly<Record<string, SessionModelSelectionV1 | SessionModelSelectionV2 | null>>;
   defaultAgentTarget?: AgentExecutionTargetV1;
 }>;
@@ -71,10 +77,10 @@ export type ManagedDefaultSourceNamesV1 = Readonly<{
 export type ManagedAgentSandboxAvailability =
   | Readonly<{ status: 'enabled' | 'disabled' }>
   | Readonly<{ status: 'unavailable'; reason: 'not_available_in_sandbox_type' }>;
-export type ResolvedManagedSessionDefaults = Readonly<{
+export type ResolvedManagedSessionDefaults<Placement extends ManagedSessionRequestPlacementV1 = ManagedSessionPlacementV1> = Readonly<{
   agentTarget: ManagedDefaultDecision<AgentExecutionTargetV1>;
   approvalProfileId: ManagedDefaultDecision<string | null> & Readonly<{ teamOrGroupDerived: boolean }>;
-  placement: ManagedDefaultDecision<ManagedSessionPlacementV1>;
+  placement: ManagedDefaultDecision<ManagedSessionPlacementV1 | Placement>;
   permissionMode: ManagedDefaultDecision<AgentPermissionIntentV1>;
   agentSandbox: Readonly<{
     value: 'on' | 'off' | undefined;
@@ -90,28 +96,28 @@ export type ResolvedInheritedManagedSessionDefaults = Readonly<{
     : ResolvedManagedSessionDefaults[Field] & { names: ManagedDefaultSourceNamesV1 };
 }>;
 
-export type ManagedSessionDefaultsLayerV1 = Readonly<{
+export type ManagedSessionDefaultsLayerV1<Placement extends ManagedSessionRequestPlacementV1 = ManagedSessionPlacementV1> = Readonly<{
   source: 'explicit' | 'personal-project' | 'project' | 'member' | 'group' | 'team' | 'home' | 'policy';
-  defaults: ManagedSessionExplicitChoicesV1 | null;
+  defaults: ManagedSessionExplicitChoicesV1<ManagedSessionPlacementV1 | Placement> | null;
 }>;
 
-export type ManagedSessionDefaultsLayerProjectionV1 = Readonly<{
-  layers: readonly ManagedSessionDefaultsLayerV1[];
+export type ManagedSessionDefaultsLayerProjectionV1<Placement extends ManagedSessionRequestPlacementV1 = ManagedSessionPlacementV1> = Readonly<{
+  layers: readonly ManagedSessionDefaultsLayerV1<Placement>[];
   purposeKeys: readonly string[];
   agentTarget: ManagedDefaultDecision<AgentExecutionTargetV1>;
   targetKey: string;
 }>;
 
 /** The canonical layer order and connected-service purpose projection. */
-export function projectManagedSessionDefaultsLayers(
+export function projectManagedSessionDefaultsLayers<Placement extends ManagedSessionRequestPlacementV1 = ManagedSessionPlacementV1>(
   input: ManagedSessionDefaultsContext & Readonly<{
     agentTargetKey: string;
-    explicitChoices?: ManagedSessionExplicitChoicesV1;
+    explicitChoices?: ManagedSessionExplicitChoicesV1<Placement>;
     inheritBelowProjectScope?: 'personal-project' | 'project';
   }>,
-): ManagedSessionDefaultsLayerProjectionV1 {
+): ManagedSessionDefaultsLayerProjectionV1<Placement> {
   const groups = (input.groupIds ?? []).flatMap(id => input.teamDefaults?.groups[id] ? [input.teamDefaults.groups[id]] : []);
-  const layers: ManagedSessionDefaultsLayerV1[] = [
+  const layers: ManagedSessionDefaultsLayerV1<Placement>[] = [
     { source: 'explicit', defaults: input.explicitChoices ?? null },
     ...(!input.inheritBelowProjectScope && input.personalProjectDefaults ? [{ source: 'personal-project' as const, defaults: input.personalProjectDefaults }] : []),
     ...(input.inheritBelowProjectScope !== 'project' && input.projectDefaults ? [{ source: 'project' as const, defaults: input.projectDefaults }] : []),
@@ -162,13 +168,13 @@ export function resolveManagedAgentSandbox(input: ManagedAgentSandboxContext): R
 }
 
 /** One decision per field/purpose. Defaults express intent and never confer resource access. */
-export function resolveManagedSessionDefaults(input: ManagedSessionDefaultsContext & ManagedAgentSandboxContext & Readonly<{
-  agentTargetKey: string; explicitChoices?: ManagedSessionExplicitChoicesV1;
+export function resolveManagedSessionDefaults<Placement extends ManagedSessionRequestPlacementV1 = ManagedSessionPlacementV1>(input: ManagedSessionDefaultsContext & ManagedAgentSandboxContext & Readonly<{
+  agentTargetKey: string; explicitChoices?: ManagedSessionExplicitChoicesV1<Placement>;
   inheritBelowProjectScope?: 'personal-project' | 'project';
-}>): ResolvedManagedSessionDefaults {
+}>): ResolvedManagedSessionDefaults<Placement> {
   const projection = projectManagedSessionDefaultsLayers(input);
   const groups = projection.layers.filter(layer => layer.source === 'group').flatMap(layer => layer.defaults ? [layer.defaults] : []);
-  function decide<T>(read: (defaults: ManagedSessionExplicitChoicesV1) => T | undefined,
+  function decide<T>(read: (defaults: ManagedSessionExplicitChoicesV1<ManagedSessionPlacementV1 | Placement>) => T | undefined,
     equal: (left: T, right: T) => boolean = sameStrictJsonValue): ManagedDefaultDecision<T> {
     const groupValues = groups.flatMap(group => { const value = read(group); return value === undefined ? [] : [value]; });
     const first = groupValues[0];

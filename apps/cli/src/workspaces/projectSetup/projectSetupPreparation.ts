@@ -33,7 +33,8 @@ import { readWorkspaceSyncChildMachineFacts } from '@/workspaces/sync/workspaceS
 import { isManagedDevcontainerChildProjectionCurrentV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { projectWorkspaceRefV1, resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { readProjectDefinitionFile, readProjectDefinitionFileBytes } from './nativeDefinitionFiles';
-import { createProjectSetupTrustClient, type ProjectCheckoutTeardownConsent, type ProjectSetupTrustClientInput } from './projectSetupTrust';
+import type { ProjectAccountRowsInput } from '@/workspaces/projectAccountRows';
+import { createProjectSetupTrustClient, type ProjectCheckoutTeardownConsent } from './projectSetupTrust';
 import { createProjectSetupSuccessStore, type ProjectSetupSuccessBasis } from './projectSetupSuccess';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
@@ -54,7 +55,7 @@ export type ProjectSetupPreparationInput = Readonly<{
     workspace: WorkspaceRefV1;
     /** Resolved by the accepted Workspace/Project row owner, never from Action input. */
     projectAssociation: Readonly<{ workspace: WorkspaceRefV1; project: QualifiedProjectTrustProjectV1 }>;
-    requester: ProjectSetupTrustClientInput;
+    requester: ProjectAccountRowsInput & Readonly<{ serverHttpBaseUrl: string }>;
     /** Already opened detail retained by the same review/preparation; never Action input. */
     acceptedSetup?: ProjectSetupReadV1;
     /** Host-selected execution identity; never inferred from credentials or Action operands. */
