@@ -6,6 +6,7 @@ export const SOURCE_UI_ASSET_OUTPUT_PATHS = Object.freeze({
     // another lane's uncommitted edit, so they are prepared like the others.
     atmosphereWorklet: 'sources/components/atmosphere/backdropWorkletCore.generated.js',
     atmosphereWorker: 'public/happier-atmosphere-worker.js',
+    nativeGlyphTypeface: 'sources/components/atmosphere/glyph/glyphTypeface.generated.js',
     cryptoWorker: 'public/happier-crypto-worker.js',
     passwordKdfWorker: 'public/happier-password-kdf-worker.js',
 });

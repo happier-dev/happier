@@ -12,14 +12,18 @@ function makeImage(width: number, height: number, rgba: Uint8Array | Uint8Clampe
     return image;
 }
 
-export async function createNativeGlyphPainter(grid: GlyphGrid, dpr: number) {
+export async function warmNativeGlyphAtlas(grid: GlyphGrid, dpr: number) {
     const [w, h] = grid.cell;
     const [regular, small, ramp] = await Promise.all([
         glyphAtlas({ w: w / dpr, h: h / dpr, chars: glyphAtlasChars }, dpr),
         glyphAtlas({ w: w * 0.75 / dpr, h: h * glyphSmallDigitHeight / dpr, chars: glyphAtlasChars }, dpr),
         glyphAtlas({ w: w / dpr, h: h * glyphRampHeight / dpr, chars: glyphPlanetChars }, dpr),
     ]);
-    const pixels = packGlyphAtlas(grid, regular, small, ramp, dpr);
+    return packGlyphAtlas(grid, regular, small, ramp, dpr);
+}
+
+export function createNativeGlyphPainter(grid: GlyphGrid, dpr: number, pixels: Awaited<ReturnType<typeof warmNativeGlyphAtlas>>) {
+    const [w, h] = grid.cell;
     const atlasImage = makeImage(pixels.width, pixels.height, pixels.pixels);
     if (!atlasImage) throw new Error('Could not create the glyph atlas');
     const atlas = atlasImage;

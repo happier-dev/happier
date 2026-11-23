@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
-import { GlyphSurface } from './GlyphSurface.native';
+import { GlyphSurface, warmGlyphSurface } from './GlyphSurface.native';
 
 const presented = vi.hoisted(() => vi.fn());
 
@@ -28,6 +28,28 @@ it('presents the first recorded native glyph frame without mounting an empty pic
     try {
         await vi.waitFor(() => expect(painted).toHaveBeenCalledOnce());
         expect(presented).toHaveBeenCalledOnce();
+    } finally {
+        await screen.unmount();
+    }
+});
+
+it('publishes a drawn native frame by the first layout when admission has time to warm', async () => {
+    const warmup = warmGlyphSurface();
+    await vi.dynamicImportSettled();
+
+    let readiness: string | null = null;
+    const firstLayout = vi.fn();
+    function Destination() {
+        React.useLayoutEffect(() => firstLayout(readiness), []);
+        return null;
+    }
+    const screen = await renderScreen(<>
+        <GlyphSurface width={48} height={32} scene={[]} warmWhenHidden warmup={warmup}
+            onReady={status => { readiness = status; }} />
+        <Destination />
+    </>);
+    try {
+        expect(firstLayout).toHaveBeenCalledExactlyOnceWith('ready');
     } finally {
         await screen.unmount();
     }

@@ -7,8 +7,23 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { createRequire } from 'node:module';
 
-import { buildAtmosphereRenderers } from './buildAtmosphereRenderers.mjs';
+import * as renderers from './buildAtmosphereRenderers.mjs';
 import { atmosphereRipple, createAtmosphereTransition } from '../../../../packages/brand/atmosphere.mjs';
+
+const { buildAtmosphereRenderers } = renderers;
+
+test('native glyph warm-up gets the exact bundled mono face from its JavaScript module', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-native-glyph-typeface-'));
+    try {
+        const output = join(directory, 'glyphTypeface.generated.mjs');
+        await renderers.buildNativeGlyphTypeface({ outputPath: output });
+        const { glyphTypefaceBase64 } = await import(new URL(`file://${output}`).href);
+        const original = await readFile(new URL('../../sources/assets/fonts/IBMPlexMono-Regular.ttf', import.meta.url));
+        assert.deepEqual(Buffer.from(glyphTypefaceBase64, 'base64'), original);
+    } finally {
+        await rm(directory, { recursive: true, force: true });
+    }
+});
 
 test('both emitted platform engines preserve the independent lab RGBA matrix', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-U4-renderers-'));

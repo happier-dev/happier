@@ -17,6 +17,9 @@ import type { UnsavedChangesDecision } from '@/utils/ui/promptUnsavedChangesAler
 import { withInternalRouteQueryParams } from '@/utils/path/routeUtils';
 import { createPluginPageOpenSurfaceHandler, PluginPageLaunchInputScope, usePluginPageExplicitNavigation, usePluginPageLaunch, usePluginPageLaunchInputStaging } from './pluginPageNavigation';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { buildHomeQrInviteDeepLink, consumeHomeQrInviteRestoreHandoff } from '@/auth/pairing/pairingUrl';
+import { redirectNativeSystemPath } from '@/utils/url/nativeAppLink';
+import { encodeBase64 } from '@/encryption/base64';
 
 const native = vi.hoisted(() => ({ platform: 'ios', pathname: '/', initialUrl: null as string | null,
     pushes: [] as string[], listeners: new Set<(event: { url: string }) => void>() }));
@@ -177,6 +180,37 @@ it('delivers a fresh open only to the visible physical destination and does not 
     expect(mounted.read()).toBeNull();
     await mounted.visibility(true);
     expect(mounted.read(), 'Restoring the retained page is not another explicit open').toBeNull();
+});
+
+it('preserves the router’s Home pairing handoff when observing the same native URL', async () => {
+    const issuedAtMs = Date.now();
+    const url = buildHomeQrInviteDeepLink({
+        invite: {
+            v: 2,
+            intent: 'home_device',
+            direction: 'trusted_home_displays',
+            pairId: 'pair-native-ingress',
+            home: {
+                v: 1,
+                homeServerIdentityId: 'srv_home',
+                canonicalServerUrl: 'https://ingress.test',
+                revision: 1,
+                endpoints: [{ kind: 'https', url: 'https://ingress.test' }],
+            },
+            qrSecretBase64Url: encodeBase64(new Uint8Array(32).fill(8), 'base64url'),
+            issuedAtMs,
+            expiresAtMs: issuedAtMs + 60_000,
+        },
+    });
+    const mounted = await mountIngress();
+    const href = redirectNativeSystemPath({ path: url, initial: false });
+    const handle = new URL(href, 'https://ingress.test').searchParams.get('pairingHandoff');
+    if (!handle) throw new Error('The native router did not issue a Home pairing handoff');
+
+    await act(async () => { for (const listener of native.listeners) listener({ url }); });
+
+    expect(consumeHomeQrInviteRestoreHandoff(handle)).toBe(url);
+    expect(mounted.read()).toBeNull();
 });
 
 it('delivers an inputless in-app open through the existing staged page launch', async () => {

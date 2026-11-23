@@ -5,7 +5,7 @@ import url from 'node:url';
 import { resolveUiPostinstallTasks } from './resolveUiPostinstallTasks.mjs';
 import { buildPasswordKdfWorker } from './password/buildPasswordKdfWorker.mjs';
 import { buildCryptoWorker } from './crypto/buildCryptoWorker.mjs';
-import { buildAtmosphereRenderers } from './atmosphere/buildAtmosphereRenderers.mjs';
+import { buildAtmosphereRenderers, buildNativeGlyphTypeface } from './atmosphere/buildAtmosphereRenderers.mjs';
 import { runCommandBestEffort, runCommandOrExit } from './postinstall/runCommand.mjs';
 import { verifyNativePatchCompilation } from './postinstall/verifyNativePatchCompilation.mjs';
 import { findUiInstalledPackageDirs } from './postinstall/installedPackageDirs.mjs';
@@ -43,6 +43,7 @@ if (wants('vendor-password-kdf-worker')) {
 if (wants('vendor-crypto-worker')) await buildCryptoWorker();
 if (wants('prepare-atmosphere-renderers')) {
     await buildAtmosphereRenderers({ web: wants('vendor-password-kdf-worker') });
+    await buildNativeGlyphTypeface();
 }
 
 // pnpm installs the patches before lifecycle scripts. Prepare the owned WASM

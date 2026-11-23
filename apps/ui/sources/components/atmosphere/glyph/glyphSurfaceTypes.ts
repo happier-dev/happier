@@ -9,10 +9,11 @@ export type GlyphViewport = Readonly<{
 }>;
 
 export type GlyphSurfaceReadiness = 'ready' | 'still';
-export type GlyphSurfaceWarmup = Readonly<{
+export type WebGlyphSurfaceWarmup = Readonly<{
     dpr: number;
     atlas: ReturnType<typeof import('./glyphPainter.web').warmWebGlyphAtlas>;
 }>;
+export type GlyphSurfaceWarmup = WebGlyphSurfaceWarmup | ReturnType<typeof import('./GlyphSurface.native').warmGlyphSurface>;
 export type GlyphMotion =
     | Readonly<{ kind: 'transition'; epoch: number; durationS: number; onSettled?: () => void }>
     | Readonly<{ kind: 'sequence'; readTimeS?: (nowMs: number) => number; continues: (seconds: number) => boolean; onSuspended?: () => void }>
@@ -42,7 +43,7 @@ export type GlyphSurfaceProps = Readonly<{
     drawAtRef?: React.RefObject<((seconds: number) => void) | null>;
     /** An admitted hidden presenter can prepare one frame before it is shown. */
     warmWhenHidden?: boolean;
-    /** Optional boot preparation for the web surface's default cell size. */
+    /** Optional boot preparation for the surface's default cell size. */
     warmup?: GlyphSurfaceWarmup;
     style?: StyleProp<ViewStyle>;
     testID?: string;

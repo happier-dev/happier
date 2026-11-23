@@ -12,72 +12,60 @@ import type { GlyphSurfaceProps, GlyphSurfaceReadiness } from './glyphSurfaceTyp
 import { readGlyphLowPower } from './readGlyphLowPower.native';
 
 type Backend = typeof import('./glyphPainter.native');
-type Painter = Awaited<ReturnType<Backend['createNativeGlyphPainter']>>;
+type Painter = ReturnType<Backend['createNativeGlyphPainter']>;
+type Preparation = Readonly<{ createPainter: () => Painter; lowPower: boolean }> | 'still';
+const defaultCell = [8, 16] as const;
 export type { GlyphSurfaceProps, GlyphSurfaceReadiness, GlyphMotion } from './glyphSurfaceTypes';
 
-export function warmGlyphSurface(): undefined {
-    void import('./glyphPainter.native').catch(() => {});
-    return undefined;
+function prepareGlyphs(dpr: number, cellW: number, cellH: number): Promise<Preparation> {
+    const grid = { cell: [Math.round(cellW * dpr), Math.round(cellH * dpr)] as const, cols: 0, rows: 0, origin: [0, 0] as const };
+    const painter = import('./glyphPainter.native').then(async backend => {
+        const atlas = await backend.warmNativeGlyphAtlas(grid, dpr);
+        return () => backend.createNativeGlyphPainter(grid, dpr, atlas);
+    });
+    return Promise.all([painter, readGlyphLowPower()]).then(
+        ([createPainter, lowPower]) => ({ createPainter, lowPower }),
+        () => 'still' as const,
+    );
+}
+
+export function warmGlyphSurface() {
+    const dpr = PixelRatio.get();
+    let prepared: Preparation | null = null;
+    const pending = prepareGlyphs(dpr, ...defaultCell).then(result => prepared = result);
+    // The admission owns just CPU atlas bytes until a surface takes the preparation.
+    return { dpr, pending, get prepared() { return prepared; } };
 }
 
 export const GlyphSurface = React.memo(function GlyphSurface({
-    width, height, scene, motion = null, theme: themeOverride, cell, pixelRatio, style, testID, onReady, onPaint, composePicture, drawAtRef, warmWhenHidden, viewport, digitCadence,
+    width, height, scene, motion = null, theme: themeOverride, cell, pixelRatio, style, testID, onReady, onPaint, composePicture, drawAtRef, warmWhenHidden, warmup, viewport, digitCadence,
 }: GlyphSurfaceProps) {
     const { theme: appTheme } = useUnistyles();
     const theme = themeOverride ?? (appTheme.dark ? 'dark' : 'light');
     const dpr = pixelRatio ?? PixelRatio.get();
     const reduced = useReducedMotionPreference();
     const painterRef = React.useRef<Painter | null>(null);
-    const [prepared, setPrepared] = React.useState(false);
-    const [lowPower, setLowPower] = React.useState<boolean | null>(null);
+    const [available, setAvailable] = React.useState<GlyphSurfaceReadiness | null>(null);
     const [picture, setPicture] = React.useState<SharedValue<SkPicture> | null>(null);
     const pictureRef = React.useRef<SharedValue<SkPicture> | null>(null);
     const previousPicture = React.useRef<SkPicture | null>(null);
     const sample = React.useMemo(createGlyphFrameSampler, []);
     const onReadyRef = React.useRef(onReady);
     onReadyRef.current = onReady;
-    const cellW = cell?.[0] ?? 8, cellH = cell?.[1] ?? 16;
+    const [cellW, cellH] = cell ?? defaultCell;
     const dimensions = React.useRef({ width, height });
+    const admission = warmup && 'pending' in warmup && warmup.dpr === dpr && cellW === defaultCell[0] && cellH === defaultCell[1] ? warmup : undefined;
 
     React.useLayoutEffect(() => {
         dimensions.current = { width, height };
         painterRef.current?.reserveSpriteBatch(width, height);
     }, [width, height]);
 
-    React.useEffect(() => {
-        let disposed = false;
-        setPrepared(false);
-        setPicture(null);
-        paintedStatus.current = null;
-        const grid = { cell: [Math.round(cellW * dpr), Math.round(cellH * dpr)] as const, cols: 0, rows: 0, origin: [0, 0] as const };
-        void import('./glyphPainter.native').then(backend => backend.createNativeGlyphPainter(grid, dpr)).then((painter) => {
-            if (disposed) { painter.dispose(); return; }
-            painter.reserveSpriteBatch(dimensions.current.width, dimensions.current.height);
-            painterRef.current = painter;
-            setPrepared(true);
-        }, () => {
-            if (!disposed) setPrepared(true);
-        });
-        return () => {
-            disposed = true;
-            pictureRef.current = null;
-            previousPicture.current?.dispose();
-            previousPicture.current = null;
-            painterRef.current?.dispose();
-            painterRef.current = null;
-        };
-    }, [cellH, cellW, dpr]);
-
-    React.useEffect(() => {
-        let active = true;
-        void readGlyphLowPower().then(value => { if (active) setLowPower(value); });
-        return () => { active = false; };
-    }, []);
-    const readiness = prepared && lowPower !== null ? reduced || lowPower || !painterRef.current ? 'still' as const : 'ready' as const : null;
+    const readiness = reduced && available ? 'still' : available;
     const paintedStatus = React.useRef<GlyphSurfaceReadiness | null>(null);
-    const paint = React.useCallback((seconds: number, digitSeconds = 0) => {
+    const draw = React.useCallback((seconds: number, digitSeconds: number, status: GlyphSurfaceReadiness) => {
         if (width <= 0 || height <= 0) return;
-        const layers = typeof scene === 'function' ? scene(seconds, readiness ?? undefined, digitSeconds) : scene;
+        const layers = typeof scene === 'function' ? scene(seconds, status, digitSeconds) : scene;
         const painter = painterRef.current;
         const frame = painter && sample({ view: { w: width, h: height }, dpr, theme, layers, cell: [cellW, cellH] }, { time: seconds });
         const next = composePicture
@@ -95,12 +83,62 @@ export const GlyphSurface = React.memo(function GlyphSurface({
             previousPicture.current?.dispose();
             previousPicture.current = next;
         }
-        if (readiness && paintedStatus.current !== readiness) {
-            paintedStatus.current = readiness;
-            onReadyRef.current?.(readiness);
+        if (paintedStatus.current !== status) {
+            paintedStatus.current = status;
+            onReadyRef.current?.(status);
         }
         onPaint?.();
-    }, [cellH, cellW, composePicture, dpr, height, onPaint, readiness, sample, scene, theme, width]);
+    }, [cellH, cellW, composePicture, dpr, height, onPaint, sample, scene, theme, width]);
+    const drawRef = React.useRef({ draw, reduced, warmWhenHidden });
+    drawRef.current = { draw, reduced, warmWhenHidden };
+    const primed = React.useRef<{ draw: typeof draw; status: GlyphSurfaceReadiness } | null>(null);
+
+    React.useLayoutEffect(() => {
+        let disposed = false;
+        setAvailable(null);
+        setPicture(null);
+        paintedStatus.current = null;
+        primed.current = null;
+        const prepare = (result: Preparation) => {
+            if (disposed) return;
+            let status: GlyphSurfaceReadiness = 'still';
+            if (result !== 'still') {
+                try {
+                    const painter = result.createPainter();
+                    painterRef.current = painter;
+                    painter.reserveSpriteBatch(dimensions.current.width, dimensions.current.height);
+                    if (!result.lowPower) status = 'ready';
+                } catch {
+                    painterRef.current?.dispose();
+                    painterRef.current = null;
+                }
+            }
+            if (admission && drawRef.current.warmWhenHidden) {
+                const { draw, reduced } = drawRef.current;
+                const firstStatus = reduced ? 'still' : status;
+                draw(0, 0, firstStatus);
+                if (paintedStatus.current === firstStatus) primed.current = { draw, status: firstStatus };
+            }
+            setAvailable(status);
+        };
+        if (admission?.prepared) prepare(admission.prepared);
+        else void (admission?.pending ?? prepareGlyphs(dpr, cellW, cellH)).then(prepare);
+        return () => {
+            disposed = true;
+            pictureRef.current = null;
+            previousPicture.current?.dispose();
+            previousPicture.current = null;
+            painterRef.current?.dispose();
+            painterRef.current = null;
+        };
+    }, [admission, cellH, cellW, dpr]);
+
+    const paint = React.useCallback((seconds: number, digitSeconds = 0) => {
+        const firstFrame = primed.current;
+        primed.current = null;
+        if (firstFrame?.draw === draw && firstFrame.status === readiness && seconds === 0 && digitSeconds === 0) return;
+        if (readiness) draw(seconds, digitSeconds, readiness);
+    }, [draw, readiness]);
     React.useImperativeHandle(drawAtRef, () => readiness ? paint : (() => {}), [paint, readiness]);
     useGlyphClock(motion, readiness, paint, warmWhenHidden, viewport, digitCadence);
 

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Linking, Platform } from 'react-native';
 import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { resolveNativeAppLinkHref } from '@/utils/url/nativeAppLink';
+import { readNativeAppLinkLocation } from '@/utils/url/nativeAppLink';
 import { desktopHostKind } from '@/utils/platform/desktopHost';
 import { usePathname } from '@/components/appShell/workspace/destinationRoute';
 
@@ -45,12 +45,12 @@ export function usePluginPageIngress(stage: StagePluginPageExplicitHref, retireU
         let receivedLiveUrl = false;
         const subscription = Linking.addEventListener('url', event => {
             receivedLiveUrl = true;
-            const href = resolveNativeAppLinkHref(event.url);
+            const href = readNativeAppLinkLocation(event.url);
             if (href) stageRef.current(href);
         });
         void Linking.getInitialURL().then(url => {
             if (disposed || receivedLiveUrl || !url) return;
-            const href = resolveNativeAppLinkHref(url);
+            const href = readNativeAppLinkLocation(url);
             if (href) stageRef.current(href, lifetime);
         }).catch(() => {});
         return () => { disposed = true; subscription.remove(); };

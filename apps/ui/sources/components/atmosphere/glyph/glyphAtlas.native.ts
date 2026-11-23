@@ -2,16 +2,12 @@ import { AlphaType, ColorType, Skia } from '@shopify/react-native-skia';
 import { createWorkletRuntime, runOnRuntimeAsync, type WorkletRuntime } from 'react-native-worklets';
 import type { AtmosphereGlyphAtlas } from '@happier-dev/brand/atmosphere';
 
-import { encodeBase64 } from '@/encryption/base64';
-import { readBundledAssetBytes } from '@/utils/assets/readBundledAssetBytes';
+import { glyphTypefaceBase64 } from './glyphTypeface.generated';
 
 let runtime: WorkletRuntime | undefined;
-let fontBytes: Promise<string> | undefined;
 
 /** Same atlas layout as web, rasterized on a native worker runtime rather than the UI thread. */
-export async function glyphAtlas(spec: { w: number; h: number; chars: string }, dpr: number): Promise<AtmosphereGlyphAtlas> {
-    // Observe the asset result before native worklet setup can fail independently.
-    const bytes = await (fontBytes ??= readBundledAssetBytes(require('@/assets/fonts/IBMPlexMono-Regular.ttf')).then(encodeBase64));
+export function glyphAtlas(spec: { w: number; h: number; chars: string }, dpr: number): Promise<AtmosphereGlyphAtlas> {
     runtime ??= createWorkletRuntime({ name: 'happier-atmosphere-glyphs' });
     const api = Skia, colorType = ColorType.RGBA_8888, alphaType = AlphaType.Unpremul;
     return runOnRuntimeAsync(runtime, (input: typeof spec, ratio: number, bytes: string) => {
@@ -46,5 +42,5 @@ export async function glyphAtlas(spec: { w: number; h: number; chars: string }, 
                 } finally { surface.dispose(); font.dispose(); paint.dispose(); }
             } finally { typeface.dispose(); }
         } finally { data.dispose(); }
-    }, spec, dpr, bytes);
+    }, spec, dpr, glyphTypefaceBase64);
 }

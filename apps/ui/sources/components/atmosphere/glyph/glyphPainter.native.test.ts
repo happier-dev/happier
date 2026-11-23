@@ -2,7 +2,7 @@ import { expect, it, vi } from 'vitest';
 import { fieldDotLayer, glyphFrame, planetGlyphLayer } from '@happier-dev/brand/glyph-scene';
 import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
 
-import { createNativeGlyphPainter } from './glyphPainter.native';
+import { createNativeGlyphPainter, warmNativeGlyphAtlas } from './glyphPainter.native';
 
 const native = vi.hoisted(() => ({
     transformAllocations: 0,
@@ -40,7 +40,7 @@ it('streams all field and planet glyphs in painter order using transforms reserv
         planetGlyphLayer({ geometry: horizonPlanetGeometry({ width, height }, { phone: true, composerTop: 260 }),
             intensity: 'quiet', digits: true, fade: { from: 400, to: 560 } }),
     ] });
-    const painter = await createNativeGlyphPainter(frame.grid, 1);
+    const painter = createNativeGlyphPainter(frame.grid, 1, await warmNativeGlyphAtlas(frame.grid, 1));
     try {
         painter.reserveSpriteBatch(width, height);
         const initialAllocations = native.transformAllocations;

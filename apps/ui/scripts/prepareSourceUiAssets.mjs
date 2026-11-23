@@ -89,6 +89,13 @@ async function readSourceWorkerSpecs() {
     if (tasks.includes('prepare-atmosphere-renderers')) {
         specs.push({ generate: atmosphere, source: SOURCE_UI_ASSET_OUTPUT_PATHS.atmosphereWorklet, candidate: 'backdropWorkletCore.generated.js' });
         if (web) specs.push({ generate: atmosphere, source: SOURCE_UI_ASSET_OUTPUT_PATHS.atmosphereWorker, candidate: 'happier-atmosphere-worker.js' });
+        const modulePath = '../tools/atmosphere/buildAtmosphereRenderers.mjs';
+        const { buildNativeGlyphTypeface } = await import(modulePath);
+        specs.push({ source: SOURCE_UI_ASSET_OUTPUT_PATHS.nativeGlyphTypeface, candidate: 'glyphTypeface.generated.js',
+            generate: async ({ uiPackageDir, outputPath }) => {
+                const built = await buildNativeGlyphTypeface({ uiDirectory: uiPackageDir, outputPath });
+                return { ...built, inputPaths: [...tool(modulePath), ...built.inputPaths] };
+            } });
     }
     if (web) {
         const { buildPasswordKdfWorker } = await import('../tools/password/buildPasswordKdfWorker.mjs');

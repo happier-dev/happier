@@ -30,24 +30,31 @@ export function redirectNativeSystemPath({ path }: Readonly<{ path: string; init
     }
     const systemPath = resolvePairingSystemPath(path);
     if (systemPath !== path) return systemPath;
-    const href = resolveNativeAppLinkPath(path);
+    const href = readNativeAppLinkLocation(path);
     if (href && captureNativeArtifactSignedInLinkSecret(path, href)) return href;
     return path;
 }
 
 /** One native URI codec for OS Linking and desktop deep-link delivery. */
 export function resolveNativeAppLinkHref(url: string): string | null {
-    const href = resolveNativeAppLinkPath(url);
+    const href = resolveNativeAppLinkPath(url, 'intent');
     if (href) captureNativeArtifactSignedInLinkSecret(url, href);
     return href;
 }
 
-function resolveNativeAppLinkPath(url: string): string | null {
+/** Read the location for passive observers of a platform URL. */
+export function readNativeAppLinkLocation(url: string): string | null {
+    return resolveNativeAppLinkPath(url, 'location');
+}
+
+function resolveNativeAppLinkPath(url: string, purpose: 'intent' | 'location'): string | null {
     let parsed: URL;
     try { parsed = new URL(url, 'https://native.invalid'); } catch { return null; }
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:' && !isAcceptedHappierUrlProtocol(parsed.protocol)) return null;
-    const systemPath = resolvePairingSystemPath(url);
-    if (systemPath !== url) return systemPath;
+    if (purpose === 'intent') {
+        const systemPath = resolvePairingSystemPath(url);
+        if (systemPath !== url) return systemPath;
+    }
     // Universal links already carry their internal route in the pathname.
     if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
         return `${parsed.pathname}${parsed.search}`;

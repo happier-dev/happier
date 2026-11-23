@@ -7,7 +7,7 @@ import { registerWebCanvasReplay, releaseCanvasBackingStore } from '@/components
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
 import { useGlyphClock } from '../moments/useMomentClock';
-import type { GlyphSurfaceProps, GlyphSurfaceReadiness, GlyphSurfaceWarmup } from './glyphSurfaceTypes';
+import type { GlyphSurfaceProps, GlyphSurfaceReadiness, WebGlyphSurfaceWarmup } from './glyphSurfaceTypes';
 
 type Backend = typeof import('./glyphPainter.web');
 type Prepared = {
@@ -25,7 +25,7 @@ const atlasGrid = (w: number, h: number, dpr: number) => ({
     cols: 0, rows: 0, origin: [0, 0] as const,
 });
 
-export function warmGlyphSurface(): GlyphSurfaceWarmup {
+export function warmGlyphSurface(): WebGlyphSurfaceWarmup {
     const dpr = readPixelRatio();
     const atlas = import('./glyphPainter.web').then(backend => backend.warmWebGlyphAtlas(atlasGrid(...defaultCell, dpr), dpr));
     // The boot can settle to Still before any canvas consumes this preparation.
@@ -69,7 +69,7 @@ export const GlyphSurface = React.memo(function GlyphSurface({
                 canvas.dataset.glyphLinked = String(restored);
                 if (prepared.current) setReady(restored ? 'ready' : 'still');
             });
-            const atlas = await (warmup?.dpr === dpr && cellW === defaultCell[0] && cellH === defaultCell[1]
+            const atlas = await (warmup && 'atlas' in warmup && warmup.dpr === dpr && cellW === defaultCell[0] && cellH === defaultCell[1]
                 ? warmup.atlas : backend.warmWebGlyphAtlas(atlasGrid(cellW, cellH, dpr), dpr));
             if (disposed) return;
             canvas.dataset.glyphRenderer = painter.renderer ?? 'unavailable';
