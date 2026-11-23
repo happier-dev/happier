@@ -25,7 +25,7 @@ import {
     createActionExecutor,
     createWorkflowActionExecutor,
     createWorkflowDefinitionActions,
-    SessionTriggerListResultV1Schema,
+    WorkflowTriggerListResultV1Schema,
     WorkflowTriggerWriteResultV1Schema,
     AutomationDefinitionListResponseSchema,
     AutomationDefinitionDetailsResponseSchema,
@@ -46,6 +46,7 @@ import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { registerAutomationV3Routes } from "@/app/api/routes/automations/registerAutomationV3Routes";
 import { registerAccountEncryptionMigrateRoutes } from "@/app/api/routes/account/registerAccountEncryptionMigrateRoutes";
+import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 
 import {
     AutomationDisabledError,
@@ -347,7 +348,9 @@ describe("automationCrudService (integration)", () => {
             const unexpected = async (): Promise<never> => { throw new Error("Unexpected Artifact or saved Workflow access"); };
             const definitions = createWorkflowDefinitionActions({ artifactStore: { read: unexpected, list: unexpected,
                 create: unexpected, update: unexpected, delete: unexpected }, encodeListCursor: (row) => row.artifactId, assertDefinitionWriteAllowed: unexpected });
-            const triggers = createWorkflowTriggerActions({
+            const triggers = createAccountWorkflowTriggerActions({
+                resolveEncryption: async () => ({ kind: "available", witness: { mode: "plain", version: 1, contentKeyFingerprint: null } }),
+                randomBytes,
                 automations: {
                     create: async (input, beforeWrite) => {
                         await beforeWrite?.();
@@ -381,9 +384,6 @@ describe("automationCrudService (integration)", () => {
                     delete: unexpected,
                 },
                 newId: () => randomUUID(), resolveWorkflow: unexpected,
-                openContext: async (row) => row.executionRecipe?.v === 2 && row.executionRecipe.workflow.t === "plain" ? row.executionRecipe.workflow.v : null,
-                sealContext: async ({ templateVersion, context }) => AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({
-                    v: 2, templateVersion, workflow: { t: "plain", v: context }, triggerEvidence: null }),
                 resolveSession: async (id) => {
                     const row = await db.session.findFirst({ where: { id, accountId: account.id } });
                     if (!row) throw Object.assign(new Error("target_unavailable"), { code: "target_unavailable" });
@@ -393,30 +393,27 @@ describe("automationCrudService (integration)", () => {
             const boundary = createActionExecutor({ workflowAction: createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true,
                 definitions, triggers, runs: { execute: unexpected } }) });
             const caller = { surface: "ui", authority: "present_user" } as const;
-            const request = { sessionId: sessionB.id, project, target: { kind: "inline", definition }, trigger: {
+            const request = { lifetimeSession: { sessionId: sessionB.id }, project, target: { kind: "inline", definition }, trigger: {
                 kind: "schedule", enabled: false, schedule: { kind: "cron", scheduleExpr: "0 9 * * *", everyMs: null, timezone: "UTC" } } } as const;
-            const added = await boundary.execute("session.trigger.add", request, caller);
+            const added = await boundary.execute("workflow.trigger.add", request, caller);
             expect(added).toMatchObject({ ok: true });
             if (!added.ok) throw new Error(added.errorCode);
             const receipt = WorkflowTriggerWriteResultV1Schema.parse(added.result);
             expect(await db.automation.findUnique({ where: { id: receipt.set.automationId }, include: { assignments: true } }))
                 .toMatchObject({ scopeSessionId: sessionB.id, assignments: [{ machineId }] });
-            const listed = await boundary.execute("session.trigger.list", { sessionId: sessionB.id }, caller);
+            const listed = await boundary.execute("workflow.trigger.list", { lifetimeSession: request.lifetimeSession }, caller);
             expect(listed).toMatchObject({ ok: true });
             if (!listed.ok) throw new Error(listed.errorCode);
-            expect(SessionTriggerListResultV1Schema.parse(listed.result).sets).toEqual([receipt.set]);
+            expect(WorkflowTriggerListResultV1Schema.parse(listed.result).sets).toEqual([receipt.set]);
             expect(receipt.set).toMatchObject({ project, destinations: { targetSessionIds: [sessionA.id] },
                 context: { inlineDefinition: { defaults: { conversation: destination }, blocks: [{ execution: { conversation: destination } }] } } });
-            const updated = await boundary.execute("session.trigger.update", { sessionId: sessionB.id, triggerId: receipt.triggerId,
-                expectedRevision: receipt.set.revision, patch: { trigger: { kind: "sessionLifecycle", sourceSessionId: sessionB.id,
+            const subject = { kind: "session", serverId: await getOrCreateServerIdentityId(), sessionId: sessionB.id } as const;
+            const updated = await boundary.execute("workflow.trigger.update", { automationId: receipt.set.automationId, triggerId: receipt.triggerId,
+                expectedRevision: receipt.set.revision, patch: { trigger: { kind: "sessionLifecycle", subject,
                     events: ["parentTurnCompleted"], policy: { kind: "everyMatch" } } } }, caller);
+            if (!updated.ok) throw new Error(JSON.stringify(updated));
             expect(updated).toMatchObject({ ok: true, result: { set: { project, destinations: { targetSessionIds: [sessionA.id] },
-                triggers: [{ kind: "sessionLifecycle", sourceSessionId: sessionB.id }] } } });
-            // Mis-wiring the scope to A while the lifecycle producer still names B is rejected before storage.
-            expect(await boundary.execute("session.trigger.add", { ...request, sessionId: sessionA.id,
-                trigger: { kind: "sessionLifecycle", enabled: false, sourceSessionId: sessionB.id,
-                    events: ["parentTurnCompleted"], policy: { kind: "everyMatch" } } }, caller))
-                .toMatchObject({ ok: false, errorCode: "invalid_input", details: { code: "session_trigger_source_mismatch" } });
+                triggers: [{ kind: "sessionLifecycle", subject }] } } });
             expect(await db.automation.count({ where: { accountId: account.id } })).toBe(1);
         });
     });
