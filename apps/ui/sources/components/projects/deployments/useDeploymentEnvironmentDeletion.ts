@@ -10,9 +10,10 @@ import { readDeploymentActionError, readDeploymentActionResult, type DeploymentA
 import { useReceiptRead } from './useDeploymentReads';
 import { deploymentManagedRetention, type DeploymentRetentionChoiceValue } from './DeploymentRetentionChoice';
 import type { DeploymentTeardownVolumesV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import type { DeploymentRuntimeReinstallV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
 /** Only the target-membership Actions: a page passes the subset it holds. */
-type Actions = Pick<ReturnType<typeof createDeploymentActions>, 'deleteEnvironment' | 'unlink' | 'teardown' | 'link'>;
+type Actions = Pick<ReturnType<typeof createDeploymentActions>, 'deleteEnvironment' | 'unlink' | 'teardown' | 'link' | 'setBindings'>;
 export type DeploymentEnvironmentDeleteChoice = Readonly<{ kind: 'detachKeepRunning' }>
     | Readonly<{ kind: 'afterTeardown'; deploymentIds: readonly string[] }>;
 export type DeploymentTargetUnlinkChoice = Readonly<{ kind: 'detachKeepRunning' }>
@@ -130,6 +131,26 @@ export function useDeploymentEnvironmentDeletion(options: DeploymentEnvironmentD
         }, operation, 'manageTargets');
     }
     /**
+     * Reinstall on this Machine (the read's `runtimeReinstall`), the first two of its ordered Actions
+     * (`DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1`): relink the same target to each Machine's current installation, then
+     * save the bindings unchanged, which re-seals them there. The page's own Deploy is the third.
+     */
+    function reinstall(machines: DeploymentRuntimeReinstallV1['machines'], operation?: UiActionOperation) {
+        return run(async (actions, value, invoked) => {
+            const previous = value.targetLinks.find(item => item.targetLink.id === value.environment.runtimeTargetLinkId)?.targetLink;
+            if (!previous) return { kind: 'refused', reason: 'other', code: 'deployment_unavailable' };
+            const linked = await actions.link({ environmentId: value.environment.id, expectedRevision: value.environment.revision,
+                targetId: previous.source.id, role: 'runtime',
+                machines: machines.map(machine => ({ machineId: machine.machineId, installationId: machine.currentInstallationId })),
+                replacesLinkId: previous.id, expectedTargetLinkRevision: previous.revision,
+                requestKey: operation?.actionRequestId ?? randomUUID() }, invoked);
+            if (!linked.ok) return readDeploymentActionResult(linked);
+            const sealed = await actions.setBindings({ environmentId: value.environment.id, expectedRevision: linked.revision,
+                set: [], remove: [] }, invoked);
+            return sealed.ok ? { kind: 'linked', targetLinkId: linked.targetLinkId } : readDeploymentActionResult(sealed, 'refused');
+        }, operation, 'manageTargets');
+    }
+    /**
      * Stop and remove is one admitted teardown; its owner also removes the Environment unless only a provider target's
      * resource goes. `providerRemoval` carries the person's reviewed choice to the provider teardown owner.
      */
@@ -165,7 +186,7 @@ export function useDeploymentEnvironmentDeletion(options: DeploymentEnvironmentD
     return { canDelete, busy, outcome, receipt: receipt.snapshot, refreshReceipt: receipt.refresh,
         canLink: options.snapshot.status === 'ready' && detail?.environment.capabilities.manageTargets === true
             && options.actions !== null,
-        deleteEnvironment, unlink, teardown, stopAndRemove, link,
+        deleteEnvironment, unlink, teardown, stopAndRemove, link, reinstall,
         cancel: () => { if (flight.current?.scope === scope) flight.current.controller.abort(); },
         clearOutcome: () => { if (current.current.scope === scope && !flight.current) setState(null); },
         review: {

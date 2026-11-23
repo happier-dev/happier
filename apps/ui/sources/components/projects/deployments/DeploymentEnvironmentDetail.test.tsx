@@ -517,6 +517,42 @@ it('leads the deployed Overview with what runs, then one Definition with one Com
   } finally { controller.retire(); }
 });
 
+// ENV-REINSTALL-1123 (owner 11-23): a reinstalled Machine keeps its Environment. The read's `runtimeReinstall` is the
+// trigger; the Overview offers one "Reinstall on this Machine", or says why it can't when someone else controls it.
+it.each([true, false])('offers Reinstall on this Machine from the read, with what stays and which secrets re-seal (available: %s)', async available => {
+  const { t } = await import('@/text');
+  const { ModalProvider } = await import('@/modal');
+  const base = environmentDetailForHome();
+  const runtime = base.targetLinks.find(row => row.targetLink.id === base.environment.runtimeTargetLinkId)!.targetLink;
+  const machineId = runtime.machines[0]!;
+  const detail = { ...base, runtimeReinstall: { reason: 'machine_installation_replaced' as const,
+    machines: [{ machineId, retiredInstallationId: 'retired-installation', currentInstallationId: 'current-installation' }],
+    available, actionIds: ['deployments.targets.link', 'deployments.bindings.set', 'deployments.deploy'] as const,
+    savedSecrets: { reseal: ['secret-kept'], reenter: ['secret-lost'] } } };
+  const { controller } = controllerFor({ detail });
+  const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+  const { createDeploymentActions } = await import('./deploymentActions');
+  const actions = createDeploymentActions(lifetime, scope.projectSourceId);
+  try {
+    const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller}
+      environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
+      phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} lifetime={lifetime} disposition={actions} />
+    </ModalProvider>);
+    await waitForContent(screen, 'project-deployments.environment.reinstall');
+    const action = 'project-deployments.environment.reinstall.action';
+    if (!available) {
+      expect(screen.findByTestId(action)).toBeNull();
+      expect(screen.getTextContent()).toContain(t('projects.deployments.overviewStatus.reinstallUnavailable'));
+      return;
+    }
+    await screen.pressByTestIdAsync(action);
+    await waitForContent(screen, 'project-deployments.reinstall.confirm');
+    expect(screen.findByTestId('project-deployments.reinstall.reseal.secret-kept')).not.toBeNull();
+    expect(screen.findByTestId('project-deployments.reinstall.reenter.secret-lost')).not.toBeNull();
+    expect(screen.findByTestId('project-deployments.reinstall.fact.backups')).not.toBeNull();
+  } finally { controller.retire(); }
+});
+
 // Deploy from CI closes the Overview (pfc-redesign r4 dEnvOv KEEP, owner-approved 11-13).
 it.each(['repository', 'stored'] as const)('opens CI token setup only for a %s Environment', async kind => {
   const { ModalProvider } = await import('@/modal');

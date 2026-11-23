@@ -542,6 +542,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                     || await isDeploymentDatabaseMoveCandidateV1(environment.content, runtime),
                 ...(pendingDeployment === undefined ? {} : { pendingDeployment }),
                 ...(detail.savedSecretRevisions === undefined ? {} : { savedSecretRevisions: detail.savedSecretRevisions }),
+                ...(detail.runtimeReinstall === undefined ? {} : { runtimeReinstall: detail.runtimeReinstall }),
                 ...(detail.controller ? { controller: detail.controller } : {}) } };
         }),
         listHistory: (scope, environmentId, query, options) => scoped(scope, options, async account => {

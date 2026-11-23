@@ -35,6 +35,7 @@ import {
   type PageHeaderMetaFact,
 } from '@/components/ui/layout/PageHeader';
 import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { showDeploymentReinstallSheet } from './DeploymentReinstallSheet';
 import { DeploymentEnvironmentMark } from './rows/DeploymentEnvironmentRow';
 import { Item } from '@/components/ui/lists/Item';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
@@ -247,7 +248,7 @@ export const DeploymentEnvironmentDetail = React.memo(
       destination?: DeploymentEnvironmentDestinationV1;
       onNavigate?: (destination: DeploymentEnvironmentDestinationV1) => void;
       /** The Action owner's target-membership Actions (Delete environment, Link and Unlink target); absent where the page cannot write. */
-      disposition?: Pick<ReturnType<typeof createDeploymentActions>, 'deleteEnvironment' | 'unlink' | 'teardown' | 'link'> | null;
+      disposition?: Pick<ReturnType<typeof createDeploymentActions>, 'deleteEnvironment' | 'unlink' | 'teardown' | 'link' | 'setBindings'> | null;
       detachReview?: Readonly<{ targetLinkId: string; onOpened: () => void }>;
       /** The Environment was deleted: the page leaves it. */
       onDeleted?: () => void;
@@ -885,8 +886,28 @@ export const DeploymentEnvironmentDetail = React.memo(
     // Overview owns the whole precedence; other tabs keep only what blocks their own presses.
     const overview = tab === 'overview';
     const latest = overview ? history.result.items[0] ?? null : null;
+    const runtimeReinstall = detail.runtimeReinstall ?? null;
+    const reinstallMachine = runtimeReinstall ? knownMachine(runtimeReinstall.machines[0]!.machineId) : null;
+    // Reinstall on this Machine (the read's fact): relink and re-seal through the disposition owner, then the page's
+    // own Deploy, so its progress and Receipt are the ordinary ones. Offered only when the read says it may run.
+    const openReinstall = runtimeReinstall?.available && disposition.canLink ? () => {
+      showDeploymentReinstallSheet({
+        name: detail.content.name,
+        machine: reinstallMachine ?? t('projects.deployments.aMachine'),
+        reinstall: runtimeReinstall,
+        secretScope: props.lifetime?.scope ?? null,
+        run: () => disposition.reinstall(runtimeReinstall.machines, { confirmed: true }),
+        // The relinked target is the one Deploy runs on; the read refreshes behind it.
+        onReinstalled: (targetLinkId) => {
+          void environment.refresh();
+          if (deploy) void press(() => deploy({ environmentId, targetLinkId, ...(onFailure ? { onFailure } : {}) }));
+        },
+        onApproval: review.request,
+      });
+    } : null;
     const attention = deploymentEnvironmentAttention({
       machineOffline: offlineMachine !== null,
+      machineReinstalled: runtimeReinstall !== null,
       noTarget: availability.kind === 'noTarget',
       controller: overview ? detail.controller ?? null : null,
       refused: outcome?.kind === 'refused',
@@ -926,6 +947,18 @@ export const DeploymentEnvironmentDetail = React.memo(
               testID="project-deployments.environment.offline"
               tone="neutral"
               title={t('projects.deployments.machineOffline', { machine: offlineMachine! })}
+            />
+          );
+        case 'machineReinstalled':
+          // One control, or the reason it is not offered (another person controls that Machine or this Project).
+          return (
+            <AttentionBanner
+              testID="project-deployments.environment.reinstall"
+              tone="warning"
+              title={t('projects.deployments.overviewStatus.reinstallTitle', { machine: reinstallMachine ?? t('projects.deployments.aMachine') })}
+              description={openReinstall ? t('projects.deployments.overviewStatus.reinstallBody')
+                : t('projects.deployments.overviewStatus.reinstallUnavailable')}
+              {...(openReinstall ? { action: { label: t('projects.deployments.overviewStatus.reinstallAction'), onPress: openReinstall } } : {})}
             />
           );
         case 'noTarget':

@@ -452,7 +452,7 @@ export function deploymentHealthFact(
  * fact lands; nothing else orders deployment notices.
  */
 export const DEPLOYMENT_ENVIRONMENT_ATTENTION_ORDER = [
-  'machineOffline', 'noTarget', 'controllerPaused', 'actionRefused', 'latestFailed', 'approvalWaiting', 'deploying',
+  'machineOffline', 'machineReinstalled', 'noTarget', 'controllerPaused', 'actionRefused', 'latestFailed', 'approvalWaiting', 'deploying',
   'unhealthy', 'secretWithdrawn', 'runningUnverified', 'catalogUpdate',
 ] as const;
 export type DeploymentEnvironmentAttentionKind = (typeof DEPLOYMENT_ENVIRONMENT_ATTENTION_ORDER)[number];
@@ -464,6 +464,8 @@ export type DeploymentEnvironmentAttention =
 export type DeploymentEnvironmentAttentionFacts = Readonly<{
   /** The single runtime Machine is known offline (not merely unresolved). */
   machineOffline: boolean;
+  /** The Environment read's `runtimeReinstall`: a runtime Machine was reinstalled since this Environment deployed there. */
+  machineReinstalled?: boolean;
   noTarget: boolean;
   /** T2 controller availability: `paused` means jobs and alerts wait for the controller; `unknown` claims nothing. */
   controller: Readonly<{ state: 'available' | 'paused' | 'unknown' }> | null;
@@ -481,6 +483,8 @@ export type DeploymentEnvironmentAttentionFacts = Readonly<{
 
 export function deploymentEnvironmentAttention(facts: DeploymentEnvironmentAttentionFacts): DeploymentEnvironmentAttention | null {
   if (facts.machineOffline) return { kind: 'machineOffline' };
+  // Every deploy there refuses until it is reinstalled, so the reinstall is the one thing said (the refusal is not).
+  if (facts.machineReinstalled) return { kind: 'machineReinstalled' };
   if (facts.noTarget) return { kind: 'noTarget' };
   if (facts.controller?.state === 'paused') return { kind: 'controllerPaused' };
   if (facts.refused) return { kind: 'actionRefused' };

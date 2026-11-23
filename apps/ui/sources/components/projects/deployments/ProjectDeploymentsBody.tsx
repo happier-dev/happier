@@ -361,7 +361,8 @@ const ProjectDeploymentsPage = React.memo(
         case 'logs':
           if (at?.deploymentId) { setSelection({ environmentId: selectionRef.current.environmentId, deploymentId: at.deploymentId }); return; }
           openEnvironmentTab({ tab: 'overview', section: null }); return;
-        case 'review': case 'deploy':
+        // Reinstall on this Machine is offered once, by the Overview's notice from the Environment read.
+        case 'review': case 'deploy': case 'reinstall':
           openEnvironmentTab({ tab: 'overview', section: null }); return;
         case 'source':
           if (at?.openProject) navigateToProjectOpen(buildProjectOpenRoute(at.openProject, 'clone'));
@@ -410,9 +411,11 @@ const ProjectDeploymentsPage = React.memo(
     const unlink = props.actions?.unlink;
     const teardown = props.actions?.teardown;
     const link = props.actions?.link;
+    const setBindings = props.actions?.setBindings;
     const disposition = React.useMemo(
-      () => deleteEnvironment && unlink && teardown && link ? { deleteEnvironment, unlink, teardown, link } : null,
-      [deleteEnvironment, link, teardown, unlink],
+      () => deleteEnvironment && unlink && teardown && link && setBindings
+        ? { deleteEnvironment, unlink, teardown, link, setBindings } : null,
+      [deleteEnvironment, link, setBindings, teardown, unlink],
     );
     const inspectPlatformTarget = props.actions?.inspectPlatformTarget;
     const checkPlatformTarget = props.actions?.checkPlatformTarget;

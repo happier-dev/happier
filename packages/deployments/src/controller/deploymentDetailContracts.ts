@@ -1,4 +1,5 @@
 import { z } from '@happier-dev/protocol/zodRuntimePolicy';
+import { DeploymentRuntimeReinstallV1Schema } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
 import { DeploymentEnvironmentContentStoredReadV1Schema, DeploymentEnvironmentHeaderV1Schema } from '../artifacts/deploymentEnvironmentContent.js';
 import { DeploymentTargetLinkContentV1Schema, DeploymentTargetLinkHeaderV1Schema } from '../targets/deploymentTargetContracts.js';
@@ -86,6 +87,8 @@ export const DeploymentEnvironmentDetailV1Schema = z.strictObject({
         z.strictObject({ status: z.literal('unavailable'), reason: z.string() }),
     ])),
     healthAggregate: z.optional(DeploymentEnvironmentHealthAggregateV1Schema),
+    /** The read's reinstall fact: a runtime Machine was reinstalled since this Environment deployed there. */
+    runtimeReinstall: z.optional(DeploymentRuntimeReinstallV1Schema),
 });
 export type DeploymentEnvironmentDetailV1 = z.infer<typeof DeploymentEnvironmentDetailV1Schema>;
 
