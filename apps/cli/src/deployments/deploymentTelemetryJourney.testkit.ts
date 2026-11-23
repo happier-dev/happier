@@ -17,6 +17,8 @@ import { inspectBuiltinTailscaleAccessProvider } from '../../../../packages/cli-
 import { projectMachineReachabilityObservation } from '@/machines/reachability/readMachineReachability';
 import type { ActionExecuteResult } from '@happier-dev/protocol';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { DoctorSnapshotDaemonStatusSchema } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
+import { createHappierJsonExecutorFromTextRunner } from '../../../../packages/cli-common/src/systemTasks/executors/happierJsonExecutorFromTextRunner';
 import { bindPresentUserActionConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
 import { MACHINE_ACCESS_GRANT_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machine/accessActionIdsV1';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
@@ -269,6 +271,7 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                 const failedDockerCommands: Array<Readonly<{ verb: string; operation: string; exitCode: number | null; reasons: string[] }>> = [];
                 const verbs = new Set(['image', 'buildx', 'compose', 'version', 'info', 'inspect', 'network', 'volume', 'container', 'ps']);
                 const operations = new Set(['inspect', 'save', 'pull', 'imagetools', 'bake', 'version', 'config', 'up', 'down', 'ls', 'rm', 'tag']);
+                const observedReadyMachines = new Set<string>();
                 const createNativeRuntime = nativeRuntimeBoundary.createOwnServerNativeRuntime;
                 const nativeObservation = vi.spyOn(nativeRuntimeBoundary, 'createOwnServerNativeRuntime').mockImplementation(input => {
                     const native = createNativeRuntime(input);
@@ -276,6 +279,22 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                     const observeRun: typeof native.nativeIo.run = async request => {
                         const result = await run(request);
                         const argv = request.args;
+                        if (result.exitCode === 0 && argv.at(-2) === 'restart' && /^[a-f0-9]{64}$/.test(argv.at(-1) ?? '')) {
+                            console.info('F14 enrollment native restart', { encryptionMode, observedAt: new Date().toISOString(), containerId: argv.at(-1) });
+                        }
+                        if (result.exitCode === 0 && !result.stdoutTruncated && argv.at(-6) === 'exec'
+                            && argv.at(-1)?.includes("'daemon' 'status' '--json'")) {
+                            const cli = createHappierJsonExecutorFromTextRunner(async () => ({ status: 0, stdout: result.stdout, stderr: '' }));
+                            const snapshot = DoctorSnapshotDaemonStatusSchema.safeParse(await cli.runHappierJson(['daemon', 'status', '--json']).catch(() => null));
+                            if (snapshot.success) {
+                                const { daemon, auth } = snapshot.data;
+                                if (daemon.running && daemon.healthy === true && !auth.needsAuth && auth.machineId && !observedReadyMachines.has(auth.machineId)) {
+                                    observedReadyMachines.add(auth.machineId);
+                                    console.info('F14 first positive guest readiness', { encryptionMode, observedAt: new Date().toISOString(),
+                                        machineId: auth.machineId, pid: daemon.pid, service: argv.at(-4) });
+                                }
+                            }
+                        }
                         const verbIndex = argv.findIndex(value => verbs.has(value));
                         if (result.exitCode !== 0) {
                             const message = (result.stderr ?? '').toLowerCase();

@@ -94,6 +94,7 @@ vi.mock('@/daemon/multiDaemon', async (importOriginal) => ({
 
 const SYNTHETIC_API_TOKEN = 'hap_v1_11111111-1111-4111-8111-111111111111_' + 'A'.repeat(43);
 const exactSessionId = 'c123456789012345678901234';
+const testDaemonControlToken = 'captured-account-control';
 
 function syntheticAccountToken(accountId: string): string {
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
@@ -113,7 +114,7 @@ async function withPublishedAccountDaemon(run: (fixture: Readonly<{
   const originalHomeDir = process.env.HAPPIER_HOME_DIR;
   const serverId = 'cloud';
   const daemonTarget = { pid: process.pid, httpPort: Number(new URL(patActionEndpoint).port),
-    controlToken: 'captured-account-control', machineId: 'machine-local', accountId: 'account-1' };
+    controlToken: testDaemonControlToken, machineId: 'machine-local', accountId: 'account-1' };
   const statePath = join(taskDir, 'servers', serverId, 'daemon.state.json');
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
   const credentials = { token: `${encode({ alg: 'none', typ: 'JWT' })}.${encode({ sub: daemonTarget.accountId,
@@ -169,6 +170,12 @@ function requestHeaders(request: IncomingMessage): Record<string, string> {
 }
 
 async function handlePatActionRequest(request: IncomingMessage, response: import('node:http').ServerResponse): Promise<void> {
+  if (request.method === 'POST' && request.url === '/ping'
+      && request.headers['x-happier-daemon-token'] === testDaemonControlToken) {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ status: 'ok' }));
+    return;
+  }
   const fetch = patActionFetch;
   const endpoint = patActionEndpoint;
   if (fetch === null || endpoint === null) {
@@ -647,7 +654,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     expect(patRequests).toEqual([]);
   });
 
-  it('pins a fixed-Home stored-session root client to that Home daemon and fails closed when it is unavailable', async () => {
+  it('uses the fixed-Home daemon for Machine inventory until its publication is withdrawn', async () => {
     daemonPost.mockResolvedValueOnce({
       ok: true,
       result: { machines: [] },
@@ -672,8 +679,8 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
         { surface: 'cli' },
       )).resolves.toEqual({
         ok: false,
-        errorCode: 'daemon_unavailable',
-        error: 'daemon_unavailable',
+        errorCode: 'local_executor_used',
+        error: 'local_executor_used',
       });
       expect(daemonPost).toHaveBeenCalledTimes(1);
     });

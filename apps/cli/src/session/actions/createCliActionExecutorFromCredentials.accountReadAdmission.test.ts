@@ -23,6 +23,34 @@ import { createCliActionExecutorFromCredentials } from './createCliActionExecuto
 describe('original CLI Account admission', () => {
     afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+    it('lists the Account Machines through Home when the CLI has no local daemon', async () => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-cli-machines-list-' }, async () => {
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'operator', tokenEpoch: 4,
+                provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+            const serverId = configuration.activeServerId;
+            const machine = { id: 'offline-machine', kind: 'persistent', active: false,
+                revokedAt: null, replacedByMachineId: null };
+            const homeReads = vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
+                const path = new URL(url).pathname;
+                if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+                expect(url).toBe('https://home.test/v1/machines');
+                expect(options?.headers?.Authorization).toBe(`Bearer ${token}`);
+                return { status: 200, data: [machine] };
+            });
+            const executor = createCliActionExecutorFromCredentials({
+                credentials: { token, encryption: null, credentialProvenance: 'stored_session' },
+                serverId, serverApiUrl: 'https://home.test', serverIdentityId: 'srv_home', externalActionClient: true,
+                resolveServerFeaturesSnapshot: async () => ({ status: 'ready', provenance: 'authenticated',
+                    features: FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_home' } } }) }),
+                actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({}) }),
+            });
+            await expect(executor.execute('machines.list', { refresh: true }, {
+                surface: 'cli', serverId, authority: 'present_user', presentUserConfirmation: { actionId: 'machines.list' },
+            })).resolves.toMatchObject({ ok: true, result: { items: [{ machineId: machine.id, active: false, serverId: 'srv_home' }] } });
+            expect(homeReads.mock.calls.filter(([url]) => new URL(url).pathname === '/v1/machines')).toHaveLength(1);
+        });
+    });
+
     it.each([
         { actionId: 'approval.request.get', input: { artifactId: 'owned-request' }, expected: 'owned-request' },
         { actionId: 'approval.request.list', input: {}, expected: 'queue' },
