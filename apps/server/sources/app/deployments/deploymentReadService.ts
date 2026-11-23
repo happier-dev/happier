@@ -238,7 +238,7 @@ export async function readDeploymentEnvironmentInTx(tx: Tx, actorAccountId: stri
         return revision === undefined ? [] : [{ resourceId: capture.resourceId, revision }];
     });
     // Deploy admission consumes this scope; operational purposes keep their own exact owners.
-    const required = await readDeploymentEnvironmentRequiredSecretUsesInTx(tx, loaded.row, DEPLOYMENT_SECRET_SCOPE_PURPOSES_V1);
+    const required = await readDeploymentEnvironmentRequiredSecretUsesInTx(tx, loaded.row, DEPLOYMENT_SECRET_SCOPE_PURPOSES_V1, targetRows);
     const coverage = await readEnvironmentSecretGrantCoverageInTx(tx, {
         environmentId: loaded.row.id, requiredSecretUses: required.requiredSecretUses,
     });

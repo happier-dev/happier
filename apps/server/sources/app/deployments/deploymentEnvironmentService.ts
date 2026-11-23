@@ -36,7 +36,7 @@ import { readProjectSourceOwnerInTx, readProjectSourceCustodyInTx, createProject
     resolveProjectSourceAudienceInTx } from '@/app/projects/sources/projectSourceService';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { hasCurrentManagedDataTargetLinkInTx, linkDeploymentTargetForAdmittedEnvironmentInTx, readCurrentManagedDataTargetLinksInTx,
-    readDeploymentTargetRuntimeInstallations } from './deploymentTargetLinkService';
+    readDeploymentTargetRuntimeInstallations, type loadDeploymentTargetRowsInTx } from './deploymentTargetLinkService';
 import { admitDeploymentEnvironmentPrincipalsInTx, createDeploymentEnvironmentPrincipalRows, deploymentEnvironmentPrincipalSelect,
     readDeploymentEnvironmentPrincipals, replaceDeploymentEnvironmentPrincipalsInTx, sameDeploymentEnvironmentPrincipals,
     type DeploymentEnvironmentPrincipalRow } from './deploymentEnvironmentDeployers';
@@ -156,18 +156,26 @@ export async function loadDeploymentEnvironmentForInstalledMachineInTx(tx: Tx, i
 }
 
 /** Current placement requirements, independent of retained ciphertext for accepted work.
- * Without `purposes` every routed use counts, so operational families stay incomplete. */
+ * Without `purposes` every routed use counts, so operational families stay incomplete.
+ * `targetRows`, when supplied, must come from this Environment in the same transaction. */
 export async function readDeploymentEnvironmentRequiredSecretUsesInTx(tx: Tx,
     row: Pick<DeploymentEnvironmentRow, 'id' | 'runtimeTargetLinkId' | 'buildMachineId' | 'referencedSavedSecretRevisions'>,
     purposes?: Parameters<typeof selectEnvironmentSecretCapturePurposesV1>[1],
+    targetRows?: Readonly<Awaited<ReturnType<typeof loadDeploymentTargetRowsInTx>>>,
 ): Promise<EnvironmentSecretRequiredUsesProjectionV1> {
     const captures = purposes ? selectEnvironmentSecretCapturePurposesV1(row.referencedSavedSecretRevisions, purposes)
         : readDeploymentBindingSavedSecretRevisionsV1(row.referencedSavedSecretRevisions);
     if (!captures) return { status: 'incomplete', requiredSecretUses: [] };
-    const link = row.runtimeTargetLinkId ? await tx.deploymentTargetLink.findFirst({
-        where: { id: row.runtimeTargetLinkId, environmentId: row.id, deletedAt: null },
-        include: { machines: { orderBy: { position: 'asc' } } },
-    }) : null;
+    const currentTargets = targetRows && new Map(targetRows.flatMap(target =>
+        target.deletedAt === null ? [[target.id, target] as const] : []));
+    const link = row.runtimeTargetLinkId
+        ? currentTargets
+            ? currentTargets.get(row.runtimeTargetLinkId)
+            : await tx.deploymentTargetLink.findFirst({
+                where: { id: row.runtimeTargetLinkId, environmentId: row.id, deletedAt: null },
+                include: { machines: { orderBy: { position: 'asc' } } },
+            })
+        : null;
     const runtimeMembers = link ? readDeploymentTargetRuntimeInstallations(link) : [];
     const machineIds = [...new Set([...runtimeMembers.map(member => member.machineId),
         ...(row.buildMachineId ? [row.buildMachineId] : [])])];
@@ -185,11 +193,13 @@ export async function readDeploymentEnvironmentRequiredSecretUsesInTx(tx: Tx,
         ? runtimeMembers.map(member => installations.get(member.machineId)!) : null;
     const registryIds = [...new Set(captures.flatMap(capture => capture.requiredBindings?.flatMap(binding =>
         binding.purpose === 'registry' ? [binding.targetLinkId] : []) ?? []))];
-    const currentRegistryTargetLinkIds: string[] = [];
-    for (const ids of portableQueryChunks({ values: registryIds, bindingsPerValue: 1 })) {
-        const links = await tx.deploymentTargetLink.findMany({ where: { id: { in: [...ids] },
-            environmentId: row.id, deletedAt: null }, select: { id: true } });
-        currentRegistryTargetLinkIds.push(...links.map(current => current.id));
+    const currentRegistryTargetLinkIds = currentTargets ? registryIds.filter(id => currentTargets.has(id)) : [];
+    if (!currentTargets) {
+        for (const ids of portableQueryChunks({ values: registryIds, bindingsPerValue: 1 })) {
+            const links = await tx.deploymentTargetLink.findMany({ where: { id: { in: [...ids] },
+                environmentId: row.id, deletedAt: null }, select: { id: true } });
+            currentRegistryTargetLinkIds.push(...links.map(current => current.id));
+        }
     }
     return projectEnvironmentSecretBindingRequiredUsesV1({ referencedSavedSecretRevisions: captures,
         runtimeInstallations, ...(row.buildMachineId ? { buildInstallation: installations.get(row.buildMachineId) ?? null } : {}),
