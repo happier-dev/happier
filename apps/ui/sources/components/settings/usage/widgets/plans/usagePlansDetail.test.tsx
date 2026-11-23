@@ -639,6 +639,40 @@ it('collapses to one line while no plan has a price, even when ended windows wer
   expect(screen.findByTestId('fit.plan.first.fit')).toBeTruthy();
 });
 
+it.each([
+  { nowIso: '2026-03-29T12:00:00+02:00', tickIsos: ['2026-03-30T00:00:00+02:00', '2026-03-31T00:00:00+02:00'] },
+  { nowIso: '2026-10-25T12:00:00+01:00', tickIsos: ['2026-10-26T00:00:00+01:00', '2026-10-27T00:00:00+01:00'] },
+  { nowIso: '2026-08-15T12:00:00+02:00', tickIsos: ['2026-08-16T00:00:00+02:00', '2026-08-17T00:00:00+02:00'] },
+])('places Resets ticks at local midnight after $nowIso', async ({ nowIso, tickIsos }) => {
+  const now = Date.parse(nowIso);
+  const ticks = tickIsos.map(iso => Date.parse(iso));
+  const justAfterMidnight = ticks[0]! + 60_000;
+  const last = ticks[1]! + HOUR;
+  const restore = vi.spyOn(Date, 'now').mockReturnValue(now);
+  vi.stubEnv('TZ', 'Europe/Amsterdam');
+  try {
+    const read = quotaRead('work', now, [
+      { meterId: 'daily', label: 'Daily', usedPct: 25, resetAtMs: justAfterMidnight, windowDurationMs: DAY },
+      { meterId: 'weekly', label: 'Weekly', usedPct: 30, resetAtMs: last, windowDurationMs: 7 * DAY },
+    ]);
+    const { UsageResetPlannerWidget } = await import('../UsageResetPlannerWidget');
+    const { IntervalTimeline } = await import('@happier-dev/plugin-ui/presentation');
+    const screen = await renderPlanAccessibility(
+      <WidgetPresentationProvider value={{ size: 'full',
+        footprint: { columns: 2, columnSpan: 2, rowSpan: 1, width: 'full', height: 'regular' },
+        geometry: { width: 900, height: 320 } }}>
+        <UsageResetPlannerWidget {...bodyProps([read])} id="usage_resets" testID="reset" />
+      </WidgetPresentationProvider>,
+    );
+    const timeline = screen.findByType(IntervalTimeline);
+    expect(timeline.props.ticks).toEqual(ticks);
+    expect(timeline.props.intervals).toEqual(expect.arrayContaining([expect.objectContaining({ start: justAfterMidnight })]));
+  } finally {
+    restore.mockRestore();
+    vi.unstubAllEnvs();
+  }
+});
+
 it('names reset rows as the exact-values path and includes hidden precision without extra focus targets', async () => {
   const now = Date.now();
   const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30.125,

@@ -289,16 +289,22 @@ function ResetTimeline(
   const theme = useUsagePluginTheme();
   const text = usePlanText();
   const presentation = useWidgetPresentation();
-  const DAY_MS = 86_400_000;
   const last = Math.max(props.nowMs, ...props.events.map(event => event.atMs));
   // A lane's last marker sits whole inside the plot rather than half past its edge.
   const end = props.lanes ? last + (last - props.nowMs) * 0.03 : last;
   // The lanes read as days (lab p2sheet-D): the plot opens at today's midnight with now drawn across it, and each
   // coming midnight is a tick named by its day; the timeline drops ticks that would crowd.
-  const today = new Date(props.nowMs); today.setHours(0, 0, 0, 0);
-  const start = props.lanes ? today.getTime() : props.nowMs;
+  const day = new Date(props.nowMs);
+  const start = props.lanes ? day.setHours(0, 0, 0, 0) : props.nowMs;
   const ticks: number[] = [];
-  for (let at = start + DAY_MS; at < last; at += DAY_MS) ticks.push(at);
+  if (props.lanes) {
+    for (;;) {
+      day.setDate(day.getDate() + 1);
+      const midnight = day.setHours(0, 0, 0, 0);
+      if (!(midnight < last)) break;
+      ticks.push(midnight);
+    }
+  }
   const dayLabel = (value: number) => value === start ? t('usage.today')
     : value === end ? null : formatWithCachedDateTimeFormatter(new Date(value), getPreferredLanguage(), { weekday: 'short', day: 'numeric' });
   const byKey = new Map(props.accounts.map(account => [account.key, account]));
