@@ -51,7 +51,6 @@ import { UsageParallelWidget } from './UsageParallelWidget';
 import { UsageOutcomesWidget } from './UsageOutcomesWidget';
 import { UsageChartInteractions } from '../usageChartInteractions';
 import { UsageEfficiencyWidget } from './UsageEfficiencyWidget';
-import { UsagePeriodSummaryWidget } from './UsagePeriodSummaryWidget';
 import { UsageCoachWidget } from './UsageCoachWidget';
 import { storage } from '@/sync/domains/state/storage';
 import { formatUsageObservedAt } from '@/sync/domains/usage/usageCalendarPresentation';
