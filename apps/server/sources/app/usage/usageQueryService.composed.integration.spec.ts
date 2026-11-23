@@ -1160,6 +1160,31 @@ describe('native usage producer → ingest → query', () => {
         }, { threadStartModel: 'gpt-5' });
     });
 
+    it('keeps released usage when the Session continues with runtime facts and no capture', async () => {
+        const account = await db.account.create({ data: { publicKey: 'released-codex-continued-runtime' } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: 'continued-codex',
+            encryptionMode: 'plain', metadata: '{}' } });
+        const cutoff = Date.UTC(2026, 6, 1);
+        await db.usageReport.create({ data: { accountId: account.id, sessionId: session.id, key: 'codex-app-server:released',
+            createdAt: new Date(cutoff), updatedAt: new Date(cutoff),
+            data: { tokens: { input: 10_800, output: 41, total: 10_841 }, cost: { total: 3 } } } });
+        for (const [index, at] of [cutoff - 1, cutoff + 1].entries()) {
+            const result = await recordUsageEvent(account.id, UsageEventIngestRequestSchema.parse({
+                sessionId: session.id, agentId: 'codex', source: 'codex-runtime', scope: 'turn_delta', observedAt: at,
+                externalKey: `runtime-fact-${index}`,
+                tokens: { input: 80, output: 20, total: 100, reasoning: null, cacheRead: null, cacheWrite: null },
+                cost: { reportedUsd: 1, estimatedUsd: null, currency: 'USD', costSource: 'provider_reported' },
+                isCumulative: false,
+                metadata: { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true } },
+            }));
+            expect(result.ok).toBe(true);
+        }
+        const request = UsageAnalyticsQueryRequestSchema.parse({});
+        const result = await queryUsageAnalytics(account.id, request);
+        expect(result.totals).toMatchObject({ tokens: { total: 10_941 }, cost: { reportedUsd: 4 } });
+        expect(result.coverage.status).toBe('partial');
+    });
+
     it.each(['inference', 'session only', 'root resolved and restarted'] as const)(
       'keeps runtime publication opaque and cumulative (%s)', async scenario => {
         const withInference = scenario === 'inference';
