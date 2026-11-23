@@ -67,7 +67,13 @@ export function useWidgetGroupInputsEditor(
   const [notice, setNotice] = React.useState<string | null>(null);
   const { group, scope, context, setInputs, testID } = input;
   // Built once when the step opens (the popover keeps its first setup); cheap to derive per render.
-  const candidate = React.useMemo(() => buildWidgetGroupInputsCandidate({ title: input.title, candidates: input.candidates }), [input.title, input.candidates]);
+  const candidate = React.useMemo(() => {
+    const descriptor = buildWidgetGroupInputsCandidate({ title: input.title, candidates: input.candidates });
+    if (!descriptor?.inputs) return descriptor;
+    // A group edit sets overrides. Each child still validates its own effective inputs.
+    const fields = descriptor.inputs.fields.map(({ required: _required, requiredWhen: _requiredWhen, ...field }) => field);
+    return { ...descriptor, inputs: { ...descriptor.inputs, fields } };
+  }, [input.title, input.candidates]);
   const editable = candidate !== null && scope !== null && setInputs !== undefined;
   const commands = useCurrentUiContextLocalCommands(editable ? [
     { key: 'open', title: t('widgetFrame.groupInputsTitle', { group: input.title }), description: `${testID}.groupInputs.open`,
@@ -90,6 +96,7 @@ export function useWidgetGroupInputsEditor(
   );
   const childTitle = input.childTitle;
   const buildSetup = React.useCallback(() => {
+    const bindings = group.context ?? {};
     const setup = buildWidgetCandidateSetup({
       candidate: candidate!,
       fieldCandidates: input.candidates,
@@ -101,7 +108,7 @@ export function useWidgetGroupInputsEditor(
           v: 1,
           id: group.id,
           definition: widgetDefinitionOfCandidate(candidate!),
-          bindings: group.context ?? {},
+          bindings,
         },
       },
       scope,
@@ -113,6 +120,8 @@ export function useWidgetGroupInputsEditor(
     });
     return {
       ...setup,
+      // Missing group overrides leave the widget's surface context in effect.
+      initial: { bindings },
       title: t('widgetFrame.groupInputsTitle', { group: input.title }),
       hint: t('widgetFrame.groupInputsHint'),
       widget: { title: input.title, mark: WIDGET_GROUP_ICON },
