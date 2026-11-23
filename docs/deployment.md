@@ -1124,6 +1124,10 @@ Database detail page scopes this discovery to its native service or managed
 Link, and requests size only for the selected native service. Environment-wide
 discovery remains available to the Workbench chooser.
 
+The controller projects Production protection from the admitted Environment
+into the native and managed database descriptors. Staged Changes uses that
+fact for the destructive review treatment.
+
 The existing service Exec owner supplies native container reachability to the
 shared PostgreSQL or MySQL driver. Shared dialect modules own statement admission,
 parameter binding and typed ordered result decoding. Reads use the dedicated

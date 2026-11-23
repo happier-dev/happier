@@ -91,7 +91,11 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
         if ((!options.nativeMember && detail.environment.controllerMachineId !== host.machineId) || !host.installationId) return refuse('machine_unavailable');
         const placement: DatabaseDescriptorV1['placement'] = { serverId: host.serverId, accountId: host.credentialOwnerAccountId,
             machineId: host.machineId, installationId: host.installationId };
-        return { host, detail, context: captured, placement };
+        const origin: DatabaseDescriptorV1['origin'] = {
+            label: detail.content.name,
+            ...(detail.environment.protection === 'production' ? { environment: 'production' } : {}),
+        };
+        return { host, detail, context: captured, placement, origin };
     };
 
     const selectLink = (admission: Awaited<ReturnType<typeof readEnvironment>>, targetLinkId: string) => {
@@ -371,7 +375,7 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
                         kind: 'deployment_service', environment: request.scope.environment,
                         deploymentId: runtime.activeDeploymentId, targetLinkId: runtime.id, serviceId: data.service, database: definition.database };
                     targets.push({ target, automationSubject: readAutomationDatabaseSubjectV1(admission.host.serverId, target),
-                        label: definition.database, engine: definition.engine, origin: { label: admission.detail.content.name },
+                        label: definition.database, engine: definition.engine, origin: admission.origin,
                         capabilities: builtinDatabaseCapabilities(definition.engine), access: summary, placement: admission.placement });
                 }
             }
@@ -392,6 +396,7 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
                         if (descriptor.target.kind !== 'managed_deployment') return refuse('target_mismatch');
                         const target: DatabaseManagedDeploymentTargetV1 = { ...selected.target, database: descriptor.target.database };
                         targets.push({ ...descriptor, target, automationSubject: readAutomationDatabaseSubjectV1(admission.host.serverId, target), access: summary,
+                            origin: { ...admission.origin, label: descriptor.origin.label },
                             placement: bound.placement });
                     }
                     if (!result.completeness.complete) completeness = result.completeness;
@@ -438,7 +443,7 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
                     async close() {},
                 };
                 return { descriptor: { target, engine, label: target.database,
-                    automationSubject: readAutomationDatabaseSubjectV1(host.serverId, target), origin: { label: detail.content.name },
+                    automationSubject: readAutomationDatabaseSubjectV1(host.serverId, target), origin: admission.origin,
                     capabilities: builtinDatabaseCapabilities(engine), access: summary, placement }, connection };
             }
             const admitted = await admitTarget(request, operation);
@@ -451,7 +456,7 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
                     context: admission.context, signal: input.seed.signal, operationId: input.seed.correlationId, access: operation });
                 return { descriptor: { target, engine: connection.engine, label: target.database,
                     automationSubject: readAutomationDatabaseSubjectV1(admission.host.serverId, target),
-                    origin: { label: admission.detail.content.name }, capabilities: builtinDatabaseCapabilities(connection.engine),
+                    origin: admission.origin, capabilities: builtinDatabaseCapabilities(connection.engine),
                     access: summary, placement: admission.placement }, connection };
             }
             const { target, admission, summary } = admitted;
@@ -460,13 +465,14 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
             try {
                 const resolved = operation === 'read' && bound.runtime.readRoleEndpoint
                     ? await bindReadAccess(admitted, bound).openRead().then(connection => ({ connection, descriptor: {
-                        target, engine: connection.engine, label: target.database, origin: { label: admission.detail.content.name },
+                        target, engine: connection.engine, label: target.database, origin: admission.origin,
                         capabilities: builtinDatabaseCapabilities(connection.engine), access: summary, placement: bound.placement,
                     } }))
                     : await bound.runtime.open({ preparation: bound.preparation, target, access: operation,
                         placement: bound.placement }, bound.invocation);
                 const close = async () => { try { await resolved.connection.close(); } finally { bound.dispose(); } };
                 return { descriptor: { ...resolved.descriptor, target,
+                    origin: { ...admission.origin, label: resolved.descriptor.origin.label },
                     automationSubject: readAutomationDatabaseSubjectV1(admission.host.serverId, target), access: summary, placement: bound.placement },
                     connection: { engine: resolved.connection.engine, execute: resolved.connection.execute.bind(resolved.connection), close } };
             } catch (error) { bound.dispose(); throw error; }

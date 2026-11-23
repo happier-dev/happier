@@ -55,6 +55,7 @@ describe('managed database attachment at the deployment owner', () => {
     it('lists the selected native service from the active deployment without provider credentials', async () => {
         const stored = createDeploymentTargetRoleAdmissionFixture('inspect');
         stored.state.environment.environment.controllerMachineId = 'other-controller';
+        stored.state.environment.environment.protection = 'production';
         const native = stored.state.environment.targetLinks[0]!;
         native.targetLink.targetKind = 'ownServer';
         native.targetLink.source = { kind: 'host', id: 'own-server' };
@@ -90,7 +91,7 @@ describe('managed database attachment at the deployment owner', () => {
         try {
             expect(await service.listTargets({ scope: { kind: 'environment', environment } })).toMatchObject({ targets: [{
                 target: { kind: 'deployment_service', environment, deploymentId: 'deployment-a', targetLinkId: 'target-link', serviceId: 'db', database: 'deployed' },
-                engine: 'postgresql', access: { canRead: true, canWrite: false },
+                engine: 'postgresql', origin: { environment: 'production' }, access: { canRead: true, canWrite: false },
                 automationSubject: { ok: true, subject: { kind: 'database', serverId: environment.serverId,
                     target: { kind: 'environment', environmentId: environment.environmentId, service: 'db', database: 'deployed' } } },
             }], completeness: { complete: true } });
@@ -110,6 +111,7 @@ describe('managed database attachment at the deployment owner', () => {
 
     it('reads and applies a reviewed MySQL write on the exact managed Link', async () => {
         const stored = createDeploymentTargetRoleAdmissionFixture('branches.list');
+        stored.state.environment.environment.protection = 'production';
         const pluginManifest = normalizePluginManifestV2(PLUGIN_MANIFEST);
         const pluginId = pluginManifest.id;
         const source = pluginManifest.contributes.deploymentTargets.find(entry => entry.role === 'data')!;
@@ -251,7 +253,8 @@ describe('managed database attachment at the deployment owner', () => {
             const listed = await service.listTargets({ scope: { kind: 'environment', environment,
                 selection: { kind: 'managed_link', targetLinkId: target.targetLinkId } } });
             expect(requests).toHaveLength(beforeSelection + 1);
-            expect(listed).toMatchObject({ targets: [{ target, access: { canRead: true, canWrite: false, reason: 'database_editing_off' } }], completeness: { complete: true } });
+            const origin = { label: 'Linked database', environment: 'production' };
+            expect(listed).toMatchObject({ targets: [{ target, origin, access: { canRead: true, canWrite: false, reason: 'database_editing_off' } }], completeness: { complete: true } });
             const automationSubject = { ok: true, subject: { kind: 'database', serverId: environment.serverId,
                 target: { kind: 'managed_deployment', environmentId: environment.environmentId,
                     targetLinkId: target.targetLinkId, databaseName: target.database } } };
@@ -259,7 +262,7 @@ describe('managed database attachment at the deployment owner', () => {
             expect(stored.state.reads).toBe(readsBeforeSelectedLink + 1);
             expect(requests).toMatchObject([{ headers: { authorization: 'Bearer selected-provider-credential' } }]);
             const resolved = await service.resolve(read, 'read');
-            expect(resolved.descriptor.target).toEqual(target);
+            expect(resolved.descriptor).toMatchObject({ target, origin });
             expect(resolved.descriptor.automationSubject).toEqual(automationSubject);
             try {
                 await expect(resolved.connection.execute(read)).resolves.toMatchObject({ ok: true,
