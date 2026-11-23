@@ -70,6 +70,17 @@ describe('SourceControlUnavailableState', () => {
     expect(textNodes.some((node) => node.props.children === 'errors.sourceControlUnavailableForSession')).toBe(true);
   });
 
+  it('explains the repository path refusal in the card body', async () => {
+    const screen = await renderScreen(
+      <SourceControlUnavailableState errorCode={SCM_OPERATION_ERROR_CODES.INVALID_PATH} />
+    );
+
+    const textNodes = screen.findAllByType('Text');
+    expect(textNodes.some((node) => typeof node.props.children === 'string'
+      && /repository path/i.test(node.props.children))).toBe(true);
+    expect(textNodes.some((node) => node.props.children === 'errors.tryAgain')).toBe(false);
+  });
+
   it('falls back to try-again body when no errorCode and no recognizable details', async () => {
     const screen = await renderScreen(<SourceControlUnavailableState details="something else" />);
 

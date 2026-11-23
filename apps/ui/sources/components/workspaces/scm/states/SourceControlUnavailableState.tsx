@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
 import { t } from '@/text';
 import { RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
 import { SCM_OPERATION_ERROR_CODES, type ScmOperationErrorCode } from '@happier-dev/protocol/scm/operationError';
@@ -64,7 +65,6 @@ export function SourceControlUnavailableState(props: {
     const reachability = useCheckoutReachability(useAnnouncedCheckoutMachine());
     const trimmedDetails = typeof props.details === 'string' ? props.details.trim() : '';
     const errorCode = typeof props.errorCode === 'string' && props.errorCode.length > 0 ? props.errorCode : undefined;
-    const bodyKey = resolveBodyKey(errorCode, trimmedDetails);
     const details = sanitizeDetails(props.details ?? null);
 
     const workspace = props.workspaceScope?.workspace;
@@ -79,12 +79,16 @@ export function SourceControlUnavailableState(props: {
             workspaceName={workspaceName} reason={t('files.pane.managedStoppedChangesReason')}
             workspaceScope={props.workspaceScope ?? null} onStarted={props.onRetry} />;
     }
+    const fallback = t(resolveBodyKey(errorCode, trimmedDetails));
+    const reason = errorCode === SCM_OPERATION_ERROR_CODES.INVALID_PATH
+        ? getScmUserFacingError({ errorCode, fallback })
+        : fallback;
     return (
         <SurfaceStateCard
             testID={props.testID ?? 'source-control-unavailable'}
             kind="error"
             title={t('errors.sourceControlUnavailableTitle')}
-            reason={t(bodyKey)}
+            reason={reason}
             diagnosticCode={errorCode ?? details}
             diagnosticDetail={errorCode ? details : undefined}
             action={props.onRetry ? { label: t('common.retry'), onPress: props.onRetry } : undefined}
