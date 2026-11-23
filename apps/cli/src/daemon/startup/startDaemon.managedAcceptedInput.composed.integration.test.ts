@@ -128,12 +128,17 @@ it('recovers the original accepted Pending input at controller startup, approves
   await vi.waitFor(async () => expect(await db.machine.findUniqueOrThrow({ where: { id: guest.machineId } })).toMatchObject({ active: false }));
   // Native Send retains Pending while the guest is stopped. CLI Send has a
   // separate Machine admission contract and cannot stand in for this surface.
-  expect(await runWithServerHttpBaseUrl(guest.home.baseUrl, () => enqueuePendingQueueV2MessageViaHttp({
+  const enqueue = () => runWithServerHttpBaseUrl(guest.home.baseUrl, () => enqueuePendingQueueV2MessageViaHttp({
     token: guest.ownerCredentials.token, sessionId, body: { localId, messageRole: 'user',
       requestedAction: { v: 1, kind: 'enqueue' }, content: { t: 'plain', v: {
         role: 'user', content: { type: 'text', text: 'ORIGINAL_INPUT_QUEUED' }, meta: { source: 'ui' },
       } } },
-  }))).toMatchObject({ didWrite: true, terminal: false });
+  }));
+  expect(await enqueue()).toMatchObject({ didWrite: true, terminal: false });
+  // A lost acknowledgement can replay the same Send while the guest is still
+  // stopped. The original local ID must remain the sole Pending input.
+  expect(await enqueue()).toMatchObject({ didWrite: false, terminal: false });
+  expect((await guest.home.readWorkflowSessionEffects()).pending).toEqual([{ sessionId, localId }]);
   const armed = await runWithServerHttpBaseUrl(guest.home.baseUrl, () => pendingOwner.execute('session.pending.action.set', {
     sessionId, localId, requestedAction: { v: 1, kind: 'enqueue' }, resumeWhenAvailable: true,
   }, { surface: 'ui', authority: 'present_user', presentUserConfirmation: { actionId: 'session.pending.action.set' } }));
@@ -226,6 +231,7 @@ it('recovers the original accepted Pending input at controller startup, approves
     ]);
   }, { timeout: 30_000 });
   expect(await owner.execute('session.wait.idle', { sessionId }, context)).toMatchObject({ ok: true });
+  expect(await enqueue()).toMatchObject({ didWrite: false, terminal: true });
   const effects = await guest.home.readWorkflowSessionEffects();
   expect(effects.pending).toEqual([]);
   expect(effects.messages.filter(message => message.sessionId === sessionId && message.localId === localId && message.messageRole === 'user'))
