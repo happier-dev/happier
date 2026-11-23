@@ -26,7 +26,7 @@ import { machineAddLeadsWithCreate, readMachineAddRoutePath } from './machineAdd
 import { readMachineAddDevice } from './useMachineAddPaths';
 import { useMachineAddFlow, useMachineAddFlowServerId } from './useMachineAddFlow';
 import { updateMachineAddFlowDraft } from './machineAddFlowStore';
-import { useManagedMachineAccountSettings } from '@/components/settings/machines/managed/useManagedMachineAccountSettings';
+import { useManagedMachineCreationPreference } from '@/components/settings/machines/managed/useManagedMachineAccountSettings';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { buildManagedMachineConfigurationRoute } from '@/components/settings/machines/managed/managedMachineConfigurationRoute';
@@ -98,8 +98,8 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
     const homeName = resolveHomeDisplayName(getServerProfileById(serverId));
     // One read of the Account's opt-out serves the header's promise and the form's Create one.
     const accountScope = useServerCredentialAccountScopeBinding(serverId);
-    const accountSettings = useManagedMachineAccountSettings(accountScope.binding, accountScope.resolution);
-    const canCreate = accountSettings.settings?.managedMachineCreationEnabled === true;
+    const { settings: creationEnabled, error: creationSettingsError } = useManagedMachineCreationPreference(accountScope.binding, accountScope.resolution);
+    const canCreate = creationEnabled === true;
     // `?path=create` (Home's Machines widget, "Create one in the cloud") opens Create one, as its tab would. Without
     // a path, a phone or a browser opens on it too (58d §D2), unless a setup is already running from this draft.
     const pathParam = Array.isArray(params.path) ? params.path[0] : params.path;
@@ -110,7 +110,7 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
     const pushedWay = pushesWays ? routePath : undefined;
     const initialCreating = pathParam === 'create' ? true
         : pathParam || intent === 'connect' || !machineAddLeadsWithCreate(readMachineAddDevice()) ? false
-        : !accountSettings.settings && !accountSettings.error && (accountScope.resolution.kind === 'resolving' || accountScope.resolution.kind === 'bound') ? null
+        : creationEnabled === null && !creationSettingsError && (accountScope.resolution.kind === 'resolving' || accountScope.resolution.kind === 'bound') ? null
         : canCreate;
     const flow = useMachineAddFlow({ serverId: connectionServerId, initialPath, initialCreating,
         connectionPathVisible: !separateCreateHome && (!pushesWays || Boolean(routePath)),

@@ -51,6 +51,45 @@ describe('Add machine Connect and Create entry', () => {
             expect(screen.tree.findAll(node => node.props.testID === 'managed-picker')).toHaveLength(0);
         } finally { await screen.unmount(); }
     });
+    it('keeps the Add Machine draft quiet on retention edits and observes creation eligibility', async () => {
+        const target = await harness.addHome({ name: 'Compute', serverUrl: 'https://draft-eligibility.example', accountId: 'owner' });
+        const { MachineAddDraftScreen } = await import('./MachineAddDraftScreen');
+        const { MachineAddFormWithFlow } = await import('./MachineAddForm');
+        const { saveAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
+        const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+        const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const editable = { ...settingsDefaults, managedMachineCreationEnabled: true };
+        harness.answer(target, '/v2/account/settings', { body: { content: { t: 'plain', v: editable }, version: 1 } });
+        routeBoundary.params = { intent: 'connect' };
+        const { renderHook } = await import('@/dev/testkit');
+        const binding = await renderHook(() => useServerCredentialAccountScopeBinding(target).binding);
+        const commits = vi.fn();
+        const screen = await renderScreen(<React.Profiler id="add-machine-draft" onRender={commits}>
+            <MachineAddDraftScreen />
+        </React.Profiler>);
+        const canCreate = () => screen.findByType(MachineAddFormWithFlow).props.canCreate;
+        try {
+            await waitForHomeGovernance(() => expect(canCreate()).toBe(true));
+            const scope = binding.getCurrent()?.scope;
+            if (!scope) throw new Error('Expected a bound Account scope');
+            await act(async () => saveAccountSettings(scope, editable, 1));
+            await flushHookEffects();
+            commits.mockClear();
+            for (let version = 2; version <= 5; version++) {
+                await act(async () => saveAccountSettings(scope, { ...editable, machineRetentionDefaultsV1: {
+                    v: 1, local: { retention: { kind: 'unused', afterMs: 17_500 + version, effect: 'stop' },
+                        wakeOnAcceptedMessage: true },
+                } }, version));
+                await flushHookEffects();
+            }
+            expect(commits).not.toHaveBeenCalled();
+            await act(async () => saveAccountSettings(scope, { ...editable, managedMachineCreationEnabled: false }, 6));
+            await waitForHomeGovernance(() => expect(canCreate()).toBe(false));
+        } finally {
+            await screen.unmount();
+            await binding.unmount();
+        }
+    });
     it('opens Create in the addressed Home while retaining a connection draft for another Home', async () => {
         const connected = await harness.addHome({ name: 'Existing setup', serverUrl: 'https://retained-connect.example', accountId: 'owner' });
         const target = await harness.addHome({ name: 'Notice Home', serverUrl: 'https://notice-create.example', accountId: 'owner' });

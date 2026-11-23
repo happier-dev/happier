@@ -19,9 +19,9 @@ export function useManagedMachineAccountSettings(binding: ServerCredentialAccoun
     return useManagedMachineSettingsProjection(binding, resolution, MANAGED_SETTINGS_KEYS, selectManagedSettings);
 }
 
-export function useManagedMachineCreationEnabled(binding: ServerCredentialAccountScopeBinding | null | undefined,
-    resolution: ServerCredentialAccountScopeResolution): boolean | null {
-    return useManagedMachineSettingsProjection(binding, resolution, MANAGED_CREATION_KEYS, selectCreationEnabled).settings;
+export function useManagedMachineCreationPreference(binding: ServerCredentialAccountScopeBinding | null | undefined,
+    resolution: ServerCredentialAccountScopeResolution): SettingsObservation<boolean> {
+    return useManagedMachineSettingsProjection(binding, resolution, MANAGED_CREATION_KEYS, selectCreationEnabled);
 }
 
 /**
