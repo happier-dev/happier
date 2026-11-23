@@ -18985,6 +18985,9 @@ settingsSession: {
               notNow: "Nicht jetzt",
               usePending: "Für dieses Projekt verwenden",
               nothingRunsPending: "Nichts läuft, bis du dich entscheidest.",
+              useSharedLink: "Geteilte Einrichtung über einen Link verwenden…",
+              linkPlaceholder: "Link zur Einrichtung einfügen",
+              invalidLink: "Dieser Link öffnet keine geteilte Einrichtung.",
             },
             pendingShared: {
               title: "Geteiltes Setup",

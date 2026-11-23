@@ -18494,6 +18494,9 @@ settingsSession: {
           notNow: "暂不",
           usePending: "用于此项目",
           nothingRunsPending: "在你选择之前不会运行任何内容。",
+          useSharedLink: "通过链接使用共享设置…",
+          linkPlaceholder: "粘贴设置链接",
+          invalidLink: "此链接无法打开共享设置。",
         },
         pendingShared: {
           title: "共享设置",

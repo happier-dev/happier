@@ -22285,6 +22285,9 @@ const enProjects = {
       notNow: "Not now",
       usePending: "Use for this project",
       nothingRunsPending: "Nothing runs until you choose.",
+      useSharedLink: "Use a shared setup from a link…",
+      linkPlaceholder: "Paste a setup link",
+      invalidLink: "This link doesn’t open a shared setup.",
     },
     pendingShared: {
       title: "Shared setup",

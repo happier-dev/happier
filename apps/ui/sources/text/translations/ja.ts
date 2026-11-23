@@ -18788,6 +18788,9 @@ settingsSession: {
           notNow: "今はしない",
           usePending: "このプロジェクトで使う",
           nothingRunsPending: "選ぶまで何も実行されません。",
+          useSharedLink: "リンクから共有セットアップを使う…",
+          linkPlaceholder: "セットアップのリンクを貼り付け",
+          invalidLink: "このリンクでは共有セットアップを開けません。",
         },
         pendingShared: {
           title: "共有セットアップ",

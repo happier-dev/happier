@@ -18875,6 +18875,9 @@ settingsSession: {
           notNow: "Ahora no",
           usePending: "Usar en este proyecto",
           nothingRunsPending: "No se ejecuta nada hasta que elijas.",
+          useSharedLink: "Usar una configuración compartida desde un enlace…",
+          linkPlaceholder: "Pega un enlace de configuración",
+          invalidLink: "Este enlace no abre una configuración compartida.",
         },
         pendingShared: {
           title: "Configuración compartida",

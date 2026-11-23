@@ -2683,8 +2683,8 @@ describe('ProjectScriptsBody native environment states (plan 24 copy)', () => {
 
 describe('Share setup from the Scripts header (plan A U3, lab L6 share)', () => {
   it.each([
-    { canManage: true, items: ['share'] },
-    { canManage: false, items: [] },
+    { canManage: true, items: ['share', 'useSharedLink'] },
+    { canManage: false, items: ['useSharedLink'] },
   ])('offers Share setup from the header only when this person manages the checkout Source (canManage $canManage)', async ({ canManage, items }) => {
     isolateManifestDrafts();
     let source = { id: 'src-own', name: 'acme/web', revision: 4, audience: [], createdByAccountId: 'account-1',
@@ -2706,16 +2706,12 @@ describe('Share setup from the Scripts header (plan A U3, lab L6 share)', () => 
       rootPath: workspace.rootPath, createdAtMs: 1, projectKey: workspace.workspaceId, source: { sourceId: 'src-own', revision: 4 } }];
     const screen = await render('page', 'scripts.script:test', { workspaceRefs: refs });
     await vi.waitFor(() => expect(sourceRequests.some(request => request.method === 'GET')).toBe(true));
-    if (!canManage) {
-      await act(async () => {});
-      expect(screen.findAllHostsByTestId('scripts.more')).toHaveLength(0);
-      return;
-    }
     await vi.waitFor(() => expect(screen.findAllHostsByTestId('scripts.more').length).toBeGreaterThan(0));
     await act(async () => { await screen.pressByTestIdAsync('scripts.more'); });
     const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
     const menu = screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'scripts.more:menu')!;
     expect(menu.props.items.map((item: { id: string }) => item.id)).toEqual(items);
+    if (!canManage) return;
     // Nothing is read for sharing until the person opens the sheet.
     const inspectsBefore = shared.calls.filter(call => call.actionId === 'projects.inspect').length;
     await act(async () => { menu.props.onSelect('share'); });
@@ -2940,12 +2936,35 @@ describe('Project setup layers on the Scripts page (plan A L6)', () => {
     expect(textOf(screen, 'scripts.script:lint.status')).toContain('projects.scripts.origin.personal');
     expect(screen.getTextContent()).toContain('projects.scripts.layers.personal');
   });
+  it('opens a pasted shared setup link through the Source route without applying it', async () => {
+    const { buildProjectSourceSetupUrl, parseProjectSourceSetupLink } = await import('../sources/projectSourceNavigation');
+    const url = buildProjectSourceSetupUrl({ applicationOrigin: 'https://app.example.test', sourceId: 'shared-source',
+      homeTarget: JSON.stringify({ kind: 'profile', serverId: 'home' }) });
+    const selection = parseProjectSourceSetupLink(url);
+    if (!selection) throw new Error('Fixture did not make a Source link');
+    shared.inspection = { definition: presentDefinition(declared), detection, importCandidates: [],
+      effectiveDefinition: resolveProjectDefinitionV1({ repositoryManifest: { ...declared, version: 1 } }) };
+    const screen = await render('page', 'scripts.script:test');
+    const prompt = vi.mocked(Modal.prompt);
+    prompt.mockResolvedValueOnce(url);
+    await act(async () => { await screen.pressByTestIdAsync('scripts.more'); });
+    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const menu = screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'scripts.more:menu');
+    expect(menu?.props.items).toContainEqual(expect.objectContaining({ id: 'useSharedLink' }));
+    await act(async () => { menu?.props.onSelect('useSharedLink'); });
+    expect(shared.navigate).toHaveBeenCalledWith(selection.path);
+    expect(shared.calls.some(call => call.actionId === 'projects.setup.set' || call.actionId === 'projects.prepare')).toBe(false);
+  });
+
   it('omits the shared setup update check when no shared setup is attached', async () => {
     const origins = [{ path: ['scripts', 'test'], layer: 'repository', overridden: false }];
     shared.inspection = { definition: presentDefinition(declared), detection, importCandidates: [],
       effectiveDefinition: { effectiveManifest: declared, origins } };
     const screen = await render('page', 'scripts.script:test');
-    expect(screen.findAllHostsByTestId('scripts.more')).toHaveLength(0);
+    await act(async () => { await screen.pressByTestIdAsync('scripts.more'); });
+    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const menu = screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'scripts.more:menu');
+    expect(menu?.props.items.map((item: { id: string }) => item.id)).toEqual(['useSharedLink']);
   });
   it.each([
     { checkout: 'explicitly associated Project', ref: { projectKey: 'parent-project' }, projectKey: 'parent-project', outcome: 'current' },
@@ -2974,7 +2993,8 @@ describe('Project setup layers on the Scripts page (plan A L6)', () => {
     await act(async () => { await screen.pressByTestIdAsync('scripts.more'); });
     const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
     const menu = screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'scripts.more:menu')!;
-    expect(menu.props.items.map((item: { id: string }) => item.id)).toEqual(['checkShared']);
+    expect(menu.props.items.map((item: { id: string }) => item.id))
+      .toEqual(outcome === 'current' ? ['useSharedLink', 'checkShared', 'detachShared'] : ['useSharedLink', 'checkShared']);
     await act(async () => { menu.props.onSelect('checkShared'); });
     expect(show).toHaveBeenCalledWith(expect.objectContaining({
       props: expect.objectContaining({ sourceId: 'src-acme-web' }),

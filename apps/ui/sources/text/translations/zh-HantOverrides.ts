@@ -14430,6 +14430,9 @@ settingsSession: {
               notNow: "暫不",
               usePending: "用於此專案",
               nothingRunsPending: "在你選擇之前不會執行任何內容。",
+              useSharedLink: "透過連結使用共享設定…",
+              linkPlaceholder: "貼上設定連結",
+              invalidLink: "此連結無法開啟共享設定。",
             },
             pendingShared: {
               title: "共享設定",

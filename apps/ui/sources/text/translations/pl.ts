@@ -18700,6 +18700,9 @@ settingsSession: {
           notNow: "Nie teraz",
           usePending: "Użyj w tym projekcie",
           nothingRunsPending: "Nic nie zostanie uruchomione, dopóki nie wybierzesz.",
+          useSharedLink: "Użyj udostępnionej konfiguracji z linku…",
+          linkPlaceholder: "Wklej link do konfiguracji",
+          invalidLink: "Ten link nie otwiera udostępnionej konfiguracji.",
         },
         pendingShared: {
           title: "Udostępniona konfiguracja",

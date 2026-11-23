@@ -18828,6 +18828,9 @@ settingsSession: {
           notNow: "Не сейчас",
           usePending: "Использовать в этом проекте",
           nothingRunsPending: "Ничего не запустится, пока вы не выберете.",
+          useSharedLink: "Использовать общую настройку по ссылке…",
+          linkPlaceholder: "Вставьте ссылку на настройку",
+          invalidLink: "Эта ссылка не открывает общую настройку.",
         },
         pendingShared: {
           title: "Общая настройка",
