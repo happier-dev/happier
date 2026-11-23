@@ -3807,7 +3807,12 @@ describe('Workflow trigger Action entry contracts', () => {
   it.each(['ui', 'voice', 'cli', 'mcp', 'agent'] as const)(
     'persists and reopens the same trigger through the %s Action boundary', async surface => {
       const f = fixture();
+      const placements: string[] = [];
       const actions = createWorkflowTriggerActions({ ...f.deps,
+        automations: { ...f.deps.automations, runNow: async automationId => {
+          placements.push(...(f.rows.get(automationId)?.assignments.map(row => row.machineId) ?? []));
+          return manualReceipt(automationId);
+        } },
         resolveMaterializer: async () => ({ effects: { resolveTargetAvailability: async () => true } }) });
       const boundary = f.executor(actions);
       const context: ActionExecutorContext = {
@@ -3815,6 +3820,7 @@ describe('Workflow trigger Action entry contracts', () => {
         surface,
         actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
           'workflow.trigger.add': [surface], 'workflow.trigger.update': [surface], 'workflow.trigger.remove': [surface],
+          'workflow.trigger.run_now': [surface],
         } }),
       };
       const created = await boundary.execute('workflow.trigger.add', { workflow, project, trigger }, context);
@@ -3822,6 +3828,10 @@ describe('Workflow trigger Action entry contracts', () => {
       if (!created.ok) throw new Error(created.errorCode);
       const { set, triggerId } = WorkflowTriggerWriteResultV1Schema.parse(created.result);
       expect(f.rows.get(set.automationId)?.assignments).toMatchObject([{ machineId: project.machineId }]);
+      expect(await boundary.execute('workflow.trigger.run_now', { automationId: set.automationId }, context)).toMatchObject({
+        ok: true, result: manualReceipt(set.automationId),
+      });
+      expect(placements).toEqual([project.machineId]);
       const target = { automationId: set.automationId, triggerId: triggerId! };
       const changed = await boundary.execute('workflow.trigger.update', {
         ...target, expectedRevision: set.revision, patch: { enabled: false },

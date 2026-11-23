@@ -22,6 +22,14 @@ const observation = {
 } as const;
 
 describe('supplied Automation Event diagnostics', () => {
+  it.each(['ui', 'voice', 'agent', 'mcp', 'cli'] as const)('uses the supplied-fact diagnostic from the %s Action entry', async surface => {
+    const executor = createActionExecutor({});
+    expect(await executor.execute(actionId, { trigger, observation }, { surface }))
+      .toEqual({ ok: true, result: { result: 'matched' } });
+    expect(await executor.execute(actionId, { trigger, observation: { ...observation, sourceContractVersion: 4 } }, { surface }))
+      .toEqual({ ok: true, result: { result: 'sourceMismatch' } });
+  });
+
   it('reports source, version, freshness and filter dispositions without admission', async () => {
     // This read-only diagnostic needs no external host ports. Unrelated required
     // ports are omitted, as in the existing Action executor boundary tests.
