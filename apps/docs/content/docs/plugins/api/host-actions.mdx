@@ -22152,7 +22152,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `session.permission_mode.set`
 
-**Set session permission mode** — Immediately update the permission intent (read_only/default/auto/yolo) for the specified session. Compatible aliases are accepted. To apply a mode with the next prompt, use session.message.send with permissionModeOverride.
+**Set session permission mode** — Update the permission intent (read_only/default/auto/yolo) for the specified session immediately, or use applyTiming next_prompt to stage it in the Session draft without sending input. Staging requires a connected Happier client. Compatible aliases are accepted.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
@@ -22165,6 +22165,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `sessionId` (text, required): Session id
 - `permissionMode` (text, required): Permission mode
 - `applyTiming` (select): Apply timing
+- `clientId` (text): Client id
 
 ## `session.public_link.create`
 

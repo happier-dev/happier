@@ -187,7 +187,7 @@ export async function dispatchSessionControls1(inv: Pick<CoreInvocation, 'action
             sessionId,
             context: ctx,
             permissionMode: effectiveMode,
-            ...(data.applyTiming === 'immediate' ? { applyTiming: data.applyTiming } : {}),
+            ...(data.applyTiming === 'immediate' || data.applyTiming === 'next_prompt' ? { applyTiming: data.applyTiming } : {}),
             ...(callerConstraints ? { callerInputConstraints: {
               models: callerConstraints.models, permissionModes: callerConstraints.permissionModes,
             } } : {}),

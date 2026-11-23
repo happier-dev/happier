@@ -1,11 +1,11 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
-import { ACTION_ID_FAMILIES_V1, ActionIdSchema, type ActionId } from './actionIds.js';
+import { ACTION_INVOKE_ACTION_ID_V1, ACTION_ID_FAMILIES_V1, ActionIdSchema, SESSION_PERMISSION_MODE_SET_ACTION_ID_V1, type ActionId } from './actionIds.js';
 import { ActionSurfaceSchema, ActionRequiredAuthoritySchema, getActionSpec, requiresRequesterAppReview, resolveActionExecutionPlacementForInput } from './actionSpecs.js';
 import type { ActionExecuteResult, ActionExecutorContext } from './executor/types.js';
 import { ActionApprovalRequestCreatedResultSchema, ActionExecuteResultSchema, type ActionExecuteFailure } from './actionExecutionResult.js';
 import { ApiTokenGrantV1Schema } from '../auth/apiTokenGrant.js';
-import { ApprovalExecutionOriginCallerV1Schema } from '../approvals/approvalRequestV1.js';
+import { ApprovalExecutionOriginCallerV1Schema, ApprovalExecutionOriginV1Schema } from '../approvals/approvalRequestV1.js';
 import { ExternalActionTargetV1Schema } from './externalActionApi.js';
 import { isSettingsDeclarationActionIdV1 } from './settingsDeclarationActionFamily.js';
 import { RPC_METHODS } from '../rpc/methods.js';
@@ -152,6 +152,9 @@ export const UiActionDispatchRequestV1Schema = lazyZodSchema(() => z.strictObjec
     // Host provenance, never Action input. Nested owners recheck the grant and
     // keep their own approval policy; the root's bypass/signature is not delegated.
     actionCaller: z.optional(ApprovalExecutionOriginCallerV1Schema),
+    // Preserve the host-admitted permission inputs; the receiving executor owns their decision.
+    callerPermissionMode: ApprovalExecutionOriginV1Schema.shape.callerPermissionMode,
+    causalPermissionAuthority: ApprovalExecutionOriginV1Schema.shape.causalPermissionAuthority,
     actionRequestId: z.optional(z.string().check(z.trim(), z.minLength(1))),
     externalActionCredential: z.optional(z.strictObject({
       accountId: z.string().check(z.minLength(1)), principalId: z.string().check(z.minLength(1)), credentialId: z.string().check(z.minLength(1)),
@@ -182,9 +185,15 @@ export function buildUiActionDispatchRequestV1(request: Readonly<{
   admittedHostReviewedChildren?: AdmittedHostReviewedChildrenV1;
 }>): UiActionDispatchRequestV1 {
   const shape = UiActionDispatchRequestV1Schema.shape.context.shape;
+  const { callerPermissionMode, causalPermissionAuthority, ...hostContext } = request.context;
   // Only the executor's closed admission supplies these facts, never a caller's context projection.
-  const context = { ...Object.fromEntries(Object.entries(request.context)
+  const context = { ...Object.fromEntries(Object.entries(hostContext)
     .filter(([key]) => key !== 'admittedHostReviewedChildren' && Object.hasOwn(shape, key))),
+    // The staged permission Action is new to this wire. Keep existing Actions readable by older clients.
+    ...(request.actionId === SESSION_PERMISSION_MODE_SET_ACTION_ID_V1 ? {
+      ...(callerPermissionMode === undefined ? {} : { callerPermissionMode }),
+      ...(causalPermissionAuthority === undefined ? {} : { causalPermissionAuthority }),
+    } : {}),
     ...(request.admittedHostReviewedChildren ? { admittedHostReviewedChildren: request.admittedHostReviewedChildren } : {}) };
   return UiActionDispatchRequestV1Schema.parse({ v: 1, actionId: request.actionId, input: request.input, context });
 }

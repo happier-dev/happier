@@ -95,7 +95,9 @@ describe('desktop destination window Action', () => {
 
   it('serializes the admitted context through the wire owner without leaking local runtime facts', () => {
     const request = buildUiActionDispatchRequestV1({ actionId: 'clipboard.write', input: { text: 'admitted' },
-      context: { ...person, actionRequestId: 'request', defaultSessionId: 'session', signal: new AbortController().signal } });
+      context: { ...person, actionRequestId: 'request', defaultSessionId: 'session', signal: new AbortController().signal,
+        callerPermissionMode: 'read-only',
+        causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'read-only' } } });
     expect(request).toEqual({ v: 1, actionId: 'clipboard.write', input: { text: 'admitted' },
       context: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
         actionRequestId: 'request', defaultSessionId: 'session' } });

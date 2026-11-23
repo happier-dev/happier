@@ -3872,7 +3872,7 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
         expect(hasAuthoritativeSessionRouteData(committed, { hasSessionEncryption: false })).toBe(true);
     });
 
-    it('leaves a newer permission choice pending when an earlier prompt is admitted', async () => {
+    it('carries an Agent-staged permission on the next Send and preserves a newer picker choice', async () => {
         const sessionId = 's_account_permission_frozen';
         state.getState().applySessions([createSessionFixture({
             id: sessionId, serverId: restored!.home.id, active: true,
@@ -3881,6 +3881,10 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
         state.getState().applySettingsLocal({ sessionPermissionModeApplyTiming: 'next_prompt' });
         const { applyPermissionModeSelection } = await import('./domains/permissions/permissionModeApply');
         const { createDefaultActionExecutor } = await import('./ops/actions/defaultActionExecutor');
+        const { createUiClientActionReverseHandler } = await import('./ops/actions/clientActionReverseDispatch');
+        const { SESSION_PERMISSION_MODE_SET_ACTION_ID_V1 } = await import('@happier-dev/protocol/actions/actionIds');
+        const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+        const { buildUiActionDispatchRequestV1 } = await import('@happier-dev/protocol/actions/clientDispatchV1');
         const { getSessionDraftSnapshot, readSessionNextPromptPermissionModeFromDraft,
             captureSessionDraftCurrentness, clearSessionDraftCurrentnessLocal } = await import('./ops/sessionDrafts/sessionDraftRepository');
         await (await import('./ops/sessionDrafts/sessionDraftPersistenceStorage')).prepareSessionDraftPersistenceStorage();
@@ -3888,17 +3892,34 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
         if (!accountLifetime) throw new Error('Expected the restored Account lifetime');
         const scope = accountLifetime.scope;
         const address = { kind: 'session' as const, sessionId };
-        const choosePermission = (mode: 'yolo' | 'read-only') => applyPermissionModeSelection({
-            sessionId, serverId: scope.serverId, mode, applyTiming: 'next_prompt', draftScope: scope,
-            executeAction: createDefaultActionExecutor().execute,
+        const receive = createUiClientActionReverseHandler({ ...scope, isCurrent: accountLifetime.isCurrent });
+        const agent = createActionExecutor({
+            clientActionExecute: async request => (await receive(
+                buildUiActionDispatchRequestV1(request), { signal: new AbortController().signal },
+            )).execution,
         });
-        await choosePermission('yolo');
+        const outboundBeforeStage = accountTransport.ack.mock.calls.length;
+        await expect(agent.execute(SESSION_PERMISSION_MODE_SET_ACTION_ID_V1, {
+            sessionId, permissionMode: 'read-only', applyTiming: 'next_prompt',
+        }, {
+            surface: 'agent', authority: 'account_automation', defaultSessionId: sessionId,
+            actionCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 },
+            callerPermissionMode: 'read-only',
+            causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'read-only' },
+            sessionInputSource: { sourceSessionId: sessionId, sourceTurnId: 'turn-1', via: 'action' },
+        })).resolves.toMatchObject({ ok: true });
+        expect(accountTransport.ack.mock.calls.slice(outboundBeforeStage).filter(([event]) => event === 'message')).toEqual([]);
+        expect(metadataBoundary.writes).toEqual([]);
+
         const admittedDraft = captureSessionDraftCurrentness({ scope, address });
         const admittedMode = readSessionNextPromptPermissionModeFromDraft(getSessionDraftSnapshot(scope, address)?.document);
-        expect(admittedMode).toBe('yolo');
+        expect(admittedMode).toBe('read-only');
         accountTransport.ack.mockImplementation(async (event: string) => {
             if (event === 'message') {
-                await choosePermission('read-only');
+                await applyPermissionModeSelection({
+                    sessionId, serverId: scope.serverId, mode: 'yolo', applyTiming: 'next_prompt',
+                    executeAction: createDefaultActionExecutor().execute,
+                });
                 return { ok: true, id: 'admitted-message', seq: 1, localId: 'frozen-permission', didWrite: true };
             }
             throw new Error(`Unexpected socket event: ${event}`);
@@ -3912,10 +3933,10 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
             fieldIds: ['extensions.happier.nextPromptPermissionModeV1'] });
 
         expect(accountTransport.ack).toHaveBeenCalledWith('message', expect.objectContaining({
-            message: { t: 'plain', v: expect.objectContaining({ meta: expect.objectContaining({ permissionMode: 'yolo' }) }) },
+            message: { t: 'plain', v: expect.objectContaining({ meta: expect.objectContaining({ permissionMode: 'read-only' }) }) },
         }));
         expect(metadataBoundary.writes).toEqual([]);
-        expect(readSessionNextPromptPermissionModeFromDraft(getSessionDraftSnapshot(scope, address)?.document)).toBe('read-only');
+        expect(readSessionNextPromptPermissionModeFromDraft(getSessionDraftSnapshot(scope, address)?.document)).toBe('yolo');
         expect(state.getState().sessions[sessionId].permissionMode).toBe('default');
         const { readSessionOwnerMetadataView } = await import('./domains/session/readSessionOwnerMetadataView');
         expect(readSessionOwnerMetadataView(state.getState().sessions[sessionId])?.permissionMode).toBe('default');

@@ -5160,22 +5160,23 @@ describe('Action Spec Registry', () => {
     if (pluginParsed.success) expect(pluginParsed.data.permissionMode).toBe('workspace_write');
   });
 
-  it('advertises current session permission intent names while accepting compatible aliases', () => {
+  it('advertises current session permission intent names while accepting compatible aliases', async () => {
     const spec = getActionSpec('session.permission_mode.set');
     expect(spec.surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: true });
     expect(spec.requiredAuthority).toBe('account_automation');
     expect(spec.inputSchema.parse({ sessionId: 's1', permissionMode: 'default', applyTiming: 'immediate' }))
       .toMatchObject({ applyTiming: 'immediate' });
-    expect(spec.inputSchema.safeParse({ sessionId: 's1', permissionMode: 'default', applyTiming: 'next_prompt' }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({ sessionId: 's1', permissionMode: 'default', applyTiming: 'next_prompt' }).success).toBe(true);
     expect(spec.inputHints?.fields.find((field) => field.path === 'applyTiming')?.options?.map((option) => option.value))
-      .toEqual(['immediate']);
+      .toEqual(['immediate', 'next_prompt']);
     const cliInput = spec.cli?.inputSchema?.safeParse({ sessionId: 's1', permissionMode: 'read_only', applyTiming: 'immediate' });
     expect(cliInput?.success).toBe(true);
-    if (cliInput?.success) expect(spec.cli?.bindInput?.(cliInput.data, { actionId: spec.id, invocationId: 'timing-test' }))
+    if (cliInput?.success) expect(await spec.cli?.bindInput?.(cliInput.data, { actionId: spec.id, invocationId: 'timing-test' }))
       .toMatchObject({ applyTiming: 'immediate' });
-    const cliDelayed = spec.cli?.inputSchema?.safeParse({ sessionId: 's1', permissionMode: 'read_only', applyTiming: 'next_prompt' });
-    expect(cliDelayed?.success).toBe(false);
-    if (cliDelayed && !cliDelayed.success) expect(cliDelayed.error.issues[0]?.message).toContain('session.message.send');
+    const cliDelayed = spec.cli?.inputSchema?.safeParse({ sessionId: 's1', permissionMode: 'read_only', applyTiming: 'next_prompt', clientId: 'client-a' });
+    expect(cliDelayed?.success).toBe(true);
+    if (cliDelayed?.success) expect(await spec.cli?.bindInput?.(cliDelayed.data, { actionId: spec.id, invocationId: 'timing-test' }))
+      .toMatchObject({ applyTiming: 'next_prompt', clientId: 'client-a' });
     expect(spec.inputSchema.safeParse({ sessionId: 's1', permissionMode: 'default', applyTiming: 'eventually' }).success).toBe(false);
 
     expect(spec.description).toContain('read_only/default/auto/yolo');

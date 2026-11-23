@@ -23,6 +23,7 @@ import { resolveSocketRpcSessionAuthorization } from '../rpc/socket.js';
 import { SessionModelSetResultV1Schema } from '../sessions/control/modelTransitionV1.js';
 import { createEmptyWorkflowActionHost } from './executor/emptyWorkflowActionHost.testkit.js';
 import { bindPresentUserActionConfirmationV1 } from './executor/approvalReview.js';
+import { buildUiActionDispatchRequestV1, UiActionDispatchRequestV1Schema } from './clientDispatchV1.js';
 
 function modelSetSuccess(request: Parameters<NonNullable<ActionExecutorDeps['sessionModelSet']>>[0]) {
   const modelId = request.teamCredentialModel?.modelId ?? request.modelId;
@@ -1997,6 +1998,40 @@ describe('createActionExecutor (session control)', () => {
     expect(sessionSendMessage).toHaveBeenCalledWith(expect.objectContaining({
       permissionModeOverride: surface === 'agent' ? 'read-only' : 'read_only',
     }));
+  });
+
+  it.each([
+    { requestedMode: 'read_only', allowed: true },
+    { requestedMode: 'default', allowed: false },
+    { requestedMode: 'yolo', allowed: false },
+  ])('preserves the admitted Agent ceiling across next-prompt client transport ($requestedMode)', async ({ requestedMode, allowed }) => {
+    const sessionPermissionModeSet = vi.fn(async () => ({ ok: true }));
+    const receiver = createExecutor({ sessionPermissionModeSet });
+    const sender = createExecutor({
+      clientActionExecute: async request => {
+        // Substitute only the RPC transport; both admission and receiving execution stay real.
+        const wire = UiActionDispatchRequestV1Schema.parse(JSON.parse(JSON.stringify(buildUiActionDispatchRequestV1(request))));
+        return receiver.executeAdmittedClientAction(wire.actionId, wire.input, wire.context);
+      },
+    });
+    const result = await sender.execute('session.permission_mode.set', {
+      sessionId: 's1', permissionMode: requestedMode, applyTiming: 'next_prompt',
+    }, {
+      surface: 'agent', authority: 'account_automation',
+      actionCaller: { kind: 'session', sessionId: 's1', starterDepth: 0, turnDepth: 0 },
+      defaultSessionId: 's1', callerPermissionMode: 'read-only',
+      causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'read-only' },
+      sessionInputSource: { sourceSessionId: 's1', sourceTurnId: 'turn-1', via: 'action' },
+    });
+    if (allowed) {
+      expect(result).toEqual({ ok: true, result: { ok: true } });
+      expect(sessionPermissionModeSet).toHaveBeenCalledWith(expect.objectContaining({
+        permissionMode: 'read-only', applyTiming: 'next_prompt',
+      }));
+    } else {
+      expect(result).toMatchObject({ ok: false, errorCode: 'permission_escalation_denied' });
+      expect(sessionPermissionModeSet).not.toHaveBeenCalled();
+    }
   });
 
   it('executes session.model.set via deps.sessionModelSet', async () => {

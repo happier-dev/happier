@@ -34,6 +34,7 @@ import { StrictJsonValueSchema } from '../../../json/strictJsonValue.js';
 import { NonBlankOpaqueIdentifierSchema } from '../../../strings/opaqueIdentifier.js';
 import { SessionApprovalProfileSetInputV1Schema } from '../../sessionStateFieldActions.js';
 import { BOT_FACE_SHAPE_GEOMETRY_GUIDANCE } from '../../../sessions/identity/botFaceShapeValidation.js';
+import { readRecord } from '../../../inputs/inputRecords.js';
 
 export const SessionTargetsResolveInputV1Schema: z.ZodMiniType<
   { target: SessionTargetV1; actionId: string },
@@ -376,8 +377,10 @@ function createSessionStateActionSpecs() {
     id: 'session.permission_mode.set', executionPlacement: 'session', approval: {result: 'none'},
     sessionTarget: { field: 'sessionId', cardinality: 'many' },
     sideEffectClass: 'write',
+    executionPlacements: ['session', 'client'],
+    executionPlacementForInput: (input: unknown) => readRecord(input).applyTiming === 'next_prompt' ? 'client' : 'session',
     title: 'Set session permission mode',
-    description: `Immediately update the permission intent (${SESSION_PERMISSION_INTENT_INPUTS.join('/')}) for the specified session. Compatible aliases are accepted. To apply a mode with the next prompt, use session.message.send with permissionModeOverride.`,
+    description: `Update the permission intent (${SESSION_PERMISSION_INTENT_INPUTS.join('/')}) for the specified session immediately, or use applyTiming next_prompt to stage it in the Session draft without sending input. Staging requires a connected Happier client. Compatible aliases are accepted.`,
     safety: 'safe',
     placements: [],
     bindings: { mcpToolName: 'session_permission_mode_set', rpcMethod: 'session.permission_mode.set' },
@@ -400,6 +403,7 @@ function createSessionStateActionSpecs() {
         { path: 'permissionMode', title: 'Permission mode', widget: 'text', required: true },
         { path: 'applyTiming', title: 'Apply timing', widget: 'select', options: [
           { value: 'immediate', label: 'Immediately' },
+          { value: 'next_prompt', label: 'From the next prompt' },
         ] },
       ],
     },

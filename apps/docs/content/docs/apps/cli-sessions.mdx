@@ -543,6 +543,7 @@ hdev send <session-id-or-prefix-or-tag> "ping" --permission-mode safe-yolo
 Notes:
 
 - `set-permission-mode` updates the session’s persisted intent.
+- In 0.3 development builds, add `--apply-timing next_prompt` to stage the mode in the Session draft. A connected Happier client is required. The command leaves the draft unsent, and the next Send from that composer uses the staged mode.
 - `session send --permission-mode ...` is a one-message override.
 - The exact allowed operations still depend on the Agent runtime, selected model provider, and your account policy.
 - Use `--json` to see the normalized intent stored/used.

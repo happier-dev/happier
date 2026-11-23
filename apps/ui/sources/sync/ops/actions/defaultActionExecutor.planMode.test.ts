@@ -2288,26 +2288,42 @@ describe('default Action executor mode and catalog contracts', () => {
       .resolves.toMatchObject({ success: false, code: 'approval_canceled' });
     expect(outgoing).toEqual([]);
   });
-  it('retains next-prompt mode in the draft without invoking the immediate Action', async () => {
+  it('stages next-prompt mode through the permission Action and preserves immediate publication', async () => {
     const { applyPermissionModeSelection } = await import('@/sync/domains/permissions/permissionModeApply');
     const { getSessionDraftSnapshot } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
     await (await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage')).prepareSessionDraftPersistenceStorage();
     const read = installSession('mode-session', { path: '/repo', machineId: 'machine-a', flavor: 'claude' });
     const draftScope = storage.getState().settingsScope;
     if (!draftScope) throw new Error('Expected the restored Account draft scope');
+    installActionSettings({ 'session.permission_mode.set': { disabledSurfaces: ['ui'] } });
+    await expect(applyPermissionModeSelection({ sessionId: 'mode-session', serverId, mode: 'safe-yolo', applyTiming: 'next_prompt',
+      executeAction: createDefaultActionExecutor().execute })).rejects.toThrow();
+    expect(getSessionDraftSnapshot(draftScope, { kind: 'session', sessionId: 'mode-session' })).toBeNull();
+    installActionSettings({});
     await applyPermissionModeSelection({ sessionId: 'mode-session', serverId, mode: 'safe-yolo', applyTiming: 'next_prompt',
-      draftScope,
       executeAction: createDefaultActionExecutor().execute });
     expect(storage.getState().sessions['mode-session']?.permissionMode).not.toBe('safe-yolo');
     const retainedDraft = getSessionDraftSnapshot(draftScope, { kind: 'session', sessionId: 'mode-session' });
     if (!retainedDraft || !('extensions' in retainedDraft.document)) throw new Error('Expected Session composer draft');
     expect(retainedDraft.document.extensions.happier?.nextPromptPermissionModeV1?.value).toBe('safe-yolo');
     expect(read().metadataVersion).toBe(1);
+    expect(await createDefaultActionExecutor().execute('session.permission_mode.set', {
+      sessionId: 'mode-session', permissionMode: 'read_only', applyTiming: 'next_prompt',
+    }, { surface: 'cli', serverId })).toMatchObject({ ok: true });
+    const actionDraft = getSessionDraftSnapshot(draftScope, { kind: 'session', sessionId: 'mode-session' });
+    if (!actionDraft || !('extensions' in actionDraft.document)) throw new Error('Expected Session composer draft');
+    expect(actionDraft.document.extensions.happier?.nextPromptPermissionModeV1?.value).toBe('read-only');
+    expect(read().metadataVersion).toBe(1);
+    expect(homes.requestsFor('/v2/sessions/mode-session/messages')).toHaveLength(0);
     await applyPermissionModeSelection({ sessionId: 'mode-session', serverId, mode: 'read-only', applyTiming: 'immediate',
-      draftScope,
       executeAction: createDefaultActionExecutor().execute });
     expect(storage.getState().sessions['mode-session']?.permissionMode).toBe('read-only');
     expect(read().metadataVersion).toBeGreaterThan(1);
+    const clearedDraft = getSessionDraftSnapshot(draftScope, { kind: 'session', sessionId: 'mode-session' });
+    if (clearedDraft) {
+      if (!('extensions' in clearedDraft.document)) throw new Error('Expected Session composer draft');
+      expect(clearedDraft.document.extensions.happier?.nextPromptPermissionModeV1?.value).toBeUndefined();
+    }
   });
 
   it('refuses disabled transcript permission and answer Actions before reaching the daemon', async () => {

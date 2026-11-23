@@ -1,5 +1,11 @@
 # Compatibility and version skew
 
+## Next-prompt permission staging (unreleased 0.3)
+
+`session.permission_mode.set` accepts `applyTiming: next_prompt` and routes that invocation to a connected Happier client. The client writes the existing Session draft field. The private continuation carries the Agent's admitted permission inputs for this Action so the receiving executor can enforce its ceiling.
+
+Use matching 0.3 development hosts and clients for staging. Earlier builds reject the new timing. Omitted timing and `immediate` retain the existing Action path, and there is no draft migration.
+
 ## Workflow wait input facts (unreleased 0.3)
 
 The closed Workflow wait declaration accepts optional `input` value references.

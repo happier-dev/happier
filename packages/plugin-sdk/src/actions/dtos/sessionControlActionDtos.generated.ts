@@ -1189,7 +1189,9 @@ export type SessionControlActionInputById = {
     readonly "session.permission_mode.set": {
         permissionMode: unknown;
         sessionId: SessionTargetV1<true>;
-        applyTiming?: 'immediate' | undefined;
+        applyTiming?: 'immediate' | 'next_prompt' | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "session.model.set": {
         [x: string]: unknown;

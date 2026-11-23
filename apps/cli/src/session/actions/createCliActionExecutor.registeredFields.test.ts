@@ -8,6 +8,7 @@ import { ArtifactReadHeadersBatchInputV1Schema, ArtifactReadHeadersBatchResponse
 import { V2SessionRecordSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { SESSION_STATUS_CLEAR_ACTION_ID_V1, SESSION_STATUS_SET_PROGRESS_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { clientActionUnavailable } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { AgentStartSessionCallerV1Schema } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
 import { ActionsSettingsV1Schema, SessionEffectiveAccessV1Schema, projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
 import { createPlainSessionOwnerMetadataEnvelopeV1, SessionMetadataOwnerPatchV1Schema, SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
@@ -129,7 +130,7 @@ function actionDeps() {
 }
 
 function executor() {
-  return createActionExecutor(actionDeps());
+  return createActionExecutor({ ...actionDeps(), clientActionExecute: async ({ actionId }) => clientActionUnavailable(actionId) });
 }
 
 async function executeFaceThroughMcp(owner: ReturnType<typeof executor>, face: unknown) {
@@ -366,12 +367,12 @@ describe('headless registered Session field Actions', () => {
     expect(boundary.rpcCalls).toBe(0);
   });
 
-  it('refuses caller-local next-prompt mode selection before Home reads or writes, while immediate retains its metadata owner', async () => {
+  it('requires a client for staged next-prompt mode without changing immediate metadata ownership', async () => {
     const owner = executor();
     const input = { sessionId, permissionMode: 'read-only' };
     const context = { surface: 'cli' as const, authority: 'present_user' as const, serverId: 'home' };
     expect(await owner.execute('session.permission_mode.set', { ...input, applyTiming: 'next_prompt' }, context))
-      .toMatchObject({ ok: false, errorCode: 'invalid_parameters', error: expect.stringContaining('session.message.send') });
+      .toMatchObject({ ok: false, errorCode: 'unavailable', error: 'noClient' });
     expect(boundary.reads).toBe(0);
     expect(boundary.patches).toEqual([]);
     expect(await owner.execute('session.permission_mode.set', { ...input, applyTiming: 'immediate' }, context))
