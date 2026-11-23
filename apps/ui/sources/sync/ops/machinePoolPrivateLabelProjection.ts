@@ -57,15 +57,14 @@ async function openMachinePoolPrivateLabelV1(params: Readonly<{
     }
 }
 
-/** Opens a recipient-only server view before it reaches local Pool presentation state. */
-export async function openMachinePoolPrivateViewV1(params: Readonly<{
+type MachinePoolNameRead = Readonly<{
     view: MachinePoolPrivateViewV1;
     labels: MachinePoolPrivateLabelOpenerV1;
     signal?: AbortSignal;
-}>): Promise<MachinePoolViewV1> {
-    const readPolicy = await params.labels.readPolicyForPool(params.view, params.signal);
-    params.signal?.throwIfAborted();
-    const name = await openMachinePoolPrivateLabelV1({
+}>;
+
+async function openMachinePoolName(params: MachinePoolNameRead, readPolicy: PrivateLabelReadPolicyV1) {
+    return await openMachinePoolPrivateLabelV1({
         poolId: params.view.pool.id,
         field: 'name',
         label: params.view.pool.name,
@@ -73,6 +72,18 @@ export async function openMachinePoolPrivateViewV1(params: Readonly<{
         readPolicy,
         ...(params.signal ? { signal: params.signal } : {}),
     });
+}
+
+export async function readMachinePoolPrivateNameV1(params: MachinePoolNameRead): Promise<string | null> {
+    const name = await openMachinePoolName(params, await params.labels.readPolicyForPool(params.view, params.signal));
+    return name.kind === 'available' ? name.value : null;
+}
+
+/** Opens a recipient-only server view before it reaches local Pool presentation state. */
+export async function openMachinePoolPrivateViewV1(params: MachinePoolNameRead): Promise<MachinePoolViewV1> {
+    const readPolicy = await params.labels.readPolicyForPool(params.view, params.signal);
+    params.signal?.throwIfAborted();
+    const name = await openMachinePoolName(params, readPolicy);
     const description = await openMachinePoolPrivateLabelV1({
         poolId: params.view.pool.id,
         field: 'description',

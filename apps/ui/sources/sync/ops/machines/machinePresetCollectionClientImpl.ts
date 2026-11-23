@@ -515,6 +515,24 @@ export async function prepareManagedMachinePresetSavedSecretPromotionRewritesInC
     }
 }
 
+/** Opens the stored payload for the captured recipient, without initiating repair. */
+export async function openStoredMachinePresetAtCustody(raw: ManagedMachinePresetV1,
+    reader: () => Promise<ManagedMachinePresetReadCustodyV1 | null>): Promise<OpenedMachinePreset | typeof MACHINE_PRESET_TEAM_KEY_PENDING | null> {
+    const mode = raw.contentEncryptionMode;
+    const custody = await (await reader())?.open(mode);
+    if (!custody) return null;
+    const projection = mode === 'plain'
+        ? ManagedMachinePresetRecipientProjectionV1Schema.safeParse({ content: raw.content, recipientEnvelope: null }).data
+        : projectManagedMachinePresetForRecipientV1({ content: raw.content, recipients: raw.recipients,
+            recipientAccountId: custody.accountId });
+    if (!projection) return null;
+    if (mode === 'e2ee' && raw.owner.kind === 'team' && projection.recipientEnvelope === null) return MACHINE_PRESET_TEAM_KEY_PENDING;
+    const content = openManagedMachinePresetRecipientProjectionAtCustodyV1({ presetId: raw.id, mode, projection, custody });
+    if (!content) return null;
+    const { content: _stored, recipients: _recipients, ...structural } = raw;
+    return { ...structural, ...content, recipientProjection: projection };
+}
+
 /** Settings reads and mutations all pass through the exact-Home Action front door. */
 export function createMachinePresetCollectionClient(scope: ServerAccountScope, homeId: string) {
     const executeAction = scopedHomeActionExecutor(scope);
@@ -611,31 +629,14 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         }, key, signal);
     }
 
-    async function openStoredPreset(raw: ManagedMachinePresetV1,
-        reader: () => Promise<ManagedMachinePresetReadCustodyV1 | null>): Promise<OpenedMachinePreset | typeof MACHINE_PRESET_TEAM_KEY_PENDING | null> {
-        const mode = raw.contentEncryptionMode;
-        const custody = await (await reader())?.open(mode);
-        if (!custody) return null;
-        const projection = mode === 'plain'
-            ? ManagedMachinePresetRecipientProjectionV1Schema.safeParse({ content: raw.content, recipientEnvelope: null }).data
-            : projectManagedMachinePresetForRecipientV1({ content: raw.content, recipients: raw.recipients,
-                recipientAccountId: custody.accountId });
-        if (!projection) return null;
-        if (mode === 'e2ee' && raw.owner.kind === 'team' && projection.recipientEnvelope === null) return MACHINE_PRESET_TEAM_KEY_PENDING;
-        const content = openManagedMachinePresetRecipientProjectionAtCustodyV1({ presetId: raw.id, mode, projection, custody });
-        if (!content) return null;
-        const { content: _stored, recipients: _recipients, ...structural } = raw;
-        return { ...structural, ...content, recipientProjection: projection };
-    }
-
     async function openPresetWithRecipientRepair(raw: ManagedMachinePresetV1,
         reader: () => Promise<ManagedMachinePresetReadCustodyV1 | null>): Promise<OpenedMachinePreset | typeof MACHINE_PRESET_TEAM_KEY_PENDING | null> {
-        const initiallyOpened = await openStoredPreset(raw, reader);
+        const initiallyOpened = await openStoredMachinePresetAtCustody(raw, reader);
         if (!initiallyOpened || initiallyOpened === MACHINE_PRESET_TEAM_KEY_PENDING) return initiallyOpened;
         // Opening a selected preset lets its keyholder repair owed Account envelopes. Home checks the current census and revision.
         const repaired = await repairRecipientEnvelopes(raw, reader);
         if (!repaired) return initiallyOpened;
-        return await openStoredPreset({ ...repaired, ...(raw.lastUsedAt === undefined ? {} : { lastUsedAt: raw.lastUsedAt }) }, reader);
+        return await openStoredMachinePresetAtCustody({ ...repaired, ...(raw.lastUsedAt === undefined ? {} : { lastUsedAt: raw.lastUsedAt }) }, reader);
     }
 
     /**
@@ -746,7 +747,7 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
             }
             if (actionId === 'machines.presets.list' && value.kind === 'listed') {
                 const presets = await Promise.all(value.presets.map(async raw => {
-                    const preset = await openStoredPreset(raw, reader);
+                    const preset = await openStoredMachinePresetAtCustody(raw, reader);
                     if (preset && preset !== MACHINE_PRESET_TEAM_KEY_PENDING) return preset;
                     const { content: _content, recipients: _recipients, ...structural } = raw;
                     return { ...structural, kind: 'private_content_unavailable' as const, ...(preset ? { reason: preset } : {}) };

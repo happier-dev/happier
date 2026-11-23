@@ -110,6 +110,8 @@ export function readActionApprovalSubject(input: ActionApprovalPresentationInput
     const references = describeApprovalActionFields({ ...input, actionArgs: input.actionArgs }).rows.flatMap(row => row.kind === 'value'
         ? [...(row.reference ? [row.reference] : []), ...(row.entries?.flatMap(entry => entry.reference ? [entry.reference] : []) ?? [])]
         : []);
+    // The catalog rows own the exact read of a Preset or Pool. The header only names the Action.
+    if (references.some(reference => reference.kind === 'machinePreset' || reference.kind === 'machinePool')) return undefined;
     // Policy is set on the Team. Groups and profiles name the defaults inside that policy.
     if (input.actionId === TEAM_POLICY_SET_ACTION_ID_V1) return references.find(reference => reference.kind === 'team');
     // A workspace-sync request is titled by its Action; its controller machine and linked folders read in Details.

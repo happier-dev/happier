@@ -284,6 +284,7 @@ function toSharedFieldRow(row: ApprovalFieldRow, serverId: string | null, exactR
         return { kind: 'answers', key: row.path, label: row.title, answers: row.answers.map(answer => ({ question: answer.question, values: answer.values })) };
     }
     const governance = actionId !== undefined && (actionId.startsWith('teams.') || actionId.startsWith('home.')
+        || actionId.startsWith('machines.presets.') || actionId.startsWith('machines.pools.')
         || isSessionAccessActionId(actionId) || actionId === SESSION_SPAWN_NEW_ACTION_ID_V1);
     if (row.entries) {
         // Structured entries read their references without the page's exact read, as Protocol lays them out.
@@ -450,7 +451,10 @@ function formatApprovalTimestamp(value: string): string {
  */
 function nameApprovalReferenceLabel(label: string, reference: ApprovalReference | undefined, named: boolean): string {
     const handle = /(\s+(id|key|target|selection))+$/i;
-    if (!reference || !named || !handle.test(label)) return label;
+    if (!reference || !handle.test(label)) return label;
+    const displaysNameOrFallback = named || reference.kind === 'machinePreset' || reference.kind === 'machinePool'
+        || ('unavailableWithoutName' in reference && reference.unavailableWithoutName === true);
+    if (!displaysNameOrFallback) return label;
     const stem = label.replace(handle, '');
     if (!stem) return label;
     return reference.kind === 'home' && /^server$/i.test(stem) ? t('common.home') : stem;

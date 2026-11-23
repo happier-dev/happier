@@ -1,7 +1,9 @@
+export const MACHINE_PRESET_CREATE_ACTION_ID_V1 = 'machines.presets.create' as const;
+export const MACHINE_PRESET_UPDATE_ACTION_ID_V1 = 'machines.presets.update' as const;
 export const MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 = 'machines.presets.archive' as const;
 export const MACHINE_PRESET_HTTP_ACTION_IDS_V1 = [
-  'machines.presets.list', 'machines.presets.get', 'machines.presets.create',
-  'machines.presets.update', MACHINE_PRESET_ARCHIVE_ACTION_ID_V1, 'machines.presets.restore',
+  'machines.presets.list', 'machines.presets.get', MACHINE_PRESET_CREATE_ACTION_ID_V1,
+  MACHINE_PRESET_UPDATE_ACTION_ID_V1, MACHINE_PRESET_ARCHIVE_ACTION_ID_V1, 'machines.presets.restore',
 ] as const;
 
 export type MachinePresetHttpActionIdV1 = typeof MACHINE_PRESET_HTTP_ACTION_IDS_V1[number];

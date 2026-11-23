@@ -41,6 +41,9 @@ import { endpointFor, type WorkspaceSyncRelationshipEndpoint, type WorkspaceSync
 import { formatWorkspaceSyncRelationshipTitle } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
 import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
 import { createManagedMachineActionClient } from '@/sync/api/machines/managedMachineActions';
+import { createMachinePresetActionClient } from '@/sync/api/machines/managedMachinePresets';
+import { createMachinePoolActionClient } from '@/sync/api/machines/machinePoolActions';
+import { createMachinePoolPrivateLabelClientForAccount, readMachinePoolPrivateNameV1 } from '@/sync/ops/machinePoolPrivateLabelProjection';
 import { isManagedOpaquePresetMachineV1, type ManagedMachineFullV1, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveRunNativeModelLabel } from '@/components/sessions/runs/resolveExecutionRunSelectionLabel';
 import { useProjectedQualifiedConnectedAccountTargetPresentations, type ProjectedQualifiedConnectedAccountTarget } from '@/hooks/server/connectedServices/useProjectedQualifiedConnectedAccountTargetPresentations';
@@ -111,6 +114,10 @@ export async function readApprovalReferenceForConfirmation(reference: ApprovalRe
         }
         account.assertCurrent();
     }
+    if (reference.kind === 'machinePreset' || reference.kind === 'machinePool') {
+        sources.machineCatalogName = await readMachineCatalogReferenceName(reference, account, signal);
+        account.assertCurrent();
+    }
     if (reference.kind === 'artifact' || reference.kind === 'skill') {
         sources.artifact = await account.fetchArtifact(reference.id, { signal });
         account.assertCurrent();
@@ -143,6 +150,36 @@ export async function readApprovalReferenceForConfirmation(reference: ApprovalRe
             ? resolveServerScopedMachine(storage.getState(), account.serverId, sources.managedMachine.enrolledMachineId) : null;
     }
     return resolveApprovalReferenceReading(reference, reference.id ?? '', account.serverId, sources);
+}
+
+type MachineCatalogReference = Extract<ApprovalReference, { kind: 'machinePreset' | 'machinePool' }>;
+
+async function readMachineCatalogReferenceName(reference: MachineCatalogReference, account: LazyActionAccountContext,
+    signal?: AbortSignal): Promise<string | null> {
+    try {
+        if (reference.kind === 'machinePool') {
+            const view = await createMachinePoolActionClient({ request: account.request }).execute('machines.pools.get',
+                { poolId: reference.id }, { serverId: account.serverId, signal });
+            if (view.pool.id !== reference.id) return null;
+            return await readMachinePoolPrivateNameV1({ view, labels: createMachinePoolPrivateLabelClientForAccount(account), signal });
+        }
+        const homeId = reference.homeId ?? account.serverIdentityId;
+        if (!homeId || homeId !== account.serverIdentityId) return null;
+        const found = await createMachinePresetActionClient({ request: account.request }).execute('machines.presets.get',
+            { homeId, id: reference.id }, { signal });
+        if (found.kind !== 'found' || found.preset.id !== reference.id || found.preset.homeId !== homeId) return null;
+        const { createManagedMachinePresetReadCustodyV1 } = await import('@/sync/ops/machines/managedMachinePresetCustody');
+        const { openStoredMachinePresetAtCustody } = await import('@/sync/ops/machines/machinePresetCollectionClient');
+        const custody = createManagedMachinePresetReadCustodyV1({ account, signal });
+        try {
+            const preset = await openStoredMachinePresetAtCustody(found.preset, async () => custody);
+            return preset && typeof preset !== 'string' ? preset.name : null;
+        } finally {
+            await custody?.dispose();
+        }
+    } catch {
+        return null;
+    }
 }
 
 /** The confirmation's workspace, read from the invoking Account's census the way the approval page reads it. */
@@ -208,12 +245,16 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
     const savedSecret = useSavedSecretCatalogName(reference?.kind === 'savedSecret' ? reference.id : null, ownHome ? viewer : null);
     const principal = useApprovalPrincipalName(reference, approvalServerId);
     const profileId = reference?.kind === 'approvalProfile' ? reference.id : null;
-    const profile = useScopedSharingRead(profileId, approvalServerId, async (scope, signal) => {
-        if (profileId === null) return null;
+    const machineCatalogReference = reference?.kind === 'machinePreset' || reference?.kind === 'machinePool' ? reference : null;
+    const lookupKey = machineCatalogReference ? JSON.stringify([machineCatalogReference.kind,
+        machineCatalogReference.id, machineCatalogReference.kind === 'machinePreset' && machineCatalogReference.homeId])
+        : profileId === null ? null : JSON.stringify(['approvalProfile', profileId]);
+    const lookup = useScopedSharingRead(lookupKey, approvalServerId, async (scope, signal) => {
         const account = await captureLazyActionAccountContext(scope.serverId, signal);
         try {
             if (account.accountId !== scope.accountId) return null;
-            return await readApprovalProfileDescriptor(account, profileId, signal);
+            return machineCatalogReference ? await readMachineCatalogReferenceName(machineCatalogReference, account, signal)
+                : profileId === null ? null : (await readApprovalProfileDescriptor(account, profileId, signal))?.name ?? null;
         } finally {
             account.dispose();
         }
@@ -232,7 +273,10 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
         providerConnection, providerManualModel, providerCatalogLoading, declarations, localizePluginText,
         syncLink, workspace, discussionTitle: discussion.title, discussionTitleResolving: discussion.resolving,
         principalName: principal.name, principalResolving: principal.resolving,
-        approvalProfileName: profile.value?.name, approvalProfileResolving: profile.resolving });
+        approvalProfileName: profileId === null ? undefined : lookup.value ?? undefined,
+        approvalProfileResolving: profileId !== null && lookup.resolving,
+        machineCatalogName: machineCatalogReference ? lookup.value : null,
+        machineCatalogResolving: machineCatalogReference !== null && lookup.resolving });
 }
 
 const NO_DISCUSSION_IDS: readonly string[] = Object.freeze([]);
@@ -291,6 +335,8 @@ type ApprovalReferenceSources = {
     principalResolving?: boolean;
     approvalProfileName?: string;
     approvalProfileResolving?: boolean;
+    machineCatalogName?: string | null;
+    machineCatalogResolving?: boolean;
     connectedAccount?: { accessibilityLabel: string };
     savedSecret?: Readonly<{ name: string | null; resolving: boolean }>;
     sessionReading: Pick<ReturnType<typeof useApprovalSessionReading>, 'name' | 'machineId' | 'status'>;
@@ -330,6 +376,11 @@ function resolveApprovalReferenceReading(reference: ApprovalReference | undefine
         return { text: name ?? t(sources.homeLayoutItemResolving ? 'common.loading' : 'common.unavailable'),
             named: Boolean(name), ...(sources.homeLayoutItemResolving ? { resolving: true } : {}) };
     }
+    if (reference?.kind === 'machinePreset' || reference?.kind === 'machinePool') {
+        const name = sources.machineCatalogName;
+        return { text: name ?? (sources.machineCatalogResolving ? t('common.loading') : t('common.unavailable')),
+            named: Boolean(name), ...(sources.machineCatalogResolving ? { resolving: true } : {}) };
+    }
     if (reference?.kind === 'managedMachine') {
         const title = readManagedMachineName(sources);
         // The generic word stands in for a machine that could not be read; it is not a name, so a title never
@@ -341,7 +392,7 @@ function resolveApprovalReferenceReading(reference: ApprovalReference | undefine
     if (reference?.kind === 'machine') {
         // A machine whose details were never read has no name yet: the reference's own id stands in, unnamed.
         const name = getSettledMachineDisplayName(machine, sources.machineInventory ?? undefined);
-        const title = name ?? reference.id;
+        const title = name ?? (reference.unavailableWithoutName ? t('common.unavailable') : reference.id);
         // The row's own label already names the kind ("Machine"); the value is just its name.
         return { text: reference.workspaceRoot ? `${formatPathRelativeToHome(reference.workspaceRoot)} · ${title}` : title, named: Boolean(name) };
     }
@@ -357,7 +408,8 @@ function resolveApprovalReferenceReading(reference: ApprovalReference | undefine
     }
     if (reference?.kind === 'workspace') {
         const endpoint = sources.workspace;
-        return endpoint?.workspaceRef ? { text: describeApprovalWorkspaceEndpoint(endpoint), named: true } : { text: literal, named: false };
+        return endpoint?.workspaceRef ? { text: describeApprovalWorkspaceEndpoint(endpoint), named: true }
+            : { text: reference.unavailableWithoutName ? t('common.unavailable') : literal, named: false };
     }
     if (reference?.kind === 'mcpServer') {
         const server = mcp?.value?.servers.find(row => row.id === reference.id);
@@ -448,7 +500,9 @@ function resolveApprovalReferenceReading(reference: ApprovalReference | undefine
     if (reference?.kind === 'home') {
         const home = resolveApprovalHomeName(reference.id)
             ?? (areServerProfileIdentifiersEquivalent(reference.id, approvalServerId) ? t('settingsAccount.thisHomeTitle') : null);
-        return home === null ? { text: literal, named: false } : { text: home, named: true };
+        return home === null
+            ? { text: reference.unavailableWithoutName ? t('common.unavailable') : literal, named: false }
+            : { text: home, named: true };
     }
     if (reference?.kind === 'account') {
         const own = viewer !== null && viewer.accountId === reference.id && areServerProfileIdentifiersEquivalent(viewer.serverId, approvalServerId);
