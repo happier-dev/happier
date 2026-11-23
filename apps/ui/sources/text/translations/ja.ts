@@ -4063,6 +4063,17 @@ localTailscale: {
       userActionsTitle: "操作リクエスト",
       userActionsSubtitle: "セッションが入力を必要とするときにローカル通知を表示します",
     },
+    soundEffects: {
+      title: "効果音",
+      footer: "このデバイスのみ。おやすみモードやサイレントモード中は鳴りません。",
+      enabledTitle: "サウンド",
+      enabledSubtitle: "セッションの状態が変わったときに音を鳴らす",
+      errorSubtitle: "セッションが失敗したとき",
+      attentionTitle: "対応が必要",
+      attentionSubtitle: "セッションが承認や入力を求めたとき",
+      successTitle: "成功",
+      successSubtitle: "ターンが完了したとき",
+    },
     desktop: {
       title: "デスクトップ通知",
       footer: "このデスクトップアプリのローカル通知配信を確認します。",

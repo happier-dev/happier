@@ -3572,6 +3572,17 @@ export const ca: TranslationStructure = {
             userActionsTitle: 'Sol·licituds d’acció',
             userActionsSubtitle: 'Mostra una notificació local quan una sessió necessiti la teva intervenció',
         },
+        soundEffects: {
+            title: "Efectes de so",
+            footer: "Només en aquest dispositiu. Silenciat amb No molestis o el mode silenciós activat.",
+            enabledTitle: "Sons",
+            enabledSubtitle: "Reprodueix un so quan una sessió canvia d'estat",
+            errorSubtitle: "Quan una sessió falla",
+            attentionTitle: "Cal atenció",
+            attentionSubtitle: "Quan una sessió necessita aprovació o una resposta",
+            successTitle: "Èxit",
+            successSubtitle: "Quan acaba un torn",
+        },
         desktop: {
             title: 'Notificacions d’escriptori',
             footer: 'Comprova el lliurament de notificacions locals per a aquesta app d’escriptori.',

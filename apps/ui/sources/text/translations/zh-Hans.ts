@@ -3664,6 +3664,17 @@ export const zhHans: TranslationStructure = {
       userActionsTitle: "操作请求",
       userActionsSubtitle: "当会话需要你的输入时显示本地通知",
     },
+    soundEffects: {
+      title: "音效",
+      footer: "仅在此设备上播放。开启勿扰模式或静音模式时不会发声。",
+      enabledTitle: "声音",
+      enabledSubtitle: "会话状态变化时播放声音",
+      errorSubtitle: "会话失败时",
+      attentionTitle: "需要处理",
+      attentionSubtitle: "会话需要批准或输入时",
+      successTitle: "成功",
+      successSubtitle: "回合完成时",
+    },
     desktop: {
       title: "桌面通知",
       footer: "检查此桌面应用的本地通知投递。",

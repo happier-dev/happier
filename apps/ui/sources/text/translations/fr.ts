@@ -3486,6 +3486,17 @@ export const fr: TranslationStructure = {
             userActionsTitle: 'Demandes d’action',
             userActionsSubtitle: 'Afficher une notification locale quand une session attend ta réponse',
         },
+        soundEffects: {
+            title: "Effets sonores",
+            footer: "Sur cet appareil uniquement. Silencieux lorsque Ne pas déranger ou le mode silencieux est activé.",
+            enabledTitle: "Sons",
+            enabledSubtitle: "Jouer un son quand une session change d'état",
+            errorSubtitle: "Quand une session échoue",
+            attentionTitle: "Attention requise",
+            attentionSubtitle: "Quand une session attend une approbation ou une réponse",
+            successTitle: "Succès",
+            successSubtitle: "Quand un tour se termine",
+        },
         desktop: {
             title: 'Notifications desktop',
             footer: 'Vérifie la remise des notifications locales pour cette app desktop.',

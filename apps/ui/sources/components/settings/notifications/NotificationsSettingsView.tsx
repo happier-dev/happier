@@ -37,6 +37,7 @@ import {
     updateNotificationChannelById,
 } from './notificationChannels';
 import { useTauriNotificationPermissionDiagnostics } from './useTauriNotificationPermissionDiagnostics';
+import { SoundEffectsSettingsGroup } from './SoundEffectsSettingsGroup';
 import { Icon } from '@/components/ui/icons/Icon';
 
 type ForegroundBehavior = 'full' | 'silent' | 'off';
@@ -480,6 +481,8 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
                     showChevron={false}
                 />
             </ItemGroup>
+
+            <SoundEffectsSettingsGroup />
 
             {isDesktopNotificationsSupported ? (
                 <ItemGroup

@@ -3487,6 +3487,17 @@ export const en = {
             userActionsTitle: 'Action requests',
             userActionsSubtitle: 'Show a local notification when a session needs your input',
         },
+        soundEffects: {
+            title: "Sound effects",
+            footer: "Plays on this device only. Stays silent while Do Not Disturb or silent mode is on.",
+            enabledTitle: "Sounds",
+            enabledSubtitle: "Play a sound when a session changes status",
+            errorSubtitle: "When a session fails",
+            attentionTitle: "Attention required",
+            attentionSubtitle: "When a session needs approval or input",
+            successTitle: "Success",
+            successSubtitle: "When a turn finishes",
+        },
         desktop: {
             title: 'Desktop notifications',
             footer: 'Checks local notification delivery for this desktop app.',

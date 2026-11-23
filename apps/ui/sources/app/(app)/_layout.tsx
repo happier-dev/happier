@@ -15,6 +15,7 @@ import {
 } from '@/utils/navigation/createSocialStackScreenOptions';
 import { ActivityBadgeRuntime } from '@/activity/badges/ActivityBadgeRuntime';
 import { ActivityLocalNotificationRuntime } from '@/activity/notifications/runtime/ActivityLocalNotificationRuntime';
+import { SoundEffectsRuntime } from '@/activity/sounds/SoundEffectsRuntime';
 import { PushNotificationPermissionPrimingRuntime } from '@/activity/notifications/permission/PushNotificationPermissionPrimingRuntime';
 import { DesktopTrayRuntime } from '@/desktop/tray/DesktopTrayRuntime';
 import { ReleaseNotesAutoShowMount } from '@/changelog/releaseNotes';
@@ -193,6 +194,7 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
         <SessionCockpitChromeRegistryProvider>
             <ActivityBadgeRuntime />
             <ActivityLocalNotificationRuntime />
+            <SoundEffectsRuntime />
             <DesktopTrayRuntime />
             {auth.isAuthenticated ? <AuthenticatedAppShellRuntimes /> : null}
             <NavigatorSafeAreaBleed>

@@ -3486,6 +3486,17 @@ export const de: TranslationStructure = {
             userActionsTitle: 'Aktionsanfragen',
             userActionsSubtitle: 'Eine lokale Benachrichtigung zeigen, wenn eine Session deine Eingabe braucht',
         },
+        soundEffects: {
+            title: "Soundeffekte",
+            footer: "Nur auf diesem Gerät. Stumm, solange „Nicht stören“ oder der Lautlosmodus aktiv ist.",
+            enabledTitle: "Töne",
+            enabledSubtitle: "Einen Ton abspielen, wenn sich der Status einer Sitzung ändert",
+            errorSubtitle: "Wenn eine Sitzung fehlschlägt",
+            attentionTitle: "Aufmerksamkeit erforderlich",
+            attentionSubtitle: "Wenn eine Sitzung eine Freigabe oder Eingabe braucht",
+            successTitle: "Erfolg",
+            successSubtitle: "Wenn ein Durchgang abgeschlossen ist",
+        },
         desktop: {
             title: 'Desktop-Benachrichtigungen',
             footer: 'Prüft die Zustellung lokaler Benachrichtigungen für diese Desktop-App.',

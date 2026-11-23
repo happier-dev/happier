@@ -4115,6 +4115,17 @@ export const it: TranslationStructure = {
       userActionsTitle: "Richieste di azione",
       userActionsSubtitle: "Mostra una notifica locale quando una sessione richiede il tuo input",
     },
+    soundEffects: {
+      title: "Effetti sonori",
+      footer: "Solo su questo dispositivo. Silenziosi con Non disturbare o la modalità silenziosa attivi.",
+      enabledTitle: "Suoni",
+      enabledSubtitle: "Riproduci un suono quando una sessione cambia stato",
+      errorSubtitle: "Quando una sessione non riesce",
+      attentionTitle: "Attenzione richiesta",
+      attentionSubtitle: "Quando una sessione richiede un'approvazione o una risposta",
+      successTitle: "Completato",
+      successSubtitle: "Quando un turno termina",
+    },
     desktop: {
       title: "Notifiche desktop",
       footer: "Verifica la consegna delle notifiche locali per questa app desktop.",

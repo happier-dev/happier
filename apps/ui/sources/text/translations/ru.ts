@@ -3862,6 +3862,17 @@ export const ru: TranslationStructure = {
       userActionsTitle: "Запросы на действия",
       userActionsSubtitle: "Показывать локальное уведомление, когда сеансу требуется ваше участие",
     },
+    soundEffects: {
+      title: "Звуковые эффекты",
+      footer: "Только на этом устройстве. Не звучат в режиме «Не беспокоить» или в беззвучном режиме.",
+      enabledTitle: "Звуки",
+      enabledSubtitle: "Воспроизводить звук при смене статуса сессии",
+      errorSubtitle: "Когда сессия завершилась ошибкой",
+      attentionTitle: "Требуется внимание",
+      attentionSubtitle: "Когда сессии нужно одобрение или ответ",
+      successTitle: "Успех",
+      successSubtitle: "Когда ход завершён",
+    },
     desktop: {
       title: "Уведомления рабочего стола",
       footer: "Проверяет локальную доставку уведомлений для этого desktop-приложения.",

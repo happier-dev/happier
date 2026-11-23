@@ -3476,6 +3476,17 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             userActionsTitle: '操作請求',
             userActionsSubtitle: '當工作階段需要你的輸入時顯示本機通知',
         },
+        soundEffects: {
+            title: "音效",
+            footer: "僅在此裝置上播放。開啟勿擾模式或靜音模式時不會發聲。",
+            enabledTitle: "聲音",
+            enabledSubtitle: "工作階段狀態變更時播放聲音",
+            errorSubtitle: "工作階段失敗時",
+            attentionTitle: "需要處理",
+            attentionSubtitle: "工作階段需要核准或輸入時",
+            successTitle: "成功",
+            successSubtitle: "回合完成時",
+        },
         desktop: {
             title: '桌面通知',
             footer: '檢查此桌面 App 的本機通知傳遞。',

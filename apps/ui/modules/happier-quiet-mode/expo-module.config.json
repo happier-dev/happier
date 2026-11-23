@@ -1,0 +1,5 @@
+{
+    "name": "HappierQuietMode",
+    "platforms": ["android"],
+    "android": { "modules": ["dev.happier.quietmode.HappierQuietModeModule"] }
+}

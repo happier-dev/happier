@@ -23,6 +23,7 @@ import {
     LoadingIndicatorSpeedIdSchema,
     LoadingIndicatorStyleIdSchema,
 } from './loadingIndicatorStyleSetting';
+import { DEFAULT_SOUND_EFFECT_IDS, soundEffectIdSchema } from '@/activity/sounds/soundEffectCatalog';
 import {
     SESSION_LIST_FOLDER_SORT_MODE_DEFAULT_V1,
     SESSION_LIST_FOLDER_SORT_MODES_V1,
@@ -410,6 +411,30 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         schema: z.enum(['full', 'silent', 'off']),
         default: 'full',
         description: 'Foreground notification presentation on this device',
+        storageScope: 'local',
+    },
+    soundEffectsEnabled: {
+        schema: z.boolean(),
+        default: false,
+        description: 'Play sound effects for session errors, attention requests and finished turns on this device',
+        storageScope: 'local',
+    },
+    soundEffectsErrorSound: {
+        schema: soundEffectIdSchema('error'),
+        default: DEFAULT_SOUND_EFFECT_IDS.error,
+        description: 'Sound played on this device when a session fails',
+        storageScope: 'local',
+    },
+    soundEffectsAttentionSound: {
+        schema: soundEffectIdSchema('attention'),
+        default: DEFAULT_SOUND_EFFECT_IDS.attention,
+        description: 'Sound played on this device when a session needs approval or input',
+        storageScope: 'local',
+    },
+    soundEffectsSuccessSound: {
+        schema: soundEffectIdSchema('success'),
+        default: DEFAULT_SOUND_EFFECT_IDS.success,
+        description: 'Sound played on this device when a turn finishes',
         storageScope: 'local',
     },
     petsEnabledOverride: {

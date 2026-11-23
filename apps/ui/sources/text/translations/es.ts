@@ -3761,6 +3761,17 @@ export const es: TranslationStructure = {
       userActionsTitle: 'Solicitudes de acción',
       userActionsSubtitle: 'Muestra una notificación local cuando una sesión necesita tu intervención',
     },
+    soundEffects: {
+      title: "Efectos de sonido",
+      footer: "Solo en este dispositivo. En silencio con No molestar o el modo silencio activado.",
+      enabledTitle: "Sonidos",
+      enabledSubtitle: "Reproducir un sonido cuando una sesión cambia de estado",
+      errorSubtitle: "Cuando una sesión falla",
+      attentionTitle: "Requiere atención",
+      attentionSubtitle: "Cuando una sesión necesita aprobación o una respuesta",
+      successTitle: "Éxito",
+      successSubtitle: "Cuando termina un turno",
+    },
     desktop: {
       title: 'Notificaciones de escritorio',
       footer: 'Comprueba la entrega de notificaciones locales para esta app de escritorio.',

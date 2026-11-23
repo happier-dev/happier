@@ -3792,6 +3792,17 @@ export const pl: TranslationStructure = {
       userActionsTitle: 'Prośby o akcję',
       userActionsSubtitle: 'Pokazuj lokalne powiadomienie, gdy sesja wymaga Twojego wkładu',
     },
+    soundEffects: {
+      title: "Efekty dźwiękowe",
+      footer: "Tylko na tym urządzeniu. Wyciszone, gdy włączony jest tryb Nie przeszkadzać lub tryb cichy.",
+      enabledTitle: "Dźwięki",
+      enabledSubtitle: "Odtwarzaj dźwięk, gdy zmienia się stan sesji",
+      errorSubtitle: "Gdy sesja zakończy się błędem",
+      attentionTitle: "Wymaga uwagi",
+      attentionSubtitle: "Gdy sesja potrzebuje zatwierdzenia lub odpowiedzi",
+      successTitle: "Sukces",
+      successSubtitle: "Gdy tura się zakończy",
+    },
     desktop: {
       title: 'Powiadomienia desktopowe',
       footer: 'Sprawdza lokalne dostarczanie powiadomień dla tej aplikacji desktopowej.',

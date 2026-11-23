@@ -139,6 +139,17 @@ While the Happier window has focus, **In-app notifications** applies to other se
 
 While the tab is hidden, behind another tab or in a minimized window, the web app pauses its connection and notifications stop. To be notified while you work elsewhere, give Happier its own browser window and keep part of it on screen, or use the desktop app, which stays connected in the background.
 
+### Sound effects
+
+Happier can play a short sound when a session changes status: **Error** when a session fails, **Attention required** when it needs a permission decision or your answer, and **Success** when a turn finishes. Sound effects are off by default and apply only to the device you turn them on for. Turn them on under **Settings → Notifications → Sound effects → Sounds**, then choose a sound for each status; choosing one plays it so you can hear it.
+
+Sound effects respect your device's quiet modes:
+
+- **Android:** no sound while Do Not Disturb is on or the ringer is set to silent or vibrate.
+- **iOS:** the Ring/Silent switch mutes them. iOS doesn't let apps read Focus, so a Focus mode alone doesn't. After you use voice or dictation, sound effects stay off until you restart the app, because voice keeps audio playing through the silent switch.
+
+Sound effects play while the app is running and connected, so the hidden-tab pause above applies to them too. Each open browser tab plays its own sound.
+
 ## What you need to configure
 
 ### Test remote delivery in development builds
