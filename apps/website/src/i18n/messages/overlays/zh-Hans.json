@@ -174,7 +174,7 @@
   "agents.AGENTS.kiro.whatItDoes.0": "Kiro 是 AWS 的智能体式开发 CLI，它的文档明确讲的是 Agent Client Protocol——这很方便，因为 Happier 正是用这个协议和它对话的。`happier kiro` 会在你指定的仓库里运行 `kiro-cli` 可执行文件。",
   "agents.AGENTS.kiro.whatItDoes.1": "关于你的 AWS 身份的所有事，仍然留在原处。Happier 在你自己的电脑上启动这个进程，加密地把对话送到你的其他设备上，然后让开。CLI 和 AWS 之间没有网关，你账户的任何信息都不会被复制到别处。",
   "agents.AGENTS.kiro.whatItDoes.2": "运行它的电脑不必是你面前的那一台。开发机、EC2 实例，或者柜子里的机器都行——在那里安装 Happier CLI，开始会话，然后从手机上读它。",
-  "agents.AGENTS.opencode.faq.0.a": "不一定。Happier 优先使用你 PATH 上的 `opencode`，如果没有，它可以把 `opencode-ai` 包安装到自己的目录里。你自己的安装绝不会被背着你替换或升级。",
+  "agents.AGENTS.opencode.faq.0.a": "不一定。Happier 优先使用你 PATH 上的 `opencode`，如果没有，它可以把 `@opencode/cli` 包安装到自己的目录里。你自己的安装绝不会被背着你替换或升级。",
   "agents.AGENTS.opencode.faq.0.q": "我需要事先装好 OpenCode 吗？",
   "agents.AGENTS.opencode.faq.1.a": "不会。OpenCode 保留自己的供应商配置和自己的凭据；Happier 只是启动它并读取对话。如果你在 `opencode auth` 里设置了多个供应商，决定请求发往何处的仍然是它。",
   "agents.AGENTS.opencode.faq.1.q": "Happier 会改变 OpenCode 连接哪个供应商吗？",
