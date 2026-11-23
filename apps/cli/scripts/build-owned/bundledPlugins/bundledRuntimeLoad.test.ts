@@ -73,10 +73,26 @@ it.each(readBundledPluginPackageNames(repoRoot))('loads shipped runtime entries 
         locator: sourceEntryPath, rootPath: projectRoot, loadModule: loadSource,
         authority: { kind: 'bundled_first_party', pluginId: manifest.id, packageRootPath: projectRoot },
       });
+      const daemonExternalReads = new Set<string>();
       await stagePluginDaemonRuntime({
         sourceRootPath: projectRoot, sourceEntryPath, stagedRootPath: root, daemonEntrypoint: daemon,
         sessionRunnerFactories, canonicalWorkspacePackageRoots: workspaceRoots,
         firstPartyPackagedWorkspaceExternals: PLUGIN_HOST_SHARED_RUNTIME_PACKAGES,
+      }, {
+        inspectEmittedOutputs(outputs) {
+          for (const { imports } of Object.values(outputs)) {
+            for (const { external, kind, path } of imports) {
+              // The bundler resolves ordinary package imports itself. Node
+              // built-ins and optional dependencies (such as pg-native) can
+              // also appear as externals without being part of the CLI closure.
+              if (!external || !PLUGIN_HOST_SHARED_RUNTIME_PACKAGES.some(name => path === name || path.startsWith(`${name}/`))) continue;
+              const specifier = JSON.stringify(path);
+              daemonExternalReads.add(kind === 'require-call' || kind === 'require-resolve'
+                ? `require.resolve(${specifier});`
+                : `await import(${specifier});`);
+            }
+          }
+        },
       });
 
       // The installed daemon resolves the shared SDK/Protocol from the CLI closure.
@@ -87,7 +103,15 @@ it.each(readBundledPluginPackageNames(repoRoot))('loads shipped runtime entries 
         await mkdir(dirname(link), { recursive: true });
         await symlink(join(hostPackageDir, 'node_modules', name), link, 'junction');
       }
-      expect((await loadEntry(join(root, daemon))).activate, daemon).toBeTypeOf('function');
+      const daemonPath = join(root, daemon);
+      expect((await loadEntry(daemonPath)).activate, daemon).toBeTypeOf('function');
+      const externalsPath = join(dirname(daemonPath), 'externals.mjs');
+      await writeFile(externalsPath, [
+        "import { createRequire } from 'node:module';",
+        'const require = createRequire(import.meta.url);',
+        ...daemonExternalReads,
+      ].join('\n'));
+      await loadEntry(externalsPath);
     }
   } finally {
     await rm(root, { recursive: true, force: true });

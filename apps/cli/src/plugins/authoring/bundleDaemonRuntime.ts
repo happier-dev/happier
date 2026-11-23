@@ -745,7 +745,10 @@ export async function stagePluginDaemonRuntime(
      */
     firstPartyPackagedWorkspaceExternals?: readonly string[];
   }>,
-  deps: Readonly<{ build?: typeof EsbuildBuild }> = {},
+  deps: Readonly<{
+    build?: typeof EsbuildBuild;
+    inspectEmittedOutputs?: (outputs: EsbuildMetafile['outputs']) => void;
+  }> = {},
 ): Promise<StagedPluginDaemonRuntime> {
   const sourceRoot = await realpath(resolve(params.sourceRootPath));
   const sourceRealPath = await realpath(resolve(params.sourceEntryPath));
@@ -986,6 +989,7 @@ export async function stagePluginDaemonRuntime(
       throw new Error('Plugin daemon runtime build did not return its requested metafile');
     }
     const metafile = buildResult.metafile;
+    deps.inspectEmittedOutputs?.(metafile.outputs);
     await validateContainedPackSourceImports({
       sourceRoot,
       resolutionRoot: buildWorkingDirectory,
