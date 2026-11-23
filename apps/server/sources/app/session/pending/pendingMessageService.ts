@@ -2396,6 +2396,52 @@ async function rejectQueuedPendingInputInTx(params: Readonly<{
     });
 }
 
+/** Settle pre-dispatch custody after removal of a Session follower edge. */
+export async function withdrawUnroutedSessionFollowPendingInputsInTx(tx: Tx, input: Readonly<{
+    destinationSessionId: string;
+    destinationAccountId: string;
+    sourceSessionId: string;
+    changedByAccountId: string;
+}>) {
+    const sessionId = input.destinationSessionId;
+    const queued = await tx.sessionPendingMessage.findMany({
+        where: { sessionId, status: 'queued', inputAdmissionReceipt: { not: getActivePrismaRuntime().DbNull } },
+        select: { localId: true, targetExecutionRunId: true, status: true, deliveryState: true, deliveryBlockedReason: true,
+            discardedReason: true, content: true, requestedAction: true, inputAdmissionReceipt: true, requestEqualityEvidenceV1: true },
+    });
+    let latestChange: Awaited<ReturnType<typeof rejectQueuedPendingInputInTx>> = null;
+    for (const row of queued) {
+        const receipt = readStoredSessionInputAdmissionReceipt(row.inputAdmissionReceipt);
+        const original = receipt?.followDeliveryV1?.original;
+        if (!original || !('sourceSessionId' in original) || original.sourceSessionId !== input.sourceSessionId
+            || !receipt?.followRelations?.some(relation => relation.relation === 'follower')
+            || isOrdinaryPendingMutationFenced(row)) continue;
+        const custody = await readAdmittedSessionFollowInputInTx(tx, {
+            accountId: input.destinationAccountId, destinationSessionId: sessionId, localInputId: row.localId,
+            sourceSessionId: input.sourceSessionId,
+            authority: { kind: 'account', authentication: backgroundDeliveryAuthentication() },
+        });
+        if (custody?.effectiveDelivery) continue;
+        const change = await rejectQueuedPendingInputInTx({
+            tx, sessionId, localId: row.localId, existing: row, code: 'session_input_cancelled',
+        });
+        if (change) latestChange = change;
+    }
+    if (latestChange) {
+        const state = latestChange;
+        afterTx(tx, () => {
+            void emitPendingChanged({
+                sessionId, changedByAccountId: input.changedByAccountId, pendingCount: state.pendingCount,
+                pendingBlockedCount: state.pendingBlockedCount, pendingVersion: state.pendingVersion,
+                recipientCursors: resolveSessionAccountChangePublications(state.recipientCursors),
+            }).catch(error => {
+                warn({ module: "session-pending-service", operation: "follow-input-cancellation", sessionId, err: error },
+                    "failed to publish Follow pending input cancellation");
+            });
+        });
+    }
+}
+
 /** Retires the exact deterministic queued Session input owned by one Automation Run. */
 export async function retireAutomationPendingInputInTx(params: Readonly<{
     tx: Tx;

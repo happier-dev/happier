@@ -79,6 +79,7 @@ import { observeDiscussionFollowSourcesInTx } from './discussionFollowSource';
 import { observeAccountDiscussionFollowOccurrenceInTx, type DiscussionFollowOccurrenceUnavailableCode } from './discussionFollowSource';
 import { SessionFollowRunOccurrenceRoutesRequestV1Schema, type SessionFollowSourceOccurrenceRoutesRequestV1,
     type SessionFollowSourceOccurrenceRoutesResponseV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
+import { withdrawUnroutedSessionFollowPendingInputsInTx } from '@/app/session/pending/pendingMessageService';
 import { readExactCurrentPublisherAuthorityInTx } from '@/app/session/pending/hasExactCurrentPublisherAuthorityInTx';
 import { readStalledSessionFollowRulesInTx, acknowledgeStalledSessionFollowRulesInTx } from './sessionFollowStalledRule';
 import { isSessionFollowStalledOccurrenceCurrentV1, type SessionFollowStalledOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceOccurrenceV1';
@@ -978,6 +979,12 @@ export async function removeSessionFollowSource(input: Readonly<{
             },
         });
         if (removed.count > 0) {
+            await withdrawUnroutedSessionFollowPendingInputsInTx(tx, {
+                destinationSessionId: input.destinationSessionId,
+                destinationAccountId: destination.accountId,
+                sourceSessionId: input.sourceSessionId,
+                changedByAccountId: input.accountId,
+            });
             await invalidateSessionFollowDestinationsInTx(tx, [input.destinationSessionId]);
         }
         return { ok: true, value: { changed: removed.count > 0 } };

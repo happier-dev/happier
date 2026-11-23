@@ -286,7 +286,7 @@ describe('SessionFollowEdge service', () => {
         expect(await settle()).toEqual({ relationProgressAdvanced: false });
     });
 
-    it('rejects a direct Pending terminal notice backed only by a source message', async () => {
+    it.each([false, true])('settles a queued report after Follow removal according to its remaining routes (manager: %s)', async hasManager => {
         const owner = await createAccount();
         const source = await createSession(owner.id, { seq: 2 });
         const destination = await createSession(owner.id);
@@ -298,7 +298,14 @@ describe('SessionFollowEdge service', () => {
         await db.sessionMessage.create({ data: { sessionId: source.id, seq: 2, localId: reportLocalId, messageRole: 'agent',
             content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'An ordinary report' } } } } });
         expect((await setSessionFollowSource({ accountId: owner.id, sourceSessionId: source.id,
-            destinationSessionId: destination.id })).ok).toBe(true);
+            destinationSessionId: destination.id, authentication })).ok).toBe(true);
+        if (hasManager) {
+            expect(await setSessionManager({ accountId: owner.id, sessionId: source.id, managerSessionId: destination.id,
+                expectedManagerSessionId: null, authentication })).toMatchObject({ ok: true });
+        }
+        const manager = hasManager
+            ? await db.sessionFollowEdge.findUniqueOrThrow({ where: { managerSourceSessionId: source.id } })
+            : null;
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, installationId: randomUUID(),
             active: true, metadata: encodePlainMachineStoredContent({}), dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
             operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1] } }, operationProtocolCapabilitiesRevision: 1 } });
@@ -316,7 +323,9 @@ describe('SessionFollowEdge service', () => {
                 headers: { 'x-test-user-id': owner.id, 'x-happier-account-stored-content-protocol': '4' },
                 payload: { targetMachineId: machine.id, localId: deriveSessionFollowInputLocalIdV1({ destinationSessionId: destination.id, original: controlOriginal }),
                     content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Ordinary report' } } },
-                    requestedAction: { v: 1, kind: 'enqueue' }, followRelations: [{ relation: 'follower' }],
+                    requestedAction: { v: 1, kind: 'enqueue' }, followRelations: [
+                        { relation: 'follower' }, ...(manager ? [{ relation: 'manager', attachedAt: manager.attachedAt.getTime() }] : []),
+                    ],
                     followDeliveryV1: { v: 1, delivery: 'wake', original: controlOriginal, event: { kind: 'update_posted' } } },
             });
             expect(control.statusCode, control.body).toBe(200);
@@ -328,6 +337,21 @@ describe('SessionFollowEdge service', () => {
                     followDeliveryV1: { v: 1, delivery: 'wake', original, event: { kind: 'finished' } } },
             });
             expect(response.statusCode, response.body).toBe(400);
+            const queuedLocalId = deriveSessionFollowInputLocalIdV1({ destinationSessionId: destination.id, original: controlOriginal });
+            const rowKey = { sessionId_localId: { sessionId: destination.id, localId: queuedLocalId } };
+            expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: rowKey })).toMatchObject({ status: 'queued' });
+            expect(await removeSessionFollowSource({ accountId: owner.id, sourceSessionId: source.id,
+                destinationSessionId: destination.id, authentication })).toEqual({ ok: true, value: { changed: true } });
+            const pending = await app.inject({ method: 'GET', url: `/v2/sessions/${destination.id}/pending?includeDiscarded=true`,
+                headers: { 'x-test-user-id': owner.id, 'x-happier-account-stored-content-protocol': '4' },
+            });
+            expect(pending.statusCode, pending.body).toBe(200);
+            expect(pending.json().pending).toEqual([expect.objectContaining({
+                localId: queuedLocalId,
+                deliveryStatus: hasManager ? { status: 'queued' } : { status: 'discarded', reason: 'session_input_cancelled' },
+            })]);
+            expect(await db.session.findUniqueOrThrow({ where: { id: destination.id } }))
+                .toMatchObject({ pendingCount: hasManager ? 1 : 0 });
         });
         expect(await db.sessionPendingMessage.count({ where: { sessionId: destination.id, localId: terminalLocalId } })).toBe(0);
         expect(await db.sessionMessage.count({ where: { sessionId: destination.id } })).toBe(0);
