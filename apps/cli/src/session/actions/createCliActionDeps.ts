@@ -1358,6 +1358,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
       if (denied) return denied;
       const accountId = context.externalActionExecutionAuthorization?.binding.accountId ?? homeAccountId;
       if (!accountId) return executionRunActionFailure('not_authenticated');
+      const homeId = await resolveProjectHomeIdentity();
       return checkDeploymentTargetV1(input, {
         accountId, inspect, assertCurrent: () => assertDeploymentCredentialCurrent(context),
         readSource: () => actionDeps.projectSourcesRead!({ serverId: input.serverId, sourceId: input.projectSourceId }, context),
@@ -1372,7 +1373,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
         },
         async list(scope, selection, cursor) {
           const path = '/v1/deployments/targets/list';
-          const body = { serverId: projectHomeId, scope, selection, ...(cursor ? { cursor } : {}) };
+          const body = { serverId: homeId, scope, selection, ...(cursor ? { cursor } : {}) };
           const response = await axios.request({ method: 'POST', url: new URL(path, todoHomeBaseUrl).href,
             data: body, signal: context.signal, validateStatus: () => true,
             headers: await resolveAccountStorageHeaders(context, DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1, { method: 'POST', path, body }) });

@@ -202,6 +202,74 @@ function executor() {
     serverId: 'deployment-home', serverHttpBaseUrl: 'https://deployment-home.test' }));
 }
 
+it.each(['exact tag', 'script name'] as const)('checks an owned Cloudflare Worker by %s when the connection profile differs from Home', async selection => {
+  const { DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionIdsV1');
+  const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployments/testing/v1');
+  const serverId = `srv_${'c'.repeat(32)}`;
+  const profileId = 'stack_cloudflare-check__id_profile';
+  const accountId = 'deployment-account';
+  const owner = { kind: 'account', accountId } as const;
+  const target = { pluginId: 'happier.deploy.cloudflare', localId: 'workers' };
+  const projectSourceId = 'worker-source';
+  const scriptName = 'owned-worker';
+  const providerEnvironment = { kind: 'native', selection: { kind: 'script', scriptName } };
+  const providerIdentity = { providerAccountId: 'cloudflare-account', providerResourceId: 'native-tag',
+    providerEnvironment: `script:${scriptName}` };
+  const credentialRef = { service: { pluginId: target.pluginId, localId: 'cloudflare' }, accountId: 'saved-credential' };
+  const environment = createDeploymentEnvironmentHeaderV1({ id: 'worker-environment', serverId, owner, projectSourceId });
+  const targetLink = createDeploymentTargetLinkHeaderV1({ id: 'worker-link', environmentId: environment.id,
+    source: { kind: 'plugin', contribution: target }, targetKind: 'cloudflare-workers', machines: [], members: [] });
+  let inventoryReads = 0;
+  vi.spyOn(axios, 'request').mockImplementation(async request => {
+    const url = new URL(request.url!);
+    if (url.pathname === `/v1/projects/sources/${projectSourceId}`) return { status: 200, data: { ok: true,
+      canManage: true, source: { id: projectSourceId, revision: 1, name: 'Worker', owner, audience: [], createdByAccountId: accountId } } };
+    if (url.pathname === '/v1/deployments/targets/list') {
+      inventoryReads++;
+      return request.data.serverId === serverId
+        ? { status: 200, data: { ok: true, items: [{ environment, targetLink }], coverage: 'complete', nextCursor: null } }
+        : { status: 404, data: { ok: false, error: 'deployment_unavailable' } };
+    }
+    throw new Error(`Unexpected Home request ${url.pathname}`);
+  });
+  vi.spyOn(axios, 'get').mockImplementation(async value => {
+    const { pathname } = new URL(value);
+    if (pathname === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+    if (pathname === '/v1/account/encryption/currentness') return { status: 200,
+      data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
+    if (pathname === `/v1/artifacts/${targetLink.contentArtifactId}`) return { status: 200, data: {
+      id: targetLink.contentArtifactId, ownerAccountId: accountId, access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
+      dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      header: encodePlainArtifactStoredContent({ kind: 'deployment-target-link.v1', title: 'Existing Worker' }),
+      body: encodePlainArtifactStoredContent({ body: JSON.stringify({ providerIdentity }) }),
+      headerVersion: targetLink.contentHeaderVersion, bodyVersion: targetLink.contentBodyVersion,
+      seq: 1, createdAt: 1, updatedAt: 1,
+    } };
+    throw new Error(`Unexpected Home read ${pathname}`);
+  });
+  const deps = createCliActionDeps({ token, credentials: { token, encryption: null }, sessionId: 'cli-global', mode: 'plain', ctx: null,
+    serverId: profileId, serverIdentityId: serverId, serverHttpBaseUrl: 'https://deployment-home.test' });
+  const executor = createActionExecutor({ ...deps,
+    // The provider Inspect is on another process. The CLI, catalog and Home read projection stay real.
+    routeHostChildAction: async request => {
+      if (request.actionId !== 'action.invoke') return null;
+      expect(request.input).toMatchObject({ input: { providerEnvironment,
+        ...(selection === 'exact tag' ? { providerIdentity } : { providerAccountId: providerIdentity.providerAccountId }) } });
+      const input = request.input as { input: { credentialPrincipal: unknown } };
+      return { ok: true, result: { credentialPrincipal: input.input.credentialPrincipal, providerIdentity, providerEnvironment } };
+    },
+  });
+  const result = await executor.execute(DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1, {
+    serverId, projectSourceId, target, credentialRef, controllerMachineId: 'owned-controller',
+    fields: { sourceMethod: 'upload', providerEnvironment,
+      ...(selection === 'exact tag' ? { providerIdentity } : { providerAccountId: providerIdentity.providerAccountId }) },
+  }, { surface: 'agent', authority: 'account_automation', serverId });
+  expect(inventoryReads, JSON.stringify(result)).toBe(1);
+  expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'alreadyLinked', association: {
+    targetLinkId: targetLink.id, environment: { serverId, projectSourceId, environmentId: environment.id },
+  } } });
+});
+
 describe('GitHub native Preview through the SDK and CLI deployment reader', () => {
   it.each(['refused', 'partial'] as const)('preserves the %s Home list outcome after the GitHub read succeeds', async outcome => {
     const environment = createDeploymentEnvironmentHeaderV1({ id: 'preview-child',
