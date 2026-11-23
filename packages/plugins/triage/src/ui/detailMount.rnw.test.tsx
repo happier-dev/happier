@@ -79,7 +79,7 @@ import { readTriageEntryDetail } from '../actions/readEntryDetail.js';
 import { createTestkitSourceSessionRelations, readTestkitSourceSessionLinks } from '../sessions/testkit/entrySessionTestkit.test-support.js';
 import { listTriagePinnedEntries, setTriageEntryPinned } from '../actions/userMarks.js';
 import { reobserveTriageEntry } from '../actions/reobserveEntry.js';
-import { findConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
+import { findConfiguredSourceInstanceRow, readExactConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../internalTasks/configuration.js';
 import { toTriageWireObservation } from '../projection/listWindowWire.js';
 import {
@@ -553,6 +553,7 @@ function createHarness(options: Readonly<{
     }
     /** Every connection the mounted detail actually ran a read under. */
     const readDetailInstanceIds: string[] = [];
+    const readDetailInputs: Array<ReturnType<typeof TriageReadEntryDetailInputV1Schema.parse>> = [];
     const exactReads: Array<ReturnType<typeof TriageReobserveEntryInputV1Schema.parse>> = [];
     const getEntryIds: string[] = [];
     const continuedScanPages: string[] = [];
@@ -706,6 +707,7 @@ function createHarness(options: Readonly<{
                 throw new Error('linked Session page unavailable');
             }
             readDetailInstanceIds.push(detailInput.sourceInstanceId);
+            readDetailInputs.push(detailInput);
             const blocked = blockedDetailRead;
             if (blocked !== null
                 && (blocked.entryId === undefined || blocked.entryId === detailInput.entryRef.entryId)) {
@@ -741,7 +743,11 @@ function createHarness(options: Readonly<{
             const isOtherSource = input.entryRef.source.pluginId === OTHER_SOURCE.pluginId;
             const result = await reobserveTriageEntry(input, {
                 readConfiguredInstance: async (id, cancellation) => {
-                    const row = await findConfiguredSourceInstanceRow(collections.sourceInstances, id, cancellation);
+                    const row = input.sourceInstanceRowId === undefined
+                        ? await findConfiguredSourceInstanceRow(collections.sourceInstances, id, cancellation)
+                        : await readExactConfiguredSourceInstanceRow(collections.sourceInstances, {
+                            sourceInstanceId: id, configurationRowId: input.sourceInstanceRowId,
+                        }, cancellation);
                     return row?.value.lifecycle === CORPUS_SOURCE_INSTANCE_LIFECYCLE.active ? row.value.configured : null;
                 },
                 readSourceSnapshot: async () => ({ contributions: admitted }),
@@ -803,6 +809,7 @@ function createHarness(options: Readonly<{
         observes,
         deferLinkedEntry,
         readDetailInstanceIds,
+        readDetailInputs,
         exactReads,
         getEntryIds,
         continuedScanPages,
@@ -1582,7 +1589,7 @@ describe('opening a row into the source detail', () => {
         await vi.waitFor(() => { expect(harness.exactReads).toHaveLength(1); });
         await expect(shell.getByText(DETAIL_BODY_TEXT)).resolves.toBeDefined();
         expect(harness.exactReads).toEqual([{ v: 1, entryRef: { source: SOURCE, kindId: 'pull-request',
-            collisionScope: 'example/repository', entryId: '657' }, sourceInstanceId: INSTANCE, includeTaskFields: true }]);
+            collisionScope: 'example/repository', entryId: '657' }, sourceInstanceId: INSTANCE, sourceInstanceRowId: instanceRow().instanceTag, includeTaskFields: true }]);
         expect(harness.readDetailInstanceIds).toEqual([INSTANCE]);
         expect(harness.getEntryIds).toEqual(['657']);
     });
@@ -1608,8 +1615,9 @@ describe('opening a row into the source detail', () => {
 
         await vi.waitFor(() => { expect(currentHarness?.exactReads).toHaveLength(1); });
         await expect(shell.getByText(DETAIL_BODY_TEXT)).resolves.toBeDefined();
-        expect(currentHarness?.exactReads).toEqual([{ v: 1, entryRef, sourceInstanceId: INSTANCE, includeTaskFields: true }]);
-        expect(currentHarness?.readDetailInstanceIds).toEqual([INSTANCE]);
+        const binding = { entryRef, sourceInstanceId: INSTANCE, sourceInstanceRowId: instanceRow().instanceTag };
+        expect(currentHarness?.exactReads).toEqual([{ v: 1, ...binding, includeTaskFields: true }]);
+        expect(currentHarness?.readDetailInputs).toEqual([{ v: 1, ...binding }]);
     });
 
     it('keeps a cold pin in its routed detail when no connection can qualify it', async () => {
@@ -2410,6 +2418,32 @@ describe('opening a row into the source detail', () => {
             await expect(shell.getByRole('button', { name: 'Replace the duplicated normalizer' })).resolves.toBeDefined();
         });
         await expect(shell.queryByText('The list could not be read')).resolves.toBeUndefined();
+    });
+
+    it('shows the source outage over retained rows when the mounted Machine goes offline', async () => {
+        const hostTarget = { ready: true, pending: false, executionReady: true };
+        const shell = await mountShell({ hostTarget, activeSurface: true });
+        const row = { name: 'Replace the duplicated normalizer' };
+        await expect(shell.getByRole('button', row)).resolves.toBeDefined();
+        await act(async () => { await shell.updateSurface({
+            ...surfaceContext(), machineExecutionReady: true, machineConnectionPending: false,
+        }); });
+        await expect(shell.queryByText('Your sources could not be reached')).resolves.toBeUndefined();
+
+        hostTarget.ready = false;
+        await act(async () => { await shell.updateSurface({
+            ...surfaceContext(), machineExecutionReady: false, machineConnectionPending: false,
+        }); });
+        await expect(shell.getByRole('button', row)).resolves.toBeDefined();
+        await expect(shell.getByText('Your sources could not be reached')).resolves.toBeDefined();
+        await expect(shell.getByText('Showing the last known list')).resolves.toBeDefined();
+
+        hostTarget.ready = true;
+        await act(async () => { await shell.updateSurface({ ...surfaceContext(), machineExecutionReady: true }); });
+        await vi.waitFor(async () => {
+            await expect(shell.queryByText('Your sources could not be reached')).resolves.toBeUndefined();
+        });
+        await expect(shell.getByRole('button', row)).resolves.toBeDefined();
     });
 
     it('offers Retry beside an Account aggregate refusal and reacquires through the mounted window', async () => {
@@ -3806,7 +3840,7 @@ describe('opening a row into the source detail', () => {
         expect(currentHarness?.getEntryIds).toEqual(['532']);
         expect(currentHarness?.continuedScanPages).toEqual([]);
         expect(currentHarness?.exactReads).toEqual([{ v: 1, entryRef: { source: SOURCE, kindId: 'pull-request',
-            collisionScope: 'example/repository', entryId: '532' }, sourceInstanceId: INSTANCE, includeTaskFields: true }]);
+            collisionScope: 'example/repository', entryId: '532' }, sourceInstanceId: INSTANCE, sourceInstanceRowId: instanceRow().instanceTag, includeTaskFields: true }]);
         expect(currentHarness?.readDetailInstanceIds).toEqual([INSTANCE]);
         await expect(shell.queryByText('These details are not loaded')).resolves.toBeUndefined();
         await expect(shell.getByText('Checks')).resolves.toBeDefined();
@@ -3824,7 +3858,7 @@ describe('opening a row into the source detail', () => {
         expect(currentHarness?.getEntryIds).toEqual(['710']);
         expect(currentHarness?.continuedScanPages).toEqual([]);
         expect(currentHarness?.exactReads).toEqual([{ v: 1, entryRef: { source: SOURCE, kindId: 'pull-request',
-            collisionScope: 'example/repository', entryId: '710' }, sourceInstanceId: INSTANCE, includeTaskFields: true }]);
+            collisionScope: 'example/repository', entryId: '710' }, sourceInstanceId: INSTANCE, sourceInstanceRowId: instanceRow().instanceTag, includeTaskFields: true }]);
         expect(currentHarness?.readDetailInstanceIds).toEqual([INSTANCE]);
         await expect(shell.queryByText('No connection to open this through')).resolves.toBeUndefined();
         await act(async () => { await shell.updateSurface(surfaceContext()); });

@@ -248,8 +248,7 @@ function FileRow<TRow extends TriageChangedFileV1>({
       }}
       {...(row.diffAvailable === true
         ? {
-            // A panel that is not showing holds no open row (its focus clears as it leaves): the row never lifts around a
-            // body it would not draw.
+            // Leaving the panel detaches the diff body while the detail keeps the disclosed path for the revisit.
             expanded: expanded && active,
             onPress: () => onFocusPath(expanded ? null : row.path),
             // Always present on a file with a diff, so a collapsed row is announced as expandable and keeps its element

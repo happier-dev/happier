@@ -19,6 +19,7 @@ export function useTriagePostMutationRow(
   /** The shell's admitted selection remains read authority while facts are unavailable. */
   selection?: TriageSurfaceSelectionV1 | null,
   publication?: TriageListWindowStoreV1 | null,
+  sourceInstanceRowId?: string,
 ) {
   const hostApi = usePluginHostApi();
   const { targetedContributions } = useSurfaceContext();
@@ -79,6 +80,7 @@ export function useTriagePostMutationRow(
       // must observe after that action, even while another mount is still opening.
       ...(shareOpeningRead ? { sharedScope } : {}),
       keepViewerFacts,
+      sourceInstanceRowId,
       onExactRead: (read, observation) => {
         exactRead = read;
         // Record before publishing, so this read's own row cannot reopen it.
@@ -105,7 +107,7 @@ export function useTriagePostMutationRow(
           readFailed: next === null, failure });
     }
     if (reobservation.current === controller) reobservation.current = null;
-  }, [entryRef, hostApi, lanes, ownerKey, publication, sharedScope, sourceInstanceId, state.generation, targetedContributions, windowRow]);
+  }, [entryRef, hostApi, lanes, ownerKey, publication, sharedScope, sourceInstanceId, sourceInstanceRowId, state.generation, targetedContributions, windowRow]);
   const completePostMutation = React.useCallback(() => reobserveRow(row === null ? row
     : publication?.getRow(triageEntryRowKey(row.entryRef)) ?? row), [publication, reobserveRow, row]);
   const reobserveSelection = React.useEffectEvent((opening: boolean) => reobserveRow(windowRow, true, opening));

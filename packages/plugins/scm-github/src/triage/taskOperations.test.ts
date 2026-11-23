@@ -131,6 +131,24 @@ describe('registered GitHub task writes at the provider HTTP boundary', () => {
     } finally { await plugin.dispose(); }
   });
 
+  it('uses the exact repository read when the place picker searches for owner/name', async () => {
+    const transport = createStubGithubTransport({ respond: (request) => {
+      const path = new URL(request.url).pathname;
+      if (path === '/search/repositories') return { status: 200, body: { items: [], total_count: 0 } };
+      if (path === `/repos/${route}`) return { status: 200, body: { ...GITHUB_REPOSITORY_RESPONSE, full_name: route, has_issues: true } };
+      return undefined;
+    } });
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
+    } });
+    try {
+      const place = { id: route, label: route, kindId: 'issue', fields: { scopeId: route } };
+      const expected = { kind: 'page', status: 'complete', places: [place] };
+      expect(await plugin.invokeAction('triage/list-github-creation-places', { v: 1, instance, scopeId: route })).toEqual(expected);
+      expect(await plugin.invokeAction('triage/list-github-creation-places', { v: 1, instance, query: route })).toEqual(expected);
+    } finally { await plugin.dispose(); }
+  });
+
   it('does not replay a create whose response is lost or guess the created identity', async () => {
     const transport = createStubGithubTransport({ respond: (request) => {
       if (request.method === 'POST') throw new Error('response lost after dispatch');

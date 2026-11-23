@@ -168,6 +168,8 @@ export type TriageListShellStateV1 =
       stale: boolean;
       /** Read-health presentation only; age by itself does not request an amber warning. */
       showReadWarning: boolean;
+      /** Selected sources need the unavailable Machine. */
+      sourceMachineUnavailable?: true;
       /** Retained beside the rows, never instead of them. */
       failure: TriageListShellFailureV1 | null;
       /** Selected-source body facts; the original window retains whole-scan data for detail and management. */
@@ -654,20 +656,30 @@ export function resolveTriageListShellState(
   }> = {},
 ): TriageListShellStateV1 {
   const window = snapshot.window;
+  const personConfigured = (source: TriageListWindowSnapshotV1['configuredSources'][number]) =>
+    options.readSourceDescriptor?.(source.source)?.accountDataInstance === undefined;
+  const includesSource = planTriageViewSourceSelectionV1(options.filters ?? TRIAGE_LIST_NO_FILTERS_V1,
+    options.inventory ?? (options.tasks === true
+      ? { includesSource: () => true, includesKind: () => true } : TRIAGE_PR_VIEW_INVENTORY_V1));
+  const sourceMachineUnavailable = snapshot.sourceMachineUnavailable === true
+    && snapshot.configuredSources.some(source => includesSource(source) && personConfigured(source));
+  if (sourceMachineUnavailable && (options.durableStateReachable !== true || !window?.rows.length)) {
+    const error = snapshot.error;
+    return Object.freeze({
+      kind: options.durableStateReachable === true ? 'sourcesUnreachable' : 'unavailable',
+      message: error === undefined ? '' : listReadFailureMessage(error.code, error.message),
+      retryable: error?.retryable !== false,
+      ...(error?.detail === undefined ? {} : { detail: error.detail }),
+    });
+  }
   if (window !== undefined) {
-    const personConfigured = (source: TriageListWindowSnapshotV1['configuredSources'][number]) =>
-      options.readSourceDescriptor?.(source.source)?.accountDataInstance === undefined;
     if (!snapshot.configuredSources.some(source => options.tasks === true
       || TRIAGE_PR_VIEW_INVENTORY_V1.includesSource(source.source) && (window.rows.length > 0 || personConfigured(source)))) {
       return Object.freeze({ kind: 'configureSources' });
     }
-    const stale = snapshot.freshness !== 'fresh';
+    const stale = snapshot.freshness !== 'fresh' || sourceMachineUnavailable;
     const wholeScanFailure = readShellFailure(snapshot);
-    const viewHealth = projectTriageViewSourceHealthV1(snapshot,
-      planTriageViewSourceSelectionV1(options.filters ?? TRIAGE_LIST_NO_FILTERS_V1,
-        options.inventory ?? (options.tasks === true
-          ? { includesSource: () => true, includesKind: () => true } : TRIAGE_PR_VIEW_INVENTORY_V1)),
-      wholeScanFailure?.sources ?? []);
+    const viewHealth = projectTriageViewSourceHealthV1(snapshot, includesSource, wholeScanFailure?.sources ?? []);
     const readingSources = viewHealth.body.coverage === 'partial'
       && (snapshot.pending !== 'idle' || snapshot.sourceAdmissionPending === true);
     // Machine refusals and provider pacing are actionable while sibling reads are pending.
@@ -688,6 +700,7 @@ export function resolveTriageListShellState(
       ...(readingSources ? { readingSources: true as const } : {}),
       stale,
       showReadWarning: viewHealth.showReadWarning,
+      ...(sourceMachineUnavailable ? { sourceMachineUnavailable: true as const } : {}),
       failure,
       body: viewHealth.body,
       wholeScanFailure,

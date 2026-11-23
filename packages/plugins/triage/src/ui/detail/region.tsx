@@ -148,6 +148,7 @@ export type TriageDetailRegionProps = Readonly<{
   /** Opening and subsequent exact reads belong to the shell's one read owner. */
   exactRead?: import('./postMutationReobservation.js').TriageExactEntryReadV1 | null;
   exactReadFailure?: Readonly<{ failure?: PluginError }>;
+  sourceBinding?: Readonly<{ sourceInstanceId: string; configurationRowId: string }>;
   /** The mounted Account's configured instance for this exact selection. */
   admittedInstance?: TriageConfiguredSourceInstanceV1;
   availabilityFailure?: TriageSourceFailureV1;
@@ -897,12 +898,13 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     () => readTriageSelectedObservationV1(row),
     [row],
   );
+  const { sourceInstanceId: boundInstanceId, configurationRowId } = props.sourceBinding ?? {};
   const selection = React.useMemo(() => (
     selected === null
       ? null
       : { entryRef: row.entryRef, sourceInstanceId: selected.sourceInstanceId,
-          ...(selected.sourceInstanceRowId === undefined ? {} : { sourceInstanceRowId: selected.sourceInstanceRowId }) }
-  ), [row.entryRef, selected]);
+          ...(boundInstanceId === selected.sourceInstanceId ? { sourceInstanceRowId: configurationRowId } : {}) }
+  ), [row.entryRef, selected, boundInstanceId, configurationRowId]);
   const observation = selected?.observation ?? null;
   const readFailure = observation === null ? row.observations.flatMap(candidate => (
     candidate.outcome.kind === 'unresolved' ? [candidate.outcome.failure] : []

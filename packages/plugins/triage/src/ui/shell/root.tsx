@@ -1229,6 +1229,14 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       },
     };
   }, [state, surface.selection, window.readOwner]);
+  const selectedSourceSummary = React.useMemo(() => {
+    const selection = surface.selection;
+    if (selection === null) return null;
+    const summary = window.snapshot.configuredSources.find(
+      (candidate) => candidate.sourceInstanceId === selection.sourceInstanceId,
+    );
+    return summary ?? null;
+  }, [surface.selection, window.snapshot.configuredSources]);
   // Explicit opens and restored locations share configured-source admission
   // and the same exact read when their entry is outside the list window.
   const { row: selectedRow, completePostMutation, readFailed, failure: selectedReadFailure, exactRead } = useTriagePostMutationRow(
@@ -1236,6 +1244,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     state.kind === 'window' ? state.window.lanes : [],
     surface.selection,
     window.readOwner,
+    selectedSourceSummary?.configurationRowId,
   );
   // The page's one refresh (lab: "Updated · ⟳"): a press re-reads the list and, once, the open entry through its
   // existing exact read; the generation tells the mounted detail's Activity to re-read its source as well.
@@ -1253,14 +1262,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     if (!pinsByEntry.has(key)) return;
     setExactPinReads((current) => current.get(key) === selectedRow ? current : new Map(current).set(key, selectedRow));
   }, [pinsByEntry, selectedRow, selectedWindowRow]);
-  const selectedSourceSummary = React.useMemo(() => {
-    const selection = surface.selection;
-    if (selection === null) return null;
-    const summary = window.snapshot.configuredSources.find(
-      (candidate) => candidate.sourceInstanceId === selection.sourceInstanceId,
-    );
-    return summary ?? null;
-  }, [surface.selection, window.snapshot.configuredSources]);
   const selectedConnectionLabel = selectedSourceSummary?.displayLabel ?? null;
   const selectedConfiguredInstance = React.useMemo(() => {
     const selection = surface.selection;
@@ -2219,7 +2220,11 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   };
   // While the host's band names the outage, retained rows keep their age in its usual place (QB-25(a)): the band says
   // why the list is read-only, the age says how old it is, and nothing above the rows comes or goes.
-  const freshness = state.kind !== 'window' ? null : hostSpeaksForOutage ? (rowCount === 0 ? null : readAge) : state.refreshing
+  const freshness = state.kind !== 'window' ? null : state.sourceMachineUnavailable
+    ? rowCount === 0 ? null
+      : { tone: 'warning' as const, pulsing: false, indicator: true,
+        label: text('plugins.triage.surface.lastKnown', 'Showing the last known list') }
+    : hostSpeaksForOutage ? (rowCount === 0 ? null : readAge) : state.refreshing
     ? { tone: 'neutral' as const, pulsing: true, indicator: true, label: text('plugins.triage.surface.refreshing', 'Refreshing') }
     : state.showReadWarning
       // "The last known list" is a claim about rows on screen. With none, the body's failure state is the
@@ -2470,6 +2475,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     detailRow !== null ? (
       <TriagePublishedDetail
         exactRead={exactRead}
+        sourceBinding={selectedSourceSummary ?? undefined}
         admittedInstance={selectedConfiguredInstance}
         {...(readFailed ? { exactReadFailure: {
           ...(selectedReadFailure === undefined ? {} : { failure: selectedReadFailure }),
@@ -2628,7 +2634,9 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const coldMachineOutage = hostSpeaksForOutage && state.kind === 'window' && window.snapshot.completedAtMs === undefined
     && emptyAnswer?.kind === 'sourceFailure';
   const machineUnreachable = coldMachineOutage ? readTriageMachineUnreachableNoticeV1(text) : null;
-  const listFailureStatus = listWindow?.failure == null || coldMachineOutage || (hostSpeaksForOutage && rowCount > 0) ? null : (
+  const listFailureStatus = listWindow?.sourceMachineUnavailable === true
+    ? <Status tone="warning" label={readTriageMachineUnreachableNoticeV1(text).title} value={readAge?.label} />
+    : listWindow?.failure == null || coldMachineOutage || (hostSpeaksForOutage && rowCount > 0) ? null : (
     <TriageListFailureStatus failure={listWindow.failure} manageSources={sourceManagementStatusAction}
       retry={refreshState.kind === 'available' ? <TriageFailureLineAction label={retryLabel} onPress={refreshPage} /> : null} />
   );

@@ -287,6 +287,25 @@ describe('the mounted GitHub Files panel across a tab leave', () => {
     expect(readCount(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles)).toBe(2);
   });
 
+  it('keeps the disclosed file after paging and revisiting Files', async () => {
+    const detail = await mountDetail();
+    await openTab(detail, 'Files');
+    await act(async () => {
+      await detail.press((await detail.queryAllByRole('button')).find(button => button.name?.startsWith('src/alpha.ts'))!);
+    });
+    const disclosure = () => [...document.querySelectorAll('[aria-expanded]')]
+      .find(node => node.textContent?.startsWith('src/alpha.ts'));
+    expect(disclosure()?.getAttribute('aria-expanded')).toBe('true');
+
+    await pressLoadMore(detail);
+    await expectFiles(detail, ['src/alpha.ts', 'src/beta.ts', 'src/gamma.ts']);
+    expect(disclosure()?.getAttribute('aria-expanded')).toBe('true');
+    await openTab(detail, 'Overview');
+    await openTab(detail, 'Files');
+
+    expect(disclosure()?.getAttribute('aria-expanded')).toBe('true');
+  });
+
   // Line counts and the per-file Copy path / Open on GitHub are the host review's: their tests live at the real
   // host boundary (apps/ui PluginUiPrivateChangedFilesReview.test.tsx), not against this semantic stand-in.
 

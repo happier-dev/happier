@@ -2594,12 +2594,6 @@ function FilesPanel({
   const viewedCount = useTriageViewedFileCount(viewed);
   // The page's one refresh re-reads the files and their Viewed marks; this panel draws no refresh of its own.
   useTriagePageRefresh(() => { controller.refresh(); void viewed?.refresh(); });
-  // One disclosed file for reader and agent intents; leaving Files releases its body.
-  const wasActive = React.useRef(active);
-  React.useEffect(() => {
-    if (wasActive.current && !active) onFocusPath(null);
-    wasActive.current = active;
-  }, [active, onFocusPath]);
   const openCommands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() => state.rows
     .filter(row => row.diffAvailable).map(row => ({ title: row.path,
       operation: { kind: 'setSourceItemExpanded', list: 'files', itemId: row.path, expanded: true } })), [state.rows]);

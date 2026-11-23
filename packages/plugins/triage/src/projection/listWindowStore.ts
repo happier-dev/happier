@@ -109,6 +109,8 @@ export type TriageListWindowSnapshotV1 = Readonly<{
     pending: 'idle' | 'initial' | 'refresh';
     /** Missing contributions in the roster are provisional while Machine admission is being established. */
     sourceAdmissionPending?: true;
+    /** The list transport's Machine is known to be unavailable. */
+    sourceMachineUnavailable?: true;
     /**
      * How many passes this mount has read: it moves once per pass the coordinator admitted, whether or not the
      * window changed, and never for a demand the pacing refused. A reader that follows reads (the list's
@@ -606,6 +608,8 @@ export function createTriageListWindowStore(deps: Readonly<{
                 || (rosterReadWhileResolving && sourceMachineReadiness?.ready !== false))
                 && configuredSources.some(source => !source.available)
                 ? { sourceAdmissionPending: true as const } : {}),
+            ...(sourceMachineReadiness?.ready === false && !sourceMachineReadiness.pending
+                ? { sourceMachineUnavailable: true as const } : {}),
             passes,
             ...(appendable === undefined ? {} : { loadMore: appendable }),
             // The one gate on the store-wide slot, and the reason it is here
@@ -1645,5 +1649,6 @@ function sameTriageListWindowSnapshot(left: TriageListWindowSnapshotV1, right: T
         && left.loadMore === right.loadMore && left.refreshBlocked === right.refreshBlocked
         && left.unreadableSources === right.unreadableSources && left.configuredSources === right.configuredSources
         && left.configuredSourcesReady === right.configuredSourcesReady
-        && left.sourceAdmissionPending === right.sourceAdmissionPending;
+        && left.sourceAdmissionPending === right.sourceAdmissionPending
+        && left.sourceMachineUnavailable === right.sourceMachineUnavailable;
 }

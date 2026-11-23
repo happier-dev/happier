@@ -44,6 +44,7 @@ export async function reobserveTriagePostMutationRow(
     /** A mounted linked row borrows its opening read until it can hand it off to detail. */
     linkedRowLifetime?: AbortSignal;
     keepViewerFacts?: boolean;
+    sourceInstanceRowId?: string;
     /** The source declares a directory for this kind: the opened detail asks for it in this one read. */
     includeTaskFieldChoices?: boolean;
     onReadFailure?: (error: unknown) => void;
@@ -51,7 +52,7 @@ export async function reobserveTriagePostMutationRow(
     publishObservation?: (observation: CorpusQualifiedObservationV1, keepViewerFacts?: boolean) => TriageListRowV1 | null;
   }>,
 ): Promise<TriageListRowV1 | null> {
-  const { keepViewerFacts, includeTaskFieldChoices, onReadFailure, onExactRead, publishObservation, sharedScope, linkedRowLifetime, ...cancellation } = options;
+  const { keepViewerFacts, includeTaskFieldChoices, onReadFailure, onExactRead, publishObservation, sharedScope, linkedRowLifetime, sourceInstanceRowId, ...cancellation } = options;
   const signal = linkedRowLifetime ?? cancellation.signal;
   const previous = 'observations' in row ? row : null;
   const prior = previous?.observations.find(
@@ -70,6 +71,7 @@ export async function reobserveTriagePostMutationRow(
         v: 1,
         entryRef: row.entryRef,
         sourceInstanceId,
+        ...(sourceInstanceRowId === undefined ? {} : { sourceInstanceRowId }),
         ...(onExactRead === undefined && linkedRowLifetime === undefined ? {} : { includeTaskFields: true, ...(includeTaskFieldChoices === true ? { includeTaskFieldChoices: true } : {}) }),
         ...(lastKnownLocator === undefined ? {} : { lastKnownLocator }),
       },
