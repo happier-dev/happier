@@ -1,3 +1,5 @@
+import { projectSessionRuntimeIssueMetadataV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueMetadataV1';
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { isDeepStrictEqual } from 'node:util';
 import { SessionMessageReplyProgressV1Schema, deriveSessionMessageReplyReturnLocalIdV1, deriveSessionMessageReplyAnswerLocalIdV1, type SessionMessageReplyAdmissionV1, type SessionMessageReplyMutationV1,
     type SessionMessageReplyMutationResultV1, type SessionMessageReplyOutcomeV1, type SessionMessageReplyProgressV1,
@@ -920,8 +922,9 @@ export async function releaseSessionMessageReplySourceTurnInTx(tx: Tx, params: R
 }
 
 /** Pre-provider cancellation/rejection stays on the original admitted row without inventing a turn. */
-export async function settleUnacceptedSessionInputReplyInTx(tx: Tx, sessionId: string, localId: string, kind: 'cancelled' | 'failed'): Promise<void> {
+export async function settleUnacceptedSessionInputReplyInTx(tx: Tx, sessionId: string, localId: string, kind: 'cancelled' | 'failed', runtimeIssueV1?: SessionRuntimeIssueV1): Promise<void> {
     const original = await readOriginal(tx, sessionId, localId);
     if (!original?.progress || original.progress.acceptedTurnId || original.progress.outcome) return;
-    await writeOriginal(tx, original, { ...original.progress, outcome: { kind } });
+    await writeOriginal(tx, original, { ...original.progress, outcome: kind === 'failed' && runtimeIssueV1
+        ? { kind, runtimeIssueV1: projectSessionRuntimeIssueMetadataV1(runtimeIssueV1) } : { kind } });
 }

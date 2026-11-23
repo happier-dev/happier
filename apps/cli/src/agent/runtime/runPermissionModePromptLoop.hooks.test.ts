@@ -545,6 +545,19 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
     expect(JSON.stringify(result.enqueueAgentMessageCommitted.mock.calls)).not.toContain('PRIVATE_NATIVE_COMPLETION');
   });
 
+  it('settles a typed Team publication refusal during startup as a pre-dispatch rejection', async () => {
+    const { SessionTurnPublicationRejectedError } = await import('@/api/session/client/transport/mutations/deliverSessionTurnMutation');
+    const error = new SessionTurnPublicationRejectedError({ code: 'session_team_credential_binding_rejected', reason: 'access_removed' });
+    const { runtime, observeProviderInputSettlement } = await runSingleSpecialCommand({
+      text: 'original input', localId: 'startup-team-refusal', onAfterStart: async () => { throw error; },
+    });
+    expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
+    expect(observeProviderInputSettlement).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'rejected_before_effect', reason: 'session_team_credential_binding_rejected', retryable: false,
+      diagnostic: expect.objectContaining({ code: 'session_team_credential_binding_rejected' }),
+    }));
+  });
+
   it('retains safe source coordinates when runtime startup fails without exposing private error text or paths', async () => {
     const log = vi.spyOn(logger, 'infoFile').mockImplementation(() => undefined);
     const privateText = 'PRIVATE_RUNTIME_PROMPT_AND_CREDENTIAL';

@@ -8,6 +8,7 @@ import { projectSessionMessageAccountActors } from './projectSessionMessageAccou
 import { isUnclaimedUnavailableExecutionRunInput } from '@/app/session/pending/selectPendingProviderInvocation';
 import { normalizePendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { normalizePendingDeliveryStatusV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
+import { SessionMessageReplyProgressV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 /** Exact committed reads share transcript publication and current credential admission. */
@@ -44,7 +45,7 @@ export async function readCommittedSessionMessageInTx(tx: Tx, input: Readonly<{
       ? await tx.sessionPendingMessage.findUnique({
         where: { sessionId_localId: { sessionId: input.sessionId, localId: input.localId } },
         select: { localId: true, targetExecutionRunId: true, requestedAction: true, status: true,
-            deliveryState: true, deliveryBlockedReason: true, providerAction: true, updatedAt: true },
+            deliveryState: true, deliveryBlockedReason: true, providerAction: true, updatedAt: true, replyProgress: true },
     }) : null;
     const inputDisposition = !row && pending?.status === 'queued'
         && normalizePendingRequestedActionV1(pending.requestedAction, 'stored').kind === 'recover_execution_run'
@@ -52,11 +53,15 @@ export async function readCommittedSessionMessageInTx(tx: Tx, input: Readonly<{
         ? { localId: pending.localId, result: { status: 'rejected' as const, code: 'session_input_target_unavailable' as const } }
         : null;
     const delivery = pending && normalizePendingDeliveryStatusV1(pending);
+    const progress = SessionMessageReplyProgressV1Schema.safeParse(pending?.replyProgress);
+    const outcome = progress.success ? progress.data.outcome : undefined;
+    const retainedIssue = outcome?.kind === 'failed' ? outcome.runtimeIssueV1 : undefined;
     const inputDeliveryIssue: SessionRuntimeIssueV1 | null = row && pending?.targetExecutionRunId === null && delivery?.status === 'blocked'
-        && delivery.reason === 'team_access_removed'
-        ? { v: 1, scope: 'primary_session', status: 'failed', code: delivery.reason,
-            source: 'team_credential', occurredAt: pending.updatedAt.getTime(),
-            failureCause: { phase: 'turn_start', failureReason: 'permission_denied', providerErrorCode: delivery.reason } }
+        ? retainedIssue ?? (delivery.reason === 'team_access_removed'
+            ? { v: 1, scope: 'primary_session', status: 'failed', code: delivery.reason,
+                source: 'team_credential', occurredAt: pending.updatedAt.getTime(),
+                failureCause: { phase: 'turn_start', failureReason: 'permission_denied', providerErrorCode: delivery.reason } }
+            : null)
         : null;
     const turnRow = 'localId' in input && row?.turnStartWitnessId ? await tx.sessionTurn.findUnique({ where: {
         sessionId_turnId: { sessionId: input.sessionId, turnId: row.turnStartWitnessId },

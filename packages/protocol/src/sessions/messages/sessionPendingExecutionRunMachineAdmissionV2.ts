@@ -12,6 +12,7 @@ import { AcceptedPendingSettlementResponseV1Schema } from '../pending/acceptedPe
 import { SessionPendingEnqueueByMachineFieldsV1, refineSessionPendingMachineEqualityEvidenceV1 } from './sessionPendingMachineAdmissionV1.js';
 import { SessionInputEnqueueResultV1Schema, SessionInputAdmissionReceiptV1Schema } from './sessionInputAdmission.js';
 import { SessionMessageRoleSchema } from './sessionMessageRole.js';
+import { SessionRuntimeIssueV1Schema } from '../control/runtimeIssueV1.js';
 import { PendingDeliveryBlockedReasonSchema } from './pendingDeliveryBlockedReason.js';
 import { StrictSessionStoredMessageContentEnvelopeSchema } from './sessionStoredMessageContent.js';
 import { SessionMessageAcceptedDeliveryContentV1Schema, SessionMessageAcceptedTurnV1Schema } from './sessionMessageDeliveryResolutionV1.js';
@@ -146,6 +147,7 @@ export const SessionPendingExecutionRunBlockRequestV2Schema = lazyZodSchema(() =
   recipient: ParticipantExecutionRunRecipientRoutingIdentityV1Schema,
   localId: PendingLocalIdSchema,
   reason: PendingDeliveryBlockedReasonSchema,
+  runtimeIssueV1: z.optional(SessionRuntimeIssueV1Schema),
 }));
 export type SessionPendingExecutionRunBlockRequestV2 = z.infer<typeof SessionPendingExecutionRunBlockRequestV2Schema>;
 export const SessionPendingExecutionRunBlockResponseV2Schema = lazyZodSchema(() => z.strictObject({

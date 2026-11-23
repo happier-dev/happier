@@ -41,6 +41,15 @@ and UI in 0.3 development because earlier strict Plan readers can refuse the
 optional `retry` field. Updated readers accept earlier Plan results, and the
 stored Setup and Workflow records keep their existing shapes.
 
+## Pending reply refusal cause (unreleased 0.3)
+
+Pending delivery/block and admission rejection accept optional `runtimeIssueV1`.
+Updated daemons send only the existing safe metadata projection. Failed original
+reply custody may retain that projection, and committed-input observation reads
+it from the same original. Earlier daemons omitting it settle as before. Matching
+0.3 readers are required for typed failed reply custody; earlier strict readers
+cannot read the extended failure outcome. No database migration is needed.
+
 ## Exact original input publication refusal (unreleased 0.3)
 
 The exact committed message read by local ID can include optional

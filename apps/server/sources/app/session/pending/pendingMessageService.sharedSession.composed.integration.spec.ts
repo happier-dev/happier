@@ -99,6 +99,8 @@ import { registerPermissionModeMessageQueueBinding } from '../../../../../cli/sr
 import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt, type PermissionModeQueuedPromptMode } from '../../../../../cli/src/agent/runtime/permissions/queuedPrompt';
 import { createSessionProviderInputOutcomeBinding } from '../../../../../cli/src/agent/runtime/session/input/providerInputOutcome';
 import { waitForSessionInputResult } from '../../../../../cli/src/session/services/sendSessionMessage';
+import { createWorkflowSessionStepExecutor } from '../../../../../cli/src/daemon/workflows/sessionStepExecutor';
+import { installAxiosFastifyAdapter } from '../../../../../cli/src/testkit/http/axiosAdapter';
 import { runWithServerHttpBaseUrl } from '../../../../../cli/src/api/client/serverHttpBaseUrl';
 import * as cliSessionSockets from '../../../../../cli/src/api/session/sockets';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
@@ -536,7 +538,7 @@ describe("pendingMessageService (shared sessions)", () => {
         } })).resolves.toBeNull();
     });
 
-    it.each(['permission_mode_not_granted', 'session_model_transition_apply_failed', 'team_credential_binding_not_current', 'provider_unavailable_before_acceptance'] as const)(
+    it.each(['permission_mode_not_granted', 'session_model_transition_apply_failed', 'team_credential_binding_not_current', 'session_team_credential_binding_rejected', 'provider_unavailable_before_acceptance'] as const)(
         'settles an encrypted shared editor input refused before dispatch (%s) and delivers the following input', async refusal => {
         const ownerKey = tweetnacl.box.keyPair();
         const editorKey = tweetnacl.box.keyPair();
@@ -685,7 +687,7 @@ describe("pendingMessageService (shared sessions)", () => {
                     expect((await queue.waitForMessagesAndGetAsString()).message.localId).toBe(refused);
                     return;
                 }
-                if (refusal === 'session_model_transition_apply_failed' || refusal === 'team_credential_binding_not_current') {
+                if (refusal === 'session_model_transition_apply_failed' || refusal === 'team_credential_binding_not_current' || refusal === 'session_team_credential_binding_rejected') {
                     expect((await queue.waitForMessagesAndGetAsString()).message.localId).toBe(refused);
                     if (refusal === 'team_credential_binding_not_current') client.markPendingProviderInputDispatched([refused]);
                     await client.observeProviderInputSettlement({
@@ -8042,31 +8044,108 @@ describe("pendingMessageService (shared sessions)", () => {
         });
     });
 
-    it('settles an unaccepted Workflow reply and admits fresh ordinary input after Team access is restored', async () => {
-        const owner = await createAccount('withdrawn-workflow-owner');
+    it.each([{ committed: false, typed: true }, { committed: true, typed: true }, { committed: false, typed: false }])('carries the publication cause through the Workflow reply (%j)', async ({ committed, typed }) => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' });
+        const owner = await db.account.create({
+            data: { ...createSignedAccountContentBinding(), encryptionMode: 'plain' }, select: { id: true },
+        });
         const session = await createSession(owner.id);
+        await db.session.update({ where: { id: session.id }, data: { encryptionMode: 'plain', metadata: '{}' } });
         const workflow = { purpose: 'invocation' as const, runId: randomUUID(), invocationRecordId: randomUUID() };
         const localId = deriveWorkflowSessionInputLocalIdV2(workflow);
         const progress = await inTx(tx => createSessionInputReplyProgressInTx(tx, {
             accountId: owner.id, requestSessionId: session.id, reply: { mode: 'wait', workflow },
         }));
         if (!progress) throw new Error('Canonical reply admission failed');
-        await enqueuePendingMessage({ actorUserId: owner.id, sessionId: session.id, localId, ciphertext: 'workflow-input' });
-        await materializeNextPendingMessage({ actorUserId: owner.id, sessionId: session.id });
+        const content = { t: 'plain' as const, v: { role: 'user', content: { type: 'text', text: 'Workflow input' } } };
+        expect(await enqueuePendingMessage({ actorUserId: owner.id, sessionId: session.id, localId, content }))
+            .toMatchObject({ ok: true });
+        expect(await materializeNextPendingMessage({ actorUserId: owner.id, sessionId: session.id }))
+            .toMatchObject({ ok: true, didMaterialize: true });
         await db.sessionPendingMessage.update({ where: { sessionId_localId: { sessionId: session.id, localId } },
             data: { replyProgress: progress, replyDisposition: progress.disposition } });
-        expect(await blockPendingDelivery({ actorUserId: owner.id, sessionId: session.id, localId,
-            reason: 'team_access_removed' })).toMatchObject({ ok: true });
+        if (committed) expect(await createSessionMessage({ actorUserId: owner.id, sessionId: session.id, localId,
+            inputAdmission: 'authenticatedAccount', authentication, messageRole: 'user', content }))
+            .toMatchObject({ ok: true, didWrite: true });
+        const refusal = { runtimeIssueV1: { v: 1 as const, scope: 'primary_session' as const, status: 'failed' as const,
+            code: 'session_team_credential_binding_rejected', source: 'team_credential' as const, occurredAt: Date.now(),
+            sanitizedPreview: 'PRIVATE_DIAGNOSTIC_MUST_NOT_TRAVEL',
+            failureCause: { code: 'session_team_credential_binding_rejected', phase: 'turn_start' as const,
+                failureReason: 'permission_denied' as const, providerErrorCode: 'access_removed',
+                providerErrorMessage: 'PRIVATE_DIAGNOSTIC_MUST_NOT_TRAVEL' } } };
+        await withAuthenticatedTestApp(sessionPendingRoutes, async app => {
+            const response = await app.inject({ method: 'POST',
+                url: `/v2/sessions/${session.id}/pending/${localId}/delivery/block`,
+                headers: { 'x-test-user-id': owner.id }, payload: { reason: typed ? 'delivery_outcome_uncertain' : 'provider_rejected_before_acceptance', ...(typed ? refusal : {}) } });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toMatchObject({ ok: true });
+        });
         expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId } } }))
-            .toMatchObject({ deliveryState: 'blocked', deliveryBlockedReason: 'team_access_removed',
-                replyProgress: { outcome: { kind: 'failed' } } });
+            .toMatchObject({ deliveryState: 'blocked', deliveryBlockedReason: typed ? 'delivery_outcome_uncertain' : 'provider_rejected_before_acceptance',
+                replyProgress: { outcome: typed ? { kind: 'failed', runtimeIssueV1: { code: 'session_team_credential_binding_rejected' } } : { kind: 'failed' } } });
+        expect(JSON.stringify(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId } } }))).not.toContain('PRIVATE_DIAGNOSTIC_MUST_NOT_TRAVEL');
         const freshId = localId + '-after-regrant';
         await enqueuePendingMessage({ actorUserId: owner.id, sessionId: session.id, localId: freshId,
-            ciphertext: 'fresh-input-after-regrant', requestedAction: { v: 1, kind: 'enqueue' } });
+            content, requestedAction: { v: 1, kind: 'enqueue' } });
         expect(await materializeNextPendingMessage({ actorUserId: owner.id, sessionId: session.id }))
-            .toMatchObject({ ok: true, didMaterialize: true, message: { localId: freshId } });
+            .toMatchObject({ ok: true, didMaterialize: false, deferredReason: 'waiting_for_predecessor' });
         expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId } } }))
-            .toMatchObject({ deliveryState: 'blocked', deliveryBlockedReason: 'team_access_removed' });
+            .toMatchObject({ deliveryState: 'blocked', deliveryBlockedReason: typed ? 'delivery_outcome_uncertain' : 'provider_rejected_before_acceptance' });
+
+        await withAuthenticatedTestApp(app => {
+            registerSessionMessageRoutes(app);
+            registerSessionListingRoutes(app);
+            registerAccountEncryptionRoutes(app);
+            sessionPendingRoutes(app);
+        }, async app => {
+            const origin = 'https://workflow-pending.test';
+            const restore = installAxiosFastifyAdapter({ app, origin });
+            const request = axios.interceptors.request.use(config => {
+                config.headers.set('x-test-user-id', owner.id);
+                return config;
+            });
+            const socket = vi.spyOn(cliSessionSockets, 'createSessionScopedSocketConnection').mockImplementation(() => {
+                const connection = createApiSessionSocketStub({ connected: true });
+                return { socket: connection, transport: createSocketTransportAdapter(connection) } as ReturnType<typeof cliSessionSockets.createSessionScopedSocketConnection>;
+            });
+            vi.stubGlobal('fetch', async () => Response.json(FeaturesResponseSchema.parse({ features: {}, capabilities: {
+                encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' },
+                session: { pendingInput: { protocolVersion: 5 } },
+            } })));
+            const document = { text: 'Workflow input', references: [], attachments: [] };
+            const execute = createWorkflowSessionStepExecutor({
+                credentials: { token: 'workflow-pending-fixture', encryption: null },
+                prepareConversation: async () => { throw new Error('The original input already has a Session'); },
+                materializeConversation: async () => { throw new Error('The original input was already admitted'); },
+            });
+            try {
+                const result = await runWithServerHttpBaseUrl(origin, () => execute({
+                    runId: workflow.runId,
+                    invocation: { kind: 'happier.workflow-progress.v1', invocationPath: { blockId: 'shared-model', scope: [] },
+                        blockKind: 'step', attempt: '0', logicalInvocationRecordId: workflow.invocationRecordId,
+                        execution: { kind: 'session', sessionId: session.id, localInputId: localId } },
+                    step: { kind: 'step', id: 'shared-model', document, input: [], result: { kind: 'text' }, timeoutMs: 1000 },
+                    input: { ...document, values: [] },
+                    execution: {},
+                    executionTarget: { kind: 'session' },
+                    workspace: { machineId: 'fixture-machine', directory: '/repo', checkoutRootPath: '/repo' },
+                    authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
+                    onInputAccepted: async () => {},
+                    beforeInputAdmission: async () => {},
+                }));
+                expect(result).toMatchObject({
+                    kind: 'failed',
+                    ...(typed ? { runtimeIssueV1: { code: 'session_team_credential_binding_rejected',
+                        failureCause: { phase: 'turn_start', providerErrorCode: 'access_removed' } } } : { code: 'session_input_failed' }),
+                });
+                if (!typed) expect(result).not.toHaveProperty('runtimeIssueV1');
+            } finally {
+                vi.unstubAllGlobals();
+                socket.mockRestore();
+                axios.interceptors.request.eject(request);
+                restore();
+            }
+        });
     });
 
     it("withdraw reports actual removal and never mistakes an absent or accepted request for a restored draft", async () => {

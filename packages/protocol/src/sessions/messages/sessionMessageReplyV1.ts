@@ -32,7 +32,10 @@ export const SessionMessageExplicitReplyV1Schema = lazyZodSchema(() => z.discrim
 export type SessionMessageExplicitReplyV1 = z.infer<typeof SessionMessageExplicitReplyV1Schema>;
 
 export const SessionMessageReplyTerminalOutcomeV1Schema = lazyZodSchema(() =>
-  z.strictObject({ kind: z.enum(['pass', 'failed', 'cancelled', 'terminal_no_result', 'declined']) }));
+  z.union([
+    z.strictObject({ kind: z.literal('failed'), runtimeIssueV1: z.optional(SessionRuntimeIssueV1Schema) }),
+    z.strictObject({ kind: z.enum(['pass', 'cancelled', 'terminal_no_result', 'declined']) }),
+  ]));
 
 const SessionMessageReplyResultV1Schema = lazyZodSchema(() => z.strictObject({
   sessionId: asProtocolZod(SessionIdSchema), messageId: z.string().check(z.minLength(1)),

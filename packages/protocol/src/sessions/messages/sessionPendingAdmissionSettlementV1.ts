@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { SessionRuntimeIssueV1Schema } from '../control/runtimeIssueV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { UsageTimingBoundsV1Schema } from '../../usage/usageTimingV1.js';
 
@@ -52,6 +53,7 @@ export const SessionPendingAdmissionSettlementRequestV1Schema = lazyZodSchema(()
     z.strictObject({
       kind: z.literal('reject'),
       code: SessionInputAdmissionRejectionCodeV1Schema,
+      runtimeIssueV1: z.optional(SessionRuntimeIssueV1Schema),
       validation: z.optional(SessionInputSettlementValidationV1Schema),
     }),
   ]),

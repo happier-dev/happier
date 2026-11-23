@@ -1,4 +1,5 @@
 import { PendingDeliveryFailureCauseV1Schema } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
+import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { z } from "zod/mini";
 import { sendTransactionUnavailable } from '@/app/api/utils/sendTransactionUnavailable';
 import { AutonomousExchangeControlRequestV1Schema, AutonomousExchangeStatusV1Schema } from '@happier-dev/protocol/sessions/messages/autonomousExchangeV1';
@@ -880,7 +881,7 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
             preHandler: app.authenticate,
             schema: {
                 params: z.object({ runId, sessionId: z.string(), localId: PendingLocalIdSchema }),
-                body: z.object({ reason: PendingDeliveryBlockedReasonSchema }),
+                body: z.object({ reason: PendingDeliveryBlockedReasonSchema, runtimeIssueV1: z.optional(SessionRuntimeIssueV1Schema) }),
             },
             config: {
                 restrictedCredentialBinding: { scope: "session", session: "params.sessionId" },
@@ -896,6 +897,7 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
                 ...(request.params.runId ? { targetExecutionRunId: request.params.runId } : {}),
                 localId,
                 reason: request.body.reason,
+                runtimeIssueV1: request.body.runtimeIssueV1,
             });
             if (!res.ok) {
                 if (res.error === "invalid-params") return reply.code(400).send({ error: res.error });

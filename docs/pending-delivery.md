@@ -213,6 +213,14 @@ failed, without holding the next input behind a blocked predecessor. The next
 input still opens a fresh Team binding through ordinary admission. Generic
 unavailable admission and ambiguous delivery keep their existing parked states.
 
+In 0.3 development, a typed Team publication refusal during prompt startup also
+uses that terminal path when the prompt-loop owner emits `rejected_before_effect`.
+A publication refusal after native acceptance retains Pending effect uncertainty.
+Both paths carry the existing safe `runtimeIssueV1` metadata projection into the
+original failed reply; exact committed-input observation reads that same cause.
+Private diagnostic prose and credential context do not enter reply custody.
+Older daemons omitting the optional cause retain their existing settlement.
+
 In 0.3 development, blocked custody invalidates an otherwise idle CLI Session
 projection. The existing message-page reader accepts `projection=activity` for
 main-session activity consumers. Its initial whole-session read snapshot includes

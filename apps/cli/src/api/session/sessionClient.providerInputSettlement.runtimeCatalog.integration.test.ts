@@ -177,7 +177,8 @@ describe('ApiSessionClient provider-input settlement', () => {
         ...(classified ? { providerErrorCode: 'access_removed' } : {}) } });
       await vi.waitFor(() => expect(client.hasPendingProviderInput(localId)).toBe(false));
       expect(axios.post).toHaveBeenCalledWith(expect.stringContaining('/block'),
-        { reason: classified ? 'team_access_removed' : 'delivery_outcome_uncertain' }, expect.any(Object));
+        expect.objectContaining({ reason: classified ? 'team_access_removed' : 'delivery_outcome_uncertain',
+          runtimeIssueV1: expect.objectContaining({ code: 'session_team_credential_binding_rejected' }) }), expect.any(Object));
     } finally { await client.close(); }
   });
   it('releases a brokered effect only after the accepted Turn receives its Home acknowledgement', async () => {

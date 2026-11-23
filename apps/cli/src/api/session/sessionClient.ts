@@ -1,3 +1,5 @@
+import { projectSessionRuntimeIssueMetadataV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueMetadataV1';
+import { SessionRuntimeIssueV1Schema, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { resolveCatalogAgentRequestCoverageOptions } from '@/agent/catalog/registry';
 import { readHostedSessionScope, sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { createSessionUsageLimitRecoveryRuntime } from '@/session/usageLimitRecoveryControls/createSessionUsageLimitRecoveryRuntime';
@@ -5344,9 +5346,10 @@ export class ApiSessionClient extends EventEmitter {
         code: 'session_input_cancelled' | PreDispatchInputRejectionCodeV1,
         socket: ApiSessionClient['socket'],
         signal: AbortSignal,
+        runtimeIssueV1?: SessionRuntimeIssueV1,
     ): Promise<boolean> {
         const result = await settlePendingQueueV2Admission({ socket, sessionId: this.sessionId, localId,
-            signal, decision: { kind: 'reject', code } });
+            signal, decision: { kind: 'reject', code, ...(runtimeIssueV1 ? { runtimeIssueV1 } : {}) } });
         if (result.status !== 'rejected' || result.code !== code) return false;
         this.deletePendingProviderInputLocalState(localId);
         this.emit('pending-provider-input-retired', localId);
@@ -5595,6 +5598,7 @@ export class ApiSessionClient extends EventEmitter {
                         if (isPreDispatchInputRejectionCodeV1(accepted.outcome.reason) && !authority.executionRun) {
                             if (await this.rejectPendingInputBeforeProviderDispatch(
                                 localId, accepted.outcome.reason, authority.socket, authority.abortSignal,
+                                this.pendingProviderInputRuntimeIssue(accepted.outcome),
                             )) {
                                 this.terminalPendingSettlementLocalIds.delete(localId);
                                 this.wakePendingMaterialization();
@@ -5703,7 +5707,11 @@ export class ApiSessionClient extends EventEmitter {
                             await this.blockPendingProviderInputDeliveryByReason(localId,
                                 publicationError.failureCause.providerErrorCode === 'access_removed'
                                     ? 'team_access_removed' : 'delivery_outcome_uncertain',
-                                authority.executionRun, authority.abortSignal);
+                                authority.executionRun, authority.abortSignal, {
+                                    v: 1, scope: 'primary_session', status: 'failed', source: 'team_credential',
+                                    code: publicationError.failureCause.code, occurredAt: Date.now(),
+                                    failureCause: publicationError.failureCause,
+                                });
                             if (!this.isPendingProviderInputSettlementOperationCurrent(authority, localId)) return;
                             this.deletePendingProviderInputLocalState(localId);
                             this.executionRunPendingCustody.delete(localId);
@@ -5814,12 +5822,14 @@ export class ApiSessionClient extends EventEmitter {
         reason: PendingQueueDeliveryBlockedReason,
         executionRun: ExecutionRunPendingInputBinding | undefined,
         signal: AbortSignal,
+        runtimeIssueV1?: SessionRuntimeIssueV1,
     ): Promise<boolean> {
+        const cause = runtimeIssueV1 ? { runtimeIssueV1: projectSessionRuntimeIssueMetadataV1(runtimeIssueV1) } : {};
         const result = executionRun ? await blockPendingExecutionRunDelivery({
             signal,
-            socket: this.socket, sessionId: this.sessionId, localId, recipient: executionRun.recipient, reason,
+            socket: this.socket, sessionId: this.sessionId, localId, recipient: executionRun.recipient, reason, ...cause,
         }) : await this.runSessionRequest(async () => blockPendingQueueV2Delivery({
-            token: this.token, sessionId: this.sessionId, localId, reason, signal,
+            token: this.token, sessionId: this.sessionId, localId, reason, signal, ...cause,
         }));
         const didRequeueConditionalSteer = reason === 'conditional_steer_unavailable'
             && (!('usedLegacySteeringUnavailableFallback' in result) || result.usedLegacySteeringUnavailableFallback !== true);
@@ -5830,6 +5840,18 @@ export class ApiSessionClient extends EventEmitter {
         return didRequeueConditionalSteer;
     }
 
+    private pendingProviderInputRuntimeIssue(outcome: SessionProviderInputOutcome): SessionRuntimeIssueV1 | undefined {
+        const diagnostic = outcome.kind === 'rejected_before_effect' ? outcome.diagnostic : undefined;
+        const details = diagnostic?.details && typeof diagnostic.details === 'object' && !Array.isArray(diagnostic.details)
+            ? diagnostic.details : undefined;
+        const issue = diagnostic ? SessionRuntimeIssueV1Schema.safeParse({
+            v: 1, scope: 'primary_session', status: 'failed', occurredAt: Date.now(),
+            code: diagnostic.code, source: details?.source ?? 'agent_session_error',
+            ...(details?.failureCause ? { failureCause: details.failureCause } : {}),
+        }) : undefined;
+        return issue?.success ? projectSessionRuntimeIssueMetadataV1(issue.data) : undefined;
+    }
+
     private async blockPendingProviderInputDelivery(
         outcome: Exclude<SessionProviderInputOutcome, { kind: 'accepted' | 'custody_observed' }>,
         executionRun?: ExecutionRunPendingInputBinding,
@@ -5838,7 +5860,9 @@ export class ApiSessionClient extends EventEmitter {
         const localId = outcome.localId;
         const reason = outcome.kind !== 'rejected_before_effect' ? 'delivery_outcome_uncertain'
             : isPreDispatchInputRejectionCodeV1(outcome.reason) ? 'provider_rejected_before_acceptance' : outcome.reason;
-        const didRequeueConditionalSteer = await this.blockPendingProviderInputDeliveryByReason(localId, reason, executionRun, signal);
+        const runtimeIssueV1 = this.pendingProviderInputRuntimeIssue(outcome);
+        const didRequeueConditionalSteer = await this.blockPendingProviderInputDeliveryByReason(localId, reason, executionRun, signal,
+            runtimeIssueV1);
         if (executionRun && !executionRun.isCurrent()) return false;
         if (didRequeueConditionalSteer) {
             this.deletePendingProviderInputLocalState(localId);

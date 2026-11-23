@@ -8,7 +8,7 @@ import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/r
 import { validatePluginHookPayloadV1 } from '@happier-dev/protocol/plugins/hooks';
 import { ProviderErrorCodeV1Schema, type ProviderErrorCodeV1 } from '@happier-dev/protocol/providers/errors';
 import { formatSessionModelTransitionFailureCode } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
-import { SESSION_MODEL_TRANSITION_APPLY_FAILED_CODE } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
+import { SESSION_MODEL_TRANSITION_APPLY_FAILED_CODE, isPreDispatchInputRejectionCodeV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
 import { isModelRefGrantedV1, isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { SessionPendingQueueDeliveryTiming, AgentSessionStartupInstructionsMarkerV1 } from '@happier-dev/protocol';
 import { projectSessionModelTransitionRequestedSelectionV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
@@ -1956,12 +1956,15 @@ export async function runPermissionModePromptLoop(opts: {
           : null;
         const dependencyFailureReason = error instanceof StructuredInputComposerAttachmentResolutionError && !error.retryable
           ? 'attachment_unavailable' : 'runtime_config_blocked';
+        const causeCode = issue?.failureCause?.code ?? issue?.code;
+        const preDispatchCode = isPreDispatchInputRejectionCodeV1(causeCode) ? causeCode : undefined;
         const settlement: PreTurnFailure = { ...(issue?.source === 'dependency_failure'
             ? { ...preTurnFailure, reason: dependencyFailureReason }
-            : issue ? { ...preTurnFailure, code: issue.code, message: issue.sanitizedPreview }
+            : issue ? { ...preTurnFailure, code: preDispatchCode ?? issue.code, message: issue.sanitizedPreview,
+                ...(preDispatchCode ? { reason: preDispatchCode } : {}) }
               : preTurnFailure), ...(issue ? { diagnostic: {
                 code: issue.source === 'dependency_failure'
-                  ? preparation?.code ?? issue.code : issue.code,
+                  ? preparation?.code ?? issue.code : preDispatchCode ?? issue.code,
                 severity: 'error' as const,
                 message: preparation?.message ?? issue.sanitizedPreview,
                 details: { v: 1, source: issue.source, ...(issue.failureCause ? { failureCause: issue.failureCause } : {}) },

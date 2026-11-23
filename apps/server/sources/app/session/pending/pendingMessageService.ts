@@ -9,6 +9,7 @@ import { markSessionProjectionRecipientsChanged, type SessionRecipientCursor, ty
 import { markPendingStateChangedRecipients } from "@/app/session/pending/markPendingStateChangedRecipients";
 import { pendingPublicationResult, type PendingPublicationFields } from "./pendingPublicationResult";
 import { isRetainedPendingContextForPublisherInTx } from './retainedPendingContext';
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { isUnavailablePendingProviderPredecessor } from './selectPendingProviderInvocation';
 import { resolveSessionAccountChangePublications } from "@/app/session/changeTracking/markAccountChangesForSessionAccounts";
 import { reconcileSessionPendingQueueStateInTx } from "@/app/session/pending/reconcileSessionPendingQueueState";
@@ -2336,6 +2337,7 @@ async function rejectQueuedPendingInputInTx(params: Readonly<{
     localId: string;
     existing: QueuedPendingInputForRejection;
     code: SessionInputAdmissionRejectionCodeV1;
+    runtimeIssueV1?: SessionRuntimeIssueV1;
 }>) {
     if (params.existing.status !== "queued") return null;
     const requestContent = params.existing.content as PrismaJson.SessionPendingMessageContent;
@@ -2382,7 +2384,7 @@ async function rejectQueuedPendingInputInTx(params: Readonly<{
             ...(requestEqualityEvidenceV1 ? { requestEqualityEvidenceV1 } : {}),
         },
     });
-    await settleUnacceptedSessionInputReplyInTx(params.tx, params.sessionId, params.localId, 'failed');
+    await settleUnacceptedSessionInputReplyInTx(params.tx, params.sessionId, params.localId, 'failed', params.runtimeIssueV1);
     await reconcilePendingActivationAuthorizationForRemovedRequestInTx({
         tx: params.tx,
         sessionId: params.sessionId,
@@ -2728,6 +2730,7 @@ export async function settlePendingInputAdmission(params: Readonly<{
                     localId,
                     existing,
                     code: decision.code,
+                    runtimeIssueV1: decision.kind === 'reject' && 'runtimeIssueV1' in decision ? decision.runtimeIssueV1 : undefined,
                 });
                 if (!state) return { ok: false, error: "conflict" } as const;
                 return {
@@ -4271,6 +4274,7 @@ export async function blockPendingDelivery(params: {
     publisherAuthority?: CurrentSessionPublisherAuthority;
     localId: string;
     reason: PendingDeliveryBlockedReason;
+    runtimeIssueV1?: SessionRuntimeIssueV1;
 }): Promise<BlockPendingDeliveryResult> {
     const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
@@ -4399,10 +4403,10 @@ export async function blockPendingDelivery(params: {
                     return { ok: true, ...(await readCurrentPendingMutationState(tx, sessionId)), didUpdate: false };
                 }
                 const progress = SessionMessageReplyProgressV1Schema.safeParse(existing.replyProgress);
-                if ((reason === 'provider_rejected_before_acceptance' || reason === 'team_access_removed')
+                if ((params.runtimeIssueV1 || reason === 'provider_rejected_before_acceptance' || reason === 'team_access_removed')
                     && progress.success && progress.data.workflow
                     && localId === deriveWorkflowSessionInputLocalIdV2(progress.data.workflow)) {
-                    await settleUnacceptedSessionInputReplyInTx(tx, sessionId, localId, 'failed');
+                    await settleUnacceptedSessionInputReplyInTx(tx, sessionId, localId, 'failed', params.runtimeIssueV1);
                 }
                 if (existing.deliveryState === "blocked" && existing.deliveryBlockedReason === reason) {
                     return { ok: true, ...(await readCurrentPendingMutationState(tx, sessionId)), didUpdate: false };

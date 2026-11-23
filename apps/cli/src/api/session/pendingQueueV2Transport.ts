@@ -1,3 +1,4 @@
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import type { UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
@@ -1360,6 +1361,7 @@ export async function blockPendingQueueV2Delivery(params: {
     sessionId: string;
     localId: string;
     reason: PendingQueueDeliveryBlockedReason;
+    runtimeIssueV1?: SessionRuntimeIssueV1;
     signal?: AbortSignal;
 }): Promise<{
     pendingQueueState?: KnownPendingQueueState;
@@ -1369,7 +1371,7 @@ export async function blockPendingQueueV2Delivery(params: {
         return await postPendingQueueV2DeliveryAction({
             ...params,
             action: 'block',
-            body: { reason: params.reason },
+            body: { reason: params.reason, ...(params.runtimeIssueV1 ? { runtimeIssueV1: params.runtimeIssueV1 } : {}) },
         });
     } catch (error) {
         if (

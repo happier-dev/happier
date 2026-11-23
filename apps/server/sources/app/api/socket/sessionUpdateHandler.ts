@@ -2381,7 +2381,7 @@ export function sessionUpdateHandler(
                     socket,
                     operation: (publisherAuthority) => blockPendingDelivery({
                         authentication: readSessionAccessAuthenticationFromSocket(socket),
-                        actorUserId: userId, sessionId, localId, reason,
+                        actorUserId: userId, sessionId, localId, reason, runtimeIssueV1: parsed.data.runtimeIssueV1,
                         targetExecutionRunId: recipient.runId, publisherAuthority,
                     }),
                 });
