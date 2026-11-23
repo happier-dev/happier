@@ -35,6 +35,7 @@ import { Typography } from '@/constants/Typography';
 import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { updateWorkflowTrigger } from '@/sync/domains/workflows/workflowTriggerActions';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { sync } from '@/sync/sync';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -419,7 +420,7 @@ export function ServiceCheckDetail(
     <View testID={`services.check.${row.automationId}.${row.triggerId}`}>
       {props.renderHeader ? props.renderHeader(
         <View style={styles.headerActions}>
-          {settings ? <CheckNowButton checkNow={checkNow} disabled={offlineObserver !== null} /> : null}
+          {settings ? <CheckNowButton checkNow={checkNow} /> : null}
           <CheckMenu onEdit={() => openEditor()} />
         </View>,
       ) : null}
@@ -433,7 +434,7 @@ export function ServiceCheckDetail(
           the actions) it holds only what Check now says while it waits and Investigate, else nothing, so the bars stand
           right under the header (lab A3). */}
       {(props.metaInHeader || meta === null)
-        && (props.renderHeader ? checkNow.state === 'idle' : !settings) && !(failing && investigateSubject) ? null : (
+        && (props.renderHeader ? checkNow.state.kind === 'idle' : !settings) && !(failing && investigateSubject) ? null : (
       <ItemGroup surface="none" testID="services.check.head">
         {props.metaInHeader || meta === null ? null : (
           <Text
@@ -449,7 +450,7 @@ export function ServiceCheckDetail(
             <View style={styles.checkNow}>
               {props.renderHeader ? null : (
                 <View style={styles.headerActions}>
-                  <CheckNowButton checkNow={checkNow} disabled={offlineObserver !== null} />
+                  <CheckNowButton checkNow={checkNow} />
                   <CheckMenu onEdit={() => openEditor()} />
                 </View>
               )}
@@ -710,12 +711,13 @@ function keyFlowRuleText(config: NonNullable<ServiceCheckSettings['keyFlow']>): 
 }
 
 /** Check now runs the saved kind's public Action through the ordinary front door (policy, approval, Machine). */
-type CheckNowControl = Readonly<{ state: 'idle' | 'running' | 'failed'; run: () => void; cancel: () => void }>;
+type CheckNowState = Readonly<{ kind: 'idle' | 'running' }> | Readonly<{ kind: 'failed'; error: unknown }>;
+type CheckNowControl = Readonly<{ state: CheckNowState; run: () => void; cancel: () => void }>;
 
 /** One Check now per page: the button (header or body) and what it says while it waits share this state. */
 function useCheckNow(run: ServiceCheckSettings['run'] | null, observerMachineId: string | null,
   scope: ManagedConfiguredCheckRow['scope']): CheckNowControl {
-  const [state, setState] = React.useState<'idle' | 'running' | 'failed'>('idle');
+  const [state, setState] = React.useState<CheckNowState>({ kind: 'idle' });
   const controller = React.useRef<AbortController | null>(null);
   React.useEffect(() => () => controller.current?.abort(), []);
   const start = React.useCallback(async () => {
@@ -723,7 +725,7 @@ function useCheckNow(run: ServiceCheckSettings['run'] | null, observerMachineId:
     controller.current?.abort();
     const current = new AbortController();
     controller.current = current;
-    setState('running');
+    setState({ kind: 'running' });
     try {
       await checkNowConfiguredHealthCheck({
         subject: run.subject,
@@ -733,27 +735,26 @@ function useCheckNow(run: ServiceCheckSettings['run'] | null, observerMachineId:
         serverId: scope.serverId,
         expectedAccountId: scope.accountId,
       });
-      if (!current.signal.aborted) setState('idle');
-    } catch {
-      if (!current.signal.aborted) setState('failed');
+      if (!current.signal.aborted) setState({ kind: 'idle' });
+    } catch (error) {
+      if (!current.signal.aborted) setState({ kind: 'failed', error });
     }
   }, [run, observerMachineId, scope.accountId, scope.serverId]);
   // The person can stop waiting: the Action's own signal is aborted; a result its Machine still sends arrives as usual.
   const cancel = React.useCallback(() => {
     controller.current?.abort();
-    setState('idle');
+    setState({ kind: 'idle' });
   }, []);
   return React.useMemo(() => ({ state, run: () => void start(), cancel }), [cancel, start, state]);
 }
 
-function CheckNowButton(props: Readonly<{ checkNow: CheckNowControl; disabled?: boolean }>) {
+function CheckNowButton(props: Readonly<{ checkNow: CheckNowControl }>) {
   return (
     <RoundButton
       testID="services.check.checkNow"
       display="secondary"
       title={t(`${k}.checkNow`)}
-      disabled={props.disabled}
-      loading={props.checkNow.state === 'running'}
+      loading={props.checkNow.state.kind === 'running'}
       onPress={props.checkNow.run}
     />
   );
@@ -762,16 +763,16 @@ function CheckNowButton(props: Readonly<{ checkNow: CheckNowControl; disabled?: 
 function CheckNowStatus(props: Readonly<{ checkNow: CheckNowControl }>) {
   const { state, cancel } = props.checkNow;
   // While it waits it says so, and after a few seconds how long (the loading state's own "Still waiting" clock).
-  if (state === 'running') {
+  if (state.kind === 'running') {
     return (
       <SurfaceStateCard testID="services.check.checkNow.pending" kind="loading" size="line"
         title={t(`${k}.checkNowRunning`)}
         action={{ label: t('common.cancel'), onPress: cancel, testID: 'services.check.checkNow.cancel' }} />
     );
   }
-  return state === 'failed' ? (
+  return state.kind === 'failed' ? (
     <Text variant="meta" style={styles.metaText} testID="services.check.checkNow.failed">
-      {t(`${k}.checkNowFailed`)}
+      {resolveActionExecutionErrorMessage(state.error, t('common.requestFailed'))}
     </Text>
   ) : null;
 }

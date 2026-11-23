@@ -1,4 +1,15 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/ingest';
+import { PluginProjectedActionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { createHealthCheckSourceInstanceIdV1 } from '@happier-dev/plugin-sdk';
+import { plugin as healthPlugin } from '../../../../../../packages/plugins/machine-services/src/manifest';
+import { HEALTH_KINDS_ACTION_ID } from '../../../../../../packages/plugins/machine-services/src/healthCatalog';
+import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
+import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
+import { PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY } from '@/sync/domains/plugins/ui/projectionUnion';
+import * as machineTransport from '@/sync/ops/machineContributionRegistryProjection';
 import { AutomationDefinitionDetailSchema, AutomationDefinitionListItemSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
@@ -182,9 +193,7 @@ it('keeps Address editing on the Check page when the saved source needs recovery
   }
 });
 
-it('keeps saved Check settings readable with the observing Machine offline and links to that Machine', async () => {
-  const { router } = await import('expo-router');
-  vi.mocked(router.push).mockClear();
+async function restoreSavedHttpCheck() {
   const id = 'service-observer-offline';
   const checkId = 'readiness';
   const triggerId = AutomationTriggerIdSchema.parse('33333333-3333-4333-8333-333333333332');
@@ -233,12 +242,18 @@ it('keeps saved Check settings readable with the observing Machine offline and l
       targetLabel: endpoint, periodMs: 60_000, domainId: null, keyFlow: null }] },
     lastResults: { kind: 'available', checks: [] },
   };
+  return { row, scope, observer, endpoint, checkId };
+}
+
+it('keeps saved Check settings readable with the observing Machine offline and links to that Machine', async () => {
+  const { router } = await import('expo-router');
+  vi.mocked(router.push).mockClear();
+  const { row, scope, observer, endpoint } = await restoreSavedHttpCheck();
   const screen = await renderScreen(<ServiceCheckDetail row={row} nowMs={NOW} />);
   try {
     await vi.waitFor(() => expect(screen.findByTestId('services.check.settings.from')).not.toBeNull());
-    // The check says its Machine is offline at a glance and offers no Check now it cannot run (PAGE-ACCEPT-176 R10-D4).
+    // Presence still describes the last observed state and points to the Machine.
     await vi.waitFor(() => expect(screen.findByTestId('services.check.offline')).not.toBeNull());
-    expect(screen.findByTestId('services.check.checkNow')?.props.disabled).toBe(true);
     await screen.pressByTestIdAsync('services.check.settings.from');
     await vi.waitFor(() => expect(screen.findByTestId('automation-event-watcher-picker')).not.toBeNull());
     expect(screen.getTextContent()).toMatch(/choose a machine/i);
@@ -273,5 +288,67 @@ it('keeps saved Check settings readable with the observing Machine offline and l
     });
   } finally {
     await screen.unmount();
+  }
+});
+
+it('sends one saved probe to the ready observer even when its displayed presence is offline', async () => {
+  const { row, scope, observer, checkId } = await restoreSavedHttpCheck();
+  const parsed = ingestPluginManifestV2(healthPlugin.manifest);
+  if (!parsed.ok) throw new Error('Expected the bundled Machine Services declaration');
+  const manifest = parsed.manifest;
+  const catalog = manifest.contributes.healthCheckKinds.map(kind => ({ ...kind, pluginId: manifest.id }));
+  const http = catalog.find(kind => kind.id === 'http');
+  if (!http) throw new Error('Expected the bundled HTTP Check');
+  const actions = manifest.contributes.actions.filter(action => action.id === HEALTH_KINDS_ACTION_ID || action.id === http.action);
+  expect(actions).toHaveLength(2);
+  const occurrenceId = 'ready-health-observer-occurrence';
+  const unpublish = publishCommittedAppShellPluginUiProjection(() => ({
+    ...EMPTY_PLUGIN_UI_PROJECTION,
+    actionsById: Object.fromEntries(actions.map(action => {
+      const { inputSchema: _input, resultSchema: _result, ...projected } = action;
+      const declaration = PluginProjectedActionV2Schema.parse({ ...projected, pluginId: manifest.id, occurrenceId, available: true });
+      return [`${manifest.id}/${action.id}`, { ...declaration, [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: {
+        machineId: observer.id, serverId: scope.serverId, executionOrigin: null, phase: 'current', interactionEnabled: true,
+      } }];
+    })),
+  }));
+  const requests = vi.fn();
+  const result = { status: 'up', observedAt: NOW, evidence: { v: 1, items: [] } } as const;
+  const kit = await createPluginTestkit({ manifest: healthPlugin.manifest, module: healthPlugin, services: {
+    healthChecks: {
+      listKinds: async () => catalog,
+      readSource: async () => { throw new Error('Unexpected saved source re-read'); },
+      manageHeartbeat: async () => { throw new Error('Unexpected heartbeat mutation'); },
+      setup: async () => { throw new Error('Unexpected health setup'); },
+      read: async ({ sourceInstanceId, checkIds }) => {
+        requests(sourceInstanceId, checkIds);
+        return [{ checkId, result }];
+      },
+    },
+  } });
+  const transport = vi.spyOn(machineTransport, 'machinePluginStructuredMessageActionExecute')
+    .mockImplementation(async (machineId, invocation) => {
+      expect(machineId).toBe(observer.id);
+      expect(invocation.serverId).toBe(scope.serverId);
+      const action = actions.find(({ id }) => invocation.qualifiedActionId === `${manifest.id}/${id}`);
+      if (!action) throw new Error('Unexpected Machine Services Action');
+      return { supported: true, result: { ok: true, result: await kit.invokeAction(action.id, normalizeStrictJsonValue(invocation.input)) } };
+    });
+  const screen = await renderScreen(<ServiceCheckDetail row={row} nowMs={NOW} renderHeader={actions => actions} />);
+  try {
+    await vi.waitFor(() => expect(screen.findByTestId('services.check.checkNow')).not.toBeNull());
+    expect(screen.findByTestId('services.check.offline')).not.toBeNull();
+    await screen.pressByTestIdAsync('services.check.checkNow');
+    await vi.waitFor(() => {
+      expect(requests).toHaveBeenCalledExactlyOnceWith(createHealthCheckSourceInstanceIdV1({
+        kind: 'machineService', machineId: observer.id, serviceId: 'systemd:qa-health',
+      }), [checkId]);
+      expect(screen.findByTestId('services.check.checkNow.pending')).toBeNull();
+    });
+  } finally {
+    await screen.unmount();
+    transport.mockRestore();
+    unpublish();
+    await kit.dispose();
   }
 });
