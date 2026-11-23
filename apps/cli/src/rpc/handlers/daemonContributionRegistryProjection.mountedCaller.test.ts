@@ -26,12 +26,15 @@ import { registerDaemonContributionRegistryProjectionHandler } from './daemonCon
 import { createDeferred } from '@/testkit/async/deferred';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { invokeAccountMachineSourceAction } from '@/plugins/runtime/invocation/actions/accountMachineActionTransport';
-import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecutor, createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { createCommittedContributedActionInvoker } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import type { ActionSettlementV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
 
 describe('mounted caller admission through the real contributed Action RPC', () => {
-    it('runs the qualified Before check and publishes one After settlement for a mounted page Action', async () => {
+    it.each(['mounted page', 'native Action', 'CLI Action', 'MCP Action'] as const)(
+        'runs the qualified Before check and publishes one After settlement through the %s boundary', async entry => {
         const pluginId = 'acme.tickets';
         const actionId = `${pluginId}/actions/close-ticket`;
         const machineId = 'ticket-machine';
@@ -41,7 +44,7 @@ describe('mounted caller admission through the real contributed Action RPC', () 
                 manifest: createPluginManifestV2Fixture({ id: pluginId, contributes: {
                     ui: { renderers: [{ id: 'panel', kind: 'declarative', root: { kind: 'text', text: 'Tickets' } }],
                         views: [{ id: 'tickets', container: 'appPage', target: { kind: 'app' }, renderer: 'panel' }] },
-                    actions: [{ id: 'close-ticket', title: 'Close ticket', scopes: ['global'], surfaces: ['ui', 'cli'],
+                    actions: [{ id: 'close-ticket', title: 'Close ticket', scopes: ['global'], surfaces: ['ui', 'cli', 'mcp'],
                         dangerLevel: 'safe', readOnly: false, placementBindings: [], execution: { target: 'daemon' } }],
                 } }),
                 files: { 'daemon.mjs': `export function activate(api) {
@@ -91,13 +94,29 @@ describe('mounted caller admission through the real contributed Action RPC', () 
             const sourceCustody = fixture.registry.readPluginSourceCustody?.(pluginId);
             const materializationRef = fixture.registry.resolveCurrentPluginMaterializationRef?.(pluginId);
             if (!execute || !occurrenceId || !sourceCustody || !materializationRef) throw new Error('Expected installed Tickets page');
-            expect(await execute({ machineId, qualifiedActionId: `${pluginId}/close-ticket`, expectedContributorOccurrenceId: occurrenceId,
-                executionSurface: 'ui', input: { ticket: { ticketId: 'ticket-1' } },
-                invocation: { kind: 'mountedPluginSurface', mountedBinding: {
-                    pluginId, contributionLocalId: 'tickets', occurrenceId, sourceCustody, materializationRef,
-                } },
-            }, { signal: new AbortController().signal, callerAuthority: 'present_user' }))
-                .toEqual({ ok: true, result: { ticketId: 'ticket-1', state: 'closed' } });
+            const input = { ticket: { ticketId: 'ticket-1' } };
+            const result = entry === 'mounted page'
+                ? await execute({ machineId, qualifiedActionId: `${pluginId}/close-ticket`, expectedContributorOccurrenceId: occurrenceId,
+                    executionSurface: 'ui', input,
+                    invocation: { kind: 'mountedPluginSurface', mountedBinding: {
+                        pluginId, contributionLocalId: 'tickets', occurrenceId, sourceCustody, materializationRef,
+                    } },
+                }, { signal: new AbortController().signal, callerAuthority: 'present_user' })
+                : await createActionExecutor({ actionAutomations, invokeContributedAction: createCommittedContributedActionInvoker({
+                    daemonHoldsApprovalWaiter: true,
+                    acquireRuntimeRegistryLease: async () => {
+                        const lease = fixture.controller.tryAcquireRuntimeRegistry();
+                        if (!lease) throw new Error('Expected admission to the installed Ticket contributor');
+                        return lease;
+                    },
+                    requestCurrentIntent,
+                }) }).execute(ACTION_INVOKE_ACTION_ID_V1, { action: { pluginId, localId: 'close-ticket' }, input,
+                    expectedContributorOccurrenceId: occurrenceId }, {
+                    surface: entry === 'native Action' ? 'ui' : entry === 'CLI Action' ? 'cli' : 'mcp',
+                    authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'ticket-home', serverIdentityId,
+                    runtimeAccountId: 'actor', externalActionTarget: { kind: 'machine', machineId },
+                });
+            expect(result).toEqual({ ok: true, result: { ticketId: 'ticket-1', state: 'closed' } });
             expect(approval).toMatchObject({ status: 'executed', automaticChecks: { humanApprovalRequired: false,
                 phase: 'passed', runs: [{ triggerId: 'before-trigger', runId: 'ticket-check' }] } });
             expect(settled).toMatchObject([{ actionId, machineId, status: 'succeeded', phase: 'after' }]);

@@ -3803,6 +3803,40 @@ describe('workflow trigger Automation composition', () => {
 });
 
 
+describe('Workflow trigger Action entry contracts', () => {
+  it.each(['ui', 'voice', 'cli', 'mcp', 'agent'] as const)(
+    'persists and reopens the same trigger through the %s Action boundary', async surface => {
+      const f = fixture();
+      const actions = createWorkflowTriggerActions({ ...f.deps,
+        resolveMaterializer: async () => ({ effects: { resolveTargetAvailability: async () => true } }) });
+      const boundary = f.executor(actions);
+      const context: ActionExecutorContext = {
+        ...(surface === 'agent' ? ownCaller : { authority: 'present_user', actionCaller: { kind: 'host' } }),
+        surface,
+        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
+          'workflow.trigger.add': [surface], 'workflow.trigger.update': [surface], 'workflow.trigger.remove': [surface],
+        } }),
+      };
+      const created = await boundary.execute('workflow.trigger.add', { workflow, project, trigger }, context);
+      expect(created).toMatchObject({ ok: true });
+      if (!created.ok) throw new Error(created.errorCode);
+      const { set, triggerId } = WorkflowTriggerWriteResultV1Schema.parse(created.result);
+      expect(f.rows.get(set.automationId)?.assignments).toMatchObject([{ machineId: project.machineId }]);
+      const target = { automationId: set.automationId, triggerId: triggerId! };
+      const changed = await boundary.execute('workflow.trigger.update', {
+        ...target, expectedRevision: set.revision, patch: { enabled: false },
+      }, context);
+      expect(changed).toMatchObject({ ok: true, result: { set: { triggers: [{ id: triggerId, enabled: false }] } } });
+      expect(await boundary.execute('workflow.trigger.list', { automationId: set.automationId }, context)).toMatchObject({
+        ok: true, result: { sets: [{ automationId: set.automationId, triggers: [{ id: triggerId, enabled: false }] }] },
+      });
+      expect(await boundary.execute('workflow.trigger.remove', target, context)).toMatchObject({
+        ok: true, result: { set: { automationId: set.automationId, triggers: [] } },
+      });
+      expect(f.rows.get(set.automationId)?.triggers).toEqual([]);
+    });
+});
+
 describe('Round 12 Workflow trigger admission', () => {
   it('reopens Current Turn and distinct lifetimes from one exact Workflow list', async () => {
     const f = fixture();
