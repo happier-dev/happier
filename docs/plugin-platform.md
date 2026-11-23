@@ -6611,8 +6611,10 @@ the current saved connection; the caller supplies no revision or authority epoch
 Transfer takes the existing revision witness without a second generation witness.
 Poll failures and
 readiness observations preserve it; actual configuration changes and changes to
-history-gap recovery advance it. Disabling or transferring a connection does
-not wait for provider stop proof. Deletion retains `finalizingDelete` only to
+history-gap recovery advance it. Native Session PR attachment can continue
+when the first history notice is the only change to the configuration it read.
+Disabling or transferring a connection does not wait for provider stop proof.
+Deletion retains `finalizingDelete` only to
 resume bounded relation cleanup and settle already-attempted sends honestly.
 Every storage write still uses the
 latest exact physical Collection revision. The channel-state V8→V9 migration

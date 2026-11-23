@@ -150,6 +150,7 @@ import {
   withConversationBindingPolicy,
   readConversationConnectionSharedEndpointInputModes,
   readConversationConnectionUpdateRow,
+  isCurrentConversationConnectionForBinding,
   assertConversationBindingInputModeIsDeliverable,
   assertConversationBindingMutationCanPersist,
   commitConversationBindingMutation,
@@ -421,7 +422,7 @@ function bindingResolutionStale(): ConversationBindingResolutionStale {
 async function readCurrentBindingResolutionConnection(input: Readonly<{
   collection: ChannelStateCollection;
   connectionId: string;
-  expectedConnectionRevision: number;
+  expectedConnection: number | ConversationConnectionUpdateRow;
   signal: AbortSignal;
 }>): Promise<BindingResolutionConnectionRead> {
   assertNotAborted(input.signal);
@@ -435,14 +436,14 @@ async function readCurrentBindingResolutionConnection(input: Readonly<{
 function admitBindingResolutionConnection(input: Readonly<{
   row: StateRow;
   connectionId: string;
-  expectedConnectionRevision?: number;
+  expectedConnection?: number | ConversationConnectionUpdateRow;
 }>): BindingResolutionConnectionRead {
   const connection = readConversationConnectionUpdateRow({
     row: input.row,
     connectionId: input.connectionId,
   });
-  if (input.expectedConnectionRevision !== undefined
-    && connection.configurationRevision !== input.expectedConnectionRevision) return bindingResolutionStale();
+  if (input.expectedConnection !== undefined
+    && !isCurrentConversationConnectionForBinding(connection, input.expectedConnection)) return bindingResolutionStale();
   if (connection.lifecycle.deletionState !== 'none') {
     return bindingResolutionUnavailable('connectionDeleting');
   }
@@ -567,13 +568,13 @@ function readPrincipalResolveResult(value: unknown): ReturnType<typeof Conversat
 async function rereadBindingResolutionAfterProviderEffect(input: Readonly<{
   collection: ChannelStateCollection;
   connectionId: string;
-  expectedConnectionRevision: number;
+  expectedConnection: number | ConversationConnectionUpdateRow;
   context: PluginInvocationContext;
 }>): Promise<BindingResolutionConnectionRead> {
   const connectionRead = await readCurrentBindingResolutionConnection({
     collection: input.collection,
     connectionId: input.connectionId,
-    expectedConnectionRevision: input.expectedConnectionRevision,
+    expectedConnection: input.expectedConnection,
     signal: input.context.signal,
   });
   if (connectionRead.kind !== 'current') return bindingResolutionStale();
@@ -597,7 +598,7 @@ async function resolveBindingEndpointCandidates(input: Readonly<{
   const connectionRead = await readCurrentBindingResolutionConnection({
     collection,
     connectionId: input.connectionId,
-    expectedConnectionRevision: input.expectedConnectionRevision,
+    expectedConnection: input.expectedConnectionRevision,
     signal: input.context.signal,
   });
   if (connectionRead.kind !== 'current') return connectionRead;
@@ -615,7 +616,7 @@ async function resolveBindingEndpointCandidates(input: Readonly<{
   const reread = await rereadBindingResolutionAfterProviderEffect({
     collection,
     connectionId: input.connectionId,
-    expectedConnectionRevision: input.expectedConnectionRevision,
+    expectedConnection: input.expectedConnectionRevision,
     context: input.context,
   });
   return reread.kind === 'current' ? resolution : reread;
@@ -695,7 +696,7 @@ async function resolveBindingPrincipalCandidatesForEndpoint(input: Readonly<{
   const connectionRead = await readCurrentBindingResolutionConnection({
     collection,
     connectionId: input.connectionId,
-    expectedConnectionRevision: input.expectedConnectionRevision,
+    expectedConnection: input.expectedConnectionRevision,
     signal: input.context.signal,
   });
   if (connectionRead.kind !== 'current') return connectionRead;
@@ -712,7 +713,7 @@ async function resolveBindingPrincipalCandidatesForEndpoint(input: Readonly<{
   const reread = await rereadBindingResolutionAfterProviderEffect({
     collection,
     connectionId: input.connectionId,
-    expectedConnectionRevision: input.expectedConnectionRevision,
+    expectedConnection: input.expectedConnectionRevision,
     context: input.context,
   });
   return reread.kind === 'current' ? resolution : reread;
@@ -3668,17 +3669,19 @@ export async function createConversationBindingForInvocation(
     context,
   });
   if (audience.kind !== 'ready') return audience;
-  return await createConversationBindingWithAudience(createInput, audience, context);
+  return await createConversationBindingWithAudience(createInput, createInput.expectedConnectionRevision, audience, context);
 }
 
 /** Private continuation: the invoking journey already admitted this audience. */
 async function createConversationBindingWithAudience(
-  createInput: Omit<ConversationBindingCreateInputV1, 'endpointSelection' | 'principalSelection'>,
+  createInput: Omit<ConversationBindingCreateInputV1, 'endpointSelection' | 'principalSelection' | 'expectedConnectionRevision'>,
+  expectedConnection: number | ConversationConnectionUpdateRow,
   audience: Extract<BindingAudienceResolution, { kind: 'ready' }>,
   context: PluginInvocationContext,
 ): Promise<ConversationBindingCreateResult> {
   const { endpoint, allowedPrincipalIds } = audience;
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
+  const connectionCurrentness = { collection, connectionId: createInput.connectionId, expectedConnection, context };
   // The binding identity is minted before verification so the Automation owner
   // can answer for this exact binding rather than for the target alone.
   const scopedIdentity = createInput.target.kind === 'automation'
@@ -3730,7 +3733,7 @@ async function createConversationBindingWithAudience(
         }
         const target = resolvedTarget ?? await resolveBindingTargetForPersistence(createInput.target, context);
         if (target.kind === 'notVerified') return target;
-        const currentness = await rereadBindingResolutionAfterProviderEffect({ collection, connectionId: createInput.connectionId, expectedConnectionRevision: createInput.expectedConnectionRevision, context });
+        const currentness = await rereadBindingResolutionAfterProviderEffect(connectionCurrentness);
         if (currentness.kind !== 'current') return currentness;
         return { kind: 'created', binding: current.binding };
       }
@@ -3767,12 +3770,7 @@ async function createConversationBindingWithAudience(
     if (target.kind === 'notVerified') return target;
     // The Automation verifier is an external boundary. Re-read connection
     // authority and resolve the current stable provider before persistence.
-    const finalCurrent = await rereadBindingResolutionAfterProviderEffect({
-      collection,
-      connectionId: createInput.connectionId,
-      expectedConnectionRevision: createInput.expectedConnectionRevision,
-      context,
-    });
+    const finalCurrent = await rereadBindingResolutionAfterProviderEffect(connectionCurrentness);
     if (finalCurrent.kind !== 'current') return finalCurrent;
     connectionRowForPersistence = finalCurrent.row;
     candidate = createCandidate(target);
@@ -3785,12 +3783,7 @@ async function createConversationBindingWithAudience(
       target: candidate.binding.target,
       context,
     });
-    const finalCurrent = await rereadBindingResolutionAfterProviderEffect({
-      collection,
-      connectionId: createInput.connectionId,
-      expectedConnectionRevision: createInput.expectedConnectionRevision,
-      context,
-    });
+    const finalCurrent = await rereadBindingResolutionAfterProviderEffect(connectionCurrentness);
     if (finalCurrent.kind !== 'current') return finalCurrent;
     connectionRowForPersistence = finalCurrent.row;
   }
@@ -4147,7 +4140,6 @@ export async function manageSessionPullRequestBindingForInvocation(input: JsonVa
   const connectionAdmission = admitBindingResolutionConnection({ row: connectionResult.connectionRow, connectionId });
   if (connectionAdmission.kind !== 'current') throw refuseSessionPullRequestConnection(context, 'retain');
   const connection = connectionAdmission.connection;
-  const { configurationRevision } = connection;
   // Rejoin retains the connection's transport placement and credential. These
   // one-shot reads consume this attach's authenticated setup, never persist it.
   const resolutionConnection: ConversationConnectionUpdateRow = {
@@ -4196,7 +4188,7 @@ export async function manageSessionPullRequestBindingForInvocation(input: JsonVa
       kind: 'automation', automationId: request.target.automationId, policy: { resultDelivery: 'none' },
       scopedTrigger: { sessionId: request.sessionId, triggerId: request.target.triggerId, triggerRevision: request.target.triggerRevision, triggerKind: request.target.triggerKind, principalPolicy: 'repositoryWriters', pullRequest: endpoint.pullRequest },
     });
-    const binding = await createConversationBindingWithAudience({ connectionId, expectedConnectionRevision: configurationRevision, target, allowBotSenders: principal.kind === 'bot', inputMode: 'allAllowedMessages', inboundDebounceMs: 0, enabled: retained?.enabled ?? request.target !== undefined }, {
+    const binding = await createConversationBindingWithAudience({ connectionId, target, allowBotSenders: principal.kind === 'bot', inputMode: 'allAllowedMessages', inboundDebounceMs: 0, enabled: retained?.enabled ?? request.target !== undefined }, connection, {
       kind: 'ready', endpoint, allowedPrincipalIds: [principal.id],
       ...(endpoints.sharedEndpointInputModes === undefined ? {} : { sharedEndpointInputModes: endpoints.sharedEndpointInputModes }),
     }, context);
@@ -4370,7 +4362,7 @@ async function mutateConversationBinding(
     const finalCurrent = await rereadBindingResolutionAfterProviderEffect({
       collection,
       connectionId: current.binding.connectionId,
-      expectedConnectionRevision: connection.configurationRevision,
+      expectedConnection: connection.configurationRevision,
       context,
     });
     if (finalCurrent.kind !== 'current') return finalCurrent;
@@ -4379,7 +4371,7 @@ async function mutateConversationBinding(
     const finalCurrent = await readCurrentBindingResolutionConnection({
       collection,
       connectionId: current.binding.connectionId,
-      expectedConnectionRevision: connection.configurationRevision,
+      expectedConnection: connection.configurationRevision,
       signal: context.signal,
     });
     if (finalCurrent.kind !== 'current') {

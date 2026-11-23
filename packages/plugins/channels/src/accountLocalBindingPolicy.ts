@@ -497,6 +497,29 @@ export function readConversationConnectionUpdateRow(input: Readonly<{
   };
 }
 
+function conversationConnectionConfigurationSubject(payload: ChannelStateJsonRecord): ChannelStateJsonRecord {
+  const { configurationRevision: _revision, providerReadiness: _readiness, pollFailure: _failure, ...subject } = payload;
+  return subject;
+}
+
+/** A native attach holds the full snapshot, so it can identify a notice-only revision. */
+export function isCurrentConversationConnectionForBinding(
+  current: ConversationConnectionUpdateRow,
+  expected: number | ConversationConnectionUpdateRow,
+): boolean {
+  if (typeof expected === 'number') return current.configurationRevision === expected;
+  if (current.configurationRevision === expected.configurationRevision) return true;
+  // A first poll can publish its history notice while attachment is in flight.
+  // Require one revision advance and the same configuration apart from the notice.
+  return current.configurationRevision === expected.configurationRevision + 1
+    && expected.lifecycle.historyGap === null
+    && current.lifecycle.historyGap !== null
+    && pluginJsonValuesEqual(
+      conversationConnectionConfigurationSubject(current.payload),
+      conversationConnectionConfigurationSubject({ ...expected.payload, historyGap: current.lifecycle.historyGap }),
+    );
+}
+
 /**
  * One revision owner for every connection writer. Poll/readiness observations
  * retain the approved configuration subject; configuration and recovery-custody
@@ -508,10 +531,10 @@ export function withConversationConnectionPayload(input: Readonly<{
   updatedAt?: number;
 }>): ConversationConnectionWriteValue {
   const current = readConversationConnectionUpdateRow({ row: input.row, connectionId: input.row.rowId });
-  const subject = (payload: ChannelStateJsonRecord) => Object.fromEntries(Object.entries(payload).filter(
-    ([key]) => key !== 'configurationRevision' && key !== 'providerReadiness' && key !== 'pollFailure',
-  ));
-  const changed = !pluginJsonValuesEqual(subject(current.payload), subject(input.payload));
+  const changed = !pluginJsonValuesEqual(
+    conversationConnectionConfigurationSubject(current.payload),
+    conversationConnectionConfigurationSubject(input.payload),
+  );
   if (changed && current.configurationRevision >= PLUGIN_COLLECTION_REVISION_MAX) {
     throw policyError('channels_connection_configuration_revision_exhausted', 'Connection configuration cannot advance further.');
   }

@@ -4,14 +4,14 @@ import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { ScmPullRequestOpenOrReuseResponseSchema } from '@happier-dev/protocol/scm/pullRequests';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createManifestTargetedContributionsService } from '@happier-dev/cli-common/plugins/registration';
-import type { JsonValue, PluginServices } from '@happier-dev/plugin-sdk';
+import type { JsonValue, PluginInvocationContext, PluginServices } from '@happier-dev/plugin-sdk';
 import { CHANNELS_PLUGIN, PLUGIN_MANIFEST as CHANNELS_MANIFEST } from '@happier-dev/plugins-channels/manifest';
 import { TRIAGE_PLUGIN } from '@happier-dev/plugins-triage/manifest';
 import { GITHUB_PLUGIN } from '@happier-dev/plugins-scm-github/manifest';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { WidgetInstanceActionInputSchemasV1, WidgetInstanceActionOutputSchemasV1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
-import { SessionPullRequestBindingInputV1Schema } from '@happier-dev/channels-protocol/v1';
+import { SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1, SessionPullRequestBindingInputV1Schema } from '@happier-dev/channels-protocol/v1';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { createPluginInvocationActionsService, type PluginActionsHostExecutor, type PluginActionsServiceSeed } from '@/plugins/runtime/invocation/services/actions';
 import { projectContributedActionFailure } from '@/plugins/runtime/invocation/actions/contributedActionFailure';
@@ -21,7 +21,9 @@ import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots'
 import { createTargetActionInvocationRegistry } from '@/plugins/runtime/invocation/targetActionRegistry';
 import { createTargetActionHostBindingResolver } from '@/plugins/runtime/hostAccess/resolve';
 import { createPluginInvocationServiceBinding, createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import { readConversationConnectionUpdateRow, withConversationConnectionPayload } from '../../../../../packages/plugins/channels/src/accountLocalBindingPolicy';
 import { CHANNEL_STATE_COLLECTION, CHANNEL_STATE_FIELD, CHANNEL_STATE_RECORD_KIND } from '../../../../../packages/plugins/channels/src/collections';
+import { runConversationCheckpointedPollForInvocation } from '../../../../../packages/plugins/channels/src/ingress';
 import { MemoryCollection } from '../../../../../packages/plugins/channels/src/testkit/memoryCollection';
 
 const boundary = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), rpc: vi.fn() }));
@@ -174,7 +176,7 @@ describe('CLI session pull request binding', () => {
       effect: { kind: 'pull_request', number: 42, url: pullRequest.url }, message: expect.stringContaining('denied') } });
   });
 
-  it.each(['current', 'provider retired', 'connection changed', 'comments permission denied'] as const)(
+  it.each(['current', 'first poll settles', 'provider retired', 'connection changed', 'comments permission denied'] as const)(
     'composes native open in a Team Session with a fresh repository and %s binding authority', async (authority) => {
     const ordinaryRead = boundary.get.getMockImplementation()!;
     boundary.get.mockImplementation(async (url: string) => {
@@ -194,6 +196,8 @@ describe('CLI session pull request binding', () => {
     const linkRequestId = 'pr-link-request';
     const warn = vi.fn<PluginServices['logger']['warn']>();
     let providerRetired = false;
+    let channelsContext: PluginInvocationContext | undefined;
+    let firstPollSettled = false;
     let instances: WidgetInstanceV1[] = [];
     let adds = 0;
     const hostBoundary: PluginActionsHostExecutor = { async execute(actionId, rawInput, context) {
@@ -209,14 +213,26 @@ describe('CLI session pull request binding', () => {
         // resolved, while Channels is establishing the Session baseline.
         if (rawInput && typeof rawInput === 'object' && 'cursor' in rawInput && rawInput.cursor === 'tail') {
           if (authority === 'provider retired') providerRetired = true;
-          if (authority === 'connection changed') {
+          if (authority === 'connection changed' || (authority === 'first poll settles' && !firstPollSettled)) {
             const connection = [...state.rows.values()].find(row =>
               row.value[CHANNEL_STATE_FIELD.recordKind] === CHANNEL_STATE_RECORD_KIND.connection);
             if (!connection) throw new Error('Expected an acknowledged fresh connection');
-            const payload = connection.value.payload;
-            if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Expected a connection payload');
-            await state.put({ ...connection.value, payload: { ...payload, configurationRevision: 2 } },
-              { expectedRevision: connection.revision });
+            if (authority === 'first poll settles') {
+              if (!channelsContext) throw new Error('Expected Channels invocation services');
+              const poll = await runConversationCheckpointedPollForInvocation({ connectionId: connection.rowId, waitMs: 0 }, channelsContext);
+              expect(poll).toMatchObject({ kind: 'committed' });
+              expect((await state.get(connection.rowId))?.value.payload).toMatchObject({
+                historyGap: { reason: 'providerHistoryUnavailable' },
+              });
+              firstPollSettled = true;
+            } else {
+              const { payload } = readConversationConnectionUpdateRow({ row: connection, connectionId: connection.rowId });
+              await state.put(withConversationConnectionPayload({ row: connection, payload: {
+                ...payload, enabled: false,
+                historyGap: { reason: 'providerHistoryUnavailable', reportedAt: Date.now() },
+              } }),
+                { expectedRevision: connection.revision });
+            }
           }
         }
         return { ok: true, result: { ok: true, projection: 'externalShareableV1',
@@ -311,22 +327,33 @@ describe('CLI session pull request binding', () => {
       resolveHostBinding: createTargetActionHostBindingResolver({ createServiceBinding: (occurrenceId, id) =>
         createPluginInvocationServiceBinding(occurrenceId, id) }),
       resolveCurrentPluginMaterializationRef: pluginId => createPluginActionCallerMaterializationFixture(pluginId).materialization,
-      createServices: seed => ({ ...createUnavailablePluginServices(),
-        actions: actionsFor(seed),
-        logger: { ...createUnavailablePluginServices().logger, warn },
-        targetedContributions: targeted.bind({ pluginId: seed.plugin.id, signal: seed.signal, isCurrent: seed.isOccurrenceCurrent }),
-        http: { ...http, async openWebSocket() { throw new Error('No PR attach socket'); } },
-        // The shared Collection and credential materializers are genuine external boundaries.
-        storage: { account: { collection: (definition: { id: string }) => {
-          if (definition.id !== CHANNEL_STATE_COLLECTION.id) throw new Error(`Unexpected Collection ${definition.id}`);
-          return state;
-        } } } as unknown as PluginServices['storage'],
-        connectedAccounts: { getBinding: async () => ({ account: credentialRef }),
-          materialize: async () => ({ kind: 'httpHeaders', headers: { authorization: 'Bearer fixture-token' } }) } as unknown as PluginServices['connectedAccounts'],
-        settings: { forScope: () => ({ snapshot: async () => ({ scope: { kind: 'account' as const }, revision: '1', values: {} }),
-          get: async () => null, describe: () => [], watch: () => ({ dispose() {} }),
-          set: async () => { throw new Error('No Settings writes'); }, reset: async () => { throw new Error('No Settings writes'); } }) },
-      }),
+      createServices: seed => {
+        const services: PluginServices = { ...createUnavailablePluginServices(),
+          actions: actionsFor(seed),
+          logger: { ...createUnavailablePluginServices().logger, warn },
+          targetedContributions: targeted.bind({ pluginId: seed.plugin.id, signal: seed.signal, isCurrent: seed.isOccurrenceCurrent }),
+          http: { ...http, async openWebSocket() { throw new Error('No PR attach socket'); } },
+          // The shared Collection and credential materializers are genuine external boundaries.
+          storage: { account: { collection: (definition: { id: string }) => {
+            if (definition.id !== CHANNEL_STATE_COLLECTION.id) throw new Error(`Unexpected Collection ${definition.id}`);
+            return state;
+          } } } as unknown as PluginServices['storage'],
+          connectedAccounts: { getBinding: async () => ({ account: credentialRef }),
+            materialize: async () => ({ kind: 'httpHeaders', headers: { authorization: 'Bearer fixture-token' } }) } as unknown as PluginServices['connectedAccounts'],
+          settings: { forScope: () => ({ snapshot: async () => ({ scope: { kind: 'account' as const }, revision: '1', values: {} }),
+            get: async () => null, describe: () => [], watch: () => ({ dispose() {} }),
+            set: async () => { throw new Error('No Settings writes'); }, reset: async () => { throw new Error('No Settings writes'); } }) },
+        };
+        if (authority === 'first poll settles' && seed.plugin.id === CHANNELS_MANIFEST.id
+          && seed.contribution.id === SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1) {
+          // Place the background poll on the same Machine as the provider fixture.
+          channelsContext = { ...seed, invokedAtMs: Date.now(), services: { ...services, actions: { ...services.actions,
+            getCurrentExecutionRouting: async () => ({ serverIdentityId: linkedSession.serverId,
+              machineId: providerMaterialization.materialization.machineId, pluginId: CHANNELS_MANIFEST.id }),
+          } } };
+        }
+        return services;
+      },
     });
     const invokeCore = async (localId: string, input: JsonValue) => {
       const result = await registry.invoke({ pluginId: CHANNELS_MANIFEST.id, localId, input, surface: 'cli',
@@ -363,7 +390,7 @@ describe('CLI session pull request binding', () => {
       executeCanonicalAction: async () => ({ ok: false, errorCode: 'unavailable', error: 'unavailable' }),
     });
     try {
-      if (authority !== 'current') {
+      if (authority !== 'current' && authority !== 'first poll settles') {
         const cause = authority === 'provider retired' ? 'channels_pr_link_provider_not_ready' : 'channels_pr_link_connection_not_ready';
         expect(await open()).toMatchObject({ success: true, pullRequest, result: 'created',
           outcome: { kind: 'effect_applied_with_warning',
@@ -383,6 +410,7 @@ describe('CLI session pull request binding', () => {
         return;
       }
       expect(await open()).toBe(nativeResponse);
+      if (authority === 'first poll settles') expect(firstPollSettled).toBe(true);
       expect(adds).toBe(1); expect(attaches).toBe(1);
       expect(instances[0]?.bindings.session).toEqual({ kind: 'value', value: linkedSession });
       nativeResponse = ScmPullRequestOpenOrReuseResponseSchema.parse({ success: true, pullRequest, result: 'reused', nextAction: { kind: 'none' } });
