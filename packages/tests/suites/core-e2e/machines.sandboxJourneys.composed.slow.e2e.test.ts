@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { ApprovalRequestPublicSettlementSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { SessionTranscriptGetSemanticSuccessSchema } from '@happier-dev/protocol/actions/specs/session/transcript';
 import { MachinePresetActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
@@ -13,6 +14,7 @@ import { ManagedMachinePresetRecipientCensusResultV1Schema } from '@happier-dev/
 import { sealManagedMachinePresetContentV1, type ManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { MachineIsolationGetResultV1Schema } from '@happier-dev/protocol/machines/machineIsolationPolicyV1';
 import { ManagedListOutputV1Schema, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedIntentResultSchema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { SessionWorkspaceReturnPreviewV1Schema } from '@happier-dev/protocol/actions/specs/session/projectFilesReturn';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityCollectionWritersClaimActionInputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
@@ -109,6 +111,7 @@ afterEach(async () => {
     if (fixture && account && ui) {
       for (const sessionId of sessionIds) await action('session.stop', { sessionId });
       for (const managed of await resources()) {
+        if (managed.allocation === 'confirmed-absent' && managed.desired === 'delete') continue;
         await action('machines.managed.delete', { homeId: fixture.serverId, managedId: managed.id, when: 'now',
           expectedRevision: managed.intentRevision, intent: 'delete', reviewedDependencies: true });
       }
@@ -162,12 +165,16 @@ afterAll(async () => {
   }
 }, 0);
 
-async function action(id: ActionId, input: unknown) {
+async function executeUiAction(id: ActionId, input: unknown) {
   if (!ui || !fixture) throw new Error('Person UI client not connected');
-  const result = await ui.executeConfirmed(id, input, {
+  return ui.executeConfirmed(id, input, {
     surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: ui.serverId,
     serverIdentityId: fixture.serverId, actionRequestId: randomUUID(),
   });
+}
+
+async function action(id: ActionId, input: unknown) {
+  const result = await executeUiAction(id, input);
   expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
   if (!result.ok) throw new Error(`${id}: ${result.errorCode}`);
   return result.result;
@@ -387,15 +394,13 @@ async function publicAction(id: ActionId, input: unknown) {
     if (!stored || typeof stored !== 'object' || !('request' in stored)) throw new Error('Approval settlement missing');
     execution = ApprovalRequestPublicSettlementSchema.parse(stored.request).execution;
   }
-  expect(execution, JSON.stringify(execution)).toMatchObject({ ok: true });
-  if (!execution.ok) throw new Error(`${id}: ${execution.errorCode}`);
-  return execution.result;
+  return execution;
 }
 
 it.each([
-  { ingress: 'UI Action', execute: action },
+  { ingress: 'UI Action', execute: executeUiAction },
   { ingress: 'public Action', execute: publicAction },
-])('MACH-J8 $ingress sends, wakes, stops, starts and deletes the same managed owner', async ({ ingress, execute }) => {
+])('MACH-J8 $ingress stops, starts and deletes the same native Docker sandbox', async ({ ingress, execute }) => {
   const startedAt = performance.now();
   const saved = await createPreset(`Ingress parity ${ingress}`);
   await configure(saved.preset.id, 'shared-kept');
@@ -403,10 +408,14 @@ it.each([
   await mkdir(project, { recursive: true });
   await writeFile(join(project, 'host-sentinel.txt'), 'ingress parity sentinel\n');
   const sessionId = await spawn(project);
-  const [initial] = await resources(saved.preset.id);
+  const managed = await resources(saved.preset.id);
+  expect(managed).toHaveLength(1);
+  const [initial] = managed;
   if (!initial) throw new Error('Session placement did not create its managed resource');
   expect(initial.controller).toEqual(controller);
-  expect(initial.enrolledMachineId).toBeTruthy();
+  // Native isolated Sessions use a holder on Docker. The enrolled guest and
+  // queued Send wake contract are exercised by machines.managedJourney.
+  expect(initial.enrolledMachineId).toBeUndefined();
   const nativeId = containerId(initial.id);
   const target = { homeId: fixture!.serverId, managedId: initial.id };
   const read = async () => {
@@ -419,8 +428,20 @@ it.each([
     { encoding: 'utf8' }).trim() === 'true';
   const power = async (intent: 'start' | 'stop') => {
     const row = await read();
-    expect(await execute('machines.managed.power.set', { ...target, when: 'now', intent,
-      expectedRevision: row.intentRevision })).toMatchObject({ kind: 'accepted', managedId: initial.id });
+    const execution = await execute('machines.managed.power.set', { ...target, when: 'now', intent,
+      expectedRevision: row.intentRevision });
+    expect(execution, JSON.stringify(execution)).toMatchObject({
+      ok: true, result: { kind: 'accepted', managedId: initial.id },
+    });
+    if (!execution.ok) throw new Error(`${ingress} ${intent} refused: ${execution.errorCode}`);
+    const accepted = ManagedIntentResultSchema.parse(execution.result);
+    if (accepted.kind === 'accepted' && accepted.operation) {
+      const operation = ActionOperationGetV1ResponseSchema.parse(await action('action.operations.get', {
+        serverId: ui!.serverId, machineId: controller.machineId, operationId: accepted.operation.operationId,
+        waitForTerminal: true,
+      }));
+      expect(operation, JSON.stringify(operation)).toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
+    }
     await waitFor(() => running() === (intent === 'start'),
       { timeoutMs: 60_000, context: `${ingress} native sandbox ${intent} settles` });
     expect(running()).toBe(intent === 'start');
@@ -429,36 +450,21 @@ it.each([
   const transcript = async () => SessionTranscriptGetSemanticSuccessSchema.parse(
     await action('session.transcript.get', { sessionId, roles: ['user', 'assistant'] }));
 
-  // Do not allow the initial reply to stand in for a reply after wake.
   await waitFor(async () => (await transcript()).items.some(item => item.role === 'assistant'),
     { timeoutMs: 60_000, context: `${ingress} initial sandbox reply` });
-  const row = await read();
-  await action('machines.managed.retention.update', { ...target, expectedIntentRevision: row.intentRevision,
-    retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true });
-  expect(await read()).toMatchObject({ id: initial.id, wakeOnAcceptedMessage: true });
   const staleRevision = await power('stop');
-  const prompt = `Wake ingress parity ${ingress} ${randomUUID()}`;
-  await execute('session.message.send', { sessionId, message: prompt });
-  await waitFor(async () => {
-    const page = await transcript();
-    const sent = page.items.find(item => item.role === 'user' && item.text === prompt);
-    return sent?.seq !== undefined && page.items.some(item => item.role === 'assistant'
-      && item.seq !== undefined && item.seq > sent.seq!);
-  }, { timeoutMs: 60_000, context: `${ingress} accepted Send wakes sandbox and produces its next reply` });
-  expect(running()).toBe(true);
-  expect(containerId(initial.id)).toBe(nativeId);
-  expect(await execute('machines.managed.power.set', { ...target, when: 'now', intent: 'stop',
-    expectedRevision: staleRevision })).toMatchObject({ kind: 'conflict', currentRevision: (await read()).intentRevision });
-  expect(running()).toBe(true);
-
-  await power('stop');
   await power('start');
+  const beforeStale = await read();
+  expect(await execute('machines.managed.power.set', { ...target, when: 'now', intent: 'stop',
+    expectedRevision: staleRevision })).toMatchObject({ ok: false, errorCode: 'intent_changed' });
+  expect((await read()).intentRevision).toBe(beforeStale.intentRevision);
+  expect(running()).toBe(true);
   expect(containerId(initial.id)).toBe(nativeId);
   await archiveSession(sessionId);
   const beforeDelete = await read();
   expect(await execute('machines.managed.delete', { ...target, when: 'now', intent: 'delete',
     expectedRevision: beforeDelete.intentRevision, reviewedDependencies: true }))
-    .toMatchObject({ kind: 'accepted', managedId: initial.id });
+    .toMatchObject({ ok: true, result: { kind: 'accepted', managedId: initial.id } });
   await waitFor(async () => {
     const nativeExists = execFileSync('docker', ['container', 'ls', '--all', '--quiet', '--no-trunc', '--filter', `id=${nativeId}`],
       { encoding: 'utf8' }).trim() !== '';

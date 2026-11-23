@@ -58,6 +58,29 @@ test('sandbox journeys reach the installed provisioner and managed ingress acros
   }
 });
 
+test('the Can-use member journey is selected for the signed Send and Machine access owners', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'affected-member-machine-'));
+  try {
+    const member = 'packages/tests/suites/core-e2e/machines.canUseMemberJourney.slow.e2e.test.ts';
+    await mkdir(join(root, member, '..'), { recursive: true });
+    await writeFile(join(root, member), 'export {};');
+    await cp('packages/tests/fixtures/cli-backends', join(root, 'packages/tests/fixtures/cli-backends'), { recursive: true });
+
+    for (const owner of [
+      'apps/cli/src/session/services/sendSessionMessage.ts',
+      'apps/cli/src/api/externalActionExecutionAuthorization.ts',
+      'apps/server/sources/app/machines/machineAccess.ts',
+      'packages/tests/src/fixtures/fake-claude-code-cli.cjs',
+    ]) {
+      const selection = await selectAffectedTests(root, [owner], { journeysOnly: true });
+      assert.deepEqual(selection.journeyFiles, [member], owner);
+      assert.equal(planAffectedTestCommands(selection)[0]?.id, 'core-e2e slow');
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 // Real Vitest graph on a small repository fixture; subprocess edges use the real stub specs.
 test('Cursor plugin change selects its stub scenarios and unrelated docs select no provider journeys', async () => {
   const root = await mkdtemp(join(tmpdir(), 'affected-providers-'));

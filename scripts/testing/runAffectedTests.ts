@@ -26,6 +26,7 @@ const UI_E2E_PREFIX = `${TESTS_DIR}/suites/ui-e2e/`;
 const FIRST_OPEN_BROWSER_SPEC = `${UI_E2E_PREFIX}firstOpen.browser.spec.ts`;
 const FIRST_OPEN_WEB_SETUP_SPEC = `${UI_E2E_PREFIX}setup.onboardingWizard.web.spec.ts`;
 const SANDBOX_JOURNEY = `${TESTS_DIR}/suites/core-e2e/machines.sandboxJourneys.composed.slow.e2e.test.ts`;
+const MEMBER_MACHINE_JOURNEY = `${TESTS_DIR}/suites/core-e2e/machines.canUseMemberJourney.slow.e2e.test.ts`;
 const AGENT_PREFIX = `${TESTS_DIR}/suites/agents/`;
 const MATRIX_FILE = `${AGENT_PREFIX}provider.matrix.test.ts`;
 type ProviderMatrixEntry = { preset: string; tier: 'smoke' | 'extended'; scenarios: string[] };
@@ -297,6 +298,16 @@ export async function selectAffectedTests(rootDir: string, changedFiles: readonl
         `${TESTS_DIR}/fixtures/machines/`,
       ].some(owner => file.startsWith(owner)))) {
     journeyFiles.push(SANDBOX_JOURNEY);
+  }
+  // Session MCP launches a vendor subprocess and dispatches over the installed Machine socket.
+  if (!journeyFiles.includes(MEMBER_MACHINE_JOURNEY) && existsSync(resolve(rootDir, MEMBER_MACHINE_JOURNEY))
+      && runtimeChanges.some(file => [
+        'apps/cli/src/session/services/sendSessionMessage.ts',
+        'apps/cli/src/api/externalActionExecutionAuthorization.ts',
+        'apps/server/sources/app/machines/machineAccess.ts',
+        `${TESTS_DIR}/src/fixtures/fake-claude-code-cli.cjs`,
+      ].includes(file))) {
+    journeyFiles.push(MEMBER_MACHINE_JOURNEY);
   }
   // cliLaunchSpec starts src/index.ts, which dynamically loads cli/bootstrap.
   const sharedProcesses = runtimeChanges.some(file => file === 'apps/cli/src/index.ts' || [
