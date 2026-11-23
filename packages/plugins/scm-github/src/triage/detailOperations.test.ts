@@ -18,6 +18,7 @@ import { GITHUB_TRIAGE_ACTION_IDS_V1, GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1, PLUGIN
 
 import {
   GITHUB_CONNECTED_ACCOUNT_PURPOSE,
+  GITHUB_CONNECTED_ACCOUNT_SERVICE,
   GITHUB_PLUGIN_ID,
 } from '../observations/githubProviderContracts.js';
 
@@ -1685,6 +1686,27 @@ describe('GitHub checks plane', () => {
 });
 
 describe('GitHub pull-request status operation', () => {
+  it('requires admitted GitHub sign-in even when the pull request is publicly readable', async () => {
+    const input = statusInput();
+    const signedOut = createStubGithubTransport({ binding: null,
+      respond: () => { throw new Error('Expected sign-in refusal before any GitHub request'); } });
+    const instance = { ...input.instance, binding: { purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
+      source: 'native' as const, service: GITHUB_CONNECTED_ACCOUNT_SERVICE } };
+
+    expect(await readGithubPullRequestStatus({ ...input, instance }, signedOut.context)).toEqual({
+      kind: 'unavailable', failure: { class: 'authentication', code: 'plugin_connected_account_native_unavailable' },
+    });
+    expect(signedOut.requests).toEqual([]);
+
+    const signedIn = statusTransport();
+    expect(await readGithubPullRequestStatus(input, signedIn.context)).toMatchObject({
+      kind: 'status', branch: { headRevision: HEAD_SHA },
+    });
+    expect(signedIn.requests).toEqual(expect.arrayContaining([expect.objectContaining({
+      method: 'GET', url: `https://api.github.com/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/pulls/1284`,
+    })]));
+  });
+
   it('retains current-head D-I14 fix evidence without fetching thread bodies or another snapshot', async () => {
     const stub = statusTransport(undefined, {
       reviewThreads: { nodes: [{ id: 'PRRT_resolved', isResolved: true }, { id: 'PRRT_open', isResolved: false }],
