@@ -1338,6 +1338,7 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
     const admission = binding.deploymentPreparationAdmission;
     if (!admission || !isDeploymentCreateHttpEffect(binding, effectActionId)) return null;
     if (proof.path === '/v1/deployments/targets/list') {
+        if (binding.custodianAccountId !== binding.accountId) return null;
         if (effectActionId !== binding.actionId || admission.operation !== 'create' && admission.operation !== 'targetCheck') return null;
         const owner = await readPreparationSourceOwnerInTx(tx, admission);
         const target = admission.operation === 'targetCheck' ? admission.target : undefined;

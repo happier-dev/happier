@@ -62,7 +62,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'sqlite') === 'mysql')('delega
         else process.env.HANDY_MASTER_SECRET = originalSecret;
     });
 
-    it('lets the installed signer list only the Source owner’s Link candidates', async () => {
+    it.each(['requester', 'foreign custodian'] as const)('limits the Source owner’s Link candidates with a %s signer', async signer => {
         const actor = await db.account.create({ data: { encryptionMode: 'plain' } });
         const team = await db.team.create({ data: { name: 'Another visible team' } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: 'owner' } });
@@ -70,10 +70,15 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'sqlite') === 'mysql')('delega
             serverId, requestKey: crypto.randomUUID(), name: 'Selected Source', audience: [],
         }));
         if (!opened.ok) throw new Error('Expected a saved Source');
+        const custodian = signer === 'requester' ? actor : await db.account.create({ data: { encryptionMode: 'plain' } });
         const signing = nacl.sign.keyPair();
         const installationId = crypto.randomUUID();
-        const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: actor.id,
+        const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: custodian.id,
             metadata: '{}', installationId, installationPublicKey: new Uint8Array(signing.publicKey) } });
+        if (signer === 'foreign custodian') {
+            await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id,
+                accountId: actor.id, accessLevel: 'admin', createdByAccountId: custodian.id } });
+        }
         const target = { kind: 'machine' as const, machineId: machine.id };
         const contribution = { pluginId: 'fixture.deploy', localId: 'platform' };
         const input = DeploymentTargetCheckInputV1Schema.parse({
@@ -89,6 +94,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'sqlite') === 'mysql')('delega
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
             deploymentPreparationAdmission: projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({ actionId, envelope }),
         }, { input });
+        expect(authorization.binding).toMatchObject({ accountId: actor.id, custodianAccountId: custodian.id });
         const path = '/v1/deployments/targets/list';
         const selection = { source: { kind: 'plugin', contribution }, targetKind: 'platform' };
         await withAuthenticatedTestApp(app => {
@@ -109,6 +115,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'sqlite') === 'mysql')('delega
             const list = (scope: unknown, selection?: unknown) => call(actionId, 'POST', path,
                 { serverId, scope, ...(selection === undefined ? {} : { selection }) });
             const admitted = await list(opened.source.owner, selection);
+            if (signer === 'foreign custodian') {
+                expect(admitted.statusCode, admitted.body).toBe(401);
+                return;
+            }
             expect(admitted.statusCode, admitted.body).toBe(200);
             expect(admitted.json()).toEqual({ ok: true, items: [], nextCursor: null, coverage: 'complete' });
             expect((await list({ kind: 'team', teamId: team.id }, selection)).statusCode).toBe(401);
