@@ -120,6 +120,22 @@ describe('daemon start graph in the single CLI graph', () => {
     expect(eagerCatalogImports.map((edge) => edge.path)).toEqual([]);
   });
 
+  it('keeps daemon and Session host control transport imports at their owners', () => {
+    const coldEdges = [
+      ['apps/cli/src/session/transport/rpc/localSessionRpcChannel.ts',
+        'packages/protocol/src/sessions/metadata/sessionMetadataSchemasV1.ts'],
+      ['apps/cli/src/session/transport/rpc/localSessionRpcChannel.ts',
+        'apps/cli/src/agent/runtime/session/process/agentRuntimeRunnerProtocol.ts'],
+      ['apps/cli/src/daemon/externalActions/daemonExternalActionTargetResolver.ts',
+        'apps/cli/src/daemon/workflows/recovery.ts'],
+    ] as const;
+    expect(coldEdges.filter(([owner, dependency]) => {
+      const ownerInput = inputs[owner];
+      expect(ownerInput, owner).toBeDefined();
+      return ownerInput.imports.some((edge) => edge.path === dependency && edge.kind !== 'dynamic-import');
+    })).toEqual([]);
+  });
+
   it('keeps owners the idle daemon never runs out of it', () => {
     expect(COLD_OWNERS.filter((owner) => !inputs[owner]), 'cold owners must stay bundled').toEqual([]);
     expect(COLD_OWNERS.filter((owner) => startGraph.has(owner))).toEqual([]);

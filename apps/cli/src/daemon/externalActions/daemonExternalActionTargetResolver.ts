@@ -34,8 +34,7 @@ import { rethrowRequesterHomeReadFailure } from "@/daemon/sessionEncryption/requ
 import { timeApprovalPhase, withApprovalActionTrace } from './webLatencyTrace';
 import { createCredentialedWorkflowActionAdmissionReader, createCredentialedWorkflowRunEncryptionResolver,
   readWorkflowActionInvocationEffect, type createWorkflowActionAdmissionReader } from '../workflows/workflowActionAdmission';
-import { isWorkflowDiscussionModelReservationCurrent,
-  type WorkflowDiscussionModelReservationCustody } from '../workflows/recovery';
+import type { WorkflowDiscussionModelReservationCustody } from '../workflows/recovery';
 import { createWorkflowRunStorageClient } from '../workflows/workflowRunStorageClient';
 
 type CurrentMachineExecutionOrigin = Readonly<{
@@ -341,6 +340,7 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
       // the Run's admitted principal is not re-authorized during replay.
       if (origin.caller.kind === 'workflowRun' && origin.caller.discussionModelReservation) {
         if (!input.workflowDiscussionModelReservationCustody) return stale('workflow_authorization_unavailable');
+        const { isWorkflowDiscussionModelReservationCurrent } = await import('../workflows/recovery');
         if (!await isWorkflowDiscussionModelReservationCurrent({
           ...input.workflowDiscussionModelReservationCustody,
           accountId: input.accountId,

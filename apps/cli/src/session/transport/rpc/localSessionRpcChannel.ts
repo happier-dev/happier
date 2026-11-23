@@ -1,4 +1,4 @@
-import { SessionLifecycleStateReasonSchema, type SessionLifecycleStateReason } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SessionLifecycleStateReasonSchema, type SessionLifecycleStateReason } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import { SessionRuntimeFailureCauseV1Schema, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { SessionSpawnLaunchErrorV1Schema, type SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
 import { createHash, randomBytes } from 'node:crypto';
@@ -27,7 +27,7 @@ import { observeLocalIpcPeerIdentity, resolveProcessCustodyPeerIdentityExecutabl
 import type { ProcessBirthWitness } from '@/daemon/processIdentity';
 import type { RpcLocalActionContext } from '@/api/rpc/types';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { AgentRuntimeRunnerBootstrapV1Schema, type AgentRuntimeRunnerBootstrapV1 } from '@/agent/runtime/session/process/agentRuntimeRunnerProtocol';
+import type { AgentRuntimeRunnerBootstrapV1 } from '@/agent/runtime/session/process/agentRuntimeRunnerProtocol';
 import { createLocalSessionRpcAgent } from './localSessionRpcAgent';
 
 /**
@@ -639,7 +639,7 @@ export type SessionHostLaunchRecordV1 = Readonly<{
   runnerBootstrap?: Readonly<{ path: string; bootstrap: AgentRuntimeRunnerBootstrapV1 }>;
 }>;
 
-function parseSessionHostLaunchRecord(value: unknown): SessionHostLaunchRecordV1 | null {
+async function parseSessionHostLaunchRecord(value: unknown): Promise<SessionHostLaunchRecordV1 | null> {
   if (value === undefined) return {};
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const { account, runnerBootstrap, ...rest } = value as Record<string, unknown>;
@@ -655,8 +655,10 @@ function parseSessionHostLaunchRecord(value: unknown): SessionHostLaunchRecordV1
   let parsedBootstrap: SessionHostLaunchRecordV1['runnerBootstrap'];
   if (runnerBootstrap !== undefined) {
     const { path, bootstrap } = (runnerBootstrap ?? {}) as Record<string, unknown>;
+    if (typeof path !== 'string' || !path) return null;
+    const { AgentRuntimeRunnerBootstrapV1Schema } = await import('@/agent/runtime/session/process/agentRuntimeRunnerProtocol');
     const parsed = AgentRuntimeRunnerBootstrapV1Schema.safeParse(bootstrap);
-    if (typeof path !== 'string' || !path || !parsed.success) return null;
+    if (!parsed.success) return null;
     parsedBootstrap = { path, bootstrap: parsed.data };
   }
   return { ...(parsedAccount ? { account: parsedAccount } : {}), ...(parsedBootstrap ? { runnerBootstrap: parsedBootstrap } : {}) };
@@ -721,14 +723,14 @@ export async function listLocalSessionHostPids(): Promise<number[]> {
   return pids;
 }
 
-function parseSessionHostAddRequest(body: unknown): SessionHostAddRequest | null {
+async function parseSessionHostAddRequest(body: unknown): Promise<SessionHostAddRequest | null> {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
   const { trackingKey, argv, env, cwd, launch } = body as Record<string, unknown>;
   if (typeof trackingKey !== 'string' || !trackingKey || typeof cwd !== 'string' || !cwd) return null;
   if (!Array.isArray(argv) || argv.length === 0 || argv.some(arg => typeof arg !== 'string')) return null;
   if (!env || typeof env !== 'object' || Array.isArray(env)
     || Object.values(env).some(value => typeof value !== 'string')) return null;
-  const parsedLaunch = parseSessionHostLaunchRecord(launch);
+  const parsedLaunch = await parseSessionHostLaunchRecord(launch);
   if (!parsedLaunch) return null;
   return { trackingKey, argv: argv as string[], env: env as Record<string, string>, cwd,
     ...(launch === undefined ? {} : { launch: parsedLaunch }) };
@@ -797,7 +799,7 @@ async function handleSessionHostRequest(current: Ingress, request: IncomingMessa
     }
     ended = watched;
   } else {
-    const add = parseSessionHostAddRequest(body);
+    const add = await parseSessionHostAddRequest(body);
     if (!add) {
       reply(response, 400, { error: 'Invalid session host request', errorCode: 'RPC_FORBIDDEN' });
       return;
