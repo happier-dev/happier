@@ -261,6 +261,7 @@ export function createDaemonMachineBootstrapRuntime(
     machineResourceSummary?: MachineResourceSummary;
     resolveManagedPurposeBindingIntent?: BootstrapRuntime['resolveManagedPurposeBindingIntent'];
     resolveManagedPurposeBindingIntentSelection?: BootstrapRuntime['resolveManagedPurposeBindingIntentSelection'];
+    observeConnectedAccountTargetAvailability?: BootstrapRuntime['observeConnectedAccountTargetAvailability'];
     teamCredentialNativeSource?: BootstrapRuntime['teamCredentialNativeSource'];
     mcpServers?: BootstrapRuntime['mcpServers'];
     openTeamDirect?: BootstrapRuntime['openTeamDirect'];
@@ -924,6 +925,7 @@ export function createDaemonMachineBootstrapRuntime(
     ...(params.resolveManagedPurposeBindingIntentSelection
       ? { resolveManagedPurposeBindingIntentSelection: params.resolveManagedPurposeBindingIntentSelection }
       : {}),
+    observeConnectedAccountTargetAvailability: params.observeConnectedAccountTargetAvailability,
     ...(params.teamCredentialNativeSource ? { teamCredentialNativeSource: params.teamCredentialNativeSource } : {}),
     listProviderConnectedAccountProfiles: params.listProviderConnectedAccountProfiles,
     ...(params.createAgentCatalogObservation

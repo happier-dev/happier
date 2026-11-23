@@ -43,7 +43,7 @@ import {
   type WorkspaceSyncStatusV1,
 } from '@happier-dev/protocol';
 import type { DaemonState } from '@/api/types';
-import type { ApiMachineClient } from '@/api/apiMachine';
+import { ApiMachineClient } from '@/api/apiMachine';
 import { decryptLegacy, encryptLegacy } from '@/api/encryption';
 import type { ManagedConnectionState } from '@happier-dev/connection-supervisor';
 import { createLocalServicesDaemonRuntime } from '../local/services/runtime';
@@ -64,7 +64,11 @@ import type { WorkflowCoordinatorResult } from '../workflows/coordinator';
 import { createDaemonMachineBootstrapRuntime, createProjectFiniteSourceManifestInspector } from './createDaemonMachineBootstrapRuntime';
 import { createBeforeShutdownDrain } from '../lifecycle/createBeforeShutdownDrain';
 import { createDaemonAdmissionDrain } from '../lifecycle/admissionDrain';
-import { retireMachineSyncRuntimeAttempt } from '../machine/bootstrapMachineSyncRuntime';
+import { bootstrapMachineSyncRuntime, retireMachineSyncRuntimeAttempt } from '../machine/bootstrapMachineSyncRuntime';
+import { createPurposeTargetResolver } from '../connectedServices/purposeBindings/resolveTarget';
+import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
+import { MUSE_ACCOUNT_SERVICE, museAccountDescriptor } from '../../../../../packages/plugins/muse/src/connectedAccounts/declarations';
 import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
 import { getMachineFinitePolicyV1 } from '@happier-dev/protocol/machines/machineFinitePolicyV1';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
@@ -193,6 +197,51 @@ function createBaseRuntimeParams(overrides: Partial<Parameters<typeof createDaem
 }
 
 describe('createDaemonMachineBootstrapRuntime', () => {
+  it('reads recovered Team source eligibility after the serving daemon restarts', async () => {
+    const credentials = { token: 'source-custodian', encryption: null };
+    const home = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { id: 'source-custodian' } });
+    const connect = vi.spyOn(ApiMachineClient.prototype, 'connect').mockImplementation(() => {});
+    onTestFinished(() => { home.mockRestore(); connect.mockRestore(); });
+    const account = { service: MUSE_ACCOUNT_SERVICE, accountId: 'saved-muse' };
+    const profile = QualifiedConnectedAccountProfileV4Schema.parse({ ref: account, status: 'connected',
+      authenticationModeId: 'native-import', revisionSemantics: 'revisioned', configurationReady: false,
+      configurationRevision: null, credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', kind: 'oauth', scopes: [] });
+    let accounts: readonly (typeof profile)[] = [];
+    // Supply the Home metadata at its IO boundary. Keep the purpose predicate,
+    // both daemon bootstrap stages, and the serialized Machine RPC real.
+    const resolveTarget = createPurposeTargetResolver({ available: true,
+      resolveService: async () => ({ service: MUSE_ACCOUNT_SERVICE, authentication: museAccountDescriptor.authentication }),
+      listAccounts: async () => accounts });
+    const machine = { id: 'source-broker', encryptionMode: 'plain' as const,
+      metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
+    const readReadinessFromStartedDaemon = async () => {
+      const params = { ...createBaseRuntimeParams({ api: await ApiClient.create(credentials), credentials,
+        workspaceSyncHandoffAdapter: undefined, getServerFeaturesSnapshot: () => ({ status: 'ready',
+          features: FeaturesResponseSchema.parse({ features: { providers: { enabled: true } } }) }) }),
+        observeConnectedAccountTargetAvailability: async (target: Parameters<typeof resolveTarget>[0], signal: AbortSignal) =>
+          (await resolveTarget(target, signal, true)) !== null };
+      const bootstrap = createDaemonMachineBootstrapRuntime(params);
+      const runtime = await bootstrapMachineSyncRuntime({ ...bootstrap, machine, machineId: machine.id,
+        preferredHost: 'test-host', happyHomeDir: configuration.happyHomeDir, happyLibDir: configuration.happyHomeDir,
+        filesystemAccessPolicy: { kind: 'osUser' }, takeoverRequested: false,
+        connectedServiceRefreshLoopHandle: null, connectedServiceQuotasLoopHandle: null });
+      try {
+        if (!runtime.apiMachine) throw new Error('Missing Machine RPC runtime');
+        return DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema.parse(await runtime.apiMachine.invokeLocalMachineAction(
+          RPC_METHODS.DAEMON_PROVIDERS_TEAM_CREDENTIAL_BROKER_ELIGIBILITY, { machineId: machine.id,
+            teamId: 'team', resourceId: 'share', expectedResourceRevision: 2, scope: 'source_credential',
+            source: { v: 1, kind: 'connected_account', target: { kind: 'account', account }, credentialIncarnation: 'saved-source' } },
+        ));
+      } finally {
+        await retireMachineSyncRuntimeAttempt(runtime);
+        await bootstrap.beforeShutdown();
+      }
+    };
+    await expect(readReadinessFromStartedDaemon()).resolves.toEqual({ status: 'unavailable', reason: 'source_unavailable' });
+    accounts = [profile];
+    await expect(readReadinessFromStartedDaemon()).resolves.toEqual({ status: 'eligible' });
+  });
+
   it('uses current machine CPU capacity for execution-run statistics after bootstrap', async () => {
     const credentials = { token: 'cpu-capacity-account', encryption: null };
     const runId = 'fin-type-1109b-capacity';
