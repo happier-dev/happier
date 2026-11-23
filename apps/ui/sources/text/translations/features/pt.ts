@@ -917,6 +917,7 @@ const deploymentPlatformLinkTranslations = {
     platformBuilds: 'A plataforma compila o repositório deste projeto no ramo que escolher.',
     managersOnly: 'Só os gestores deste ambiente podem ligar uma plataforma.',
     refusedRemedy: 'Verifique a conta e o projeto que escolheu e volte a verificar.',
+    connectionRequiresPermission: ({ permission }) => `Adicione ${permission} ao token conectado e volte a conectar.`,
     nothingDeployedBody: 'A primeira implementação compila este ramo na plataforma que ligar.',
     deployNoPlatform: 'Este ambiente ainda não tem um projeto de plataforma para onde implementar.',
     connectTitle: ({ platform }) => `Conecte ${platform} para implantar aqui`,

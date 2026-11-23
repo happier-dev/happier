@@ -107,9 +107,14 @@ export const DeploymentTargetGitSourceV1Schema = lazyZodSchema(() => z.discrimin
 ]));
 
 export function describeDeploymentTargetGitCreateV1(source: z.infer<typeof DeploymentTargetGitSourceV1Schema> | undefined,
-    platform: string, input: Readonly<{ resourceName?: string; repository?: string; productionBranch?: string }>): string | undefined {
-    if (source?.create !== 'branchHead' || !input.resourceName || !input.repository || !input.productionBranch) return;
-    return `Create service ${input.resourceName} from ${input.repository} on branch ${input.productionBranch}. ${platform} builds the latest commit on that branch and redeploys when it changes.`;
+    platform: string, input: Readonly<{ resourceName?: string; repository?: string; productionBranch?: string;
+        sourceMethod?: 'upload' | 'gitIntegration' }>): string | undefined {
+    if (source?.create !== 'branchHead' || input.sourceMethod === 'upload'
+        || !input.resourceName || !input.repository || !input.productionBranch) return;
+    const consequence = input.sourceMethod === 'gitIntegration'
+        ? 'Pushes to the production branch deploy Production.'
+        : `${platform} builds the latest commit on that branch and redeploys when it changes.`;
+    return `Create service ${input.resourceName} from ${input.repository} on branch ${input.productionBranch}. ${consequence}`;
 }
 
 export function deploymentTargetRoleWithNativeSelectorV1(base: PluginJsonSchemaV2, selection: PluginJsonSchemaV2): PluginJsonSchemaV2 {

@@ -45,8 +45,12 @@ function cloudflareErrors(body: Uint8Array): Record<string, unknown>[] {
 }
 
 /** A Cloudflare v4 403 is a token refusal only with code 10000; any other 403 is unclassified. */
+export function isCloudflareTokenRefusal(status: unknown, code: unknown): boolean {
+  return status === 403 && (code === 10000 || code === '10000');
+}
+
 export function cloudflareRefused(response: Readonly<{ status: number; body: Uint8Array }>): boolean {
-  return response.status === 403 && cloudflareErrors(response.body).some(error => error.code === 10000);
+  return response.status === 403 && cloudflareErrors(response.body).some(error => isCloudflareTokenRefusal(response.status, error.code));
 }
 
 class ProbeFailure extends Error {

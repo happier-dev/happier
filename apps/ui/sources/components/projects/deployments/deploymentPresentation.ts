@@ -6,6 +6,7 @@ import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/con
 import { resolveWorkStatusTone, type WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
 import type { ActionActorV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { t } from '@/text';
+import { isRecord } from '@happier-dev/protocol/common/records';
 import type { DeploymentActorPresentation } from './useDeploymentActorPresentations';
 import { readDeploymentRefusal } from './deploymentActionOutcome';
 import { readDeploymentFailureRecoveryV1, readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryPresentationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
@@ -45,6 +46,15 @@ export function deploymentActionRefusalRemedy(code: string): string {
     case 'unsupported': return t('projects.deployments.copy.unsupported');
     case 'other': return t('projects.deployments.copy.retry');
   }
+}
+
+/** The provider reports its missing token permission separately from Home access. */
+export function readDeploymentConnectionPermissionRemedy(code: string | undefined, details: unknown): string | null {
+  const permission = code === 'cloudflare_builds_configuration_edit_required' && isRecord(details)
+    ? details.requiredPermission : undefined;
+  return typeof permission === 'string' && permission
+    ? t('projects.deployments.platformLink.connectionRequiresPermission', { permission })
+    : null;
 }
 
 type ReceiptState = DeploymentReceiptHeaderV1['state'];

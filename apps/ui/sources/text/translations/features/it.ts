@@ -915,6 +915,7 @@ const deploymentPlatformLinkTranslations = {
     platformBuilds: 'La piattaforma compila il repository di questo progetto sul branch che scegli.',
     managersOnly: 'Solo i gestori di questo ambiente possono collegare una piattaforma.',
     refusedRemedy: 'Controlla l’account e il progetto scelti, poi verifica di nuovo.',
+    connectionRequiresPermission: ({ permission }) => `Aggiungi ${permission} al token connesso, poi riconnettilo.`,
     nothingDeployedBody: 'La prima distribuzione compila questo branch sulla piattaforma che colleghi.',
     deployNoPlatform: 'Questo ambiente non ha ancora un progetto sulla piattaforma in cui distribuire.',
     connectTitle: ({ platform }) => `Collega ${platform} per distribuire qui`,

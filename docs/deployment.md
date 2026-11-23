@@ -1703,10 +1703,15 @@ Before Create, the existing Cloudflare inspect Actions accept a source-choice
 draft and return `preparedNative.reviewNotice` without discovering or creating a
 provider resource. Inspect, Create and Prepare use one plugin-owned notice
 builder for the chosen target and source method.
-Workers creation currently declares upload only: its Builds connection/trigger
-API needs native repository identifiers and a separate build-token selection
-that the creation input does not yet supply. Existing linked Workers Builds
-continue through the existing trigger and `observeBuild` owners.
+Workers creation supports upload and Git integration with hosted GitHub and GitLab.
+Choose the repository, production branch, forge repository ID, forge account or
+group ID, and Cloudflare build-token UUID in the Create form. Review explains
+that pushes to the production branch deploy Production. Create connects the
+repository and configures the production trigger. Workers Builds needs a
+user-owned API token with **Workers Builds Configuration (Edit)**. A refused
+Builds write reports `cloudflare_builds_configuration_edit_required` with the
+required permission. Existing linked Workers Builds continue through the
+existing trigger and `observeBuild` owners.
 
 Manual-token Connect and health verify token activity, expiry and `not_before`,
 then use the configured Account ID as the identity and display name. The optional Features selection checks

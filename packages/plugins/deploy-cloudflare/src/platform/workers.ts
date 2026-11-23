@@ -5,6 +5,7 @@ import { isPluginError, type DeploymentTargetDeployInputV1, type DeploymentTarge
 import { isObject } from '../connectedAccounts/probe.js';
 import { request, failure, type DeploymentContext } from './deploymentHttp.js';
 import { observeBuild } from './builds.js';
+import { workerBuildsRepositoryMatches } from './pagesSource.js';
 import { type CloudflareRoleInput, type WorkerSelection as WorkerTargetSelection } from './targetSelection.js';
 
 export const workersAddressAccessId = 'cloudflare-workers-address';
@@ -57,13 +58,7 @@ export async function prepareWorker(input: WorkerSelection, context: WorkerConte
   let ready = false;
   if (trigger !== undefined) {
     if (!isObject(trigger) || trigger.external_script_id !== input.workerTag) return failure('provider_response_invalid', 'link');
-    const repository = trigger.repo_connection;
-    ready = (trigger.deleted_on === undefined || trigger.deleted_on === null) && isObject(repository)
-      && (repository.deleted_on === undefined || repository.deleted_on === null)
-      && repository.provider_type === 'github' && text(repository.repo_id)
-      && text(repository.provider_account_name) && text(repository.repo_name)
-      && input.repository.kind === 'github' && input.repository.deployment === 'https://github.com'
-      && `${repository.provider_account_name}/${repository.repo_name}`.toLowerCase() === input.repository.repository.toLowerCase();
+    ready = trigger.deleted_on == null && workerBuildsRepositoryMatches(trigger.repo_connection, input.repository);
   }
   return { providerIdentity: { providerAccountId: input.accountId, providerResourceId: input.workerTag, providerEnvironment: workerEnvironmentKey(input.scriptName) },
     providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: input.scriptName } }, triggerUuid: input.triggerUuid,

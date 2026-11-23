@@ -80,7 +80,7 @@ it('settles when Account availability arrives between the first read and its res
   }
 });
 
-it.each([false, true, 'git-grant', 'branch-set', 'branch-kept', 'branch-unconfirmed'] as const)('finishes an acknowledged created resource by exact association without creating it again; ambiguous create stays uncertain (%s)', async ambiguous => {
+it.each([false, true, 'git-grant', 'builds-permission', 'branch-set', 'branch-kept', 'branch-unconfirmed'] as const)('finishes an acknowledged created resource by exact association without creating it again; ambiguous create stays uncertain (%s)', async ambiguous => {
   const pluginId = 'com.example.create-cloud';
   const providerUrl = 'https://console.provider.test/exact-created-beta';
   const browserOpen = vi.fn();
@@ -109,6 +109,8 @@ it.each([false, true, 'git-grant', 'branch-set', 'branch-kept', 'branch-unconfir
           creates.push(input);
           if (ambiguous === 'git-grant') return { ok: false, error: 'needsGitAccess', details: { phase: 'link',
             reason: 'vercel_github_app_required', grantUrl: 'https://github.com/apps/vercel/installations/new' } };
+          if (ambiguous === 'builds-permission') return { ok: false, error: 'cloudflare_builds_configuration_edit_required',
+            details: { requiredPermission: 'Workers Builds Configuration (Edit)' } };
           if (typeof ambiguous === 'string' && ambiguous.startsWith('branch-')) return { ok: true,
             environmentId: environment.id, revision: 5, targetLinkId: 'created-link', targetLinkRevision: 1,
             productionBranchOutcome: ambiguous === 'branch-set' ? { status: 'set', branch: 'release' }
@@ -162,6 +164,17 @@ it.each([false, true, 'git-grant', 'branch-set', 'branch-kept', 'branch-unconfir
         .find(node => node.props.testID === 'project-deployments.platform.needsGitAccess');
       await act(async () => { await surfaceAction(card).onPress(); });
       expect(browserOpen.mock.calls.map(call => call[0])).toEqual(['https://github.com/apps/vercel/installations/new']);
+      expect(associations).toHaveLength(0);
+      return;
+    }
+    if (ambiguous === 'builds-permission') {
+      await waitForHomeGovernance(async () => {
+        await act(async () => {});
+        const card = screen.root.findAllByType(SurfaceStateCard)
+          .find(node => node.props.testID === 'project-deployments.platform.linkRefused');
+        expect(card?.props.diagnosticCode).toBe('cloudflare_builds_configuration_edit_required');
+        expect(card?.props.reason).toContain('Workers Builds Configuration (Edit)');
+      });
       expect(associations).toHaveLength(0);
       return;
     }

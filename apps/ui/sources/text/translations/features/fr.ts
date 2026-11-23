@@ -918,6 +918,7 @@ const deploymentPlatformLinkTranslations = {
     platformBuilds: 'La plateforme construit le dépôt de ce projet sur la branche choisie.',
     managersOnly: 'Seuls les gestionnaires de cet environnement peuvent lier une plateforme.',
     refusedRemedy: 'Vérifie le compte et le projet choisis, puis vérifie à nouveau.',
+    connectionRequiresPermission: ({ permission }) => `Ajoutez ${permission} au jeton connecté, puis reconnectez-le.`,
     nothingDeployedBody: 'Le premier déploiement construit cette branche sur la plateforme que tu lies.',
     deployNoPlatform: 'Cet environnement n’a pas encore de projet de plateforme où déployer.',
     connectTitle: ({ platform }) => `Connectez ${platform} pour déployer ici`,

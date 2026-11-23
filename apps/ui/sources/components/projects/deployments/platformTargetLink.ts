@@ -274,11 +274,12 @@ export function readPlatformReviewNotice(value: unknown): string | null {
 
 /** The declaration owns Git creation semantics; the draft supplies the user-reviewed operands. */
 export function readPlatformGitCreateReview(target: DeploymentPlatformTarget, draft: PlatformTargetProviderCreate): string | null {
-  const { resourceName, repository, productionBranch } = draft;
+  const { resourceName, repository, productionBranch, sourceMethod } = draft;
   return describeDeploymentTargetGitCreateV1(target.gitSource, target.title, {
     ...(text(resourceName) ? { resourceName } : {}),
     ...(record(repository) && text(repository.repository) ? { repository: repository.repository } : {}),
     ...(text(productionBranch) ? { productionBranch } : {}),
+    ...(sourceMethod === 'upload' || sourceMethod === 'gitIntegration' ? { sourceMethod } : {}),
   }) ?? null;
 }
 
@@ -382,6 +383,7 @@ export function disclosePlatformFields(
 ): readonly EffectiveActionInputField[] {
   const disclosed: EffectiveActionInputField[] = [];
   for (const field of fields) {
+    if (!field.visible) continue;
     disclosed.push(field);
     if (field.required && readHappierActionInputPath(values as Record<string, unknown>, field.path) === undefined) break;
   }

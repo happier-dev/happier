@@ -175,7 +175,8 @@ token owner because Cloudflare uses different verification endpoints, and
 restrict its permissions to the account ID configured for that connection.
 
 Verification reads token activity, its matching policy record and the provider's
-permission catalog. Workers requires both script and Git-build authority;
+permission catalog. Workers requires script write access and **Workers Builds
+Configuration (Edit)** on a user-owned API token for Builds writes.
 Pages requires its project/deployment authority. Tunnel and DNS need their own
 write permissions; DNS also checks the configured zone and its owning account.
 The token needs read access to its policies, and Workers and Pages need account

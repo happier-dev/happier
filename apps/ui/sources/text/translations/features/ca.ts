@@ -918,6 +918,7 @@ const deploymentPlatformLinkTranslations = {
     platformBuilds: 'La plataforma construeix el repositori d’aquest projecte a la branca que triïs.',
     managersOnly: 'Només els gestors d’aquest entorn poden enllaçar una plataforma.',
     refusedRemedy: 'Revisa el compte i el projecte que has triat i torna a comprovar.',
+    connectionRequiresPermission: ({ permission }) => `Afegeix ${permission} al testimoni connectat i torna a connectar.`,
     nothingDeployedBody: 'El primer desplegament construeix aquesta branca a la plataforma que enllacis.',
     deployNoPlatform: 'Aquest entorn encara no té cap projecte de plataforma on desplegar.',
     connectTitle: ({ platform }) => `Connecta ${platform} per desplegar-hi`,

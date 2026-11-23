@@ -87,6 +87,7 @@ export type DeploymentPlatformLinkCopy = Readonly<{
   platformBuilds: string;
   managersOnly: string;
   refusedRemedy: string;
+  connectionRequiresPermission: (params: { permission: string }) => string;
   nothingDeployedBody: string;
   deployNoPlatform: string;
   connectTitle: (params: { platform: string }) => string;
@@ -188,6 +189,7 @@ export const deploymentPlatformLinkTranslations = {
     platformBuilds: 'The platform builds this project’s repository at the branch you choose.',
     managersOnly: 'Only managers of this environment can link a platform.',
     refusedRemedy: 'Check the account and project you chose, then check again.',
+    connectionRequiresPermission: ({ permission }) => `Add ${permission} to the connected token, then reconnect.`,
     nothingDeployedBody: 'The first deploy builds this branch on the platform you link.',
     deployNoPlatform: 'This environment has no platform project to deploy to yet.',
     connectTitle: ({ platform }) => `Connect ${platform} to deploy here`,

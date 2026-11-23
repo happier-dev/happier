@@ -895,6 +895,7 @@ const deploymentPlatformLinkTranslations = {
     platformBuilds: '平台会按你选择的分支构建此项目的仓库。',
     managersOnly: '只有此环境的管理者可以关联平台。',
     refusedRemedy: '请核对所选的账户和项目，然后再次检查。',
+    connectionRequiresPermission: ({ permission }) => `为已连接的令牌添加 ${permission} 权限，然后重新连接。`,
     nothingDeployedBody: '首次部署会在你关联的平台上构建此分支。',
     deployNoPlatform: '此环境还没有可部署到的平台项目。',
     connectTitle: ({ platform }) => `连接 ${platform} 以在此部署`,

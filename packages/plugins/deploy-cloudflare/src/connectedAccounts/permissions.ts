@@ -5,6 +5,8 @@ import type { PluginConnectedAccountAuthenticationModeV2 } from '@happier-dev/pl
  * https://developers.cloudflare.com/tunnel/get-started/
  * Each inner group contains equivalent permissions accepted by that API.
  */
+export const workersBuildsEditPermission = 'Workers Builds Configuration (Edit)';
+
 const featurePermissions = {
   Workers: [['Workers Scripts Write'], ['Workers CI Write']],
   Pages: [['Pages Write']],
@@ -22,7 +24,10 @@ const featureGuide = (token: boolean) => Object.entries(featurePermissions).map(
   feature,
   items: [
     ...(token && feature === 'Workers' ? ['User-owned token'] : []),
-    ...groups.map(([preferred]) => feature === 'DNS' ? `${preferred} for the selected zone` : preferred),
+    ...groups.map(([preferred]) => {
+      if (feature === 'DNS') return `${preferred} for the selected zone`;
+      return token && preferred === 'Workers CI Write' ? workersBuildsEditPermission : preferred;
+    }),
   ],
 }));
 

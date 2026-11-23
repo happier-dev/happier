@@ -34,7 +34,9 @@ export function prepareRuntimeTargetCreateForHost(input: DeploymentTargetLinkCre
         ...(operand.repository ? { repository: operand.repository.repository } : {}),
         ...(operand.productionBranch ? { productionBranch: operand.productionBranch } : {}),
     };
-    const summary = describeDeploymentTargetGitCreateV1(target.gitSource, platformName, source);
+    const summary = describeDeploymentTargetGitCreateV1(target.gitSource, platformName, {
+        ...source, ...(operand.sourceMethod ? { sourceMethod: operand.sourceMethod } : {}),
+    });
     // The approval reads as the reviewed decision (what gets created, where, from what); provider ids stay in the input.
     const deploymentReview = normalizeStrictJsonValue(DeploymentApprovalReviewV1Schema.parse({ ...(summary ? { summary } : {}),
         platformCreate: { ...(environment ? { environment: { id: environment.id, name: environment.name } } : {}),

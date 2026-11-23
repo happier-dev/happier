@@ -9,10 +9,13 @@ import { patchHappierActionInputPath } from '@happier-dev/plugin-ui/presentation
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
+import { seedInputByFieldHints } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import {
   applyPlatformFieldPatch,
   buildPlatformTargetDraft,
   disclosePlatformFields,
+  drawPlatformFields,
+  readPlatformGitCreateReview,
   readDeploymentPlatformTargets,
   readPlatformInspectOutcome,
   readPlatformReviewNotice,
@@ -125,6 +128,38 @@ it('checks an existing Pages project from the sheet choices through the Pages in
   } finally {
     await kit.dispose();
   }
+});
+
+it('keeps the reviewed Workers Builds coordinates when editing the Create form', () => {
+  const platform = cloudflarePlatform('workers');
+  const scriptPath = 'providerEnvironment.selection.scriptName';
+  const tokenPath = 'providerEnvironment.selection.builds.buildTokenUuid';
+  const choices: Record<string, unknown> = {
+    providerAccountId: 'cf-account', resourceName: 'example', sourceMethod: 'gitIntegration',
+    productionBranch: 'release', [scriptPath]: 'example',
+    'providerEnvironment.selection.builds.repositoryId': '100',
+    'providerEnvironment.selection.builds.namespaceId': '101',
+    [tokenPath]: '42c231bf-fa21-41e4-94e8-5de1b555ba20',
+  };
+  const hints = { inputHints: { fields: [...platform.create?.fields ?? []] } };
+  let values = seedInputByFieldHints(hints, {});
+  for (const [path, value] of Object.entries(choices)) {
+    const effective = resolveEffectiveActionInputFields(hints, values, { includeHidden: true });
+    expect(disclosePlatformFields(effective, values).some(field => field.path === path)).toBe(true);
+    values = applyPlatformFieldPatch(effective, values, patchHappierActionInputPath(values, path, value)).values;
+  }
+  const draft = buildPlatformTargetDraft({ target: platform, ownerAccountId: 'owner', serverId: 'home',
+    environment: {}, account, repository, values });
+  expect(draft.providerEnvironment).toMatchObject({ kind: 'native', selection: { kind: 'script', scriptName: 'example',
+    builds: { repositoryId: '100', namespaceId: '101', buildTokenUuid: choices[tokenPath] } } });
+  const visible = disclosePlatformFields(resolveEffectiveActionInputFields(hints, values, { includeHidden: true }), values);
+  const drawn = drawPlatformFields(visible, values, field => ({
+    status: 'ready', options: field.path === scriptPath ? [{ value: 'example' }] : [],
+  }), () => false);
+  expect(drawn.fields.map(field => field.path)).not.toContain(scriptPath);
+  expect(drawn.fields.map(field => field.path)).not.toContain('providerEnvironment.kind');
+  expect(readPlatformGitCreateReview(platform, draft)).toContain('Pushes to the production branch deploy Production.');
+  expect(readPlatformGitCreateReview(platform, { ...draft, sourceMethod: 'upload' })).toBeNull();
 });
 
 it('checks an existing Worker from its sheet choices and returns the selected script tag', async () => {

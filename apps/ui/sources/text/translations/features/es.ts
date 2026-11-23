@@ -916,6 +916,7 @@ const deploymentPlatformLinkTranslations = {
     platformBuilds: 'La plataforma construye el repositorio de este proyecto en la rama que elijas.',
     managersOnly: 'Solo los gestores de este entorno pueden vincular una plataforma.',
     refusedRemedy: 'Revisa la cuenta y el proyecto que elegiste y vuelve a comprobar.',
+    connectionRequiresPermission: ({ permission }) => `Añade ${permission} al token conectado y vuelve a conectar.`,
     nothingDeployedBody: 'El primer despliegue construye esta rama en la plataforma que vincules.',
     deployNoPlatform: 'Este entorno aún no tiene un proyecto de plataforma donde desplegar.',
     connectTitle: ({ platform }) => `Conecta ${platform} para desplegar aquí`,

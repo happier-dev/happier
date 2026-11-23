@@ -910,6 +910,7 @@ const deploymentPlatformLinkTranslations = {
     platformBuilds: 'Платформа собирает репозиторий этого проекта из выбранной ветки.',
     managersOnly: 'Подключить платформу могут только управляющие этой средой.',
     refusedRemedy: 'Проверьте выбранные аккаунт и проект, затем проверьте ещё раз.',
+    connectionRequiresPermission: ({ permission }) => `Добавьте разрешение ${permission} к подключённому токену и подключите его заново.`,
     nothingDeployedBody: 'Первое развёртывание соберёт эту ветку на подключённой платформе.',
     deployNoPlatform: 'У этой среды пока нет проекта на платформе для развёртывания.',
     connectTitle: ({ platform }) => `Подключите ${platform}, чтобы развёртывать здесь`,

@@ -908,6 +908,7 @@ const deploymentPlatformLinkTranslations = {
     platformBuilds: 'Platforma buduje repozytorium tego projektu z wybranej gałęzi.',
     managersOnly: 'Tylko zarządzający tym środowiskiem mogą połączyć platformę.',
     refusedRemedy: 'Sprawdź wybrane konto i projekt, a potem sprawdź ponownie.',
+    connectionRequiresPermission: ({ permission }) => `Dodaj ${permission} do połączonego tokena i połącz się ponownie.`,
     nothingDeployedBody: 'Pierwsze wdrożenie zbuduje tę gałąź na połączonej platformie.',
     deployNoPlatform: 'To środowisko nie ma jeszcze projektu na platformie do wdrożenia.',
     connectTitle: ({ platform }) => `Połącz ${platform}, aby tu wdrażać`,

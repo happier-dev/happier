@@ -1,6 +1,7 @@
 import type { DeploymentTargetRepositoryAccessV1, DeploymentTargetRoleFailureV1 } from '@happier-dev/plugin-sdk';
 import { isObject } from '../connectedAccounts/probe.js';
 import { failure, request, type DeploymentContext } from './deploymentHttp.js';
+import { workerBuildsRepositoryMatches } from './pagesSource.js';
 
 export type PreviewSelection = Readonly<{ accountId: string; workerTag: string; scriptName: string; previewName: string;
   repository: DeploymentTargetRepositoryAccessV1['repository'] }>;
@@ -38,12 +39,7 @@ export async function preparePreview(input: PreviewSelection, context: Deploymen
   const worker = await request(context, input.accountId, `/builds/workers/${encodeURIComponent(input.workerTag)}`, 'link');
   if ('code' in worker) return worker;
   if (!isObject(worker.value) || worker.value.script_tag !== input.workerTag) return failure('provider_response_invalid', 'link');
-  const git = worker.value.git_repository;
-  const ready = worker.value.previews_enabled === true && isObject(git) && git.provider_type === 'github'
-    && typeof git.repo_id === 'string' && git.repo_id.length > 0
-    && typeof git.provider_account_name === 'string' && typeof git.repo_name === 'string'
-    && input.repository.kind === 'github' && input.repository.deployment === 'https://github.com'
-    && `${git.provider_account_name}/${git.repo_name}`.toLowerCase() === input.repository.repository.toLowerCase();
+  const ready = worker.value.previews_enabled === true && workerBuildsRepositoryMatches(worker.value.git_repository, input.repository);
   return { previewId, previewName: input.previewName, gitBranch: builds.value.branch,
     repositoryAccess: { status: ready ? 'ready' : 'needsGitAccess', repository: input.repository } };
 }

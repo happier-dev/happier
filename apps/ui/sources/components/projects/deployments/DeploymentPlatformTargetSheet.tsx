@@ -31,6 +31,7 @@ import type { DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protoc
 import {
   ActionInputFields,
   getValueAtPath,
+  setValueAtTopLevelPatch,
   type ActionFieldOption,
 } from '@/components/sessions/actions/ActionInputFields';
 import { useInputFieldOptions } from '@/components/sessions/actions/useInputFieldOptions';
@@ -63,7 +64,7 @@ import { readProjectRepositoryIdentityV1 } from '@/sync/domains/widgets/projectW
 import { t } from '@/text';
 
 import { readDeploymentActionError, readDeploymentRefusal } from './deploymentActionOutcome';
-import { deploymentActionRefusalRemedy } from './deploymentPresentation';
+import { deploymentActionRefusalRemedy, readDeploymentConnectionPermissionRemedy } from './deploymentPresentation';
 import type { createDeploymentActions } from './deploymentActions';
 import { isJsonObject, projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { DeploymentSourceMethodChoice } from './DeploymentSourceMethodChoice';
@@ -399,7 +400,7 @@ export function DeploymentPlatformTargetEditor(
   );
   const effectiveFields = React.useMemo(
     () => form ? resolveEffectiveActionInputFields(
-      { inputHints: { fields: [...form.fields] } }, draft ?? values,
+      { inputHints: { fields: [...form.fields] } }, draft ?? values, { includeHidden: true },
     ) : [],
     [form, draft, values],
   );
@@ -476,14 +477,14 @@ export function DeploymentPlatformTargetEditor(
   // Cloudflare account behind the sole connection, or the Worker just named on Create new (PAGE-ACCEPT-176 R8-D4, R10-D6).
   const mayPreselect = draft !== null && !connectionNeeded && busy === null && !reviewingCreate;
   const soleChoice = mayPreselect ? fields.reduce<Readonly<{ path: string; value: ActionFieldOption['value'] }> | null>((found, field) => {
-    if (found || !field.required || field.allowCustomValue || field.widget !== 'select' || field.path.includes('.')) return found;
-    if (values[field.path] !== undefined || (cursors[field.path]?.length ?? 0) > 0) return found;
+    if (found || !field.required || field.allowCustomValue || field.widget !== 'select') return found;
+    if (getValueAtPath(values, field.path) !== undefined || (cursors[field.path]?.length ?? 0) > 0) return found;
     const choices = options.state(field);
     if (choices.status !== 'ready' || choices.nextCursor !== undefined) return found;
     const option = findSoleEligibleOption(choices.options, choice => !choice.disabled);
     return option ? { path: field.path, value: option.value } : found;
   }, null) : null;
-  const applySoleChoice = useEventCallback(() => { if (soleChoice) patch({ ...values, [soleChoice.path]: soleChoice.value }); });
+  const applySoleChoice = useEventCallback(() => { if (soleChoice) patch(setValueAtTopLevelPatch(values, soleChoice.path, soleChoice.value)); });
   // The choice is rebuilt each render; its serialized form says when it changed.
   const soleChoiceKey = soleChoice ? JSON.stringify(soleChoice) : null;
   React.useEffect(() => { if (soleChoiceKey) applySoleChoice(); }, [soleChoiceKey, applySoleChoice]);
@@ -639,8 +640,9 @@ export function DeploymentPlatformTargetEditor(
   const createSourceMethod = draftMethod.success ? draftMethod.data : sourceMethod;
   const providerEnvironment = draft?.providerEnvironment;
   const gitCreateReview = create && target && draft ? readPlatformGitCreateReview(target, draft) : null;
-  const hasDeclaredCreateReview = target?.gitSource?.create === 'branchHead';
-  const noticeKey = !hasDeclaredCreateReview && onPrepared && create && createIntentReady && target && account
+  // Branch-head deploy providers also disclose what Send builds (Pages source mode is fixed at creation).
+  const needsProviderNotice = !gitCreateReview || target?.gitSource?.guarantee === 'branchHead';
+  const noticeKey = needsProviderNotice && onPrepared && create && createIntentReady && target && account
     ? JSON.stringify([target.key, account, createSourceMethod ?? null, providerEnvironment ?? null]) : null;
   const [createNotice, setCreateNotice] = React.useState<Readonly<{
     key: string;
@@ -670,7 +672,7 @@ export function DeploymentPlatformTargetEditor(
     return () => { current = false; };
   }, [noticeKey, readCreateNotice]);
   const currentNotice = createNotice?.key === noticeKey ? createNotice : null;
-  const reviewNotice = gitCreateReview ?? currentNotice?.notice ?? null;
+  const reviewNotice = [gitCreateReview, currentNotice?.notice].filter(Boolean).join(' ') || null;
   React.useEffect(() => {
     if (!onPrepared || !create) return;
     if (!createIntentReady || !draft) { onPrepared(null); return; }
@@ -964,10 +966,11 @@ export function DeploymentPlatformTargetEditor(
             size="line"
             kind="error"
             title={t('projects.deployments.platformLink.linkRefused')}
-            reason={linkRefused.code === DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION
-              ? deploymentActionRefusalRemedy(linkRefused.code)
-              : readDeploymentRefusal(linkRefused.code).reason === 'permission'
-                ? t('projects.deployments.platformLink.managersOnly') : t('projects.deployments.nothingChanged')}
+            reason={readDeploymentConnectionPermissionRemedy(linkRefused.code, linkRefused.details)
+              ?? (linkRefused.code === DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION
+                ? deploymentActionRefusalRemedy(linkRefused.code)
+                : readDeploymentRefusal(linkRefused.code).reason === 'permission'
+                  ? t('projects.deployments.platformLink.managersOnly') : t('projects.deployments.nothingChanged'))}
             diagnosticCode={linkRefused.code}
           />
         ) : null}

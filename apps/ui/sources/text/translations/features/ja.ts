@@ -906,6 +906,7 @@ const deploymentPlatformLinkTranslations = {
     platformBuilds: 'プラットフォームが、選んだブランチでこのプロジェクトのリポジトリをビルドします。',
     managersOnly: 'この環境の管理者だけがプラットフォームを連携できます。',
     refusedRemedy: '選んだアカウントとプロジェクトを確認してから、もう一度チェックしてください。',
+    connectionRequiresPermission: ({ permission }) => `接続済みのトークンに ${permission} を追加して、再接続してください。`,
     nothingDeployedBody: '最初のデプロイで、連携したプラットフォーム上でこのブランチがビルドされます。',
     deployNoPlatform: 'この環境にはまだデプロイ先のプラットフォームのプロジェクトがありません。',
     connectTitle: ({ platform }) => `ここにデプロイするには ${platform} を接続`,

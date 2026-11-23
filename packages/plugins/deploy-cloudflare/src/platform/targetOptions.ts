@@ -73,6 +73,10 @@ async function read(input: Input, context: DeploymentContext) {
     } else if (input.product === 'pages') {
       path = `/pages/projects${params.size ? `?${params}` : ''}`;
     } else if (input.product === 'workers') {
+      if (input.fieldPath === 'providerEnvironment.selection.scriptName') {
+        if (!input.resourceName) return missingDependency('resourceName');
+        return { options: options([{ value: input.resourceName, label: input.resourceName }], input.query) };
+      }
       if (input.fieldPath === 'providerEnvironment' && input.resourceName) return { options: options([
         { value: { kind: 'native', selection: { kind: 'script', scriptName: input.resourceName } }, label: input.resourceName },
       ], input.query) };
