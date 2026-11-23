@@ -71,7 +71,7 @@ async function waitForTerminalStreamMarker(params: Readonly<{
 
 describe('registerMachineTerminalRpcHandlers real PTY QA', () => {
   const holderPath = process.env.HAPPIER_SESSION_HOLDER_TEST_EXECUTABLE ?? resolveSessionHolderExecutablePath();
-  it.runIf(process.platform === 'linux' && !!holderPath)('opens only an admitted managed Project shell through the holder', async () => {
+  it.runIf(process.platform === 'linux' && !!holderPath)('opens an admitted managed Project shell through the holder and closes it after exit', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-managed-terminal-')));
     const handlers = new Map<string, RpcHandler<unknown, unknown>>();
     const controller = { machineId: 'machine', installationId: 'installation' };
@@ -134,6 +134,13 @@ describe('registerMachineTerminalRpcHandlers real PTY QA', () => {
       expect(localSpawn).not.toHaveBeenCalled();
       expect(openChannel).toHaveBeenCalledTimes(1);
       await expect(exits[0]).resolves.toBe(0);
+      await expect(manager.waitForExit({ terminalId })).resolves.toMatchObject({ kind: 'exited' });
+      expect(manager.list()).toMatchObject([{ terminalId, ended: true }]);
+      const close = handlers.get(RPC_METHODS.DAEMON_TERMINAL_CLOSE)!;
+      await expect(close({ terminalId }, differentAccount)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+      await expect(close({ terminalId }, context)).resolves.toEqual({ ok: true });
+      expect(manager.list()).toEqual([]);
+      await expect(close({ terminalId }, context)).resolves.toEqual({ ok: true });
     } finally {
       registration.dispose(); manager.dispose(); vi.restoreAllMocks(); await rm(root, { recursive: true, force: true });
     }

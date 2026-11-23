@@ -638,10 +638,9 @@ export function createTerminalPtySessionManager(params: Readonly<{
     notifyLiveWorkChanged();
   };
 
-  const closeById = (terminalId: string): SimpleOk | ErrorResult => {
+  const closeById = (terminalId: string): SimpleOk => {
     const session = sessionsById.get(terminalId);
-    if (!session) return okDisabled('terminal_not_found');
-    removeSession(session);
+    if (session) removeSession(session);
     return { ok: true };
   };
 
