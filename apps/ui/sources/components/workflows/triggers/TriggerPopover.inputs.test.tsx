@@ -324,6 +324,52 @@ describe('Run a workflow trigger inputs', () => {
         expect(resolveWorkflowStepSelectionV1({ defaults: target.definition.defaults, purpose: 'authoring' }).selection.connectedServices)
             .toEqual(connectedServices);
     });
+    it('keeps a saved prompt Role when the contextual Agent becomes ready', async () => {
+        const { PromptAgentRows } = await import('./TriggerPopover');
+        const { createMachineReadBatchResponseFixture, createReadyMachineAgentInventoryFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { refreshMachineAgents } = await import('@/agents/machineAgents/useMachineAgents');
+        const machine = createMachineFixture({ id: 'role-trigger-machine', activeAt: Date.now(), storageMode: 'plain',
+            access: createPlainMachineRowFixture({ id: 'role-trigger-machine', accountId: 'account-a' }).access });
+        getStorage().setState({ machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] } });
+        publishMachineActivityForTest([machine]);
+        const machineRow = createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a' });
+        home.answer(serverId, `/v1/machines/${machine.id}`, { body: { machine: machineRow } });
+        home.answer(serverId, 'POST /v1/machines/read-batch', { select: async input => ({
+            body: await createMachineReadBatchResponseFixture(input, id => id === machine.id ? machineRow : null).json(),
+        }) });
+        home.answer(serverId, '/v1/account/entity-rows/acp', { body: { status: 'absent' } });
+        const inventory = createReadyMachineAgentInventoryFixture([{ agentId: 'claude', title: 'Claude Code' }]);
+        machineRpc.mockImplementation(async (request) => {
+            if (request.method === `${machine.id}:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`) {
+                return { protocolVersion: 1, projection: inventory.projection };
+            }
+            if (request.method === `${machine.id}:${RPC_METHODS.CAPABILITIES_DETECT}`) return inventory.capabilities;
+            if (request.method === `${machine.id}:${RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST}`) return { jobs: [] };
+            return { error: 'method_not_found' };
+        });
+        const definition = WorkflowDefinitionV1Schema.parse({ version: 1, defaults: { roleId: 'saved-reviewer' },
+            blocks: [{ kind: 'step', id: 'review', document: { text: 'Review', references: [], attachments: [] },
+                input: [], result: { kind: 'text' } }] });
+        const pending = vi.fn();
+        const retained = vi.fn();
+        const shared = { machineId: machine.id, serverId, directory: '/repo' };
+        await renderScreen(<>
+            <PromptAgentRows {...shared} testID="new-prompt" then={{ kind: 'sendPrompt', prompt: 'Review' }} onChange={pending} />
+            <PromptAgentRows {...shared} testID="saved-prompt"
+                then={{ kind: 'sendPrompt', prompt: 'Review', sourceDefinition: definition }} onChange={retained} />
+        </>);
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        if (!accountLifetime) throw new Error('Expected the trigger Account scope');
+        // The prompt observes readiness acquired by the normal Machine inventory owner.
+        await act(async () => refreshMachineAgents({ serverId, machineId: machine.id, accountLifetime, agentId: 'claude' }));
+        await waitForHomeGovernance(() => expect(pending).toHaveBeenCalledWith(expect.objectContaining({
+            selection: expect.objectContaining({ agentTarget: expect.any(Object) }),
+        })));
+        expect(retained).not.toHaveBeenCalled();
+    });
+
+
     it('shows two When choices side by side and switches with one press', async () => {
         const screen = await renderScreen(<TriggerPopover testID="when-choice" anchorRef={React.createRef()}
             onRequestClose={vi.fn()} whenKinds={['schedule', 'pluginEvent']} sessionId={null}

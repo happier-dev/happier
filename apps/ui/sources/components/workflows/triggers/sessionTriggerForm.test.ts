@@ -220,11 +220,11 @@ describe('session trigger form', () => {
     it('keeps a new Account prompt incomplete until its contextual Agent is selected', () => {
         expect(buildTriggerTarget({ kind: 'sendPrompt', prompt: 'Review the changes' }, 'account')).toBeNull();
     });
-    it('changes a retained step Agent through the canonical engine arm without losing other settings', () => {
+    it('changes a retained step Agent without replacing the default Agent or other settings', () => {
         const created = buildTriggerTarget({ kind: 'sendPrompt', prompt: 'Review', selection }, 'account');
         if (created?.kind !== 'inline') throw new Error('expected an inline target');
         const target = { ...created, definition: { ...created.definition, blocks: created.definition.blocks.map(block =>
-            block.kind === 'step' ? { ...block, execution: { engine: created.definition.defaults.engine,
+            block.kind === 'step' ? { ...block, execution: { agentTarget: selection.agentTarget,
                 permissionMode: 'read-only' as const } } : block) } };
         const original = readTriggerThen(target);
         expect(buildTriggerTarget(original, 'account')).toEqual(target);
@@ -236,7 +236,8 @@ describe('session trigger form', () => {
         if (step?.kind !== 'step') throw new Error('expected an Agent step');
         expect(resolveWorkflowStepSelectionV1({ defaults: changed.definition.defaults, step: step.execution,
             purpose: 'authoring' }).selection).toMatchObject({ agentTarget, permissionMode: 'read-only' });
-        expect(step.execution).not.toHaveProperty('agentTarget');
+        expect(step.execution?.agentTarget).toEqual(agentTarget);
+        expect(changed.definition.defaults.agentTarget).toEqual(selection.agentTarget);
         expect(validateWorkflowDefinition(changed.definition).valid).toBe(true);
     });
     it('keeps an inputless predecessor Session start intact when reviewing its trigger', () => {

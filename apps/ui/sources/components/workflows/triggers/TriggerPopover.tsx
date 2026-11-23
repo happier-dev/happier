@@ -37,7 +37,7 @@ import { useViewportClass } from '@/utils/platform/useViewportClass';
 import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
 import { SessionAuthoringControls } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
 import { useSessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/useSessionAuthoringControlFacts';
-import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
+import { readWorkflowEngineChoiceV1, resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import { withWorkflowAuthoringEngineFields } from '@/sync/domains/workflows/workflowAuthoringEngineSelection';
 import { useActionFieldOptionsForMachine } from '@/components/sessions/actions/useSessionActionFieldOptions';
 import { findWorkflowActionSpec } from '@/components/workflows/presentation/workflowActionCatalog';
@@ -1038,7 +1038,7 @@ export function PromptAgentRows(props: Readonly<{
         step: only?.kind === 'step' ? only.execution : undefined, purpose: 'authoring' });
     const values = props.then.selection === undefined ? retained.selection
         : resolveWorkflowStepSelectionV1({ defaults: withWorkflowAuthoringEngineFields(retained.selection, props.then.selection), purpose: 'authoring' }).selection;
-    const retainedEngine = only?.kind === 'step' ? only.execution?.engine ?? source?.defaults.engine : source?.defaults.engine;
+    const retainedEngine = readWorkflowEngineChoiceV1(source?.defaults ?? {}, only?.kind === 'step' ? only.execution : undefined);
     const defaultAgentTarget = facts.contextualDefaultAgentTarget;
     React.useEffect(() => {
         if (values.agentTarget != null || retainedEngine !== undefined || defaultAgentTarget == null) return;
