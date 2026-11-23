@@ -1710,8 +1710,7 @@ describe('ApprovalDetailScreen', () => {
       automationId: 'automation-freeze', triggerId: 'trigger-freeze', triggerRevision: 1,
       workflowId: 'artifact-release-freeze', workflowRevision: 3, ownerAccountId: 'account-mara' };
     const run = { automationId: selected.automationId, triggerId: selected.triggerId, runId: 'run-freeze' };
-    const request = ApprovalRequestV2Schema.parse({ ...JSON.parse(artifact.body), status: 'rejected', updatedAtMs: 3,
-      decision: { kind: 'reject', decidedAtMs: 3 }, automaticChecks: {
+    const request = ApprovalRequestV2Schema.parse({ ...JSON.parse(artifact.body), automaticChecks: {
         phase: 'override', humanApprovalRequired: false, subjects: [], selectionStatus: 'ready', notices: [],
         selected: [selected], consents: [{ automationId: run.automationId, triggerId: run.triggerId, decision: 'allow' }],
         runs: [run], results: [{ ...run, outcome: 'failed', reason: 'content_unavailable' }],
@@ -1720,10 +1719,53 @@ describe('ApprovalDetailScreen', () => {
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
     const screen = await renderScreen(<ApprovalDetailScreen artifactId={artifact.id} />);
 
+    const execution = { executedAtMs: 3, ok: false, errorCode: 'action_interception_rejected',
+      error: 'action_interception_rejected', effectAttempted: false, details: { message: 'content_unavailable' } } as const;
+    const settled = ApprovalRequestV2Schema.parse({ ...request, status: 'rejected', updatedAtMs: 3,
+      decision: { kind: 'reject', decidedAtMs: 3 } });
+    remoteArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(settled), body: JSON.stringify(settled) };
+    daemonReply = { ok: true, result: { status: 'rejected', execution } };
+    const { Modal } = await import('@/modal');
+
+    expect(screen.findByTestId('approvals.cancel')).toBeNull();
+    expect(screen.findByTestId('approvals.session-consent')).toBeNull();
+    await screen.pressByTestIdAsync('approvals.reject');
+    await vi.waitFor(() => expect(approvalItem(screen, 'approvals.status')?.props.detail).toBe('approvals.status.rejected'));
+    expect(Modal.alert).not.toHaveBeenCalled();
     expect(approvalItem(screen, 'approvals.status')?.props.detail).toBe('approvals.status.rejected');
     expect(screen.findByTestId('approvals.automatic-checks:override')).toBeNull();
     expect(screen.findByTestId('approvals.automatic-checks:refused')).not.toBeNull();
     expect(screen.findByTestId('approvals.automatic-checks:reason').props.children).toBe('workflows.contentUnavailable');
+  });
+
+  it('shows a failed action inline after the person skips its shared check', async () => {
+    const artifact = await createDaemonRoutedApprovalArtifact();
+    const selected = { phase: 'before', actionIds: ['session.title.set'], mode: 'wait', onFailure: 'ask',
+      automationId: 'automation-freeze', triggerId: 'trigger-freeze', triggerRevision: 1,
+      workflowId: 'artifact-release-freeze', workflowRevision: 3, ownerAccountId: 'account-mara' };
+    const consent = { automationId: selected.automationId, triggerId: selected.triggerId, decision: 'pending' } as const;
+    const request = ApprovalRequestV2Schema.parse({ ...JSON.parse(artifact.body), automaticChecks: {
+      phase: 'consent', humanApprovalRequired: false, subjects: [], selectionStatus: 'ready', notices: [],
+      selected: [selected], consents: [consent], runs: [], results: [],
+    } });
+    currentArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
+    const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId={artifact.id} />);
+
+    const execution = { executedAtMs: 3, ok: false, errorCode: 'action_failed', error: 'action_failed',
+      effectAttempted: true } as const;
+    const settled = ApprovalRequestV2Schema.parse({ ...request, status: 'failed', updatedAtMs: 3, execution,
+      automaticChecks: { ...request.automaticChecks, phase: 'passed', consents: [{ ...consent, decision: 'skip' }] },
+    });
+    remoteArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(settled), body: JSON.stringify(settled) };
+    daemonReply = { ok: true, result: { status: 'failed', execution } };
+
+    await screen.pressByTestIdAsync('approvals.reject');
+    await vi.waitFor(() => expect(approvalItem(screen, 'approvals.status')?.props.detail).toBe('approvals.status.failed'));
+    const { Modal } = await import('@/modal');
+    expect(Modal.alert).not.toHaveBeenCalled();
+    expect(screen.findByTestId('approvals.automatic-checks:consent')).toBeNull();
+    expect(screen.findByTestId('approvals.automatic-checks:skipped:0')).not.toBeNull();
   });
 
   it('uses the executed receipt when the deciding Home loses its reply', async () => {
@@ -3095,6 +3137,15 @@ describe('ApprovalDetailScreen', () => {
     expect(text).toContain('Agent wants to answer the pending question');
     expect(text).toContain('Continue?');
     expect(text).toContain('Yes');
+  });
+
+  it('shortens the requester folder using its Machine home when the Session has no home directory', async () => {
+    sessionFixtures['session-1'] = createSessionFixture({ id: 'session-1', metadata: {
+      name: 'Repo session', host: 'tester.local', machineId: 'machine-target', path: '/Users/tester/repo',
+    } });
+    const screen = await renderScreen(<approvalDetailScreenModule.ApprovalDetailScreen artifactId="artifact-1" />);
+    await waitForHomeGovernance(() => expect(readRenderedText(screen)).toContain('~/repo'));
+    expect(readRenderedText(screen)).not.toContain('/Users/tester/repo');
   });
 
   it('shows the exact reviewed source and destination in a conflict approval without a second Use Version action', async () => {

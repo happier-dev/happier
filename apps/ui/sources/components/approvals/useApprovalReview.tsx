@@ -65,11 +65,11 @@ import { openComputerTargetPickerForSession } from '@/components/computer/openCo
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 import { readApprovalOriginMachineId, readApprovalSessionEndpointLabels, readApprovalTargetEndpointLabels } from './approvalEndpointLabels';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import {
   alertApprovalFailure,
   ApprovalExecutionError,
-  assertApprovalExecutionSucceeded,
   presentRecordedApprovalFailure,
   isApprovalDecisionStale,
   isApprovalReplayRouteUnavailable,
@@ -90,6 +90,8 @@ import {
   buildSessionContextFacts,
   projectSessionContextPresentation,
 } from '@/sync/domains/session/presentation/sessionContextPresentation';
+
+const readMachineHomeDir = (machine: Machine | null) => machine?.metadata?.homeDir ?? null;
 
 /** The picker opener for this page's computer approvals (the page already holds the store). */
 const resolveComputerPicker = () => openComputerTargetPickerForSession;
@@ -380,6 +382,9 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   }) || readApprovalOriginMachineId(matchedBody);
   // The machine is shown by name only; the name holds through a re-read instead of flashing empty.
   const machineLabel = useServerScopedMachineLabel(approvalServerId, approvalServerId ? machineId : '');
+  const machineHomeDir = useServerScopedMachine(approvalServerId,
+    approvalServerId && !ownerMetadata?.homeDir ? machineId : null, readMachineHomeDir);
+  const requesterHomeDir = ownerMetadata?.homeDir || machineHomeDir;
   // Context currentness is source-owned. Its relative age subscribes only at the context-line leaf.
   const contextServerProfile = approvalServerId ? getServerProfileById(approvalServerId) : null;
   const sessionContextFacts = React.useMemo(() => approvalServerId && session
@@ -389,10 +394,10 @@ export function useApprovalReview(props: ApprovalReviewInput) {
         awareness: projectUiSessionAwareness(session, Date.now()),
         viewer: session.viewer,
         audience: audiencePresentation,
-        homeDir: ownerMetadata?.homeDir ?? null,
+        homeDir: requesterHomeDir,
         homeObservation: homeObservation ?? null,
       })
-    : null, [approvalServerId, audiencePresentation, contextServerProfile, homeObservation, ownerMetadata?.homeDir, session, sessionId]);
+    : null, [approvalServerId, audiencePresentation, contextServerProfile, homeObservation, requesterHomeDir, session, sessionId]);
   const sessionContext = React.useMemo(() => sessionContextFacts ? projectSessionContextPresentation(sessionContextFacts) : null, [sessionContextFacts]);
   const computerChoice = useComputerApprovalChoice({
     artifactId: artifact?.id ?? props.artifactId,
@@ -500,16 +505,18 @@ export function useApprovalReview(props: ApprovalReviewInput) {
         await refreshArtifact();
       } catch (err) {
         const isStaleDecision = isApprovalDecisionStale(err);
-        const isVersionConflict = !isStaleDecision && err instanceof Error && err.message.includes('modified by another client');
-        if (parsed.kind === 'target' || isVersionConflict || isStaleDecision || err instanceof ApprovalExecutionError) {
+        const hasSettledExecution = err instanceof ApprovalExecutionError;
+        const isVersionConflict = !isStaleDecision && !hasSettledExecution
+          && err instanceof Error && err.message.includes('modified by another client');
+        if (parsed.kind === 'target' || isVersionConflict || isStaleDecision || hasSettledExecution) {
           try {
             await refreshArtifact();
           } catch {
-            // The original decision failure remains authoritative and is still shown below.
+            // Keep the decision result while the Home projection catches up.
           }
         }
         if (isVersionConflict) Modal.alert(t('common.error'), err.message);
-        else if (!isStaleDecision) alertApprovalFailure(err);
+        else if (!isStaleDecision && !hasSettledExecution) alertApprovalFailure(err);
       } finally {
         decisionInFlightRef.current = false;
         setIsDeciding(false);
@@ -733,7 +740,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
         accessibilityHint: approveWithheldReason ?? undefined,
         onPress: () => decide('approve'),
       } : undefined}
-      dismiss={projectCommand && !checking ? undefined : { testID: 'approvals.cancel', disabled: isDeciding,
+      dismiss={override || (projectCommand && !checking) ? undefined : { testID: 'approvals.cancel', disabled: isDeciding,
         ...(checking ? { label: t('workflows.triggers.checks.cancel') } : { accessibilityHint: t('approvals.dismissHint') }),
         onPress: () => { void (checking ? checks.cancelChecks() : decide('cancel')); } }}
       reject={checking ? undefined : consent ? { testID: 'approvals.reject', label: t('workflows.triggers.checks.skip'),
@@ -748,7 +755,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   ) : null;
   // An Agent enable request answers "Always in <place>" through its own controller, so it offers no Session row.
   const sessionConsent = !capabilityEnable && (decisionBar || sessionConsentChoice.saveFailed) ? (
-    <ApprovalSessionConsentRow choice={sessionConsentChoice} open={Boolean(decisionBar) && !consent && !checking}
+    <ApprovalSessionConsentRow choice={sessionConsentChoice} open={Boolean(decisionBar) && !consent && !checking && !override}
       agentLabel={describeApprovalAgent(parsed.request.createdBy.agentId)} actionTitle={actionValue}
       disabled={isDeciding || approveDisabled} />
   ) : null;
