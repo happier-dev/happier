@@ -1,4 +1,4 @@
-import { ReviewEngineInventorySchema, type ReviewEngineProfileSelection } from '@happier-dev/protocol/reviews/reviewEngines';
+import { ReviewEngineInventorySchema, type ReviewEngineProfileSelection, type ReviewEngineScope } from '@happier-dev/protocol/reviews/reviewEngines';
 import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveSessionListPreferredServerIdFromState } from '@/sync/domains/session/listing/sessionListLookupState';
@@ -15,7 +15,7 @@ const normalizeId = (raw: unknown) => typeof raw === 'string' ? raw.trim() : '';
 
 /** The daemon owns the inventory and launch defaults; the UI only chooses the exact transport target. */
 export async function listReviewEnginesForVoiceTool(params: Readonly<{
-  sessionId: string | null; machineId?: string; includeDisabled?: boolean; scope?: 'paths'; serverId?: string;
+  sessionId: string | null; machineId?: string; includeDisabled?: boolean; scope?: ReviewEngineScope; serverId?: string;
   engineIds?: readonly string[];
   profileSelections?: readonly ReviewEngineProfileSelection[];
 }>, capturedAccount?: LazyActionAccountContext): Promise<unknown> {
