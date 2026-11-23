@@ -117,6 +117,57 @@ describe('workflow effect Actions', () => {
     expect(starts).toBe(1);
   });
 
+  it('records the Workflow command exit after a Before wait filter skips the check', async () => {
+    const actionId = 'machines.command.run' as const;
+    const row = { automationId: 'review', triggerId: 'before', triggerRevision: 1, workflowId: 'review-workflow',
+      workflowRevision: 1, ownerAccountId: 'owner', phase: 'before', mode: 'wait', onFailure: 'ask' } as const;
+    const actionAutomations = createActionAutomationPortV1({
+      accountId: 'owner',
+      seed: async () => ({ v: 1, rows: [{ ...row, actionIds: [actionId] }] }),
+      start: async () => ({ runs: [], notices: [{
+        code: 'action_automation_skipped', reason: 'conditionNotMatched', automationId: row.automationId,
+        triggerId: row.triggerId, workflowId: row.workflowId,
+      }] }),
+    });
+    const requesterWorkAttributionV1 = { serverId: 'home', accountId: 'owner', machineId: 'machine', installationId: 'installation' };
+    const machineAdmission = { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
+      installationId: 'installation', role: 'manage', encryptionMode: 'e2ee' } as const;
+    let stored: Parameters<NonNullable<ActionExecutorDeps['approvalsCreate']>>[0]['request'] | null = null;
+    let dispatches = 0;
+    // The receipt store and local Machine transport are the external boundaries.
+    const executor = createActionExecutor({ actionAutomations,
+      approvalsCreate: async ({ request }) => { stored = request; return { artifactId: 'automatic-approval' }; },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => { stored = request; return { ok: true }; },
+      isApprovalExecutionOriginCurrent: async () => true,
+      machineCommandRun: async (_input, context) => {
+        if (context.requesterWorkAttributionV1 !== requesterWorkAttributionV1
+          || context.admittedHostWorkflowRequester !== machineAdmission) {
+          return { ok: false, errorCode: 'action_failed', error: 'Machine transport could not rejoin the admitted requester' };
+        }
+        dispatches++;
+        return { ok: false, errorCode: 'command_failed', error: 'Command failed', details: { exitCode: 7 } };
+      },
+    });
+    try {
+      const prepared = await executor.prepare(actionId, { command: 'exit 7' }, {
+        surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'workflowRun', runId: 'workflow-run',
+          authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
+          authenticatedStarterV1: { requestRef: 'workflow-start', requester: { serverId: 'home', accountId: 'owner' } } },
+        bypassApprovals: true, actionRequestId: 'workflow-command', runtimeAccountId: 'owner', serverId: 'home',
+        serverIdentityId: 'home', defaultSessionMachineId: 'machine', executionRunWorkflowRunId: 'workflow-run',
+        externalActionTarget: { kind: 'machine', machineId: 'machine', project: { machineId: 'machine', directory: '/workspace' } },
+        machineAdmission, admittedHostWorkflowRequester: machineAdmission, requesterWorkAttributionV1,
+      });
+      if (prepared.kind !== 'ready') throw new Error(JSON.stringify(prepared));
+      const result = await prepared.invocation.run();
+      expect(result).toMatchObject({ ok: false, errorCode: 'command_failed', details: { exitCode: 7 } });
+      expect(dispatches).toBe(1);
+    } finally {
+      actionAutomations.dispose();
+    }
+  });
+
   it('starts the notify Before workflow once across operation re-entry', async () => {
     const actionId = 'session.spawn_new' as const;
     let starts = 0;

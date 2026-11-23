@@ -1696,6 +1696,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     retainedWidgetAreaContext?: ActionExecutorContext['widgetAreaContext'];
     retainedPublicProfileAction?: ActionExecutorContext['publicProfilePreparedAction'];
     retainedPublicProfilePreview?: ActionExecutorContext['publicProfilePreviewResult'];
+    continuesLiveWorkflow?: true;
     privateSecretContinuation?: PrivateSecretContinuationV1;
     privateActionInputContinuation?: PrivateActionInputContinuationV1;
   }>): Promise<
@@ -2119,6 +2120,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const retainedLogsContext = resolveRetainedLogsReplayContext({ retainsHostInvocation,
       retainedLogsLifetime: retainedLogsLifetime !== undefined,
       currentOrigin: origin?.success && originIsCurrent ? origin.data : undefined, context: args.ctx });
+    // The inline check continuation still owns the admitted Run's private
+    // requester context. Durable decision replay has no such live context.
+    const liveWorkflowContext = args.continuesLiveWorkflow && origin?.success && originIsCurrent
+      && origin.data.caller.kind === 'workflowRun' && args.ctx.actionCaller?.kind === 'workflowRun'
+      && args.ctx.actionRequestId === origin.data.requestId && actionId === origin.data.actionId
+      && args.ctx.serverId === origin.data.serverId && args.ctx.runtimeAccountId === origin.data.accountId
+      && sameStrictJsonValue(projectApprovalExecutionOriginCaller(args.ctx.actionCaller), origin.data.caller)
+      ? args.ctx : undefined;
     const approvedPluginInstallReview = request.actionId === 'plugins.install'
       ? readPluginInstallApprovalPendingReview(request.preview) : null;
     const deploymentRolloutSemanticInput = actionId === null ? undefined : readDeploymentApprovalSemanticInput(actionId,
@@ -2213,6 +2222,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       // the deciding person's filesystem identity.
       ...(args.ctx.machineAdmission ? { machineAdmission: args.ctx.machineAdmission } : {}),
       ...(args.ctx.verifyMachineAdmissionCurrent ? { verifyMachineAdmissionCurrent: args.ctx.verifyMachineAdmissionCurrent } : {}),
+      ...(liveWorkflowContext?.requesterWorkAttributionV1
+        ? { requesterWorkAttributionV1: liveWorkflowContext.requesterWorkAttributionV1 } : {}),
+      ...(liveWorkflowContext?.admittedHostWorkflowRequester
+        ? { admittedHostWorkflowRequester: liveWorkflowContext.admittedHostWorkflowRequester } : {}),
       ...(retainedPluginContext?.context.machineAdmission
         ? { machineAdmission: retainedPluginContext.context.machineAdmission } : {}),
       ...(retainedPluginContext?.context.admittedHostWorkflowRequester
@@ -4101,6 +4114,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             }
             const executed = await executeApprovedActionForRequest({ artifactId: created.artifactId,
               request: automaticRequest, artifactServerId: normalizeId(ctx.serverId) || null, ctx: automaticContext,
+              continuesLiveWorkflow: true,
               ...(retainsAutomaticInvocation ? { liveOnlyActionArgs: admittedInput } : {}),
               ...(ctx.widgetAreaContext ? { retainedWidgetAreaContext: ctx.widgetAreaContext } : {}),
               ...(ctx.publicProfilePreparedAction ? { retainedPublicProfileAction: ctx.publicProfilePreparedAction } : {}),
