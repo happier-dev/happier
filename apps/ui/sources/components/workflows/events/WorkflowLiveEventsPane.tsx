@@ -18,7 +18,9 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import type { WorkflowActivityProjection } from '@/sync/engine/workflows/workflowActivityProjection';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { WorkflowTriggerDraftSeedIntent } from '../triggers/workflowTriggerStarts';
-import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { useCurrentUiContextLocalCommands, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { t } from '@/text';
 
 import {
@@ -43,6 +45,10 @@ import {
   useWorkflowEventsFeed,
 } from './WorkflowEventsList';
 
+type WorkflowCompanionCaller = Readonly<{ context: ActionExecutorContext; invocation: CurrentUiContextCommandInvocation }>;
+export type WorkflowCompanionAddTrigger = (when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent,
+  caller?: WorkflowCompanionCaller) => Promise<string | undefined>;
+
 /**
  * The editor's Live events companion (S2, D11): the same feed, rows and detail body as the Events tab, beside the
  * workflow being written. A row expands in place; its one primary adds that event's start to this workflow's
@@ -53,7 +59,7 @@ export const WorkflowLiveEventsPane = React.memo(
     props: Readonly<{
       active: boolean;
       /** Adds the event's start to the mounted draft's triggers; absent when this person cannot manage them. */
-      onAddTrigger: ((when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => string) | null;
+      onAddTrigger: WorkflowCompanionAddTrigger | null;
       /** The trigger editor's answer to whether a row an add created is still there (Undo takes it away). */
       hasTriggerRow: ((clientId: string) => boolean) | null;
       canUndoAddedTrigger?: (clientId: string) => boolean;
@@ -86,8 +92,8 @@ export const WorkflowLiveEventsPane = React.memo(
     // The phone sheet carries the open row's actions in a bar over the list (S2), not inside the row.
     const barred = props.presentation === 'sheet';
     const { onAddTrigger, canUndoAddedTrigger, onUndoAddedTrigger } = props;
-    const add = useEventCallback((key: string, when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => {
-      const clientId = onAddTrigger?.(when, seed);
+    const add = useEventCallback(async (key: string, ...args: Parameters<WorkflowCompanionAddTrigger>) => {
+      const clientId = await onAddTrigger?.(...args);
       if (clientId === undefined) return false;
       setAddedRows((current) => new Map(current).set(key, clientId));
       return true;
@@ -184,7 +190,7 @@ type LiveEventProps = Readonly<{
   eventKey: string;
   scope: ServerAccountScope | null;
   retainedRuns: readonly WorkflowRunSummaryV1[] | undefined;
-  onAdd: ((key: string, when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => boolean) | null;
+  onAdd: ((key: string, ...args: Parameters<WorkflowCompanionAddTrigger>) => Promise<boolean>) | null;
   picked: WorkflowEventMatchSelection;
   testID: string;
 }>;
@@ -243,9 +249,16 @@ function LiveEventActions(props: LiveEventProps & Readonly<{
     : readWorkflowEventWhen(presentation.fact, props.match.match);
   const open = presentation.open;
   const canAdd = props.active && when !== null && onAdd !== null;
-  const add = () => canAdd && onAdd(eventKey, when, seed?.nativeEvent ? { nativeEvent: seed.nativeEvent } : undefined);
+  const add = (caller?: WorkflowCompanionCaller) => canAdd && onAdd(eventKey, when,
+    seed?.nativeEvent ? { nativeEvent: seed.nativeEvent } : undefined, caller);
   useCurrentUiContextLocalCommands(canAdd ? [
-    { key: 'add-to-mounted-workflow', title: t('workflows.events.addToWorkflow'), invoke: add },
+    { key: 'add-to-mounted-workflow', title: t('workflows.events.addToWorkflow'), invoke: async (_input, context, invocation) => {
+      try {
+        return await add({ context, invocation });
+      } catch (error) {
+        return { ok: false, code: 'denied', ...(error instanceof WorkflowActionError && error.code ? { errorCode: error.code } : {}) };
+      }
+    } },
   ] : [], { contextKey: eventKey });
   const addsLine = canAdd ? props.match.addsLine : null;
   // One primary in the pane (Add to this workflow); the rest of what the event allows waits behind its ⋯ (S2).
@@ -263,7 +276,7 @@ function LiveEventActions(props: LiveEventProps & Readonly<{
       testID={`${props.testID}:add`}
       size={props.bar ? 'normal' : 'small'}
       title={t('workflows.events.addToWorkflow')}
-      onPress={() => { add(); }}
+      onPress={() => { void add(); }}
     />
   );
   return (

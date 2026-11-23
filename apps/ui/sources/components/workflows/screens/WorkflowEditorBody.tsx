@@ -1,9 +1,7 @@
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { useWorkflowNavigation, selectWorkflowNavigationItem } from '../navigation/workflowNavigation';
 import { useWorkflowPageNavigationShown, WorkflowPageNavigation, WorkflowCompanionNavigation } from '../navigation/WorkflowNavigationViews';
-import type { WorkflowTriggerDraftSeedIntent } from '../triggers/workflowTriggerStarts';
-import { WorkflowLiveEventsPane } from '../events/WorkflowLiveEventsPane';
-import type { TriggerWhenValue } from '../triggers/sessionTriggerForm';
+import { WorkflowLiveEventsPane, type WorkflowCompanionAddTrigger } from '../events/WorkflowLiveEventsPane';
 import { useMountedScopeActionCommand } from '@/components/approvals/useMountedScopeActionCommand';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -450,7 +448,7 @@ export type WorkflowEditorBodyProps = Readonly<{
     /** The same triggers as the Sentence view's When clause (round 1116c). */
     triggersSentence?: React.ReactNode;
     /** Live events' "Add to this workflow" (D11): adds that event's start to the triggers above; absent when they are not this person's to change. */
-    onAddTriggerWhen?: (when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => string;
+    onAddTriggerWhen?: WorkflowCompanionAddTrigger;
     /** Whether the row an add created is still one of the triggers (Undo takes it away), from the trigger editor. */
     hasTriggerRow?: (clientId: string) => boolean;
     canUndoAddedTrigger?: (clientId: string) => boolean;

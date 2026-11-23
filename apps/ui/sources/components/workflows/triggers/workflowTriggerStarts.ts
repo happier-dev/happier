@@ -372,21 +372,27 @@ export function createWorkflowTriggerClientId(): string {
  * the draft when it is complete, else held beside it as incomplete until its Session or Event is chosen. Returns the
  * new row's on-screen identity.
  */
-export function addWorkflowTriggerWhen(params: Readonly<{
+export function prepareWorkflowTriggerWhenAddition(params: Readonly<{
     draft: WorkflowTriggerDraft;
     when: TriggerWhenValue;
     seed?: WorkflowTriggerDraftSeedIntent;
     sessionId?: string | null;
-    onChangeDraft: (next: WorkflowTriggerDraft) => void;
-    updateIncomplete: (update: (current: WorkflowTriggerIncomplete) => WorkflowTriggerIncomplete) => void;
-}>): string {
+}>) {
     const clientId = createWorkflowTriggerClientId();
     const next = commitWorkflowTriggerWhen({ draft: params.draft, row: { kind: 'new', clientId }, when: params.when, enabled: true,
         sessionId: params.sessionId });
-    if (next !== null) params.onChangeDraft(next);
-    else params.updateIncomplete((current) => ({ ...current, pending: [...current.pending, { clientId, when: params.when,
-        ...params.seed }] }));
-    return clientId;
+    return next === null ? { clientId, kind: 'incomplete' as const, row: { clientId, when: params.when, ...params.seed } }
+        : { clientId, kind: 'complete' as const, draft: next };
+}
+
+export function addWorkflowTriggerWhen(params: Parameters<typeof prepareWorkflowTriggerWhenAddition>[0] & Readonly<{
+    onChangeDraft: (next: WorkflowTriggerDraft) => void;
+    updateIncomplete: (update: (current: WorkflowTriggerIncomplete) => WorkflowTriggerIncomplete) => void;
+}>): string {
+    const addition = prepareWorkflowTriggerWhenAddition(params);
+    if (addition.kind === 'complete') params.onChangeDraft(addition.draft);
+    else params.updateIncomplete((current) => ({ ...current, pending: [...current.pending, addition.row] }));
+    return addition.clientId;
 }
 
 export function removeWorkflowTriggerRow(draft: WorkflowTriggerDraft, row: WorkflowTriggerRowRef): WorkflowTriggerDraft {

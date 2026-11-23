@@ -49,6 +49,7 @@ export type WorkflowTriggerEditing = Readonly<{
     /** The authored set lifetime, also carried when a sentence opens the full editor. */
     lifetimeSession: Readonly<{ sessionId: string }> | undefined;
     draft: WorkflowTriggerDraft;
+    readDraft: () => WorkflowTriggerDraft;
     triggerEvents: readonly WorkflowTriggerEventDeclarationV1[] | undefined;
     intendedTriggers: readonly WorkflowIntendedTriggerV1[] | undefined;
     setDraft: (next: WorkflowTriggerDraft) => void;
@@ -139,11 +140,13 @@ export function useWorkflowTriggerEditing(params: Readonly<{
         ? undefined : projectWorkflowTriggerEvents(set, draft), [params.definitionId, status, set, draft]);
     const mounted = React.useRef(true);
     React.useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-    const setDraft = React.useCallback((next: WorkflowTriggerDraft) => {
-        if (identityRef.current === identity) setState({ identity, draft: next });
-    }, [identity]);
     const stateRef = React.useRef({ identity, set, draft, projectTarget: params.projectTarget, lifetimeSession });
     stateRef.current = { identity, set, draft, projectTarget: params.projectTarget, lifetimeSession };
+    const setDraft = React.useCallback((next: WorkflowTriggerDraft) => {
+        if (identityRef.current !== identity) return;
+        stateRef.current = { ...stateRef.current, draft: next };
+        setState({ identity, draft: next });
+    }, [identity]);
     const rowIdentities = React.useMemo(() => {
         const knownDefinitions: WorkflowTriggerKnownDefinitions = new Map();
         return {
@@ -168,6 +171,7 @@ export function useWorkflowTriggerEditing(params: Readonly<{
         }
         return captureWorkflowTriggerSnapshot(latest.set, draftOverride ?? latest.draft, identify, rowIdentities.knownDefinitions);
     }, [identity, identify, rowIdentities]);
+    const readDraft = React.useCallback(() => stateRef.current.draft, []);
     const restoreSnapshot = React.useCallback((snapshot: WorkflowTriggerSnapshot) => {
         if (identityRef.current !== identity) return null;
         const pending = pendingSave.current;
@@ -275,7 +279,7 @@ export function useWorkflowTriggerEditing(params: Readonly<{
         return triggerId !== undefined && !draft.removes.includes(triggerId) && (set?.triggers.some((row) => row.id === triggerId) ?? false);
     }, [draft, incomplete, set, rowIdentities]);
     const complete = incomplete.pending.length === 0 && Object.keys(incomplete.edits).length === 0;
-    return { set, lifetimeSession, draft, triggerEvents: eventProjection?.triggerEvents, intendedTriggers: eventProjection?.intendedTriggers, setDraft, captureSnapshot, restoreSnapshot, status, retry,
+    return { set, lifetimeSession, draft, readDraft, triggerEvents: eventProjection?.triggerEvents, intendedTriggers: eventProjection?.intendedTriggers, setDraft, captureSnapshot, restoreSnapshot, status, retry,
         dirty: !complete || isWorkflowTriggerDraftDirty(draft), incomplete, complete,
         updateIncomplete, summary, hasTriggerRow, save };
 }

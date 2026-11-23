@@ -1160,6 +1160,30 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(readBodyProps()!.draftStore.get().name).toBe('Keep the blocked edit');
     });
 
+    it('settles native draft Save after the Account Action review decision', async () => {
+        const { WORKFLOW_AUTHORING_ACTION_ID } = await import('@happier-dev/protocol/actions/workflowAuthoringActionIds');
+        const boundary = await serveMountedDraftActionHome(undefined, true, undefined, {
+            actionsSettingsV1: { v: 1, actions: { [WORKFLOW_AUTHORING_ACTION_ID.draftSave]: {
+                approvalRequiredSurfaces: ['ui'],
+            } } },
+        });
+        await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        const title = 'Reviewed draft edit';
+        await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: title }));
+        for (const approved of [false, true]) {
+            await act(async () => { readBodyProps()!.onSave!(); });
+            await vi.waitFor(() => expect(readConfirmation()).toBeDefined());
+            expect(boundary.updates).toEqual([]);
+            expect(readBodyProps()!.draftStore.get().name).toBe(title);
+            await pressConfirmation(approved);
+            await vi.waitFor(() => expect(readConfirmation()).toBeUndefined());
+        }
+        await vi.waitFor(() => expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' }));
+        expect(boundary.updates).toHaveLength(1);
+        expect(WorkflowDefinitionArtifactHeaderV1Schema.parse(decodePlainArtifactStoredContent(boundary.artifact.header)).metadata.title)
+            .toBe(title);
+    });
+
     it('presents the Account Action Machine Skip after native Save while agent Save retains its refusal without a dialog', async () => {
         const boundary = await serveMountedDraftActionHome(undefined, true, undefined, undefined, 'plain', [], [], {
             v: 1, rows: [{ automationId: 'save-check', triggerId: 'before-save', triggerRevision: 1,
@@ -1292,13 +1316,43 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(boundary.automationCreates[0]).toMatchObject({ triggers: [{ trigger }] });
     });
 
+    it.each([false, true])('applies draft Action admission enabled=%s to companion Add', async enabled => {
+        const { WORKFLOW_AUTHORING_ACTION_ID } = await import('@happier-dev/protocol/actions/workflowAuthoringActionIds');
+        const boundary = await serveMountedDraftActionHome(undefined, true, undefined, {
+            actionsSettingsV1: { v: 1, actions: { [WORKFLOW_AUTHORING_ACTION_ID.draftEdit]: { enabled } } },
+        });
+        await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        const { readWorkflowEventWhen } = await import('../events/workflowEventFacts');
+        const subject = { kind: 'session', serverId: boundary.scope.serverId, sessionId: 'matching-session' } as const;
+        const when = readWorkflowEventWhen({ kind: 'session', key: 'session-start', sessionId: subject.sessionId, event: 'started',
+            sourceRevision: 1, occurredAt: 10, coverage: 'live' }, { subject, label: 'Matching Session' });
+        if (when === null) throw new Error('Expected a Session start');
+        let clientId: string | undefined;
+        let secondId: string | undefined;
+        await act(async () => {
+            const add = readBodyProps()!.onAddTriggerWhen!;
+            clientId = await add(when);
+            if (clientId !== undefined) secondId = await add(when);
+        });
+        expect(clientId !== undefined).toBe(enabled);
+        expect(readBodyProps()!.history!.undoLabel !== null).toBe(enabled);
+        if (enabled) {
+            expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.settings.triggers).toMatchObject({ rows: [
+                { identity: { clientId }, trigger: { kind: 'sessionLifecycle', subject } },
+                { identity: { clientId: secondId }, trigger: { kind: 'sessionLifecycle', subject } },
+            ] });
+            expect(secondId).not.toBe(clientId);
+        }
+        expect(boundary.automationCreates).toHaveLength(0);
+    });
+
     // QA-B E12: Live events' Added reads the editor's triggers, so Undo offers Add again and Redo shows Added.
     it('answers whether a Live events add is still a trigger across Undo and Redo', async () => {
         await serveMountedDraftActionHome();
         await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
         const { createDefaultWhen } = await import('../triggers/sessionTriggerForm');
         let clientId = '';
-        await act(async () => { clientId = readBodyProps()!.onAddTriggerWhen!(createDefaultWhen('schedule')); });
+        await act(async () => { clientId = (await readBodyProps()!.onAddTriggerWhen!(createDefaultWhen('schedule'))) ?? ''; });
         expect(readBodyProps()!.hasTriggerRow!(clientId)).toBe(true);
         await act(async () => { readBodyProps()!.history!.undo(); });
         expect(readBodyProps()!.hasTriggerRow!(clientId)).toBe(false);
@@ -1312,7 +1366,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         const nativeEvent = { kind: 'machine', key: 'machine-online', machineId: 'machine-a', event: 'online',
             sourceRevision: 1, occurredAt: 10, coverage: 'retained' } as const;
         let clientId = '';
-        await act(async () => { clientId = readBodyProps()!.onAddTriggerWhen!({ kind: 'pluginEvent', value: null }, { nativeEvent }); });
+        await act(async () => { clientId = (await readBodyProps()!.onAddTriggerWhen!({ kind: 'pluginEvent', value: null }, { nativeEvent })) ?? ''; });
         await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Keep this title' }); });
         expect(readBodyProps()!.canUndoAddedTrigger?.(clientId)).toBe(true);
         await act(async () => { readBodyProps()!.onUndoAddedTrigger!(clientId); });
@@ -1331,7 +1385,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         if (!seed?.nativeEvent) throw new Error('Expected a Machine event setup seed');
         expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
         let clientId = '';
-        await act(async () => { clientId = readBodyProps()!.onAddTriggerWhen!({ kind: 'pluginEvent', value: null }, { nativeEvent: seed.nativeEvent }); });
+        await act(async () => { clientId = (await readBodyProps()!.onAddTriggerWhen!({ kind: 'pluginEvent', value: null }, { nativeEvent: seed.nativeEvent })) ?? ''; });
         expect(readBodyProps()!.saveStatus).toEqual({ kind: 'unsaved' });
         expect(readBodyProps()!.hasTriggerRow!(clientId)).toBe(true);
         expect(readBodyProps()!.history!.undoLabel).not.toBeNull();
@@ -1356,7 +1410,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             sourceRevision: 1, occurredAt: 10, coverage: 'retained' } as const;
         let clientId = '';
         await act(async () => {
-            clientId = readBodyProps()!.onAddTriggerWhen!({ kind: 'pluginEvent', value: null }, { nativeEvent });
+            clientId = (await readBodyProps()!.onAddTriggerWhen!({ kind: 'pluginEvent', value: null }, { nativeEvent })) ?? '';
         });
         await act(async () => { readBodyProps()!.history!.undo(); });
         await act(async () => { readBodyProps()!.history!.redo(); });
@@ -3755,11 +3809,13 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(readBodyProps()!.history?.redoLabel).toBeNull();
     });
 
-    it('commits text at its input boundary and undoes metadata and targets in one source-local history', async () => {
+    it('groups typed text and undoes metadata and targets in one source-local history', async () => {
+        await serveMountedDraftActionHome();
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
         const original = readBodyProps()!.draftStore.get();
+        await act(async () => readBodyProps()!.onChange({ ...original, name: 'Typ' }, 'Name', false));
+        expect(readBodyProps()!.history?.undoLabel).toBe('Name');
         await act(async () => readBodyProps()!.onChange({ ...original, name: 'Typing' }, 'Name', false));
-        expect(readBodyProps()!.history?.undoLabel).toBeNull();
         await act(async () => readBodyProps()!.onCommitChange?.());
         expect(readBodyProps()!.history?.undoLabel).toBe('Name');
         await act(async () => readBodyProps()!.onChangeDescription?.('Purpose'));
