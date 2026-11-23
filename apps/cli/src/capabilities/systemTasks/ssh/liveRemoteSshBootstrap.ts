@@ -211,10 +211,14 @@ function resolveSshEndpoint(params: Readonly<{
     windowsHide: true,
   });
   if (result.error) {
-    throw sshCommandFailure(result.error.message);
+    throw sshCommandFailure(result.error);
   }
   if ((result.status ?? 1) !== 0) {
-    throw sshCommandFailure(String(result.stderr ?? ''));
+    const stdout = result.stdout ?? '';
+    const stderr = result.stderr ?? '';
+    throw sshCommandFailure(stderr, typeof result.status === 'number'
+      ? { status: result.status, stdout, stderr }
+      : undefined);
   }
 
   const values = new Map<string, string>();

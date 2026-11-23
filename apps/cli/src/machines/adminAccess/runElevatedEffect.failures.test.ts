@@ -21,6 +21,8 @@ it.each([
     ['private reason', 'native_effect_failed', undefined],
     ['failed apply', 'native_effect_failed', 'required_fact_unavailable'],
     ['partial native apply', 'native_effect_failed', 'native_effect_failed'],
+    ['unclean exit after apply', 'native_protocol_invalid', undefined],
+    ['applied observation unavailable', 'native_check_unavailable', 'required_fact_unavailable'],
 ] as const)('retains %s native failure once without private helper output', async (scenario, reasonCode, reason) => {
     const log = vi.spyOn(logger, 'warnLocalFile');
     const basis = { kind: 'setup' as const, machineId: 'machine', desiredRevision: 1 };
@@ -31,7 +33,10 @@ it.each([
         const stdin = new PassThrough(), stdout = new PassThrough(), stderr = new PassThrough();
         let finish!: (value: { code: number | null; signal: string | null }) => void;
         const settled = new Promise<{ code: number | null; signal: string | null }>(resolve => { finish = resolve; });
-        const close = () => { stdout.end(); stderr.end(); stdin.destroy(); finish({ code: 1, signal: null }); };
+        const close = () => {
+            stdout.end(); stderr.end(); stdin.destroy();
+            finish({ code: scenario === 'applied observation unavailable' ? 0 : 1, signal: null });
+        };
         void (async () => {
             const lines = createInterface({ input: stdin });
             const iterator = lines[Symbol.asyncIterator]();
@@ -42,14 +47,17 @@ it.each([
                 const plan = MachineSetupEffectPlanV1Schema.parse({ v: 1, basis, steps,
                     nativeFacts: [{ stepId: 'prepare', status: scenario, reason, facts: {} }], planDigest: 'a'.repeat(64) });
                 stdout.write(JSON.stringify({ type: 'result', result: { status: 'checked', plan } }) + '\n');
-            } else if (scenario === 'failed apply' || scenario === 'partial native apply') {
+            } else if (scenario === 'failed apply' || scenario === 'partial native apply'
+                || scenario === 'unclean exit after apply' || scenario === 'applied observation unavailable') {
                 const plan = MachineSetupEffectPlanV1Schema.parse({ v: 1, basis, steps,
                     nativeFacts: [{ stepId: 'prepare', status: 'drifted', facts: {} }], planDigest: 'a'.repeat(64) });
                 stdout.write(JSON.stringify({ type: 'result', result: { status: 'checked', plan } }) + '\n');
                 await iterator.next();
                 stdout.write(JSON.stringify({ type: 'progress', stepId: 'prepare', phase: 'apply', status: 'started' }) + '\n');
-                stdout.write(JSON.stringify({ type: 'result', result: { status: 'failed', stepId: 'prepare', reason,
-                    completedStepIds: [], daemonRestartRequired: false } }) + '\n');
+                const result = scenario === 'unclean exit after apply' || scenario === 'applied observation unavailable'
+                    ? { status: 'applied', completedStepIds: ['prepare'], daemonRestartRequired: false }
+                    : { status: 'failed', stepId: 'prepare', reason, completedStepIds: [], daemonRestartRequired: false };
+                stdout.write(JSON.stringify({ type: 'result', result }) + '\n');
             } else if (scenario !== 'missing') stdout.write(JSON.stringify({ type: 'result', result: {
                 status: 'failed', reason: reason ?? '/private/native/path token=secret', completedStepIds: [], daemonRestartRequired: false,
             } }) + '\n');
@@ -57,12 +65,16 @@ it.each([
         })();
         return { stdin, stdout, stderr, settled, terminate: async () => { close(); } };
     };
+    let observations = 0;
     const result = await runElevatedMachineSetupIntent({ machineId: 'machine', operationId: 'request-id', basis, steps }, {
         installationId: 'installation', installedCli: '/managed/happier', spawn,
         readPolicy: async () => ({ version: 1, mode: 'preauthorized' }), verifyCurrent: async () => true,
-        observe: async () => ({ version: 1, observedAt: 1, daemonUid: 1000, daemonUsername: 'happier',
-            daemonIdentity: 'nonRoot', rootEquivalentGroups: [], passwordlessSudoToRoot: 'allowed',
-            managedDropIn: 'valid', tailscaledOperator: { authorization: 'unknown' } }),
+        observe: async () => {
+            if (++observations === 2 && scenario === 'applied observation unavailable') throw new Error('private/native token=secret');
+            return { version: 1, observedAt: 1, daemonUid: 1000, daemonUsername: 'happier',
+                daemonIdentity: 'nonRoot', rootEquivalentGroups: [], passwordlessSudoToRoot: 'allowed',
+                managedDropIn: 'valid', tailscaledOperator: { authorization: 'unknown' } };
+        },
     });
     const failure = { kind: reasonCode, ...(reason ? { reason } : {}),
         ...(['failed apply', 'partial native apply'].includes(scenario) ? { stepId: 'prepare', phase: 'apply' } : {}),
@@ -70,7 +82,10 @@ it.each([
             requiredFact: 'prepare', remedy: expect.stringContaining('prepare'),
         } : {}),
     };
-    const expected = { outcome: 'not_applied', reasonCode, failure };
+    const expected = scenario === 'unclean exit after apply' || scenario === 'applied observation unavailable'
+        ? { outcome: 'outcome_unknown', failure: { ...failure, phase: 'apply', remedy: expect.any(String),
+            ...(scenario === 'applied observation unavailable' ? { requiredFact: 'nativeSetupObservation' } : {}) } }
+        : { outcome: 'not_applied', reasonCode, failure };
     expect(result).toEqual(expected);
     expect(MachineElevatedResultV1Schema.parse(result)).toEqual(expected);
     const retained = log.mock.calls.filter(([message]) => message === '[machine-elevation] settled');

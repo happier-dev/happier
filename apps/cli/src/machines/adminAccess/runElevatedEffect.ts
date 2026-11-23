@@ -659,7 +659,12 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
         const exitedCleanly = settled.code === 0 && settled.signal === null;
         const observeApplied = async (): Promise<MachineElevatedResultV1> => {
             try { return { outcome: 'applied', observation: await dependencies.observe() }; }
-            catch { return { outcome: 'outcome_unknown' }; }
+            catch (error) {
+                nativeFailure ??= error instanceof MachineSetupEffectError ? error.failure : undefined;
+                rememberNativeFailure('native_check_unavailable', 'required_fact_unavailable', 'nativeSetupObservation',
+                    'Restore this Machine’s native Setup observation and inspect its state before retrying Apply.', { phase: 'apply' });
+                return { outcome: 'outcome_unknown', failure: nativeFailure };
+            }
         };
         // The interpreter verifies the exact administrator effect before it
         // emits success. A clean exit completes this single-step native plan.
@@ -689,7 +694,12 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
             nativeFailure = { ...(nativeFailure ?? {}), ...failure };
         }
         if (result.status === 'applied') {
-            if (!exitedCleanly) return { outcome: 'outcome_unknown' };
+            if (!exitedCleanly) {
+                rememberNativeFailure('native_protocol_invalid', undefined, undefined,
+                    'Inspect the Machine’s setup state before retrying. The elevated helper did not exit cleanly after reporting Apply.',
+                    { phase: 'apply' });
+                return { outcome: 'outcome_unknown', failure: nativeFailure };
+            }
             input.onSetupApplied?.(result);
             if (reboot) return { outcome: 'applied', observation };
             return await observeApplied();

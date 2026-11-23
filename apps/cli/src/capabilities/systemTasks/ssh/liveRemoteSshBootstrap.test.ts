@@ -178,7 +178,7 @@ vi.mock('@happier-dev/cli-common/systemTasks', async () => {
   };
 });
 
-import { createLiveRemoteEnrollmentExecutor, createLiveRemoteSshBootstrapTaskKind, createLiveRemoteSshManageHostTaskKind } from './liveRemoteSshBootstrap';
+import { createLiveRemoteEnrollmentExecutor, createLiveRemoteSshBootstrapTaskKind, createLiveRemoteSshManageHostTaskKind, resolveLiveRemoteHostTrust } from './liveRemoteSshBootstrap';
 import { createServer } from 'node:http';
 import { encodeHomeQrInviteV2Payload, type HomeQrInviteV2 } from '@happier-dev/protocol';
 import { createSystemTasksRunner, parseSshKnownHostLine, runRemoteHomeEnrollmentFlow } from '@happier-dev/cli-common/systemTasks';
@@ -210,6 +210,16 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
   beforeAll(async () => { payloadFixture = await createCliPayloadFixture(); });
   afterAll(async () => { await payloadFixture?.cleanup(); });
   afterEach(() => { vi.unstubAllEnvs(); });
+
+  it('retains the SSH configuration exit status without exposing native output', async () => {
+    spawnSync.mockReturnValueOnce({ status: 255, stdout: '', stderr: 'Invalid configuration at /private/native/path' });
+    await expect(resolveLiveRemoteHostTrust({
+      ssh: { target: 'dev@example.test', auth: 'agent', sshConfigFile: '/tmp/ssh_config' }, knownHostsMode: 'app',
+    })).rejects.toMatchObject({
+      code: 'ssh_command_failed',
+      message: expect.stringMatching(/\(phase ssh\.command; exitStatus 255; stdoutPresent false; stderrPresent true\)$/u),
+    });
+  });
 
   it('merges overlapping task trust approvals into the current real known_hosts file', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-ssh-trust-test-'));
@@ -1991,7 +2001,7 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
       expect(message).not.toContain('/mock-home/ssh/known_hosts');
       expect(message).not.toContain('supersecret');
       expect(error).toMatchObject({ code: 'ssh_command_failed' });
-      expect(message).toBe('The SSH command failed.');
+      expect(message).toContain('exitStatus 1');
     }
   });
 });
