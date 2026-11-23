@@ -251,7 +251,7 @@ function row<const Id extends ProjectActionIdV1>(id: Id) {
     originalExecution: { accountRoot: 'allowed' }, title: PROJECT_ACTION_COPY[id][0],
     approvalPresentation: { summary: (input: unknown) => {
       if (id === 'projects.script.run') {
-        const script = PROJECT_ACTION_INPUT_SCHEMAS_V1[id].safeParse(input);
+        const script = PROJECT_ACTION_INPUT_SCHEMAS_V1['projects.script.run'].safeParse(input);
         if (script.success) {
           const { workspace, selection, choice } = script.data;
           if (selection.kind === 'named' && choice?.kind === 'workers' && choice.destination.kind === 'machine') {
