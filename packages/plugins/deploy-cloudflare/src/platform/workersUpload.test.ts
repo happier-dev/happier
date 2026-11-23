@@ -27,7 +27,7 @@ function result(exitCode = 0): PluginProcessResult {
     stdout: new Uint8Array(), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
 }
 async function fixture(mode: 'success' | 'buildFailure' | 'cancel' | 'lost' | 'denied' | 'malformed' | 'uncompiled' | 'otherVersion'
-  | 'assets' | 'assetsCached' | 'unknownAsset' | 'preview' | 'compactVersion' = 'success') {
+  | 'assets' | 'assetsCached' | 'unknownAsset' | 'preview' | 'compactVersion' = 'success', latestPreviewError?: number) {
   const root = await mkdtemp(join(tmpdir(), 'workers-upload-'));
   await writeFile(join(root, 'worker.ts'), 'export default { fetch: () => new Response("compiled") };');
   await writeFile(join(root, '.env'), 'PRIVATE=not-for-build');
@@ -75,6 +75,11 @@ async function fixture(mode: 'success' | 'buildFailure' | 'cancel' | 'lost' | 'd
   const http = createPluginHttpFixture({ async request(request) {
     requests.push(request);
     if (mode === 'lost') throw new Error('private-provider-detail');
+    if (latestPreviewError !== undefined && request.url.endsWith('/deployments/latest')) {
+      return { status: 404, headers: {}, body: new TextEncoder().encode(JSON.stringify({
+        success: false, errors: [{ code: latestPreviewError }],
+      })) };
+    }
     let value: unknown = { id: 'app', deployment_id: mode === 'compactVersion' ? versionId.replaceAll('-', '') : versionId };
     if (request.url.endsWith('/workers/scripts')) value = [{ id: 'app', tag: 'worker-tag' }];
     else if (request.url.endsWith('/assets-upload-session')) value = { jwt: 'asset-upload-token',
@@ -283,5 +288,37 @@ it('uploads executable modules and Static Assets only to the captured native Pre
       deploymentId: 'receipt', expectedDeploymentRevision: 1, actionOperationId: 'operation', providerDeploymentId: 'preview-deployment:preview-deployment' }))
       .toMatchObject({ state: 'succeeded', providerDeploymentId: 'preview-deployment:preview-deployment' });
     expect(h.spawn).toHaveBeenCalledOnce();
+  } finally { await h.dispose(); }
+});
+
+
+it('publishes the first deployment of the captured Preview when Cloudflare reports no latest deployment', async () => {
+  const h = await fixture('preview', 10222);
+  try {
+    const accepted = await h.invoke({
+      providerEnvironment: { kind: 'native', selection: { kind: 'preview', scriptName: 'app', previewName: 'pr-1' } },
+      preparedNative: { projectName: 'app', previewId, scriptName: 'app' },
+    });
+    expect(accepted).toMatchObject({ state: 'running', providerDeploymentId: 'preview-deployment:preview-deployment' });
+    const publish = h.requests.find(request => request.method === 'POST'
+      && request.url.endsWith(`/previews/${previewId}/deployments`));
+    expect(publish).toBeDefined();
+    if (!publish?.body) throw new Error('Expected Preview deployment body');
+    const form = await new Response(Uint8Array.from(publish.body).buffer, { headers: publish.headers }).formData();
+    expect(JSON.parse(String(form.get('metadata'))).env).toEqual({
+      PREVIEW_VALUE: { type: 'plain_text', text: 'preview-only' },
+    });
+    expect(h.requests.some(request => request.method === 'PUT')).toBe(false);
+  } finally { await h.dispose(); }
+});
+
+it('reports a provider error reading the latest deployment when the captured Preview itself disappeared', async () => {
+  const h = await fixture('preview', 10025);
+  try {
+    await expect(h.invoke({
+      providerEnvironment: { kind: 'native', selection: { kind: 'preview', scriptName: 'app', previewName: 'pr-1' } },
+      preparedNative: { projectName: 'app', previewId, scriptName: 'app' },
+    })).rejects.toMatchObject({ code: 'deployment_unavailable' });
+    expect(h.requests.some(request => request.method === 'POST' || request.method === 'PUT')).toBe(false);
   } finally { await h.dispose(); }
 });

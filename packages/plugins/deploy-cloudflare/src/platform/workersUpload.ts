@@ -1,7 +1,7 @@
 import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { readFile } from 'node:fs/promises';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetRoleResultV1ProtocolSchema as output,
-  PluginError, type DeploymentTargetUploadDeployInputV1, type DeploymentTargetRoleResultV1,
+  isPluginError, PluginError, type DeploymentTargetUploadDeployInputV1, type DeploymentTargetRoleResultV1,
   type JsonValue, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginActionDeclaration } from '@happier-dev/plugin-sdk/actions';
 import { isObject } from '../connectedAccounts/probe.js';
@@ -40,13 +40,18 @@ async function upload(input: CloudflareRoleInput<DeploymentTargetUploadDeployInp
   const previewRoot = preview ? `/workers/workers/${encodeURIComponent(scriptName)}/previews/${encodeURIComponent(preview.previewId)}` : null;
   let metadata: Record<string, unknown> = { ...prepared.metadata };
   if (previewRoot) {
-    const latest = await request(io, accountId, `${previewRoot}/deployments/latest`, 'observe');
-    if ('code' in latest && latest.code !== 'deployment_unavailable') {
+    const latest = await request(io, accountId, `${previewRoot}/deployments/latest`, 'observe').catch((error: unknown) => {
+      // The Preview exists, but its first deployment has no environment to inherit.
+      if (isPluginError(error) && error.code === 'deployment_unavailable'
+        && error.data.failureCause?.httpStatus === 404 && error.data.failureCause.nativeErrorCode === '10222') return null;
+      throw error;
+    });
+    if (latest && 'code' in latest) {
       throw withActionFailureDiagnostic(new PluginError({ code: latest.code, retryable: latest.retryable, details: { phase: latest.phase },
         failureCause: projectActionFailureCauseV1(latest, `deployment.cloudflare.${latest.phase}`) }),
         { phase: `deployment.cloudflare.${latest.phase}`, causeKind: 'native_failure', error: latest });
     }
-    const latestEnv = !('code' in latest) && isObject(latest.value) && isObject(latest.value.env) ? latest.value.env : {};
+    const latestEnv = latest && isObject(latest.value) && isObject(latest.value.env) ? latest.value.env : {};
     const configuredEnv = isObject(prepared.preview?.env) ? prepared.preview.env : {};
     const { main_module, compatibility_date, compatibility_flags, exports, migrations } = prepared.metadata;
     metadata = { ...prepared.preview, main_module, compatibility_date, compatibility_flags, exports, migrations,
