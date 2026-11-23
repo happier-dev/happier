@@ -34,7 +34,7 @@ async function options(input: OptionsInput, context: PluginAccountActionContext)
         { kind: 'environment', keys: [RAILWAY_PROJECT_KEY] }, { signal: context.signal });
       if (material.kind !== 'environment') throw new PluginError({ code: 'credential_unavailable' });
       const savedProject = material.env[RAILWAY_PROJECT_KEY];
-      if (!savedProject) return projectPage(await choices().readProjectsPage(after));
+      if (!savedProject) return projectPage(await choices().readAccountProjectsPage(after));
       const binding = await context.services.connectedAccounts.getBinding(ACCOUNT_PURPOSE, { signal: context.signal });
       if (!binding) throw new PluginError({ code: 'credential_unavailable' });
       return { options: [{ value: savedProject, label: binding.target.displayName }].filter(matches) };

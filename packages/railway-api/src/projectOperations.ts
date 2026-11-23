@@ -22,6 +22,7 @@ const connection = defineProtocolObject({
   edges: defineProtocolArray(defineProtocolObject({ node: choice }, open)),
   pageInfo,
 }, open);
+const accountProjectsCursor = defineProtocolObject({ workspaceId: text, after: optionalText }, { policy: 'closed' });
 const serviceInstance = defineProtocolObject({
   serviceId: text, serviceName: text, deletedAt: optionalText,
   service: defineProtocolObject({ templateId: optionalText }, open).optional(),
@@ -93,6 +94,18 @@ function readChoicePage(value: unknown, after: string | null): Page {
   return { choices: parsed.data.edges.map(edge => edge.node), nextCursor: readNextCursor(parsed.data.pageInfo, after) };
 }
 
+function readAccountProjectsCursor(cursor: string) {
+  let value: unknown;
+  try {
+    value = JSON.parse(cursor);
+  } catch {
+    throw new NativeError('invalid_parameters');
+  }
+  const parsed = accountProjectsCursor.safeParse(value);
+  if (!parsed.success) throw new NativeError('invalid_parameters');
+  return parsed.data;
+}
+
 /** On-demand project inventory and non-replacing variable updates for Railway consumers. */
 export function createRailwayProjectOperations(request: typeof fetch, signal?: AbortSignal) {
   const graphql = createRailwayGraphqlClient(request, signal);
@@ -129,6 +142,28 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
     if (!memberWorkspaces.success || !sharedWorkspaces.success) throw new NativeError('railway_invalid_response');
     const byId = new Map([...sharedWorkspaces.data, ...memberWorkspaces.data].map(workspace => [workspace.id, workspace]));
     return [...byId.values()];
+  }
+
+  /** Railway's project cursor belongs to a workspace. Keep the workspace with it when listing across an Account. */
+  async function readAccountProjectsPage(cursor: string | null): Promise<Page> {
+    const position = cursor === null ? null : readAccountProjectsCursor(cursor);
+    const workspaces = await readWorkspaceChoices();
+    const start = position === null ? 0 : workspaces.findIndex(workspace => workspace.id === position.workspaceId);
+    if (start < 0) throw new NativeError('invalid_parameters');
+    for (let index = start; index < workspaces.length; index++) {
+      const workspace = workspaces[index]!;
+      const after = index === start ? position?.after ?? null : null;
+      const page = await readProjectsPage(after, workspace.id);
+      const nextWorkspace = workspaces[index + 1];
+      if (page.nextCursor !== null) {
+        return { choices: page.choices, nextCursor: JSON.stringify({ workspaceId: workspace.id, after: page.nextCursor }) };
+      }
+      if (page.choices.length > 0) {
+        return { choices: page.choices,
+          nextCursor: nextWorkspace ? JSON.stringify({ workspaceId: nextWorkspace.id, after: null }) : null };
+      }
+    }
+    return { choices: [], nextCursor: null };
   }
 
   async function listGrantedProjectWorkspaces() {
@@ -241,6 +276,7 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
     deleteServiceInstance,
     listProjects: (workspaceId?: string) => listPages(after => readProjectsPage(after, workspaceId)),
     readProjectsPage,
+    readAccountProjectsPage,
     listGrantedWorkspaces,
     readWorkspaceChoices,
     listGrantedProjectWorkspaces,

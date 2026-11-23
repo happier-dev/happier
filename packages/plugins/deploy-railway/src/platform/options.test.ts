@@ -13,10 +13,10 @@ const draft = { credentialRef: railwayAccount, credentialPrincipal: { kind: 'acc
 
 type OptionsDraft = Readonly<Record<string, JsonValue>>;
 
-function withOptions(respond: (query: string) => unknown, assert: (read: (fieldPath: string, input: OptionsDraft, cursor?: string, creating?: boolean) => Promise<unknown>,
+function withOptions(respond: (query: string, variables: Record<string, unknown>) => unknown, assert: (read: (fieldPath: string, input: OptionsDraft, cursor?: string, creating?: boolean) => Promise<unknown>,
   requests: readonly { query: string; variables: unknown }[]) => Promise<void>, savedProject: string | null = projectId) {
   return (async () => {
-    const requests: { query: string; variables: unknown }[] = [];
+    const requests: { query: string; variables: Record<string, unknown> }[] = [];
     const unavailable = (): never => { throw new Error('Unexpected Connected Account operation'); };
     const plugin = definePlugin({ ...railwayIdentity, hostAccess: railwayHostAccess,
       actions: { 'target-options-read': optionsAction }, resources: optionsResources });
@@ -24,7 +24,7 @@ function withOptions(respond: (query: string) => unknown, assert: (read: (fieldP
       expect(request.credentialBinding).toMatchObject({ kind: 'connectedAccountPurpose', purpose: 'cloud-api' });
       const document = JSON.parse(new TextDecoder().decode(request.body)) as typeof requests[number];
       requests.push(document);
-      return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ data: respond(document.query) })) };
+      return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ data: respond(document.query, document.variables) })) };
     } });
     const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: { http, connectedAccounts: {
       requestSelection: unavailable, listAccounts: unavailable, materializeListedAccount: unavailable, watch: unavailable,
@@ -95,13 +95,32 @@ it('requires the selected native Environment before reading service options', ()
   expect(requests).toHaveLength(0);
 }));
 
-it('reads one page of accessible projects for the account token', () => withOptions(() => ({
-  projects: { pageInfo: { endCursor: 'next', hasNextPage: true }, edges: [
-    { node: { id: projectId, name: 'Backend project' } },
-  ] },
-}), async (read, requests) => {
-  await expect(read('providerAccountId', draft, 'prior')).resolves.toEqual({
-    options: [{ value: projectId, label: 'Backend project' }], nextCursor: 'next',
-  });
-  expect(requests.map(({ variables }) => variables)).toEqual([{ after: 'prior' }]);
-}, null));
+it('lists token projects across workspaces and resumes the selected workspace page', () => {
+  const first = 'workspace-one';
+  const second = 'workspace-two';
+  const third = 'workspace-three';
+  return withOptions((query, variables) => {
+    if (query.includes('me { workspaces')) return {
+      me: { workspaces: [{ id: first, name: 'First' }, { id: second, name: 'Second' }] },
+      externalWorkspaces: [{ id: third, name: 'Shared' }],
+    };
+    const more = variables.workspaceId === second && !variables.after;
+    const id = more ? projectId : variables.workspaceId === second ? 'second-project'
+      : variables.workspaceId === third ? 'shared-project' : null;
+    return { projects: { pageInfo: { endCursor: more ? 'railway-cursor' : null, hasNextPage: more },
+      edges: id ? [{ node: { id, name: id } }] : [] } };
+  }, async (read, requests) => {
+    type ProjectOptions = { options: { value: string; label: string }[]; nextCursor?: string };
+    const firstPage = await read('providerAccountId', draft) as ProjectOptions;
+    expect(firstPage).toEqual({ options: [{ value: 'shared-project', label: 'shared-project' }], nextCursor: expect.any(String) });
+    expect(requests.map(({ variables }) => variables)).toEqual([{}, { workspaceId: third, after: null }]);
+    const nextPage = await read('providerAccountId', draft, firstPage.nextCursor) as ProjectOptions;
+    expect(nextPage).toEqual({ options: [{ value: projectId, label: projectId }], nextCursor: expect.any(String) });
+    await expect(read('providerAccountId', draft, nextPage.nextCursor)).resolves.toEqual({
+      options: [{ value: 'second-project', label: 'second-project' }] });
+    expect(requests.map(({ variables }) => variables).filter(variables => variables.workspaceId)).toEqual([
+      { workspaceId: third, after: null }, { workspaceId: first, after: null }, { workspaceId: second, after: null },
+      { workspaceId: second, after: 'railway-cursor' },
+    ]);
+  }, null);
+});
