@@ -231,6 +231,7 @@ export async function readDeploymentSourceIntentForHost(input: DeploymentSourceR
     };
     const definition = environment.content.definition;
     let sha = request.sha;
+    const pinnedSha = intent?.kind === 'repository' ? intent.sha : sha;
     if (repository && needsWorkspace) {
         for (const checkout of machineCheckouts) {
             if (checkout.source?.sourceId !== sourceId || checkout.source.revision !== sourceRevision) continue;
@@ -265,9 +266,15 @@ export async function readDeploymentSourceIntentForHost(input: DeploymentSourceR
                             expectedCommitSha: resolvedSha, signal }).catch(rethrowDeploymentSourceAcquisitionFailure);
                         sha = resolvedSha;
                     }
-                } else if (!publishedGitProviders) {
-                    // A pinned commit skips ref resolution, but still requires a checkout to export it from.
-                    await requireWorkspaceCommitRepository(checkout.rootPath, signal);
+                } else if (!publishedGitProviders && pinnedSha) {
+                    // Upload must choose a checkout containing the reviewed object.
+                    try {
+                        const resolved = await resolveWorkspaceCommitRef({ sourcePath: checkout.rootPath, ref: pinnedSha, signal });
+                        if (resolved !== pinnedSha) return refuse('deployment_conflict');
+                    } catch (error) {
+                        if (error instanceof Error && 'code' in error && error.code === SCM_OPERATION_ERROR_CODES.NOT_FOUND) continue;
+                        throw error;
+                    }
                 }
             } catch (error) {
                 const cause = error instanceof Error ? error.cause : undefined;

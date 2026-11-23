@@ -170,8 +170,17 @@ it('retains the Home Source purpose refusal and recovery through the deployment 
 
 it('reads restore workspace rows under the signed public root while reading the Source under its own effect', async () => {
     const environment = createDeploymentEnvironmentDetailV1();
-    const sourceIntent = createDeploymentReceiptDetailV1().content.sourceIntent;
-    if (sourceIntent.kind !== 'repository') throw new Error('Repository fixture required');
+    const fixtureIntent = createDeploymentReceiptDetailV1().content.sourceIntent;
+    if (fixtureIntent.kind !== 'repository') throw new Error('Repository fixture required');
+    const runtime = await mountReviewedCheckoutGit();
+    onTestFinished(() => runtime.dispose());
+    const repository = await mkdtemp(join(tmpdir(), 'deployment-signed-restore-'));
+    onTestFinished(() => rm(repository, { recursive: true, force: true }));
+    const git = (args: string[]) => execFileSync('git', args, { cwd: repository, encoding: 'utf8' }).trim();
+    git(['init', '--quiet']); git(['config', 'user.name', 'Source Fixture']); git(['config', 'user.email', 'source@example.test']);
+    await writeFile(join(repository, 'compose.yaml'), 'services: {}');
+    git(['add', '.']); git(['commit', '--quiet', '-m', 'Source for signed Restore']);
+    const sourceIntent = { ...fixtureIntent, sha: git(['rev-parse', 'HEAD']) };
     const native = projectDeploymentNativeAdmissionV1('deployments.backups.restore', { serverId: 'home',
         environmentId: environment.environment.id, machineId: 'controller', installationId: 'installation',
         targetLinkId: 'target', deploymentId: 'capture-receipt', source: { kind: 'repository', snapshotId: 'backup' },
@@ -194,7 +203,7 @@ it('reads restore workspace rows under the signed public root while reading the 
             } },
     } satisfies ExternalActionExecutionAuthorizationV1;
     mockProjectAccountRowsHttpBoundary([createPlainProjectAccountRefRow({ id: 'workspace', serverId: 'home',
-        machineId: 'controller', rootPath: '/restore-source', createdAtMs: 1,
+        machineId: 'controller', rootPath: repository, createdAtMs: 1,
         source: { sourceId: sourceIntent.projectSourceId, revision: sourceIntent.sourceRevision } })]);
     vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: ProjectSourcesReadOutputV1Schema.parse({ ok: true,
         canManage: true, source: { id: sourceIntent.projectSourceId, revision: sourceIntent.sourceRevision, name: 'App', audience: [],
@@ -212,7 +221,7 @@ it('reads restore workspace rows under the signed public root while reading the 
                 const requester = await identityOwner.resolveActionRequester!(current);
                 try { return requester.identity; } finally { await requester.dispose(); }
             } } });
-    expect(selected.workspace?.rootPath).toBe('/restore-source');
+    expect(selected.workspace?.rootPath).toBe(repository);
     expect(effects).toEqual(['projects.sources.read', 'deployments.backups.restore']);
 });
 
@@ -253,6 +262,8 @@ it.each([
     { actorAccountId: 'owner', session: true, enabled: true, direct: false },
     { actorAccountId: 'use-grantee', session: false, enabled: false, direct: false },
 ])('acquires requester workspace only for admitted direct placement ($actorAccountId, session=$session, isolation=$enabled)', async ({ actorAccountId, session, enabled, direct }) => {
+    const runtime = await mountReviewedCheckoutGit();
+    onTestFinished(() => runtime.dispose());
     await withTempDir('deployment-source-requester-', async directory => {
         const repository = join(directory, 'repository');
         await mkdir(repository);
@@ -441,7 +452,10 @@ it.each([
 });
 
 
-it.each(['Upload', 'pinned Upload', 'published Git'] as const)('can use the new %s checkout after Open leaves the old row', async method => {
+it.each([
+    ['Upload', 'removed', true], ['pinned Upload', 'removed', true],
+    ['published Git', 'removed', true], ['pinned Upload', 'main only', true], ['pinned Upload', 'main only', false],
+] as const)('selects the reviewed checkout for %s with an old %s checkout and a replacement: %s', async (method, oldCheckout, addReplacement) => {
     const runtime = await mountReviewedCheckoutGit();
     onTestFinished(() => runtime.dispose());
     await withTempDir('deployment-checkout-reopened-', async directory => {
@@ -457,25 +471,41 @@ it.each(['Upload', 'pinned Upload', 'published Git'] as const)('can use the new 
         const workspaceRow = (id: string, rootPath: string, createdAtMs: number) => createPlainProjectAccountRefRow({
             id, serverId: 'home', machineId: 'controller', rootPath, createdAtMs, source: { sourceId, revision: 1 },
         });
-        mockProjectAccountRowsHttpBoundary([
-            workspaceRow('old', join(directory, 'removed'), 1), workspaceRow('new', directory, 2),
-        ]);
-        vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: ProjectSourcesReadOutputV1Schema.parse({
-            ok: true, canManage: true, source: { id: sourceId, revision: 1, name: 'App', audience: [],
-                createdByAccountId: 'owner', repository: { protocol: 'https', provider: { id: 'github', kind: 'github',
-                    displayName: 'GitHub', baseUrl: 'https://github.com' }, repository: {
-                    nameWithOwner: 'example/app', cloneUrl: 'https://github.com/example/app.git' } } },
-        }) });
-        const publishedGit = method === 'published Git';
-        const source = await readDeploymentSourceIntentForHost({ request: { environment, context: {}, requireWorkspace: !publishedGit,
-            ...(publishedGit ? { publishedGitProviders: ['github'], sha } : method === 'pinned Upload' ? { sha } : {}) },
-            host: { credentials: { token: 'fixture', encryption: null }, serverId: 'home', serverHttpBaseUrl: 'https://home.test',
-                machineId: 'controller', async assertAuthority() {}, async resolveRepositoryRef() { return sha; },
-                async resolveRequesterIdentity() {
-                    return { kind: 'owner_person' as const, requester: { serverId: 'home', accountId: 'owner',
-                        machineId: 'controller', installationId: 'installation' } };
-                } } });
-        expect(source).toMatchObject({ workspace: { id: 'new', rootPath: directory }, sourceIntent: { kind: 'repository', sha } });
+        await withTempDir('deployment-old-checkout-', async mainDir => {
+            if (oldCheckout === 'main only') {
+                const main = (...args: string[]) => execFileSync('git', args, { cwd: mainDir, encoding: 'utf8' }).trim();
+                main('init', '--quiet', '--initial-branch=main');
+                await writeFile(join(mainDir, 'index.html'), 'unrelated main checkout');
+                main('add', 'index.html');
+                main('-c', 'user.name=Source Fixture', '-c', 'user.email=source@example.test', 'commit', '--quiet', '-m', 'Main only');
+                expect(main('rev-parse', 'HEAD')).not.toBe(sha);
+            }
+            mockProjectAccountRowsHttpBoundary([
+                workspaceRow('old', oldCheckout === 'removed' ? join(directory, 'removed') : mainDir, 1),
+                ...(addReplacement ? [workspaceRow('new', directory, 2)] : []),
+            ]);
+            vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: ProjectSourcesReadOutputV1Schema.parse({
+                ok: true, canManage: true, source: { id: sourceId, revision: 1, name: 'App', audience: [],
+                    createdByAccountId: 'owner', repository: { protocol: 'https', provider: { id: 'github', kind: 'github',
+                        displayName: 'GitHub', baseUrl: 'https://github.com' }, repository: {
+                        nameWithOwner: 'example/app', cloneUrl: 'https://github.com/example/app.git' } } },
+            }) });
+            const publishedGit = method === 'published Git';
+            const source = readDeploymentSourceIntentForHost({ request: { environment, context: {}, requireWorkspace: !publishedGit,
+                ...(publishedGit ? { publishedGitProviders: ['github'], sha } : method === 'pinned Upload' ? { sha } : {}) },
+                host: { credentials: { token: 'fixture', encryption: null }, serverId: 'home', serverHttpBaseUrl: 'https://home.test',
+                    machineId: 'controller', async assertAuthority() {}, async resolveRepositoryRef() { return sha; },
+                    async resolveRequesterIdentity() {
+                        return { kind: 'owner_person' as const, requester: { serverId: 'home', accountId: 'owner',
+                            machineId: 'controller', installationId: 'installation' } };
+                    } } });
+            if (!addReplacement) {
+                await expect(source).rejects.toMatchObject({ code: 'deployment_source_checkout_required' });
+            } else {
+                await expect(source).resolves.toMatchObject({ workspace: { id: 'new', rootPath: directory },
+                    sourceIntent: { kind: 'repository', sha } });
+            }
+        });
     });
 });
 

@@ -8,6 +8,7 @@ import { getScmCommandIndeterminateErrorCode, runScmCommand } from '../runtime.j
 import { gitFileAtRevision } from './fileAtRevision.js';
 import { fetchVerifiedGitCommitRef } from './materializeGitWorkspaceCheckout.js';
 
+const commitShaPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 const refuse = (code: string) => Object.assign(new Error(code), { code });
 
 export const fetchGitCommitRef: NonNullable<WorkspaceIntegrationHandlers['fetchCommitRef']> = async input => {
@@ -30,11 +31,24 @@ export const resolveGitCommitRef: NonNullable<WorkspaceIntegrationHandlers['reso
     if (!input.ref.trim() || input.ref.includes('\0')) throw refuse('git_selection_unavailable');
     const cwd = input.context.detection.rootPath ?? input.context.cwd;
     input.context.assertFilesystemPathAuthorized?.(cwd);
+    if (commitShaPattern.test(input.ref)) {
+        // An unpeeled rev-parse accepts a hexadecimal object name even when the object is absent.
+        const object = await runScmCommand({ bin: 'git', cwd,
+            args: ['--no-replace-objects', 'cat-file', '--batch-check=%(objecttype)'],
+            stdin: `${input.ref}\n`, signal: input.signal });
+        input.signal?.throwIfAborted();
+        if (object.success && !object.stderr.trim()) {
+            const type = object.stdout.trim();
+            if (type === 'commit') return input.ref;
+            if (type === `${input.ref} missing`) throw refuse(SCM_OPERATION_ERROR_CODES.NOT_FOUND);
+        }
+        throw refuse(getScmCommandIndeterminateErrorCode(object) ?? 'git_selection_unavailable');
+    }
     const result = await runScmCommand({ bin: 'git', cwd,
         args: ['rev-parse', '--verify', '--quiet', '--end-of-options', `${input.ref}^{commit}`], signal: input.signal });
     input.signal?.throwIfAborted();
     const sha = result.stdout.trim();
-    if (!result.success || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(sha)) {
+    if (!result.success || !commitShaPattern.test(sha)) {
         const indeterminate = getScmCommandIndeterminateErrorCode(result);
         // Peeling also fails for an existing ref whose object is missing. Only a
         // missing unpeeled name permits fallback; corruption keeps the local refusal.
@@ -55,7 +69,7 @@ export const resolveGitCommitRef: NonNullable<WorkspaceIntegrationHandlers['reso
 /** Export object-database bytes through the existing entries/blob materializer. */
 export const exportGitCommit: NonNullable<WorkspaceIntegrationHandlers['exportCommit']> = async input => {
     input.signal?.throwIfAborted();
-    if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(input.commitSha)) throw refuse('git_selection_unavailable');
+    if (!commitShaPattern.test(input.commitSha)) throw refuse('git_selection_unavailable');
     const cwd = input.context.detection.rootPath ?? input.context.cwd;
     input.context.assertFilesystemPathAuthorized?.(cwd);
     // Export the admitted objects themselves, never a local refs/replace view.
