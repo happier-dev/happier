@@ -1561,8 +1561,9 @@ export function DeployOutcomeBanner(
         ? { action: { label: recovery.nextAction.label, onPress: controller.retry } }
         : recovery && openRecovery ? { action: { label: recovery.nextAction.label,
           onPress: () => openRecovery(recovery.nextAction.destination,
-            failedDeploymentId ? { deploymentId: failedDeploymentId }
-              : recoveryMachineId ? { machineId: recoveryMachineId } : undefined) } } : {})}
+            recovery.nextAction.openProject ? { openProject: recovery.nextAction.openProject }
+              : failedDeploymentId ? { deploymentId: failedDeploymentId }
+                : recoveryMachineId ? { machineId: recoveryMachineId } : undefined) } } : {})}
       // The typed code is for support; the sentence says what it left. When the typed remedy is the sentence, the
       // stored recovery line would only repeat or contradict it.
       details={failure ? failure.technicalDetails.filter(line => !(line.key === 'failure-remedy' && (recovery || ownDeploy) && !canonicalReason))

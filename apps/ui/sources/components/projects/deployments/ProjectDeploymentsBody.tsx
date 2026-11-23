@@ -44,6 +44,8 @@ import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { useProjectSaveAsSource } from '../ProjectSaveAsSourceSheet';
 import { useProjectsSourcesComposition } from '../useProjectsSourcesComposition';
 import { useOpenNewApp } from '../starters/newAppPresentation';
+import { buildProjectOpenRoute } from '../activation/projectOpenRoute.mjs';
+import { useNavigateToProjectOpen } from '../activation/projectOpenPresentation';
 import { DeploymentEnvironmentCollection, environmentAfterDelete } from './DeploymentEnvironmentCollection';
 import { ProjectDeploymentDefaultsSettings } from './ProjectDeploymentDefaultsSettings';
 import { DeploymentPreparationEntry } from './DeploymentPreparation';
@@ -345,6 +347,7 @@ const ProjectDeploymentsPage = React.memo(
     // A failed receipt's recovery opens the place its typed destination names: an Environment page in place, or
     // the Source, Machines, Connected services or Store page. A failed step's logs are on its own receipt, which
     // opens on that step; review lives on the Environment's Overview.
+    const navigateToProjectOpen = useNavigateToProjectOpen();
     const openRecoveryDestination = React.useCallback((destination: DeploymentFailureRecoveryDestinationV1,
       at?: DeploymentRecoveryTarget) => {
       const machineId = at?.machineId;
@@ -356,7 +359,10 @@ const ProjectDeploymentsPage = React.memo(
           openEnvironmentTab({ tab: 'overview', section: null }); return;
         case 'review': case 'deploy':
           openEnvironmentTab({ tab: 'overview', section: null }); return;
-        case 'source': router.push(projectSourceRoute(props.sourceId)); return;
+        case 'source':
+          if (at?.openProject) navigateToProjectOpen(buildProjectOpenRoute(at.openProject, 'clone'));
+          else router.push(projectSourceRoute(props.sourceId));
+          return;
         case 'machineAdminAccess': router.push(machineId ? machinePageHref({ door: 'rail',
           target: { machineId, serverId: props.serverId }, tab: { id: 'security' } }) : SETTINGS_ROUTES.machines); return;
         // A Machine-scoped remedy (a missing tool, the build Machine) opens that Machine's Setup; Machines only when none is named.
@@ -365,7 +371,7 @@ const ProjectDeploymentsPage = React.memo(
         case 'connectedAccounts': router.push(SETTINGS_ROUTES.connectedServices); return;
         case 'store': router.push(PLUGINS_APP_ROUTE); return;
       }
-    }, [openEnvironmentTab, props.sourceId, props.serverId, router, setSelection]);
+    }, [navigateToProjectOpen, openEnvironmentTab, props.sourceId, props.serverId, router, setSelection]);
     const hostedBack = useProjectPageBack(phone && (environmentId !== null || selection.drafting === true || selection.defaults === true), back);
     // Without a Project bar to host it (the standalone deployments route), the open Environment draws the
     // receipt's same page Back so a phone can return to the list.

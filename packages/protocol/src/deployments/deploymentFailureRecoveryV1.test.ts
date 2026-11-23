@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DeploymentFailureRecoveryV1Schema, projectDeploymentFailureRecoveryV1, projectDeploymentSourceCheckoutRequiredV1, readDeploymentFailureRecoveryV1, readDeploymentRefusalRecoveryV1 } from './deploymentFailureRecoveryV1.js';
+import { DeploymentFailureRecoveryV1Schema, projectDeploymentCheckoutDestinationOccupiedV1, projectDeploymentFailureRecoveryV1, projectDeploymentSourceCheckoutRequiredV1, readDeploymentFailureRecoveryV1, readDeploymentRefusalRecoveryV1 } from './deploymentFailureRecoveryV1.js';
 import { DeploymentReceiptFailureV1Schema } from './deploymentReceiptEventsV1.js';
 import { DeploymentDomainFailureDetailsV1Schema } from './deploymentDomainFailureV1.js';
 import { DeploymentTemplateInstantiationPartialV1Schema } from './deploymentTemplateInstantiationV1.js';
@@ -364,6 +364,21 @@ describe('deployment refusal recovery (a refused press: banner and platform shee
             nextAction: { kind: 'action', actionId: 'projects.open', input: OpenProjectInputV1Schema.parse(input) } });
         expect(readDeploymentRefusalRecoveryV1('deployment_source_checkout_required', details)?.nextAction)
             .toEqual({ kind: 'navigate', destination: 'source', label: 'Open checkout' });
+    });
+
+    it('opens a draft for a new location only when automatic checkout found an occupied path before effects', () => {
+        const target = { serverId: 'home', machineId: 'controller', ref: 'release', source: {
+            kind: 'source', id: 'source-1', revision: 2, selector: {
+                protocol: 'https', provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+                repository: { nameWithOwner: 'example/app', cloneUrl: 'https://github.com/example/app.git' },
+            },
+        }, materialization: { kind: 'clone', destinationParentPath: '/home/developer/src', destinationDirectoryName: 'app' } } as const;
+        const refusal = { kind: 'refused', code: 'destination_exists', effectAttempted: false } as const;
+        expect(readDeploymentRefusalRecoveryV1(refusal.code, refusal)).toBeNull();
+        const details = projectDeploymentCheckoutDestinationOccupiedV1(target, refusal);
+        expect(readDeploymentRefusalRecoveryV1(refusal.code, details)?.nextAction)
+            .toMatchObject({ kind: 'navigate', destination: 'source', openProject: target });
+        expect(readDeploymentRefusalRecoveryV1(refusal.code, { ...details, effectAttempted: true })).toBeNull();
     });
 
     it('uses repository recovery for an unavailable source without a Compose file failure', () => {

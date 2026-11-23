@@ -22,7 +22,7 @@ import type { StoredCredentials } from '@/persistence';
 import { resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
 import { readProjectAccountRowsObservation } from '@/workspaces/projectAccountRows';
-import { fetchWorkspaceCommitRef, resolveWorkspaceCommitRef } from '@/scm/workspace/workspaceCommitExport';
+import { fetchWorkspaceCommitRef, requireWorkspaceCommitRepository, resolveWorkspaceCommitRef } from '@/scm/workspace/workspaceCommitExport';
 import { runScmCommand } from '@/scm/runtime';
 import { admitDeploymentSourceIntent } from './deploymentSourceAdmission';
 import { captureDeploymentFolderSourceForHost } from './captureDeploymentFolderSourceForHost';
@@ -201,9 +201,9 @@ export async function readDeploymentSourceIntentForHost(input: DeploymentSourceR
         serverId: host.serverId, signal, assertCurrentAuthority: assertAuthority,
         selection: { kinds: ['workspace-ref'], serverId: host.serverId },
     })) : undefined;
-    const workspace = needsWorkspace ? rows?.snapshot.workspaceRefs.find(ref => ref.serverId === host.serverId
-        && ref.machineId === host.machineId && (folder ? ref.id === folder.workspaceId
-            : ref.source?.sourceId === sourceId && ref.source.revision === sourceRevision)) : undefined;
+    const machineCheckouts = rows?.snapshot.workspaceRefs.filter(ref => ref.serverId === host.serverId
+        && ref.machineId === host.machineId) ?? [];
+    let workspace = folder ? machineCheckouts.find(ref => ref.id === folder.workspaceId) : undefined;
     let folderExport: DeploymentSourceIntentForHost['folderExport'];
     if (folder) {
         // This owned ref addresses this Machine, even when the caller has a Session workspace.
@@ -229,53 +229,72 @@ export async function readDeploymentSourceIntentForHost(input: DeploymentSourceR
             materialization: { kind: 'clone', ...destination } }) };
         throw Object.assign(createActionExecuteFailureError(failure), { cause: failure });
     };
-    if (needsWorkspace && !workspace) return refuseMissingCheckout();
-    if (publishedGitProviders && workspace) {
-        const status = await runScmCommand({ bin: 'git', cwd: workspace.rootPath, signal,
-            args: ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=normal', '--ignore-submodules=none'] });
-        signal?.throwIfAborted();
-        if (!status.success) return refuse('deployment_source_unavailable');
-        if (status.stdout.length > 0) return refuse('deployment_source_dirty');
-    }
-    if (!intent) {
-        const definition = environment.content.definition;
-        if (definition.kind === 'stored') intent = structuredClone(definition);
-        else if (definition.kind === 'repository') {
-            if (sourceRevision === undefined) return refuse('deployment_source_unavailable');
-            let sha = request.sha;
-            if (!sha) {
-                if (workspace) {
-                    try {
-                        sha = await resolveWorkspaceCommitRef({ sourcePath: workspace.rootPath, ref: definition.ref, signal });
-                    } catch (error) {
-                        const cause = error instanceof Error ? error.cause : undefined;
-                        if (needsWorkspace && cause instanceof Error && 'errorCode' in cause
-                            && (cause.errorCode === SCM_OPERATION_ERROR_CODES.ROOT_NOT_FOUND
-                                || cause.errorCode === SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY)) {
-                            return refuseMissingCheckout();
+    const definition = environment.content.definition;
+    let sha = request.sha;
+    if (repository && needsWorkspace) {
+        for (const checkout of machineCheckouts) {
+            if (checkout.source?.sourceId !== sourceId || checkout.source.revision !== sourceRevision) continue;
+            try {
+                if (publishedGitProviders) {
+                    const status = await runScmCommand({ bin: 'git', cwd: checkout.rootPath, signal, args: [
+                        '--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=normal', '--ignore-submodules=none',
+                    ] });
+                    signal?.throwIfAborted();
+                    if (status.workingDirectoryMissing) continue;
+                    if (!status.success) {
+                        // Status also fails for an unreadable repository. The SCM owner distinguishes absence.
+                        if (!status.executableMissing && !status.timedOut && !status.signal && !status.aborted) {
+                            await requireWorkspaceCommitRepository(checkout.rootPath, signal);
                         }
+                        return refuse('deployment_source_unavailable');
+                    }
+                    if (status.stdout.length > 0) return refuse('deployment_source_dirty');
+                }
+                if (!intent && !sha && definition.kind === 'repository') {
+                    try {
+                        sha = await resolveWorkspaceCommitRef({ sourcePath: checkout.rootPath, ref: definition.ref, signal });
+                    } catch (error) {
                         if (publishedGitProviders || !(error instanceof Error && 'code' in error && error.code === SCM_OPERATION_ERROR_CODES.NOT_FOUND)
-                            || !sourceRepository || !host.resolveRepositoryRef) return rethrowDeploymentSourceAcquisitionFailure(error);
-                        sha = await host.resolveRepositoryRef(sourceRepository, definition.ref, request.context);
+                            || !sourceRepository || !host.resolveRepositoryRef) throw error;
+                        const resolvedSha = await host.resolveRepositoryRef(sourceRepository, definition.ref, request.context);
                         const cloneUrl = sourceRepository.protocol === 'ssh'
                             ? sourceRepository.repository.sshUrl : sourceRepository.repository.cloneUrl;
                         if (!cloneUrl) return refuse('deployment_source_unavailable');
-                        await fetchWorkspaceCommitRef({ sourcePath: workspace.rootPath, cloneUrl,
+                        await fetchWorkspaceCommitRef({ sourcePath: checkout.rootPath, cloneUrl,
                             ref: definition.ref.startsWith('refs/') ? definition.ref : `refs/heads/${definition.ref}`,
-                            expectedCommitSha: sha, signal }).catch(rethrowDeploymentSourceAcquisitionFailure);
+                            expectedCommitSha: resolvedSha, signal }).catch(rethrowDeploymentSourceAcquisitionFailure);
+                        sha = resolvedSha;
                     }
+                } else if (!publishedGitProviders) {
+                    // A pinned commit skips ref resolution, but still requires a checkout to export it from.
+                    await requireWorkspaceCommitRepository(checkout.rootPath, signal);
                 }
-                else if (sourceRepository && host.resolveRepositoryRef) {
-                    sha = await host.resolveRepositoryRef(sourceRepository, definition.ref, request.context);
-                } else return refuse('deployment_source_unavailable');
+            } catch (error) {
+                const cause = error instanceof Error ? error.cause : undefined;
+                if (cause instanceof Error && 'errorCode' in cause
+                    && (cause.errorCode === SCM_OPERATION_ERROR_CODES.ROOT_NOT_FOUND
+                        || cause.errorCode === SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY)) continue;
+                return rethrowDeploymentSourceAcquisitionFailure(error);
             }
+            workspace = checkout;
+            break;
+        }
+        if (!workspace) return refuseMissingCheckout();
+    }
+    if (!intent) {
+        if (definition.kind === 'stored') intent = structuredClone(definition);
+        else if (definition.kind === 'repository') {
+            if (sourceRevision === undefined) return refuse('deployment_source_unavailable');
+            if (!sha && sourceRepository && host.resolveRepositoryRef) {
+                sha = await host.resolveRepositoryRef(sourceRepository, definition.ref, request.context);
+            }
+            if (!sha) return refuse('deployment_source_unavailable');
             intent = { kind: 'repository', projectSourceId: sourceId, sourceRevision,
                 ...(definition.compose === undefined ? {} : { compose: definition.compose }), sha };
         }
     }
     if (!intent) return refuse('deployment_source_unavailable');
     if (publishedGitProviders) {
-        const definition = environment.content.definition;
         if (intent.kind !== 'repository' || definition.kind !== 'repository' || !workspace
             || !sourceRepository || !host.resolveRepositoryRef) return refuse('deployment_source_unavailable');
         const reviewedSha = intent.sha;

@@ -296,6 +296,7 @@ it.each(['opened', 'refused', 'unsupported-forge', 'declined'] as const)('prepar
   const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
   const { OpenProjectInputV1Schema } = await import('@happier-dev/protocol/projects/openProjectV1');
   const { createDeploymentActions } = await import('./deploymentActions');
+  const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
   const { Modal, ModalProvider } = await import('@/modal');
   const account = await captureLazyActionAccountContext(scope.serverId);
   const base = environmentDetailForHome();
@@ -347,10 +348,12 @@ it.each(['opened', 'refused', 'unsupported-forge', 'declined'] as const)('prepar
   const { controller } = controllerFor({ detail, history: [] });
   const actions = createDeploymentActions(account.accountLifetime, source.id);
   const openedReceipts: string[] = [];
+  const recoveries: unknown[][] = [];
+  const review = { ...noReview, openRecovery: (...args: unknown[]) => { recoveries.push(args); } };
   try {
     const screen = await renderScreen(<ModalProvider>
       <DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id} demand={shown}
-        accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={actions.deploy} review={noReview}
+        accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={actions.deploy} review={review}
         onOpenReceipt={id => openedReceipts.push(id)} lifetime={account.accountLifetime} />
     </ModalProvider>);
     await waitForContent(screen, 'project-deployments.environment.deploy');
@@ -383,6 +386,18 @@ it.each(['opened', 'refused', 'unsupported-forge', 'declined'] as const)('prepar
         expect(screen.getTextContent()).toMatch(/could not clone.*QA fixture forge/i);
       }
     });
+    if (openResult === 'refused') {
+      const banner = screen.findAllByType(AttentionBanner)
+        .find(node => node.props.testID === 'project-deployments.outcome.refused.other');
+      expect(banner?.props.action?.label).toBe('Choose checkout location');
+      expect(banner?.props.secondaryAction).toBeUndefined();
+      await act(async () => { banner?.props.action?.onPress(); });
+      expect(recoveries).toEqual([['source', { openProject: expect.objectContaining({
+        machineId, serverId: scope.serverId, source: expect.objectContaining({ id: source.id, revision: 2 }), ref: 'main',
+        materialization: { kind: 'clone', destinationParentPath: '/home/me/src', destinationDirectoryName: 'app' },
+      }) }]]);
+      expect(effects).toEqual(['open']);
+    }
   } finally { account.dispose(); await act(async () => { controller.retire(); }); }
 });
 

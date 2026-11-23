@@ -45,6 +45,7 @@ export type DeploymentFailureRecoveryDestinationV1 =
     | 'machines' | 'machineAdminAccess' | 'buildMachineSetup' | 'connectedAccounts' | 'store' | 'review' | 'deploy';
 export type DeploymentFailureRecoveryNextActionV1 = Readonly<{
     kind: 'navigate'; destination: DeploymentFailureRecoveryDestinationV1; label: string; machineId?: string;
+    openProject?: OpenProjectInputV1;
 }>;
 export type DeploymentFailureRecoveryPresentationV1 = Readonly<{
     requiredFact: string; remedy: string; nextAction: DeploymentFailureRecoveryNextActionV1;
@@ -302,11 +303,22 @@ function readDomainAdminRecoveryMachineId(details: Record<string, unknown>, erro
     return DeploymentIdentifierV1Schema.safeParse(details.machineId).data;
 }
 
+const occupiedCheckoutRecovery = recovery(
+    'The suggested checkout location is already in use. Choose another location to open this Source, then deploy again.',
+    'source', 'Choose checkout location',
+);
+
 function recoveryFor(details: Record<string, unknown>, errorCode?: string, request?: DeploymentRefusalRequestV1) {
     details = recoveryDetails(details);
     const replacement = readDeploymentInstallationReplacementRefusalV1(errorCode, details);
     if (replacement) return recovery(replacement.remedy, 'source', 'Open Source details');
     if (details.kind === 'refused') {
+        if (errorCode === 'destination_exists' && details.code === errorCode && details.effectAttempted === false) {
+            const input = OpenProjectInputV1Schema.safeParse(details.checkoutDraft);
+            if (input.success && input.data.source.kind === 'source' && input.data.materialization.kind === 'clone') {
+                return { ...occupiedCheckoutRecovery, nextAction: { ...occupiedCheckoutRecovery.nextAction, openProject: input.data } };
+            }
+        }
         const open = OpenProjectRefusalV1Schema.safeParse(details);
         if (open.success && open.data.remediation?.kind === 'unsupported_provider') {
             return unsupportedCloneProviderRecovery(open.data.remediation.providerDisplayName);
@@ -394,6 +406,16 @@ export function projectDeploymentSourceCheckoutRequiredV1(target: OpenProjectInp
         ? { kind: 'action', actionId: 'projects.open', input: input.data } : undefined;
     return projectDeploymentFailureRecoveryV1({ reason: 'deployment_source_checkout_required', ...(nextAction ? { nextAction } : {}) },
         'deployment_source_checkout_required');
+}
+
+/** Recover a refused automatic checkout through the same Projects Open review. */
+export function projectDeploymentCheckoutDestinationOccupiedV1(
+    target: OpenProjectInputV1,
+    refusal: z.infer<typeof OpenProjectRefusalV1Schema>,
+) {
+    if (refusal.code !== 'destination_exists' || refusal.effectAttempted !== false
+        || target.source.kind !== 'source' || target.materialization.kind !== 'clone') return refusal;
+    return projectDeploymentFailureRecoveryV1({ ...refusal, checkoutDraft: target }, refusal.code);
 }
 
 /** Receipt, review and Store render this result; callers supply their existing navigation context. */

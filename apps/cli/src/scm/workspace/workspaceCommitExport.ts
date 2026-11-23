@@ -13,6 +13,15 @@ async function requireWorkspaceCommitSelection(sourcePath: string, registry: Scm
     throw Object.assign(new Error('SCM source is unavailable', { cause }), { code: 'git_selection_unavailable' });
 }
 
+/** Reviewed source already has a commit. Confirm it has a usable repository for acquisition. */
+export async function requireWorkspaceCommitRepository(sourcePath: string, signal?: AbortSignal): Promise<void> {
+    await runWithScmBackendRegistryLease(undefined, async registry => {
+        signal?.throwIfAborted();
+        await requireWorkspaceCommitSelection(sourcePath, registry);
+        signal?.throwIfAborted();
+    });
+}
+
 /** Configured-remote authority and fetched-ref verification stay with the selected SCM backend. */
 export async function fetchWorkspaceCommitRef(input: Readonly<{
     sourcePath: string; cloneUrl: string; ref: string; expectedCommitSha: string;

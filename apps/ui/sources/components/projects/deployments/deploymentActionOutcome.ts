@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { DeploymentFailureRecoveryDestinationV1, DeploymentRefusalRequestV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import type { OpenProjectInputV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import { readDeploymentTemplateInstantiationPartialV1 as readDeploymentPartialResult } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 export { readDeploymentPartialResult };
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -9,8 +10,8 @@ import { HappyError } from '@/utils/errors/errors';
 
 import { readActionApprovalRequestCreatedError } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
-/** Where a recovery destination opens: a build Machine's setup, or the failed deployment's own receipt for its logs. */
-export type DeploymentRecoveryTarget = Readonly<{ machineId?: string; deploymentId?: string }>;
+/** The exact target of an existing recovery surface. */
+export type DeploymentRecoveryTarget = Readonly<{ machineId?: string; deploymentId?: string; openProject?: OpenProjectInputV1 }>;
 
 type DeploymentPressReview = Readonly<{
   request: (artifactId: string) => void;

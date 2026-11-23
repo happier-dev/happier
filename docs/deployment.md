@@ -86,17 +86,20 @@ the gesture runs the existing `projects.open` Action before dispatching
 and the person's ordinary destination review. An Open refusal or uncertain
 outcome stops the sequence. When the typed Projects Open refusal names an
 unsupported hosting provider, the Deploy panel includes its display name.
-Stored definitions and provider Git integration do not require this checkout
-step. Deploy itself never opens a checkout internally.
+The app skips automatic checkout for stored definitions and provider Git
+integration. The published Git path still requires a clean checkout of the
+revision on the controller so it can match the reviewed commit to the published
+repository. Deploy never opens a checkout internally.
 
-If Upload cannot clone a Source, the Deploy panel shows the checkout failure and
-its repair step. The failed checkout is recorded by Projects Open. A deployment
-receipt begins only after Deploy is admitted.
+If the suggested Upload checkout location is occupied, choose another location
+in Projects Open. The review keeps the original Source, Machine, and ref. A
+deployment receipt begins only after Deploy is admitted.
 
 When a direct deploy Action needs a checkout, its refusal returns the complete
-`projects.open` input for that Source and Machine. This also covers an old checkout
-record whose directory or repository is gone. Open uses the same destination
-suggestion and runs with its own review before the person retries the deploy.
+`projects.open` input for that Source and Machine. Deploy skips old checkout
+records whose directory or repository is gone and can use a replacement
+checkout registered for the same Source revision. Projects Open runs with its
+own review before the person retries the deploy.
 
 ## Declared platform plans (0.3 development)
 

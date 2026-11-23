@@ -18,8 +18,12 @@ import { createPlainProjectAccountRefRow } from '@/workspaces/projectAccountRows
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { createDeploymentSourceMaterializationPort } from './targets/ownServer/exactCommitRelease';
 import { createDeploymentGitRegistry } from './targets/ownServer/exactCommitRelease.testkit';
-import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
+import { GIT_PLUGIN } from '../../../../packages/plugins/scm-git/src/manifest';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -351,15 +355,30 @@ it.each([true, false])('captures an admitted exact provider Git commit without a
     await expect(captured.assertSourceCurrent()).rejects.toMatchObject({ code: 'action_forbidden' });
 });
 
-it.each(['no checkout row', 'removed checkout', 'non-Git checkout'] as const)('offers to check out a repository for Upload with %s', async observation => {
+async function mountReviewedCheckoutGit() {
+    return createAuthoredAdmittedPluginRuntimeFixture({
+        controller: pluginReloadController,
+        plugins: [{ manifest: GIT_PLUGIN.manifest,
+            files: { [GIT_PLUGIN.manifest.entrypoints!.daemon!]: 'export function activate() {}' },
+            instantiateCommittedModule: () => ({ activate: GIT_PLUGIN.activate }) }],
+        resolveContributes: async happyHomeDir => createResolvedContributionRegistry(projectLoadedPluginContributes({
+            loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external',
+        })),
+    });
+}
+
+it.each([
+    ['Upload', 'no checkout row'], ['Upload', 'removed checkout'], ['Upload', 'non-Git checkout'],
+    ['pinned Upload', 'no checkout row'], ['pinned Upload', 'removed checkout'], ['pinned Upload', 'non-Git checkout'],
+    ['published Git', 'no checkout row'], ['published Git', 'removed checkout'], ['published Git', 'non-Git checkout'],
+] as const)('offers to check out a repository for %s with %s', async (method, observation) => {
     const environment = createDeploymentEnvironmentDetailV1();
     environment.content.definition = { kind: 'repository', ref: 'release' };
     const sourceIntent = createDeploymentReceiptDetailV1().content.sourceIntent;
     if (sourceIntent.kind !== 'repository') throw new Error('Repository fixture required');
     const directory = await mkdtemp(join(tmpdir(), 'deployment-checkout-'));
     onTestFinished(() => rm(directory, { recursive: true, force: true }));
-    const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
-        runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
+    const runtime = await mountReviewedCheckoutGit();
     onTestFinished(() => runtime.dispose());
     mockProjectAccountRowsHttpBoundary(observation !== 'no checkout row' ? [createPlainProjectAccountRefRow({
         id: 'checkout', serverId: 'home', machineId: 'controller',
@@ -386,7 +405,12 @@ it.each(['no checkout row', 'removed checkout', 'non-Git checkout'] as const)('o
             try { return requester.identity; } finally { await requester.dispose(); }
         } };
     // The checkout can be absent even when the Account retains a row for it.
-    const missingCheckout = await readDeploymentSourceIntentForHost({ host, request: { environment, context, requireWorkspace: true } })
+    const publishedGit = method === 'published Git';
+    const missingCheckout = await readDeploymentSourceIntentForHost({ host, request: { environment, context,
+        requireWorkspace: !publishedGit,
+        ...(publishedGit ? { publishedGitProviders: ['github'], sha: sourceIntent.sha }
+            : method === 'pinned Upload' ? { sha: sourceIntent.sha } : {}),
+    } })
         .then(() => { throw new Error('A missing checkout cannot select a source'); }, (error: unknown) => error);
     const failure = normalizeActionExecuteResult(projectDeploymentException(missingCheckout));
     if (failure.ok) throw new Error('A missing checkout cannot become success');
@@ -416,6 +440,44 @@ it.each(['no checkout row', 'removed checkout', 'non-Git checkout'] as const)('o
         .rejects.toMatchObject({ code: 'deployment_source_unavailable' });
 });
 
+
+it.each(['Upload', 'pinned Upload', 'published Git'] as const)('can use the new %s checkout after Open leaves the old row', async method => {
+    const runtime = await mountReviewedCheckoutGit();
+    onTestFinished(() => runtime.dispose());
+    await withTempDir('deployment-checkout-reopened-', async directory => {
+        const git = (...args: string[]) => execFileSync('git', args, { cwd: directory, encoding: 'utf8' }).trim();
+        git('init', '--quiet', '--initial-branch=release');
+        await writeFile(join(directory, 'index.html'), 'replacement checkout');
+        git('add', 'index.html');
+        git('-c', 'user.name=Source Fixture', '-c', 'user.email=source@example.test', 'commit', '--quiet', '-m', 'Reviewed release');
+        const sha = git('rev-parse', 'HEAD');
+        const environment = createDeploymentEnvironmentDetailV1();
+        environment.content.definition = { kind: 'repository', ref: 'release' };
+        const sourceId = environment.environment.projectSourceId;
+        const workspaceRow = (id: string, rootPath: string, createdAtMs: number) => createPlainProjectAccountRefRow({
+            id, serverId: 'home', machineId: 'controller', rootPath, createdAtMs, source: { sourceId, revision: 1 },
+        });
+        mockProjectAccountRowsHttpBoundary([
+            workspaceRow('old', join(directory, 'removed'), 1), workspaceRow('new', directory, 2),
+        ]);
+        vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: ProjectSourcesReadOutputV1Schema.parse({
+            ok: true, canManage: true, source: { id: sourceId, revision: 1, name: 'App', audience: [],
+                createdByAccountId: 'owner', repository: { protocol: 'https', provider: { id: 'github', kind: 'github',
+                    displayName: 'GitHub', baseUrl: 'https://github.com' }, repository: {
+                    nameWithOwner: 'example/app', cloneUrl: 'https://github.com/example/app.git' } } },
+        }) });
+        const publishedGit = method === 'published Git';
+        const source = await readDeploymentSourceIntentForHost({ request: { environment, context: {}, requireWorkspace: !publishedGit,
+            ...(publishedGit ? { publishedGitProviders: ['github'], sha } : method === 'pinned Upload' ? { sha } : {}) },
+            host: { credentials: { token: 'fixture', encryption: null }, serverId: 'home', serverHttpBaseUrl: 'https://home.test',
+                machineId: 'controller', async assertAuthority() {}, async resolveRepositoryRef() { return sha; },
+                async resolveRequesterIdentity() {
+                    return { kind: 'owner_person' as const, requester: { serverId: 'home', accountId: 'owner',
+                        machineId: 'controller', installationId: 'installation' } };
+                } } });
+        expect(source).toMatchObject({ workspace: { id: 'new', rootPath: directory }, sourceIntent: { kind: 'repository', sha } });
+    });
+});
 
 it('selects the retained serving stored U for Add after an undeployed edit B, while ordinary deploy stays strict', async () => {
     const environment = createDeploymentEnvironmentDetailV1();

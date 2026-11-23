@@ -1,6 +1,7 @@
 import type { DeploymentEnvironmentDetailV1, DeploymentSourceMethodV1 } from '@happier-dev/deployments/contracts/v1';
 import { resolveDeploymentSourceMethodV1 } from '@happier-dev/deployments/contracts/v1';
 import { OpenProjectRefusalV1Schema, OpenProjectResultV1Schema, projectOpenProjectRefusalV1, type OpenProjectInputV1 } from '@happier-dev/protocol/projects/openProjectV1';
+import { projectDeploymentCheckoutDestinationOccupiedV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
@@ -71,7 +72,8 @@ async function openThroughProjectOpen(lifetime: ServerAccountScopeLifetime, inpu
   if (refused.success) {
     const failure = projectOpenProjectRefusalV1(refused.data);
     const code = refused.data.remediation?.kind === 'unsupported_provider' ? 'deployment_source_clone_failed' : failure.errorCode;
-    throw new HappyError(code, false, { code, details: failure.details, failureCause: failure.failureCause,
+    const details = projectDeploymentCheckoutDestinationOccupiedV1(input, refused.data);
+    throw new HappyError(code, false, { code, details, failureCause: failure.failureCause,
       effectAttempted: failure.effectAttempted, ...(!executed.ok && executed.requestId ? { requestId: executed.requestId } : {}) });
   }
   requireActionSuccess(executed, 'projects.open');
