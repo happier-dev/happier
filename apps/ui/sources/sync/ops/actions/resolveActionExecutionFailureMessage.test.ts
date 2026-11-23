@@ -13,6 +13,24 @@ import { presentActionExecutionFailure, resolveActionExecutionErrorMessage, reso
 import { resolveSessionSpawnNewResultFailureMessage } from './sessionSpawnFailurePresentation';
 
 describe('Action failure presentation', () => {
+    it.each([
+        ['provider_account_grant_stale', 'settingsProviders.accountAccessStale'],
+        ['provider_account_scope_required', 'settingsProviders.errors.accountScopeRequiredDescription'],
+        ['plugin_connected_account_binding_out_of_scope', 'connectedServices.errors.accountAccessUnavailable'],
+        ['connected_service_credential_scope_missing', 'connectedServices.diagnostics.body.connected_service_credential_scope_missing'],
+    ] as const)('presents the qualified provider refusal %s through an Action envelope', (errorCode, key) => {
+        const requestId = 'qualified-provider-check';
+        const presentation = presentActionExecutionFailure({
+            ok: false, errorCode: 'credential_scope_denied', requestId,
+            failureCause: { phase: 'provider_check', errorClass: 'Error', errorCode, httpStatus: 403 },
+        });
+        expect(presentation.reason).toBe(t(key));
+        expect(presentation.technicalDetails).toEqual(expect.arrayContaining([
+            expect.objectContaining({ key: 'causeCode', value: errorCode }),
+            expect.objectContaining({ key: 'requestId', value: requestId }),
+        ]));
+    });
+
     it('says what a typed refusal means and what the person can do, never its code', () => {
         const say = (failure: Record<string, unknown>) => resolveActionExecutionFailureMessage({ ok: false, ...failure }, 'fallback');
         expect(say({ errorCode: 'requester_credential_disclosure_required', error: 'requester_credential_disclosure_required' }))

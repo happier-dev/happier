@@ -1949,6 +1949,12 @@ credential admission. A Saved Secret capture failure during an Account catalog
 write retains `provider_secret_unavailable` through the Action result and UI,
 without writing the catalog or presenting a plugin failure.
 
+The shared Action refusal presenter uses the qualified cause when a generic
+permission response wraps a stale Account grant, a Provider scope requirement, or
+a Connected Account scope refusal. It uses the existing Provider and Connected
+Services guidance. Technical details retain the typed cause and any request ID
+provided by the Action.
+
 Changing a local endpoint invalidates the previous grant. The daemon must refuse before secret resolution with an actionable error when the grant is absent or stale. A connection definition may sync across devices; authorization to use a local endpoint does not silently transfer to another machine.
 
 In 0.3 development, revoking a machine removes that machine's grants, endpoint overrides, and machine secret bindings from the private Provider catalog. Revocation can remove the last reachable machine, so the client captures the Home/Account before revoking it and performs cleanup through the catalog's revision-checked writer, without requiring that machine's daemon or rewriting Account Settings. Plain and E2EE Accounts use their own admitted catalog envelope. An incomplete catalog, stale revision, or unknown receipt leaves cleanup pending; retry reads the current catalog rather than blindly replaying the mutation. The recovering display projection never authorizes a rewrite, and cleanup does not erase default-model intent from its separate preference.

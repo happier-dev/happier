@@ -8,6 +8,7 @@ import { isActionOutcomeUnknownErrorCodeV1, isActionTurnedOffErrorCode, readActi
 import { DiscussionErrorCodeV1Schema } from '@happier-dev/protocol/discussions/api';
 import { MachineElevationFailureV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 import { MachineReachabilityNativeFailureDetailsV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { readDeploymentInstallationReplacementRefusalV1, readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { FeatureDecisionSchema } from '@happier-dev/protocol/features/decision';
@@ -15,6 +16,8 @@ import { readTeamCreationPolicyRefusalV1 } from '@happier-dev/protocol/teams';
 import { teamsCreateRefusalText } from '@/components/settings/teams/collection/teamsCreateGuidanceText';
 
 import { t } from '@/text';
+import { presentProviderError } from '@/providers/connection/errorPresentation';
+import { connectedServiceUxDiagnosticBodyKey } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics';
 import { describeManagedAcquisitionRefusal } from './managedAcquisitionFailureCopy';
 import { discussionFailureLabel } from '@/components/discussions/discussionFailureLabel';
 import { getSessionInputFailureLabelKey } from '@/components/sessions/pending/pendingMessageVisualState';
@@ -189,6 +192,15 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     if (cause && !('kind' in cause) && cause.errorCode !== null && cause.errorCode !== code) {
         const causeMessage = readFailureFallbackMessage({ code: cause.errorCode }, options);
         if (causeMessage) return causeMessage;
+    }
+    if (code === 'provider_account_grant_stale' || code === 'provider_account_scope_required') {
+        return t(presentProviderError(code).descriptionKey);
+    }
+    if (code === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialScopeMissing) {
+        return t(connectedServiceUxDiagnosticBodyKey(code));
+    }
+    if (code === 'plugin_connected_account_binding_out_of_scope') {
+        return t('connectedServices.errors.accountAccessUnavailable');
     }
     if (options?.serviceCommand) {
         const { service, machine } = options.serviceCommand;

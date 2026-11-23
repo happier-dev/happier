@@ -39,7 +39,7 @@ describe('provider error presentation', () => {
 
     it('classifies stale Account grants separately from stale Machine grants', () => {
         expect(presentProviderError(createProviderErrorV1('provider_account_grant_stale', { connectionId: 'pc_a' })))
-            .toMatchObject({ scope: 'account', action: 'review_account_grant' });
+            .toMatchObject({ scope: 'account', action: 'review_account_grant', descriptionKey: 'settingsProviders.accountAccessStale' });
         expect(presentProviderError(createProviderErrorV1('provider_machine_grant_stale', { connectionId: 'pc_a', machineId: 'machine-a' })))
             .toMatchObject({ scope: 'machine', action: 'review_machine_grant' });
     });

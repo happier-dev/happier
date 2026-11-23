@@ -101,7 +101,7 @@ const PRESENTATIONS = Object.freeze({
     },
     provider_account_grant_stale: {
         titleKey: 'settingsProviders.errors.accessChangedTitle',
-        descriptionKey: 'settingsProviders.errors.accessChangedDescription',
+        descriptionKey: 'settingsProviders.accountAccessStale',
     },
     provider_machine_grant_stale: {
         titleKey: 'settingsProviders.errors.accessChangedTitle',

@@ -159,6 +159,10 @@ function labelKeyForAction(action: ConnectedServiceUxDiagnosticSuggestedActionV1
     }
 }
 
+export function connectedServiceUxDiagnosticBodyKey(code: ConnectedServiceUxDiagnosticCodeV1): DiagnosticBodyKey {
+    return DIAGNOSTIC_BODY_KEYS[code];
+}
+
 export function resolveConnectedServiceUxDiagnosticPresentation(
     value: unknown,
 ): ConnectedServiceUxDiagnosticPresentation | null {
@@ -168,7 +172,7 @@ export function resolveConnectedServiceUxDiagnosticPresentation(
     return {
         code: diagnostic.code,
         titleKey: DIAGNOSTIC_TITLE_KEYS[diagnostic.code],
-        bodyKey: DIAGNOSTIC_BODY_KEYS[diagnostic.code],
+        bodyKey: connectedServiceUxDiagnosticBodyKey(diagnostic.code),
         statusKey: DIAGNOSTIC_STATUS_KEYS[diagnostic.code],
         actions: diagnostic.suggestedActions.map((action) => ({
             kind: action,
