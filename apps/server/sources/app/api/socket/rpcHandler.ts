@@ -852,9 +852,11 @@ export function rpcHandler(
             }
         }
 
+        // Cleared even when another socket took every method over: the refresh loop restores
+        // missing mappings for owned methods, and must stop with the socket.
+        ownedMethods.clear();
         if (methodsToRemove.length > 0) {
             methodsToRemove.forEach(method => listeners.delete(method));
-            ownedMethods.clear();
             void redisRegistry.cleanupMethodsForSocket(userId, methodsToRemove, socket.id);
         }
 
