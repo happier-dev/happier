@@ -17,10 +17,9 @@ import { t } from '@/text';
 
 import type { createDeploymentActions } from './deploymentActions';
 import { useDeploymentPress } from './deploymentActionOutcome';
-import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { DeploymentEnvironmentChooser } from './DeploymentEnvironmentCollection';
-import type { DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
+import { DeployOutcomeBanner, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
 import { useDeploymentPromotionBindingGaps } from './useDeploymentPromotionBindingGaps';
 import { DeploymentReviewPreview } from './DeploymentReviewPreview';
@@ -67,10 +66,22 @@ function DeploymentPromotionSheet(props: DeploymentPromotionSheetInput & CustomM
     router.push(deploymentEnvironmentRoute({ serverId: props.serverId, projectSourceId: chosen.projectSourceId,
       environmentId: chosen.environmentId, tab: 'variables' }) as never);
   };
-  const press = useDeploymentPress({ pendingId: review.pendingId, request: (artifactId) => {
-    onClose();
-    review.request(artifactId);
-  } }, (deploymentId) => {
+  const press = useDeploymentPress({
+    pendingId: review.pendingId,
+    request: (artifactId) => {
+      onClose();
+      review.request(artifactId);
+    },
+    openRecovery: (destination, at) => {
+      if (destination === 'settings' && chosen) {
+        onClose();
+        router.push(deploymentEnvironmentRoute({ serverId: props.serverId, projectSourceId: chosen.projectSourceId,
+          environmentId: chosen.environmentId, tab: 'settings', section: 'servers-build' }) as never);
+      } else {
+        review.openRecovery?.(destination, at);
+      }
+    },
+  }, (deploymentId) => {
     if (destination) {
       onClose();
       onOpenReceipt(destination, deploymentId);
@@ -141,9 +152,9 @@ function DeploymentPromotionSheet(props: DeploymentPromotionSheetInput & CustomM
           title={t('projects.deployments.receipt.rebuildTitle')} reason={t('projects.deployments.receipt.rebuildBody')}
           action={{ label: t('projects.deployments.receipt.rebuildAction'), testID: 'project-deployments.promote.rebuild.confirm',
             onPress: () => request('rebuild') }} />
-          : press.outcome?.kind === 'refused' ? <SurfaceStateCard testID="project-deployments.promote.refused" size="line" kind="error"
-          title={t('projects.deployments.promotion.refused')} diagnosticCode={press.outcome.code}
-          reason={deploymentActionRefusalRemedy(press.outcome.code)} /> : null}
+          : press.outcome?.kind === 'refused'
+            ? <DeployOutcomeBanner controller={press.banner} machine={null} copy="promote" placement="inline" />
+            : null}
         {press.outcome?.kind === 'started' ? <SurfaceStateCard size="line" kind="empty"
           title={t('projects.deployments.deployStartedTitle')} reason={t('projects.deployments.deployStartedBody')} /> : null}
         {setChrome ? null : footer}

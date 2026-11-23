@@ -26,11 +26,14 @@ vi.mock(
       renderCustomModals: true,
     }).module,
 );
-afterEach(standardCleanup);
+afterEach(async () => {
+  await act(async () => { Modal.hideAll(); });
+  await standardCleanup();
+});
 
 const { showDeploymentPromotionSheet } =
   await import('./DeploymentPromotionSheet');
-const { ModalProvider } = await import('@/modal');
+const { Modal, ModalProvider } = await import('@/modal');
 const { View } = await import('react-native');
 
 const scope = {
@@ -125,6 +128,39 @@ describe('Promote', () => {
       await screen.unmount();
       controller.retire();
     }
+  });
+
+  it('sends Promote to admission and explains a typed Machine refusal with one next action', async () => {
+    const destination = createDeploymentEnvironmentHeaderV1({ id: 'production' });
+    const controller = createDeploymentReadControllerV1({
+      scope,
+      transport: {
+        listEnvironments: async () => ({ ok: true, value: { items: [{ environment: destination, title: 'Production' }], nextCursor: null } }),
+        readEnvironment: async () => ({ ok: true, value: createDeploymentEnvironmentDetailV1() }),
+        listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+        readReceipt: async () => ({ ok: false, failure: { code: 'deployment_unavailable', retryable: false } }),
+      },
+    });
+    const promote = vi.fn(async () => ({ ok: false as const, error: 'target_unavailable', details: {
+      diagnostic: { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' },
+    } }));
+    const screen = await renderScreen(<ModalProvider><View testID="host" /></ModalProvider>);
+    try {
+      await act(async () => { showDeploymentPromotionSheet({
+        controller, serverId: 'home', sourceEnvironmentId: 'staging', sourceDeploymentId: 'receipt-61',
+        name: 'Staging', version: '7f3e2b1', target: { kind: 'ownServer' },
+        promote: promote as never, review: { pendingId: null, request() {}, open() {} }, onOpenReceipt() {},
+      }); });
+      const row = `project-deployments.promote.destination:${destination.id}`;
+      await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.findByTestId(row), node => node !== null); });
+      await screen.pressByTestIdAsync(row);
+      await screen.pressByTestIdAsync('project-deployments.promote.confirm');
+      expect(promote).toHaveBeenCalledTimes(1);
+      const { t } = await import('@/text');
+      expect(screen.getTextContent()).toContain(t('errors.machineNotAnswering'));
+      expect(screen.getTextContent()).not.toContain('reconnect_machine');
+      expect(screen.getTextContent()).toContain('Open targets');
+    } finally { await screen.unmount(); controller.retire(); }
   });
 
   it('says which source variables the chosen destination lacks, links to its Variables and keeps the choice on return (#3)', async () => {

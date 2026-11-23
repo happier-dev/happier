@@ -293,14 +293,36 @@ export function deploymentStateNotice(
 export function deploymentEnvironmentRowState(item: Readonly<{
   currentDeployment?: Pick<DeploymentReceiptHeaderV1, 'state'> | null;
   healthAggregate?: Pick<NonNullable<DeploymentEnvironmentDetailV1['healthAggregate']>, 'status'> | null;
+  runtimeTargetLink?: Pick<NonNullable<DeploymentEnvironmentReadDetailV1['runtimeTargetLink']>, 'source' | 'targetKind'> | null;
 }>): Readonly<{ tone: 'danger' | 'warning' | null; text: string }> | null {
   const state = item.currentDeployment?.state ?? null;
   if (state === 'failed' || state === 'outcome_unknown' || state === 'queued' || state === 'running') return deploymentRailState(state);
   const health = item.healthAggregate?.status;
   if (health === 'down') return { tone: 'danger', text: t('projects.deployments.healthDown') };
   if (health === 'degraded') return { tone: 'warning', text: t('projects.deployments.healthDegraded') };
-  if (health === 'up' && state === 'running_unverified') return null;
+  if (state === 'running_unverified') {
+    return deploymentEnvironmentVerificationPending(state, health)
+      ? { tone: 'warning', text: deploymentEnvironmentVerificationLabel(item.runtimeTargetLink, 'short') }
+      : null;
+  }
   return state ? deploymentRailState(state) : null;
+}
+
+function deploymentEnvironmentVerificationPending(
+  state: ReceiptState | null | undefined,
+  health: NonNullable<DeploymentEnvironmentDetailV1['healthAggregate']>['status'] | undefined,
+): boolean {
+  return state === 'running_unverified' && (health === undefined || health === 'unknown');
+}
+
+export function deploymentEnvironmentVerificationLabel(
+  runtime: Pick<NonNullable<DeploymentEnvironmentReadDetailV1['runtimeTargetLink']>, 'source' | 'targetKind'> | null | undefined,
+  length: 'short' | 'full',
+): string {
+  if (runtime?.source.kind === 'host' && runtime.targetKind === 'ownServer') {
+    return t('projects.deployments.overviewStatus.addComposeHealthCheck');
+  }
+  return length === 'short' ? t('projects.deployments.stateUnverifiedShort') : deploymentStateLabel('running_unverified');
 }
 
 /**
@@ -401,7 +423,7 @@ export function deploymentHealthFact(
   servingState?: ReceiptState,
 ): Readonly<{ value: string; tone?: 'danger' | 'attention' }> {
   if (!health || health.status === 'unknown') {
-    return { value: servingState === 'running_unverified'
+    return { value: deploymentEnvironmentVerificationPending(servingState, health?.status)
       ? t('projects.deployments.review.noHealthCheck') : t('projects.deployments.healthNotChecked') };
   }
   if (health.status === 'up') return { value: t('projects.deployments.healthUp') };
@@ -454,7 +476,7 @@ export function deploymentEnvironmentAttention(facts: DeploymentEnvironmentAtten
   if (facts.reviewPending) return { kind: 'approvalWaiting' };
   if (facts.latest?.state === 'queued' || facts.latest?.state === 'running') return { kind: 'deploying', deploymentId: facts.latest.id };
   if (facts.health?.status === 'down' || facts.health?.status === 'degraded') return { kind: 'unhealthy' };
-  if (facts.servingState === 'running_unverified') return { kind: 'runningUnverified' };
+  if (deploymentEnvironmentVerificationPending(facts.servingState, facts.health?.status)) return { kind: 'runningUnverified' };
   if (facts.catalogUpdate) return { kind: 'catalogUpdate' };
   return null;
 }

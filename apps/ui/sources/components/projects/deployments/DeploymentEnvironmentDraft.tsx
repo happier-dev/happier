@@ -57,6 +57,8 @@ import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
 import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLine';
+import { resolveMachinePresence } from '@/sync/domains/machines/reachability/machinePresence';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { presentSavedSecretReferencePicker } from '@/components/ui/forms/valueRefs/presentSavedSecretReferencePicker';
 import { deploymentActionRefusalRemedy, deploymentDefinitionLabel, readDeploymentRefusalRecovery } from './deploymentPresentation';
 import { DeploymentMachinesEmpty } from './DeploymentMachinesEmpty';
@@ -243,10 +245,9 @@ export const DeploymentEnvironmentDraft = React.memo(
     // The first Machine that answers is the likely home; the person can choose another.
     // One presence owner says whether each Machine answers: the menu shows its words, and the default uses its fact.
     const presenceNowMs = useMachinePresenceNowMs(machines);
-    const presenceScope = props.lifetime?.scope ?? null;
-    const presence = React.useMemo(() => new Map(machines.map((machine) =>
-      [machine.id, describeMachinePresenceLine(machine, presenceNowMs, undefined, presenceScope)])), [machines, presenceNowMs, presenceScope]);
-    const answers = (machine: (typeof machines)[number]) => presence.get(machine.id)?.online === true;
+    const presence = React.useMemo(() => new Map(machines.map(machine =>
+      [machine.id, resolveMachinePresence(machine, presenceNowMs)])), [machines, presenceNowMs]);
+    const answers = (machine: (typeof machines)[number]) => presence.get(machine.id) === 'online';
     // A Machine whose Deployments role is off refuses deploys, so it is never the default home (Machine roles).
     const deploysHere = (machine: (typeof machines)[number]) => answers(machine) && isMachineRoleActiveV1(machine.metadata, 'deployments');
     // The person's choice wins. Otherwise a copy starts on its source's Machine and a new draft on the first one that
@@ -255,6 +256,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     const chosen =
       machineId !== null ? machines.find((machine) => machine.id === machineId) ?? null :
       machines.find((machine) => machine.id === preferredId && deploysHere(machine)) ?? machines.find(deploysHere) ?? null;
+    const chosenPresence = chosen ? presence.get(chosen.id) : undefined;
     const folderPath = folderSelection && folderSelection.machineId === chosen?.id ? folderSelection.path : null;
     const defaultBranch = source?.defaultRef ?? source?.repository?.repository.defaultBranch ?? null;
     const branch = ref ?? defaultBranch;
@@ -272,8 +274,8 @@ export const DeploymentEnvironmentDraft = React.memo(
       ...(chosen ? { controllerMachineId: chosen.id } : {}) } : null, [sourceId, definition, branch, chosen?.id]);
     const recommendationInput: PublishTargetRecommendationInput = {
       definition,
-      targets: [{ id: OWN_SERVER_TARGET, targetClass: 'ownServer', availability: allMachines == null ? 'unknown'
-        : chosen && answers(chosen) ? 'available' : 'unavailable',
+      targets: [{ id: OWN_SERVER_TARGET, targetClass: 'ownServer', availability: allMachines == null || chosenPresence === 'unknown' ? 'unknown'
+        : chosenPresence === 'online' ? 'available' : 'unavailable',
         accepts: OWN_SERVER_DEPLOYMENT_TARGET_V1.accepts, needs: OWN_SERVER_DEPLOYMENT_TARGET_V1.needs },
         ...platformTargets.map(target => ({ id: target.key, targetClass: 'platform' as const, availability: 'unknown' as const,
           accepts: target.accepts, needs: target.needs }))],
@@ -296,7 +298,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     // A Compose Environment reads the chosen Machine's readiness once; required host settings and an explicit
     // Review precede its setup Plan. Saving can wait for it; nothing runs until Apply.
     const host = useDeployHostReadiness(onPlatform || creatingMachine ? null : props.lifetime,
-      onPlatform || creatingMachine ? null : chosen?.id ?? null);
+      onPlatform || creatingMachine || chosenPresence !== 'online' ? null : chosen?.id ?? null);
     const [hostApply, setHostApply] = React.useState<Readonly<{ pending: boolean; error: string | null }>>(HOST_APPLY_IDLE);
     React.useEffect(() => setHostApply(HOST_APPLY_IDLE), [chosen?.id]);
     const applyHostSetup = async () => {
@@ -666,7 +668,7 @@ export const DeploymentEnvironmentDraft = React.memo(
       ? <DeploymentPartialProgress testID="project-deployments.draft.progress" progress={partial} failure={refusal.failure} /> : null;
     // One notice per cause: a chosen Machine that stopped answering is said once, by its own notice, in place of the
     // target refusal and the setup failure that both come from it (journey-deploy revFail).
-    const awayMachine = chosen !== null && !answers(chosen) ? chosen : null;
+    const awayMachine = chosenPresence === 'offline' ? chosen : null;
     // The shared notice line (SurfaceStateCard size="line"), placed at the Machine it concerns.
     const machineAwayNotice = awayMachine ? (
       <SurfaceStateCard testID="project-deployments.draft.machineAwayNotice" kind="unavailable" size="line"
@@ -816,14 +818,16 @@ export const DeploymentEnvironmentDraft = React.memo(
             <SurfaceStateCard kind="unavailable" size="line" title={t('common.unavailable')} reason={repositoryOnlyReason} />
           </ItemGroup> : null}
     </>;
-    const machineAway = chosen !== null && !answers(chosen);
+    const machineAway = chosenPresence === 'offline';
     // The Machine choice lives in the Machine card (whereM): its picker with the presence owner's line, and when that
     // Machine is away, the one next step on its own line.
     // Until the Machine list has answered, the field holds its place; "no Machine" is said only once it is known.
     // An unchosen Machine card reads its Machine's facts; only the chosen card carries the Machine select, so a radio
     // card that isn't chosen never holds a second live control (lab stWhere / where round 3 #2, DESIGN-ACCEPT W3).
-    const machineStatus = chosen ? !machineAway && host.readiness === 'ready' ? t('newApp.deploy.readyToHost')
-      : presence.get(chosen.id)?.label ?? null : null;
+    const machineStatus = !chosen ? null : host.readiness === 'ready' ? t('newApp.deploy.readyToHost')
+      : chosenPresence === 'unknown' ? t('common.loading')
+      : describeMachinePresenceLine(chosen, presenceNowMs, undefined, null,
+        chosenPresence === 'online' ? 'reachable' : 'unreachable').label;
     const machineFacts = chosen ? (
       <View style={[styles.machineCard, { borderTopWidth: resolveThemeHairlineBorderStyle(theme.colors.border.subtle).borderWidth,
         borderTopColor: theme.colors.border.subtle }]}>
@@ -850,8 +854,7 @@ export const DeploymentEnvironmentDraft = React.memo(
           // Configure's (journey-deploy stWhere).
           title={t('projects.deployments.machine')}
           /* An answering Machine whose Docker setup the Plan reports satisfied says it is ready to host (whereM). */
-          {...(chosen ? { subtitle: !machineAway && host.readiness === 'ready' ? t('newApp.deploy.readyToHost')
-            : presence.get(chosen.id)?.label } : {})}
+          {...(machineStatus ? { subtitle: machineStatus } : {})}
           awayMachinesChoosable
           showDivider={false}
           onSelectMachine={(machine) => setMachineId(machine.id)}
@@ -926,7 +929,9 @@ export const DeploymentEnvironmentDraft = React.memo(
               // Unknown readiness says what Review setup does, on which Machine (DESIGN-ACCEPT C5: status is not
               // guidance); a confirmed setup need keeps the review reassurance.
               description={host.readiness === 'needsSetup' ? t('projects.deployments.platformLink.hostSetupBody')
-                : t('projects.deployments.platformLink.hostUncheckedBody', { machine: machineName(chosen.id) })}
+                : resolveActionExecutionFailureMessage(host.prepared,
+                    t('projects.deployments.platformLink.hostUncheckedBody', { machine: machineName(chosen.id) }),
+                    { closedCodesOnly: true }) ?? undefined}
               // The Machine field above names it, so the title says "this Machine"; the way forward stays quiet beside the
               // footer's one primary (R2-D5).
               action={{ label: t('projects.deployments.platformLink.hostReviewShort'),

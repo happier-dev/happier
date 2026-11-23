@@ -30,7 +30,7 @@ export type DeploymentOutcomeController = Readonly<{
 
 /** Whether the result still has an attention banner on the page that made this press. */
 export function hasDeploymentPressAttention(controller: DeploymentOutcomeController,
-  copy: 'deploy' | 'rollback' | 'cancel' | 'domain' | 'domainAdd' | 'setting' | undefined): boolean {
+  copy: 'deploy' | 'rollback' | 'promote' | 'cancel' | 'domain' | 'domainAdd' | 'setting' | undefined): boolean {
   switch (controller.outcome?.kind) {
     case 'approval': return controller.pending;
     case 'started': return copy !== 'cancel' && copy !== 'domain' && copy !== 'domainAdd' && copy !== 'setting';

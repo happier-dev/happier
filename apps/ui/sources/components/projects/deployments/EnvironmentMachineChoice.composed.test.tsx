@@ -143,6 +143,7 @@ it('says a ready Machine is ready to host deploys in its Where card (journey-dep
 });
 
 it.each(['unknown', 'unavailable'] as const)('keeps unknown hosting readiness out of recipe inputs and opens the Machine setup owner (%s)', async outcome => {
+  const { t } = await import('@/text');
   const serverIdentityId = `srv_${(outcome === 'unknown' ? '4' : '5').repeat(32)}`;
   const serverId = await homes.addHome({ name: 'Host unchecked', serverUrl: `https://deploy-host-${outcome}.test`,
     accountId: 'alice', serverIdentityId, currentAccount: true });
@@ -162,7 +163,10 @@ it.each(['unknown', 'unavailable'] as const)('keeps unknown hosting readiness ou
     storage.getState().setEndpointConnectivity({ status: 'online', reason: null, attempt: 0,
       nextRetryAt: null, lastConnectedAt: Date.now(), lastDisconnectedAt: null, lastErrorMessage: null });
     await answerExternalActionAccountForHome(homes, serverId, { machineId: 'host', installationId: 'host-installation',
-      actionId: 'machines.setup.plan', tokenEpoch: 0, requesterInvocation: 'none', execute: raw => {
+      actionId: 'machines.setup.plan', tokenEpoch: 0, requesterInvocation: 'none',
+      failure: () => outcome === 'unavailable' ? { errorCode: 'target_unavailable', error: 'target_unavailable',
+        details: { diagnostic: { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' } } } : null,
+      execute: raw => {
         const input = ManagedMachineActionInputSchemasV1['machines.setup.plan'].parse(raw);
         if (!('targets' in input)) throw new Error('Expected the production combined Plan request');
         const target = input.targets[0]!;
@@ -171,9 +175,6 @@ it.each(['unknown', 'unavailable'] as const)('keeps unknown hosting readiness ou
           desiredRevision: 0, sources: [{ kind: 'direct', setup: {} }], exclusions: [], support: [],
         } }], review: { machineId: 'host', machines: [{ machineId: 'host', online: true }] } };
       } });
-    if (outcome === 'unavailable') homes.answer(serverId, 'POST /v1/actions/machines.setup.plan', {
-      status: 503, body: { error: 'unavailable' },
-    });
     await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({
       id: 'host', installationId: 'host-installation', activeAt: Date.now(),
     })]);
@@ -192,7 +193,12 @@ it.each(['unknown', 'unavailable'] as const)('keeps unknown hosting readiness ou
       await screen.pressByTestIdAsync('project-deployments.draft.hostSetup.prepare');
       expect(retainDraftAndOpenSetup).toHaveBeenCalledWith(machinePageHref({ door: 'rail',
         target: { machineId: 'host', serverId: serverIdentityId }, tab: { id: 'setup' } }));
-      expect(modes).toEqual(outcome === 'unknown' ? [undefined] : []);
+      expect(modes).toEqual([undefined]);
+      if (outcome === 'unavailable') {
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('errors.machineNotAnswering')));
+        expect(screen.getTextContent()).not.toContain('reconnect_machine');
+      }
+      expect(homes.requestsFor('/v1/actions/machines.setup.plan').filter(request => request.serverId === serverId && request.method === 'POST')).toHaveLength(1);
     } finally { await screen.unmount(); }
   } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
 });

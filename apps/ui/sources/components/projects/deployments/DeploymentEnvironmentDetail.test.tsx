@@ -624,6 +624,7 @@ function controllerFor(
     history?: readonly ReturnType<typeof createDeploymentReceiptDetailV1>[];
     destinations?: readonly ReturnType<typeof createDeploymentEnvironmentHeaderV1>[];
     onListEnvironments?: () => void;
+    onListHistory?: () => void;
     listEnvironments?: DeploymentReadTransportV1['listEnvironments'];
     listDomains?: DeploymentReadTransportV1['listDomains'];
     /** A read that has not answered yet (the serving receipt still loading). */
@@ -658,16 +659,19 @@ function controllerFor(
       },
     }); }),
     readEnvironment: async () => ({ ok: true, value: detail }),
-    listHistory: async () => ({
-      ok: true,
-      value: { ok: true, items: [...retained, ...(servingId && !retained.some(row => row.deployment.id === servingId) ? [serving] : [])]
-        .map(row => {
-          // The real transport's per-row projection: revision title, source, the recorded failure and captured actor.
-          const entry = projectDeploymentReceiptHistoryEntryV1(row);
-          return { ...row.deployment, source: entry.source, failure: entry.failure, actor: entry.actor,
-            ...(entry.historyTitle ? { title: entry.historyTitle } : {}) };
-        }), nextCursor: null },
-    }),
+    listHistory: async () => {
+      input.onListHistory?.();
+      return {
+        ok: true,
+        value: { ok: true, items: [...retained, ...(servingId && !retained.some(row => row.deployment.id === servingId) ? [serving] : [])]
+          .map(row => {
+            // The real transport's per-row projection: revision title, source, the recorded failure and captured actor.
+            const entry = projectDeploymentReceiptHistoryEntryV1(row);
+            return { ...row.deployment, source: entry.source, failure: entry.failure, actor: entry.actor,
+              ...(entry.historyTitle ? { title: entry.historyTitle } : {}) };
+          }), nextCursor: null },
+      };
+    },
     readReceipt: input.readReceipt ?? (async (_scope, _environmentId, id) => ({ ok: true,
       value: retained.find(row => row.deployment.id === id) ?? (id === receipt.deployment.id ? receipt : serving) })),
   };
@@ -1150,8 +1154,9 @@ describe('Project deployments page', () => {
         });
       } else if (response === 'refusal') {
         await waitForContent(screen, 'project-deployments.promote.refused');
-        expect(screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'project-deployments.promote.refused')?.props.diagnosticCode)
-          .toBe('deployment_access_denied');
+        expect(screen.getTextContent()).not.toContain('deployment_access_denied');
+        await screen.pressByTestIdAsync('project-deployments.promote.refused.details');
+        expect(screen.getTextContent()).toContain('deployment_access_denied');
         expect(screen.findByTestId('project-deployments.promote.destination:production')?.props['aria-checked']).toBe(true);
         expect(request).not.toHaveBeenCalled();
       } else {
@@ -2044,13 +2049,14 @@ describe('Project deployments page', () => {
     } finally { controller.retire(); }
   });
 
-  it('says how several servers are doing in the facts, and opens History from Recent deployments', async () => {
+  it('shows the live deploy first in Recent activity using one history read', async () => {
     const base = environmentDetailForHome();
     const servingId = base.targetLinks.find(row => row.targetLink.id === base.environment.runtimeTargetLinkId)?.targetLink.activeDeploymentId;
     if (!servingId) throw new Error('Expected a serving receipt in the fixture');
     const serving = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: servingId, state: 'succeeded' }) });
     const earlier = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: 'earlier-attempt', state: 'succeeded' }) });
-    const { controller, detail } = controllerFor({ receipt: serving, history: [serving, earlier], detail: { ...base, healthAggregate: {
+    const listHistory = vi.fn();
+    const { controller, detail } = controllerFor({ receipt: serving, history: [serving, earlier], onListHistory: listHistory, detail: { ...base, healthAggregate: {
       v: 1, environmentId: base.environment.id, targetLinkId: base.environment.runtimeTargetLinkId!,
       protection: base.environment.protection, status: 'degraded', n: 3, down: 1, degraded: 0, unknown: 0,
       members: [], affectedMachineIds: [], edgeUnreachable: false, authoritativeRecovery: false,
@@ -2061,9 +2067,15 @@ describe('Project deployments page', () => {
         phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} />);
       expect(screen.findByTestId('project-deployments.environment.facts.health')).not.toBeNull();
       expect(screen.getTextContent()).toContain('2 of 3 servers healthy');
-      // The version that serves leads the page, so Recent lists what came before it and never the same row again.
       await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.receipt.row.earlier-attempt')).not.toBeNull());
-      expect(screen.findByTestId(`project-deployments.receipt.row.${servingId}`)).toBeNull();
+      const recentRowIds = screen.findAll(node => typeof node.props.testID === 'string'
+        && node.props.testID.startsWith('project-deployments.receipt.row.') && typeof node.props.onPress === 'function')
+        .map(row => row.props.testID);
+      expect([...new Set(recentRowIds)].slice(0, 2)).toEqual([
+        `project-deployments.receipt.row.${servingId}`,
+        'project-deployments.receipt.row.earlier-attempt',
+      ]);
+      expect(listHistory).toHaveBeenCalledTimes(1);
       await screen.pressByTestIdAsync('project-deployments.environment.recent.history');
       expect(screen.findByTestId('project-deployments.environment.history')).not.toBeNull();
       // History is the whole record, the serving version included.
@@ -3079,7 +3091,8 @@ describe('Deployment receipt header actions', () => {
     } finally { controller.retire(); }
   });
 
-  it('keeps a refused rollback\'s typed code out of its sentence and behind Details', async () => {
+  it.each(['machine_target_not_current', 'target_unavailable'] as const)(
+    'keeps a refused rollback’s typed code behind Details (%s)', async code => {
     const base = environmentDetailForHome();
     const current = base.targetLinks[0]!;
     const old = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: 'old-deployment' }) });
@@ -3090,15 +3103,24 @@ describe('Deployment receipt header actions', () => {
     try {
       const screen = await renderScreen(<DeploymentReceiptDetail controller={controller} {...receiptProps}
         environmentId={detail.environment.id} deploymentId={old.deployment.id} cancel={null} deploy={null}
-        rollback={async () => ({ ok: false as const, error: 'machine_target_not_current' }) as never} />);
+        rollback={async () => ({ ok: false as const, error: code,
+          ...(code === 'target_unavailable' ? { details: { diagnostic: {
+            reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine',
+          } } } : {}),
+        }) as never} />);
       await act(async () => { await waitForTestEvent(screen.subscribe,
         () => screen.findByTestId('project-deployments.receipt.rollback'), node => node !== null); });
       await screen.pressByTestIdAsync('project-deployments.receipt.rollback');
       const banner = 'project-deployments.outcome.refused.other';
       expect(screen.findByTestId(banner)).not.toBeNull();
-      expect(screen.getTextContent()).not.toContain('machine_target_not_current');
+      expect(screen.getTextContent()).not.toContain(code);
+      if (code === 'target_unavailable') {
+        const { t } = await import('@/text');
+        expect(screen.getTextContent()).toContain(t('errors.machineNotAnswering'));
+        expect(screen.getTextContent()).not.toContain('reconnect_machine');
+      }
       await screen.pressByTestIdAsync(`${banner}.details`);
-      expect(screen.getTextContent()).toContain('machine_target_not_current');
+      expect(screen.getTextContent()).toContain(code);
     } finally { controller.retire(); }
   });
 
@@ -3593,6 +3615,7 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
     { page: 'Receipt', state: 'empty', reason: 'agentActionsNotConfigured' },
     { page: 'Environment', state: 'loading', reason: 'agentActionsLoading' },
     { page: 'Environment', state: 'contributed_action_unavailable', reason: 'agentActionsUnavailable' },
+    { page: 'Environment', state: 'plugin_action_execution_failed', reason: null },
   ] as const)('$page shows a quiet agent catalog $state reason with Retry', async ({ page, state, reason }) => {
     const { createDeferred } = await import('@/dev/testkit');
     const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
@@ -3641,7 +3664,12 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
       const line = `investigation.agentActions.${state === 'loading' ? 'loading' : 'unavailable'}`;
       await waitForHomeGovernance(() => {
         expect(mounted.findByTestId(line)).not.toBeNull();
-        expect(mounted.getTextContent()).toContain(t(`inbox.work.healthNotice.${reason}`));
+        expect(mounted.getTextContent()).toContain(reason === null
+          ? 'The Machine couldn’t run the agent action catalog.' : t(`inbox.work.healthNotice.${reason}`));
+        if (state === 'plugin_action_execution_failed') {
+          expect(mounted.getTextContent()).not.toContain(state);
+          expect(reads).toBe(1);
+        }
       });
       expect(mounted.findByTestId(`${line}-action`)?.props.accessibilityLabel).toBe(t('common.retry'));
       expect(mounted.findAllByType(AgentActionButton)).toHaveLength(0);

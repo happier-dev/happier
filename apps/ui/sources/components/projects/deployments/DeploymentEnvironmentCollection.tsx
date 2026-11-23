@@ -223,7 +223,7 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
     // Machine names wrap between words, never at their own hyphens (lab K12-5).
     const machine = name ? keepNamesWhole(name) : null;
     // Live health and the latest attempt through the one Environment state rule the page also reads (D11).
-    const latest = deploymentEnvironmentRowState({ currentDeployment, healthAggregate });
+    const latest = deploymentEnvironmentRowState({ currentDeployment, healthAggregate, runtimeTargetLink });
     // Compose and runtime Machine names belong to native runtime membership, never to its controller.
     const compose = runtimeTargetLink?.targetKind === 'ownServer' ? t('projects.deployments.compose') : null;
     const platform = runtimeTargetLink?.source.kind === 'plugin' ? platformTitle(runtimeTargetLink.source) : null;

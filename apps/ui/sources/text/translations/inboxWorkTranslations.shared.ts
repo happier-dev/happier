@@ -89,6 +89,7 @@ export const en = {
         agentActionsNeedAgent: 'Agent actions need a connected agent.',
         agentActionsNotConfigured: 'No agent actions are configured.',
         agentActionsUnavailable: 'Agent actions couldn’t be loaded.',
+        agentActionsDispatchFailed: 'The Machine couldn’t run the agent action catalog.',
         alertInvestigateHint: 'Opens a session with this issue as evidence.',
         investigateUnavailable: 'Investigate isn’t available for this alert.',
         notSetUpTitle: 'This action isn’t set up',

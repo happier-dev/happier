@@ -29,6 +29,7 @@ type DeploymentOverviewTranslations = Readonly<{
   deployingBody: string;
   deployWhenFinished: string;
   unhealthyBody: string;
+  addComposeHealthCheck: string;
   serversTitle: string;
   serversDescription: (params: { count: number }) => string;
   serversDown: (params: { down: number; count: number }) => string;
@@ -147,6 +148,7 @@ export const deploymentOverviewTranslations = {
     deployingBody: "Deploy when finished runs the newest commit right after this one. Only the latest request waits.",
     deployWhenFinished: "Deploy when finished",
     unhealthyBody: "Open a service’s logs from Services below, or restart it.",
+    addComposeHealthCheck: "Add health check",
     serversTitle: "Servers",
     serversDescription: ({ count }) => `Runs on ${count} servers.`,
     serversDown: ({ down, count }) => `${down} of ${count} down.`,
@@ -233,6 +235,7 @@ export const deploymentOverviewTranslations = {
     deployingBody: "Déployer ensuite lance le commit le plus récent juste après celui-ci. Seule la dernière demande attend.",
     deployWhenFinished: "Déployer ensuite",
     unhealthyBody: "Ouvrez les journaux d’un service dans Services ci-dessous, ou redémarrez-le.",
+    addComposeHealthCheck: "Ajouter un contrôle d’état",
     serversTitle: "Serveurs",
     serversDescription: ({ count }) => `Tourne sur ${count} serveurs.`,
     serversDown: ({ down, count }) => `${down} sur ${count} hors service.`,
@@ -319,6 +322,7 @@ export const deploymentOverviewTranslations = {
     deployingBody: "Danach deployen startet den neuesten Commit direkt im Anschluss. Nur die letzte Anfrage wartet.",
     deployWhenFinished: "Danach deployen",
     unhealthyBody: "Öffne die Logs eines Dienstes unten unter Dienste oder starte ihn neu.",
+    addComposeHealthCheck: "Healthcheck hinzufügen",
     serversTitle: "Server",
     serversDescription: ({ count }) => `Läuft auf ${count} Servern.`,
     serversDown: ({ down, count }) => `${down} von ${count} ausgefallen.`,
@@ -405,6 +409,7 @@ export const deploymentOverviewTranslations = {
     deployingBody: "Desplegar al terminar ejecuta el commit más reciente justo después. Solo espera la última solicitud.",
     deployWhenFinished: "Desplegar al terminar",
     unhealthyBody: "Abre los registros de un servicio en Servicios, abajo, o reinícialo.",
+    addComposeHealthCheck: "Añadir comprobación de estado",
     serversTitle: "Servidores",
     serversDescription: ({ count }) => `Se ejecuta en ${count} servidores.`,
     serversDown: ({ down, count }) => `${down} de ${count} caídos.`,
@@ -491,6 +496,7 @@ export const deploymentOverviewTranslations = {
     deployingBody: "Deploy al termine esegue il commit più recente subito dopo. Attende solo l’ultima richiesta.",
     deployWhenFinished: "Deploy al termine",
     unhealthyBody: "Apri i log di un servizio in Servizi qui sotto, oppure riavvialo.",
+    addComposeHealthCheck: "Aggiungi controllo di stato",
     serversTitle: "Server",
     serversDescription: ({ count }) => `Gira su ${count} server.`,
     serversDown: ({ down, count }) => `${down} su ${count} non attivi.`,
@@ -577,6 +583,7 @@ export const deploymentOverviewTranslations = {
     deployingBody: "Fazer deploy ao terminar executa o commit mais recente logo depois. Só a última solicitação espera.",
     deployWhenFinished: "Fazer deploy ao terminar",
     unhealthyBody: "Abra os logs de um serviço em Serviços, abaixo, ou reinicie-o.",
+    addComposeHealthCheck: "Adicionar verificação de saúde",
     serversTitle: "Servidores",
     serversDescription: ({ count }) => `Roda em ${count} servidores.`,
     serversDown: ({ down, count }) => `${down} de ${count} fora do ar.`,
@@ -663,6 +670,7 @@ export const deploymentOverviewTranslations = {
     deployingBody: "Desplega en acabar executa el commit més recent just després. Només espera la darrera petició.",
     deployWhenFinished: "Desplega en acabar",
     unhealthyBody: "Obre els registres d’un servei a Serveis, a sota, o reinicia’l.",
+    addComposeHealthCheck: "Afegeix una comprovació d’estat",
     serversTitle: "Servidors",
     serversDescription: ({ count }) => `S’executa en ${count} servidors.`,
     serversDown: ({ down, count }) => `${down} de ${count} caiguts.`,
@@ -749,6 +757,7 @@ export const deploymentOverviewTranslations = {
     deployingBody: "Wdróż po zakończeniu uruchamia najnowszy commit zaraz po tym. Czeka tylko ostatnie żądanie.",
     deployWhenFinished: "Wdróż po zakończeniu",
     unhealthyBody: "Otwórz logi usługi w sekcji Usługi poniżej lub uruchom ją ponownie.",
+    addComposeHealthCheck: "Dodaj kontrolę stanu",
     serversTitle: "Serwery",
     serversDescription: ({ count }) => `Działa na serwerach: ${count}.`,
     serversDown: ({ down, count }) => `Niedostępne: ${down} z ${count}.`,
@@ -835,6 +844,7 @@ export const deploymentOverviewTranslations = {
     deployingBody: "«Развернуть после» запустит самый новый коммит сразу после текущего. Ждёт только последний запрос.",
     deployWhenFinished: "Развернуть после",
     unhealthyBody: "Откройте логи сервиса в разделе «Сервисы» ниже или перезапустите его.",
+    addComposeHealthCheck: "Добавить проверку состояния",
     serversTitle: "Серверы",
     serversDescription: ({ count }) => `Работает на серверах: ${count}.`,
     serversDown: ({ down, count }) => `Недоступно: ${down} из ${count}.`,
@@ -921,6 +931,7 @@ export const deploymentOverviewTranslations = {
     deployingBody: "「完了後にデプロイ」は、この直後に最新のコミットを実行します。待機するのは最新のリクエストだけです。",
     deployWhenFinished: "完了後にデプロイ",
     unhealthyBody: "下のサービスからログを開くか、再起動してください。",
+    addComposeHealthCheck: "ヘルスチェックを追加",
     serversTitle: "サーバー",
     serversDescription: ({ count }) => `${count} 台のサーバーで実行中。`,
     serversDown: ({ down, count }) => `${count} 台中 ${down} 台が停止中。`,
@@ -1007,6 +1018,7 @@ export const deploymentOverviewTranslations = {
     deployingBody: "“完成后部署”会在本次之后立即部署最新提交。只有最新的请求会等待。",
     deployWhenFinished: "完成后部署",
     unhealthyBody: "在下方“服务”中打开服务日志，或重启它。",
+    addComposeHealthCheck: "添加健康检查",
     serversTitle: "服务器",
     serversDescription: ({ count }) => `运行在 ${count} 台服务器上。`,
     serversDown: ({ down, count }) => `${count} 台中 ${down} 台已停机。`,
@@ -1093,6 +1105,7 @@ export const deploymentOverviewTranslations = {
     deployingBody: "「完成後部署」會在這次之後立即部署最新提交。只有最新的請求會等待。",
     deployWhenFinished: "完成後部署",
     unhealthyBody: "在下方「服務」中開啟服務日誌，或重新啟動它。",
+    addComposeHealthCheck: "新增健康檢查",
     serversTitle: "伺服器",
     serversDescription: ({ count }) => `執行於 ${count} 台伺服器。`,
     serversDown: ({ down, count }) => `${count} 台中 ${down} 台已停機。`,

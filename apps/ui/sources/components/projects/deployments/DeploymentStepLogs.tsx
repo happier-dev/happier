@@ -127,7 +127,7 @@ export function DeploymentStepLogs(
   const machineName = facts.placement === 'machine' ? props.machineName : null;
   const logMachineId = machineName !== null && props.readLogs ? open?.log?.machineId : undefined;
   const [logMachine] = useMachinePresenceSummaries(props.serverId, logMachineId ? [logMachineId] : [], lifetime);
-  const offlineLogMachine = logMachine?.reachability === 'unreachable'
+  const offlineLogMachine = logMachine?.presenceOnline === false
     ? logMachine.sentenceName ?? (logMachineId ? machineNames[logMachineId] : undefined) ?? machineName
     : null;
   const visible =

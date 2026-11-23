@@ -78,9 +78,14 @@ it('names the runtime platform for healthy releases and previews without present
 });
 
 it('D11: a live health arrival changes only that row\'s state, from the one state rule every Environment list reads', async () => {
+  const { t } = await import('@/text');
+  const folder = { kind: 'folder' as const, manifestFingerprint: `sha256:${'b'.repeat(64)}`,
+    fileCount: 4, totalBytes: 228, excludedPaths: [] };
+  const target = createDeploymentTargetLinkHeaderV1({ targetKind: 'ownServer' });
   let items: EnvironmentItem[] = ['api', 'worker', 'db'].map(id => ({
     environment: createDeploymentEnvironmentHeaderV1({ id, updatedAtMs: 1000 }), title: id,
-    currentDeployment: createDeploymentReceiptHeaderV1({ state: 'running_unverified' }) }));
+    runtimeTargetLink: target,
+    currentDeployment: { ...createDeploymentReceiptHeaderV1({ state: 'running_unverified' }), source: folder } }));
   let publish: (next: EnvironmentItem[]) => void = () => {};
   const renders = new Map<string, number>();
   let rows: RowParts[] = [];
@@ -96,6 +101,8 @@ it('D11: a live health arrival changes only that row\'s state, from the one stat
   }
   const screen = await renderScreen(<Producer />);
   try {
+    expect(screen.getTextContent()).toContain('Add health check');
+    expect(screen.getTextContent()).not.toContain(t('projects.deployments.stateUnverifiedShort'));
     expect(rows.find(row => row.environmentId === 'db')?.state?.tone).toBe('warning');
     renders.clear();
     // Live health says the database is down while its receipt is unchanged: that row reads Down, nothing else renders.

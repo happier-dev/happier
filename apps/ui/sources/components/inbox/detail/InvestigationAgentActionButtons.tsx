@@ -19,6 +19,7 @@ function describeCatalogOutcome(outcome: FailureAgentCatalogOutcome) {
     case 'machine_unreachable': return t('inbox.work.healthNotice.agentActionsNeedMachine');
     case 'agent_unavailable': return t('inbox.work.healthNotice.agentActionsNeedAgent');
     case 'no_agent_actions': return t('inbox.work.healthNotice.agentActionsNotConfigured');
+    case 'plugin_action_execution_failed': return t('inbox.work.healthNotice.agentActionsDispatchFailed');
     default: return t('inbox.work.healthNotice.agentActionsUnavailable');
   }
 }

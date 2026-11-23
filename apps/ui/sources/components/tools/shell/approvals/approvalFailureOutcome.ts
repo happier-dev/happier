@@ -23,6 +23,7 @@ import { FiniteCommandFailureDetailsV1Schema, MachineSetupFailureDetailsV1Schema
 import { OpenProjectRefusalV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { t } from '@/text';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { resolveLocalServiceOutput, type LocalServiceOutputRecovery } from '@/sync/domains/local/services/serviceFailure';
 import { isApprovalDecisionStale, presentApprovalFailure, presentRecordedApprovalFailure } from './useApprovalDecisionHandler';
 import { readConfidentialFillSettlement, resolveConfidentialFillOutcome } from '@/components/approvals/confidentialSecretApprovalModel';
@@ -165,7 +166,9 @@ export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics,
         ? DeploymentMissingRequiredSecretsV1Schema.safeParse(failure.details) : null;
     const imageResolution = scope === 'deployment' && failure.errorCode === 'native_failed'
         ? DeploymentImageResolutionFailureV1Schema.safeParse(failure.details) : null;
-    const reason = imageResolution?.success ? describeDeploymentImageResolutionFailureV1(imageResolution.data)
+    const targetReason = scope === 'deployment' && failure.errorCode === 'target_unavailable'
+        ? resolveActionExecutionFailureMessage(failure, '', { closedCodesOnly: true }) || null : null;
+    const reason = targetReason ?? (imageResolution?.success ? describeDeploymentImageResolutionFailureV1(imageResolution.data)
         : finiteCommand.success && finiteCommand.data.exitCode !== null
             ? t('localServices.actions.failure.exitCode', { code: String(finiteCommand.data.exitCode) })
             : machineSetup.success && remedy ? remedy
@@ -174,7 +177,7 @@ export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics,
             : retiredDomain ? `${retiredDomain} · ${remedy}`
                 // The recovery owner reads the stored remedy: a sentence stays, a remedy code becomes its sentence.
                 : deploymentRecovery ? (remedy ? readDeploymentFailureRecovery(failure.errorCode, failure.details).remedy : deploymentRecovery.remedy)
-                : presented.reason || remedy || null;
+                : presented.reason || (scope === 'deployment' ? null : remedy) || null);
     return {
         reason: scope === 'deployment' ? readDeploymentConnectionPermissionRemedy(failure.errorCode, failure.details) ?? reason : reason,
         message: presented.code === null || failure.error === failure.errorCode ? null : failure.error,

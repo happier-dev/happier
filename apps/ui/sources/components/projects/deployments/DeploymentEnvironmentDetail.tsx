@@ -94,6 +94,7 @@ import {
   deploymentDeployAvailability,
   deploymentHealthFact,
   deploymentEnvironmentAttention,
+  deploymentEnvironmentVerificationLabel,
   deploymentAttentionLeaves,
   deploymentPreviewAvailability,
   deploymentReadIssue,
@@ -863,7 +864,7 @@ export const DeploymentEnvironmentDetail = React.memo(
     const machineLabel = machineName(machineIds[0] ?? '');
     const offlineMachine = offline ? knownMachine(machineIds[0]) : null;
     const receipts = history.result.items;
-    const recentReceipts = receipts.filter((receipt) => receipt.id !== activeId).slice(0, RECENT_COUNT);
+    const recentReceipts = receipts.slice(0, RECENT_COUNT);
     const openServingReceipt = () => { if (activeReceipt) props.onOpenReceipt(activeReceipt.deployment.id); };
     const servingNotice = activeReceipt ? deploymentStateNotice(activeReceipt.deployment.state) : null;
     // Overview owns the whole precedence; other tabs keep only what blocks their own presses.
@@ -1011,12 +1012,12 @@ export const DeploymentEnvironmentDetail = React.memo(
           );
         }
         case 'runningUnverified':
-          // The receipt's own notice, where the person looks first (lab d1 `unverified`).
+          // The serving receipt carries the native check result. The current health can supersede it.
           return servingNotice ? (
             <AttentionBanner
               testID="project-deployments.environment.serving.notice.running_unverified"
               tone={servingNotice.tone}
-              title={deploymentStateLabel('running_unverified')}
+              title={deploymentEnvironmentVerificationLabel(runtime, 'full')}
               description={servingNotice.text}
             />
           ) : null;
@@ -1279,7 +1280,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                 />
               ) : null}
               {arrival.tail === 'held' ? null : <>
-              {/* Recent activity (lab `envOv`): the receipts before the serving one, as the shared Timeline. */}
+              {/* Recent activity uses the same newest-first history page as the History tab. */}
               {recentReceipts.length > 0 ? (
                 <ItemGroup
                   testID="project-deployments.environment.recent"
@@ -1496,7 +1497,7 @@ export function DeployOutcomeBanner(
     machine: string | null;
     /** The Machine a Machine-scoped remedy opens (its Setup), when the refusal concerns one runtime Machine. */
     machineId?: string | null;
-    copy?: 'deploy' | 'rollback' | 'cancel' | 'domain' | 'domainAdd' | 'setting';
+    copy?: 'deploy' | 'rollback' | 'promote' | 'cancel' | 'domain' | 'domainAdd' | 'setting';
     placement?: 'inline';
   }>,
 ) {
@@ -1568,7 +1569,7 @@ export function DeployOutcomeBanner(
   const needsReview = recovery?.nextAction.destination === 'review';
   return (
     <AttentionBanner
-      testID={`project-deployments.outcome.refused.${outcome.reason}`}
+      testID={props.copy === 'promote' ? 'project-deployments.promote.refused' : `project-deployments.outcome.refused.${outcome.reason}`}
       placement={placement}
       tone={
         needsReview
@@ -1584,6 +1585,8 @@ export function DeployOutcomeBanner(
           ? t('projects.deployments.deployUnavailableTitle')
           : rollback
             ? t('projects.deployments.rollbackFailedTitle')
+            : props.copy === 'promote'
+              ? t('projects.deployments.promotion.refused')
             : cancel
               ? t('projects.deployments.cancelFailedTitle')
               : setting

@@ -4,6 +4,11 @@ import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testin
 import { projectDeploymentReceiptFactsV1 } from '@happier-dev/deployments';
 import type { DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
 
+import { act, createDeferred, createMachineFixture } from '@/dev/testkit';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { recordMachineRequestFailed } from '@/sync/domains/machines/reachability/machineReachability';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 
@@ -25,7 +30,48 @@ afterEach(() => {
   standardCleanup();
 });
 
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
 const { DeploymentStepLogs } = await import('./DeploymentStepLogs');
+
+it('keeps the receipt’s pending log read visible when pushed presence is online after a request failure', async () => {
+  const serverId = await homes.addHome({ name: 'Live logs', serverUrl: 'https://deploy-live-logs.test',
+    accountId: 'alice', serverIdentityId: `srv_${'e'.repeat(32)}`, currentAccount: true });
+  const account = await captureLazyActionAccountContext(serverId);
+  const scope = account.accountLifetime.scope;
+  const machine = createMachineFixture({ id: 'runtime-machine', installationId: 'runtime-installation',
+    active: true, activeAt: Date.now(), storageMode: 'plain' });
+  const receipt = createDeploymentReceiptDetailV1();
+  receipt.content.machines = [machine.id];
+  receipt.content.steps = [];
+  const reference = { kind: 'build' as const, environmentId: receipt.deployment.environmentId, deploymentId: receipt.deployment.id,
+    targetLinkId: receipt.deployment.targetLinkId, machineId: machine.id, installationId: 'runtime-installation' };
+  const facts = projectDeploymentReceiptFactsV1(receipt);
+  const response = createDeferred<void>();
+  const readLogs = vi.fn<NonNullable<React.ComponentProps<typeof DeploymentStepLogs>['readLogs']>>(async input => {
+    await response.promise;
+    return { ...input, ok: true, kind: 'build', logs: { kind: 'page', page: {
+      sourceRevision: 'page-1', text: 'live output', truncated: false, nextCursor: null,
+    } } };
+  });
+  let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+  try {
+    await publishMachineInventoryForTest(scope, [machine]);
+    recordMachineRequestFailed({ ...scope, machineId: machine.id });
+    screen = await renderScreen(<DeploymentStepLogs testID="live-logs" title="Deploy"
+      machineName="Runtime Machine" machineNames={{ [machine.id]: 'Runtime Machine' }} machineId={machine.id}
+      facts={{ ...facts, placement: 'machine', logs: [{ scope: 'operation', reference, excerpt: null }] }} steps={[]}
+      running={true} followLog={false} serverId={serverId} readLogs={readLogs} fileStem="deploy" />);
+    expect(screen.findByTestId('live-logs.log.reading')).not.toBeNull();
+    expect(screen.findByTestId('live-logs.log.offline')).toBeNull();
+    expect(readLogs).toHaveBeenCalledTimes(1);
+  } finally {
+    await act(async () => response.resolve());
+    await screen?.unmount();
+    account.dispose();
+    await homes.reset();
+  }
+});
 
 describe('Deployment step logs on a platform receipt (TYPES-ODEPLOY TS18047)', () => {
   it.each([false, true])('keeps the mounted receipt readable when its Machine-less platform log arrives and disappears (single log: %s)', async single => {
