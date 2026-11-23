@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from './index.js';
 import { buildProviderAccountUsageMaterialChangesV1, readProviderAccountUsageChangedRecordIdsV1,
   readProviderAccountUsageChangeRecordIdV1 } from './providerAccountUsage.js';
 
@@ -36,9 +37,10 @@ describe('Provider usage change scope', () => {
     expect(readProviderAccountUsageChangedRecordIdsV1(changes)).toEqual(records);
   });
 
-  it('keeps authority-bearing connected-service and Team rows conservative', () => {
-    const changes = [...page(first), { kind: 'account', entityId: 'teams', cursor: 3 }];
-    expect(readProviderAccountUsageChangedRecordIdsV1(changes)).toBeUndefined();
+  it('retains named Account-owned quota records across Team rows, but not Connected Account authority changes', () => {
+    const changes = [...page(first), { kind: 'account', entityId: TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1, cursor: 3 },
+      { kind: 'account', entityId: TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1, cursor: 4 }, ...page(second, 5)];
+    expect(readProviderAccountUsageChangedRecordIdsV1(changes)).toEqual([first, second]);
     expect(readProviderAccountUsageChangedRecordIdsV1([...page(first), { kind: 'account', entityId: 'connected-services', cursor: 3 }])).toBeUndefined();
   });
 });

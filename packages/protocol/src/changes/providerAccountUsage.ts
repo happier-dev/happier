@@ -1,9 +1,7 @@
 import { PROVIDER_ACCOUNT_USAGE_DAY_MS, ProviderAccountUsageRecordIdSchema } from '../connect/providerAccountUsagePrimitives.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
-import { ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1,
-  TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1,
-  readConnectedServicesAccountChangeV1 } from './index.js';
+import { ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1, readConnectedServicesAccountChangeV1 } from './index.js';
 
 /** Retained for clients that consume the Account-wide allowance invalidation. */
 export const PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'provider-account-usage' as const;
@@ -60,14 +58,12 @@ export function buildProviderAccountUsageMaterialChangesV1(recordId: string,
 
 /**
  * Account feed pages also carry projection rows unrelated to quota history.
- * Only rows that can change source/credential authority make a provider scope
- * unknown; other account rows do not erase exact provider record identities.
+ * The quota read admits the Account’s own credentials. Team directory and
+ * shared credential publications do not change those bindings.
  */
 function isProviderAccountUsageAuthorityChangeV1(entityId: string): boolean {
   return entityId === 'self'
     || entityId === ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1
-    || entityId === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1
-    || entityId === TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1
     || readConnectedServicesAccountChangeV1({ kind: 'account', entityId }) !== null;
 }
 

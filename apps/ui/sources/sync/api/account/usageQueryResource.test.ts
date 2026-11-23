@@ -4701,18 +4701,26 @@ describe('usage query captured Resource adapter', () => {
       await flushHookEffects({ cycles: 20 });
       await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
       const baseline = reads();
+      // M68 quota traffic came from feed pages mixing an ordinary Team wake
+      // with named record changes. A Team-only page must cost no allowance reads.
+      publishHomeAccountChange(captured.accountLifetime.scope.serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1],
+        { feedPageConsumed: true, changeKinds: ['account'], usageQueryAffects: true, usageAccountingAffects: false });
+      await flushHookEffects({ cycles: 20 });
+      expect(reads()).toEqual(baseline);
       for (const index of [0, 1, 2, 3]) {
         const snapshot = snapshots[index]!;
         snapshots[index] = { ...snapshot, meters: snapshot.meters.map(meter => ({ ...meter, used: 20 + index, remaining: 80 - index, utilizationPct: 20 + index })) };
         const page = buildProviderAccountUsageMaterialChangesV1(snapshots[index]!.recordId).map((change, offset) => ({ ...change, cursor: index * 2 + offset + 1 }));
-        const providerAccountUsageRecordIds = readProviderAccountUsageChangedRecordIdsV1([
+        const changes = [
           ...page,
+          ...(index === 0 ? [{ kind: 'account', entityId: TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1, cursor: 90 }] : []),
           { kind: 'account', entityId: 'home-governance', cursor: 100 + index },
           { kind: 'account', entityId: `c8e100dc-0565-4c09-9bc9-a02222cfbc${String(index).padStart(2, '0')}`, cursor: 200 + index },
           { kind: 'machine', entityId: `machine-${index}`, cursor: 300 + index },
-        ]);
-        publishHomeAccountChange(captured.accountLifetime.scope.serverId, page.map(change => change.entityId),
-          { changeKinds: ['account'], usageQueryAffects: true, providerAccountUsageRecordIds });
+        ];
+        publishHomeAccountChange(captured.accountLifetime.scope.serverId, changes.map(change => change.entityId),
+          { feedPageConsumed: true, changeKinds: ['account', 'machine'], usageQueryAffects: true, usageAccountingAffects: false,
+            providerAccountUsageRecordIds: readProviderAccountUsageChangedRecordIdsV1(changes) });
         await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
       }
       const after = reads();
