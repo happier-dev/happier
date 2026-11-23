@@ -414,6 +414,12 @@ export const CHANNEL_COLLECTION_MIGRATIONS = {
     toSchemaVersion: 24,
     // Held Send receipts can now retain an optional cause. Existing rows stay intact.
     migrate: (value) => value,
+  }, {
+    id: 'channel-state-v24-to-v25',
+    fromSchemaVersion: 24,
+    toSchemaVersion: 25,
+    // Native Workflow refusal codes extend terminal attention. Retained rows keep their facts.
+    migrate: (value) => value,
   }],
   [CHANNEL_DELIVERIES_COLLECTION_ID]: [{
     id: 'channel-deliveries-v1-to-v2',

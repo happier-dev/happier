@@ -1314,15 +1314,6 @@ function ingressAdmissionDecision(input: Readonly<{
       nonAdmission: { reason: 'unsupportedContent', senderFeedbackEligible: false } },
     newSession: null, approval: null, userActionAnswer: null };
   }
-  // Each original PR sender is admitted before aggregation. A scoped native
-  // call still authorizes its own host evidence, but cannot receive a stranger
-  // hidden behind another member's authorized sender.
-  if ((linkedPullRequest !== undefined || (scopedTrigger !== undefined && fullText?.pullRequestUpdate !== undefined))
-    && !providerCi && !providerState && shell.actor.repositoryWriteAccess !== true) {
-    return { terminalOutcome: { disposition: 'rejected',
-      nonAdmission: { reason: 'actorNotAllowed', senderFeedbackEligible: false } },
-    newSession: null, approval: null, userActionAnswer: null };
-  }
   if (scopedTrigger !== undefined) {
     // Scoped SCM observations are data, not conversation commands. The
     // Automation admission owner decides repository permission from the
@@ -1342,6 +1333,11 @@ function ingressAdmissionDecision(input: Readonly<{
   if (linkedPullRequest !== undefined) {
     // PR observations are evidence, never chat commands or remote approvals.
     // Authenticated CI is provider data; feedback requires measured write access.
+    if (!providerCi && !providerState && shell.actor.repositoryWriteAccess !== true) {
+      return { terminalOutcome: { disposition: 'rejected',
+        nonAdmission: { reason: 'actorNotAllowed', senderFeedbackEligible: false } },
+      newSession: null, approval: null, userActionAnswer: null };
+    }
     const reason = ingress.kind === 'routableNonAdmission' ? ingress.reason
       : shell.message.contentProvenance !== 'original' ? 'unsupportedContent' as const
       : shell.actor.principalId === null ? 'actorUnattributable' as const
@@ -4494,7 +4490,9 @@ async function dispatchIngressObligationAttempt(input: Readonly<{
     context: input.context,
     authority,
     obligation,
-    disposition: admission.kind === 'refused' ? 'rejected' : 'admitted',
+    ...(admission.kind === 'refused'
+      ? { disposition: 'rejected', nonAdmission: { reason: admission.reason, senderFeedbackEligible: false } }
+      : { disposition: 'admitted' }),
   });
   return 'checkpointSafe';
 }
@@ -6045,7 +6043,7 @@ function unclassifiedPullRequestMember(member: PreparedPullRequestBatchMember): 
   } } };
 }
 
-/** Admit each original sender once, then store only actual admitted batch relations. */
+/** Classify each original observation, then freeze the batch for its destination. */
 async function freezeClassifiedPullRequestBatches(input: Readonly<{
   context: PluginInvocationContext;
   source: Extract<IngressExecutionSource, { kind: 'checkpointedPoll' }>;
@@ -6084,15 +6082,19 @@ async function freezeClassifiedPullRequestBatches(input: Readonly<{
       return;
     }
     if (obligation.payload.prBatchLeaderId !== undefined) {
-      if (expanded.has(obligation.payload.prBatchLeaderId)) return;
-      let leader = known.get(obligation.payload.prBatchLeaderId);
-      if (leader === undefined) {
-        const retained = asIngressObligation(readStateRow(await collection.get(obligation.payload.prBatchLeaderId,
-          { signal: input.context.signal })) ?? null);
-        if (retained === undefined || retained.value.terminal) return;
-        leader = { obligation: retained, ingress: await readPreparedIngressForObligation({ context: input.context, obligation: retained.value }) };
+      if (candidates.has(obligation.id)) return;
+      const leader = known.get(obligation.payload.prBatchLeaderId);
+      const retained = leader?.obligation ?? asIngressObligation(readStateRow(await collection.get(obligation.payload.prBatchLeaderId,
+        { signal: input.context.signal })) ?? null);
+      if (retained === undefined) return;
+      if (!retained.value.payload.prBatchMemberIds?.includes(obligation.id)) {
+        // A previous regrouping can replace the old leader before this
+        // unattempted follower is written. Replay still owns its original input.
+        candidates.set(obligation.id, unclassifiedPullRequestMember(member));
+        return;
       }
-      await collect(leader);
+      await collect(leader ?? { obligation: retained,
+        ingress: await readPreparedIngressForObligation({ context: input.context, obligation: retained.value }) });
       return;
     }
     if (obligation.payload.lifecycle.phase === 'batchCollecting') candidates.set(obligation.id, member);
@@ -6108,8 +6110,14 @@ async function freezeClassifiedPullRequestBatches(input: Readonly<{
       || observation.endpoint.pullRequest === undefined || sessionId === undefined) {
       throw pluginError('channels_pr_batch_invalid', 'A PR batch requires exact retained provider and Session identities.');
     }
+    // Native Workflow admission decides over the whole update. Group only
+    // identical actor evidence so one actor's refusal cannot settle another's input.
+    const actorEvidence = target?.kind === 'automation'
+      ? [observation.actor.principalId, observation.actor.repositoryWriteAccess ?? null]
+      : null;
     const key = JSON.stringify([obligation['binding-id'], sessionId, observation.endpoint.pullRequest,
-      observation.pullRequestUpdate.head, obligation.payload.sourceAuthority, obligation.payload.prSplitContinuation?.firstOccurrenceId]);
+      observation.pullRequestUpdate.head, obligation.payload.sourceAuthority, obligation.payload.prSplitContinuation?.firstOccurrenceId,
+      actorEvidence]);
     const group = collecting.get(key) ?? [];
     group.push(member);
     collecting.set(key, group);

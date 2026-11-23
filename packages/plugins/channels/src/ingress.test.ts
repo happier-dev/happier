@@ -6844,8 +6844,10 @@ expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-1',
 
   it.each([ ...(['analyse', 'autoFix', 'automation'] as const).flatMap(mode =>
     (['ciFirst', 'strangerFirst', 'refusedOnly'] as const).map(order => ({ mode, order }))),
-    { mode: 'analyse' as const, order: 'strangerFirst' as const, retainedUnattempted: true } ])(
-    'admits each PR sender once before batching ($mode, $order, $retainedUnattempted)', async testCase => {
+    ...(['analyse', 'automation'] as const).map(mode => ({
+      mode, order: 'strangerFirst' as const, retainedUnattempted: true,
+    })) ])(
+    'settles each PR sender at its destination ($mode, $order, $retainedUnattempted)', async testCase => {
       const { mode, order } = testCase;
       const retainedUnattempted = 'retainedUnattempted' in testCase;
       vi.useFakeTimers();
@@ -6865,7 +6867,11 @@ expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-1',
           : { kind: 'review', id: 'review', revision: '1', occurredAt: 1_001,
             author: { kind: 'person', principalId: 'writer' }, body: 'Authorized review feedback',
             verdict: 'changesRequested', inlineCommentIds: [] };
-        const entries = (order === 'ciFirst' ? [authorized, stranger] : order === 'refusedOnly' ? [stranger] : [stranger, authorized]).map(event => {
+        const unknown = { ...stranger, id: 'unknown', author: { ...stranger.author, principalId: 'unknown' },
+          body: 'Unknown writer evidence' };
+        const events = order === 'ciFirst' ? [authorized, stranger] : order === 'refusedOnly' ? [stranger] : [stranger, authorized];
+        if (mode === 'automation' && order === 'strangerFirst') events.push(unknown);
+        const entries = events.map(event => {
           const input = observation({ occurrenceId: `mixed-${event.id}`, messageId: event.id,
             messageRevision: '1', occurredAt: event.occurredAt, messageText: 'body' in event ? event.body : 'Authorized CI failure' });
           const original = fullTextIngress(input);
@@ -6873,13 +6879,16 @@ expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-1',
             scopedTriggerKind: event.kind === 'check' ? 'ciFailed' as const : 'prComment' as const,
             actor: { ...original.actor, principalId: event.kind === 'check' ? 'integration' : event.author.principalId,
               kind: event.kind === 'check' ? 'integration' as const : 'human' as const,
-              isIntegrationSelf: event.kind === 'check', repositoryWriteAccess: event.id !== 'stranger' },
+              isIntegrationSelf: event.kind === 'check',
+              ...(event.id === 'unknown' ? {} : { repositoryWriteAccess: event.id !== 'stranger' }) },
             pullRequestUpdate: { head: { sha: 'head-1', ref: 'fix/widgets' }, event },
           } } };
         });
         let polls = 0;
         const automationInputs: JsonValue[] = [];
+        const runs: JsonValue[] = [];
         let interrupted = false;
+        let interruptedRegrouping = false;
         let nativeAccepted = false;
         let retainedLeaderId: string | undefined;
         let handoffAssociationReads = 0;
@@ -6905,6 +6914,13 @@ expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-1',
               interrupted = true;
               throw new Error('Interrupted before PR batch formation');
             }
+            if (retainedUnattempted && mode === 'automation' && !interruptedRegrouping
+              && operations.some(operation => operation.kind === 'put'
+                && record(operation.value.payload).prUpdate !== undefined
+                && (record(operation.value.payload).occurrenceIds as string[])[0] === 'mixed-stranger')) {
+              interruptedRegrouping = true;
+              throw new Error('Interrupted while replacing the retained PR batch');
+            }
           },
           pollExecution: async (): Promise<JsonValue> => ++polls === 1
             ? { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } }
@@ -6912,6 +6928,16 @@ expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-1',
           execute: async (actionId, input): Promise<JsonValue> => {
             if (actionId === 'automation.conversation.admit') {
               automationInputs.push(input);
+              // The native Action is the transport boundary. Refuse the
+              // exact actor groups expected from this fixture.
+              const update = SessionPullRequestUpdateV1Schema.parse(record(input).prUpdate);
+              const first = update.events[0]!;
+              if (first.id === 'stranger' || first.id === 'unknown') return {
+                kind: 'refused',
+                reason: first.id === 'stranger' ? 'repositoryWriteAccessDenied' : 'repositoryWriteAccessUnknown',
+                checkpointSafe: true,
+              };
+              runs.push(input);
               return { kind: 'admitted', runId: 'mixed-run', checkpointSafe: true };
             }
             if (actionId === 'session.input.result.get') return { ok: true, sessionId: 'session-1', localId: 'pending-1', result: { kind: 'pending' } };
@@ -6954,7 +6980,7 @@ expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-1',
           const originals = [...harness.rows.values()].filter(row => row.value['record-kind'] === 'ingress-obligation');
           const leader = originals.find(row => (record(row.value.payload).occurrenceIds as string[]).includes('mixed-review'))!;
           retainedLeaderId = leader.rowId;
-          const strangerRow = originals.find(row => row.rowId !== leader.rowId)!;
+          const strangerRow = originals.find(row => (record(row.value.payload).occurrenceIds as string[]).includes('mixed-stranger'))!;
           harness.rows.set(leader.rowId, stateRow({ ...leader.value, 'due-at': 1_000, payload: {
             ...record(leader.value.payload), occurrenceIds: ['mixed-review', 'mixed-stranger'],
             prUpdate: { v: 1, bindingId: 'binding-1', sessionId: 'session-1', pullRequest: endpoint.pullRequest,
@@ -6967,11 +6993,49 @@ expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-1',
             lifecycle: { phase: 'batchCollecting', attemptCount: 0, dueAt: null },
           } }, strangerRow.revision));
           classifications.mockClear();
-          await runConversationIngressDueWorkForInvocation({ now: 1_000 }, harness.context);
-          expect(handoffAssociationReads).toBe(0);
-          expect(handoffConnectionReads).toBe(0);
+          if (mode === 'automation') {
+            // The previous leader was replaced before the former follower
+            // could be regrouped. The same provider page can still replay.
+            await expect(runConversationIngressDueWorkForInvocation({ now: 1_000 }, harness.context))
+              .rejects.toThrow('Interrupted while replacing the retained PR batch');
+            await runConversationCheckpointedPollForInvocation({ connectionId: 'connection-1', waitMs: 0 }, harness.context);
+          } else {
+            await runConversationIngressDueWorkForInvocation({ now: 1_000 }, harness.context);
+            expect(handoffAssociationReads).toBe(0);
+            expect(handoffConnectionReads).toBe(0);
+          }
         }
-        expect(mode === 'automation' ? automationInputs : harness.send.mock.calls).toHaveLength(order === 'refusedOnly' ? 0 : 1);
+        if (mode === 'automation') {
+          const mixed = order === 'strangerFirst';
+          expect(automationInputs).toHaveLength(mixed ? 3 : 1);
+          const currentAttention = async () => {
+            const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: CHANNELS_PLUGIN,
+              services: { storage: harness.context.services.storage } });
+            try { return await kit.invokeAction('ingress/attention-v1', {}, { surface: 'agent' }); }
+            finally { await kit.dispose(); }
+          };
+          const attention = await currentAttention();
+          const reasons = order === 'ciFirst' ? ['endpointMismatch']
+            : mixed ? ['repositoryWriteAccessDenied', 'repositoryWriteAccessUnknown'] : ['repositoryWriteAccessDenied'];
+          expect(record(attention).obligations).toHaveLength(reasons.length);
+          for (const reason of reasons) expect(record(attention).obligations).toContainEqual(
+            expect.objectContaining({ kind: 'terminal', category: 'informational', reason }));
+          for (const [eventId, repositoryWriteAccess] of mixed ? [['stranger', false], ['unknown', null]] as const : []) {
+            const child = automationInputs.find(input => record(input).occurrenceId === `mixed-${eventId}`);
+            expect(SessionPullRequestUpdateV1Schema.parse(record(child).prUpdate).events)
+              .toEqual(events.filter(event => event.id === eventId));
+            expect(record(record(child).hostEvidence).eventActors).toEqual([expect.objectContaining({
+              actor: { principalId: eventId, repositoryWriteAccess },
+            })]);
+          }
+          if (mixed) {
+            await runConversationCheckpointedPollForInvocation({ connectionId: 'connection-1', waitMs: 0 }, harness.context);
+            expect(automationInputs).toHaveLength(3);
+            expect(await currentAttention()).toEqual(attention);
+          }
+          expect(harness.send).not.toHaveBeenCalled();
+        }
+        expect(mode === 'automation' ? runs : harness.send.mock.calls).toHaveLength(order === 'refusedOnly' ? 0 : 1);
         if (order === 'refusedOnly') {
           expect([...harness.rows.values()].filter(row => row.value['record-kind'] === 'ingress-obligation')).toEqual([
             expect.objectContaining({ value: expect.objectContaining({ payload: expect.objectContaining({ normalizedIngress: null }) }) }),
@@ -6980,12 +7044,12 @@ expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-1',
           return;
         }
         const delivered = mode === 'automation'
-          ? SessionPullRequestUpdateV1Schema.parse(record(automationInputs[0]).prUpdate).events
+          ? SessionPullRequestUpdateV1Schema.parse(record(runs[0]).prUpdate).events
           : sentUserTextRequest(harness.send.mock.calls[0]?.[0]).forgeEvidence?.items.map((item, index) => index === 0
             ? record(JSON.parse(item.text)).event : JSON.parse(item.text));
         expect(delivered).toEqual([authorized]);
         const authorizedPrincipalId = authorized.kind === 'check' ? 'integration' : authorized.author.principalId;
-        if (mode === 'automation') expect(record(record(automationInputs[0]).hostEvidence).eventActors).toEqual([
+        if (mode === 'automation') expect(record(record(runs[0]).hostEvidence).eventActors).toEqual([
           expect.objectContaining({ occurrenceId: `mixed-${authorized.id}`,
             sender: { principalId: authorizedPrincipalId },
             observationActorPrincipalId: authorizedPrincipalId,
@@ -6995,9 +7059,12 @@ expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-1',
           && record(row.value.payload).occurrenceIds instanceof Array
           && (record(row.value.payload).occurrenceIds as unknown[]).includes('mixed-stranger'));
         expect(rejected?.value).toMatchObject({ terminal: true, payload: {
-          disposition: 'rejected', nonAdmission: { reason: 'actorNotAllowed' },
+          disposition: 'rejected', nonAdmission: { reason: mode === 'automation'
+            ? order === 'ciFirst' ? 'endpointMismatch' : 'repositoryWriteAccessDenied' : 'actorNotAllowed' },
         } });
-        expect(classifications).toHaveBeenCalledTimes(order === 'ciFirst' ? mode === 'automation' ? 0 : 1 : 2);
+        if (!interruptedRegrouping) {
+          expect(classifications).toHaveBeenCalledTimes(order === 'ciFirst' ? mode === 'automation' ? 0 : 1 : mode === 'automation' ? 3 : 2);
+        }
       } finally { classifications.mockRestore(); vi.useRealTimers(); }
     });
 

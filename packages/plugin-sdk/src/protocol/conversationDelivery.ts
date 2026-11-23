@@ -8,6 +8,8 @@ import {
     defineProtocolUtf8String,
 } from './protocolFacade.js';
 
+export { AUTOMATION_CONVERSATION_ADMIT_REFUSAL_REASONS_V1 } from '@happier-dev/protocol/automations/automationConversationAdmitRefusalReasonsV1';
+
 // Shared V1 provider outcomes for Channels and Email Transports.
 export const MAX_CONVERSATION_ENDPOINT_STABLE_ID_UTF8_BYTES = 512;
 

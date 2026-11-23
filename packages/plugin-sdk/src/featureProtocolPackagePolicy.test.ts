@@ -250,6 +250,7 @@ const FEATURE_PROTOCOL_PROTOCOL_IMPORT_ALLOWLIST = new Set([
     'ForgeCiStepRefV1',
     'ForgeCiStepRefV1JsonSchema',
     'ForgeCiStepRefV1Schema',
+    'AUTOMATION_CONVERSATION_ADMIT_REFUSAL_REASONS_V1',
     'MAX_CONVERSATION_CHANNEL_RELATION_ID_ASCII_BYTES',
     'SessionPullRequestBindingMetadataFieldsV1',
     'SessionPullRequestFixAttemptLimitV1Schema',

@@ -6954,6 +6954,11 @@ Fix receipts. The V23→V24 identity migration preserves existing receipts,
 including those without a cause. A person-held Send settles into Pending, and
 Triage uses the receipt to show the named Session’s waiting notice.
 
+Channels `channel-state` V25 extends terminal ingress attention with the
+content-free native Workflow refusal codes. The V24→V25 identity migration
+preserves existing binding and custody rows. Use matching Channels Collection
+and Action declarations when reading new terminal attention.
+
 ### Plugin Collection tables
 
 The Account Collection query owner accepts both `asc` and `desc` keyset order.
@@ -13301,10 +13306,9 @@ shared attachment codec. Email's retained slash-joined MIME part paths and
 their portable encoding name the same native parts. This leaves the existing
 comparisons of descriptor order, names, media types, lengths and occurrence
 content unchanged.
-Channels applies current sender and command policy once at dispatch, not at
-capture and again at dispatch. For a PR batch, that boundary admits each
-original event against its current binding before forming the update; a refused
-sender neither joins the update nor suppresses another sender's admitted event.
+Channels applies current sender and command policy at dispatch. A Session PR
+Watch applies its sender policy to each original event before forming the
+Session update.
 An unclassified PR capture retains its due time so the existing ingress pump can
 recover an interrupted batch. The V22 channel-state contract admits that due time
 alongside the absent due time of a member already assigned to a batch leader; its
@@ -13314,10 +13318,12 @@ remain in Channels connection health.
 Polling reuses the connection, binding inventory and provider selection acquired
 for that finite poll; dispatch retains the cross-person recipient and binding
 checks. A later due dispatch is a new natural admission boundary.
-Scoped Automation batches carry ordered, identity-only per-event actor evidence
-to native admission, which applies its existing repository permission policy to
-each sender. Display labels and message content do not enter server-readable
-E2EE host evidence; the full native input remains sealed.
+Scoped Workflow PR batches group by provider principal and measured repository
+permission. Native Workflow admission decides repository-write eligibility for
+each group. Channels retains the exact refusal code in terminal attention so
+another actor's admission can proceed independently. Retried native attempts
+keep their frozen request. Ordered per-event actor evidence contains identity
+and permission only. The full native input remains sealed for E2EE Accounts.
 Channels is not a message archive. Each pending obligation holds input only
 while an actual destination still needs delivery. Native Session or Discussion
 idempotent acceptance owns the accepted history; after the last destination

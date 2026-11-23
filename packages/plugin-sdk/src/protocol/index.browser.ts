@@ -1,5 +1,6 @@
 export type { ActionOperationGetV1Response } from './projectExecution.js';
 export { ActionOperationGetV1ResponseProtocolSchema } from './projectExecution.js';
+export { AUTOMATION_CONVERSATION_ADMIT_REFUSAL_REASONS_V1 } from './conversationDelivery.js';
 export { CONVERSATION_CHANNEL_RELATION_ID_PRINTABLE_ASCII_PATTERN_V1 } from './channelsPullRequestWatch.js';
 export { CONVERSATION_DELIVERY_ARCHIVE_RECOVERY_KINDS_V1 } from './conversationDelivery.js';
 export { CONVERSATION_DELIVERY_RETRY_KINDS_V1 } from './conversationDelivery.js';

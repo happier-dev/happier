@@ -16,6 +16,7 @@ import {
   AutomationEventSourceOrOccurrenceIdV1Schema,
   boundedAutomationEventJsonValueV1,
 } from './automationEventJsonBoundsV1.js';
+import { AUTOMATION_CONVERSATION_ADMIT_REFUSAL_REASONS_V1 } from './automationConversationAdmitRefusalReasonsV1.js';
 import { AutomationOccurredAtV1Schema } from './automationOccurredAtV1.js';
 import { AutomationTriggerIdSchema, AutomationTriggerRevisionSchema } from './automationTriggerIdentity.js';
 import { AutomationPullRequestTriggerSchema } from './pullRequestTrigger.js';
@@ -217,7 +218,7 @@ export function isAutomationConversationAdmitScopedCorrespondenceV1(
 export const AutomationConversationAdmitResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('refused'),
-    reason: z.enum(['repositoryWriteAccessUnknown', 'repositoryWriteAccessDenied', 'scopedTriggerIdentityMismatch']),
+    reason: z.enum(AUTOMATION_CONVERSATION_ADMIT_REFUSAL_REASONS_V1),
     checkpointSafe: z.literal(true),
   }),
   z.strictObject({ kind: z.literal('admitted'), runId: asProtocolZod(AutomationIdV1Schema), checkpointSafe: z.literal(true) }),

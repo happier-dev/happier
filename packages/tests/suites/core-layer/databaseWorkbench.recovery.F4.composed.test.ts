@@ -48,6 +48,25 @@ import { readEncryptedAccountSettingsV2OrEmpty, upsertEncryptedAccountSettingsV2
 
 const execute = promisify(execFile);
 
+// This file loads the SDK protocol, database and registry entries first,
+// as in the recovery fixture. Loading Channels must also work in that order.
+it('loads Channels terminal attention from the R6 entry order', async () => {
+    const { PLUGIN_MANIFEST } = await import('../../../plugins/channels/src/manifest');
+    const attention = PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === 'ingress/attention-v1');
+    if (attention?.resultSchema === undefined) throw new Error('Channels omitted the terminal-attention result schema');
+    const { compilePluginJsonSchema } = await import('@happier-dev/plugin-sdk/manifest');
+    const validate = compilePluginJsonSchema(attention.resultSchema);
+    expect(validate({ obligations: [{
+        kind: 'terminal',
+        obligationId: 'a'.repeat(43),
+        revision: 1,
+        connectionId: 'connection-1',
+        updatedAt: 1,
+        category: 'informational',
+        reason: 'repositoryWriteAccessDenied',
+    }] })).toBe(true);
+});
+
 // All Actions, Workflow coordination, repositories and native database processes
 // are real. G1 requires semantic selected-read and admitted-write controls; an
 // unavailable producer before those succeed is a setup blocker.

@@ -2575,6 +2575,7 @@
 | `./notifications` | `PluginNotificationRegistrationApi` | type | daemon |
 | `./protocol` | `ActionOperationGetV1Response` | type | any |
 | `./protocol` | `ActionOperationGetV1ResponseProtocolSchema` | value | any |
+| `./protocol` | `AUTOMATION_CONVERSATION_ADMIT_REFUSAL_REASONS_V1` | value | any |
 | `./protocol` | `CONVERSATION_CHANNEL_RELATION_ID_PRINTABLE_ASCII_PATTERN_V1` | value | any |
 | `./protocol` | `CONVERSATION_DELIVERY_ARCHIVE_RECOVERY_KINDS_V1` | value | any |
 | `./protocol` | `CONVERSATION_DELIVERY_RETRY_KINDS_V1` | value | any |

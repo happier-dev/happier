@@ -1,4 +1,5 @@
 import {
+    AUTOMATION_CONVERSATION_ADMIT_REFUSAL_REASONS_V1,
     MAX_CONVERSATION_CHANNEL_RELATION_ID_ASCII_BYTES,
     CONVERSATION_ENDPOINT_AUDIENCES_V1,
     CONVERSATION_PROVIDER_FAILURE_REASONS_V1,
@@ -31,6 +32,7 @@ export const CONVERSATION_NON_ADMISSION_REASONS_V1 = [
     'commandNotAuthorized',
     'targetUnavailable',
     'routeNotMatched',
+    ...AUTOMATION_CONVERSATION_ADMIT_REFUSAL_REASONS_V1,
 ] as const;
 
 /** Stable Channels core Action ids for provider callers. */

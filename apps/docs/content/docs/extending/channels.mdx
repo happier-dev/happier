@@ -352,9 +352,11 @@ In unreleased development source, linking a PR from another machine can reuse
 its existing repository connection without transferring it first. The link uses
 the new request's authenticated credential and machine to resolve the PR and
 sender; it preserves the connection's saved credential and polling placement.
-PR link/watch belongs to Session targets, while scoped Workflow PR triggers
-use no result delivery. Discussion and router targets do not gain PR link/watch
-controls from receiving ordinary channel messages.
+PR link/watch belongs to Session targets. Scoped Workflow PR triggers use no
+result delivery and evaluate each actor's repository access independently.
+Channels ingress attention distinguishes denied write access from unknown write
+access. Discussion and router targets do not gain PR link/watch controls from
+receiving ordinary channel messages.
 
 ### The history baseline
 
