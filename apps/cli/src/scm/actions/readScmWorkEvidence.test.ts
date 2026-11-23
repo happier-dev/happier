@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -12,7 +12,7 @@ import { gitCheckpointAdapter } from '../checkpoints/gitCheckpointAdapter';
 import { buildRepositoryCheckpointRefs } from '../checkpoints/refs';
 import { retainRepositoryCheckpointTurnEvidence } from '../checkpoints/sessionEvidence';
 
-import { runWithScmCommandRunner, type ScmCommandInput, type ScmExecResult } from '../runtime';
+import { runWithScmCommandRunner, ScmExecutionRefusedError, type ScmCommandInput, type ScmExecResult } from '../runtime';
 import { createGitWorkspace, createTestGitRpcManager, createTestRpcManager, runGit } from '../rpc/__tests__/testRpcHarness';
 import { combineScmWorkEvidenceSession } from './readScmWorkEvidence';
 
@@ -73,8 +73,8 @@ describe('SCM batched work evidence', () => {
             observed, { status: 'error', errorCode: 'REMOTE_NETWORK_FAILED' },
         ] })).toEqual({ sessionId: 'session', status: 'partial', evidence: [pullRequest], branchEvidence: [branch], errorCode: 'REMOTE_NETWORK_FAILED' });
         expect(combineScmWorkEvidenceSession({ sessionId: 'session', turnIds: ['turn'], branchSource, prSources: [
-            observed, { status: 'error', errorCode: 'COMMAND_FAILED' }, { status: 'error', errorCode: 'BACKEND_UNAVAILABLE' },
-        ] })).toEqual({ sessionId: 'session', status: 'error', evidence: [], branchEvidence: [], errorCode: 'BACKEND_UNAVAILABLE' });
+            observed, { status: 'error', errorCode: 'COMMAND_FAILED' }, { status: 'error', errorCode: 'INVALID_REQUEST' },
+        ] })).toEqual({ sessionId: 'session', status: 'error', evidence: [], branchEvidence: [], errorCode: 'INVALID_REQUEST' });
         const failedReplacement = combineScmWorkEvidenceSession({ sessionId: 'session', turnIds: ['turn'],
             branchSource: { status: 'error', errorCode: 'COMMAND_FAILED' }, prSources: [] });
         expect(failedReplacement).toEqual({ sessionId: 'session', status: 'error', errorCode: 'COMMAND_FAILED' });
@@ -178,6 +178,39 @@ describe('SCM batched work evidence', () => {
                 expect(result.pullRequestsRead).toBe(scenario === 'complete' || scenario === 'empty' ? true : undefined);
             } finally { rmSync(cwd, { recursive: true, force: true }); }
         });
+
+    it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+        'does not replace linked evidence when an admitted repository becomes unreadable', async () => {
+            const cwd = createGitWorkspace('happier-work-batch-unreadable-');
+            const { call } = createTestGitRpcManager({ workingDirectory: cwd });
+            const read = async () => ScmWorkEvidenceReadResponseSchema.parse(await call(RPC_METHODS.SCM_WORK_EVIDENCE_READ,
+                { sessions: [{ sessionId: 'session', cwd, turnIds: [] }] },
+                { kind: 'scm.workEvidence.admitted', admissions: [{ kind: 'session.write', sessionId: 'session' }] })).sessions[0];
+            try {
+                expect(await read()).toMatchObject({ status: 'partial' });
+                chmodSync(cwd, 0o000);
+                const failed = await read();
+                expect(failed).toEqual({ sessionId: 'session', status: 'error', errorCode: 'BACKEND_UNAVAILABLE' });
+            } finally {
+                chmodSync(cwd, 0o700);
+                rmSync(cwd, { recursive: true, force: true });
+            }
+        });
+
+    it('withdraws witnesses when the native execution owner refuses the repository read', async () => {
+        const cwd = createGitWorkspace('happier-work-batch-refused-');
+        try {
+            const { call } = createTestGitRpcManager({ workingDirectory: cwd });
+            const result = await runWithScmCommandRunner(
+                async () => { throw new ScmExecutionRefusedError('agent_isolation_unavailable'); },
+                () => call(RPC_METHODS.SCM_WORK_EVIDENCE_READ, { sessions: [{ sessionId: 'session', cwd, turnIds: [] }] },
+                    { kind: 'scm.workEvidence.admitted', admissions: [{ kind: 'session.write', sessionId: 'session' }] }),
+            );
+            expect(result).toEqual({ sessions: [{
+                sessionId: 'session', status: 'error', errorCode: 'agent_isolation_unavailable', evidence: [], branchEvidence: [],
+            }] });
+        } finally { rmSync(cwd, { recursive: true, force: true }); }
+    });
 
     it('stops after real non-repository detection without discovering PRs', async () => {
         const cwd = mkdtempSync(join(tmpdir(), 'happier-work-batch-nonrepo-'));
