@@ -1,6 +1,6 @@
 import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { createActionConfirmationPresenter } from './actionConfirmationPresenter';
-import { mayVoiceApproveBySpokenConsent, projectVoiceApprovalGuidance } from './voiceActionApprovalAuthority';
+import { mayVoiceApproveBySpokenConsent, projectVoiceApprovalGuidance, resolveVoiceApprovalGuidance, type VoiceApprovalGuidance } from './voiceActionApprovalAuthority';
 import { supportsAccountPendingForSessionInput } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { createUiPluginCollectionSharingActionDeps } from './pluginCollectionSharingActionDeps';
 import { requireActionSuccess } from './actionResult';
@@ -793,7 +793,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   homeRuntimeRunner?: SystemTaskRunner;
   /** Mounted presentation only; the existing blocking executor retains input and decision custody. */
   onBlockingApprovalPending?: (input: Readonly<{ artifactId: string; scope: import('@/sync/domains/scope/serverAccountScope').ServerAccountScope;
-    signal?: AbortSignal }>) => void;
+    signal?: AbortSignal; voiceApprovalGuidance?: VoiceApprovalGuidance }>) => void;
   /** Exact mounted invocation whose intent must remain live through shared approval. */
   hostActionApprovalLifetime?: Readonly<{ actionId: ActionId; signal: AbortSignal; surface: 'ui' }>;
   /** Exact mounted view command target; policy and raw terminal remain canonical. */
@@ -5117,7 +5117,12 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         if (!accountLifetime.isCurrent()) throw scopeChanged();
       };
       assertCurrent();
-      if (!signal?.aborted) opts?.onBlockingApprovalPending?.({ artifactId, scope: accountLifetime.scope, ...(signal ? { signal } : {}) });
+      if (!signal?.aborted && opts?.onBlockingApprovalPending) {
+        const voiceApprovalGuidance = request.v === 2 && request.status === 'open' && request.automaticChecks?.humanApprovalRequired !== false
+          ? resolveVoiceApprovalGuidance(request.executionOriginV1) : undefined;
+        opts.onBlockingApprovalPending({ artifactId, scope: accountLifetime.scope,
+          ...(signal ? { signal } : {}), ...(voiceApprovalGuidance ? { voiceApprovalGuidance } : {}) });
+      }
       const decision = await approvalCoordinator.waitForDecision({
         artifactId,
         request,

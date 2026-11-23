@@ -22,6 +22,7 @@ import { MACHINE_ADMIN_ACCESS_ACTION_SPECS } from '@happier-dev/protocol/actions
 import { PROJECT_READINESS_ACTION_SPECS_V1 } from '@happier-dev/protocol/actions/specs/projectReadiness';
 import { PROJECT_CONTEXT_ACTION_SPECS } from '@happier-dev/protocol/actions/specs/projects';
 import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
+import { t } from '@/text';
 
 import {
   AccountSettingsV2UpdateRequestSchema} from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
@@ -297,8 +298,8 @@ describe('Voice Action reference catalog', () => {
       let content: Extract<AccountSettingsStoredContentEnvelope, { t: 'plain' }> = {
         t: 'plain', v: { voiceSettingsV1: { ...settingsDefaults.voice,
           audibleWaitingCue: source === 'mcp-scalar-setting',
-          canApproveRequests: source !== 'voice-off' && source !== 'admitted-on' && source !== 'mcp-on'
-            && source !== 'mcp-synthetic' && source !== 'mcp-brief-rejected' } },
+          canApproveRequests: source !== 'voice-off' && source !== 'mcp-off' && source !== 'mcp-scalar-setting'
+            && source !== 'mcp-brief-rejected' } },
       };
       let version = 1;
       home.answer(serverId, 'GET /v2/account/settings', { select: () => ({ body: { content, version } }) });
@@ -317,12 +318,16 @@ describe('Voice Action reference catalog', () => {
       const lifetime = admittedAccount.accountLifetime;
       const { DaemonVoiceAgentClient } = await import('@/voice/agent/daemonVoiceAgentClient');
       const runController = new AbortController();
+      const heard: string[] = [];
       const admittedHandle: import('@/voice/agent/types').VoiceAgentHandle = {
         signal: runController.signal,
         accountLifetime: lifetime, transcriptEpoch: 0, metadataSessionId: null,
         client: new DaemonVoiceAgentClient(lifetime.scope), voiceAgentId: 'admitted-run', backend: 'daemon',
         rpcSessionId: 'voice-carrier', agentBackendId: 'codex', toolTurnContext: { current: {
-          turnOrigin: source === 'mcp-synthetic' ? 'synthetic' : 'person', playHostText: async () => ({ status: 'completed' as const }) } },
+          turnOrigin: source === 'mcp-synthetic' ? 'synthetic' : 'person', playHostText: async ({ text }) => {
+            heard.push(text);
+            return { status: 'completed' as const };
+          } } },
         actionInvocation: { caller: { kind: 'host' }, surface: 'voice',
           authority: source === 'admitted-on' || source === 'mcp-on' || source === 'mcp-synthetic' ? 'present_user' : 'account_automation' },
       };
@@ -386,6 +391,7 @@ describe('Voice Action reference catalog', () => {
             result: { anchor: input.anchor, value: input.value } } });
           expect(home.artifacts(serverId).list()).toEqual([]);
           expect(version).toBe(2);
+          expect(heard).not.toContain(t('voiceSurface.approvalTapRequired'));
         } else {
           expect(outcome).toEqual({ kind: 'approval' });
           expect(version).toBe(1);
@@ -412,6 +418,11 @@ describe('Voice Action reference catalog', () => {
               ok: true, result: { request: { status: 'open' }, voiceApprovalGuidance: 'tap_required' },
             });
           }
+          if (source === 'mcp-off' || source === 'mcp-brief-rejected' || source === 'mcp-scalar-setting') {
+            expect(heard).toEqual([t('voiceSurface.approvalTapRequired')]);
+            expect(version).toBe(1);
+          }
+          if (source === 'coding-agent') expect(heard).toEqual([]);
           if (source === 'mcp-dismissed') {
             if (review?.type === 'custom') review.onRequestClose?.();
             expect(await pending).toMatchObject({ ok: false, errorCode: 'cancelled' });

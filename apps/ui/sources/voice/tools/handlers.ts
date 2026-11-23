@@ -48,7 +48,7 @@ import {
   isVoiceActionAvailableInState,
 } from './resolveDisabledVoiceActionIds';
 import { jsonError, jsonOk, serializeVoiceActionExecuteResult, voiceToolDiscoveryResultByteBudget, type VoiceSpawnObservedSession } from './voiceActionResult';
-import { executeSpokenAction, type SpokenActionTurnOrigin } from './executeSpokenAction';
+import { announceVoiceApprovalTap, executeSpokenAction, type SpokenActionTurnOrigin } from './executeSpokenAction';
 import { bindVoiceSessionSpawnInput } from './actionImpl/bindSessionSpawnInput';
 import { readVoiceSpawnAlternative } from './actionImpl/sessionSpawnAlternative';
 import { readSessionSpawnNewFailure } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
@@ -340,6 +340,8 @@ export function createVoiceToolHandlers(
 
   const actionExecute = createFrontDoorActionExecute(undefined, {
     ...(deps.readVoiceAgentHandle ? { readAdmittedVoiceInvocation: () => deps.readVoiceAgentHandle?.()?.actionInvocation } : {}),
+    ...(deps.playHostText ? { onBlockingApprovalPending: ({ voiceApprovalGuidance, signal }) =>
+      announceVoiceApprovalTap(voiceApprovalGuidance, deps.playHostText, signal) } : {}),
     admitSessionMessageTarget: ({ serverId, sessionId }) => {
       return areSessionAddressesEqual(
         carrierAddress,

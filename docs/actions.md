@@ -2455,6 +2455,10 @@ change of selected Session cannot retarget that confirmation.
 With `voice.canApproveRequests` on, the person's requested Action uses this path
 without an approval Artifact, including irreversible Actions after read-back.
 Setting-off and agent-initiated requests retain ordinary approval admission.
+When a Voice tool retains a live wait for a tap-required approval, the host uses
+the call's playback capability to tell the person to use the approval card while
+the action is pending. The call still returns its settled result. The utterance
+contains only the generic tap instruction.
 Contributed Actions and current-UI execute-Action commands prepare at the plugin
 dispatcher after the inner input is normalized. Their read-back uses the same
 localized confirmation and disclosed fields as the tap dialog. The host-local

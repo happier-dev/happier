@@ -9,6 +9,8 @@ import { storage } from '@/sync/domains/state/storage';
 import { resolveVoiceBindingBySessionId } from '@/voice/binding/resolveVoiceBindingBySessionId';
 import { readAdmittedVoiceSessionExecutionTarget } from '@/voice/session/voiceSessionStore';
 import { createVoiceToolHandlers } from '@/voice/tools/handlers';
+import { announceVoiceApprovalTap } from '@/voice/tools/executeSpokenAction';
+import { readVoiceApprovalGuidance } from '@/sync/ops/actions/voiceActionApprovalAuthority';
 import { projectVoiceActionExecutionResult } from '@/voice/tools/voiceActionResult';
 import { resolveToolSessionAddress, resolveToolSessionId } from '@/voice/tools/resolveToolSessionId';
 import { resolveVoiceActionExecution } from '@/voice/tools/voiceActionExecution';
@@ -94,6 +96,7 @@ export function createVoiceRunActionReverseHandler(handle: VoiceAgentHandle, con
                 if (!answered && !signal?.aborted) dismissal.abort();
               },
             });
+            announceVoiceApprovalTap(readVoiceApprovalGuidance(voiceApprovalGuidance), turn?.playHostText, signal);
           } });
         if (!handle.accountLifetime.isCurrent()) {
           const receipt = projectKnownAccountAuthorityRetirementReceipt(spec, settled);

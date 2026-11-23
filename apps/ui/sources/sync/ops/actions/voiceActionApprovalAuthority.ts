@@ -10,6 +10,13 @@ export function readVoiceApprovalGuidance(value: unknown): VoiceApprovalGuidance
   return value === 'tap_required' || value === 'spoken_decision' ? value : undefined;
 }
 
+export function resolveVoiceApprovalGuidance(
+  context: Pick<ActionExecutorContext, 'surface' | 'authority'>,
+): VoiceApprovalGuidance | undefined {
+  if (context.surface !== 'voice') return undefined;
+  return context.authority === 'present_user' ? 'spoken_decision' : 'tap_required';
+}
+
 /** A live Voice Run can speak for the person only within its admitted ceiling. */
 export function mayVoiceApproveBySpokenConsent(
   currentlyAllowed: boolean,
@@ -24,14 +31,12 @@ export function projectVoiceApprovalGuidance(
   actionId: ActionId,
   execution: ActionExecuteResult,
 ): ActionExecuteResult & Readonly<{ voiceApprovalGuidance?: VoiceApprovalGuidance }> {
-  if (context.surface !== 'voice' || !execution.ok) return execution;
+  const guidance = resolveVoiceApprovalGuidance(context);
+  if (!guidance || !execution.ok) return execution;
   const result = readRecord(execution.result);
   const pending = result.kind === 'approval_request_created'
     || (actionId === APPROVAL_REQUEST_GET_ACTION_ID_V1 && readRecord(result.request).status === 'open')
     || (actionId === APPROVAL_REQUEST_LIST_ACTION_ID_V1 && Array.isArray(result.items)
       && result.items.some(item => readRecord(item).status === 'open'));
-  return pending ? {
-    ...execution,
-    voiceApprovalGuidance: context.authority === 'present_user' ? 'spoken_decision' : 'tap_required',
-  } : execution;
+  return pending ? { ...execution, voiceApprovalGuidance: guidance } : execution;
 }

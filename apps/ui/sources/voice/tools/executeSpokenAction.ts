@@ -4,9 +4,23 @@ import type { VoiceHostTextPlayback } from '@happier-dev/plugin-sdk/voice/client
 
 import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import type { UiActionExecutorContext } from '@/sync/ops/actions/defaultActionExecutor';
+import type { VoiceApprovalGuidance } from '@/sync/ops/actions/voiceActionApprovalAuthority';
+import { t } from '@/text';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { getVoiceSessionSpokenActionConfirmation } from '@/voice/session/voiceSessionStore';
 
 export type SpokenActionTurnOrigin = 'person' | 'synthetic';
+
+/** The Action owner supplies guidance while the tool still owes its settled result. */
+export function announceVoiceApprovalTap(
+  guidance: VoiceApprovalGuidance | undefined,
+  playHostText: VoiceHostTextPlayback | undefined,
+  signal?: AbortSignal,
+): void {
+  if (guidance !== 'tap_required' || !playHostText || signal?.aborted) return;
+  fireAndForget(playHostText({ text: t('voiceSurface.approvalTapRequired'), signal: signal ?? new AbortController().signal }),
+    { tag: 'voice.approvalTapPlayback', logError: false });
+}
 
 /** Consume shared admission facts; the live carrier owns only read-back completion. */
 export async function executeSpokenAction(

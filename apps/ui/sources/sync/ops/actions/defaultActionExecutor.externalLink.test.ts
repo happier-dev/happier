@@ -8,6 +8,7 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { installSignedOutAuthForTest } from '@/dev/testkit/fixtures/signedOutAuth';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { t } from '@/text';
 
 vi.mock('react-native', async () => {
   const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -39,9 +40,15 @@ describe('external links through answering-client Action composition', () => {
 
   it('keeps Voice external opens on the answering client behind private egress approval', async () => {
     const serverId = await homes.addHome({ name: 'Voice links', serverUrl: 'https://voice-links.test', accountId: 'alice', currentAccount: true });
+    await storage.getState().activateSettingsScope({ serverId, accountId: 'alice' });
+    const voice = { ...storage.getState().settings.voice, canApproveRequests: false };
+    homes.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: { voiceSettingsV1: voice } }, version: 1 } });
+    storage.setState(state => ({ settings: { ...state.settings, voice } }));
     const input = { url: 'https://example.test/pull/17?state=private#fragment' };
     expect(resolveVoiceActionExecution({ actionId: 'links.openExternal', input })?.spec.id).toBe('links.openExternal');
-    const handlers = createVoiceToolHandlers({ resolveSessionId: () => null, currentServerId: serverId });
+    const heard: string[] = [];
+    const handlers = createVoiceToolHandlers({ resolveSessionId: () => null, currentServerId: serverId,
+      playHostText: async ({ text }) => { heard.push(text); return { status: 'completed' }; } });
     const cancellation = new AbortController();
     let announceCreated!: () => void;
     const created = new Promise<void>(resolve => { announceCreated = resolve; });
@@ -54,19 +61,22 @@ describe('external links through answering-client Action composition', () => {
       ])).toEqual({ kind: 'approval' });
       const ask = homes.artifacts(serverId).list()[0]!;
       const request = ApprovalRequestSchema.parse(JSON.parse(homes.artifacts(serverId).readPlainBody(ask.id) ?? 'null'));
-      expect(request).toMatchObject({ actionId: 'links.openExternal', requestedSurface: 'voice', actionArgs: {} });
+      expect(request).toMatchObject({ actionId: 'links.openExternal', requestedSurface: 'voice', actionArgs: {},
+        approval: { flow: 'blocking' }, executionOriginV1: { authority: 'account_automation' } });
       expect(JSON.stringify(request)).not.toContain(input.url);
       expect(opened).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(heard).toEqual([t('voiceSurface.approvalTapRequired')]));
     } finally {
       cancellation.abort();
       await pending;
     }
     const actionsSettingsV1 = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'links.openExternal': ['voice'] } });
-    homes.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: { actionsSettingsV1 } }, version: 2 } });
+    homes.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: { actionsSettingsV1, voiceSettingsV1: voice } }, version: 2 } });
     storage.setState(state => ({ settings: { ...state.settings, actionsSettingsV1 } }));
     expect(JSON.parse(await handlers.action_execute!({ actionId: 'links.openExternal', input }, { serverId })))
-      .toEqual({ ok: true, result: { status: 'opened' } });
+      .toMatchObject({ ok: true, result: { status: 'opened' } });
     expect(opened).toHaveBeenCalledExactlyOnceWith(input.url, '_blank', 'noopener,noreferrer');
+    expect(heard).toEqual([t('voiceSurface.approvalTapRequired')]);
   });
 
   it('keeps an acknowledged open when the invocation is cancelled by the platform effect', async () => {
