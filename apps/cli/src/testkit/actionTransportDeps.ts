@@ -1,4 +1,5 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 
 /** Unused OS/network transport ports fail loudly; real Action admission still runs. */
 export function createUnavailableActionTransportDeps() {
@@ -15,4 +16,9 @@ export function createUnavailableActionTransportDeps() {
         sessionActivityGet: unavailable, sessionRecentMessagesGet: unavailable, resetGlobalVoiceAgent: unavailable,
         daemonMemorySearch: unavailable, daemonMemoryGetWindow: unavailable, daemonMemoryEnsureUpToDate: unavailable,
     } satisfies ActionExecutorDeps;
+}
+
+/** External admission requires the canonical Automation port; this Account has no checks to select. */
+export function createEmptyActionAutomationPort(accountId = 'owner') {
+    return createActionAutomationPortV1({ accountId, seed: async () => ({ v: 1, rows: [] }), settle: async () => {} });
 }

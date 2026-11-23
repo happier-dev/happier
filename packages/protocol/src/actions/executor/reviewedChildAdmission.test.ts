@@ -9,6 +9,7 @@ import { readOriginalActionEnvelopeMachineRpcKindV1 } from '../../rpc/socket.js'
 import { RPC_METHODS } from '../../rpc/methods.js';
 import { createActionExecutor } from '../actionExecutor.js';
 import { ActionsSettingsV1Schema } from '../actionSettings.js';
+import { createEmptyActionAutomationPortV1 } from './actionAutomationAdmission.testkit.js';
 
 describe('ordinary reviewed child admission transport', () => {
   it.each(['before reentry', 'during execution'] as const)('keeps exact reviewed HTTP effects on the admitted operation lifetime after caller cancellation %s', async cancellationPhase => {
@@ -51,7 +52,7 @@ describe('ordinary reviewed child admission transport', () => {
     const expectedProof = { actionId: child.action, role: child.role, input: child.input,
       inputDigest: computeActionInputApprovalDigestV1(child.action, child.input) };
     let entered = false;
-    const executor = createActionExecutor({
+    const executor = createActionExecutor({ actionAutomations: createEmptyActionAutomationPortV1(),
       resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: 'environment' } }),
       prepareDeploymentAction: async () => ({ input: child.input, preview: {} }),
       // The host operation and native effect are process boundaries; the real

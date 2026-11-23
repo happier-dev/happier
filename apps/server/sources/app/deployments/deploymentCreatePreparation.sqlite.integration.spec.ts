@@ -1609,6 +1609,31 @@ describe('reviewed create preparation authority', () => {
                 const published = await publish(scope.contentArtifactId);
                 expect(published.statusCode, published.body).toBe(200);
                 expect(published.json()).toMatchObject({ id: scope.contentArtifactId });
+                // The reviewed template.deploy child reopens its candidate under its own effect and review proof.
+                const reviewedDeploy = { actionId: 'deployments.deploy', role: 'template.deploy',
+                    inputDigest: computeActionInputApprovalDigestV1('deployments.deploy', { serverId, environmentId: created.environmentId,
+                        expectedRevision: created.revision, targetLinkId: 'runtime', expectedTargetLinkRevision: 1,
+                        requestKey: rootInput.deploy.requestKey, contentArtifactId: scope.contentArtifactId,
+                        contentHeaderVersion: 1, contentBodyVersion: 1 }) };
+                const reopen = (id: string) => {
+                    const path = `/v1/artifacts/${id}`;
+                    return artifacts.inject({ method: 'GET', url: path, headers: {
+                        ...currentAccountStoredContentCompatibilityHeaders,
+                        [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                        [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'deployments.deploy',
+                        [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                        [EXTERNAL_ACTION_REVIEWED_CHILD_HEADER]: encodeReviewedActionChildHttpProofV1(reviewedDeploy),
+                        [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                            authorizationToken: authorization.token, effectActionId: 'deployments.deploy', target,
+                            installationId: controller.installationId!, requestId: f.binding.requestId, method: 'GET', path,
+                            reviewedChild: reviewedDeploy, privateKey: controllerKey.secretKey }),
+                    } });
+                };
+                const reopened = await reopen(scope.contentArtifactId);
+                expect(reopened.statusCode, reopened.body).toBe(200);
+                expect(reopened.json()).toMatchObject({ id: scope.contentArtifactId });
+                const foreign = await f.artifact(f.owner.id, 'deployment-receipt.v1');
+                expect((await reopen(foreign.contentArtifactId)).statusCode).not.toBe(200);
                 const replacement = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: f.actor.id,
                     metadata: f.machine.metadata, dataEncryptionKey: f.machine.dataEncryptionKey,
                     installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(nacl.sign.keyPair().publicKey) } });

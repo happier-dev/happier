@@ -9,7 +9,6 @@ import { createActionExecutor, type ActionExecutorContext, DeploymentTemplateIns
     DeploymentDomainAddAdmissionInputV1Schema, ArtifactJsonUpdateHttpInputV1Schema } from '@happier-dev/protocol';
 import { PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { normalizeActionsSettingsV1, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
-import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentPreparationAdmissionV1,
@@ -37,7 +36,7 @@ import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
 import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
-import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createEmptyActionAutomationPort, createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
@@ -314,8 +313,7 @@ it.each(['allowed', 'denied Domain', 'occupied Caddy port', 'approved Create rep
                         savedSecretOperationContext: admitted.savedSecretOperationContext,
                         resolveRequesterIdentity, acquirePluginRuntimeRegistryLease: async () => mounted.lease, runtime });
                     return createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
-                        // External admission requires the canonical Automation port; this Account selects no checks.
-                        actionAutomations: createActionAutomationPortV1({ accountId: 'owner', seed: async () => ({ v: 1, rows: [] }), settle: async () => {} }) });
+                        actionAutomations: createEmptyActionAutomationPort() });
                 } });
             if (!requester) throw new Error('Expected original requester custody');
             const executor = requester.executor;

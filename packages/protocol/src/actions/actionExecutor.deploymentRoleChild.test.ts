@@ -11,7 +11,7 @@ import { isDeploymentChildRootActionIdV1 } from '../deployments/deploymentAction
 import { projectDeploymentPreparationAdmissionV1 } from '../deployments/deploymentPreparationAdmissionV1.js';
 import { DeploymentEnvironmentCreateIntentInputV1Schema } from '../deployments/deploymentTemplateInstantiationV1.js';
 import { computeActionInputApprovalDigestV1 } from './decisionAuthority.js';
-import { createActionAutomationPortV1 } from './executor/actionAutomationAdmission.js';
+import { createEmptyActionAutomationPortV1 } from './executor/actionAutomationAdmission.testkit.js';
 
 const input = { serverId: 'home-identity', environmentId: 'environment', expectedRevision: 3, requestKey: 'deploy-request',
   targetLinkId: 'link', expectedTargetLinkRevision: 4, contentArtifactId: 'definition', contentHeaderVersion: 1, contentBodyVersion: 1 };
@@ -27,9 +27,6 @@ const roleInput = DeploymentTargetRoleInputSchemasV1.deploy.parse({ v: 1 as cons
   sourceIntent: { kind: 'repository' as const, projectSourceId: 'source', sourceRevision: 1, sha: 'a'.repeat(40),
     compose: { path: 'compose.yaml', profiles: [], services: [] } } });
 const request = { action: { pluginId: 'acme.fixture', localId: 'deploy' }, role: 'deploy' as const, input: roleInput };
-
-// External admission requires the canonical Automation port; these roots select no checks.
-const noAutomations = () => createActionAutomationPortV1({ accountId: 'owner', seed: async () => ({ v: 1, rows: [] }), settle: async () => {} });
 
 function context(): ActionExecutorContext {
   const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['deployments.deploy'] },
@@ -136,7 +133,7 @@ describe('deployment role host-child scope', () => {
     let parentPort: ActionExecutorContext['hostReviewedChild'];
     let executed = 0;
     const publicOperands: unknown[] = [];
-    const executor = createActionExecutor({ actionAutomations: noAutomations(),
+    const executor = createActionExecutor({ actionAutomations: createEmptyActionAutomationPortV1(),
       resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: 'environment' } }),
       prepareDeploymentAction: async () => ({ input, preview: { sourceMethod: 'gitIntegration' },
         hostReviewedChildren: { children: [{ action: request.action, role: request.role }] } }),
@@ -193,7 +190,7 @@ describe('deployment role host-child scope', () => {
 
   it('invokes the declared deployment role through the common reviewed-child port after receipt admission', async () => {
     let reservations = 0;
-    const executor = createActionExecutor({ actionAutomations: noAutomations(),
+    const executor = createActionExecutor({ actionAutomations: createEmptyActionAutomationPortV1(),
       resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: 'environment' } }),
       prepareDeploymentAction: async () => ({ input, preview: { sourceMethod: 'gitIntegration' },
         hostReviewedChildren: { children: [{ action: request.action, role: request.role }] } }),
@@ -211,7 +208,7 @@ describe('deployment role host-child scope', () => {
 
   it.each(['action.invoke', 'acme.fixture/actions/deploy'] as const)('admits explicit %s review before entering the receipt owner', async requiredActionId => {
     let reserved = false;
-    const executor = createActionExecutor({ actionAutomations: noAutomations(),
+    const executor = createActionExecutor({ actionAutomations: createEmptyActionAutomationPortV1(),
       resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: 'environment' } }),
       prepareDeploymentAction: async () => ({ input, preview: { sourceMethod: 'gitIntegration' },
         hostReviewedChildren: { children: [{ action: request.action, role: request.role }] } }),
@@ -231,7 +228,7 @@ describe('deployment role host-child scope', () => {
   });
 
   it('uses the same scoped preference precedence during root preparation', async () => {
-    const executor = createActionExecutor({ actionAutomations: noAutomations(),
+    const executor = createActionExecutor({ actionAutomations: createEmptyActionAutomationPortV1(),
       resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: 'environment' } }),
       prepareDeploymentAction: async () => ({ input, preview: { sourceMethod: 'gitIntegration' },
         hostReviewedChildren: { children: [{ action: request.action, role: request.role }] } }),
@@ -250,7 +247,7 @@ describe('deployment role host-child scope', () => {
   });
 
   it('consumes the captured role policy instead of opening a second approval after receipt admission', async () => {
-    const executor = createActionExecutor({ actionAutomations: noAutomations(),
+    const executor = createActionExecutor({ actionAutomations: createEmptyActionAutomationPortV1(),
       resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: 'environment' } }),
       prepareDeploymentAction: async () => ({ input, preview: { sourceMethod: 'gitIntegration' },
         hostReviewedChildren: { children: [{ action: request.action, role: request.role }] } }),
@@ -270,7 +267,7 @@ describe('deployment role host-child scope', () => {
 
   it('refuses a declared role before reservation when its original-holder policy is unavailable', async () => {
     let reserved = false;
-    const executor = createActionExecutor({ actionAutomations: noAutomations(),
+    const executor = createActionExecutor({ actionAutomations: createEmptyActionAutomationPortV1(),
       resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: 'environment' } }),
       prepareDeploymentAction: async () => ({ input, preview: { sourceMethod: 'gitIntegration' },
         hostReviewedChildren: { children: [{ action: request.action, role: request.role }] } }),
@@ -287,7 +284,7 @@ describe('deployment role host-child scope', () => {
   it('lets only the admitted exact role spend the deployment-only grant through its host port', async () => {
     // No contributed runtime is installed: the observable boundary proves grant
     // admission reaches the unavailable runtime, without mocking internal policy.
-    const executor = createActionExecutor({ actionAutomations: noAutomations(),
+    const executor = createActionExecutor({ actionAutomations: createEmptyActionAutomationPortV1(),
       resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: 'environment' } }),
       prepareDeploymentAction: async () => ({ input, preview: { sourceMethod: 'gitIntegration' },
         hostReviewedChildren: { children: [{ action: request.action, role: request.role }] } }),
