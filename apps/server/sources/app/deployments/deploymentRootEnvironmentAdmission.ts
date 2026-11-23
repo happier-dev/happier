@@ -172,7 +172,9 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
       const receivers = await resolveMachineAdmissionsInTx(tx, {
         actorAccountId: root.accountId, machineIds: [nativeAdmission.receiverMachineId],
       });
-      if (receivers.get(nativeAdmission.receiverMachineId)?.kind !== 'admitted' ||
+      // Setting up the receiver is Manage on that Machine; its nested Setup rides this admission.
+      const receiver = receivers.get(nativeAdmission.receiverMachineId);
+      if (receiver?.kind !== 'admitted' || receiver.role !== 'manage' ||
         await admitDeploymentMachineInTx(tx, environment.admission.owner,
           nativeAdmission.receiverMachineId, 'target')) return { ok: false, phase: 'configure_receiver' };
     }

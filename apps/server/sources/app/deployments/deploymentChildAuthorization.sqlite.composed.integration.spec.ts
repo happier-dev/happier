@@ -139,6 +139,7 @@ import { isDeploymentPreparationHttpPurposeInTx, isDeploymentReadOperandInAdmitt
     isDeploymentEnvironmentHttpReadInAdmittedScopeInTx, readDeploymentSourceReadOperands } from './deploymentPreparationAuthorization';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
+import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createDatabaseIntegrationHarness } from '@/testkit/databaseIntegrationHarness';
 import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
@@ -6659,7 +6660,8 @@ describe('deployment children retain their controller Action authority', () => {
                 config: { path: '/private/repository' }, credentialBindings: [],
                 sources: [{ kind: 'dump' as const, sourceId: 'database', service: 'postgres', consistency: 'logical' as const }],
                 ownership: { environmentId: f.environment.id, prefix: 'private-owner-prefix' }, retention: { kind: 'keepEverything' as const } } };
-        const mint = async (input: DeploymentBackupConfigureInputV1 = original, machine = f.controller, account = f.account) => {
+        const mint = async (input: DeploymentBackupConfigureInputV1 = original, machine = f.controller, account = f.account,
+            admittedMachineRole?: 'manage') => {
             const target = { kind: 'machine' as const, machineId: machine.id };
             const requestId = crypto.randomUUID();
             const authentication = { kind: 'account' as const, tokenEpoch: account.tokenEpoch };
@@ -6670,6 +6672,7 @@ describe('deployment children retain their controller Action authority', () => {
             const native = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope });
             return auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId, accountId: account.id,
                 authentication, actionId, machineId: machine.id, target, requestId,
+                ...(admittedMachineRole ? { admittedMachineRole } : {}),
                 requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) },
                 { input: mode === 'e2ee' ? native : input, deploymentNativeAdmission: native });
         };
@@ -6699,6 +6702,22 @@ describe('deployment children retain their controller Action authority', () => {
         });
         expect(await verify('GET', `/v1/machines/${f.outsider.id}`, undefined, { id: f.outsider.id })).not.toBeNull();
         expect(await verify('GET', `/v1/machines/${foreign.outsider.id}`, undefined, { id: foreign.outsider.id })).toBeNull();
+        // The reviewed receiver Setup Plan reads only the receiver this root's review names.
+        const receiverPlan = { actionId: 'machines.setup.plan' as const, role: 'backup.receiver.plan',
+            inputDigest: computeActionInputApprovalDigestV1('machines.setup.plan', { homeId: serverId, machineId: f.outsider.id }) };
+        const managed = await mint(original, f.controller, f.account, 'manage');
+        expect(await verify('GET', `/v1/machines/${f.outsider.id}`, undefined, { id: f.outsider.id },
+            'machines.setup.plan', managed, receiverPlan)).toMatchObject({ effectActionId: 'machines.setup.plan',
+            deploymentChildMachineRead: { machineId: f.outsider.id, installationId: f.outsider.installationId } });
+        expect(await verify('GET', `/v1/machines/${foreign.outsider.id}`, undefined, { id: foreign.outsider.id },
+            'machines.setup.plan', managed, receiverPlan)).toBeNull();
+        // Setup on the receiver is Manage; a receiver shared for Use is refused at the root's admission.
+        const shared = await fixture('account', 'account', { contentMode: mode });
+        await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: shared.account.id, machineId: shared.outsider.id,
+            principal: { kind: 'account', accountId: f.account.id }, level: 'view' }));
+        await expect(mint({ ...original, destinationSetup: { ...original.destinationSetup,
+            machineId: shared.outsider.id, expectedInstallationId: shared.outsider.installationId } }))
+            .rejects.toMatchObject({ code: 'credential_scope_denied' });
         await expect(mint({ ...original, destinationSetup: { ...original.destinationSetup,
             machineId: foreign.outsider.id, expectedInstallationId: foreign.outsider.installationId } }))
             .rejects.toMatchObject({ code: 'credential_scope_denied' });

@@ -2328,6 +2328,15 @@ function isAccountEncryptionCurrentnessHttpRead(proof: Readonly<{ method: string
         && proof.path === '/v1/account/encryption/currentness';
 }
 
+/** Machines a reviewed Setup reads: the root Machine and the Setup targets its own review admitted
+ * (Deployment preparation targets, a Backup's receiver). Derived from the root, never a purpose list. */
+function readReviewedSetupMachineIds(binding: ExternalActionExecutionAuthorizationBindingV1): readonly string[] {
+    const scope = binding.deploymentPreparationAdmission;
+    const backup = binding.deploymentNativeAdmission;
+    return [binding.machineId, ...(scope?.operation === 'setup' ? scope.machineTargets ?? [] : []),
+        ...(isDeploymentBackupConfigureNativeAdmissionV1(backup) && backup.receiverMachineId ? [backup.receiverMachineId] : [])];
+}
+
 /** A reviewed Setup spends its root at its original Home and admitted Machines. */
 function readReviewedMachineSetupHttpPurpose(verified: Pick<VerifiedExternalActionExecutionRequest,
     'binding' | 'effectActionId' | 'target' | 'reviewedChildAdmission'>,
@@ -2337,10 +2346,8 @@ function readReviewedMachineSetupHttpPurpose(verified: Pick<VerifiedExternalActi
     if (isMachineConnectorSecretGrantHttpPurpose(verified.binding, verified.effectActionId, proof)) return {};
     if (proof.method.toUpperCase() === 'GET' && proof.body === undefined) {
         if (isAccountEncryptionCurrentnessHttpRead(proof)) return {};
-        const scope = verified.binding.deploymentPreparationAdmission;
-        const machineId = proof.path === `/v1/machines/${encodeURIComponent(verified.binding.machineId)}`
-            ? verified.binding.machineId : scope?.operation === 'setup' ? scope.machineTargets?.find(machineId =>
-                proof.path === `/v1/machines/${encodeURIComponent(machineId)}`) : undefined;
+        const machineId = readReviewedSetupMachineIds(verified.binding).find(machineId =>
+            proof.path === `/v1/machines/${encodeURIComponent(machineId)}`);
         return machineId ? { machineId } : null;
     }
     if (proof.method.toUpperCase() !== 'POST') return null;
