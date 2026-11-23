@@ -151,6 +151,15 @@ describe('daemon start graph in the single CLI graph', () => {
     })).toEqual([]);
   });
 
+  it('loads Workflow approval and settings declaration owners at request dispatch', () => {
+    const demandEdges = [
+      ['apps/cli/src/session/actions/workflowFamily.ts', 'apps/cli/src/daemon/workflows/workflowApprovedOperation.ts'],
+      ['apps/cli/src/session/actions/cliActionDeps/settings.ts', 'apps/cli/src/session/actions/settingsDeclarationAction.ts'],
+    ] as const;
+    expect(demandEdges.filter(([owner, dependency]) =>
+      !inputs[owner]?.imports.some(edge => edge.path === dependency && edge.kind === 'dynamic-import'))).toEqual([]);
+  });
+
   it('keeps owners the idle daemon never runs out of it', () => {
     expect(COLD_OWNERS.filter((owner) => !inputs[owner]), 'cold owners must stay bundled').toEqual([]);
     expect(COLD_OWNERS.filter((owner) => startGraph.has(owner))).toEqual([]);

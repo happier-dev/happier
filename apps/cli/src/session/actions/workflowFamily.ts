@@ -43,7 +43,7 @@ import { readActionAutomationExecutionMachineV1 } from '@happier-dev/protocol/ac
 import type { ActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import type { createCommittedInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { createCredentialedWorkflowMaterializationHostV1, projectWorkflowConversationRoleSelection } from './workflowMaterializationHost';
-import { createWorkflowApprovedOperationReader } from '@/daemon/workflows/workflowApprovedOperation';
+import type { createWorkflowApprovedOperationReader } from '@/daemon/workflows/workflowApprovedOperation';
 import { createCredentialedWorkflowRunEncryptionResolver, createWorkflowActionAdmissionReader } from '@/daemon/workflows/workflowActionAdmission';
 import { createWorkflowActionContextResolver, readWorkflowActionPolicyContext } from '@/daemon/workflows/workflowActionContext';
 import type { createWorkflowInvocationRecoveryObserver, observeWorkflowInvocationRecoveryEvidence, resolveWorkflowSessionConversation } from '@/daemon/workflows/invocationRecoveryObserver';
@@ -328,12 +328,22 @@ export function createCliWorkflowFamily(
         : createAutomationAccountEncryptionMaterialSnapshotV1(credentials),
     });
   };
-  const readWorkflowApprovedOperation = params.credentials ? createWorkflowApprovedOperationReader({
-    storage: workflowRunStorage,
-    readSavedTriggerConsent: input => workflowTriggers?.readSavedConsent(input, input.context) ?? Promise.resolve(null),
-    resolveEncryption: createCredentialedWorkflowRunEncryptionResolver({ credentials: params.credentials,
-      serverHttpBaseUrl: workflowRunServerHttpBaseUrl }),
-  }) : undefined;
+  const workflowCredentials = params.credentials;
+  let workflowApprovedOperationReader: CliWorkflowFamily['readWorkflowApprovedOperation'];
+  const readWorkflowApprovedOperation: CliWorkflowFamily['readWorkflowApprovedOperation'] = workflowCredentials
+    ? async request => {
+      if (!workflowApprovedOperationReader) {
+        const { createWorkflowApprovedOperationReader } = await import('@/daemon/workflows/workflowApprovedOperation');
+        workflowApprovedOperationReader ??= createWorkflowApprovedOperationReader({
+          storage: workflowRunStorage,
+          readSavedTriggerConsent: input => workflowTriggers?.readSavedConsent(input, input.context) ?? Promise.resolve(null),
+          resolveEncryption: createCredentialedWorkflowRunEncryptionResolver({ credentials: workflowCredentials,
+            serverHttpBaseUrl: workflowRunServerHttpBaseUrl }),
+        });
+      }
+      return workflowApprovedOperationReader(request);
+    }
+    : undefined;
   const readWorkflowActionAdmission = params.credentials ? createWorkflowActionAdmissionReader({
     nativeAccountId: readAccountIdFromToken(params.credentials.token) ?? undefined,
     storage: workflowRunStorage,
