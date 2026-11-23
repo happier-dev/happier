@@ -4043,12 +4043,13 @@ async function runHostedSessionRuntime(
     };
     await initialParentSelectionRegistration;
     if (!modelTransitionCoordinator) return unavailable('model_coordinator_unavailable');
+    const teamCredentialModel = hookRuntime.readAppliedTeamCredentialModel?.();
+    if (teamCredentialModel?.deliveryMode === 'direct') return { status: 'unavailable', reason: 'direct_custody' };
     const before = await modelTransitionCoordinator.readAppliedTarget();
     if (before.status !== 'applied') return unavailable('model_transition_unavailable', {
       phase: 'before_connected_services', reason: before.reason,
     });
     const appliedTarget = before.target;
-    const teamCredentialModel = hookRuntime.readAppliedTeamCredentialModel?.();
     if (teamCredentialModel === undefined) return unavailable('native_applied_selection_unavailable');
     if (teamCredentialModel && teamCredentialModel.modelId !== appliedTarget.selection.modelId) return unavailable('team_model_mismatch');
     const modelSelection = appliedTarget.connectedAccountSelection ?? appliedTarget.selection;

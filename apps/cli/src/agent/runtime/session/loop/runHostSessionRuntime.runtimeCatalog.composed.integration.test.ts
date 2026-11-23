@@ -9627,20 +9627,25 @@ describe('runHostSessionRuntime', () => {
     });
   });
 
-  it('keeps opened Team custody on the registered model RPC until restart, including an identical native model id', async () => {
+  it.each(['brokered', 'direct'] as const)('keeps opened %s Team custody until restart, including an identical native model id', async deliveryMode => {
     const harness = createHarness();
     const selection = { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'same-model' } as const;
     harness.config.policyAgentId = 'claude';
     harness.opts.modelSelection = { v: 1, updatedAt: 10, ref: selection };
     harness.runtime.readAppliedTeamCredentialModel = () => ({
       kind: 'team_credential_provider_model', teamId: 'team-1', resourceId: 'resource-1',
-      expectedResourceRevision: 7, deliveryMode: 'brokered', agentTargetKey: selection.agentTargetKey, modelId: selection.modelId,
+      expectedResourceRevision: 7, deliveryMode, agentTargetKey: selection.agentTargetKey, modelId: selection.modelId,
     });
+    let controls: SessionRuntimeControls | null = null;
+    harness.session.setSessionRuntimeControls = next => { controls = next; };
     harness.deps.runPermissionModePromptLoopFn = async () => {
       const transition = harness.handlers.get(SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION);
       const before = harness.runtime.updateSessionRuntimeConfig.mock.calls.length;
       await expect(transition?.({ v: 1, selection })).resolves.toMatchObject({ ok: false, status: 'restart_required' });
       expect(harness.runtime.updateSessionRuntimeConfig).toHaveBeenCalledTimes(before);
+      if (deliveryMode === 'direct') {
+        expect(await controls?.readAppliedChildSelection?.()).toEqual({ status: 'unavailable', reason: 'direct_custody' });
+      }
     };
     await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
   });
