@@ -16,6 +16,7 @@ import { useDestinationInstanceKey } from '@/components/appShell/workspace/Desti
 import { useReadSessionCockpitChromeRegistration } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { resolveSessionTerminalDockLocation } from '@/components/sessions/terminal/useSessionTerminalAvailability';
+import { openBrowserPageInDockLocation } from '@/components/sessions/terminal/embeddedTerminalDocking';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { usePanePresentation } from '@/components/appShell/panes/panePresentation';
 import { useOptionalDetailsRegionTabOpener, useOptionalDetailsTabOpener, useOptionalRightPaneOpener } from '@/components/appShell/panes/hooks/useAppPaneScope';
@@ -149,6 +150,13 @@ export function useRegisterSessionPaneDriver(
             const chrome = readCockpitChrome();
             const phoneScene = chrome?.sessionId === sessionId
                 && areServerProfileIdentifiersEquivalent(chrome.serverId, serverId);
+            // A wide layout shows the page where the person's own Browser launch shows it, once (W23-47: the side
+            // column's Browser tab beside an overlay Details drew it twice). A phone keeps its Browser scene.
+            if (!phoneScene && deviceType !== 'phone') {
+                openBrowserPageInDockLocation((page, options) => { openDetailsInScope?.(scopeId, page, options); }, tab,
+                    openOptions?.intent === 'pinned' ? 'pinned' : 'default');
+                return;
+            }
             const browserScopeId = phoneScene ? createSessionBrowserPaneScopeId(scopeId) : scopeId;
             openRight?.({ tabId: 'browser' });
             openDetailsInScope?.(browserScopeId, tab, { ...openOptions, present: false });

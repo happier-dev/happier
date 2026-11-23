@@ -32,10 +32,7 @@ export function openEmbeddedToolInDockLocation(params: Readonly<{
     tool: EmbeddedDockTool;
 }>): void {
     if (params.tool === 'browser') {
-        // A rail stands in the main column (`PaneColumnsHost`), whichever column's pane API it calls: a tool it
-        // launches is the Session's, not a pick from the side column's list. Opened from main, Details docks beside
-        // the chat at its minimum width and a side column that cannot also fit folds to its rail (`resolvePaneLayout`).
-        params.pane.openDetailsTab(createBrowserLaunchpadDetailsTab(), { intent: 'pinned', origin: 'main' });
+        openBrowserPageInDockLocation(params.pane.openDetailsTab, createBrowserLaunchpadDetailsTab(), 'pinned');
         return;
     }
     if (params.tool === 'terminal') {
@@ -43,6 +40,21 @@ export function openEmbeddedToolInDockLocation(params: Readonly<{
         return;
     }
     openEmbeddedTerminalInDockLocation({ pane: params.pane, dockLocation: 'sidebar' });
+}
+
+/**
+ * Where a Session's Browser page opens on a wide layout, whoever opens it (the rail's launchpad, an approved Agent
+ * open). A rail stands in the main column (`PaneColumnsHost`), whichever column's pane API it calls: a tool it
+ * launches is the Session's, not a pick from the side column's list. Opened from main, Details docks beside the chat
+ * at its minimum width and a side column that cannot also fit folds to its rail (`resolvePaneLayout`), so the page is
+ * shown once.
+ */
+export function openBrowserPageInDockLocation(
+    openDetailsTab: AppPaneScopeApi['openDetailsTab'],
+    tab: Parameters<AppPaneScopeApi['openDetailsTab']>[0],
+    intent: 'default' | 'pinned',
+): void {
+    openDetailsTab(tab, { intent, origin: 'main' });
 }
 
 /** Move an existing terminal's view, never its PTY, into pinned Details. */

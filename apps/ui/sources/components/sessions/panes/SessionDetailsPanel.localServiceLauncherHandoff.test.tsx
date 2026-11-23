@@ -196,6 +196,7 @@ describe('SessionDetailsPanel local service launcher handoff', () => {
         reopenService = true;
         inventoryRead.resolve();
         const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+        const { useAppPaneContext } = await import('@/components/appShell/panes/AppPaneProvider');
         const { createAgentApprovalRequest } = await import('@/dev/testkit/harness/approvalInbox');
         const { captureActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
         const { approvalArtifactBodyMatchesHeaderV1 } = await import('@happier-dev/protocol/approvals/approvalArtifactHeaderV1');
@@ -212,9 +213,12 @@ describe('SessionDetailsPanel local service launcher handoff', () => {
         let pane!: ReturnType<typeof useAppPaneScope>;
         let browserPane!: ReturnType<typeof useAppPaneScope>;
         let scopeId = '';
+        let detailsOpenedFrom: string | null = null;
         function MountedSession() {
             scopeId = useRegisterSessionPaneDriver('session-a', runtime.serverId);
             pane = useAppPaneScope(scopeId);
+            // The column Details opened from, which the columns host lays it out by (`AppPaneScopeHost` reads it).
+            detailsOpenedFrom = useAppPaneContext(value => value.state.scopes[scopeId]?.details.openedFrom ?? null);
             return <AppPaneScopeHost scopeId={scopeId} main={<>{'Session chat'}</>}
                 wrapScopeContent={content => <SessionRightSidebarProvider sessionId="session-a" scopeId={scopeId}>{content}</SessionRightSidebarProvider>} />;
         }
@@ -285,10 +289,14 @@ describe('SessionDetailsPanel local service launcher handoff', () => {
                 expect(targetPane.scopeState?.details.tabs ?? []).toHaveLength(opened ? 1 : 0);
                 if (opened && addressing !== 'exact') {
                     if (addressing !== 'phone390') {
-                        expect(pane.scopeState?.right.isOpen).toBe(true);
-                        expect(pane.scopeState?.right.activeTabId).toBe('browser');
+                        // W23-47: one presentation, where the person's own Browser launch lands (the rail's dock owner):
+                        // Details opened from the main column, docked beside the chat. The side column keeps what it
+                        // showed and is never also switched to the Browser (two pictures of one page at 1440).
+                        expect(detailsOpenedFrom).toBe('main');
+                        expect(pane.scopeState?.right.isOpen ?? false).toBe(addressing === 'pane-already-open');
+                    } else {
+                        expect(screen.findAllByTestId('session-browser-screen').length).toBeGreaterThan(0);
                     }
-                    expect(screen.findAllByTestId(addressing === 'phone390' ? 'session-browser-screen' : 'session-rightpanel-browser').length).toBeGreaterThan(0);
                     const opens = serviceMethods.filter(method => method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE).length;
                     await act(async () => { await expect(hook.getCurrent()('approve')).resolves.toBe(true); });
                     expect(serviceMethods.filter(method => method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE)).toHaveLength(opens);
