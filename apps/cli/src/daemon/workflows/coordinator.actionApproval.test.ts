@@ -11,6 +11,7 @@ import { buildWorkflowActionContext } from './workflowActionContext';
 import { createInMemoryWorkflowCoordinatorStore, createTestWorkflowCoordinator } from './workflowCoordinator.testkit';
 import { readWorkflowActionApprovalSettlement } from './actionApproval';
 import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import { AutomationRunCauseSchema } from '@happier-dev/protocol';
 import { WorkflowDefinitionV1Schema } from '@happier-dev/protocol/workflows';
 import { WorkflowActionFailureV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
@@ -109,6 +110,63 @@ describe('workflow built-in Action approval holds', () => {
     expect(result).toMatchObject(held ? { state: 'paused', reason: 'approval_required' } : { state: 'succeeded' });
     expect(effects).toBe(held ? 0 : 1);
     expect(approval?.actionId).toBe(held ? 'machines.list' : undefined);
+  });
+
+  it('settles a Before check when its child approval has no public read', async () => {
+    const workspace = { machineId: 'machine', directory: '/repo', checkoutRootPath: '/repo' };
+    const store = createInMemoryWorkflowCoordinatorStore();
+    let approval: ApprovalRequestV2 | undefined;
+    let effects = 0;
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      readApprovalProfile: id => bindApprovalProfileV1([{
+        id: 'ask-list', profile: ApprovalProfileV1Schema.parse({ id: 'ask-list', name: 'Ask before listing',
+          actions: { 'machines.list': { approvalRequiredSurfaces: ['agent'] } } }),
+        access: 'owner', revision: { headerVersion: 1, bodyVersion: 1 },
+      }], id),
+      machinesList: async () => { effects++; return { items: [] }; },
+      approvalsCreate: async ({ request }) => {
+        approval = ApprovalRequestV2Schema.parse(request);
+        return { artifactId: 'child-approval' };
+      },
+      // The public Artifact view is unavailable to the host. The receipt owner
+      // can still observe the exact admitted invocation.
+      approvalsGet: async () => null,
+    });
+    const coordinator = createTestWorkflowCoordinator({ store,
+      executeStep: async () => { throw new Error('Action has no Agent step'); },
+      resolveWorkspace: async () => ({ ok: true, workspace }),
+      action: { executor, buildContext: async input => ({ ...buildWorkflowActionContext(input),
+        serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'account', defaultSessionId: 'origin' }),
+        observeRun: async () => { throw new Error('Listing has no execution Run'); },
+        observeApproval: async ({ artifactId, actionId, actionRequestId }) => {
+          expect(artifactId).toBe('child-approval');
+          expect(approval).toMatchObject({ approval: { flow: 'deferred' }, executionOriginV1: {
+            actionId, requestId: actionRequestId, caller: { kind: 'workflowRun', runId: 'before-check' },
+          } });
+          return { ok: false, errorCode: 'approval_rejected', error: 'approval_rejected' };
+        },
+      },
+    });
+    const result = await coordinator.run({ runId: 'before-check',
+      definition: { version: 1, inputs: [], defaults: {},
+        blocks: [{ kind: 'action', id: 'list', actionId: 'machines.list', input: {} }] },
+      inputs: {}, executionTarget: { kind: 'session' }, originSessionId: 'origin',
+      automationCause: AutomationRunCauseSchema.parse({
+        kind: 'trigger', triggerId: 'before-trigger', triggerRevision: 1, triggerKind: 'action',
+        occurrenceKey: 'A'.repeat(43), occurredAt: 1,
+        evidence: { actionId: 'machines.command.run', requestId: 'parent-action', phase: 'before', machineId: workspace.machineId },
+      }),
+      origin: { kind: 'direct', originSessionId: 'origin', authenticatedStarterV1: {
+        requestRef: 'start-request', requester: { serverId: 'home', accountId: 'account' } },
+        actionPolicy: { authority: 'account_automation', approvalProfileId: 'ask-list' } },
+      authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
+    });
+    expect(approval?.actionId).toBe('machines.list');
+    expect(result).toMatchObject({ state: 'failed', reason: 'approval_rejected' });
+    expect(store.list().find(row => row.blockId === 'list')).toMatchObject({
+      lifecycle: 'failed', reason: 'approval_rejected',
+    });
+    expect(effects).toBe(0);
   });
 
   it.each(['artifact-echo', 'reservation-fields'] as const)(

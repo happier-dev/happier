@@ -2130,18 +2130,13 @@ async function executeActionBlock(
     const target = readTarget(row.execution.input);
     captureResult = await context.deps.action.prepareResultCapture?.(target ? formatQualifiedPluginActionId(target) : actionId);
     if (!workspace) return await fail('outcome_uncertain', 'outcome_uncertain');
-    // The daemon observes its own admitted invocation, without spending the original PAT again.
-    const actionContext: ActionExecutorContext = { surface: 'agent', authority: 'account_automation',
-      actionCaller: { kind: 'host' }, ...(context.signal ? { signal: context.signal } : {}) };
     const approvalExecution = row.execution;
-    let settlement = await context.holds.track(() => readWorkflowActionApprovalSettlement({ runId: context.runId, execution: approvalExecution,
-      read: async artifactId => {
-        const prepared = await context.deps.action!.executor.prepare('approval.request.get', { artifactId }, actionContext);
-        const observed = prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
-        return observed.ok ? observed.result : null;
-      } }));
-    if (settlement?.kind === 'unresolved' && settlement.code === 'approval_required' && context.deps.action.observeApproval) {
-      const observed = await context.holds.track(() => context.deps.action!.observeApproval!({
+    const observeApproval = context.deps.action.observeApproval;
+    let settlement: Awaited<ReturnType<typeof readWorkflowActionApprovalSettlement>>;
+    if (observeApproval) {
+      // The exact receipt owner can observe the admitted child even when the
+      // public approval view is unavailable to the Run's host.
+      const observed = await context.holds.track(() => observeApproval({
         artifactId: pendingApproval.data.artifactId, actionRequestId: approvalExecution.actionRequestId,
         actionId: pendingApproval.data.actionId, authorization: context.authorization,
         signal: context.signal ?? new AbortController().signal,
@@ -2155,6 +2150,15 @@ async function executeActionBlock(
         settlement = { kind: 'failed', code: failure.errorCode,
           result: failure.value, failureCause: failure.failureCause, message: failure.error };
       } else return await fail('outcome_uncertain', 'outcome_uncertain');
+    } else {
+      const actionContext: ActionExecutorContext = { surface: 'agent', authority: 'account_automation',
+        actionCaller: { kind: 'host' }, ...(context.signal ? { signal: context.signal } : {}) };
+      settlement = await context.holds.track(() => readWorkflowActionApprovalSettlement({ runId: context.runId, execution: approvalExecution,
+        read: async artifactId => {
+          const prepared = await context.deps.action!.executor.prepare('approval.request.get', { artifactId }, actionContext);
+          const observed = prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
+          return observed.ok ? observed.result : null;
+        } }));
     }
     if (!settlement || settlement.kind === 'unresolved') throw new WorkflowControlBoundary('paused', settlement?.code ?? 'approval_unavailable');
     if (settlement.kind === 'outcome_uncertain') return await fail(settlement.code, 'outcome_uncertain');
