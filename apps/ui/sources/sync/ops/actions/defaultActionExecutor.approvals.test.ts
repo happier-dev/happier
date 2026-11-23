@@ -1149,6 +1149,55 @@ describe('createDefaultActionExecutor approvals', () => {
         expect(persistedApproval(artifactId)).not.toHaveProperty('execution');
     });
 
+    it('publishes a denied deferred Override through the originating Machine', async () => {
+        const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+        const artifactId = 'deferred-override-result';
+        const machineId = 'requester-machine';
+        const selected = { automationId: 'review', triggerId: 'before', triggerRevision: 1, workflowId: 'workflow',
+            workflowRevision: 1, ownerAccountId: 'account-a', actionIds: ['session.title.set'],
+            phase: 'before', mode: 'wait', onFailure: 'ask' };
+        const run = { automationId: selected.automationId, triggerId: selected.triggerId, runId: 'failed-check' };
+        const original = approvalRequest();
+        if (original.v !== 2) throw new Error('Expected a current approval');
+        await seedApproval(artifactId, ApprovalRequestV2Schema.parse({
+            ...original, createdBy: { surface: 'agent', sessionId: 's1' }, requestedSurface: 'agent',
+            approval: { flow: 'deferred', result: 'optional' },
+            executionOriginV1: { ...original.executionOriginV1, surface: 'agent', machineId, accountId: 'account-a',
+                serverIdentityId: 'srv_approval_home', caller: { kind: 'session', sessionId: 's1', starterDepth: 0, turnDepth: 0 } },
+            automaticChecks: { phase: 'override', humanApprovalRequired: false, selectionStatus: 'ready', subjects: [],
+                selected: [selected], consents: [], notices: [], runs: [run],
+                results: [{ ...run, outcome: 'failed', reason: 'command_failed' }] },
+        }));
+        const machine = { ...createPlainMachineRowFixture({ id: machineId, accountId: 'account-a' }), kind: 'persistent',
+            dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER };
+        homes.answer(homeId, '/v1/machines', { body: [machine] });
+        homes.answer(homeId, '/v1/machines/' + machineId, { body: { machine } });
+        await connectPermissionTransport();
+        const transcript = new Map<string, unknown>();
+        const origin = createActionExecutor({
+            approvalsGet: async ({ artifactId }) => persistedApproval(artifactId),
+            approvalsUpdate: async () => { throw new Error('Terminal replay must preserve the decision'); },
+            sessionSendMessage: async ({ sessionId, localId, message }) => {
+                transcript.set(sessionId + ':' + localId, JSON.parse(message));
+                return { status: 'accepted', localId };
+            },
+        });
+        rpcResponder = ({ method, params }) => {
+            expect(method).toBe(machineId + ':' + RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED);
+            expect(params).toEqual({ artifactId });
+            return origin.replayApprovedApprovalRequest({ artifactId, callerAuthority: 'present_user',
+                currentAccount: { accountId: 'account-a', serverId: homeId, serverIdentityId: 'srv_approval_home' } });
+        };
+
+        const result = await executor.execute('approval.request.decide', { artifactId, decision: 'reject' }, context());
+        expect(persistedApproval(artifactId)).toMatchObject({ status: 'rejected', decision: { kind: 'reject' } });
+        expect(transcript.get('s1:approval-result:' + artifactId), JSON.stringify(result)).toMatchObject({
+            artifactId, status: 'rejected', execution: { ok: false, effectAttempted: false,
+                errorCode: 'action_interception_rejected', details: { message: 'command_failed' } },
+        });
+        expect(result).toMatchObject({ ok: true, result: { status: 'rejected', delivery: { status: 'accepted' } } });
+    });
+
     it('preserves the host input record when replaying a deferred result without Action discovery', async () => {
         const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
         const { createPlainSessionWithDisplayRecordFixture } = await import('@/dev/testkit/fixtures/sessionDisplayFixtures');

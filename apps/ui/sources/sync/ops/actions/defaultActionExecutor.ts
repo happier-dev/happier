@@ -665,14 +665,15 @@ export async function replayApprovalRequestAtExactDaemon(input: Readonly<{
 }
 
 /**
- * Routes consumption of an already-approved built-in Action Artifact to its
- * exact daemon. No decision or authority crosses this private transport.
+ * Routes an already decided built-in Approval Artifact to its exact daemon.
+ * No decision or authority crosses this private transport.
  */
 export async function replayApprovedApprovalRequestAtExactDaemon(input: Readonly<{
   artifactId: string;
   executionTarget: Readonly<{
     /** Current-device profile id used only to route the RPC transport. */
     serverId: string;
+    accountId?: string;
     machineId: string;
     /** Stable Home identity retained by the replay route; not part of this payload. */
     serverIdentityId?: string;
@@ -683,6 +684,7 @@ export async function replayApprovedApprovalRequestAtExactDaemon(input: Readonly
 }>): Promise<ActionExecuteResult> {
   return readMachineActionRpcResult(await machineRpcWithServerScope<ActionExecuteResult, Readonly<{ artifactId: string }>>({
     serverId: input.executionTarget.serverId,
+    ...(input.executionTarget.accountId ? { accountId: input.executionTarget.accountId } : {}),
     machineId: input.executionTarget.machineId,
     method: RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED,
     operationTimeoutMs: null,
@@ -3474,6 +3476,17 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         && !(request.actionId === 'plugins.install' && readPluginInstallApprovalPendingReview(request.preview))
         ? { ok: false, errorCode: 'present_user_required', error: 'present_user_required', effectAttempted: false } : null,
     } satisfies Pick<ActionExecutorDeps, 'approvalRequestApproveRefusal'> : {}),
+
+    approvalRequestOutcomePublication: async ({ artifactId, request, context }) => {
+      const machineId = request.executionOriginV1.machineId?.trim();
+      if (!machineId || !accountContext || accountContext.credentialAuthorityKind !== 'account'
+        || context.externalActionCredential || context.rpcSessionAuthorization) return null;
+      return withAccountLifetime(context.signal, signal => replayApprovedApprovalRequestAtExactDaemon({
+        artifactId,
+        executionTarget: { serverId: accountContext.serverId, accountId: accountContext.accountId, machineId },
+        ...(signal ? { signal } : {}),
+      }));
+    },
 
     approvalRequestApprovedReplay: async ({ artifactId, request, decision, context, requestId, signal, onReplayDispatched }) => {
       try {
