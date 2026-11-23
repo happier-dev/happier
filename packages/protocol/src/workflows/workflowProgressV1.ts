@@ -879,7 +879,7 @@ export type WorkflowInvocationRetryInputV1 = z.infer<typeof WorkflowInvocationRe
 const WORKFLOW_OPERATION_ERROR_CODES_WITHOUT_DETAILS_V1 = [
   'not_authenticated',
   'admission_unavailable', 'invalid_token',
-  'run_not_found',
+  'run_not_found', 'visible_team_not_granted',
   'approval_required', 'present_user_required',
   'missing_reference', 'invalid_reference_scope',
   'workflow_input_too_large', 'workflow_outcome_unresolved',

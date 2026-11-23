@@ -1743,6 +1743,9 @@ describe('shared Account workflow run owner', () => {
   it.each([
     { name: 'a lost admission reply', failure: Object.assign(new Error('timeout of 30000ms exceeded'), { code: 'ECONNABORTED' }), code: 'workflow_outcome_unresolved' },
     { name: 'a received storage refusal', failure: Object.assign(new Error('HTTP 503'), { response: { status: 503, data: { error: 'storage_unavailable' } } }), code: 'storage_unavailable' },
+    { name: 'a received Team selection refusal',
+      failure: Object.assign(new Error('HTTP 422'), { response: { status: 422, data: { error: 'visible_team_not_granted' } } }),
+      code: 'visible_team_not_granted' },
   ])('reports $name as $code, so only an unconfirmed admission is rejoined instead of claiming failure', async ({ failure, code }) => {
     const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async operation => {
       if (operation.operation === 'get') throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
