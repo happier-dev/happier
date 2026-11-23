@@ -558,6 +558,7 @@ async function getServerFeaturesSnapshotWithRetry(
                                     ? { homeIdentityId: explicitServerProfile.serverIdentityId }
                                     : {}),
                                 token: null,
+                                ...(projection === 'public' ? { stopOnOffline: true } : {}),
                                 url: joinBaseAndPath(
                                     explicitRuntimeOrigin!,
                                     projection === 'authenticated' ? '/v1/features/authenticated' : '/v1/features',

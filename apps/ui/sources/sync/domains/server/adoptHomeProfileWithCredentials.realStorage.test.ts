@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import {
@@ -955,6 +955,10 @@ describe('adoptHomeProfileWithCredentials (real storage integration)', () => {
         restoreLocalStorage = localStorageMock.restore;
 
         const profiles = await import('@/sync/domains/server/serverProfiles');
+        const { subscribeHomeCredentialMutations } = await import('@/auth/storage/tokenStorage');
+        const published = vi.fn();
+        const unsubscribe = subscribeHomeCredentialMutations(published);
+        onTestFinished(unsubscribe);
         const {
             adoptHomeProfileWithCredentials,
             finalizeRetainedHomeProfileAdoption,
@@ -989,6 +993,7 @@ describe('adoptHomeProfileWithCredentials (real storage integration)', () => {
             expect.objectContaining({ serverIdentityId: 'srv_home_b' }),
         ]));
         expect(localStorageMock.store.get(write.key!)).toContain('new-home-b-token');
+        expect(published).not.toHaveBeenCalled();
 
         const failure = await result.catch((error: unknown) => error);
         if (!(failure instanceof HomeProfileAdoptionPartialCommitError)) throw new Error('Expected partial commit');
@@ -1002,6 +1007,9 @@ describe('adoptHomeProfileWithCredentials (real storage integration)', () => {
             failure,
         )).resolves.toMatchObject({ serverIdentityId: 'srv_home_b' });
         expect(localStorageMock.store.get(write.key!)).toBe(JSON.stringify(credentials));
+        expect(published).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+            kind: 'credentials_set', serverId: 'srv_home_b',
+        }));
     });
 
     it('reports a partial commit and keeps the concurrent winner when rollback finds the slot rewritten', async () => {

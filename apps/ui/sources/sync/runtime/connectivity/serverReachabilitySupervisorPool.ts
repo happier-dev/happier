@@ -327,6 +327,7 @@ function waitForState(params: Readonly<{
     signal?: AbortSignal;
     timeoutMs?: number;
     onState?: (state: ManagedConnectionState) => void;
+    stopOnOffline?: boolean;
 }>): Promise<void> {
     return new Promise<void>((resolve, reject) => {
         let started = false;
@@ -366,6 +367,11 @@ function waitForState(params: Readonly<{
                     : Object.assign(new Error(state.lastErrorMessage ?? 'Server request refused'), state.failure);
                 cleanup();
                 reject(error);
+                return;
+            }
+            if (params.stopOnOffline && state.phase === 'offline') {
+                cleanup();
+                reject(new Error(state.lastErrorMessage ?? 'Server unreachable'));
                 return;
             }
             if (!params.predicate(state)) return;
@@ -481,6 +487,7 @@ export async function waitForServerReachable(params: Readonly<{
     signal?: AbortSignal;
     timeoutMs?: number;
     acceptAuthFailed?: boolean;
+    stopOnOffline?: boolean;
     /** Verified transport origin; admission remains keyed by the stable Home and bearer. */
     runtimeOrigin?: string;
     /** Semantic carrier for Homes whose canonical URL has no reachable ingress. */
@@ -499,6 +506,7 @@ export async function waitForServerReachable(params: Readonly<{
         startup,
         signal: params.signal,
         timeoutMs: params.timeoutMs,
+        stopOnOffline: params.stopOnOffline,
         predicate: (state) => state.phase === 'online' || (params.acceptAuthFailed === true && state.phase === 'auth_failed'),
         onState: (state) => {
             // Foreground reach diagnostics follow an actual canonical outage,

@@ -115,6 +115,7 @@ export type HomeCredentialWriteRollback = Readonly<{
     serverId: string | null;
     /** Captured by the canonical writer before this replacement. */
     previousToken?: string;
+    complete?(committedServerUrl: string): Promise<void>;
     rollback(): Promise<boolean>;
 }>;
 
@@ -2968,6 +2969,7 @@ type HomeCredentialWriteOutcome = Readonly<{
     previousToken?: string;
     /** Exact-scope rollback for the attempted write; null when nothing was written. */
     rollback: (() => Promise<boolean>) | null;
+    complete?: HomeCredentialWriteRollback['complete'];
 }>;
 
 /** Select custody during refresh without giving credential shape authority over Account mode. */
@@ -3012,6 +3014,7 @@ async function writeHomeCredentialsForServerScope(
     options: ServerCredentialLookupOptions,
     credentials: AuthCredentials,
     authority?: HomeMutationAuthority,
+    deferPublication?: boolean,
 ): Promise<HomeCredentialWriteOutcome> {
     if (!isNonEmptyString((credentials as Record<string, unknown>).token)) {
         return { stored: false, serverId: null, rollback: null };
@@ -3051,7 +3054,10 @@ async function writeHomeCredentialsForServerScope(
     for (const legacyKey of keys.legacy) {
         await removeCredentialByKey(legacyKey);
     }
-    emitHomeCredentialMutation('credentials_set', serverUrl, options, effectiveCredentials, currentCredentials);
+    const publish = (committedServerUrl: string) => emitHomeCredentialMutation(
+        'credentials_set', committedServerUrl, options, effectiveCredentials, currentCredentials,
+    );
+    if (!deferPublication) publish(serverUrl);
 
     let rollbackCompleted = false;
     const rollback = async (): Promise<boolean> => {
@@ -3089,12 +3095,17 @@ async function writeHomeCredentialsForServerScope(
         }
         if (restored && mutated) {
             rollbackCompleted = true;
-            emitHomeCredentialMutation('credentials_removed', serverUrl, options);
+            if (!deferPublication) emitHomeCredentialMutation('credentials_removed', serverUrl, options);
         }
         return restored;
         }, authority);
     };
-    return { stored: true, serverId: identity.serverId, rollback, previousToken: currentCredentials?.token };
+    const previousToken = currentCredentials?.token;
+    const complete: HomeCredentialWriteRollback['complete'] = deferPublication ? async (committedServerUrl) => {
+        publish(committedServerUrl);
+        await completeHomeCredentialReplacement(committedServerUrl, identity.serverId, previousToken, effectiveCredentials.token);
+    } : undefined;
+    return { stored: true, serverId: identity.serverId, rollback, previousToken, complete };
     }, authority);
 }
 
@@ -3115,6 +3126,7 @@ export async function setHomeCredentialsWithRollbackUnderMutationAuthority(
     serverUrl: string,
     options: ServerCredentialLookupOptions,
     credentials: AuthCredentials,
+    publication?: 'after_profile_commit',
 ): Promise<HomeCredentialWriteRollback | null> {
     return await withHomeMutationAuthority(authority, async (owned) => {
         const outcome = await writeHomeCredentialsForServerScope(
@@ -3122,6 +3134,7 @@ export async function setHomeCredentialsWithRollbackUnderMutationAuthority(
             options,
             credentials,
             owned,
+            publication === 'after_profile_commit',
         );
         if (!outcome.stored || !outcome.rollback) return null;
         return {
@@ -3129,6 +3142,7 @@ export async function setHomeCredentialsWithRollbackUnderMutationAuthority(
             serverId: outcome.serverId,
             previousToken: outcome.previousToken,
             rollback: outcome.rollback,
+            ...(outcome.complete ? { complete: outcome.complete } : {}),
         };
     });
 }

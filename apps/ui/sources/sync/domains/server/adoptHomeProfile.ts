@@ -1,7 +1,6 @@
-import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import type { AuthCredentials, HomeCredentialWriteRollback } from '@/auth/storage/tokenStorage';
 import {
     getHomeCredentialsUnderMutationAuthority,
-    completeHomeCredentialReplacement,
     removeHomeCredentialsUnderMutationAuthority,
     setHomeCredentialsWithRollbackUnderMutationAuthority,
 } from '@/auth/storage/tokenStorage';
@@ -44,6 +43,7 @@ export class HomeProfileAdoptionPartialCommitError extends Error {
         readonly canonicalServerUrl: string,
         readonly serverIdentityId: string,
         readonly rollbackOutcome: Exclude<HomeProfileCredentialRollbackOutcome, { kind: 'succeeded' }>,
+        readonly completeCredentialWrite?: HomeCredentialWriteRollback['complete'],
     ) {
         super('Home credential was stored, but profile adoption did not complete');
         this.name = 'HomeProfileAdoptionPartialCommitError';
@@ -136,6 +136,7 @@ async function migrateExistingHomeCanonicalUrlUnderMutationAuthority(
         fromCanonicalServerUrl,
         { serverId: identity },
         input.credentials,
+        'after_profile_commit',
     );
     if (!credentialWrite) throw new Error('Unable to store Home credentials');
 
@@ -161,6 +162,7 @@ async function migrateExistingHomeCanonicalUrlUnderMutationAuthority(
                 fromCanonicalServerUrl,
                 identity,
                 { kind: 'failed', error: rollbackError },
+                credentialWrite.complete,
             );
         }
         throw adoptionError;
@@ -188,6 +190,7 @@ async function migrateExistingHomeCanonicalUrlUnderMutationAuthority(
                 fromCanonicalServerUrl,
                 identity,
                 { kind: 'failed', error: rollbackError },
+                credentialWrite.complete,
             );
         }
         throw declinedMigration;
@@ -207,6 +210,7 @@ async function migrateExistingHomeCanonicalUrlUnderMutationAuthority(
             profile,
         );
     }
+    await credentialWrite.complete?.(toCanonicalServerUrl);
 
     // Cleanup targets the obsolete URL scope only. A Home that now occupies that URL
     // owns its own credentials, so the obsolete slot is left to its owner instead.
@@ -227,7 +231,6 @@ async function migrateExistingHomeCanonicalUrlUnderMutationAuthority(
             profile,
         );
     }
-    await completeHomeCredentialReplacement(toCanonicalServerUrl, credentialWrite.serverId, credentialWrite.previousToken, input.credentials.token);
     return profile;
 }
 
@@ -260,7 +263,9 @@ export async function finalizeRetainedHomeProfileAdoption(
             { serverId: failure.serverIdentityId },
         );
         if (retained?.token !== credentials.token || shouldCancel?.()) return null;
-        return await adoptHomeProfileUnderMutationAuthority(adoption, authority);
+        const profile = await adoptHomeProfileUnderMutationAuthority(adoption, authority);
+        await failure.completeCredentialWrite?.(profile.serverUrl);
+        return profile;
     });
 }
 
@@ -315,6 +320,7 @@ async function adoptHomeProfileWithCredentialsUnderAuthority(
         target.canonicalServerUrl,
         { serverId: target.serverIdentityId },
         input.credentials,
+        'after_profile_commit',
     );
     if (!credentialWrite) {
         throw new Error('Unable to store Home credentials');
@@ -334,6 +340,7 @@ async function adoptHomeProfileWithCredentialsUnderAuthority(
                 target.canonicalServerUrl,
                 target.serverIdentityId,
                 { kind: 'failed', error: rollbackError },
+                credentialWrite.complete,
             );
         }
         if (!rollbackApplied) {
@@ -346,6 +353,6 @@ async function adoptHomeProfileWithCredentialsUnderAuthority(
         }
         throw adoptionError;
     }
-    await completeHomeCredentialReplacement(target.canonicalServerUrl, credentialWrite.serverId, credentialWrite.previousToken, input.credentials.token);
+    await credentialWrite.complete?.(profile.serverUrl);
     return profile;
 }

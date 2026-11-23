@@ -14,6 +14,7 @@ import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains
 import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { resetServerReachabilitySupervisors } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { HomeAuthenticationFlow } from './HomeAuthenticationFlow';
@@ -31,6 +32,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
     await standardCleanup();
+    await resetServerReachabilitySupervisors();
     resetServerFeaturesClientForTests();
     resetServerProfilesRuntimeForTests();
     localStorage.restore();
@@ -38,13 +40,16 @@ afterEach(async () => {
 
 async function createRecoveryHome() {
     const fixture = createDirectoryHttpFixture();
-    const state = { featureReady: true, entryReady: true, requests: [] as URL[] };
+    const state = { healthReady: true, featureReady: true, entryReady: true, requests: [] as URL[] };
     setRuntimeFetch(async (input, init) => {
         const url = new URL(String(input));
         state.requests.push(url);
         if (url.origin !== fixture.home.canonicalServerUrl) return new Response('{}', { status: 404 });
         // The real explicit-Home request owner admits HTTP through its health probe.
-        if (url.pathname === '/health') return Response.json({ status: 'ok' });
+        if (url.pathname === '/health') {
+            if (!state.healthReady) throw new TypeError('Network request failed');
+            return Response.json({ status: 'ok' });
+        }
         if (url.pathname === '/v1/features' && !state.featureReady) return Response.json({ invalid: true });
         if (url.pathname === '/v1/auth/entry' && !state.entryReady) return Response.json({ v: 999 });
         if (url.pathname === '/v1/features' || url.pathname === '/v1/auth/entry') return fixture.request(url.origin, url.pathname + url.search, init);
@@ -112,6 +117,20 @@ describe('HomeRecoveryAuthenticationFlow', () => {
         expect(card.props.reason).toBe(t('welcome.serverIncompatibleBody', { serverUrl: 'Home B' }));
         expect(screen.findAllByType(HomeAuthenticationFlow)).toHaveLength(0);
         state.entryReady = true;
+        await screen.pressByTestIdAsync('home-recovery-authentication-unavailable-action');
+        await vi.waitFor(() => expect(screen.findByTestId('home-auth-key_challenge-login-keyed')).not.toBeNull());
+        expect(getActiveServerSnapshot()).toEqual(focused);
+    });
+
+    it('shows an unavailable saved Home after its failed health check and recovers on Retry', async () => {
+        const { selected, state, focused } = await createRecoveryHome();
+        state.healthReady = false;
+        const screen = await renderRecovery(selected.id);
+        await vi.waitFor(() => expect(screen.findByTestId('home-recovery-authentication-unavailable')).not.toBeNull());
+        expect(state.requests.filter(url => url.origin === selected.serverUrl).map(url => url.pathname))
+            .toEqual(['/health']);
+
+        state.healthReady = true;
         await screen.pressByTestIdAsync('home-recovery-authentication-unavailable-action');
         await vi.waitFor(() => expect(screen.findByTestId('home-auth-key_challenge-login-keyed')).not.toBeNull());
         expect(getActiveServerSnapshot()).toEqual(focused);

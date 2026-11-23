@@ -52,6 +52,7 @@ type ReachableFetchParams = Readonly<{
     url: string;
     init: RequestInit;
     timeoutMs?: number;
+    stopOnOffline?: boolean;
     recoveryRead?: ServerFetchOptions['recoveryRead'];
     signal?: AbortSignal;
     /** Verified request origin; reachability and auth audience remain keyed by serverUrl. */
@@ -160,6 +161,7 @@ async function performReachableFetch<T>(params: ReachableFetchParams, consumeRes
             ...(params.homeIdentityId ? { homeIdentityId: params.homeIdentityId } : {}),
             signal,
             timeoutMs: params.timeoutMs,
+            stopOnOffline: params.stopOnOffline,
             acceptAuthFailed: true,
         });
         reachability = await reachabilityPromise;
