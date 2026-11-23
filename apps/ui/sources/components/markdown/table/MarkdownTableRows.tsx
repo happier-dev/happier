@@ -58,7 +58,11 @@ export function useMarkdownTableLayout(headers: readonly string[], rows: readonl
 
 function useColumnStyles(layout: MarkdownTableLayout): readonly ViewStyle[] {
     return React.useMemo(() => layout.columns.map((column) => ({
-        flexBasis: column.natural,
+        // The flex basis comes from `width`, not `flexBasis`: Yoga keeps a cell's first computed
+        // `flexBasis` while React Native only marks the node dirty, so a cell laid out mid-stream
+        // keeps that stale basis and its row leaves the grid. A `width` basis is re-resolved on
+        // every layout.
+        width: column.natural,
         // Only grows when the frame is wider than the table (its footer needs more room).
         flexGrow: 1,
         flexShrink: column.shrink,
