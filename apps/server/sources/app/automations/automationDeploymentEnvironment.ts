@@ -31,7 +31,7 @@ async function readDeploymentEnvironmentAutomationDisableSelectionInTx(tx: Tx, e
         select: { id: true, accountId: true, templateCiphertext: true }, orderBy: { id: 'asc' } });
     const jobs = options.observationOnly ? candidates.filter(row => parseAutomationObservationOnlyDefinitionV1(row.templateCiphertext)) : candidates;
     return jobs.length ? { jobs, scope: { accountId: jobs[0]!.accountId,
-        automationIds: jobs.map(job => job.id), runSourceTriggerWhere: { automation: { deploymentEnvironmentId: environmentId } } } } : null;
+        automationIds: jobs.map(job => job.id), sourceTriggerWhere: { automation: { deploymentEnvironmentId: environmentId } } } } : null;
 }
 
 /** Enclosing disposition admits the same definition and source-trigger publication as disable. */

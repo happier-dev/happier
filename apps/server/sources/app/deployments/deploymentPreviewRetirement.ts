@@ -39,7 +39,7 @@ export async function retireDeploymentPreviewsForSourceReplacementInTx(tx: Tx, i
     if (changed.length === 0) return;
     // Compose the complete existing publication audience before any definition/Run writes.
     await acquireWorkflowPublicationLocksInTx(tx, { accountId: changed[0]!.accountId,
-        automationIds: changed.map(job => job.id), runSourceTriggerWhere: { automation: {
+        automationIds: changed.map(job => job.id), sourceTriggerWhere: { automation: {
             deploymentEnvironment: { projectSourceId: input.projectSourceId },
             deploymentPreviewRole: 'preview_admission', deletedAt: null,
         } } });

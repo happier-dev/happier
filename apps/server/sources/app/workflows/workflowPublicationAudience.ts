@@ -31,7 +31,7 @@ export interface WorkflowPublicationScope {
     }>;
     automationWhere?: Prisma.AutomationWhereInput;
     triggerIds?: readonly string[];
-    runSourceTriggerWhere?: Prisma.AutomationTriggerWhereInput;
+    sourceTriggerWhere?: Prisma.AutomationTriggerWhereInput;
     sessionIds?: readonly string[];
     machineIds?: readonly string[];
     machineTargets?: readonly Readonly<{ accountId: string; machineId: string }>[];
@@ -105,8 +105,8 @@ export async function getWorkflowPublicationAudienceInTx(tx: Tx, scope: Workflow
     const automationIds = new Set([...(scope.automationIds ?? []), ...selectedAutomations.map(automation => automation.id)]);
     // Definition writers validate and catch up their retained Run sources in the
     // same transaction. Those source owners must precede the target's mode fence.
-    const sourceTriggers = scope.runSourceTriggerWhere ? await tx.automationTrigger.findMany({ where: {
-        AND: [scope.runSourceTriggerWhere], kind: "runLifecycle", sourceRunMachineId: null, deletedAt: null,
+    const sourceTriggers = scope.sourceTriggerWhere ? await tx.automationTrigger.findMany({ where: {
+        AND: [scope.sourceTriggerWhere], kind: "runLifecycle", sourceRunMachineId: null, deletedAt: null,
     }, select: { sourceRunId: true } }) : [];
     const runIds = [...new Set([...(scope.runIds ?? []), ...sourceTriggers.flatMap(trigger => trigger.sourceRunId ? [trigger.sourceRunId] : [])])];
     const runFilters: Prisma.AutomationRunWhereInput[] = portableQueryChunks({
