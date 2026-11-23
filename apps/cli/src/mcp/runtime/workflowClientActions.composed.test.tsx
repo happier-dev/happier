@@ -2,10 +2,11 @@
 import '../../../../ui/sources/dev/vitestSetup';
 import * as React from 'react';
 import axios from 'axios';
+import Fastify from 'fastify';
 import nacl from 'tweetnacl';
 import * as privacyKit from 'privacy-kit';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -14,12 +15,14 @@ import { AccountSettingsSchema, createActionExecutor, type ActionExecutorDeps, U
   WorkflowProgressEnvelopeV1Schema } from '@happier-dev/protocol';
 import { WorkflowDraftGetResultV1Schema } from '@happier-dev/protocol/actions/workflowAuthoringAction';
 import { bindExternalActionExecutionAuthorizationHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { createActionAutomationHttpPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '../../../../ui/sources/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '../../../../ui/sources/dev/testkit/harness/serverAccountConnectionHarness';
 import { renderScreen } from '../../../../ui/sources/dev/testkit/render/renderScreen';
-import { createMachineFixture } from '../../../../ui/sources/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture } from '../../../../ui/sources/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '../../../../ui/sources/dev/testkit/harness/machinePresence';
 import { createWorkflowRunSummaryFixture, createWorkflowInvocationIndexFixture } from '../../../../ui/sources/dev/testkit/fixtures/workflowRunFixtures';
 import { standardCleanup } from '../../../../ui/sources/dev/testkit/cleanup/standardCleanup';
 import type { Socket } from 'socket.io-client';
@@ -28,7 +31,10 @@ import { installedSessionExternalActionStorage as issuerStorage } from '../../..
 
 const processIdentity = vi.hoisted(() => vi.fn());
 // OS process identity and network transports are the only substituted boundaries.
-vi.mock('@/daemon/processIdentity', () => ({ readProcessIdentityByPid: processIdentity }));
+vi.mock('@/daemon/processIdentity', async importOriginal => ({
+  ...await importOriginal<typeof import('@/daemon/processIdentity')>(),
+  readProcessIdentityByPid: processIdentity,
+}));
 // The real issuer/authentication/currentness owners consume only this database
 // I/O boundary; no SQLite harness or real database mutation is involved.
 vi.mock('../../../../server/sources/storage/db', async importOriginal => ({
@@ -48,10 +54,6 @@ const { storage } = await import('../../../../ui/sources/sync/domains/state/stor
 await (await import('../../../../ui/sources/dev/testkit/harness/syncSingletonLoader')).loadSyncSingletonForTests();
 const { ClientActionReverseRuntime } = await import('../../../../ui/sources/components/appShell/runtime/ClientActionReverseRuntime');
 const { useWorkflowLibraryView } = await import('../../../../ui/sources/components/workflows/library/useWorkflowLibraryView');
-// Expo randomness is the OS boundary; use the UI's physical SDK instance.
-const expoCrypto = await import('../../../../ui/node_modules/expo-crypto/build/Crypto.js');
-const osRandomUUID = (await import('node:crypto')).randomUUID;
-beforeEach(() => { vi.spyOn(expoCrypto, 'randomUUID').mockImplementation(osRandomUUID); });
 const { WorkflowEditorHostScreen } = await import('../../../../ui/sources/components/workflows/screens/WorkflowEditorHostScreen');
 const { WorkflowInvocationReview } = await import('../../../../ui/sources/components/workflows/run/WorkflowInvocationReview');
 const { AuthProvider } = await import('../../../../ui/sources/auth/context/AuthContext');
@@ -70,18 +72,24 @@ const { hashPrivateBearer } = await import('@/daemon/privateBearerFile');
 const { createAgentSessionRunnerFactoryBinding } = await import('@/plugins/runtime/runner/agentSessionRunnerFactoryBinding');
 const { createAgentRuntimeDaemonServiceAuthorityPath, publishAgentRuntimeDaemonServiceAuthority,
   readCurrentRunnerAgentRuntimeDaemonServiceAuthority, removeAgentRuntimeDaemonServiceAuthorityIfOwned } = await import('@/daemon/agentRuntime/sessionBridgeAuthorization');
-const { AgentRuntimeDaemonServiceRequestV1Schema } = await import('@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol');
+const { AgentRuntimeDaemonServiceRequestV1Schema, AGENT_RUNTIME_DAEMON_SERVICES_PATH } = await import('@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol');
+const { createDaemonControlRequestLifetime } = await import('@/daemon/controlRequestLifetime');
+const { DAEMON_CONTROL_TOKEN_HEADER } = await import('@/daemon/controlHttp');
 afterEach(() => { standardCleanup(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 it.each(['legacy', 'legacy-terminal', 'current', 'malformed'] as const)('routes real Session MCP Library Actions through the real Home issuer and mounted client (%s)', async kind => {
+  // The installed Session storage fixture supplies PostgreSQL transaction I/O.
+  vi.stubEnv('HAPPIER_DB_PROVIDER', 'postgres');
   await homes.reset();
   const serverUrl = 'https://workflow-client.test';
   const accountId = 'relay-account';
   const serverId = await homes.addHome({ name: 'Workflow', serverUrl, accountId });
   const connection = await restoreServerAccountForTest({ serverUrl, accountId, request: homes.request });
+  homes.answer(serverId, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, { body: { v: 1, rows: [] } });
   installHomeGovernanceBoundaries(homes);
-  const machine = createMachineFixture({ id: 'driver-machine', storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
-  storage.setState(state => ({ ...state, profile: { ...state.profile!, id: accountId }, machines: { [machine.id]: machine }, machineListByServerId: {} }));
+  const machine = createHydratedPlainMachineFixture({ id: 'driver-machine', accountId, machine: { activeAt: Date.now() } });
+  storage.setState(state => ({ ...state, profile: { ...state.profile!, id: accountId } }));
+  await publishMachineInventoryForTest({ serverId, accountId }, [machine]);
   const socket = sockets.slice().reverse().find(candidate => candidate.listeners(SOCKET_RPC_EVENTS.REQUEST).length > 0);
   if (!socket) throw new Error('Missing Account reverse receiver');
   const registered = new Set<string>();
@@ -155,6 +163,14 @@ it.each(['legacy', 'legacy-terminal', 'current', 'malformed'] as const)('routes 
     return response;
   });
   let preparedRequest: Parameters<typeof prepareExternalActionRequesterAccountAuthorization>[0] | undefined;
+  const actionAutomations = createActionAutomationHttpPortV1({ accountId, request: async (path, init) => {
+    const response = await homes.request(`${serverUrl}${path}`, {
+      method: init.method, signal: init.signal, headers: { Authorization: `Bearer ${connection.credentials.token}` },
+      ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+    });
+    if (!response.ok) throw new Error(`Automation request failed: ${response.status}`);
+    return response.json();
+  } });
   const execute = createDaemonSessionAccountActionExecutor({ serverId, serverHttpBaseUrl: serverUrl, token, machineId: machine.id,
     prepareExternalActionAuthorization: async admission => {
       preparedRequest = { actionId: admission.operation.actionId,
@@ -166,7 +182,7 @@ it.each(['legacy', 'legacy-terminal', 'current', 'malformed'] as const)('routes 
       const authorization = await prepareExternalActionRequesterAccountAuthorization(preparedRequest);
       return authorization ? { authorization, target } : null;
     },
-    createExecutor: () => createActionExecutor({ clientActionExecute: reverse } as unknown as ActionExecutorDeps),
+    createExecutor: () => createActionExecutor({ clientActionExecute: reverse, actionAutomations } as unknown as ActionExecutorDeps),
   });
   const command = 'node /runtime/.runner-snapshots/workflow/dist/index.mjs';
   const runner = { pid: process.pid, processStartTimeMs: 23346, processCommandHash: hashProcessCommand(command), snapshotIdentity: 'snapshot:workflow' };
@@ -176,32 +192,32 @@ it.each(['legacy', 'legacy-terminal', 'current', 'malformed'] as const)('routes 
     sessionId: 'driver-session', runner, retainedAgent: createAgentSessionRunnerFactoryBinding({ v: 1, pluginId: 'acme.plugin', pluginVersion: '1.2.3',
       agentId: 'acme-agent', localAgentId: 'acme-agent', sourceCustody: { kind: 'managed', immutableGenerationId: `sha256:${'1'.repeat(64)}`, installSource: 'localPath' },
       locator: { module: './runtime.mjs', export: 'createRuntime', runtimeApiVersion: 1 }, normalizedModulePath: '/immutable/runtime.mjs', loadMode: 'immutable-js' }) };
-  await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: 31001, capability: 'A'.repeat(43) });
-  vi.stubEnv('HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE', path);
-  expect(await readCurrentRunnerAgentRuntimeDaemonServiceAuthority({ ...configuration, path, expectedSessionId: 'driver-session' })).not.toBeNull();
   const serviceRequests: string[] = [];
   const outcomes: unknown[] = [];
-  const nativeFetch = globalThis.fetch;
-  vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
-    if (!String(url).startsWith('http://127.0.0.1:31001/')) return nativeFetch(url, init);
-    const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(String(init?.body)));
+  // Use real private HTTP so the control client's own Undici dispatcher and
+  // request cancellation reach the same daemon executor as a loaded runner.
+  const service = Fastify();
+  service.post(AGENT_RUNTIME_DAEMON_SERVICES_PATH, async (incoming, reply) => {
+    expect(incoming.headers[DAEMON_CONTROL_TOKEN_HEADER]).toBe('A'.repeat(43));
+    const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(incoming.body);
     if (request.operation.kind !== 'action.execute') throw new Error('Unexpected host request');
     serviceRequests.push(request.operation.actionId);
-    // Model the receiving HTTP request's cancellation without conflating the
-    // client fetch polyfill's signal type with the daemon's native signal.
-    const httpLifetime = new AbortController();
-    const cancelHttp = () => httpLifetime.abort();
-    init?.signal?.addEventListener('abort', cancelHttp, { once: true });
-    if (init?.signal?.aborted) cancelHttp();
+    const lifetime = createDaemonControlRequestLifetime(incoming, reply);
     try {
       const outcome = await execute(request.operation, { sessionId: 'driver-session', isCurrent: async () => true,
-        ...(init?.signal ? { signal: httpLifetime.signal } : {}) });
+        signal: lifetime.signal });
       outcomes.push(outcome);
-      return new Response(JSON.stringify({ ok: true, result: { kind: 'action.execution', requestId: request.operation.requestId, outcome } }));
+      return { ok: true, result: { kind: 'action.execution', requestId: request.operation.requestId, outcome } };
     } finally {
-      init?.signal?.removeEventListener('abort', cancelHttp);
+      lifetime.dispose();
     }
   });
+  await service.listen({ port: 0, host: '127.0.0.1' });
+  const serviceAddress = service.server.address();
+  if (!serviceAddress || typeof serviceAddress === 'string') throw new Error('Missing private service address');
+  await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: serviceAddress.port, capability: 'A'.repeat(43) });
+  vi.stubEnv('HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE', path);
+  expect(await readCurrentRunnerAgentRuntimeDaemonServiceAuthority({ ...configuration, path, expectedSessionId: 'driver-session' })).not.toBeNull();
   const settings = AccountSettingsSchema.parse({});
   let turnId = 'turn';
   const createMcp = () => createHappierMcpServer({ sessionId: 'driver-session', getServerBinding: () => ({ serverId, serverUrl }),
@@ -232,9 +248,10 @@ it.each(['legacy', 'legacy-terminal', 'current', 'malformed'] as const)('routes 
   try {
     runtime = await renderScreen(React.createElement(ClientActionReverseRuntime));
     const current = await call('workflow.library.view.get', {});
-    expect(serviceRequests).toEqual(['workflow.library.view.get']);
+    expect(serviceRequests, JSON.stringify({ current, outcomes })).toEqual(['workflow.library.view.get']);
     if (kind === 'malformed') {
-      expect(outcomes).toMatchObject([{ ok: false, errorCode: 'target_unavailable', details: { reason: 'external_authorization_refused' } }]);
+      expect(outcomes, JSON.stringify(outcomes)).toMatchObject([{ ok: false, errorCode: 'action_forbidden',
+        details: { reason: 'external_authorization_refused' } }]);
       expect(minted).toEqual([]);
       return;
     }
@@ -319,7 +336,7 @@ it.each(['legacy', 'legacy-terminal', 'current', 'malformed'] as const)('routes 
   } finally {
     await review?.unmount(); await editor?.unmount();
     await runtime?.unmount(); await library.unmount(); await client.close(); await mcp.mcp.close(); await connection.dispose();
-    await issuer.close();
+    await service.close(); await issuer.close();
     await removeAgentRuntimeDaemonServiceAuthorityIfOwned({ ...authority, capabilityDigest: hashPrivateBearer('A'.repeat(43)) });
   }
 });
