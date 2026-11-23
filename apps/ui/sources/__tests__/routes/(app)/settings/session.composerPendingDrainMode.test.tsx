@@ -34,7 +34,7 @@ beforeEach(() => {
         agentInputEnterToSendNative: false,
         sessionMessageSendMode: 'server_pending',
         sessionBusySteerSendPolicy: 'steer_immediately',
-        sessionPendingQueueDrainMode: 'one_at_a_time',
+        sessionPendingQueueDrainMode: 'drain_all',
         sessionPendingQueueDeliveryTiming: 'after_foreground_ready',
         alwaysShowContextSize: true,
     };
@@ -70,17 +70,10 @@ async function renderComposerSettings(): Promise<SettingsScreen> {
 }
 
 describe('Session composer settings pending queue drain mode', () => {
-    it('renders one-at-a-time and drain-all choices when Pending can be used', async () => {
+    it('offers delivery timing while keeping the stored drain preference off the screen', async () => {
         const screen = await renderComposerSettings();
 
-        expect(screen.findGroup('settingsSessionPages.composer.pendingSection')?.props.description)
-            .toBe('settingsSessionPages.composer.pendingDescription');
-
-        const drain = segmentedRow(screen, 'settings-composer-pending-drain');
-        expect(drain.props.title).toBe('settingsSession.messageSending.pendingDrainModeTitle');
-        expect(drain.props.disabled).toBeFalsy();
-        expect(segmentIds(screen, 'settings-composer-pending-drain')).toEqual(['one_at_a_time', 'drain_all']);
-        expect(drain.props.rightElement.props.activeTabId).toBe('one_at_a_time');
+        expect(screen.findAllByType(Item).some(node => node.props.testID === 'settings-composer-pending-drain')).toBe(false);
 
         const timing = segmentedRow(screen, 'settings-composer-pending-timing');
         expect(timing.props.title).toBe('settingsSession.messageSending.pendingDeliveryTimingTitle');
@@ -89,7 +82,7 @@ describe('Session composer settings pending queue drain mode', () => {
         expect(timing.props.rightElement.props.activeTabId).toBe('after_foreground_ready');
     });
 
-    it('updates pending queue delivery timing independently from drain mode', async () => {
+    it('updates delivery timing and preserves the stored legacy preference', async () => {
         const screen = await renderComposerSettings();
 
         await act(async () => {
@@ -98,7 +91,7 @@ describe('Session composer settings pending queue drain mode', () => {
 
         await vi.waitFor(() => expect(account?.persistedSettings.sessionPendingQueueDeliveryTiming).toBe('after_runtime_idle'));
         expect(storage.getState().settings.sessionPendingQueueDeliveryTiming).toBe('after_runtime_idle');
-        expect(storage.getState().settings.sessionPendingQueueDrainMode).toBe('one_at_a_time');
+        expect(storage.getState().settings.sessionPendingQueueDrainMode).toBe('drain_all');
     });
 
     // The rows stay (so search never lands on a missing row) but offer no choice, and the section says why.
@@ -110,7 +103,7 @@ describe('Session composer settings pending queue drain mode', () => {
 
         expect(screen.findGroup('settingsSessionPages.composer.pendingSection')?.props.description)
             .toBe('settingsSessionPages.composer.pendingInactive');
-        for (const testID of ['settings-composer-pending-drain', 'settings-composer-pending-timing']) {
+        for (const testID of ['settings-composer-pending-timing']) {
             const row = segmentedRow(screen, testID);
             expect(row.props.disabled).toBe(true);
             expect(row.props.rightElement.props.disabled).toBe(true);

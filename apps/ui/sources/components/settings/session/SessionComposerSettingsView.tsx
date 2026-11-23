@@ -28,7 +28,6 @@ import { settingRendersOnHost } from '@/components/settings/catalog/settingDecla
 import { SESSION_COMPOSER_SETTINGS } from '@/components/settings/session/sessionComposerSettings';
 import { ComposerActionBarPreview, ComposerChipDensityPreview } from '@/components/settings/session/SessionSettingPreviews';
 
-type PendingQueueDrainMode = 'one_at_a_time' | 'drain_all';
 type PendingQueueDeliveryTiming = 'after_foreground_ready' | 'after_runtime_idle';
 type AgentInputHistoryScope = 'perSession' | 'global';
 type ActionBarLayout = 'auto' | 'wrap' | 'scroll';
@@ -52,7 +51,6 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
     const [messageSendMode, setMessageSendMode] = useSettingMutable('sessionMessageSendMode');
     const [busySteerSendPolicy, setBusySteerSendPolicy] = useSettingMutable('sessionBusySteerSendPolicy');
     const [nonSteerableSendPrompt, setNonSteerableSendPrompt] = useSettingMutable('sessionNonSteerableSendPrompt');
-    const [pendingQueueDrainMode, setPendingQueueDrainMode] = useSettingMutable('sessionPendingQueueDrainMode');
     const [pendingQueueDeliveryTiming, setPendingQueueDeliveryTiming] = useSettingMutable('sessionPendingQueueDeliveryTiming');
     const [sessionInactiveResumePolicy, setSessionInactiveResumePolicy] = useSettingMutable('sessionInactiveResumePolicy');
     const agentInputEnterToSend = useSetting('agentInputEnterToSend');
@@ -276,21 +274,6 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
                     ? t('settingsSessionPages.composer.pendingDescription')
                     : t('settingsSessionPages.composer.pendingInactive')}
             >
-                <SettingAnchor setting={settings.pendingDrain}>
-                    <SegmentedChoiceItem<PendingQueueDrainMode>
-                        subtitleLines={0}
-                        testID="settings-composer-pending-drain"
-                        testIDPrefix="settings-composer-pending-drain"
-                        title={t(settings.pendingDrain.titleKey)}
-                        disabled={!pendingQueueMayBeUsed}
-                        options={[
-                            { id: 'one_at_a_time', label: t('settingsSessionPages.composer.drainOne'), description: t('settingsSession.messageSending.pendingDrainMode.oneAtATimeSubtitle') },
-                            { id: 'drain_all', label: t('settingsSessionPages.composer.drainAll'), description: t('settingsSession.messageSending.pendingDrainMode.drainAllSubtitle') },
-                        ]}
-                        value={pendingQueueDrainMode === 'drain_all' ? 'drain_all' : 'one_at_a_time'}
-                        onChange={setPendingQueueDrainMode}
-                    />
-                </SettingAnchor>
                 <SettingAnchor setting={settings.pendingTiming}>
                     <SegmentedChoiceItem<PendingQueueDeliveryTiming>
                         subtitleLines={0}

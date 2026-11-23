@@ -34,7 +34,6 @@ export const SESSION_COMPOSER_SETTINGS = defineSettingsPage({
         pendingQueue: {
             titleKey: 'settingsSessionPages.composer.pendingSection',
             settings: {
-                pendingDrain: {},
                 pendingTiming: {},
             },
         },

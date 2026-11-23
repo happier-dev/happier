@@ -109,7 +109,7 @@ describe('SessionComposerSettingsView', () => {
 
         // The default send mode queues in the agent: steering applies, the pending queue does not.
         expect(findChoice(screen, 'settings-composer-busy-steer')?.props.disabled).toBe(false);
-        expect(findChoice(screen, 'settings-composer-pending-drain')?.props.disabled).toBe(true);
+        expect(findChoice(screen, 'settings-composer-pending-drain')).toBeNull();
         expect(findChoice(screen, 'settings-composer-pending-timing')?.props.disabled).toBe(true);
     });
 });
