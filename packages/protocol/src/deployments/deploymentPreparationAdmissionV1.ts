@@ -3,6 +3,8 @@ import { MACHINE_REBOOT_ACTION_IDS } from '../machines/rebootActionIdsV1.js';
 import * as managedActionIds from '../machines/managed/actionIdsV1.js';
 import * as deploymentActionIds from './deploymentActionIdsV1.js';
 import { z } from '../zodRuntimePolicy.js';
+import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentEnvironmentPeopleModeV1Schema, DeploymentEnvironmentPrincipalsV1Schema } from './deploymentEnvironmentDeployerV1.js';
 import { readRecord } from '../inputs/inputRecords.js';
@@ -17,10 +19,11 @@ import { MACHINE_SERVICE_ADOPT_ACTION_ID } from '../local/services/actionIdsV1.j
 import { DeploymentNewProjectV1Schema, DeploymentCatalogAppDefinitionInputV1Schema, hasOneDeploymentProjectV1 } from './storedAppInputV1.js';
 import { computeActionInputApprovalDigestV1 } from '../actions/decisionAuthority.js';
 
-export function deploymentPreparationOperationForActionV1(value: string): 'prepare' | 'template' | 'catalog' | 'setup' | 'create' | undefined {
+export function deploymentPreparationOperationForActionV1(value: string): 'prepare' | 'template' | 'catalog' | 'setup' | 'create' | 'targetCheck' | undefined {
   // Adopting a watched service is an Environment-creating root: it spends Create's preparation admission.
   return value === deploymentActionIds.DEPLOYMENT_PREPARE_ACTION_ID_V1 ? 'prepare'
     : value === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 || value === MACHINE_SERVICE_ADOPT_ACTION_ID ? 'create'
+    : value === deploymentActionIds.DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1 ? 'targetCheck'
     : value === deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 ? 'catalog'
     : value === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 ? 'template'
       : value === managedActionIds.MACHINE_SETUP_PLAN_ACTION_ID_V1 || value === managedActionIds.MACHINE_SETUP_APPLY_ACTION_ID_V1
@@ -31,7 +34,7 @@ export function deploymentPreparationOperationForActionV1(value: string): 'prepa
 /** These deployment roots require preparation; setup carries optional reviewed operands. */
 export function isDeploymentPreparationActionIdV1(value: string): value is typeof deploymentActionIds.DEPLOYMENT_PREPARE_ACTION_ID_V1 | typeof deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 | typeof deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 {
   const operation = deploymentPreparationOperationForActionV1(value);
-  return operation !== undefined && operation !== 'setup' && operation !== 'create';
+  return operation !== undefined && operation !== 'setup' && operation !== 'create' && operation !== 'targetCheck';
 }
 
 const source = lazyZodSchema(() => z.strictObject({ id, revision }));
@@ -75,6 +78,8 @@ export const DeploymentPreparationAdmissionV1Schema = lazyZodSchema(() => z.disc
     agentInstalls: z.optional(z.array(z.strictObject({ machineId: id, inputDigest: id })).check(z.minLength(1))) }),
   z.strictObject({ operation: z.literal('prepare'), source,
     environment: z.optional(z.strictObject({ id })), workspace: z.strictObject({ kind: z.literal('workspace-ref'), id }) }),
+  z.strictObject({ operation: z.literal('targetCheck'), source: z.strictObject({ id }),
+    environment: z.optional(z.strictObject({ id })), target: asProtocolZod(PluginContributionIdentityV1Schema) }),
   templatePreparationAdmission,
 ]).check(z.refine(value => value.operation !== 'setup' || value.deployments.length > 0 || (value.catalogSources?.length ?? 0) > 0
   || (value.connectorGrants?.length ?? 0) > 0 || (value.machineTargets?.length ?? 0) > 0,
@@ -115,6 +120,9 @@ export function projectDeploymentPreparationAdmissionV1(actionId: string, input:
       ...(value.contentArtifactId === undefined ? {} : { candidate: { contentArtifactId: value.contentArtifactId,
         contentHeaderVersion: value.contentHeaderVersion, contentBodyVersion: value.contentBodyVersion } }),
       ...(value.deployerPrincipals === undefined ? {} : { deployerPrincipals: value.deployerPrincipals }) });
+  if (operation === 'targetCheck') return DeploymentPreparationAdmissionV1Schema.parse({ operation,
+    source: { id: value.projectSourceId }, target: value.target,
+    ...(value.environmentId === undefined ? {} : { environment: { id: value.environmentId } }) });
   if (operation === 'catalog') return DeploymentPreparationAdmissionV1Schema.parse({ operation,
     ...(value.newProject ? { newProject: value.newProject } : { source: { id: value.projectSourceId, revision: value.sourceRevision } }),
     machineId: value.machineId, installationId: value.installationId });

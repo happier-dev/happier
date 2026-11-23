@@ -24,7 +24,7 @@ export type DeploymentPreparationScopeDeclarationV1 = (
 ) => DeploymentPreparationScopeV1;
 
 /** Declared by the ActionSpec itself; this builder only binds its signed operands. */
-export type DeploymentPreparationKindV1 = 'root' | 'create' | 'adopt' | 'template' | 'setup' | 'move' | 'update' | 'link' | 'membership';
+export type DeploymentPreparationKindV1 = 'root' | 'create' | 'adopt' | 'template' | 'setup' | 'move' | 'update' | 'link' | 'membership' | 'targetCheck';
 export const declareDeploymentPreparationScopeV1 = (kind: DeploymentPreparationKindV1): DeploymentPreparationScopeDeclarationV1 => (binding, child, effectActionId) => {
   const actionId = binding.actionId;
   const admission = binding.deploymentPreparationAdmission;
@@ -34,7 +34,8 @@ export const declareDeploymentPreparationScopeV1 = (kind: DeploymentPreparationK
     ? [ids.DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, ids.DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1]
     : kind === 'create' && admission?.operation === 'create' && admission.preview
       ? [ids.DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, ids.DEPLOYMENT_DOMAIN_GET_ACTION_ID_V1] : [];
-  const createEffects = (kind === 'create' || kind === 'adopt') && admission?.operation === 'create'
+  const targetCheck = kind === 'targetCheck' && admission?.operation === 'targetCheck';
+  const createEffects = targetCheck ? [ids.DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1] : (kind === 'create' || kind === 'adopt') && admission?.operation === 'create'
     ? [actionId, ids.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, PROJECT_SOURCE_READ_ACTION_ID_V1,
       ids.DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, ids.DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, ...previewReads,
       ...(admission.preview && admission.mode === 'apply' ? [ids.DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1] : []),
@@ -67,7 +68,8 @@ export const declareDeploymentPreparationScopeV1 = (kind: DeploymentPreparationK
   return { createEffects, previewReads, candidateEffects, setupReads, moveEffects, httpReads,
     environment: kind === 'create' ? 'create' : kind === 'template' ? 'template' : 'admitted',
     targetRetention: (kind === 'create' || kind === 'adopt') || kind === 'link' || kind === 'template',
-    storageEffects: kind === 'template' ? [ids.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, ids.DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1,
+    storageEffects: targetCheck ? [PROJECT_SOURCE_READ_ACTION_ID_V1, ids.DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1]
+      : kind === 'template' ? [ids.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, ids.DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1,
       ids.DEPLOYMENT_TARGET_LINK_ACTION_ID_V1, ids.DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1] : [],
     templateDeployEffects: kind === 'template' && deployIntent ? [ids.DEPLOYMENT_DEPLOY_ACTION_ID_V1,
       ids.DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, ids.DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1] : [] };

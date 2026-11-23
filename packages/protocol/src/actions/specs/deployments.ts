@@ -493,6 +493,7 @@ function createDeploymentActionSpecsV1(): DeploymentActionSpecsV1 {
     executionPlacement: 'account', originalExecution: { accountRoot: 'allowed' },
     approval: { result: 'none' }, safety: 'safe', sideEffectClass: 'read', placements: [],
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    deploymentPreparationScope: declareDeploymentPreparationScopeV1('targetCheck'),
     inputSchema: DeploymentTargetCheckInputV1Schema, outputSchema: DeploymentTargetCheckResultV1Schema,
     bindings: { mcpToolName: 'deployments_targets_check' },
     cli: { acceptsServerId: true, commands: [{ path: ['deployments', 'targets', 'check'], visibility: 'canonical' }] },
