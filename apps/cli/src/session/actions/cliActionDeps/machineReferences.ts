@@ -3,7 +3,7 @@ import type { CliProjectAdmission } from './projectAdmission';
 import type { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import axios from '@/api/client/credentialAxios';
 import type { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import { MachineDeploymentReferencesPageV1Schema, readMachineReferenceCensusV1, type MachineReferenceCensusV1,
+import { MachineDeploymentReferencesPageV1Schema, readMachineReferenceCensusV1, readMachineReferenceFailureCauseV1, type MachineReferenceCensusV1,
   type MachineDeploymentReferencesInputV1, type MachineDeploymentReferencesPageV1,
   type MachineReferencePoolListV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import { ManagedResourceTargetV1Schema, ManagedGetOutputV1Schema, managedMachineActionEndpointPathV1,
@@ -13,6 +13,7 @@ import { machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/
 import type { listAutomationDefinitions } from '@/api/automations';
 import type { createCliProfileStore, createCliProfileStoreForOperation } from '@/settings/profiles/profileStore';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { readSettings, StoredCredentials } from '@/persistence';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentness';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -51,14 +52,20 @@ export function createCliMachineRebootReferenceReader(params: Pick<CliActionDeps
   owner: Readonly<{ machineReferenceServerUrl: string; projectHomeId: string;
     projectAccountAdmission: CliProjectAdmission['projectAccountAdmission'] }>): NonNullable<ActionExecutorDeps['machineRebootReferences']> {
   return async ({ input, context, cursor, signal }) => {
-    if (!params.credentials || await owner.projectAccountAdmission(owner.projectHomeId, context)) throw new Error('requester_authority_unavailable');
+    const credentials = params.credentials;
+    if (!credentials) throw new Error('requester_authority_unavailable');
+    const assertRequester = async () => {
+      const denied = await owner.projectAccountAdmission(owner.projectHomeId, context);
+      if (denied) throw createActionExecuteFailureError(denied);
+    };
+    await assertRequester();
     return await runWithServerHttpBaseUrl(owner.machineReferenceServerUrl, async () => {
       const { buildCurrentAccountStoredContentCompatibilityHttpHeaders } = await import('@/api/clientCompatibility/cliClientCompatibility');
-      const headers = { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${params.credentials!.token}` };
+      const headers = { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${credentials.token}` };
       const page = await readDeploymentReferencePage(owner.machineReferenceServerUrl, {
         homeId: owner.projectHomeId, machineId: input.machineId, ...(cursor ? { cursor } : {}),
       }, headers, signal);
-      if (await owner.projectAccountAdmission(owner.projectHomeId, context)) throw new Error('requester_authority_unavailable');
+      await assertRequester();
       return page;
     });
   };
@@ -78,8 +85,10 @@ export function createCliManagedMachineReferences(
     const unavailable = (reason: MachineReferenceCensusV1['unavailable'][number]): MachineReferenceCensusV1 => ({
       homeId: input.homeId, machineId: null, coverage: 'partial', references: [], unavailable: [reason],
     });
-    if (await projectAccountAdmission(projectHomeId, context) || !params.credentials || !roleArtifactStore || !readRawRoleSettings) {
-      return unavailable('requester_authority');
+    const denied = await projectAccountAdmission(projectHomeId, context);
+    if (denied || !params.credentials || !roleArtifactStore || !readRawRoleSettings) {
+      const failureCause = readMachineReferenceFailureCauseV1(denied);
+      return { ...unavailable('requester_authority'), ...(failureCause ? { failureCause } : {}) };
     }
     return await runWithServerHttpBaseUrl(machineReferenceServerUrl, async () => {
       const [{ buildCurrentAccountStoredContentCompatibilityHttpHeaders }, { listAutomationDefinitions }] = await Promise.all([import("@/api/clientCompatibility/cliClientCompatibility"), import("@/api/automations")]);

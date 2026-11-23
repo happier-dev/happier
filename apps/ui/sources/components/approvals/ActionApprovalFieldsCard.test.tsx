@@ -29,6 +29,28 @@ import { presentApprovalFailureOutcome } from '@/components/tools/shell/approval
 import { DiscussionReplyDestinationResultV1Schema } from '@happier-dev/channels-protocol/v1';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
+it.each([
+    { actionId: 'machines.managed.delete', actionArgs: { homeId: 'home-a', managedId: 'managed-a', expectedRevision: 2,
+        intent: 'delete', when: 'now', reviewedDependencies: true } },
+    { actionId: 'machines.reboot', actionArgs: { serverId: 'home-a', machineId: 'machine-a', expectedInstallationId: 'install-a' } },
+] as const)('keeps the $actionId reference refusal in Technical details', async ({ actionId, actionArgs }) => {
+    const partial = { homeId: 'home-a', coverage: 'partial', references: [], failureCause: {
+        phase: 'project.requester_admission', errorClass: 'Error', errorCode: 'project_requester_authority_unavailable',
+        httpStatus: null, nativeErrorReason: 'signed_root_projection',
+    } };
+    const preview = actionId === 'machines.managed.delete'
+        ? { machineReferences: { ...partial, machineId: null, unavailable: ['requester_authority'] } }
+        : { machineRebootReview: { kind: 'machineReboot', deploymentReferences: { ...partial, machineId: 'machine-a', nextCursor: null } } };
+    const request = { actionId, actionArgs, preview };
+    const screen = await renderScreen(<ActionApprovalFieldsCard request={request} presentation={describeApprovalActionFields(request)} anatomy="page" />);
+    expect(screen.getTextContent()).not.toContain('signed_root_projection');
+    const disclosure = screen.findAllByTestId('approvals.technical-details')
+        .find(node => typeof node.props.onExpandedChange === 'function');
+    await act(async () => { disclosure?.props.onExpandedChange(true); });
+    expect(screen.getTextContent()).toContain('project_requester_authority_unavailable');
+    expect(screen.getTextContent()).toContain('signed_root_projection');
+});
+
 it('shows loading destination names while an optional Account name read remains pending', async () => {
     const home = await upsertServerProfile({ name: 'Personal', serverUrl: 'https://reply-names-pending.test' });
     profiles.push(home.id);

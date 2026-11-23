@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createActionExecuteFailureError, type ActionFailureCauseV1 } from '../actions/actionExecutionResult.js';
 import type { AutomationDefinitionListResponse } from '../automations/automationApiV3.js';
 import { createWorkBoardV1 } from '../boards/workBoardV1.js';
 import type { ProfileCatalogSnapshotV1 } from '../profiles/profileCatalogV1.js';
@@ -34,6 +35,19 @@ describe('readMachineReferenceCensusV1', () => {
     await expect(readMachineReferenceCensusV1({ homeId: 'home', machineId: 'machine' }, { ...ports,
       readDeployments: async () => ({ homeId: 'other-home', machineId: 'machine', coverage: 'complete', references: [], nextCursor: null }),
     })).resolves.toMatchObject({ coverage: 'partial', unavailable: ['deployments'] });
+    const failureCause = { phase: 'project.requester_admission', errorClass: 'Error',
+      errorCode: 'project_requester_authority_unavailable', httpStatus: null,
+      nativeErrorReason: 'signed_root_projection' } satisfies ActionFailureCauseV1;
+    const failures = [{ ok: false as const, errorCode: failureCause.errorCode, error: failureCause.errorCode, failureCause },
+      { ok: false as const, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' }];
+    const partial = await Promise.all(failures.map(failure => readMachineReferenceCensusV1({ homeId: 'home', machineId: 'machine' }, { ...ports,
+      readDeployments: async selection => {
+        if (selection.cursor) throw createActionExecuteFailureError(failure);
+        return await ports.readDeployments!(selection);
+      },
+    })));
+    const retained = { coverage: 'partial', unavailable: ['deployments'], references: [{ id: 'current' }] };
+    expect(partial).toMatchObject([{ ...retained, failureCause }, { ...retained, failureCause: { errorCode: 'server_scope_mismatch' } }]);
   });
   it.each(['malformed-source', 'missing-shared-body'] as const)('keeps Profile coverage partial for %s', async failure => {
     const result = await readMachineReferenceCensusV1({ homeId: 'home', machineId: 'machine' }, {

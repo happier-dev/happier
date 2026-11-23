@@ -11,6 +11,10 @@ import {
     type HappierApprovalFieldsLook,
     type HappierApprovalFieldsTextRender,
 } from '@happier-dev/plugin-ui/presentation';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
+import { MachineDeploymentReferencesResultV1Schema, MachineReferenceCensusV1Schema } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
+import { MANAGED_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MACHINE_REBOOT_ACTION_IDS } from '@happier-dev/protocol/machines/rebootActionIdsV1';
 
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
@@ -47,6 +51,26 @@ import { isDiscussionReplyActionIdV1 } from '@happier-dev/protocol/discussions';
 
 /** Presentation needs the carried review, not an Artifact or an approval decision record. */
 export type ApprovalFieldsRequest = Pick<ApprovalRequest, 'actionId' | 'actionArgs' | 'preview'> & Partial<Pick<ApprovalRequest, 'status'>>;
+
+function readMachineReferenceTechnicalLines(request?: ApprovalFieldsRequest): readonly TechnicalDetailsLine[] {
+    if (!request) return [];
+    const preview = readRecord(request.preview);
+    const census = request.actionId === MANAGED_DELETE_ACTION_ID_V1
+        ? MachineReferenceCensusV1Schema.safeParse(preview.machineReferences)
+        : request.actionId === MACHINE_REBOOT_ACTION_IDS[0]
+            ? MachineDeploymentReferencesResultV1Schema.safeParse(readRecord(preview.machineRebootReview).deploymentReferences)
+            : undefined;
+    const cause = census?.success && census.data.coverage === 'partial' ? census.data.failureCause : undefined;
+    if (!cause) return [];
+    const lines: TechnicalDetailsLine[] = [];
+    if (cause.errorCode) lines.push({
+        key: 'machine-references-cause-code', label: t('approvals.failureTechnicalLabels.causeCode'), value: cause.errorCode,
+    });
+    if ('nativeErrorReason' in cause && cause.nativeErrorReason) lines.push({
+        key: 'machine-references-reason', label: t('approvals.failureTechnicalLabels.reason'), value: cause.nativeErrorReason,
+    });
+    return lines;
+}
 
 const EXACT_READ = { exactRead: true } as const;
 
@@ -130,13 +154,14 @@ const ApprovalFieldsReading = React.memo(function ApprovalFieldsReading(props: R
     const rows = React.useMemo(() => allRows.filter((row) => !(row.kind === 'value' && row.technical)), [allRows]);
     const technical = React.useMemo(
         () => [...collectApprovalTechnicalLines(allRows),
+            ...readMachineReferenceTechnicalLines(props.request),
             ...(props.failureTechnicalDetails ?? [
                 ...(props.failureMessage ? [{ key: 'failure-message', label: t('detailPages.approval.failureTitle'), value: props.failureMessage }] : []),
                 ...(props.failureCode ? [{ key: 'failure-code', label: t('common.error'), value: props.failureCode }] : []),
             ]),
             ...(props.outputText ? [{ key: 'tool-output', label: t('toolView.output'), value: props.outputText }] : []),
             ...(props.homeIdentity ? [{ key: 'home-identity', label: t('common.home'), value: props.homeIdentity }] : [])],
-        [allRows, props.failureCode, props.failureTechnicalDetails, props.failureMessage, props.homeIdentity, props.outputText],
+        [allRows, props.failureCode, props.failureTechnicalDetails, props.failureMessage, props.homeIdentity, props.outputText, props.request],
     );
     const serverId = props.serverId ?? null;
     const exactRead = props.exactSessionReads === true;

@@ -1134,6 +1134,14 @@ an unavailable read is not represented as an empty complete census. This is
 requester-side disclosure before reviewed Delete, not an additional public
 server Action transport or a deletion authorization check.
 
+When the CLI requester admission owner supplies a typed refusal, Managed
+Machine references and the Reboot deployment-reference review retain its
+closed `failureCause` with `partial` coverage. The cause contains codes and
+omits credential and request details. The deployment references HTTP page
+keeps its existing shape. Earlier 0.3 development readers require matching
+Protocol to read the assembled result's added field. The 0.2 frontier at
+`001ec4ea85` has neither reference contract.
+
 An admitted creation's controller may forward its exact enrolled guest's
 continuation through the same `session.spawn_new` dispatcher with the signed
 creation proof. Current creation correlation and guest authority are checked

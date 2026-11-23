@@ -10,6 +10,7 @@ import { DeploymentTemplateInstantiationReviewV1Schema } from '@happier-dev/prot
 import { DeploymentEnvironmentCreationReviewV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentApprovalReviewV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { buildApprovalPreviewSummary, prepareApprovalRequest } from '@happier-dev/protocol/actions/executor/approvalPreparation';
 import { createPluginInstallationReviewFixture } from '@happier-dev/protocol/testing/pluginInstallationReviewFixture';
 
@@ -360,8 +361,14 @@ describe('native confirmation of a carried executor review', () => {
     const { ActionConfirmationReviewFacts } = await import('./ActionConfirmationReview');
     const actionArgs = getActionSpec('machines.reboot').inputSchema.parse({ serverId: 'home', machineId: 'devbox', expectedInstallationId: 'installation' });
     const prepared = await prepareApprovalRequest({ actionId: 'machines.reboot', input: actionArgs, actionArgs,
-      context: { surface: 'ui' }, deps: { machineRebootReferences: async () => ({ homeId: 'home', machineId: 'devbox', coverage: 'partial',
-        references: [{ kind: 'deployment_environment', id: 'environment', name: 'Production status', deploymentRoles: ['edge'] }], nextCursor: null }),
+      context: { surface: 'ui' }, deps: { machineRebootReferences: async ({ cursor }) => {
+        if (cursor) throw createActionExecuteFailureError({ ok: false,
+          errorCode: 'project_requester_authority_unavailable', error: 'project_requester_authority_unavailable',
+          failureCause: { phase: 'project.requester_admission', errorClass: 'Error',
+            errorCode: 'project_requester_authority_unavailable', httpStatus: null, nativeErrorReason: 'signed_root_projection' } });
+        return { homeId: 'home', machineId: 'devbox', coverage: 'complete', nextCursor: 'after-first',
+          references: [{ kind: 'deployment_environment', id: 'environment', name: 'Production status', deploymentRoles: ['edge'] }] };
+      },
       machineServiceAction: async () => ({ kind: 'unavailable', reason: 'unavailable' }) } });
     if (!prepared || 'errorCode' in prepared) throw new Error('fixture_preparation_failed');
     const screen = await renderScreen(<ActionConfirmationReviewFacts actionId="machines.reboot"

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { MachineDeploymentReferencesPageV1Schema } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
+import { MachineDeploymentReferencesResultV1Schema } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import { MachineServicesListResultV1Schema } from '@happier-dev/protocol/actions/specs/machine/services';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { HandoffTargetReplacementApprovalV1Schema, type HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffTargetReplacementApprovalV1';
@@ -357,7 +357,7 @@ function DeploymentTemplateFacts(props: Readonly<{
 /** The reboot owner already gathered these facts. Reading them never re-probes or re-admits the Machine. */
 function PreparedMachineRebootFacts(props: Readonly<{ review: Readonly<Record<string, unknown>>; serverId: string | null; testID: string }>) {
   const { review } = props;
-  const references = MachineDeploymentReferencesPageV1Schema.safeParse(review.deploymentReferences);
+  const references = MachineDeploymentReferencesResultV1Schema.safeParse(review.deploymentReferences);
   const services = MachineServicesListResultV1Schema.safeParse(review.services);
   const machine = useServerScopedMachineLabel(props.serverId,
     typeof review.machineId === 'string' ? review.machineId : null) ?? t('common.unknown');

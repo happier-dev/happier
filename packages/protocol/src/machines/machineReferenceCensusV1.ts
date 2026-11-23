@@ -4,6 +4,8 @@ import { readWorkBoardArtifactV1 } from '../boards/workBoardArtifactV1.js';
 import { loadAiLaunchProfileArtifacts, readAiLaunchProfileCollection, readAiLaunchProfileRecords } from '../profiles/read.js';
 import type { ProfileCatalogSnapshotV1 } from '../profiles/profileCatalogV1.js';
 import type { WorkflowDefinitionArtifactOperations } from '../actions/executor/workflowDefinitions.js';
+import { ActionFailureCauseV1Schema, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '../actions/actionExecutionResult.js';
+import { readActionFailureEnvelope } from '../actions/executor/actionFailureEnvelope.js';
 import type { AutomationDefinitionListResponse } from '../automations/automationApiV3.js';
 import type { MachinePoolViewV1 } from './pools/v1.js';
 import { MachineDeploymentDomainReferenceV1Schema } from './machineDeploymentDomainReferenceV1.js';
@@ -28,13 +30,29 @@ export const MachineDeploymentReferencesPageV1Schema = lazyZodSchema(() => z.rea
 })));
 export type MachineDeploymentReferencesInputV1 = z.infer<typeof MachineDeploymentReferencesInputV1Schema>;
 export type MachineDeploymentReferencesPageV1 = z.infer<typeof MachineDeploymentReferencesPageV1Schema>;
+/** Locally assembled review. The Home page contract carries relational references only. */
+export const MachineDeploymentReferencesResultV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
+  ...MachineDeploymentReferencesPageV1Schema.def.innerType.def.shape,
+  nextCursor: z.null(), failureCause: z.optional(ActionFailureCauseV1Schema),
+})));
+type MachineDeploymentReferencesResultV1 = z.infer<typeof MachineDeploymentReferencesResultV1Schema>;
 export const MachineReferenceCensusV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
   homeId: z.string().check(z.trim(), z.minLength(1)), machineId: z.nullable(z.string().check(z.trim(), z.minLength(1))),
   coverage: z.enum(['complete', 'partial']), references: z.readonly(z.array(MachineReferenceV1Schema)),
   unavailable: z.readonly(z.array(z.enum(['target', 'artifacts', 'profiles', 'pools', 'assignments', 'deployments', 'requester_authority']))),
+  failureCause: z.optional(ActionFailureCauseV1Schema),
 })));
 export type MachineReferenceV1 = z.infer<typeof MachineReferenceV1Schema>;
 export type MachineReferenceCensusV1 = z.infer<typeof MachineReferenceCensusV1Schema>;
+
+export function readMachineReferenceFailureCauseV1(error: unknown): ActionFailureCauseV1 | undefined {
+  const failure = readActionFailureEnvelope(error);
+  if (!failure) return undefined;
+  if (failure.failureCause) return failure.failureCause;
+  const cause = projectActionFailureCauseV1(failure, 'machine.references.read');
+  return cause.errorCode === null ? undefined : cause;
+}
+
 /** The keyholding host opens Pool labels before they enter the display-only census. */
 export type MachineReferencePoolListV1 = Readonly<{ pools: readonly MachinePoolViewV1[] }>;
 export type MachineReferenceCensusPortsV1 = Readonly<{
@@ -52,9 +70,10 @@ export type MachineReferenceCensusPortsV1 = Readonly<{
 /** The exact deployment-family page reader, shared by census and reboot review. */
 export async function readMachineDeploymentReferencesV1(input: Readonly<{
   homeId: string; machineId: string; signal?: AbortSignal;
-}>, readPage: NonNullable<MachineReferenceCensusPortsV1['readDeployments']>): Promise<MachineDeploymentReferencesPageV1> {
+}>, readPage: NonNullable<MachineReferenceCensusPortsV1['readDeployments']>): Promise<MachineDeploymentReferencesResultV1> {
   const references: MachineReferenceV1[] = [];
   let coverage: MachineDeploymentReferencesPageV1['coverage'] = 'complete';
+  let failureCause: MachineDeploymentReferencesResultV1['failureCause'];
   try {
     let cursor: string | undefined;
     do {
@@ -69,11 +88,13 @@ export async function readMachineDeploymentReferencesV1(input: Readonly<{
       if (page.nextCursor !== null && page.nextCursor === cursor) throw new Error('deployment_references_cursor_invalid');
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
-  } catch {
+  } catch (error) {
     input.signal?.throwIfAborted();
     coverage = 'partial';
+    failureCause = readMachineReferenceFailureCauseV1(error);
   }
-  return { homeId: input.homeId, machineId: input.machineId, coverage, references, nextCursor: null };
+  return { homeId: input.homeId, machineId: input.machineId, coverage, references, nextCursor: null,
+    ...(failureCause ? { failureCause } : {}) };
 }
 
 /** A disclosure-only projection of current owners. It never removes, repairs or retargets a reference. */
@@ -178,16 +199,18 @@ export async function readMachineReferenceCensusV1(input: Readonly<{
     } catch { unavailable.add('assignments'); }
     return references;
   };
-  const readDeployments = async () => {
-    if (!ports.readDeployments) { unavailable.add('deployments'); return []; }
-    const page = await readMachineDeploymentReferencesV1({ homeId: input.homeId, machineId: input.machineId!, signal: input.signal }, ports.readDeployments);
-    if (page.coverage !== 'complete') unavailable.add('deployments');
-    return page.references;
-  };
+  const readDeployments = async () => ports.readDeployments
+    ? readMachineDeploymentReferencesV1({ homeId: input.homeId, machineId: input.machineId!, signal: input.signal }, ports.readDeployments)
+    : null;
   // These Account-owned sources are independent. Preserve presentation order
   // while a slow family cannot serialize the other fresh checks behind it.
-  const families = await Promise.all([readBoards(), readProfiles(), readPools(), readAssignments(), readDeployments()]);
+  const [boards, profiles, pools, assignments, deployments] = await Promise.all([
+    readBoards(), readProfiles(), readPools(), readAssignments(), readDeployments(),
+  ]);
   input.signal?.throwIfAborted();
-  return { homeId: input.homeId, machineId: input.machineId, coverage: unavailable.size === 0 ? 'complete' : 'partial', references: families.flat(),
+  if (deployments?.coverage !== 'complete') unavailable.add('deployments');
+  return { homeId: input.homeId, machineId: input.machineId, coverage: unavailable.size === 0 ? 'complete' : 'partial',
+    references: [...boards, ...profiles, ...pools, ...assignments, ...(deployments?.references ?? [])],
+    ...(deployments?.failureCause ? { failureCause: deployments.failureCause } : {}),
     unavailable: (['artifacts', 'profiles', 'pools', 'assignments', 'deployments'] as const).filter(source => unavailable.has(source)) };
 }

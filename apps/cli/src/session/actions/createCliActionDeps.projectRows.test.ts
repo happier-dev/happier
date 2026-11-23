@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { computeWorkspaceSyncPolicyDigest, createActionExecutor } from '@happier-dev/protocol';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { prepareApprovalRequest } from '@happier-dev/protocol/actions/executor/approvalPreparation';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces';
@@ -431,6 +432,46 @@ describe('credentialed Session Project mutation and Sync row ports', () => {
       .resolves.toEqual({ ok: false, errorCode: 'project_context_access_denied' });
     expect(warn).toHaveBeenCalledWith('[ProjectAdmission] requester authority refused', { reason: 'signed_root_projection' });
     expect(JSON.stringify(warn.mock.calls)).not.toContain('foreign-credential');
+    expect(boundary.get).not.toHaveBeenCalled();
+    expect(boundary.post).not.toHaveBeenCalled();
+  });
+
+  it('preserves a signed root refusal as partial Machine reboot review evidence', async () => {
+    const boundary = accountRows([]);
+    const input = { serverId: 'home-a', machineId: 'machine-a', expectedInstallationId: 'installation-a' };
+    const actionId = 'machines.reboot';
+    await expect(prepareApprovalRequest({ deps: dependencies(), actionId, input, actionArgs: input,
+      context: { surface: 'cli', externalActionExecutionAuthorization: { v: 1, token: 'authorization', binding: {
+        accountId: 'foreign-account', custodianAccountId: 'account-a', principalId: 'foreign-principal', credentialId: 'foreign-credential',
+        grant: API_TOKEN_FULL_GRANT_V1, serverIdentityId: 'home-a-identity', machineId: 'machine-a', installationId: 'installation-a',
+        actionId, requestId: 'request-a', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine-a' },
+      } } },
+    })).resolves.toMatchObject({ preview: { machineRebootReview: { deploymentReferences: {
+      homeId: 'home-a', machineId: 'machine-a', coverage: 'partial', references: [], nextCursor: null,
+      failureCause: { phase: 'project.requester_admission', errorCode: 'project_requester_authority_unavailable',
+        nativeErrorReason: 'signed_root_projection' },
+    } } } });
+    expect(boundary.get).not.toHaveBeenCalled();
+    expect(boundary.post).not.toHaveBeenCalled();
+  });
+
+  it('returns partial Managed Machine references with the typed requester refusal', async () => {
+    const boundary = accountRows([]);
+    const deps = dependencies();
+    const target = { homeId: 'home-a', managedId: 'managed-a' };
+    const context = { surface: 'cli' as const, bypassApprovals: true, runtimeAccountId: 'foreign-account' };
+    const partial = {
+      homeId: 'home-a', machineId: null, coverage: 'partial', references: [], unavailable: ['requester_authority'],
+      failureCause: { phase: 'project.requester_admission', errorCode: 'project_requester_authority_unavailable',
+        nativeErrorReason: 'runtime_account_mismatch' },
+    };
+    await expect(createActionExecutor(deps).execute('machines.managed.references.get', target, context))
+      .resolves.toMatchObject({ ok: true, result: partial });
+    const actionId = 'machines.managed.delete';
+    const input = { ...target, expectedRevision: 2, when: 'now', intent: 'delete', reviewedDependencies: true };
+    await expect(deps.buildApprovalPreview!({ actionId, input, context,
+      defaultPreview: { actionId, actionArgs: input, summary: 'Delete managed Machine' },
+    })).resolves.toMatchObject({ machineReferences: partial });
     expect(boundary.get).not.toHaveBeenCalled();
     expect(boundary.post).not.toHaveBeenCalled();
   });
