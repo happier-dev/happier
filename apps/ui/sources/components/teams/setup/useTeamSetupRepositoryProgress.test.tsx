@@ -89,6 +89,55 @@ function setupOperation(overrides: Partial<ActionOperationSnapshotV1> = {}): Act
         ...overrides });
 }
 describe('selected Team batch progress', () => {
+    it('retains the native Machine operation while its Team Setup page is absent', async () => {
+        const apply = vi.fn(async () => ({ operationId: 'native-apply' }));
+        const read = createDeferred<unknown>();
+        const executor = createActionExecutor({
+            machineSetupApply: apply,
+            actionOperationAction: async () => read.promise,
+        });
+        const execute = createFrontDoorActionExecute({ ...executor, executeConfirmed: (id, input, context) =>
+            executor.execute(id, input, bindPresentUserActionConfirmation(id, input, context ?? {})) });
+        const context = { serverId: query.serverId, surface: 'ui', authority: 'present_user',
+            runtimeAccountId: query.accountId, expectedAccountId: query.accountId, serverIdentityId: homeId,
+            actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) } as const;
+        const target = { serverId: query.serverId, homeId, machineId: query.machineId };
+        let controller!: ReturnType<typeof useRetainedTeamSetupPlan>;
+        function Page() {
+            controller = useRetainedTeamSetupPlan();
+            return null;
+        }
+        const view = (showPage: boolean) => <TeamSetupPlanProvider context={context} execute={execute}>
+            {showPage ? <Page /> : null}
+        </TeamSetupPlanProvider>;
+        const screen = await renderScreen(view(true));
+        let pending!: ReturnType<typeof controller.run>;
+        try {
+            act(() => {
+                pending = controller.run({
+                    plan: { target, repositories: [], machine: { ok: true, facts: [], input: {
+                        homeId, machineId: query.machineId, targets: [{
+                            homeId, machineId: query.machineId, desiredRevision: 1,
+                            sources: [{ kind: 'direct', setup: {} }], recipePlans: [],
+                        }],
+                    } } },
+                    selection: { team: { serverId: query.serverId, teamId: 'team' }, lifetime, sources: [] },
+                });
+            });
+            await vi.waitFor(() => expect(apply).toHaveBeenCalledOnce());
+            await screen.update(view(false));
+            await screen.update(view(true));
+            expect(controller.batch).toMatchObject({ running: true, machine: { ok: true, result: { operationId: 'native-apply' } } });
+        } finally {
+            await act(async () => {
+                read.resolve({ kind: 'found', operation: { ...opening(), operationId: 'native-apply',
+                    actionId: 'machines.setup.apply', state: 'succeeded', settledAt: 2 } });
+                await pending;
+            });
+            await screen.unmount();
+        }
+        expect(apply).toHaveBeenCalledOnce();
+    });
     it.each(['source', 'folder'] as const)('opens the exact %s draft from the ready notice after leaving Joined Setup', async kind => {
         const openProject = createDeferred<typeof preparedResult>();
         const domainRef = kind === 'source' ? { kind: 'projectOpen', sourceId: query.sourceId } as const : undefined;

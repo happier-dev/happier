@@ -24,6 +24,7 @@ export type TeamSetupBatch = Readonly<{
         repositories: readonly Readonly<{ repositoryId: string; source: ProjectSourceIdentityV1; requestId: string }>[];
         isReviewPresented?: () => boolean;
     }>;
+    machine?: NonNullable<TeamSetupRunResult['machine']>;
     dispatched: ReadonlySet<string>;
     running: boolean;
     completed: boolean;
@@ -102,6 +103,10 @@ export function useTeamSetupPlan(executeAction: FrontDoorActionExecute, context:
             try {
                 settlement = await runTeamSetupPlan({ ...run, executeAction, context,
                     actionRequestId,
+                    onMachineApplied: result => {
+                        setBatch(current => current?.selection === selection ? { ...current, machine: result } : current);
+                        run.onMachineApplied?.(result);
+                    },
                     onRepositoryOpening: id => {
                         setBatch(current => current?.selection === selection ? {
                             ...current, dispatched: new Set([...current.dispatched, id]),

@@ -92,6 +92,18 @@ export type TeamSetupRunState =
     }>
   | Readonly<{ kind: 'done'; operationId: string | null; completed: boolean }>;
 
+function readTeamSetupRunState(batch: TeamSetupBatch | null): TeamSetupRunState {
+  if (!batch) return { kind: 'idle' };
+  const machine = batch.settlement?.machine ?? batch.machine;
+  const operationId = machine?.ok && 'operationId' in machine.result ? machine.result.operationId : null;
+  if (batch.running) return { kind: 'running', operationId };
+  const failure = machine && !machine.ok ? machine : batch.settlement?.machineSettlement;
+  if (failure || !batch.settlement) return { kind: 'stopped', operationId, failure: failure ?? null };
+  const approval = machine?.ok ? ActionApprovalRequestCreatedResultSchema.safeParse(machine.result) : null;
+  if (approval?.success) return { kind: 'approval', operationId: null, artifactId: approval.data.artifactId };
+  return { kind: 'done', operationId, completed: batch.completed };
+}
+
 export type TeamSetupPreparedMachine = Readonly<{
   key: string;
   plan: TeamSetupPlan | null;
@@ -264,7 +276,10 @@ function TeamSetupPlanPage(
   const [excluded, setExcluded] = React.useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const [run, setRun] = React.useState<TeamSetupRunState>({ kind: 'idle' });
+  const [dismissedRun, dismissRun] = React.useState<TeamSetupBatch['selection'] | null>(null);
+  const [selectionFailed, setSelectionFailed] = React.useState(false);
+  const run = selectionFailed ? { kind: 'stopped' as const, operationId: null, failure: null }
+    : readTeamSetupRunState(currentBatch && currentBatch.selection !== dismissedRun ? currentBatch : null);
 
   // The preset's own plan is read for the chosen Machine so each step shows before anything runs.
   const prepareKey =
@@ -344,38 +359,17 @@ function TeamSetupPlanPage(
       return repository ? [repository] : [];
     });
     if (repositoryInputs.length !== included.length) {
-      setRun({
-        kind: 'stopped',
-        operationId: null,
-        failure: null,
-      });
+      setSelectionFailed(true);
       return;
     }
     const batch = buildTeamSetupPlan({ serverId: context.scope.serverId, homeId, machineId },
       machinePlan?.plan?.machine ?? null, repositoryInputs);
-    let operationId: string | null = null;
-    setRun({ kind: 'running', operationId });
-    const result = await runPlan({
+    setSelectionFailed(false);
+    await runPlan({
       plan: batch,
       selection: { team: context.address, lifetime: props.lifetime, sources: included,
         retireOffer: resources.sources.state.status === 'ready' && resources.sources.state.coverage.complete, isReviewPresented },
-      onMachineApplied: (applied) => {
-        if (applied.ok && 'operationId' in applied.result) {
-          operationId = applied.result.operationId;
-          setRun({ kind: 'running', operationId });
-        }
-      },
     });
-    const machineFailure =
-      result.machine && !result.machine.ok
-        ? result.machine
-        : result.machineSettlement;
-    const approval = result.machine?.ok ? ActionApprovalRequestCreatedResultSchema.safeParse(result.machine.result) : null;
-    if (machineFailure) setRun({ kind: 'stopped', operationId, failure: machineFailure });
-    else if (approval?.success) {
-      setRun({ kind: 'approval', operationId: null, artifactId: approval.data.artifactId });
-    } else setRun(current => ({ kind: 'done', operationId,
-      completed: result.completed || (current.kind === 'done' && current.completed) }));
   }, [
     canRun,
     context.address,
@@ -393,11 +387,6 @@ function TeamSetupPlanPage(
     isReviewPresented,
     resources.sources.state,
   ]);
-
-  React.useEffect(() => {
-    if (!currentBatch?.completed) return;
-    setRun(current => current.kind === 'done' && !current.completed ? { ...current, completed: true } : current);
-  }, [currentBatch?.completed, run.kind]);
 
   // The Machine owner decides whether the Team's preset moved on since this Machine applied it.
   const presetUpdates = useMachinePresetUpdates({
@@ -433,7 +422,7 @@ function TeamSetupPlanPage(
     onOpen: () => { void openTask(taskProject, suggestedTask.markdown); },
   } : null, [openTask, repositories, suggestedTask, taskProject]);
   // A finished setup leaves its rows' results in place; choosing another Machine starts a new review.
-  const setUpAnother = React.useCallback(() => setRun({ kind: 'idle' }), []);
+  const setUpAnother = React.useCallback(() => dismissRun(currentBatch?.selection ?? null), [currentBatch?.selection]);
   const startSession = React.useCallback((project: OpenedProject) => { void openTask(project, ''); }, [openTask]);
 
   const sourcesState = resources.sources.state;
