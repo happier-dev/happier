@@ -9,6 +9,8 @@ import type { ExternalActionRequestEnvelope } from '@happier-dev/protocol/action
 import { isSessionActionRpcMethodV1, type SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { ActionIdSchema, ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { isWorkflowHostAdmittedChildActionIdV1, isWorkflowObservationSetupChildActionV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { WORKFLOW_AUTHORING_ACTION_ID } from '@happier-dev/protocol/actions/workflowAuthoringActionIds';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import type { AgentRuntimeDaemonServiceRequestV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
@@ -122,7 +124,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
   const actionSettingsProvider = runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => createActionSettingsProvider({
     scopeKey: resolveAccountSettingsScopeKeyForToken(params.token),
   }));
-  return async (operation: SessionActionOperation, authority: SessionActionAuthority): Promise<ActionExecuteResult> => {
+  const execute = async (operation: SessionActionOperation, authority: SessionActionAuthority, observationSetup?: true): Promise<ActionExecuteResult> => {
     const elapsedSubphasesMs: Partial<Record<ActionStartPhaseV1, number>> = {};
     const recordPhase = params.machineId
       ? createExternalActionStartDiagnosticRecorder(operation.actionId, operation.requestId, params.machineId)
@@ -478,6 +480,22 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       ...context,
       ...(source ? { defaultSessionMachineId: source.machineId } : {}),
       ...(external ? { externalActionExecutionAuthorization: external.authorization, externalActionTarget: external.target } : {}),
+      ...(observationSetup ? { requiredContributedActionDangerLevel: 'safe' } : {}),
+      ...(operation.actionId === WORKFLOW_AUTHORING_ACTION_ID.draftSave ? {
+        executeOrdinaryChildAction: (actionId, input, options) => {
+          const parsed = StrictJsonValueSchema.safeParse(input);
+          const setupRead = isWorkflowObservationSetupChildActionV1(operation.actionId, actionId);
+          if ((!setupRead && !isWorkflowHostAdmittedChildActionIdV1(actionId)) || !options?.actionRequestId || !parsed.success) {
+            return Promise.resolve({ ok: false, errorCode: 'invalid_action_input', error: 'invalid_action_input' });
+          }
+          // Retain the Session's witness. Save's proof cannot sign a new
+          // Workflow operation or authorize a contributed observation read.
+          return execute({ kind: 'action.execute', actionId, input: parsed.data, requestId: options.actionRequestId,
+            witness: operation.witness, ...(operation.surface ? { surface: operation.surface } : {}),
+            ...(operation.executionRun ? { executionRun: operation.executionRun } : {}) },
+          options.signal ? { ...authority, signal: options.signal } : authority, setupRead ? true : undefined);
+        },
+      } : {}),
       ...(external?.verifyMachineAdmissionCurrent ? {
         verifyMachineAdmissionCurrent: external.verifyMachineAdmissionCurrent,
         sessionActionOrigin,
@@ -508,4 +526,5 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
     }
     return outcome;
   };
+  return execute;
 }

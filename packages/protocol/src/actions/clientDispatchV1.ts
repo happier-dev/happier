@@ -9,7 +9,7 @@ import { ApprovalExecutionOriginCallerV1Schema, ApprovalExecutionOriginV1Schema 
 import { ExternalActionTargetV1Schema } from './externalActionApi.js';
 import { isSettingsDeclarationActionIdV1 } from './settingsDeclarationActionFamily.js';
 import { RPC_METHODS } from '../rpc/methods.js';
-import { isWorkflowAuthoringActionId } from './workflowAuthoringActionIds.js';
+import { isWorkflowAuthoringActionId, WORKFLOW_AUTHORING_ACTION_ID } from './workflowAuthoringActionIds.js';
 import { isAppShellActionId } from './appShellActionFamily.js';
 import { isWorkspaceActionId } from './workspaceActionFamily.js';
 import { isUpdatesActionId } from './updatesActionFamily.js';
@@ -212,6 +212,11 @@ export function isWorkflowHostAdmittedChildActionIdV1(actionId: ActionId): boole
   return WORKFLOW_HOST_ADMITTED_CHILD_ACTION_IDS_V1.has(actionId);
 }
 
+/** Observation setup returns from the mounted Save only. The daemon admits the exact read under its retained caller. */
+export function isWorkflowObservationSetupChildActionV1(parentId: ActionId, childId: ActionId): boolean {
+  return parentId === WORKFLOW_AUTHORING_ACTION_ID.draftSave && childId === ACTION_INVOKE_ACTION_ID_V1;
+}
+
 /**
  * A child of a client Action the dispatching daemon admitted and is still awaiting.
  * It names that parent; caller, Session, Run and Account facts stay with the daemon.
@@ -222,8 +227,8 @@ export const UiActionChildExecuteRequestV1Schema = lazyZodSchema(() => z.strictO
   sessionId: z.string().check(z.trim(), z.minLength(1)),
   actionId: ActionIdSchema,
   input: z.unknown(),
-}).check(z.refine(request => isWorkflowHostAdmittedChildActionIdV1(request.actionId)
-  && Object.hasOwn(request, 'input'), { message: 'Invalid admitted client Action child', path: ['actionId'] })));
+}).check(z.refine(request => (isWorkflowHostAdmittedChildActionIdV1(request.actionId)
+  || request.actionId === ACTION_INVOKE_ACTION_ID_V1) && Object.hasOwn(request, 'input'), { message: 'Invalid admitted client Action child', path: ['actionId'] })));
 export type UiActionChildExecuteRequestV1 = z.infer<typeof UiActionChildExecuteRequestV1Schema>;
 
 export const UiActionDispatchResultV1Schema = lazyZodSchema(() => z.strictObject({

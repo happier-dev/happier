@@ -29,6 +29,7 @@ import { t } from '@/text';
 import { Modal } from '@/modal';
 import { useActiveMachineFacts, useMachineListForServer } from '@/sync/domains/state/storage';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
+import { getSettledMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -47,7 +48,7 @@ import { useWorkflowDefinitionLibrary } from '../library/workflowLibraryReads';
 import { WorkflowTriggerRunHistory } from './WorkflowTriggerRunHistory';
 import { WorkflowTriggerBlock } from './WorkflowTriggerBlock';
 import { useWorkflowTriggerEventOptions } from './useWorkflowTriggerEventOptions';
-import { formatWorkflowMachineEventTitle, readWorkflowEventDraftSeed } from '../events/workflowEventFacts';
+import { formatWorkflowMachineEventTitle } from '../events/workflowEventFacts';
 import { describeLegacyTriggerSet } from './sessionTriggerGroups';
 import { WorkflowRunRoles, workflowUsedRoleIds } from '../run/WorkflowRunRoles';
 import type { WorkflowEditorReadable } from '../editor/workflowEditorDraftStore';
@@ -225,11 +226,6 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
         && rows.every((row) => row.trigger.kind !== 'action' || !('phase' in row.trigger) || row.trigger.phase !== 'before'
             || ('reachesOthers' in row.trigger && row.trigger.reachesOthers === true));
     const catalog = useWorkflowTriggerEventOptions({ ...placement, enabled: catalogDemanded || showsEvent });
-    // The pending fact names the watched resource; only this selected controller resolves its declaration.
-    const resolvedPending = pending.map(item => {
-        const seed = item.nativeEvent === undefined ? null : readWorkflowEventDraftSeed(item.nativeEvent, { serverId, events: catalog.events });
-        return seed?.setupRequired ? { ...item, when: { kind: 'pluginEvent' as const, value: null, eventRef: seed.eventSeed.eventRef }, eventSeed: seed.eventSeed } : item;
-    });
     const startOptions = React.useMemo(() => buildWorkflowTriggerStartOptions(catalog.events, undefined, props.startContext),
         [catalog.events, props.startContext]);
     // The menu's foot says where plugin triggers come from: the trigger set's Machine.
@@ -292,13 +288,12 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
     };
     const editPending = (clientId: string, when: TriggerWhenValue) => {
         const enabled = pending.find(item => item.clientId === clientId)?.enabled ?? true;
-        const previousWhen = resolvedPending.find(item => item.clientId === clientId)?.when;
         const next = commitWorkflowTriggerWhen({ draft: props.draft, row: { kind: 'new', clientId }, when, enabled,
             sessionId: lifetimeSessionId });
         setPending(current => next === null
             ? current.some(item => item.clientId === clientId)
                 ? current.map(item => item.clientId === clientId
-                    ? { ...item, when, ...(readWorkflowTriggerStartId(previousWhen ?? item.when) === readWorkflowTriggerStartId(when) ? {} : { eventSeed: undefined, nativeEvent: undefined }) }
+                    ? { ...item, when, ...(readWorkflowTriggerStartId(item.when) === readWorkflowTriggerStartId(when) ? {} : { eventSeed: undefined, nativeEvent: undefined }) }
                     : item) : [...current, { clientId, when }]
             : current.filter(item => item.clientId !== clientId));
         if (next !== null) change(next);
@@ -313,13 +308,20 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
             ? catalog.events.length === 0 ? t('workflows.triggers.card.noPluginTriggersOn', { machine: catalogMachineName }) : null
             : catalog.status === 'unavailable' ? t('workflows.triggers.card.pluginTriggersUnavailable', { machine: catalogMachineName })
                 : t('workflows.triggers.card.pluginTriggersLoading', { machine: catalogMachineName });
-    // A pending Event is named by its declaration; until that resolves, by what was seeded (the event feed's own
-    // name for the fact), else "Choose an event". Never a blank pill, and never the catalog's state in the When.
-    const pendingTitle = (item: PendingStart) => startTitle(item.when)
-        || (item.nativeEvent === undefined ? '' : formatWorkflowMachineEventTitle(item.nativeEvent))
-        || (item.when.kind === 'pluginEvent' ? t('automations.form.trigger.chooseEvent') : '');
-    // Why a pending Event is not named by its declaration yet: said once, under the clause.
-    const pendingReason = resolvedPending.some((item) => item.when.kind === 'pluginEvent' && startTitle(item.when) === '')
+    const pendingRows = pending.map(item => {
+        const native = item.nativeEvent;
+        const machine = native === undefined ? null : machines.find(candidate => candidate.id === native.machineId) ?? null;
+        const name = getSettledMachineDisplayName(machine, machines);
+        return { item,
+            title: native !== undefined ? formatWorkflowMachineEventTitle(native, name)
+                : startTitle(item.when) || (item.when.kind === 'pluginEvent' ? t('automations.form.trigger.chooseEvent') : ''),
+            nativeSourceName: native === undefined ? undefined : name ?? t('workflows.events.someMachine'),
+            incomplete: native === undefined || name === null,
+        };
+    });
+    // Catalog readiness is relevant to incomplete choices; a named native occurrence already supplies its source.
+    const pendingReason = pendingRows.some(({ item, incomplete }) => incomplete && item.when.kind === 'pluginEvent'
+        && (item.nativeEvent === undefined ? startTitle(item.when) === '' : item.nativeEvent.machineId === placement.machineId))
         ? catalogReason : null;
     // The When select's choice; a session event keeps its Session, and choosing the same start keeps the rows as they are.
     const selectStart = (when: TriggerWhenValue | null, id: string, apply: (next: TriggerWhenValue) => void) => {
@@ -381,10 +383,12 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                 />
             );
         }),
-        ...resolvedPending.map((item) => (
+        ...pendingRows.map(({ item, title, nativeSourceName, incomplete }) => (
             <WorkflowTriggerBlock key={`new:${item.clientId}`} testID={`${props.testIDPrefix}-trigger:new:${item.clientId}`}
-                title={pendingTitle(item)} when={item.when} enabled={item.enabled ?? true} incomplete startOptions={startOptions}
-                initialEventSeed={item.eventSeed}
+                title={title} when={item.when} enabled={item.enabled ?? true} incomplete={incomplete} startOptions={startOptions}
+                initialEventSeed={item.eventSeed} nativeSourceName={nativeSourceName}
+                {...(incomplete ? {} : { onToggleEnabled: () => setPending(current => current.map(candidate =>
+                    candidate.clientId === item.clientId ? { ...candidate, enabled: !(candidate.enabled ?? true) } : candidate)) })}
                 onStartsOpenChange={demandCatalog}
                 onSelectStart={(id) => selectStart(item.when, id, (next) => editPending(item.clientId, next))}
                 {...placement} workspaceRefId={runsOn?.workspaceRefId} accountLifetime={props.accountLifetime} sessionId={lifetimeSessionId} sessionContext={sessionContext}
@@ -420,8 +424,8 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                     },
                     renderRows: () => blocks[index] };
             }),
-            ...resolvedPending.map((item, index): WorkflowTriggerSentenceLine => ({ key: `new:${item.clientId}`,
-                startId: readWorkflowTriggerStartId(item.when), startTitle: pendingTitle(item), detail: null, enabled: item.enabled ?? true, incomplete: true,
+            ...pendingRows.map(({ item, title, nativeSourceName, incomplete }, index): WorkflowTriggerSentenceLine => ({ key: `new:${item.clientId}`,
+                startId: readWorkflowTriggerStartId(item.when), startTitle: title, detail: nativeSourceName ?? null, enabled: item.enabled ?? true, incomplete,
                 onSelectStart: (id) => selectStart(item.when, id, (next) => editPending(item.clientId, next)),
                 onRemove: () => setPending(current => current.filter(candidate => candidate.clientId !== item.clientId)),
                 renderRows: () => blocks[rows.length + index] })),

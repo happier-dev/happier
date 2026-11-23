@@ -1,3 +1,4 @@
+import type { ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { WORKFLOW_AUTHORING_ACTION_SPECS, WorkflowConversationBindInputV1Schema,
     type WorkflowConversationBindResultV1, type WorkflowAuthoringActionId, type WorkflowMountedDraftV1,
     type WorkflowDraftMutationResultV1, type WorkflowDraftGetResultV1 } from '@happier-dev/protocol/actions/workflowAuthoringAction';
@@ -14,7 +15,7 @@ type WorkflowConversationBindingOwner = Readonly<{
 export type WorkflowMountedDraftActions = Readonly<{
     getSnapshot: () => WorkflowMountedDraftV1 | null;
     execute: (actionId: WorkflowAuthoringActionId, input: unknown, signal?: AbortSignal,
-        context?: WorkflowActionCallerContext) => Promise<WorkflowDraftMutationResultV1>;
+        context?: WorkflowActionCallerContext) => Promise<WorkflowDraftMutationResultV1 | ActionApprovalRequestCreatedResult>;
 }>;
 type MountedWorkflowDraftOwner = (WorkflowConversationBindingOwner & Readonly<{
     kind: 'workflow'; actions?: WorkflowMountedDraftActions;
@@ -61,7 +62,7 @@ export function registerMountedWorkflowDraftOwner(owner: MountedWorkflowDraftOwn
 export async function invokeWorkflowAuthoringAction(request: BindingRequest & Readonly<{
     actionId: WorkflowAuthoringActionId;
     context: WorkflowActionCallerContext;
-}>): Promise<WorkflowDraftGetResultV1> {
+}>): Promise<WorkflowDraftGetResultV1 | ActionApprovalRequestCreatedResult> {
     const spec = WORKFLOW_AUTHORING_ACTION_SPECS.find(spec => spec.id === request.actionId);
     const parsed = spec?.inputSchema.safeParse(request.input);
     if (!parsed?.success) return { status: 'refused', reason: 'invalid_parameters' } as const;

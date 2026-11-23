@@ -1,3 +1,4 @@
+import type { ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { WorkflowTriggerEventDeclarationV1 } from '@happier-dev/protocol/workflows/workflowTriggerEventReferenceV1';
 import type { WorkflowIntendedTriggerV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import * as React from 'react';
@@ -6,6 +7,7 @@ import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { formatWorkflowProblemMessage } from '@/components/workflows/presentation/workflowProblemPresentation';
+import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import type { AutomationTriggerId} from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import type { AutomationTriggerDefinition } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import type { WorkflowProjectTargetV1} from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
@@ -40,7 +42,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { matchesWorkflowTriggerQuery, workflowTriggerQueryKey } from '@/sync/domains/workflows/workflowTriggerQuery';
 
 /** A trigger Save that did not land: the words the save status shows, cause included. */
-export type WorkflowTriggerSaveFailure = Readonly<{ kind: 'failed'; message: string }>;
+export type WorkflowTriggerSaveFailure = Readonly<{ kind: 'failed'; message: string; code?: string; approval?: ActionApprovalRequestCreatedResult }>;
 
 export type WorkflowTriggerEditing = Readonly<{
     set: WorkflowTriggerSetV1 | null;
@@ -249,7 +251,12 @@ export function useWorkflowTriggerEditing(params: Readonly<{
             },
         }).finally(() => { if (pendingSave.current === pending) pendingSave.current = null; });
         if (!current()) return 'stale';
-        if (outcome.kind === 'failed') return { kind: 'failed', message: t('workflows.triggers.editor.partialSaveBecause',
+        if (outcome.kind === 'failed' && outcome.error instanceof WorkflowActionError && outcome.error.approval) {
+            return { kind: 'failed', approval: outcome.error.approval, message: t('workflows.run.approvalWantedBody') };
+        }
+        if (outcome.kind === 'failed') return { kind: 'failed',
+            ...(outcome.error instanceof WorkflowActionError && outcome.error.code !== null ? { code: outcome.error.code } : {}),
+            message: t('workflows.triggers.editor.partialSaveBecause',
             { cause: formatWorkflowProblemMessage(outcome.error) }) };
         return outcome.kind;
     }, [params.accountLifetime, acknowledge]);

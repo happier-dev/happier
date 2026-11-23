@@ -1,5 +1,14 @@
 # Compatibility and version skew
 
+## Mounted Workflow observation setup (unreleased 0.3)
+
+An Agent saving a mounted Workflow draft can continue a seeded, read-only
+observation setup through the existing private client Action child request.
+The daemon holding the pending Save matches its Account and Session, checks
+the contributed Action's current safe read declaration, and invokes it as the
+original caller. Matching development daemons and clients are needed for this
+path. An older daemon refuses the child, leaving the draft available to retry.
+
 ## Next-prompt permission staging (unreleased 0.3)
 
 `session.permission_mode.set` accepts `applyTiming: next_prompt` and routes that invocation to a connected Happier client. The client writes the existing Session draft field. The private continuation carries the Agent's admitted permission inputs for this Action so the receiving executor can enforce its ceiling.

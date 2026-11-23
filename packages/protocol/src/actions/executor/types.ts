@@ -684,7 +684,7 @@ export type ActionExecutorContext = Readonly<{
     sources: readonly import('../specs/teamCredentialApproval.js').TeamCredentialApprovalSource[] }>;
   /** Host-local ordinary child ingress retained by a mounted command. Never Action/RPC input or an admission bypass. */
   executeOrdinaryChildAction?: (actionId: ActionId, input: unknown,
-    options?: Pick<ActionExecutorContext, 'signal' | 'externalActionTarget' | 'serverId' | 'expectedAccountId'> & Readonly<{
+    options?: Pick<ActionExecutorContext, 'signal' | 'externalActionTarget' | 'serverId' | 'expectedAccountId' | 'actionRequestId'> & Readonly<{
       /** Keep a mounted engine's private delivery ports; the parent executor still derives ordinary child admission. */
       execute?: (actionId: ActionId, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>;
     }>) => Promise<ActionExecuteResult>;

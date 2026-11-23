@@ -1,5 +1,6 @@
 import type { z } from 'zod/mini';
 import { WorkflowTriggerAddRequestV1Schema, WorkflowTriggerListRequestV1Schema, WorkflowTriggerListResultV1Schema, WorkflowTriggerRemoveRequestV1Schema, WorkflowTriggerRemoveResultV1Schema, WorkflowTriggerUpdateRequestV1Schema, WorkflowTriggerWriteResultV1Schema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
@@ -84,7 +85,12 @@ async function callTriggerAction<TResult>(
     const result = await callWorkflowAction({
         actionId,
         input,
-        parseResult,
+        parseResult: (value) => {
+            const approval = ActionApprovalRequestCreatedResultSchema.safeParse(value);
+            if (approval.success) throw new WorkflowActionError({ message: approval.data.kind, rawCode: approval.data.kind,
+                rawDetails: approval.data, approval: approval.data });
+            return parseResult(value);
+        },
         fallbackMessage: 'Workflow trigger request failed',
         ...(options.accountLifetime === undefined ? {} : { accountLifetime: options.accountLifetime }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),

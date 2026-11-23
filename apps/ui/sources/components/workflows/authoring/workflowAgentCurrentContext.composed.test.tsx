@@ -119,6 +119,8 @@ const { WorkflowsColumnActions } = await import('../column/WorkflowsColumnAction
 const { WorkflowAgentAuthoringDraft } = await import('./useWorkflowAgentAuthoring');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 const { WorkflowEditorBody } = await import('../screens/WorkflowEditorBody');
+const { WorkflowCompanionNavigation } = await import('../navigation/WorkflowNavigationViews');
+const { WorkflowTriggerSection } = await import('../triggers/WorkflowTriggerSection');
 const { default: WorkflowRouteEntry } = await import('@/app/(app)/workflows/[id]/index');
 const { default: WorkflowsIndexRouteEntry } = await import('@/app/(app)/workflows/index');
 const { WorkspaceProvider } = await import('@/components/appShell/workspace/WorkspaceProvider');
@@ -171,6 +173,7 @@ beforeEach(async () => {
             if (actionId === 'workflow.definition.get') return { ok: true, result: { definitionId: savedId,
                 definition: savedDefinition, metadata: { title: 'Saved Workflow' },
                 revision: { headerVersion: 1, bodyVersion: 1 }, access: 'owner' } };
+            if (actionId === 'workflow.run.list') return { ok: true, result: { runs: [], metadataByRunId: {}, projection: 'membership' } };
             throw new Error(`Unexpected Workflow HTTP request: ${actionId}`);
         } });
     // Exact saved reads use the Home's Artifact batch API before any library list.
@@ -305,6 +308,66 @@ function connectAgentToApp() {
         return result.ok ? { ok: true, result: result.result ?? null } : result;
     } } });
 }
+
+it('lets an Agent add the selected live Machine event to the workflow draft and Undo the same trigger', async () => {
+    route.width = 1440;
+    route.pathname = `/workflows/${savedId}`;
+    route.params = { id: savedId };
+    window.history.replaceState(null, '', route.pathname);
+    const scope = { serverId: connection!.serverId, accountId: 'account-a' };
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    const { serverAccountScopedResourceKey } = await import('@/sync/domains/scope/serverAccountScope');
+    const machine = createMachineFixture({ id: machineId, active: true, activeAt: Date.now(),
+        metadata: { ...createMachineFixture().metadata!, displayName: 'QA worktree Machine' },
+        storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
+    await publishMachineInventoryForTest(scope, [machine]);
+    const agent = connectAgentToApp();
+    const screen = await renderScreen(<App hosted={false} editor />);
+    await vi.waitFor(() => expect(screen.findAllByType(WorkflowCompanionNavigation)).toHaveLength(1));
+    await act(async () => screen.findByType(WorkflowCompanionNavigation).props.onSelect('events'));
+    const pane = 'workflow-editor-live-events';
+    expect(screen.findHostByTestId(pane)).not.toBeNull();
+
+    const occurredAt = Date.now();
+    const key = serverAccountScopedResourceKey(scope, 'machine', machineId, 'offline', String(occurredAt));
+    await act(async () => publishMachineInventoryForTest(scope, [{ ...machine, active: false, activeAt: occurredAt }]));
+    await vi.waitFor(() => expect(screen.findHostByTestId(`${pane}:events:row:${key}`)).not.toBeNull());
+    await screen.pressByTestIdAsync(`${pane}:events:row:${key}`);
+    expect(screen.findHostByTestId(`${pane}:add`)).not.toBeNull();
+    const readPending = () => {
+        const section: unknown = screen.findByType(WorkflowEditorBody).props.triggersSection;
+        if (!React.isValidElement<React.ComponentProps<typeof WorkflowTriggerSection>>(section))
+            throw new Error('Missing trigger editor');
+        return section.props.incomplete?.state.pending;
+    };
+    expect(readPending()).toEqual([]);
+    const current = await agent.executeActionByToolName('action_execute', { actionId: 'ui.current_context.read', input: {} }, createdSessionId);
+    if (!current.ok) throw new Error('Expected the mounted editor current UI context');
+    const command = CurrentUiContextSnapshotV1Schema.parse(current.result).commands.find(command =>
+        command.title === t('workflows.events.addToWorkflow'));
+    expect(command, 'The selected companion event exposes Add to this workflow').toBeDefined();
+    await act(async () => {
+        expect(await agent.executeActionByToolName('action_execute', {
+            actionId: 'ui.current_context.command.invoke', input: { commandId: command!.id },
+        }, createdSessionId)).toMatchObject({ ok: true });
+    });
+    const pending = expect.objectContaining({ when: { kind: 'pluginEvent', value: null },
+        nativeEvent: expect.objectContaining({ key, machineId, event: 'offline' }) });
+    expect(readPending()).toEqual([pending]);
+    const clientId = readPending()?.[0]?.clientId;
+    const triggerId = `workflow-editor-trigger:new:${clientId}`;
+    if (screen.findByTestId('workflow-editor-when-body') === null) await screen.pressByTestIdAsync('workflow-editor-when-toggle');
+    expect(screen.findByTestId(`${triggerId}-title`)?.props.children).toBe(
+        t('workflows.events.machineOffline', { machine: 'QA worktree Machine' }));
+    expect(screen.findByTestId(`${triggerId}-toggle`)?.props.value).toBe(true);
+    expect(screen.findByTestId(`${triggerId}-native-source`)?.props.children).toBe('QA worktree Machine');
+    expect(screen.findByTestId(`${triggerId}-configure-event`)).toBeNull();
+    expect(screen.findHostByTestId(`${pane}:add`)).toBeNull();
+    await screen.pressByTestIdAsync(`${pane}:undo-add`);
+    expect(readPending()).toEqual([]);
+    await screen.pressByTestIdAsync(`${pane}:add`);
+    expect(readPending()).toEqual([pending]);
+});
 
 it.each([
     { source: 'new', width: 1440, hosted: false, dictation: false },

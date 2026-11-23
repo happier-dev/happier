@@ -1,10 +1,20 @@
 import { RPC_METHODS } from '../rpc/methods.js';
 import type { EntityDragScopeV1 } from '../plugins/ui/entityDragDrop.js';
 /** Action identity must not import the schemas that themselves consume the catalog. */
+export const WORKFLOW_AUTHORING_ACTION_ID = {
+  conversationBind: 'workflow.authoring.conversation.bind',
+  draftGet: 'workflow.authoring.draft.get',
+  draftEdit: 'workflow.authoring.draft.edit',
+  draftUndo: 'workflow.authoring.draft.undo',
+  draftRedo: 'workflow.authoring.draft.redo',
+  draftSave: 'workflow.authoring.draft.save',
+  draftDiscard: 'workflow.authoring.draft.discard',
+  reviewDraftSet: 'workflow.run.review.draft.set',
+} as const;
 export const WORKFLOW_AUTHORING_ACTION_IDS = [
-  'workflow.authoring.conversation.bind', 'workflow.authoring.draft.get', 'workflow.authoring.draft.edit',
-  'workflow.authoring.draft.undo', 'workflow.authoring.draft.redo', 'workflow.authoring.draft.save',
-  'workflow.authoring.draft.discard', 'workflow.run.review.draft.set',
+  WORKFLOW_AUTHORING_ACTION_ID.conversationBind, WORKFLOW_AUTHORING_ACTION_ID.draftGet, WORKFLOW_AUTHORING_ACTION_ID.draftEdit,
+  WORKFLOW_AUTHORING_ACTION_ID.draftUndo, WORKFLOW_AUTHORING_ACTION_ID.draftRedo, WORKFLOW_AUTHORING_ACTION_ID.draftSave,
+  WORKFLOW_AUTHORING_ACTION_ID.draftDiscard, WORKFLOW_AUTHORING_ACTION_ID.reviewDraftSet,
 ] as const;
 export type WorkflowAuthoringActionId = typeof WORKFLOW_AUTHORING_ACTION_IDS[number];
 export function isWorkflowAuthoringActionId(id: string): id is WorkflowAuthoringActionId {

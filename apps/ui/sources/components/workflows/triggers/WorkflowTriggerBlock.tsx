@@ -171,6 +171,8 @@ export function WorkflowTriggerBlock(
     sessionContext?: WorkflowTriggerStartContext['session'];
     eventEdit?: Readonly<{ automationId: string; triggerId: string }>;
     initialEventSeed?: React.ComponentProps<typeof TriggerPluginEventRows>['initialEventSeed'];
+    /** An exact native occurrence already owns its source. Save completes its enrollment. */
+    nativeSourceName?: string;
     onEditSeedApplied?: React.ComponentProps<
       typeof TriggerPluginEventRows
     >['onEditSeedApplied'];
@@ -284,7 +286,11 @@ export function WorkflowTriggerBlock(
           accountLifetime={props.accountLifetime}
         />
       ) : null}
-      {when?.kind === 'pluginEvent' ? (
+      {when?.kind === 'pluginEvent' && props.nativeSourceName !== undefined ? (
+        <TrackRow label={t('workflows.triggers.card.source')} trackKey={`${props.testID}-source`}>
+          <Text testID={`${props.testID}-native-source`} style={styles.value}>{props.nativeSourceName}</Text>
+        </TrackRow>
+      ) : when?.kind === 'pluginEvent' ? (
         <TriggerPluginEventRows
           testID={props.testID}
           when={when}

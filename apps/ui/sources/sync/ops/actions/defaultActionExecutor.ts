@@ -209,7 +209,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { executeCurrentUiContextAction, executeCurrentUiContextContributedAction, listCurrentUiContextContributedActionDefinitions } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { createUiAccountAction, resolveUiAccountActionFallbackMachineId } from './accountActionDeps';
 import { executeAdmittedClientActionChildAtMachine, type AdmittedClientActionParent } from './admittedClientActionChild';
-import { clientActionUnavailable, buildUiActionDispatchRequestV1, parseClientActionDispatchResult, isWorkflowHostAdmittedChildActionIdV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { clientActionUnavailable, buildUiActionDispatchRequestV1, parseClientActionDispatchResult, isWorkflowHostAdmittedChildActionIdV1, isWorkflowObservationSetupChildActionV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import type { ThemeActionOutput } from '@happier-dev/protocol/actions/themeActionFamily';
 import { buildMachineAgentInventoryDescriptors } from '@/agents/machineAgents/machineAgentCatalog';
@@ -2657,12 +2657,18 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
             const caller = context?.actionCaller;
             // The Machine host admits a non-person caller's Workflow writes; only
             // the daemon holding this Session caller's parent can continue it.
-            return parent && caller?.kind === 'session' && context?.authority !== 'present_user'
-              && context?.serverId && context.runtimeAccountId && isWorkflowHostAdmittedChildActionIdV1(actionId)
-              ? executeAdmittedClientActionChildAtMachine({ parent, serverId: context.serverId,
+            const observationSetup = isWorkflowObservationSetupChildActionV1(request.actionId, actionId);
+            if (parent && caller?.kind === 'session' && context?.authority !== 'present_user'
+                && context?.serverId && context.runtimeAccountId
+                && (isWorkflowHostAdmittedChildActionIdV1(actionId) || observationSetup)) {
+              return executeAdmittedClientActionChildAtMachine({ parent, serverId: context.serverId,
                 accountId: context.runtimeAccountId, sessionId: caller.sessionId, actionId, input,
-                ...(context.signal ? { signal: context.signal } : {}) })
-              : createDefaultActionExecutor(opts).execute(actionId, input, context);
+                ...(context.signal ? { signal: context.signal } : {}) });
+            }
+            if (observationSetup && context?.authority !== 'present_user') {
+              return Promise.resolve({ ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' });
+            }
+            return createDefaultActionExecutor(opts).execute(actionId, input, context);
           },
         } : {}),
       },

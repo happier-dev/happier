@@ -1,8 +1,73 @@
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
-import { mountedWorkReadClientRpcMethod, isMountedWorkReadClientRpcMethod, clientActionUnavailable, UiActionDispatchRequestV1Schema, parseClientActionDispatchResult } from './clientDispatchV1.js';
+import { ACTION_INVOKE_ACTION_ID_V1 } from './actionIds.js';
+import { WORKFLOW_AUTHORING_ACTION_ID } from './workflowAuthoringActionIds.js';
+import { ActionDefinitionSummaryV1Schema } from './actionDefinitionV1.js';
+import { UiActionChildExecuteRequestV1Schema, mountedWorkReadClientRpcMethod, isMountedWorkReadClientRpcMethod, clientActionUnavailable, UiActionDispatchRequestV1Schema, parseClientActionDispatchResult } from './clientDispatchV1.js';
 
 describe('client placement delivery after canonical admission', () => {
+  it('retains the mounted Save caller for exact Workflow operations and safe setup reads', async () => {
+    const read = { pluginId: 'fixture.setup', localId: 'observation' };
+    const write = { pluginId: 'fixture.setup', localId: 'write' };
+    const scope = { serverId: 'home-a', accountId: 'account-a' };
+    const triggerInput = {
+      workflow: '11111111-1111-4111-8111-111111111111',
+      project: { machineId: 'machine-a', directory: '/workspace' },
+      trigger: { kind: 'schedule', enabled: true,
+        schedule: { kind: 'interval', scheduleExpr: null, everyMs: 60_000, timezone: null } },
+    };
+    const caller = { surface: 'agent', authority: 'account_automation', serverId: scope.serverId,
+      actionRequestId: 'mounted-workflow-save',
+      executeOrdinaryChildAction: async (actionId: string, input: unknown, options?: { actionRequestId?: string }) => {
+        issued.push({ actionId, input, requestId: options?.actionRequestId });
+        return actionId === ACTION_INVOKE_ACTION_ID_V1
+          ? { ok: true as const, result: { sourceInstanceId: 'source-a' } }
+          : { ok: false as const, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
+      },
+      runtimeAccountId: scope.accountId, defaultSessionId: 'session-a',
+      actionCaller: { kind: 'session', sessionId: 'session-a' } } as const;
+    const issued: { actionId: string; input: unknown; requestId?: string }[] = [];
+    const deps = {
+      listContributedActionDefinitions: () => [
+        { localId: read.localId, sideEffectClass: 'read' },
+        { localId: write.localId, sideEffectClass: 'write' },
+      ].map(({ localId, sideEffectClass }) => ActionDefinitionSummaryV1Schema.parse({
+        id: `fixture.setup/actions/${localId}`, sideEffectClass, safety: 'safe', title: localId,
+        description: null, slash: null, placements: [], bindings: null, examples: null,
+        surfaces: { agent: true }, inputHints: null,
+      })),
+      // Home refuses a plugin read proved by the parent's mounted-write authorization.
+      invokeContributedAction: async () => ({ ok: false, errorCode: 'action_forbidden', error: 'action_forbidden' }),
+      clientActionExecute: async ({ executeChild }) => {
+        const child = (action: typeof read) => UiActionChildExecuteRequestV1Schema.parse({
+          v: 1, parentRequestId: 'parent-a', sessionId: 'session-a', actionId: ACTION_INVOKE_ACTION_ID_V1,
+          input: { action, input: {} },
+        });
+        const allowed = child(read);
+        const denied = child(write);
+        const execution = await executeChild!(allowed.actionId, allowed.input);
+        expect(parseClientActionDispatchResult(allowed.actionId, { v: 1, execution }))
+          .toMatchObject({ ok: true, result: { sourceInstanceId: 'source-a' } });
+        expect(await executeChild!(denied.actionId, denied.input)).toMatchObject({ ok: false, errorCode: 'permission_denied' });
+        const trigger = UiActionChildExecuteRequestV1Schema.parse({
+          v: 1, parentRequestId: 'parent-a', sessionId: 'session-a', actionId: 'workflow.trigger.add',
+          input: triggerInput,
+        });
+        expect(await executeChild!(trigger.actionId, trigger.input)).toMatchObject({
+          ok: false, errorCode: 'approval_context_unavailable',
+        });
+        return { ok: true, result: { status: 'applied' } };
+      },
+    } satisfies Partial<ActionExecutorDeps>;
+    const executor = createActionExecutor(deps as ActionExecutorDeps);
+    expect(await executor.execute(WORKFLOW_AUTHORING_ACTION_ID.draftSave, { scope, draftId: 'draft-a' }, caller))
+      .toMatchObject({ ok: true, result: { status: 'applied' } });
+    expect(issued).toEqual([
+      { actionId: ACTION_INVOKE_ACTION_ID_V1, input: { action: read, input: {} }, requestId: expect.any(String) },
+      { actionId: 'workflow.trigger.add', input: triggerInput, requestId: expect.any(String) },
+    ]);
+    expect(new Set([caller.actionRequestId, ...issued.map(operation => operation.requestId)]).size).toBe(3);
+  });
   it('preserves automation notices beside successful and refused Usage history results', () => {
     const result = { status: 'idle', progress: { selected: 0, notRead: 0, completed: 0, failed: 0 } };
     const automationNotices = [{ code: 'action_automations_not_checked', reason: 'not_found' }];

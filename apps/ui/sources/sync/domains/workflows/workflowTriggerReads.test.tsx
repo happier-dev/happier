@@ -28,7 +28,7 @@ const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRu
 const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
 const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
 const { retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
-const { listWorkflowTriggerSets, removeWorkflowTrigger, updateWorkflowTrigger } = await import('./workflowTriggerActions');
+const { addWorkflowTrigger, listWorkflowTriggerSets, removeWorkflowTrigger, updateWorkflowTrigger } = await import('./workflowTriggerActions');
 const { useWorkflowTriggerSets } = await import('@/components/workflows/triggers/useWorkflowTriggerSets');
 const { useWorkflowAutomationSummaries } = await import('@/components/workflows/library/useWorkflowLibrarySummaries');
 const { useServerCredentialAccountScopeStates } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
@@ -68,6 +68,22 @@ function listed(row: ReturnType<typeof automation>) {
 }
 
 describe('Account trigger reads through real Action and Automation owners', () => {
+    it('preserves an outstanding person approval without publishing a trigger write', async () => {
+        const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+        const approval = { kind: 'approval_request_created', artifactId: 'pending-trigger-review', actionId: 'workflow.trigger.add' } as const;
+        const execute = createFrontDoorActionExecute({
+            // The remote Session Action can return a deferred approval receipt before any trigger write.
+            execute: async () => ({ ok: true, result: approval }),
+        });
+        await expect(addWorkflowTrigger({
+            workflow: '11111111-1111-4111-8111-111111111111',
+            project: { machineId: 'machine-a', directory: '/workspace' },
+            trigger: { kind: 'schedule', enabled: true,
+                schedule: { kind: 'interval', scheduleExpr: null, everyMs: 60_000, timezone: null } },
+        }, { execute })).rejects.toMatchObject({ name: 'WorkflowActionError', code: approval.kind, rawDetails: approval });
+        expect(storage.getState().workflowTriggerSetsById).toEqual({});
+    });
+
     it('preserves an HTTP authorization failure cause through the trigger Action', async () => {
         // app.authenticate supplies this existing envelope before the Automation route runs.
         const failureCause = { phase: 'execution_authorization', errorClass: 'Error',

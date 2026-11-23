@@ -18,6 +18,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import type { WorkflowActivityProjection } from '@/sync/engine/workflows/workflowActivityProjection';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { WorkflowTriggerDraftSeedIntent } from '../triggers/workflowTriggerStarts';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { t } from '@/text';
 
 import {
@@ -87,7 +88,9 @@ export const WorkflowLiveEventsPane = React.memo(
     const { onAddTrigger, canUndoAddedTrigger, onUndoAddedTrigger } = props;
     const add = useEventCallback((key: string, when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => {
       const clientId = onAddTrigger?.(when, seed);
-      if (clientId !== undefined) setAddedRows((current) => new Map(current).set(key, clientId));
+      if (clientId === undefined) return false;
+      setAddedRows((current) => new Map(current).set(key, clientId));
+      return true;
     });
     const renderExpanded = React.useCallback(
       (key: string) => {
@@ -181,7 +184,7 @@ type LiveEventProps = Readonly<{
   eventKey: string;
   scope: ServerAccountScope | null;
   retainedRuns: readonly WorkflowRunSummaryV1[] | undefined;
-  onAdd: ((key: string, when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => void) | null;
+  onAdd: ((key: string, when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => boolean) | null;
   picked: WorkflowEventMatchSelection;
   testID: string;
 }>;
@@ -239,7 +242,11 @@ function LiveEventActions(props: LiveEventProps & Readonly<{
     ? { kind: 'pluginEvent', value: null }
     : readWorkflowEventWhen(presentation.fact, props.match.match);
   const open = presentation.open;
-  const canAdd = when !== null && onAdd !== null;
+  const canAdd = props.active && when !== null && onAdd !== null;
+  const add = () => canAdd && onAdd(eventKey, when, seed?.nativeEvent ? { nativeEvent: seed.nativeEvent } : undefined);
+  useCurrentUiContextLocalCommands(canAdd ? [
+    { key: 'add-to-mounted-workflow', title: t('workflows.events.addToWorkflow'), invoke: add },
+  ] : [], { contextKey: eventKey });
   const addsLine = canAdd ? props.match.addsLine : null;
   // One primary in the pane (Add to this workflow); the rest of what the event allows waits behind its ⋯ (S2).
   const menu: WorkflowEventMenuItem[] = [
@@ -256,7 +263,7 @@ function LiveEventActions(props: LiveEventProps & Readonly<{
       testID={`${props.testID}:add`}
       size={props.bar ? 'normal' : 'small'}
       title={t('workflows.events.addToWorkflow')}
-      onPress={() => onAdd(eventKey, when, seed?.nativeEvent ? { nativeEvent: seed.nativeEvent } : undefined)}
+      onPress={() => { add(); }}
     />
   );
   return (

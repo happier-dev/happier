@@ -180,7 +180,8 @@ import { getWorkflowStarterExamplesV1, materializeWorkflowStarterExample } from 
 import { WorkflowStartersResolveInputV1Schema } from '../workflows/builtins/starterActionsV1.js';
 import { resolveReviewEngineInventoryTarget } from './executor/reviewEngineInventoryTarget.js';
 import { MemoryWindowRequestV1Schema } from '../memory/memoryWindow.js';
-import { isWorkflowAuthoringActionId } from './workflowAuthoringActionIds.js';
+import { isWorkflowAuthoringActionId, WORKFLOW_AUTHORING_ACTION_ID } from './workflowAuthoringActionIds.js';
+import { isWorkflowHostAdmittedChildActionIdV1, isWorkflowObservationSetupChildActionV1 } from './clientDispatchV1.js';
 import { PromptDocRevisionV1Schema, PromptDocCreateActionInputV1Schema } from '../prompts/library/promptDocV2.js';
 import { PromptBundleUpdateActionInputV1Schema } from '../prompts/library/promptBundleSchemas.js';
 import { SKILL_ACTION_INPUT_SCHEMAS_V1, SKILL_MACHINE_ACTION_INPUT_SCHEMAS_V1 } from '../prompts/library/skills/skillActionSchemasV1.js';
@@ -4634,12 +4635,28 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           // approval policy, never the parent's bypass, consent or request identity.
           executeChild: (childId, childInput) => {
             const { actionRequestId: parentRequestId, ...caller } = ordinaryChildContext(context);
+            const setupRead = isWorkflowObservationSetupChildActionV1(actionId, childId);
+            if (childId === ACTION_INVOKE_ACTION_ID_V1) {
+              const invocation = ActionInvokeInputSchema.safeParse(childInput);
+              const action = invocation.success
+                ? getContributedActionDefinition(formatQualifiedPluginActionId(invocation.data.action), caller) : null;
+              if (!setupRead || action?.sideEffectClass !== 'read' || action.safety !== 'safe') {
+                return Promise.resolve({ ok: false, errorCode: 'permission_denied', error: 'permission_denied' });
+              }
+            }
             const position = childPositions.get(childId) ?? 0;
             childPositions.set(childId, position + 1);
             const parent = normalizeId(parentRequestId);
-            return executeInvocation(childId, childInput, { ...childSessionContext(childId, childInput, caller), ...(parent ? {
-              actionRequestId: deriveWorkflowReplacementId(['action.client_child', parent, actionId, childId, position]),
-            } : {}) });
+            const childRequestId = parent ? deriveWorkflowReplacementId(['action.client_child', parent, actionId, childId, position]) : undefined;
+            const workflowOperation = actionId === WORKFLOW_AUTHORING_ACTION_ID.draftSave
+              && isWorkflowHostAdmittedChildActionIdV1(childId);
+            if ((setupRead || workflowOperation) && caller.executeOrdinaryChildAction) {
+              return caller.executeOrdinaryChildAction(childId, childInput, { actionRequestId: childRequestId, signal: caller.signal });
+            }
+            return executeInvocation(childId, childInput, { ...childSessionContext(childId, childInput, caller),
+              ...(setupRead ? { requiredContributedActionDangerLevel: 'safe' } : {}),
+              ...(childRequestId ? { actionRequestId: childRequestId } : {}),
+            });
           } });
         if (requesterAppReview) return delivered;
         // An exact receiver's result cannot retarget to a headless owner.
