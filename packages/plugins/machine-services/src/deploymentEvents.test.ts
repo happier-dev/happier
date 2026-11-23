@@ -2,6 +2,7 @@ import { expect, it, vi } from 'vitest';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
     type PluginCheckpointedEventSourceDefinitionV1 } from '@happier-dev/plugin-sdk/background-services';
 import { DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1 } from '@happier-dev/plugin-sdk/events';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createDeploymentReceiptEventSourceAdapter, deploymentEventActions, deploymentEvents } from './deploymentEvents.js';
 
 import { PLUGIN_MANIFEST as vercel } from '../../deploy-vercel/src/manifest.js';
@@ -30,7 +31,7 @@ function fixture(periodMs?: number, eventId = 'deployment-failed', kindWide = fa
     const targetLink = { id: config.targetLinkId, environmentId: config.environmentId, role: 'runtime', targetKind,
         source: targetKind === 'ownServer' ? { kind: 'host', id: 'own-server' }
             : { kind: 'plugin', contribution: { pluginId: 'happier.platform.test', localId: 'runtime' } } };
-    let failNextObserve = false;
+    let failNextObserve: string | null = null;
     let pendingNextObserve = false;
     let settleNextObserve: 'failed' | 'succeeded' | 'cancelled' | 'outcome_unknown' | null = null;
     let safe = true;
@@ -77,7 +78,11 @@ function fixture(periodMs?: number, eventId = 'deployment-failed', kindWide = fa
                 : { ok: false, error: 'deployment_unavailable' };
         }
         if (id === 'deployments.receipts.observe') {
-            if (failNextObserve) { failNextObserve = false; throw new Error('Provider unavailable'); }
+            if (failNextObserve) {
+                const code = failNextObserve;
+                failNextObserve = null;
+                throw new PluginError({ code });
+            }
             if (pendingNextObserve) { pendingNextObserve = false; return { ok: true, kind: 'pending', actionOperationId: 'observe-a', environmentId: config.environmentId, revision: 2 }; }
             if (settleNextObserve) { settle(settleNextObserve); settleNextObserve = null; }
             return { ok: true, environmentId: config.environmentId, deploymentId: current.id, revision: 2, deploymentRevision: current.revision, state: current.state };
@@ -105,7 +110,7 @@ function fixture(periodMs?: number, eventId = 'deployment-failed', kindWide = fa
         },
         reconnect() { return emit('@happier/automation/event-sources-invalidated', { reason: 'reconnect', definitionsChanged: false }); },
         settleOnNextObserve(state: 'failed' | 'succeeded' | 'cancelled' | 'outcome_unknown' = 'failed') { settleNextObserve = state; }, deferNextObserve() { pendingNextObserve = true; },
-        failNextObservation() { failNextObserve = true; }, setSafe(value: boolean) { safe = value; } };
+        failNextObservation(code = 'project_transport_unavailable') { failNextObserve = code; }, setSafe(value: boolean) { safe = value; } };
 }
 
 it('only wakes receipt reconciliation on reconnect while a source is assigned', async () => {
@@ -243,11 +248,39 @@ it('replays retained receipts by visible Environment and follows addressed remot
     } finally { h.controller.abort(); await running; }
 });
 
-it.each(['running', 'pending', 'unavailable'] as const)('settles a %s observation on the saved period, then does zero idle work', async outcome => {
+it.each(['credential_scope_denied', 'invalid_envelope', 'machine_offline', 'project_transport_unavailable'] as const)(
+    'parks %s without idle requests and observes again on a recovery event', async code => {
+        const periodMs = 1000;
+        const h = fixture(periodMs);
+        const transient = code === 'machine_offline' || code === 'project_transport_unavailable';
+        h.failNextObservation(code);
+        let time = 1200;
+        const sleep = vi.fn(async (delay: number) => { time += delay; h.settleOnNextObserve('succeeded'); });
+        const requests = () => h.execute.mock.calls.filter(([id]) => id === 'deployments.receipts.observe');
+        const running = runCheckpointedPluginEventObserverV1({ context: h.context,
+            source: createDeploymentReceiptEventSourceAdapter(h.context.services.events.host, () => time), now: () => time, sleep });
+        try {
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(requests()).toHaveLength(1);
+            time += 60_000;
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(requests()).toHaveLength(1);
+            expect(sleep).not.toHaveBeenCalled();
+            expect(h.execute.mock.calls).toContainEqual(['automation.event.source.status.report',
+                expect.objectContaining({ state: 'attention', code, nextRetryAt: null }), expect.anything()]);
+            h.settleOnNextObserve('succeeded');
+            await h.receiptChanged();
+            expect(requests()).toHaveLength(transient ? 2 : 1);
+            await h.reconnect();
+            expect(requests()).toHaveLength(2);
+        } finally { h.controller.abort(); await running; }
+    },
+);
+
+it.each(['running', 'pending'] as const)('settles a %s observation on the saved period, then does zero idle work', async outcome => {
     const periodMs = 7300;
     const h = fixture(periodMs);
     if (outcome === 'pending') h.deferNextObserve();
-    if (outcome === 'unavailable') h.failNextObservation();
     let time = 1200;
     const sleep = vi.fn(async (delay: number) => {
         expect(delay).toBe(periodMs); time += delay; h.settleOnNextObserve(); h.reads.length = 0;
@@ -260,9 +293,7 @@ it.each(['running', 'pending', 'unavailable'] as const)('settles a %s observatio
         expect(h.execute.mock.calls.filter(([id]) => id === 'deployments.receipts.observe')).toHaveLength(2);
         expect(h.admissions).toHaveLength(1);
         expect(h.admissions[0]).toMatchObject({ payload: { state: 'failed', phase: 'build', failureCode: 'build_failed' } });
-        if (outcome !== 'unavailable') expect(h.reads).toEqual(['receipt-a', 'receipt-a']);
-        if (outcome === 'unavailable') expect(h.execute.mock.calls).toContainEqual(['automation.event.source.status.report',
-            expect.objectContaining({ state: 'backingOff', nextRetryAt: 8500 }), expect.anything()]);
+        expect(h.reads).toEqual(['receipt-a', 'receipt-a']);
         const idleCalls = h.execute.mock.calls.length;
         time += periodMs * 10;
         await new Promise<void>(resolve => setImmediate(resolve));
@@ -280,20 +311,22 @@ it('exposes absent pending cadence after one finite observation', async () => {
         expect.objectContaining({ state: 'attention', code: 'sourceContractIncompatible', nextRetryAt: null }), expect.anything()]);
 });
 
-it('retries an unavailable incremental observation using known receipt IDs without rescanning history', async () => {
+it('retries an unavailable incremental observation on an addressed Receipt wake without rescanning history', async () => {
     const periodMs = 7300;
     const h = fixture(periodMs);
     let time = 1200;
     const sleep = vi.fn(async (delay: number) => {
         expect(delay).toBe(periodMs); time += delay;
-        if (sleep.mock.calls.length === 1) { h.failNextObservation(); h.reads.length = 0; }
-        else h.settleOnNextObserve();
+        h.failNextObservation(); h.reads.length = 0;
     });
     const running = runCheckpointedPluginEventObserverV1({ context: h.context,
         source: createDeploymentReceiptEventSourceAdapter(h.context.services.events.host, () => time), now: () => time, sleep });
     try {
         await new Promise<void>(resolve => setImmediate(resolve));
-        expect(sleep).toHaveBeenCalledTimes(2);
+        expect(sleep).toHaveBeenCalledOnce();
+        expect(h.reads).toEqual(['receipt-a']);
+        h.settleOnNextObserve();
+        await h.receiptChanged();
         expect(h.reads).toEqual(['receipt-a', 'receipt-a', 'receipt-a']);
         expect(h.execute.mock.calls.filter(([id]) => id === 'deployments.receipts.list')).toHaveLength(1);
         expect(h.admissions).toHaveLength(1);

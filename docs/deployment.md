@@ -1625,10 +1625,13 @@ not supply a polling interval. The generic source configuration accepts an expli
 positive `periodMs`. This is the person's pending-receipt observation period,
 editable on the same observation-only trigger through `workflow.trigger.update`;
 it is not inferred from unrelated
-health checks. While a receipt remains pending, the adapter returns
-`nextEligibleAt = now + periodMs` and uses that same period for an unavailable
-pending observation. Once no receipts remain pending it returns `null`, leaving
-zero scheduled idle work. In unreleased 0.3, initial runtime Link enrollment
+health checks. A successful read that still reports a pending receipt keeps the
+saved cadence. A transport or offline refusal parks that receipt until a reconnect
+or an addressed receipt change. Other refusals stop observation of that receipt
+revision until a reconnect or a new revision. The source reports its typed
+reason through the existing attention status. A refusal leaves the receipt's
+deployment outcome unchanged. Once no successfully observed receipts remain
+pending, the adapter returns `null`, leaving zero scheduled idle work. In unreleased 0.3, initial runtime Link enrollment
 seeds `periodMs` from the plugin target's declared `statusIntervalMs`. Vercel,
 Cloudflare Pages and Workers declare one second: Vercel's client starts status
 polling at one second, as does Wrangler Pages' first status wait. Workers uses

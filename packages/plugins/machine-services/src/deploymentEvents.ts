@@ -1,6 +1,5 @@
-import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
+import { isPluginError, PluginError, readUnexpectedActionErrorDiagnosticV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { arePluginMachineMaterializationRefsEqual, computeCanonicalDomainSeparatedDigest, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1, DEPLOYMENT_PROMOTE_ACTION_ID_V1, DEPLOYMENT_RECEIPT_EVENT_REFS_V1, DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1, readDeploymentAccountChangeV1,
     DeploymentReceiptChangedEventV1ProtocolSchema as changedSchema,
     deploymentInProgressStates, DeploymentReceiptEventSourceConfigV1ProtocolSchema as configSchema,
@@ -124,9 +123,36 @@ export const deploymentEvents = Object.fromEntries((Object.keys(outcomes) as Eve
 type ReceiptCompletion = NonNullable<HostEventPayloadById['@happier/deployment/receipt-invalidated']['completion']>;
 type PendingReceipt = { receipt?: Receipt | null; completion?: ReceiptCompletion | null; environmentId?: string; latest?: true;
     templateEnvironmentId?: string | null; domains?: string };
+type ReceiptObservationFailure = { revision: number; code: string; retryOnWake: boolean };
 type State = { config: DeploymentReceiptEventSourceConfigV1; event: EventId; fullRead: boolean;
-    pending: Map<string, PendingReceipt>; observing: Set<string>; observations: PluginEventObservationV1[] | null };
+    pending: Map<string, PendingReceipt>; observing: Set<string>; failures: Map<string, ReceiptObservationFailure>;
+    observations: PluginEventObservationV1[] | null };
 const inProgressStates = new Set(deploymentInProgressStates());
+
+function readReceiptObservationFailure(error: unknown, revision: number): ReceiptObservationFailure {
+    const failure = isPluginError(error) ? error : undefined;
+    const diagnostic = failure ? undefined : readUnexpectedActionErrorDiagnosticV1(error);
+    const code = failure?.code ?? diagnostic?.errorCode ?? diagnostic?.errorClass.replace(/^\$/u, '') ?? 'Error';
+    switch (code) {
+        case 'machine_offline':
+        case 'machine_unavailable':
+        case 'server_unavailable':
+        case 'project_transport_unavailable':
+        case 'ECONNRESET':
+        case 'ECONNREFUSED':
+        case 'ETIMEDOUT':
+        // A queued receipt can still be waiting for its provider handoff.
+        case 'outcome_unknown':
+            return { revision, code, retryOnWake: true };
+        case 'target_unavailable': {
+            const details = failure?.details;
+            return { revision, code, retryOnWake: !!details && typeof details === 'object'
+                && 'reason' in details && details.reason === 'machine_offline' };
+        }
+        default:
+            return { revision, code, retryOnWake: failure?.retryable === true };
+    }
+}
 
 /** Both saved Event sources and native Action completion consume this receipt projection. */
 function projectReceiptObservation(input: Readonly<{
@@ -172,7 +198,10 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
             eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' },
         }, async event => {
             if (event.payload.reason !== 'reconnect') return;
-            for (const state of states.values()) state.fullRead = true;
+            for (const state of states.values()) {
+                state.failures.clear();
+                state.fullRead = true;
+            }
             await wakeSources?.();
         });
         const needed = [...states.values()].some(state => state.event === changedEvent);
@@ -203,7 +232,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
         const event = definition.eventRef.localId as EventId;
         let state = states.get(definition.sourceInstanceId);
         if (!state || sourceId(state.config, state.event) !== sourceId(source, event)) {
-            state = { config: source, event, fullRead: true, pending: new Map(), observing: new Set(), observations: null };
+            state = { config: source, event, fullRead: true, pending: new Map(), observing: new Set(), failures: new Map(), observations: null };
             states.set(definition.sourceInstanceId, state);
         }
         state.config = source;
@@ -307,7 +336,10 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                             } else entry.receipt = projectReadReceipt(read);
                         }
                     }
-                    if (entry.receipt === null) state.observing.delete(pendingId);
+                    if (entry.receipt === null) {
+                        state.observing.delete(pendingId);
+                        state.failures.delete(pendingId);
+                    }
                     else {
                         if (event === changedEvent) {
                             if (entry.domains === undefined) {
@@ -335,13 +367,27 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                         if (receipt.environmentId !== source.environmentId || receipt.targetLinkId !== source.targetLinkId
                             || receipt.operation === 'teardown' || !inProgressStates.has(receipt.state)) {
                             state.observing.delete(receipt.id);
+                            state.failures.delete(receipt.id);
                             continue;
                         }
+                        const previous = state.failures.get(receipt.id);
+                        if (previous && !previous.retryOnWake && previous.revision === receipt.revision) continue;
+                        let result;
+                        try {
+                            result = await context.services.actions.execute('deployments.receipts.observe', {
+                                serverId: source.serverId, environmentId: source.environmentId, deploymentId: receipt.id,
+                            }, { signal: context.signal });
+                            if (!('ok' in result) || !result.ok) throw new PluginError({
+                                code: 'ok' in result ? result.error : 'deployment_unavailable',
+                            });
+                        } catch (error) {
+                            context.signal.throwIfAborted();
+                            state.observing.delete(receipt.id);
+                            state.failures.set(receipt.id, readReceiptObservationFailure(error, receipt.revision));
+                            continue;
+                        }
+                        state.failures.delete(receipt.id);
                         state.observing.add(receipt.id);
-                        const result = await context.services.actions.execute('deployments.receipts.observe', {
-                            serverId: source.serverId, environmentId: source.environmentId, deploymentId: receipt.id,
-                        }, { signal: context.signal });
-                        if (!('ok' in result) || !result.ok) throw withActionFailureDiagnostic(new PluginError({ code: 'ok' in result ? result.error : 'deployment_unavailable' }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: result });
                         if ('state' in result && !inProgressStates.has(result.state)) {
                             state.observing.delete(receipt.id);
                             const read = await context.services.actions.execute('deployments.receipts.get', {
@@ -396,9 +442,11 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                 throw error;
               }
             }
+            const failure = state.failures.values().next().value;
             return { observations: state.observations, checkpoint: state, complete: true,
                 nextEligibleAt: state.pending.size || state.fullRead ? now() : pendingEligibility(state, now()),
-                ...(state.observing.size > 0 && source.periodMs === undefined
+                ...(failure ? { status: { state: 'attention' as const, code: failure.code } }
+                    : state.observing.size > 0 && source.periodMs === undefined
                     ? { status: { state: 'attention' as const, code: 'sourceContractIncompatible' as const } } : {}) };
         },
         async save({ checkpoint }) { checkpoint.observations = null; },
