@@ -103,7 +103,7 @@ describe('Session id-batched reads (SQLite integration)', () => {
 
     sessionReadBatchCostContract('sqlite');
 
-    it('discloses the Session Computer binding only to a participant with Machine Manage (C79)', async () => {
+    it('discloses the Session Computer binding to a participant with a Machine grant that may start Sessions (C79)', async () => {
         const owner = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
         const participant = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
@@ -125,7 +125,8 @@ describe('Session id-batched reads (SQLite integration)', () => {
                     expect(response.statusCode, response.body).toBe(200);
                     return V2SessionByIdResponseSchema.parse(response.json()).session;
                 };
-                expect((await read(participant.id)).computerMachineBinding).toBeUndefined();
+                // Can use (`view`) may start a Session on this Machine, so it may route a Fork there.
+                expect((await read(participant.id)).computerMachineBinding).toEqual({ homeId, machineId: machine.id });
                 await db.machineGrant.update({ where: { id: grant.id }, data: { accessLevel: 'admin' } });
                 const shared = await read(participant.id);
                 expect(shared.computerMachineBinding).toEqual({ homeId, machineId: machine.id });

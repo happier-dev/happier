@@ -44,8 +44,12 @@ export function resolveSessionInputTargetMachineId(params: Readonly<{
     params.decryptedMetadata?.sessionCreationCorrespondenceV1,
   );
   // Creation correspondence describes birth, not the Machine serving a resumed Session.
+  // Home's routing hint names a shared Session's Machine to a recipient holding a grant on it.
+  const binding = params.rawSession.computerMachineBinding;
+  const sharedMachineId = binding && typeof binding === 'object' ? Reflect.get(binding, 'machineId') : undefined;
   const observedMachineId = typeof params.rawSession.machineId === 'string'
     ? params.rawSession.machineId.trim()
+    : typeof sharedMachineId === 'string' ? sharedMachineId.trim()
     : typeof params.decryptedMetadata?.machineId === 'string'
       ? params.decryptedMetadata.machineId.trim()
       : correspondence.success

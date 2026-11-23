@@ -5,9 +5,11 @@ import { resolveEffectiveMachineAccessForMachinesInTx } from '@/app/machines/mac
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import type { Tx } from '@/storage/inTx';
 
-/** C79: only admitted human Session recipients with Machine Manage receive this routing hint.
- * The accepted publisher placement supplies identity; no owner envelope is opened or copied.
- * This is disclosure, not Computer admission: the existing RPC owner still authorizes access.
+/** C79: an admitted Session recipient who holds a grant on the Session's Machine receives this routing
+ * hint: the same audience that may start a Session there (`session.spawn_new` admits Use, machineAccess.ts),
+ * so a guest's Fork or input can name it. It tells them only which Machine they can already see runs a
+ * Session they can already read. The accepted publisher placement supplies identity; no owner envelope
+ * is opened or copied. This is disclosure, not admission: Machine admission still decides every call.
  */
 export async function readSessionComputerBindingsInTx(tx: Tx, params: Readonly<{
     accountId: string;
@@ -27,6 +29,6 @@ export async function readSessionComputerBindingsInTx(tx: Tx, params: Readonly<{
     const access = await resolveEffectiveMachineAccessForMachinesInTx(tx, {
         machineIds: targets.map(target => target.machineId), accountIds: [params.accountId],
     });
-    return new Map(targets.filter(target => access.get(target.machineId)?.get(params.accountId) === 'manage')
+    return new Map(targets.filter(target => access.get(target.machineId)?.get(params.accountId) != null)
         .map(target => [target.sessionId, { homeId: target.homeId, machineId: target.machineId }]));
 }
