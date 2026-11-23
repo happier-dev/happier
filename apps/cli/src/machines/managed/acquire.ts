@@ -48,7 +48,7 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/s
 import { ManagedBootstrapCarrierV1Schema, type AcquireResultV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { captureManagedPendingNativeIdentity, captureManagedSubmittedNativeIdentity, readManagedIssuedNativeFact,
     type CapturedManagedNativeIdentity } from '@happier-dev/cli-common/machines/managed/reconcile';
-import { createManagedNativeInvocation, reconcileManagedMachine, resolveManagedRoleCredentialAuthorizations, resolveManagedRoleRuntime } from './reconcile';
+import { createManagedNativeInvocation, reconcileManagedMachine, resolveManagedRoleCredentialAuthorizations, resolveManagedRoleRuntime, type WorkspaceTrustTask } from './reconcile';
 import { composeManagedNativeCredentials, applyManagedNativeCredentialPolicy } from './nativeCredentialComposer';
 import { ManagedControllerCredentialDeliveryReportOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { reconcileManagedIntent, prepareManagedRetentionPolicy, type ManagedGuestActivityTransport } from './managedIntentReconciler';
@@ -1454,11 +1454,12 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                         intentRevision: 0, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
                     });
                     const operationReceipt = { operationId: operation.operationId };
-                    let acceptedForTrust = false;
+                    let retiredTrustTask: WorkspaceTrustTask | undefined;
                     const native = createManagedNativeInvocation({ input, options, client, machine, action,
-                        onWorkspaceTrustQuestion: () => {
-                            if (acceptedForTrust) return;
-                            acceptedForTrust = true;
+                        onWorkspaceTrustQuestion: task => {
+                            const firstQuestion = !retiredTrustTask;
+                            retiredTrustTask = task;
+                            if (!firstQuestion) return;
                             operation.accept({ managedId: machine.id, operation: operationReceipt } satisfies ManagedAcceptedV1);
                         },
                     }, () => machine);
@@ -1473,8 +1474,9 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     }), ManagedAdmissionOutputV1Schema);
                     client.assertConnection(admitted.machine);
                     const accepted: ManagedAcceptedV1 = { managedId: admitted.machine.id, operation: operationReceipt };
-                    context.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: admitted.machine.id } });
-                    if (!acceptedForTrust) operation.accept(accepted);
+                    context.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: admitted.machine.id,
+                        ...(retiredTrustTask ? { bootstrapTask: retiredTrustTask } : {}) } });
+                    if (!retiredTrustTask) operation.accept(accepted);
                     return accepted;
                 }
                 if (options.acquisitionMode === 'resource-bound' && !isManagedPresetAcquireInputV1(acquisition)) {

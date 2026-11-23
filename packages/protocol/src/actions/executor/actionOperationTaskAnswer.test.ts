@@ -65,7 +65,8 @@ describe('private operation task answer', () => {
     const attachment = { managedId: 'guest', operation: { operationId: attachAddress.operationId } };
     const preparing = ActionOperationSnapshotV1Schema.parse({ ...pending, revision: 3, domainRef: task });
     const settled = ActionOperationSnapshotV1Schema.parse({ ...pending, revision: 4, state: 'succeeded', settledAt: 3,
-      domainRef: { kind: 'managedMachine', id: attachment.managedId }, result: attachment });
+      domainRef: { kind: 'managedMachine', id: attachment.managedId, bootstrapTask: { id: task.id, taskKind: task.taskKind } },
+      result: attachment });
 
     let current = pending;
     const transport: ActionOperationMachineTransportV1 = async request => {
@@ -74,10 +75,10 @@ describe('private operation task answer', () => {
       current = preparing;
       return { ok: true, result: null };
     };
-    const respond = () => executeActionOperationActionV1({
+    const respond = (taskId = task.id, trusted = true) => executeActionOperationActionV1({
       actionId: 'action.operations.task.respond', context: { surface: 'ui', expectedAccountId: 'account' }, transport,
       input: getActionSpec('action.operations.task.respond').inputSchema.parse({
-        ...attachAddress, taskId: task.id, prompt: trustPrompt, answer: { trusted: true },
+        ...attachAddress, taskId, prompt: trustPrompt, answer: { trusted },
       }),
     });
 
@@ -87,7 +88,11 @@ describe('private operation task answer', () => {
     expect(observed).toMatchObject({ kind: 'found', operation: pending });
     expect(await respond()).toEqual({ kind: 'answered' }); // Inbox
     expect(await respond()).toEqual({ kind: 'answered' }); // Chooser's previously displayed question
+    const refused = { ok: false, errorCode: 'action_operation_unavailable' };
+    expect(await respond(task.id, false)).toMatchObject(refused);
     current = settled;
+    expect(await respond('unrelated-task')).toMatchObject(refused);
+    expect(await respond(task.id, false)).toMatchObject(refused);
     expect(await respond()).toEqual({ kind: 'answered' }); // Chooser resumes after Home admission
     expect(await executeActionOperationActionV1({
       actionId: 'action.operations.get', input: { ...attachAddress, waitForTerminal: true }, transport,

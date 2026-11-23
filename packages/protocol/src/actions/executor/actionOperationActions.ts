@@ -76,9 +76,11 @@ export async function executeActionOperationActionV1(args: Readonly<{
         return failure('action_operation_unavailable');
       }
       const question = readActionOperationTaskQuestionV1(operation);
-      if (!question && operation.actionId === MANAGED_ACQUIRE_ACTION_ID_V1 && 'trusted' in answerInput.answer
+      if (!question && operation.actionId === MANAGED_ACQUIRE_ACTION_ID_V1
+        && 'trusted' in answerInput.answer && answerInput.answer.trusted === true
         && (domain?.kind === 'systemTask' && domain.id === answerInput.taskId && !domain.prompt
-          || domain?.kind === 'managedMachine' && operation.state === 'succeeded')) {
+          || domain?.kind === 'managedMachine' && operation.state === 'succeeded'
+            && domain.bootstrapTask?.id === answerInput.taskId && !domain.bootstrapTask.prompt)) {
         // An Inbox answer can retire the trust question while the chooser still displays it.
         // Acknowledge the retired question so the caller can read the same operation's result.
         return { kind: 'answered' };

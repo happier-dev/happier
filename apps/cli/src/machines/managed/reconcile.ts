@@ -57,6 +57,8 @@ import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plu
 import { rebuildManagedPresetAtFirstUse } from './presetPreparationRebuild';
 import { selectManagedPresetPreparationCliDelivery } from './presetPreparationCli';
 
+export type WorkspaceTrustTask = Readonly<{ id: string; taskKind: 'remote.ssh.bootstrapMachine.v1' }>;
+
 export type ManagedMachineReconciliationInput = Readonly<{
     input: ManagedMachineAcquisitionDriverInput;
     options: ManagedMachineExecutionOptions;
@@ -69,7 +71,7 @@ export type ManagedMachineReconciliationInput = Readonly<{
     rebuild?: DevcontainerRebuildIntentV1;
     hydrator?: ManagedPresetHydrator;
     credentialConfigurations?: ManagedMachinePresetPreparationBindingV1['credentialConfigurations'];
-    onWorkspaceTrustQuestion?(): void;
+    onWorkspaceTrustQuestion?(task: WorkspaceTrustTask): void;
 }>;
 
 /**
@@ -792,7 +794,7 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
 function createManagedBootstrapProgress(params: Pick<ManagedMachineReconciliationInput, 'options' | 'onWorkspaceTrustQuestion'>, machine: ManagedMachineFullV1,
     onEnrollmentWait?: () => void): Pick<Parameters<typeof import('./enrollmentTask').createManagedBootstrapTaskRunner>[0], 'onTask' | 'onPrompt' | 'onEvent'> {
     const domainRef = { kind: 'managedMachine' as const, id: machine.id, controller: machine.controller, resource: machine.resource };
-    let bootstrapTask: Readonly<{ id: string; taskKind: 'remote.ssh.bootstrapMachine.v1' }> | undefined;
+    let bootstrapTask: WorkspaceTrustTask | undefined;
     let bootstrapPrompt: ManagedMachineBootstrapPromptV1 | null = null;
     const publishBootstrapTask = () => {
         if (!bootstrapTask) return;
@@ -802,7 +804,7 @@ function createManagedBootstrapProgress(params: Pick<ManagedMachineReconciliatio
             // The platform probe precedes the managed row. The operation owns
             // this standalone question, using the existing task response port.
             update?.update({ domainRef: { kind: 'systemTask', ...task } });
-            if (bootstrapPrompt) params.onWorkspaceTrustQuestion();
+            if (bootstrapPrompt) params.onWorkspaceTrustQuestion(bootstrapTask);
         } else {
             update?.update({ domainRef: { ...domainRef, bootstrapTask: task } });
         }
