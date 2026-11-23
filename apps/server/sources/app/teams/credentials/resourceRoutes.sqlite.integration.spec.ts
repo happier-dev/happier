@@ -3,7 +3,7 @@ import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { projectTeamCredentialResourceDisplayNameForRecipient } from "./privateLabels";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import tweetnacl from 'tweetnacl';
-import type { RouteOptions } from "fastify";
+import type { FastifyInstance, RouteOptions } from "fastify";
 import { ClusterAdapter, MessageType, type ClusterMessage } from "socket.io-adapter";
 import { io as connect } from "socket.io-client";
 
@@ -752,9 +752,10 @@ describe("Team credential resource routes (SQLite integration)", () => {
         app.machineDaemonPresence = { in: () => ({ fetchSockets: async () => [{
             data: { clientType: "machine-scoped", userId: owner.id, machineId: broker.id },
         }] }) };
-        app.forwardRpcForUser = async request => {
-            const params = request.params as { scope?: string };
-            return { ok: true, result: params.scope === "source_credential"
+        app.forwardRpcForUser = async ({ params }: Parameters<FastifyInstance["forwardRpcForUser"]>[0]) => {
+            const isSourceCredential = typeof params === "object" && params !== null
+                && "scope" in params && params.scope === "source_credential";
+            return { ok: true, result: isSourceCredential
                 ? { status: "eligible" }
                 : { status: "unavailable", reason: "source_unavailable" } };
         };
