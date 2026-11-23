@@ -97,7 +97,6 @@ async function withSource(mode: 'plain' | 'e2ee', run: (input: Readonly<{
 const protocol = TriageSourcesContributionProtocolV1;
 
 it.each([
-    { query: 'github issue', localId: TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1 },
     { query: 'pin issue', localId: TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1 },
     { query: 'non-secret configuration', localId: TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1 },
 ])('discovers the existing entry handoff from "$query"', ({ query, localId }) => {

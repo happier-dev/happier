@@ -432,7 +432,9 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
         // The shell also reads the reader's durable pins. It is a different
         // Collection and a different Action, and it reaches no source at all.
         if (String(request.action) === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1) {
-            if (state.pinsUnavailable) throw new PluginError({ code: 'server_unavailable', retryable: true });
+            if (state.pinsUnavailable) throw new PluginError({
+                code: 'server_unavailable', retryable: true, details: { requestId: 'pins-read-request' },
+            });
             return await listTriagePinnedEntries(
                 TriageListPinnedEntriesInputV1Schema.parse(request.input),
                 { collections, nowMs: () => Date.now() },
@@ -955,8 +957,10 @@ describe('the mounted PRs & Issues surface', () => {
         await expect(shell.getByText('Happier cannot reach your account right now, so pins and saved views cannot be changed.')).resolves.toBeDefined();
         expect(notifications).toEqual([]);
         expect(document.body.textContent).not.toContain('server_unavailable');
+        expect(document.body.textContent).not.toContain('pins-read-request');
         await shell.press(await shell.getByRole('button', { name: 'Details' }));
         expect(document.body.textContent).toContain('server_unavailable');
+        expect(document.body.textContent).toContain('pins-read-request');
         const retryCommand = harness.publishedContexts.at(-1)?.commands?.find(command => {
             if (command.command.kind !== 'executeAction') return false;
             const parsed = TriageMountedUiInputV1Schema.safeParse(command.command.input);

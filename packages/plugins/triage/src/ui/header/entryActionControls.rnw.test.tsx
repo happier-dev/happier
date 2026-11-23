@@ -792,7 +792,7 @@ describe("the source's own write in the header", () => {
     else await expect(fixture.queryByRole('button', { name: 'Details' })).resolves.toBeUndefined();
   });
 
-  it('follows ⋯, so a write the source offers late joins the row without moving the controls already there', async () => {
+  it('keeps the wide header overflow at the trailing edge when a source write is present', async () => {
     const fixture = await mountSourceWrite({
       title: 'Dismiss…', reading: true, disabledReason: null, pending: false, execute: async () => {},
     }, 'write-after-more', false, [formalAction('formal-review-one', 'Review'), formalAction('formal-review-two', 'Architecture review')]);
@@ -800,8 +800,8 @@ describe("the source's own write in the header", () => {
       .map(node => node.getAttribute('aria-label') ?? node.textContent ?? '');
     const more = labels.findIndex(label => label === 'More actions');
     const write = labels.findIndex(label => label.includes('Dismiss…'));
-    expect(more).toBeGreaterThanOrEqual(0);
-    expect(write).toBeGreaterThan(more);
+    expect(write).toBeGreaterThanOrEqual(0);
+    expect(more).toBeGreaterThan(write);
     await expect(fixture.getByRole('button', { name: 'More actions' })).resolves.toBeDefined();
   });
 

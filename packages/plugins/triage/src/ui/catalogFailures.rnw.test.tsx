@@ -21,8 +21,8 @@ const mounted: PluginUiTestkit[] = [];
 afterEach(async () => { for (const page of mounted.splice(0)) await act(async () => { await page.dispose(); }); });
 
 const paths = ['actions-read', 'actions-resolve', 'actions-write', 'actions-account-write', 'actions-settlement',
-  'sources-read', 'sources-watch', 'sources-remove', 'pins-read', 'pins-watch', 'pins-write'] as const;
-type Path = typeof paths[number];
+  'sources-read', 'sources-watch', 'sources-remove', 'pins-watch', 'pins-write'] as const;
+type Path = typeof paths[number] | 'pins-read';
 const authoredFailure = {
   details: { requestId: 'catalog-failure-request', operation: 'catalog-write' },
   remediation: { kind: 'retry' as const },

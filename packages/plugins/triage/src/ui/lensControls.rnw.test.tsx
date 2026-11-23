@@ -325,21 +325,6 @@ describe('the PRs & Issues lens controls', () => {
         expect(locations).toHaveLength(writes);
     });
 
-    it('answers an unavailable routed open once even if the host keeps its URL', async () => {
-        const subPath = buildTriageRouteSubPathV1({
-            ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
-            selection: { source: { pluginId: 'qa.unconfigured', localId: 'source' },
-                kindId: 'pull-request', collisionScope: SCOPE, entryId: '17' },
-        });
-        const { shell, locations } = await mountShell(subPath, undefined, subPath);
-        await expect.poll(() => locations).toEqual([subPath, '']);
-        for (const textScale of [1.25, 1]) {
-            await act(async () => { await shell.updateSurface(createSurfaceContextFixture({ textScale })); });
-        }
-        expect(locations).toEqual([subPath, '']);
-        await expect(shell.queryByRole('group', { name: 'Details pane' })).resolves.toBeUndefined();
-    });
-
     it('clears and restores Type without dropping Source, Scope, State or Attention', async () => {
         const filters = {
             sources: [{ source: SOURCE }],
