@@ -16,6 +16,7 @@ import {
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import {
     createAccountSettingsBackedSettingsRecordStore,
+    createPluginStorageBackedSettingsRecordStore,
     createStablePluginSettingsModel,
     parseCanonicalPluginSettingsRecord,
     type StablePluginSettingsModel,
@@ -588,5 +589,26 @@ describe('Account plugin Settings record storage', () => {
             resolveBaseUrl: () => 'https://server.example',
         });
         await expect((await locked.bindOperation()).readRecord(model)).resolves.toMatchObject({ status: 'unavailable', error: expect.objectContaining({ code: expect.any(String) }) });
+    });
+});
+
+describe('daemon plugin Settings storage failures', () => {
+    it.each(['read', 'write'] as const)('preserves a typed %s failure with a content-free diagnostic', async (operation) => {
+        const cause = Object.assign(new Error('PRIVATE_STORAGE_PATH'), { code: 'EIO' });
+        const store = createPluginStorageBackedSettingsRecordStore({
+            storageForPlugin: () => { throw cause; },
+        });
+        const model = { ...settingsModel, scope: 'daemon' } as const;
+        const result = operation === 'read' ? store.read(model) : store.update(model, () => {
+            throw new Error('The mutation must not run when storage acquisition fails');
+        });
+        const error = await result.catch((caught: unknown) => caught);
+        expect(error).toMatchObject({
+            code: 'plugin_settings_persistence_unavailable',
+            cause,
+            diagnostics: [{ code: 'EIO', severity: 'error' }],
+        });
+        expect(error).toHaveProperty('message', expect.stringContaining(operation));
+        expect(JSON.stringify(error)).not.toContain('PRIVATE_STORAGE_PATH');
     });
 });

@@ -26,6 +26,8 @@ export interface KVMutation {
     version: number; // Always required, use -1 for new keys
 }
 
+export type UserKvMutation = KVMutation & Readonly<{ initialVersion?: number | undefined }>;
+
 /** Shared by HTTP validation and delegated native-effect admission. */
 export const KvMutationRequestSchema = z.object({
     mutations: z.array(z.object({
@@ -101,7 +103,7 @@ export async function acquireUserKvRowLockInTx(tx: Tx, input: Readonly<{ account
 export async function applyUserKvMutationsInTx(
     tx: Tx,
     ctx: { uid: string },
-    mutations: readonly KVMutation[],
+    mutations: readonly UserKvMutation[],
     validate?: (
         mutation: KVMutation,
         existing: UserKvStoreRow,
@@ -164,7 +166,7 @@ export async function applyUserKvMutationsInTx(
                     value: mutation.value
                         ? privacyKit.decodeBase64(mutation.value)
                         : null,
-                    version: 0,
+                    version: mutation.initialVersion ?? 0,
                 },
             }).catch((error: unknown) => {
                 // Repeating an absent key within one batch retains its existing

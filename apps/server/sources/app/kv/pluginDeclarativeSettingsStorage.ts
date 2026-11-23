@@ -40,6 +40,8 @@ export type PluginDeclarativeSettingsMutationResult = ReservedAccountScopedKvRow
 const pluginDeclarativeSettingsDomain: ReservedAccountScopedKvRowDomain<PluginDeclarativeSettingsEnvelope> =
     Object.freeze({
         label: "Plugin declarative Settings",
+        // The CLI exposes absent Settings as defaults at revision 0.
+        initialRevision: 1,
         // A stored record may predate the current ciphertext bound and must
         // stay readable; a new candidate must satisfy the writer grammar.
         parseStoredEnvelope: (value: unknown) => {

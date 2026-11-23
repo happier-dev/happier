@@ -15,6 +15,7 @@ import { z } from 'zod/mini';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import { containsEquivalentPluginJsonValue } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
     isPluginError,
     PluginError,
@@ -109,6 +110,16 @@ export type StablePluginSettingsRecordStore = Readonly<{
 
 function settingsError(code: string, message: string, details?: JsonValue): PluginError {
     return new PluginError({ code, message, ...(details === undefined ? {} : { details }) });
+}
+
+function storageBackedSettingsFailure(error: unknown, operation: 'read' | 'write'): PluginError {
+    if (isPluginError(error)) return error;
+    const causeCode = readActionErrorCodeV1(error);
+    return new PluginError({
+        code: 'plugin_settings_persistence_unavailable',
+        message: `Plugin settings storage ${operation} failed`,
+        ...(causeCode === null ? {} : { diagnostics: [{ code: causeCode, severity: 'error' }] }),
+    }, { cause: error });
 }
 
 function clonePlainData<T>(value: T, path = 'value'): T {
@@ -235,11 +246,7 @@ export function createPluginStorageBackedSettingsRecordStore(params: Readonly<{
             try {
                 return await params.storageForPlugin(model.identity.pluginId).get(PLUGIN_SETTINGS_STORAGE_KEY);
             } catch (error) {
-                if (isPluginError(error)) throw error;
-                throw settingsError(
-                    'plugin_settings_persistence_unavailable',
-                    'Plugin settings persistence is unavailable',
-                );
+                throw storageBackedSettingsFailure(error, 'read');
             }
         },
         async update<T>(model: StablePluginSettingsModel, operation: (
@@ -263,11 +270,7 @@ export function createPluginStorageBackedSettingsRecordStore(params: Readonly<{
                     },
                 });
             } catch (error) {
-                if (isPluginError(error)) throw error;
-                throw settingsError(
-                    'plugin_settings_persistence_unavailable',
-                    'Plugin settings persistence is unavailable',
-                );
+                throw storageBackedSettingsFailure(error, 'write');
             }
         },
     });
@@ -348,7 +351,7 @@ async function readAccountPluginSettingsRecord(
         if (source.error) throw source.error;
         throw settingsError(
             'plugin_settings_persistence_unavailable',
-            'Account plugin settings persistence is unavailable',
+            'Account plugin settings record read is unavailable',
         );
     }
     if (source.status === 'absent') {
@@ -458,7 +461,7 @@ export function createAccountSettingsBackedSettingsRecordStore(
                 if (response.error) throw response.error;
                 throw settingsError(
                     'plugin_settings_persistence_unavailable',
-                    'Account plugin settings persistence is unavailable',
+                    'Account plugin settings record write is unavailable',
                 );
             }
             if (response.status === 'conflict') {

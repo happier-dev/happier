@@ -69,8 +69,8 @@ function createTx(options: Readonly<{
                 input.where.key.in.flatMap(key => rows.has(key) ? [rows.get(key)!] : [])),
             findUnique: vi.fn(async ({ where }: any) =>
                 rows.get(where.accountId_key.key) ?? null),
-            create: vi.fn(async ({ data }: any) => {
-                const row = { key: data.key, value: data.value, version: 0 };
+            create: vi.fn(async ({ data }: { data: StoredRow }) => {
+                const row = { key: data.key, value: data.value, version: data.version };
                 rows.set(data.key, row);
                 return row;
             }),
@@ -181,7 +181,7 @@ describe("plugin declarative settings storage", () => {
             pluginId: "example.tasks",
             expectedRevision: "absent",
             envelope: { t: "encrypted", c: ciphertext },
-        })).resolves.toEqual({ status: "updated", revision: 0, cursor: 1 });
+        })).resolves.toEqual({ status: "updated", revision: 1, cursor: 1 });
     });
 
     it("rejects an oversized correct-purpose E2EE Settings CAS candidate before storage mutation", async () => {
@@ -344,6 +344,19 @@ describe("plugin declarative settings storage", () => {
         expect(tx.accountChange.upsert).not.toHaveBeenCalled();
     });
 
+    it("continues a retained revision-zero Settings row without rewriting its revision", async () => {
+        const { buildPluginDeclarativeSettingsPhysicalKey } = await import("./accountScopedKv");
+        const key = buildPluginDeclarativeSettingsPhysicalKey("example.tasks");
+        const envelope = { t: "plain", v: { v: 1, values: { theme: "dark" } } } as const;
+        const { tx } = createTx({ row: { key, value: encodeEnvelope(envelope), version: 0 } });
+        const identity = { accountId: "account-1", pluginId: "example.tasks" };
+
+        await expect(readPluginDeclarativeSettingsInTx(tx as never, identity))
+            .resolves.toEqual({ status: "present", revision: 0, envelope });
+        await expect(mutatePluginDeclarativeSettings({ ...identity, expectedRevision: 0, envelope: null }))
+            .resolves.toEqual({ status: "updated", revision: 1, cursor: 1 });
+    });
+
     it("uses the shared CAS tombstone primitive and emits one content-free settings invalidation", async () => {
         const { tx } = createTx();
 
@@ -352,7 +365,7 @@ describe("plugin declarative settings storage", () => {
             pluginId: "example.tasks",
             expectedRevision: "absent",
             envelope: { t: "plain", v: { v: 1, values: { theme: "dark" } } },
-        })).resolves.toEqual({ status: "updated", revision: 0, cursor: 1 });
+        })).resolves.toEqual({ status: "updated", revision: 1, cursor: 1 });
 
         expect(tx.accountChange.upsert).toHaveBeenLastCalledWith(expect.objectContaining({
             where: {
@@ -367,7 +380,7 @@ describe("plugin declarative settings storage", () => {
                     pluginDomain: "settings",
                     pluginId: "example.tasks",
                     scope: "account",
-                    revision: 0,
+                    revision: 1,
                 },
             }),
         }));
@@ -375,19 +388,19 @@ describe("plugin declarative settings storage", () => {
         await expect(mutatePluginDeclarativeSettings({
             accountId: "account-1",
             pluginId: "example.tasks",
-            expectedRevision: 0,
+            expectedRevision: 1,
             envelope: null,
-        })).resolves.toEqual({ status: "updated", revision: 1, cursor: 2 });
+        })).resolves.toEqual({ status: "updated", revision: 2, cursor: 2 });
         await expect(readPluginDeclarativeSettingsInTx(tx as any, {
             accountId: "account-1",
             pluginId: "example.tasks",
-        })).resolves.toEqual({ status: "deleted", revision: 1 });
+        })).resolves.toEqual({ status: "deleted", revision: 2 });
 
         await expect(mutatePluginDeclarativeSettings({
             accountId: "account-1",
             pluginId: "example.tasks",
             expectedRevision: "absent",
             envelope: { t: "plain", v: { v: 1, values: { theme: "light" } } },
-        })).resolves.toEqual({ status: "conflict", revision: 1 });
+        })).resolves.toEqual({ status: "conflict", revision: 2 });
     });
 });

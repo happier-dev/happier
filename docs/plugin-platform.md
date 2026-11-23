@@ -3669,6 +3669,12 @@ keeps the code and the adapter's content-free phase and HTTP status in its messa
 Response bodies, request configuration and setting values are excluded. This is
 0.3 development behavior; it does not establish a loaded-runtime replay result.
 
+In 0.3 development, an absent Account plugin Settings row presents its declared
+defaults at revision 0. Its first successful write uses the existing absent-row
+CAS and creates revision 1. The acknowledgement, subsequent reads, and change
+hint carry the same persisted revision. Earlier rows already at revision 0
+retain it and advance on their next write.
+
 Portable artifacts use the SDK's existing universal CommonJS compiler (including
 its Node-builtin rejection), the UI's existing client executable module host,
 and the CLI's existing plugin module loader. Hermes compiles the app evaluator's

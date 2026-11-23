@@ -15,7 +15,7 @@ import {
 import {
     applyUserKvMutationsInTx,
     readUserKvMutationConflict,
-    type KVMutation,
+    type UserKvMutation,
     type UserKvMutationApplication,
 } from "./kvMutate";
 
@@ -24,9 +24,8 @@ import {
  * before its own domain rules apply: does the Account exist, is its encryption
  * state currently consistent, does the stored envelope match the Account mode,
  * and does the caller hold the revision it claims. This module owns exactly
- * those, so a reserved domain contributes only its envelope grammar, its
- * mode rule, and its AccountChange hint instead of restating the Account-row
- * protocol.
+ * those, so a reserved domain contributes its envelope grammar, mode rule,
+ * initial revision policy, and AccountChange hint.
  */
 export type ReservedAccountScopedKvRowFailure =
     | Readonly<{ status: "account-not-found" }>
@@ -86,6 +85,8 @@ export type ReservedAccountScopedKvRowsMutationInTxResult =
 export type ReservedAccountScopedKvRowDomain<TEnvelope, TCandidate = TEnvelope> = Readonly<{
     /** Names the domain in programming-error messages only. */
     label: string;
+    /** Starting revision of a new row when the domain distinguishes it from its default snapshot. */
+    initialRevision?: number;
     parseStoredEnvelope(value: unknown): TEnvelope | null;
     /** Restore retained facts from the owning KV row, never from another read or a new clock. */
     restoreStoredFacts?(envelope: TEnvelope, facts: Readonly<{ createdAt: Date }>): TEnvelope;
@@ -351,7 +352,7 @@ export async function mutateReservedAccountScopedKvRowsInTx(
     }
     const mode = fence.account.currentness.encryptionMode;
 
-    const mutations: KVMutation[] = [];
+    const mutations: UserKvMutation[] = [];
     const domains = new Map<string, ReservedAccountScopedKvRowDomain<unknown>>();
     for (const candidate of input.mutations) {
         if (domains.has(candidate.physicalKey)) {
@@ -366,7 +367,12 @@ export async function mutateReservedAccountScopedKvRowsInTx(
         }
         const value = envelope === null ? null : encodeAccountScopedKvJson(envelope);
         if (envelope !== null && value === null) return { status: "invalid-stored-content" };
-        mutations.push({ key: candidate.physicalKey, value, version: expectedRevision });
+        mutations.push({
+            key: candidate.physicalKey,
+            value,
+            version: expectedRevision,
+            initialVersion: candidate.domain.initialRevision,
+        });
     }
 
     let application: UserKvMutationApplication;
