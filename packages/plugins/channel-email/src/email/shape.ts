@@ -1,3 +1,5 @@
+/// <reference path="./css-tree.d.ts" />
+
 import { load } from 'cheerio';
 import type { CssNode } from 'css-tree';
 import generate from 'css-tree/generator';
