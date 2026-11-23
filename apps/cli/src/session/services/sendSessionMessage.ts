@@ -1383,7 +1383,11 @@ async function waitForExecutionRunInputTurnOutcome(params: Readonly<{
   if (delivery.kind === 'cancelled') return 'cancelled';
   if (delivery.kind !== 'materialized') return null;
   const materialized = delivery.message;
-  const events = openSessionEventSource({ token: params.credentials.token, sessionId: params.sessionId });
+  const events = openSessionEventSource({
+    token: params.credentials.token,
+    sessionId: params.sessionId,
+    executionRun: { runId: params.runId, sidechainId: materialized.sidechainId ?? null },
+  });
   try {
     while (true) {
       const revision = events.currentRevision();

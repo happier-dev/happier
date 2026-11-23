@@ -77,6 +77,7 @@ export function observeSessionSocketEvents(
 /** Transport invalidation only. Readers retain authority over every wait predicate. */
 export function openSessionEventSource(opts: {
     token: string; sessionId: string; scope?: 'user';
+    executionRun?: Readonly<{ runId: string; sidechainId: string | null }>;
     onSessionUpdate?: (body: Extract<UpdateContainer['body'], { t: 'update-session' }>) => void;
     onConnected?: () => void;
 }): Readonly<{
@@ -96,6 +97,14 @@ export function openSessionEventSource(opts: {
         const parsed = UpdateContainerSchema.safeParse(raw);
         if (!parsed.success) return;
         const body = parsed.data.body;
+        if (opts.executionRun) {
+            // Finite collaborators can receive durable sidechain messages even
+            // when the live Run projection is outside their delivery ceiling.
+            if (((body.t === 'new-message' || body.t === 'message-updated') && body.sid === opts.sessionId
+                && opts.executionRun.sidechainId !== null && body.message.sidechainId === opts.executionRun.sidechainId)
+                || (body.t === 'delete-session' && body.sid === opts.sessionId)) changed();
+            return;
+        }
         if (body.t === 'update-session' && body.id === opts.sessionId) opts.onSessionUpdate?.(body);
         if ((body.t === 'new-session' || body.t === 'update-session' || body.t === 'delete-session')
             && body.id === opts.sessionId) changed();
@@ -106,6 +115,11 @@ export function openSessionEventSource(opts: {
         const parsed = EphemeralUpdateSchema.safeParse(raw);
         if (!parsed.success) return;
         const event = parsed.data;
+        if (opts.executionRun) {
+            if (event.type === 'execution-run-updated' && event.sessionId === opts.sessionId
+                && event.run.runId === opts.executionRun.runId) changed();
+            return;
+        }
         if (('sessionId' in event && event.sessionId === opts.sessionId
             && event.type !== 'transcript-stream-segment' && event.type !== 'transcript-stream-segment-delta')
             || (event.type === 'activity' && event.id === opts.sessionId)) changed();

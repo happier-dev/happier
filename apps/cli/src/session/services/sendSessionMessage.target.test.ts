@@ -82,7 +82,10 @@ function mockRunReads(inputTurns: readonly unknown[]) {
     resolveRead();
     return { ok: true, data: { run: run() } };
   });
-  return { firstRead, advance: () => {
+  return { firstRead, emitSiblingUpdate: () => {
+    observationSocket.emit('ephemeral', { type: 'execution-run-updated', sessionId,
+      run: { ...run(), runId: 'run-b', sidechainId: 'sidechain-b' } });
+  }, advance: () => {
     readIndex += 1;
     observationSocket.emit('ephemeral', { type: 'execution-run-updated', sessionId, run: run() });
   } };
@@ -1127,8 +1130,18 @@ describe('target Session input authoring through HTTP', () => {
       requestedAction: { v: 1, kind: 'steer_if_active' },
     });
     await run.firstRead;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const initialReads = rpc.callSessionRpc.mock.calls.length;
+    for (let index = 0; index < 5; index += 1) {
+      observationSocket.emit('ephemeral', { type: 'activity', id: sessionId, active: true, activeAt: index + 1 });
+      run.emitSiblingUpdate();
+      await new Promise<void>(resolve => setImmediate(resolve));
+    }
+    const unrelatedReads = rpc.callSessionRpc.mock.calls.length - initialReads;
     run.advance();
     const result = await pendingResult;
+    expect(unrelatedReads).toBe(0);
+    expect(rpc.callSessionRpc.mock.calls.length - initialReads - unrelatedReads).toBe(1);
     if (state === 'completed') expect(result).toEqual({ status: 'accepted', localId: 'input-a' });
     else expect(result).toEqual({
       status: state,
