@@ -898,8 +898,8 @@ stopped. Recovery may reattach an owner-supported execution or require an
 explicit same-conversation or fresh-agent continuation; ambiguous effects are
 never silently replayed. If contact is lost while starting, Happier looks up
 that exact Run and can retry admission with the same reviewed request. If it
-still cannot confirm the outcome, pressing Start again rejoins the same
-request. **Run workflow again** explicitly starts a new Run.
+still cannot confirm the outcome, **Try again** rejoins the same request.
+**Run workflow again** explicitly starts a new Run.
 
 In unreleased 0.3 development source, an interrupted invocation's offered
 fresh-agent retry can use its frozen original input. It does not rebuild that
@@ -1012,29 +1012,18 @@ step; an already running turn is not interrupted.
 
 ### Review & converge
 
-Choose a Session, open **Habits** on its **Info** page, and attach this recipe to a matching
-turn-end event. Select the review engines. A panel reviews the changes in
-parallel, then a read-only convergence check reads the persisted review comments
-and each engine's outcome. Missing or failed coverage cannot count as convergence.
+In the unreleased 0.3 development version, choose the **Session to review**.
+When you open Start Review from a Session, that Session is selected by default.
+Choose reviewers and instructions. The starter runs the selected steps once
+and reports persisted findings, reviewer coverage, and any outstanding human
+review requests. A failed reviewer leaves coverage incomplete. Required human
+requests stay visible without holding the Workflow open.
 
-**Verify and fix** is the default mode. Later rounds first ask the Session to
-verify and fix the previous findings, then run a new panel. The prefilled,
-editable cap is **3 rounds**: at most three panels and two verify turns.
-**Verify only** uses one panel and asks the Session to verify remaining findings
-without fixing them. The default focus is “Review the changes made in this
-session.”
-
-The optional Judge is off by default. When enabled, it rules on disputed findings;
-its verdicts must be written to the canonical review comments before the
-convergence check reads them. Pending user input delays the next Session verify
-turn under the same admission ordering as Keep going.
-
-If the round cap is reached without convergence, **Review didn't converge**
-sends **Notify me** and completes the Run. It does not hold for review or create
-an Inbox item just because it exhausted its rounds. An unchanged-worktree skip
-is allowed only when the final successful panel certified that exact fingerprint;
-without certification it reviews again. A firing during an active Run leaves
-at most one pending occurrence.
+Verification records its findings and evidence on the review comments.
+Choose **Fix** to send accepted findings to the Session for one
+verification-and-fix pass. Start a new Review round to check the resulting
+changes. Existing saved Workflows keep their authored steps, including any
+older review loops.
 
 ### Plan with a panel
 

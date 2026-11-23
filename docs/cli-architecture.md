@@ -6289,13 +6289,15 @@ Item references may project a path from `item.value`; missing fields are absent
 for `exists` and fail a required binding. Item index/position/count remain scalar.
 These forms share the existing reference schema and input resolver.
 
-The Protocol built-in catalog owns four portable definitions and the six
-unsaved starter seeds. Keep going and Review & converge require an origin
-Session. Their final output is the loop's recorded outcome; stopping for budget,
-strikes or exhaustion does not complete a goal. Review uses ORC's shared verify
-instructions and ReviewComment Actions under CAS, then checks persisted
-comments. Plan with a panel and Open a pull request remain origin-neutral;
-their synthesis review and disagreement Wait are genuine effect-gating holds.
+Protocol owns the built-in Workflow catalog and the separate editable example
+seeds. Keep going requires an origin Session and returns its recorded loop
+outcome. Stopping for budget, strikes or exhaustion leaves the goal incomplete.
+Review & converge takes a Session to review, which defaults to the origin
+Session when available. The current starter runs one round and settles coverage
+through the Review owner. Review steps use the
+shared verification instructions and ReviewComment Actions under CAS. The Plan
+with a panel synthesis review and the Open a pull request disagreement Wait
+are effect-gating holds. Both Workflows can start without an origin Session.
 This is current-development source, not released or loaded-runtime certification.
 
 Session-scoped Habits keep scope, lifecycle source, execution placement and
