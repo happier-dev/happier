@@ -702,12 +702,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    */
   const rowsByKey = React.useMemo(() => indexTriageListItems(items), [items]);
   const rowCount = rowsByKey.size;
-  const currentUiContextRows = React.useMemo(
-    () => (state.kind === 'window'
-      ? state.window.rows.filter((row) => rowsByKey.has(triageEntryRowKey(row.entryRef)))
-      : []),
-    [rowsByKey, state],
-  );
   const rowsByKeyRef = React.useRef<TriageRouteRowIndexV1>(rowsByKey);
   rowsByKeyRef.current = rowsByKey;
   /**
@@ -1955,7 +1949,12 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     } }),
     formatOpenEntryTitle: (title) => text('plugins.triage.currentContext.openEntry', 'Open {title}', { title }),
   }), [detailSessions, detailTab, selectedKey, mountId, mountedCommands, currentContextSurface, text]);
-  const currentUiContext = React.useMemo(() => projectCurrentContext(currentUiContextRows), [currentUiContextRows, projectCurrentContext]);
+  const currentUiContext = React.useMemo(() => {
+    if (window.readOwner !== null) return null;
+    return projectCurrentContext(state.kind === 'window'
+      ? state.window.rows.filter(row => rowsByKey.has(triageEntryRowKey(row.entryRef)))
+      : EMPTY_WINDOW_ROWS);
+  }, [window.readOwner, state, rowsByKey, projectCurrentContext]);
   const contextPublication = React.useMemo(() => window.readOwner === null ? undefined : {
     subscribe: (listener: () => void) => window.readOwner!.subscribe(change => {
       // This layout subscriber can run before the shell's external-store subscriber.
@@ -1974,7 +1973,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       heldRow.current = retainTriageLastKnownRowV1(heldRow.current, currentContextSurface.selection, selected);
       return projectCurrentContext(rows.filter(row => index.has(triageEntryRowKey(row.entryRef))));
     },
-  }, [window.readOwner, listPublication, currentContextSurface.selection, selectedKey, projectCurrentContext]);
+  }, [window.readOwner, state, rowsByKey, listPublication, currentContextSurface.selection, selectedKey, projectCurrentContext]);
   useTriageCurrentUiContextPublication(hostApi, currentUiContext, contextPublication);
   openChangeRef.current = (key) => {
     if (key === TRIAGE_TASK_DRAFT_KEY_V1) return;

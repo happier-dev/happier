@@ -38,6 +38,7 @@ import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../internalTasks/configuratio
 import { TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1 } from '../../actions/tasksProtocol.js';
 import { TRIAGE_SHELL_FILL_TEST_ID_V1 } from './root.js';
 import * as listSections from '../list/sections.js';
+import * as currentContext from '../currentContext.js';
 import * as triageProtocol from '@happier-dev/triage-protocol/v1';
 import { reduceTriageSurfaceV1, TRIAGE_SURFACE_INITIAL_STATE_V1 } from '../state/surface.js';
 import { readTriageWindowLensV1 } from './lens.js';
@@ -573,16 +574,21 @@ describe('the selected entry once the window stops holding it', () => {
             contextPublications = 0;
             renderProbe.reset();
             const descriptorAdmissions = vi.spyOn(triageProtocol, 'admitTriageSourceDescriptorV1');
+            const contextProjections = vi.spyOn(currentContext, 'projectTriageCurrentUiContextV1');
             try {
                 await editQuery('Task');
                 expect(contextPublications).toBe(1);
+                expect(contextProjections).toHaveBeenCalledTimes(1);
                 // Query-dependent row destinations change, but the virtualizer renders only mounted rows.
                 const visibleRows = document.querySelectorAll('[data-testid^="triage-entry-row:"]').length;
                 expect(visibleRows).toBeGreaterThan(0);
                 expect(visibleRows).toBeLessThan(count);
                 expect(renderProbe.collect().components.CollectionRow?.renders ?? 0).toBeLessThanOrEqual(visibleRows);
                 expect(descriptorAdmissions).not.toHaveBeenCalled();
-            } finally { descriptorAdmissions.mockRestore(); }
+            } finally {
+                descriptorAdmissions.mockRestore();
+                contextProjections.mockRestore();
+            }
             contextPublications = 0;
             renderProbe.reset();
             await editQuery('001');

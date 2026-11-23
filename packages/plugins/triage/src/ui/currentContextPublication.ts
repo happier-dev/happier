@@ -4,7 +4,7 @@ import type { PluginUiContextEnrichmentV1, PluginUiHostApi } from '@happier-dev/
 /** Publish only when this mount supplies a host slot; clear that same slot on retirement. */
 export function useTriageCurrentUiContextPublication(
   hostApi: Pick<PluginUiHostApi, 'publishCurrentUiContext' | 'version'>,
-  currentUiContext: PluginUiContextEnrichmentV1,
+  currentUiContext: PluginUiContextEnrichmentV1 | null,
   publication?: Readonly<{
     subscribe: (listener: () => void) => () => void;
     read: () => PluginUiContextEnrichmentV1;
