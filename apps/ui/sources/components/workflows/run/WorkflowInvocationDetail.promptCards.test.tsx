@@ -283,6 +283,14 @@ describe('WorkflowInvocationDetail canonical request cards', () => {
             expect(agentActions).toHaveLength(1);
             const filled = [runAgain!.props.display !== 'secondary', agentActions[0]!.props.emphasis !== 'secondary'];
             expect(filled.filter(Boolean)).toHaveLength(1);
+            // One actions row holds both, the filled Run again first (FIN-DESIGN-ACCEPT-9 P4).
+            const { SectionContentRow } = await import('@/components/ui/lists/SectionContentRow');
+            const rows = screen.findAllByType(SectionContentRow)
+                .filter(row => row.findAll(node => node.props.testID === 'workflow-run-recovery-run-again').length > 0);
+            expect(rows).toHaveLength(1);
+            const order = rows[0]!.findAll(node => node.type === AgentActionButton || node.props.testID === 'workflow-run-recovery-run-again')
+                .map(node => node.type === AgentActionButton ? 'investigate' : 'runAgain');
+            expect([...new Set(order)]).toEqual(['runAgain', 'investigate']);
         } finally { await screen.unmount(); }
     });
     it('explains the Machine source-runtime repair before offering another launch', async () => {

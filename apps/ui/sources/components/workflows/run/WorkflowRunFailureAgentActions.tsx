@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import type { TriageFailureSubjectV1 } from '@happier-dev/triage-protocol/v1';
 
 import { InvestigationAgentActionButtons, type InvestigationAgentActionButtonModel } from '@/components/inbox/detail/InvestigationAgentActionButtons';
@@ -6,6 +7,8 @@ import { InvestigationOutcomeBanner } from '@/components/inbox/detail/Investigat
 import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
+
+import { workflowRunStyles as styles } from './workflowRunStyles';
 
 export type WorkflowRunInvestigationSubject = Extract<TriageFailureSubjectV1, { kind: 'workflowRun' }>;
 
@@ -15,6 +18,11 @@ export function WorkflowRunFailureAgentActions(props: Readonly<{
     testIDPrefix: string;
     /** Whether Investigate leads its card or the card's recovery action does (one filled action per card). */
     emphasis?: 'primary' | 'secondary';
+    /**
+     * The card's other recovery actions, drawn in the same row at their own widths: before Investigate when one of
+     * them leads, after it when Investigate leads.
+     */
+    actions?: React.ReactNode;
 }>) {
     const investigation = useInvestigateFailure(props.subject, { agentActions: 'withDefault' });
     const compact = useDeviceType() === 'phone';
@@ -23,7 +31,7 @@ export function WorkflowRunFailureAgentActions(props: Readonly<{
         launchMode: 'review',
         startable: true,
     }];
-    return <>
+    const investigate = (
         <InvestigationAgentActionButtons
             actions={investigation.actions ?? fallback}
             pending={investigation.pending}
@@ -31,6 +39,15 @@ export function WorkflowRunFailureAgentActions(props: Readonly<{
             {...(props.emphasis === undefined ? {} : { emphasis: props.emphasis })}
             onLaunch={(mode, actionId) => { void investigation.launch(mode, actionId); }}
         />
+    );
+    const leads = props.emphasis !== 'secondary';
+    return <>
+        {props.actions == null ? investigate : (
+            <View style={styles.actions}>
+                {leads ? investigate : props.actions}
+                {leads ? props.actions : investigate}
+            </View>
+        )}
         {investigation.showOutcome && investigation.outcome ? <InvestigationOutcomeBanner
             outcome={investigation.outcome}
             serverId={props.subject.serverId}

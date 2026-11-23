@@ -882,7 +882,7 @@ export const en = {
         keptBody: 'Completed steps are kept. Nothing finished is repeated.',
         choicesOnReconnect: ({ machine }: { machine: string }) => `Recovery choices appear when ${machine} reconnects.`,
         machineUnreachable: ({ machine }: { machine: string }) => `Happier couldn’t reach ${machine}.`,
-        noChoices: 'This step can’t continue here.',
+        noChoices: 'This step can’t be resumed.',
         unconfirmedStop: 'Happier can’t tell whether this step stopped, so it won’t start it again.',
         nextStop: 'Stop the run, then run the workflow again when you’re ready.',
         nextRunAgain: 'Running the workflow again starts a new run.',

@@ -147,7 +147,13 @@ export const REVIEW_AND_CONVERGE_WORKFLOW_V1: WorkflowDefinitionV1 = {
     { name: 'reviewSession', presentation: { title: { key: 'workflows.builtins.reviewAndConverge.inputs.reviewSession', fallback: 'Session to review' } }, valueType: 'json', required: true, inputType: { hostType: 'session' }, defaultFrom: 'origin_session' },
     { name: 'reviewers', valueType: 'json', required: true },
     { name: 'steps', valueType: 'json', required: false },
-    { name: 'then', valueType: 'string', required: false, default: 'report', enum: ['report', 'fix'] },
+    { name: 'then', presentation: {
+      title: { key: 'workflows.builtins.reviewAndConverge.inputs.then', fallback: 'After the review' },
+      optionLabels: {
+        report: { key: 'workflows.builtins.reviewAndConverge.inputs.thenReport', fallback: 'Report findings' },
+        fix: { key: 'workflows.builtins.reviewAndConverge.inputs.thenFix', fallback: 'Fix accepted findings' },
+      },
+    }, valueType: 'string', required: false, default: 'report', enum: ['report', 'fix'] },
     { name: 'focus', presentation: { title: { key: 'workflows.builtins.reviewAndConverge.inputs.focus', fallback: 'What to focus on' } }, valueType: 'string', required: false, default: 'Review the changes made in this session.' },
   ],
   blocks: [{ kind: 'if', id: 'review-composition', name: 'Run the selected Review steps',

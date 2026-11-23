@@ -65,6 +65,7 @@ import { useKeyboardShortcutHandlers } from '@/keyboard';
 import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
+import { joinList } from '@/utils/text/joinList';
 import {
   buildWorkflowRunStartInputs,
   projectWorkflowRunInputFields,
@@ -521,25 +522,34 @@ export function WorkflowRunComposer(
       return;
     initialFocusApplied.current = requestRegisteredComposerFocus(focusRef);
   }, [disabled, focusRef, hasMainInput, presented, props.autoFocusComposer]);
+  // A Team still to choose is one more thing Start needs: it is said in the one readiness line, as "Team needed to
+  // start", beside a missing input ("Request and Team needed to start") or once nothing earlier holds Start.
+  const teamMissing = retained === null && visibility.status === 'ready' && !visibility.resolution.ok;
+  const teamTitle = teamMissing ? t('workflows.start.visibility.team') : null;
+  const missingInput = blocked?.errorCode === 'missing_required_input' ? resolveWorkflowInputTitle(blocked.definition) : null;
+  const neededToStart = missingInput !== null
+    ? joinList(teamTitle === null ? [missingInput] : [missingInput, teamTitle])
+    : null;
+  const earlierReason =
+    !acceptedRepeat && roleDraft.status !== 'ready'
+      ? roleDraft.status === 'failed'
+        ? t('workflows.start.rolesPrefillFailed')
+        : t('common.loading')
+      : definitionIssue !== null
+        ? describeWorkflowCommandBlockedReason({
+            reason: 'definition_invalid',
+            blockingIssue: definitionIssue,
+          })
+        : agentReadinessCause;
+  const needed = neededToStart ?? (blocked === null && earlierReason === null ? teamTitle : null);
   const reason =
     retained !== null
       ? retainedLine
-      : blocked === null
-        ? !acceptedRepeat && roleDraft.status !== 'ready'
-          ? roleDraft.status === 'failed'
-            ? t('workflows.start.rolesPrefillFailed')
-            : t('common.loading')
-          : definitionIssue !== null
-            ? describeWorkflowCommandBlockedReason({
-                reason: 'definition_invalid',
-                blockingIssue: definitionIssue,
-              })
-            : (agentReadinessCause ?? props.startProblem?.message ?? null)
-        : blocked.errorCode === 'missing_required_input'
-          ? t('workflows.start.addToStart', {
-              name: resolveWorkflowInputTitle(blocked.definition),
-            })
-          : t('workflows.issue.invalid_input');
+      : needed !== null
+        ? t('workflows.start.addToStart', { name: needed })
+        : blocked !== null
+          ? t('workflows.issue.invalid_input')
+          : (earlierReason ?? props.startProblem?.message ?? null);
   // Hosted in a composer whose chip names the workflow (New, docked or full page): the chips already say the
   // workflow, its Machine, folder and Agent, so this owner adds only what they don't (owner 08).
   const composerHosted = props.workflowChip !== undefined;
@@ -547,30 +557,26 @@ export function WorkflowRunComposer(
   const readinessOnly =
     retained !== null ||
     agentReadinessCause !== null ||
-    blocked?.errorCode === 'missing_required_input' ||
+    needed !== null ||
     (roleDraft.status === 'loading' && blocked === null);
   // In a hosted composer, what start still needs is the composer's own status line, not a line under it.
-  const blockedMissing = blocked?.errorCode === 'missing_required_input';
+  const neededMarked = retained === null && needed !== null;
   const hostStatusBadges = props.statusBadges;
   const statusBadges = React.useMemo(() => {
     if (!composerHosted || reason === null) return hostStatusBadges;
     const readiness: AgentInputStatusBadge = {
       key: 'workflow-start-readiness', label: reason, testID: `${prefix}-reason`,
       tone: readinessOnly ? 'neutral' : 'warning',
-      ...(blockedMissing ? { icon: (tint: string) => <Icon name="warning" size={ICON_SIZE.xs} color={tint} /> } : {}),
+      ...(neededMarked ? { icon: (tint: string) => <Icon name="warning" size={ICON_SIZE.xs} color={tint} /> } : {}),
     };
     return [...(hostStatusBadges ?? []), readiness];
-  }, [blockedMissing, composerHosted, hostStatusBadges, prefix, readinessOnly, reason]);
+  }, [neededMarked, composerHosted, hostStatusBadges, prefix, readinessOnly, reason]);
   const visibilityHint =
-    retained !== null
+    retained !== null || visibility.status === 'ready'
       ? undefined
-      : visibility.status !== 'ready'
-        ? visibility.status === 'failed'
-          ? t('workflows.start.visibility.loadFailed')
-          : t('common.loading')
-        : !visibility.resolution.ok
-          ? t('workflows.start.visibility.chooseTeam')
-          : undefined;
+      : visibility.status === 'failed'
+        ? t('workflows.start.visibility.loadFailed')
+        : t('common.loading');
   const changeText = React.useCallback(
     (name: string, text: string) => {
       // Raw buffers survive intermediate numbers and malformed JSON. Only FIN parses them.
@@ -1137,10 +1143,6 @@ export function WorkflowRunComposer(
                   />
                 ) : null}
               </View>
-            ) : !visibility.resolution.ok ? (
-              <Text style={styles.readinessText}>
-                {t('workflows.start.visibility.chooseTeam')}
-              </Text>
             ) : null}
             {reason === null || composerHosted ? null : (
               <View
@@ -1150,7 +1152,7 @@ export function WorkflowRunComposer(
                   ? {}
                   : { accessibilityRole: 'alert' as const })}
               >
-                {blocked?.errorCode === 'missing_required_input' ? (
+                {neededMarked ? (
                   <Icon
                     name="warning"
                     size={ICON_SIZE.xs}
@@ -1160,7 +1162,7 @@ export function WorkflowRunComposer(
                 <Text
                   testID={`${prefix}-reason-text`}
                   style={
-                    retained !== null || (readinessOnly && blocked !== null)
+                    retained !== null || (readinessOnly && neededMarked)
                       ? styles.readinessText
                       : readinessOnly
                         ? styles.secondary
@@ -1344,21 +1346,16 @@ export function WorkflowRunInputs(
                     valueType: definition.valueType,
                     errorCode: field.errorCode,
                   });
+            // A choice or yes/no control already shows its default selected, so only a field that cannot show it says it.
+            const controlShowsDefault = isWorkflowChoiceInput(definition) || definition.valueType === 'boolean';
             const state =
               props.values[definition.name] === undefined &&
               props.rawTextValues[definition.name] === undefined
                 ? definition.default === undefined
                   ? t('workflows.start.optional')
-                  : t('workflows.start.defaultValue', {
-                      value:
-                        typeof definition.default === 'boolean'
-                          ? // A yes/no default reads in the words of its own choice, never as `true`/`false`.
-                            t(definition.default ? 'common.yes' : 'common.no')
-                          : typeof definition.default === 'string'
-                            ? (hint.options?.find(option => option.value === definition.default)?.label
-                                ?? formatWorkflowInputValue(definition.default))
-                            : formatWorkflowInputValue(definition.default),
-                    })
+                  : controlShowsDefault
+                    ? definition.description
+                    : t('workflows.start.defaultValue', { value: formatWorkflowInputValue(definition.default) })
                 : definition.description;
             if (isWorkflowChoiceInput(definition)) {
               const options = resolveOptions(hint);

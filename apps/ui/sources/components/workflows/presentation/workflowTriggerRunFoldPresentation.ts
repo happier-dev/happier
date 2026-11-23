@@ -9,7 +9,7 @@ import type {
 
 import { t, tLoose } from '@/text';
 
-import { describeWorkflowRunState } from './workflowLifecyclePresentation';
+import { describeWorkflowRunState, type WorkflowRunStatePresentation } from './workflowLifecyclePresentation';
 import { formatTriggerSummary } from '../triggers/formatTriggerSummary';
 
 type AutomationRunCause = NonNullable<
@@ -47,6 +47,8 @@ export type WorkflowTriggerRunFoldPresentation = Readonly<{
   workflowName: string | null;
   /** What started the run ("on turn end"), when it was a trigger. */
   trigger: string | null;
+  /** The run's state from the one run-state presenter; the header draws its mark when the run failed. */
+  runState: WorkflowRunStatePresentation | null;
 }>;
 
 type LoopOutcome =
@@ -109,17 +111,20 @@ export function describeWorkflowTriggerRunFold(
       : workflowName;
   const outcome =
     input.run?.state === 'succeeded' ? readLoopOutcome(input.result) : null;
-  const stateWord = input.run
+  const runState = input.run
     ? describeWorkflowRunState(input.run.state, {
         workflowCustodyState: input.run.workflowCustodyState,
-      }).label
+      })
     : null;
+  const stateWord = runState?.label ?? null;
   // One anatomy for every fold: "{n} turns · {outcome}". No turns yet is not a fact worth saying.
   const turns = input.turnCount > 0 ? t('workflows.triggerRunFold.turns', { count: input.turnCount }) : null;
   const line = (...parts: readonly (string | null)[]) => parts.filter((part): part is string => part !== null && part !== '');
 
-  if (entry?.id === 'builtin:keep-going') {
-    const said =
+  // A built-in's own verb claims work that happened ("Kept going", "Reviewed"): it is said only when the run
+  // recorded that work. A run that ended before any of it reads as its name and state, like any workflow.
+  if (entry?.id === 'builtin:keep-going' && (outcome !== null || turns !== null)) {
+    const said: string | null =
       outcome === null
         ? stateWord
         : outcome.kind === 'exhausted'
@@ -147,24 +152,23 @@ export function describeWorkflowTriggerRunFold(
       icon: entry.icon,
       workflowName,
       trigger,
+      runState,
     };
   }
-  if (entry?.id === 'builtin:review-and-converge') {
+  if (entry?.id === 'builtin:review-and-converge' && outcome !== null) {
     // Its origin-session turns are the "Verify in this session" steps, which run before every round but the first.
     const said =
-      outcome === null
-        ? stateWord
-        : outcome.kind === 'exhausted'
-          ? t('workflows.triggerRunFold.reviewDidNotConverge', {
-              count: outcome.rounds,
+      outcome.kind === 'exhausted'
+        ? t('workflows.triggerRunFold.reviewDidNotConverge', {
+            count: outcome.rounds,
+          })
+        : outcome.arm === 0
+          ? t('workflows.triggerRunFold.convergedInRounds', {
+              count: input.turnCount + 1,
             })
-          : outcome.arm === 0
-            ? t('workflows.triggerRunFold.convergedInRounds', {
-                count: input.turnCount + 1,
-              })
-            : outcome.arm === 1
-              ? t('workflows.triggerRunFold.findingsReported')
-              : stateWord;
+          : outcome.arm === 1
+            ? t('workflows.triggerRunFold.findingsReported')
+            : stateWord;
     return {
       verb: t('workflows.triggerRunFold.reviewed'),
       details: said ? [said] : [],
@@ -172,6 +176,7 @@ export function describeWorkflowTriggerRunFold(
       icon: entry.icon,
       workflowName,
       trigger,
+      runState,
     };
   }
   return {
@@ -181,6 +186,7 @@ export function describeWorkflowTriggerRunFold(
     icon: entry?.icon ?? null,
     workflowName,
     trigger,
+    runState,
   };
 }
 

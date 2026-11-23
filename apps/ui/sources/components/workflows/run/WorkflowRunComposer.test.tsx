@@ -66,7 +66,7 @@ vi.mock('react-native-unistyles', async () => {
 });
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key, params) => key.startsWith('machineRequester.') && params
+    return createTextModuleMock({ translate: (key, params) => (key.startsWith('machineRequester.') || key === 'workflows.start.addToStart') && params
         ? `${key}:${JSON.stringify(params)}` : key });
 });
 
@@ -425,6 +425,33 @@ describe('workflow composer admission', () => {
         await screen.pressByTestIdAsync('workflow-run-inputs-run');
         expect(onRun).toHaveBeenCalledWith(undefined, [], 'team-a');
     });
+    it('says a Team still to choose in the one readiness row, after a missing input (M2)', async () => {
+        await offerTeams(['team-a', 'team-b']);
+        home.answer(appliedHome.serverId, '/v1/artifacts/saved-workflow/access/grants', { body: ArtifactAccessGrantsListResponseV1Schema.parse({ artifactId: 'saved-workflow', ownerAccountId: 'account-a', access: 'owner',
+            grants: ['team-a', 'team-b'].map(teamId => ({ principal: { kind: 'team', teamId }, accessLevel: 'edit',
+                createdByAccountId: 'account-a', createdAt: 1, display: { name: teamId } })) }) });
+        const request: WorkflowInputDefinition = { name: 'request', valueType: 'string', required: true };
+        const onRun = vi.fn();
+        const render = (values: Record<string, string>, teamId?: string) => <WorkflowRunComposer sourceArtifactId="saved-workflow"
+            definition={createWorkflowDefinitionFixture({ inputs: [request], defaults: STARTABLE_DEFAULTS })} inputs={[request]} values={values}
+            visibleTeamId={teamId} onChangeVisibleTeamId={() => {}}
+            onChangeValues={() => {}} onRun={onRun} onCancel={() => {}} />;
+        const reasonText = () => screen.findByTestId('workflow-run-inputs-reason-text')?.props.children;
+        const screen = await renderScreen(render({}));
+        // Both missing: one row, the input first, then the Team.
+        await waitForHomeGovernance(() => expect(reasonText()).toBe('workflows.start.addToStart:{"name":"Request and workflows.start.visibility.team"}'));
+        expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(true);
+        expect(screen.getTextContent()).not.toContain('workflows.start.visibility.chooseTeam:');
+        // The input given: the Team is what Start still needs, in the same row.
+        await screen.update(render({ request: 'Plan the release' }));
+        await waitForHomeGovernance(() => expect(reasonText()).toBe('workflows.start.addToStart:{"name":"workflows.start.visibility.team"}'));
+        expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(true);
+        // A Team chosen clears the row and opens Start.
+        await screen.update(render({ request: 'Plan the release' }, 'team-b'));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
+        expect(screen.findByTestId('workflow-run-inputs-reason')).toBeNull();
+        await screen.unmount();
+    });
     it('excludes an unreadable Team even when the caller can use its Artifact', async () => {
         await offerTeams(['team-a']);
         const artifact = home.artifacts(appliedHome.serverId).read('saved-workflow');
@@ -526,7 +553,7 @@ describe('workflow composer admission', () => {
     });
     it.each([false, true])('prefills only the starter’s newest accepted run of the saved workflow (contextual=%s)', async contextual => {
         const roleOverrides = [{ roleId: 'builder', workspaceWrites: 'deny' as const }];
-        const definition = createWorkflowDefinitionFixture({ defaults: { engine: { role: 'builder' } } });
+        const definition = createWorkflowDefinitionFixture({ defaults: { roleId: 'builder' } });
         const materialized = await materializeWorkflowAcceptedSnapshotV1({ definition, roleOverrides,
             roleSelection: { defaultEngine: { agentTargetKey: 'agent:happier.agent.claude/claude' } },
             admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true },
@@ -603,7 +630,7 @@ describe('workflow composer admission', () => {
         expect(onRun).toHaveBeenCalledWith(undefined, roleOverrides);
     });
     it('offers Roles for this run for workflows that use a role', async () => {
-        const definition = createWorkflowDefinitionFixture({ defaults: { engine: { role: 'builder' } } });
+        const definition = createWorkflowDefinitionFixture({ defaults: { roleId: 'builder' } });
         const screen = await renderScreen(<WorkflowRunComposer inputs={[]} values={{}}
             onChangeValues={() => {}} onRun={() => {}} onCancel={() => {}} definition={definition} />);
         expect(screen.findByTestId('workflow-run-inputs-roles-chip')).not.toBeNull();

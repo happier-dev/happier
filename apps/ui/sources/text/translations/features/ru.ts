@@ -19473,7 +19473,7 @@ const en = Shared_workflowBuiltinTranslations.en;
 
 const ru: WorkflowBuiltinTranslations = {
     keepGoing: { title: 'Продолжать до готовности', description: 'Продолжает, пока цель не достигнута' },
-    reviewAndConverge: { title: 'Проверить и свести', description: 'Проверять, пока рецензенты не согласятся', apply: 'Применить', verifyAndFix: 'Проверить и исправить', verifyOnly: 'Только проверить', rounds: 'Раунды до остановки', inputs: { engines: "Рецензенты", reviewSession: "Сессия для проверки", useJudge: "Пусть судья разрешает споры", focus: "На чём сосредоточиться" } },
+    reviewAndConverge: { title: 'Проверить и свести', description: 'Проверять, пока рецензенты не согласятся', apply: 'Применить', verifyAndFix: 'Проверить и исправить', verifyOnly: 'Только проверить', rounds: 'Раунды до остановки', inputs: { engines: "Рецензенты", reviewSession: "Сессия для проверки", useJudge: "Пусть судья разрешает споры", focus: "На чём сосредоточиться", then: "После проверки", thenReport: "Передать замечания", thenFix: "Исправить принятые замечания" } },
     planWithAPanel: { title: "Панель", description: 'Несколько агентов планируют параллельно, затем план ждёт вашей проверки.', inputs: { request: 'Запрос', requestPlaceholder: 'Что должна спланировать панель?', engines: 'Планировщики' } },
     parallelImplementations: en.parallelImplementations,
     freshOpinions: { title: 'Независимые мнения', description: 'Независимые ответы на один вопрос с необязательным обобщением.' },
@@ -19824,7 +19824,7 @@ return { workflowPluginTranslations };
 const Domain_workflowRunVisibilityTranslations = (() => {
 type VisibilityCopy = Shared_workflowRunVisibilityTranslations.VisibilityCopy;
 
-const workflowRunVisibilityTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', VisibilityCopy>, "ru"> = { ru: { title: "Видимость", chooseTeam: "Выберите команду", loadFailed: "Не удалось проверить, кто может видеть этот запуск", machines: "Выполняется на ваших машинах", transcripts: "Участники команды могут просматривать разговоры шагов.", requiredSessionsEditable: "Участники этой команды могут редактировать её сессии", visibleTo: ({ team }) => "Видно команде " + team } };
+const workflowRunVisibilityTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', VisibilityCopy>, "ru"> = { ru: { title: "Видимость", chooseTeam: "Выберите команду", team: "Команда", loadFailed: "Не удалось проверить, кто может видеть этот запуск", machines: "Выполняется на ваших машинах", transcripts: "Участники команды могут просматривать разговоры шагов.", requiredSessionsEditable: "Участники этой команды могут редактировать её сессии", visibleTo: ({ team }) => "Видно команде " + team } };
 
 return { workflowRunVisibilityTranslations };
 })();
@@ -21310,7 +21310,7 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         keptBody: 'Завершённые шаги сохраняются. Ничего завершённого не повторяется.',
         choicesOnReconnect: ({ machine }: { machine: string }) => `Варианты восстановления появятся, когда ${machine} снова подключится.`,
         machineUnreachable: ({ machine }: { machine: string }) => `Happier не удалось связаться с ${machine}.`,
-        noChoices: 'Этот шаг нельзя продолжить отсюда.',
+        noChoices: 'Этот шаг нельзя возобновить.',
         unconfirmedStop: 'Happier не может определить, остановился ли этот шаг, поэтому не запустит его снова.',
         nextStop: 'Остановите запуск, а затем снова запустите workflow, когда будете готовы.',
         nextRunAgain: 'Повторный запуск workflow начинает новый запуск.',

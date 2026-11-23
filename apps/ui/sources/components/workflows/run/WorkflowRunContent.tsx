@@ -1729,7 +1729,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     // that action instead of ending on what cannot be done.
     const noChoicesNext: WorkflowInvocationDetailProps['noChoicesNext'] =
         props.run.availability.cancel && props.onCancel !== undefined ? 'stop'
-            : props.onRunAgain !== undefined ? 'run_again'
+            // The same replay the card offers as its button, so the card never says "run it again" without one.
+            : onRunAgain !== undefined ? 'run_again'
                 : props.sourceAction ? 'open_workflow' : null;
     const detailProps = React.useMemo((): WorkflowSelectedDetailInput | null => (
         props.selectedInvocationId === null ? null : {

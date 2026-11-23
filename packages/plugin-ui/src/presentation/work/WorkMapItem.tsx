@@ -10,13 +10,17 @@ import { useHappierMaterialColorResolver } from '../layout/Surface.js';
 
 /**
  * The open card keeps its own ground and tone and is ringed (lab `.wm-node.on`, `.wm-node.need.on`): a
- * paper gap, then the tone's hue, or the ink while healthy. A grey fill would bury a held step's amber.
+ * paper gap, then a held step's amber, or the ink. A grey fill would bury a held step's amber.
  */
 function selectedCardRing(colors: HappierWorkColors, tone: HappierWorkStatusTone): ViewStyle {
-  // A tone's ring is its card ring strengthened (the hue at 70%), so selection reads as the same hue, not a darker one.
-  const ring = tone === 'attention' ? softenHappierWorkColor(colors.attention.border, 0.7) ?? colors.attention.border
-    : tone === 'danger' ? softenHappierWorkColor(colors.danger.border, 0.7) ?? colors.danger.border : colors.text;
+  // A held step's ring is its card ring strengthened (the hue at 70%), so selection reads as the same hue, not a darker one.
+  const ring = tone === 'attention' ? softenHappierWorkColor(colors.attention.border, 0.7) ?? colors.attention.border : colors.text;
   return { boxShadow: `0 0 0 2px ${colors.surface}, 0 0 0 3.5px ${ring}` };
+}
+
+/** A held card is warmed amber; a failed one stays paper, its failure said by its status glyph alone (red on the glyph only). */
+function cardToneSurface(tone: HappierWorkStatusTone, colors: HappierWorkColors): ViewStyle | null {
+  return tone === 'danger' ? null : resolveHappierWorkStatusSurfaceStyle(tone, colors) as ViewStyle | null;
 }
 
 function detailRole(compact: boolean): HappierWorkTextRole {
@@ -117,7 +121,7 @@ function WorkMapItemView<TNode extends HappierWorkMapNode>(props: Omit<WorkMapIt
       style={({ pressed }) => [
         appearance === 'card' ? styles.card : appearance === 'lane' ? styles.laneCaption : styles.headerRow,
         wrapRow ? styles.rowWrap : null,
-        appearance === 'card' ? resolveHappierWorkStatusSurfaceStyle(tone, theme.colors) as ViewStyle | null : null,
+        appearance === 'card' ? cardToneSurface(tone, theme.colors) : null,
         presentation.muted ? styles.cardMuted : null,
         selected ? appearance === 'card' ? selectedCardRing({ ...theme.colors, surface: surfaceColor }, tone) : styles.rowSelected : null,
         pressed && !disabled ? styles.rowPressed : null,

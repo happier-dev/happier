@@ -19323,7 +19323,7 @@ const en = Shared_workflowBuiltinTranslations.en;
 
 const zhHant: WorkflowBuiltinTranslations = {
     keepGoing: { title: '持續直到完成', description: '持續進行，直到達成目標' },
-    reviewAndConverge: { title: '審查並收斂', description: '審查直到審閱者達成共識', apply: '套用', verifyAndFix: '驗證並修復', verifyOnly: '僅驗證', rounds: '停止前的輪數', inputs: { engines: "審閱者", reviewSession: "要審查的工作階段", useJudge: "由裁判解決分歧", focus: "關注重點" } },
+    reviewAndConverge: { title: '審查並收斂', description: '審查直到審閱者達成共識', apply: '套用', verifyAndFix: '驗證並修復', verifyOnly: '僅驗證', rounds: '停止前的輪數', inputs: { engines: "審閱者", reviewSession: "要審查的工作階段", useJudge: "由裁判解決分歧", focus: "關注重點", then: "審查之後", thenReport: "回報發現", thenFix: "修復已接受的發現" } },
     planWithAPanel: { title: "規劃小組", description: '多個代理並行規劃，然後計畫等待你的審查。', inputs: { request: '請求', requestPlaceholder: '小組應規劃什麼？', engines: '規劃者' } },
     parallelImplementations: en.parallelImplementations,
     freshOpinions: { title: '獨立意見', description: '針對同一問題獨立作答，也可彙整各方回答。' },
@@ -19674,7 +19674,7 @@ return { workflowPluginTranslations };
 const Domain_workflowRunVisibilityTranslations = (() => {
 type VisibilityCopy = Shared_workflowRunVisibilityTranslations.VisibilityCopy;
 
-const workflowRunVisibilityTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', VisibilityCopy>, "zhHant"> = { zhHant: { title: "可見範圍", chooseTeam: "選擇團隊", loadFailed: "無法檢查誰能查看此執行", machines: "在你的機器上執行", transcripts: "團隊成員可以查看步驟對話。", requiredSessionsEditable: "此團隊的成員可以編輯團隊會話", visibleTo: ({ team }) => "可見團隊：" + team } };
+const workflowRunVisibilityTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', VisibilityCopy>, "zhHant"> = { zhHant: { title: "可見範圍", chooseTeam: "選擇團隊", team: "團隊", loadFailed: "無法檢查誰能查看此執行", machines: "在你的機器上執行", transcripts: "團隊成員可以查看步驟對話。", requiredSessionsEditable: "此團隊的成員可以編輯團隊會話", visibleTo: ({ team }) => "可見團隊：" + team } };
 
 return { workflowRunVisibilityTranslations };
 })();
@@ -21160,7 +21160,7 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         keptBody: '已完成的步驟會保留，已完成的工作不會重複。',
         choicesOnReconnect: ({ machine }: { machine: string }) => `${machine} 重新連線後會顯示復原選項。`,
         machineUnreachable: ({ machine }: { machine: string }) => `Happier 無法連線到 ${machine}。`,
-        noChoices: '此步驟無法從這裡繼續。',
+        noChoices: '此步驟無法恢復。',
         unconfirmedStop: 'Happier 無法確認此步驟是否已停止，因此不會再次啟動它。',
         nextStop: '請先停止此次執行，準備好後再重新執行工作流程。',
         nextRunAgain: '再次執行工作流程會開始一次新的執行。',

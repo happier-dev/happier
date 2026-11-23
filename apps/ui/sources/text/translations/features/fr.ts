@@ -19505,7 +19505,7 @@ const en = Shared_workflowBuiltinTranslations.en;
 
 const fr: WorkflowBuiltinTranslations = {
     keepGoing: { title: 'Continuer jusqu’au bout', description: 'Continue jusqu’à atteindre l’objectif' },
-    reviewAndConverge: { title: 'Relire et converger', description: 'Réviser jusqu’à l’accord des relecteurs', apply: 'Appliquer', verifyAndFix: 'Vérifier et corriger', verifyOnly: 'Vérifier uniquement', rounds: 'Tours avant l’arrêt', inputs: { engines: "Relecteurs", reviewSession: "Session à relire", useJudge: "Laisser un juge trancher les désaccords", focus: "Sur quoi se concentrer" } },
+    reviewAndConverge: { title: 'Relire et converger', description: 'Réviser jusqu’à l’accord des relecteurs', apply: 'Appliquer', verifyAndFix: 'Vérifier et corriger', verifyOnly: 'Vérifier uniquement', rounds: 'Tours avant l’arrêt', inputs: { engines: "Relecteurs", reviewSession: "Session à relire", useJudge: "Laisser un juge trancher les désaccords", focus: "Sur quoi se concentrer", then: "Après la relecture", thenReport: "Signaler les constats", thenFix: "Corriger les constats acceptés" } },
     planWithAPanel: { title: "Panel", description: 'Plusieurs agents planifient côte à côte, puis le plan attend ta relecture.', inputs: { request: 'Demande', requestPlaceholder: 'Que doit planifier le panel ?', engines: 'Planificateurs' } },
     parallelImplementations: en.parallelImplementations,
     freshOpinions: { title: 'Avis indépendants', description: 'Des réponses indépendantes à la même question, avec un résumé facultatif.' },
@@ -19856,7 +19856,7 @@ return { workflowPluginTranslations };
 const Domain_workflowRunVisibilityTranslations = (() => {
 type VisibilityCopy = Shared_workflowRunVisibilityTranslations.VisibilityCopy;
 
-const workflowRunVisibilityTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', VisibilityCopy>, "fr"> = { fr: { title: "Visibilité", chooseTeam: "Choisir une équipe", loadFailed: "Impossible de vérifier qui peut voir cette exécution", machines: "S’exécute sur tes machines", transcripts: "Les membres de l’équipe peuvent voir les conversations des étapes.", requiredSessionsEditable: "Les sessions de cette équipe sont modifiables par ses membres", visibleTo: ({ team }) => "Visible par " + team } };
+const workflowRunVisibilityTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', VisibilityCopy>, "fr"> = { fr: { title: "Visibilité", chooseTeam: "Choisir une équipe", team: "Équipe", loadFailed: "Impossible de vérifier qui peut voir cette exécution", machines: "S’exécute sur tes machines", transcripts: "Les membres de l’équipe peuvent voir les conversations des étapes.", requiredSessionsEditable: "Les sessions de cette équipe sont modifiables par ses membres", visibleTo: ({ team }) => "Visible par " + team } };
 
 return { workflowRunVisibilityTranslations };
 })();
@@ -21342,7 +21342,7 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
         keptBody: 'Les étapes terminées sont conservées. Rien de ce qui est fini n’est répété.',
         choicesOnReconnect: ({ machine }: { machine: string }) => `Les options de reprise apparaîtront quand ${machine} se reconnectera.`,
         machineUnreachable: ({ machine }: { machine: string }) => `Happier n’a pas pu joindre ${machine}.`,
-        noChoices: 'Cette étape ne peut pas être poursuivie d’ici.',
+        noChoices: 'Cette étape ne peut pas être reprise.',
         unconfirmedStop: 'Happier ne peut pas savoir si cette étape s’est arrêtée, donc il ne la relancera pas.',
         nextStop: 'Arrêtez l’exécution, puis relancez le workflow quand vous êtes prêt.',
         nextRunAgain: 'Relancer le workflow démarre une nouvelle exécution.',

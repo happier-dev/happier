@@ -39,6 +39,21 @@ describe('trigger-run fold presentation (07 S15)', () => {
         expect(review({ kind: 'exhausted', rounds: 3 }).details).toEqual(['workflows.triggerRunFold.reviewDidNotConverge:{"count":3}']);
     });
 
+    it('says "Reviewed" only for a recorded outcome; a failed or running review reads as its name and state (M1)', () => {
+        const review = (state: 'failed' | 'running') => settled(undefined, { catalogRef: 'builtin:review-and-converge', turnCount: 0,
+            run: { state, workflowCustodyState: state === 'failed' ? 'settled' : null } });
+        const failed = review('failed');
+        expect(failed).toMatchObject({ verb: 'workflows.builtins.reviewAndConverge.title', details: ['workflows.runState.failed'],
+            meta: 'workflows.triggers.kind.turnEnds', icon: 'shield-check' });
+        // The failure is said by the one run-state presenter, which the header draws as the failed mark.
+        expect(failed.runState).toMatchObject({ state: 'failed', variant: 'danger' });
+        expect(review('running')).toMatchObject({ verb: 'workflows.builtins.reviewAndConverge.title', details: ['workflows.runState.running'] });
+        // Keep going says it kept going only once it wrote a turn or recorded an outcome.
+        expect(settled(undefined, { turnCount: 0, run: { state: 'failed', workflowCustodyState: 'settled' } }).verb)
+            .toBe('workflows.builtins.keepGoing.title');
+        expect(settled(undefined, { run: { state: 'failed', workflowCustodyState: 'settled' } }).verb).toBe('workflows.triggerRunFold.keptGoing');
+    });
+
     it('names any other workflow by its own title and reads live or unread runs from the run state word', () => {
         const custom = settled(undefined, { catalogRef: null, workflowTitle: 'Nightly triage', run: { state: 'running', workflowCustodyState: null } });
         expect(custom).toMatchObject({ verb: 'Nightly triage', icon: null });

@@ -113,6 +113,21 @@ describe('workflow composer accessibility', () => {
         expect(input?.props.placeholder).toBe('What should the panel plan?');
         expect(input?.props.accessibilityLabel).toBe('Request');
     });
+    it('names Review changes’ After the review choices by their labels and says a default only where the field cannot show it (M3, P3)', async () => {
+        const { definition } = resolveBuiltinWorkflowDefinitionV1('review-and-converge')!;
+        const then = definition.inputs.find(input => input.name === 'then')!;
+        const screen = await renderScreen(<WorkflowRunComposer
+            inputs={[then, { name: 'limit', valueType: 'number', required: false, default: 3 }]}
+            values={{}} onChangeValues={() => {}} onRun={() => {}} onCancel={() => {}} />);
+        await screen.pressByTestIdAsync('workflow-run-inputs-inputs-chip');
+        const text = screen.getTextContent();
+        expect(text).toContain('After the review');
+        // The control shows its selected default by its label, never the raw value.
+        expect(text).toContain('Report findings');
+        expect(text).not.toMatch(/\breport\b/);
+        // The choice shows its default selected; only the number field, which can't, says its default.
+        expect(text.split('workflows.start.defaultValue').length - 1).toBe(1);
+    });
     it('closes through its presenter rather than a separate Cancel row', async () => {
         const screen = await mount();
         expect(screen.findByTestId('workflow-run-inputs-cancel')).toBeNull();

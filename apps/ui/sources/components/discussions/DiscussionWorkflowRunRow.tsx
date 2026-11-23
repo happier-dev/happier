@@ -255,7 +255,7 @@ function DiscussionWorkflowRunHeader(props: DiscussionWorkflowRunProps & Readonl
   }, [router, runId, serverId]);
   const line = useRunLine(props);
   const presentation = React.useMemo(() => ({ verb: line.verb, details: line.details,
-    meta: null, icon: null, workflowName: null, trigger: null }), [line]);
+    meta: null, icon: null, workflowName: null, trigger: null, runState: line.lifecycle }), [line]);
   return (
     <View style={[styles.outer, column]} testID={`discussion-workflow-run:${runId}`}>
       <View style={styles.container}>
@@ -378,7 +378,7 @@ export function DiscussionWorkflowRoundRow(props: Readonly<{
         disclosure={{ expanded: disclosed, headerProps }}
         presentation={{ verb: t('workflows.run.occurrenceRound', { number: String(props.round.index + 1) }),
           details: [t('session.collaboration.discussion.workflowRound.speakers', { count: props.round.speakerCount })],
-          meta: null, icon: null, workflowName: null, trigger: null }} onOpen={null} /></View></View>}
+          meta: null, icon: null, workflowName: null, trigger: null, runState: null }} onOpen={null} /></View></View>}
     ><TranscriptContentDemandProvider enabled={expanded}>{props.children}</TranscriptContentDemandProvider></ExpandableItem>
     {!expanded ? props.digest : null}
     {names || props.round.allPassed ? <View style={[styles.outer, column]}><View style={styles.endContainer}>

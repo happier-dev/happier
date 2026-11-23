@@ -356,6 +356,30 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
         : offeredChoices.length > 0 ? 'choice'
             : remedy !== null ? 'remedy'
                 : runAgainShown && recovery.repairGuidance == null ? 'runAgain' : 'investigate';
+    const investigationSubject = props.investigationSubject && (failureCause !== null || props.lifecycle === 'failed'
+        || props.lifecycle === 'outcome_uncertain') ? props.investigationSubject : null;
+    const recoveryActions = runAgainShown || remedy !== null ? (
+        <>
+            {remedy !== null ? (
+                <RoundButton
+                    testID={`${testIDPrefix}-recovery-remedy-${remedy}`}
+                    size="small"
+                    display={paneLead === 'remedy' ? 'default' : 'secondary'}
+                    title={formatWorkflowFailureRemedyLabel(remedy)}
+                    onPress={() => props.onOpenMachineRemedy?.(remedy)}
+                />
+            ) : null}
+            {runAgainShown ? (
+                <RoundButton
+                    testID={`${testIDPrefix}-recovery-run-again`}
+                    size="small"
+                    display={paneLead === 'runAgain' ? 'default' : 'secondary'}
+                    title={t('workflows.run.runAgain')}
+                    onPress={props.onRunAgain}
+                />
+            ) : null}
+        </>
+    ) : null;
     const choiceDisplay = (choice: (typeof offeredChoices)[number]) =>
         paneLead === 'choice' && offeredChoices[0] === choice ? 'default' : 'secondary';
     const noChoicesLine = !noChoices ? null : waitLine ?? resolveNoChoicesLine(runAgainShown ? null : props.noChoicesNext ?? null);
@@ -500,13 +524,6 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                                 <Text testID={`${testIDPrefix}-runtime-issue-reset`} style={styles.provenance}>
                                     {failureCause.reset}
                                 </Text>
-                            </SectionContentRow>
-                        ) : null}
-                        {props.investigationSubject && (failureCause !== null || props.lifecycle === 'failed'
-                            || props.lifecycle === 'outcome_uncertain') ? (
-                            <SectionContentRow>
-                                <WorkflowRunFailureAgentActions subject={props.investigationSubject} testIDPrefix={testIDPrefix}
-                                    emphasis={paneLead === 'investigate' ? 'primary' : 'secondary'} />
                             </SectionContentRow>
                         ) : null}
                         {recovery.remainingNotStartedSiblingCount === null
@@ -825,29 +842,15 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                                 )}
                             />
                         ) : null}
-                        {runAgainShown || remedy !== null ? (
+                        {investigationSubject !== null ? (
+                            // Investigate and the card's recovery actions share one row, the leading one first (FIN-DESIGN-ACCEPT-9 P4).
                             <SectionContentRow>
-                                <View style={styles.actions}>
-                                    {remedy !== null ? (
-                                        <RoundButton
-                                            testID={`${testIDPrefix}-recovery-remedy-${remedy}`}
-                                            size="small"
-                                            display={paneLead === 'remedy' ? 'default' : 'secondary'}
-                                            title={formatWorkflowFailureRemedyLabel(remedy)}
-                                            onPress={() => props.onOpenMachineRemedy?.(remedy)}
-                                        />
-                                    ) : null}
-                                    {runAgainShown ? (
-                                        <RoundButton
-                                            testID={`${testIDPrefix}-recovery-run-again`}
-                                            size="small"
-                                            display={paneLead === 'runAgain' ? 'default' : 'secondary'}
-                                            title={t('workflows.run.runAgain')}
-                                            onPress={props.onRunAgain}
-                                        />
-                                    ) : null}
-                                </View>
+                                <WorkflowRunFailureAgentActions subject={investigationSubject} testIDPrefix={testIDPrefix}
+                                    emphasis={paneLead === 'investigate' ? 'primary' : 'secondary'}
+                                    actions={recoveryActions} />
                             </SectionContentRow>
+                        ) : recoveryActions !== null ? (
+                            <SectionContentRow><View style={styles.actions}>{recoveryActions}</View></SectionContentRow>
                         ) : null}
                         {failureDetails === undefined || !showRecoveryCard ? null : (
                             <CountedDisclosureItem

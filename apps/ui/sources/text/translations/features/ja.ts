@@ -19383,7 +19383,7 @@ const en = Shared_workflowBuiltinTranslations.en;
 
 const ja: WorkflowBuiltinTranslations = {
     keepGoing: { title: '完了まで続ける', description: '目標を達成するまで続けます' },
-    reviewAndConverge: { title: 'レビューして収束', description: 'レビュアーが合意するまでレビュー', apply: '適用', verifyAndFix: '検証して修正', verifyOnly: '検証のみ', rounds: '停止までのラウンド数', inputs: { engines: "レビュアー", reviewSession: "レビューするセッション", useJudge: "意見が割れたら審判に判定してもらう", focus: "重点を置く点" } },
+    reviewAndConverge: { title: 'レビューして収束', description: 'レビュアーが合意するまでレビュー', apply: '適用', verifyAndFix: '検証して修正', verifyOnly: '検証のみ', rounds: '停止までのラウンド数', inputs: { engines: "レビュアー", reviewSession: "レビューするセッション", useJudge: "意見が割れたら審判に判定してもらう", focus: "重点を置く点", then: "レビューの後", thenReport: "指摘を報告", thenFix: "承認された指摘を修正" } },
     planWithAPanel: { title: "パネル", description: '複数のエージェントが並行して計画し、計画はあなたのレビューを待ちます。', inputs: { request: '依頼内容', requestPlaceholder: 'パネルに何を計画させますか？', engines: '計画するエージェント' } },
     parallelImplementations: en.parallelImplementations,
     freshOpinions: { title: '独立した意見', description: '同じ質問にそれぞれ独立して回答します。必要に応じて要約も作成します。' },
@@ -19734,7 +19734,7 @@ return { workflowPluginTranslations };
 const Domain_workflowRunVisibilityTranslations = (() => {
 type VisibilityCopy = Shared_workflowRunVisibilityTranslations.VisibilityCopy;
 
-const workflowRunVisibilityTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', VisibilityCopy>, "ja"> = { ja: { title: "公開範囲", chooseTeam: "チームを選択", loadFailed: "この実行を閲覧できる人を確認できませんでした", machines: "あなたのマシンで実行します", transcripts: "チームメンバーは各ステップの会話を閲覧できます。", requiredSessionsEditable: "このチームのセッションはメンバーが編集できます", visibleTo: ({ team }) => "閲覧可能なチーム：" + team } };
+const workflowRunVisibilityTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', VisibilityCopy>, "ja"> = { ja: { title: "公開範囲", chooseTeam: "チームを選択", team: "チーム", loadFailed: "この実行を閲覧できる人を確認できませんでした", machines: "あなたのマシンで実行します", transcripts: "チームメンバーは各ステップの会話を閲覧できます。", requiredSessionsEditable: "このチームのセッションはメンバーが編集できます", visibleTo: ({ team }) => "閲覧可能なチーム：" + team } };
 
 return { workflowRunVisibilityTranslations };
 })();
@@ -21220,7 +21220,7 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         keptBody: '完了したステップはそのまま残り、終わった作業は繰り返されません。',
         choicesOnReconnect: ({ machine }: { machine: string }) => `${machine} が再接続すると、復旧の選択肢が表示されます。`,
         machineUnreachable: ({ machine }: { machine: string }) => `Happier は ${machine} に接続できませんでした。`,
-        noChoices: 'このステップはここからは続行できません。',
+        noChoices: 'このステップは再開できません。',
         unconfirmedStop: 'このステップが停止したか Happier では確認できないため、再開しません。',
         nextStop: '実行を停止してから、準備ができたらワークフローをもう一度実行してください。',
         nextRunAgain: 'ワークフローをもう一度実行すると、新しい実行が始まります。',

@@ -3505,6 +3505,11 @@ describe('WorkflowRunContent', () => {
       .toBe('workflows.recovery.noChoices');
     await lastScreen!.pressByTestIdAsync('workflow-run-recovery-run-again');
     expect(onRunAgain).toHaveBeenCalledOnce();
+    // While the Run's outcome is still being read the card offers no Run again, so it doesn't say to run it again either.
+    expect(await render({ run: createWorkflowRunSummaryFixture({ state: 'failed', availability: { cancel: false } as never }),
+      onRunAgain, firstFailedInvocationResolution: 'loading' }))
+      .toBe('workflows.recovery.noChoices');
+    expect(lastScreen!.findByTestId('workflow-run-recovery-run-again')).toBeNull();
     // A real preparation refusal can carry target_unavailable before any input was admitted.
     // Its exact recovery owner must not be contradicted by an uncertain-stop explanation.
     expect(await render({

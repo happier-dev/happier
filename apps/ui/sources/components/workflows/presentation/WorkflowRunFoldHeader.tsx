@@ -14,6 +14,7 @@ import { resolveThemeHairlineBorderStyle } from '@/components/ui/surfaces/resolv
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { WorkflowBuiltinMark } from './WorkflowBuiltinMark';
+import { WorkflowRunStateMark } from './WorkflowLifecycleStatus';
 import type { WorkflowTriggerRunFoldPresentation } from './workflowTriggerRunFoldPresentation';
 
 const HOST: HappierWorkflowRunFoldHeaderHost = {
@@ -37,10 +38,13 @@ export function WorkflowRunFoldHeader(props: Readonly<{
     space: theme.space,
     borderRadius: theme.borderRadius,
   }), [theme]);
-  const icon = props.presentation.icon;
+  const { icon, runState } = props.presentation;
+  // A failed run leads with the shared failed-state mark, the one place its colour speaks; the state word stays ink.
   return <HappierWorkflowRunFoldHeader {...props} theme={foldTheme} host={HOST}
     openLabel={t('workflows.run.open')}
-    leading={icon
-      ? <WorkflowBuiltinMark icon={icon} size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
-      : <Icon name="tree-structure" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />} />;
+    leading={runState?.variant === 'danger'
+      ? <WorkflowRunStateMark presentation={runState} size={ICON_SIZE.xs} />
+      : icon
+        ? <WorkflowBuiltinMark icon={icon} size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
+        : <Icon name="tree-structure" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />} />;
 }
