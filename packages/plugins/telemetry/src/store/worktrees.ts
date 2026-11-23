@@ -7,12 +7,13 @@ export const worktreeMigration: DaemonDatabaseMigration = { version: 6, id: 'wor
  await tx.execute('CREATE INDEX captureWorktreeRoot ON captureWorktrees(physicalRoot,worktree)');
 } };
 
+export async function writeCaptureWorktree(db: DaemonDatabase, worktree: string, physicalRoot: string) {
+ await db.execute('INSERT INTO captureWorktrees (worktree,physicalRoot) VALUES (?,?) ON CONFLICT(worktree) DO UPDATE SET physicalRoot=excluded.physicalRoot WHERE physicalRoot != excluded.physicalRoot', [worktree, physicalRoot]);
+}
+
 export function createCaptureWorktrees(db: DaemonDatabase,
  queryPage: <T extends DaemonDatabaseRow>(statement: string, params: readonly DaemonDatabaseValue[], requested: number) => Promise<{ rows: readonly T[]; pageSize: number }>) {
  return {
-  async rememberWorktree(worktree: string, physicalRoot: string) {
-   await db.execute('INSERT INTO captureWorktrees (worktree,physicalRoot) VALUES (?,?) ON CONFLICT(worktree) DO UPDATE SET physicalRoot=excluded.physicalRoot WHERE physicalRoot != excluded.physicalRoot', [worktree, physicalRoot]);
-  },
   async worktreePartitions(physicalRoot: string): Promise<string[]> {
    const result: string[] = [];
    let after = '';

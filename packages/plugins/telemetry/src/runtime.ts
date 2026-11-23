@@ -11,7 +11,7 @@ import type { IncomingMessage } from 'node:http';
 import type { WireObservation } from './wire/tracker.js';
 
 /** `capabilities` are the Environment's opt-ins, admitted once with the exporter token. */
-export type CapturePartition = Readonly<{ partition: string; capabilities?: DeploymentTelemetryAssignmentV1['capabilities'] }>;
+export type CapturePartition = Readonly<{ partition: string; physicalRootIdentity?: string; capabilities?: DeploymentTelemetryAssignmentV1['capabilities'] }>;
 
 function exceptionEvent(input: Readonly<{ id: string; context: CapturePartition; origin: 'span' | 'log';
  resource: NormalizedResourceIdentity; exception: NormalizedException; traceId?: string; spanId?: string }>): CaptureExceptionEvent {
@@ -40,6 +40,7 @@ export function createCaptureRuntime(input: {
    kind: 'metric' as const, source: 'otlp' as const, at: Number(BigInt(metric.timeUnixNano) / 1_000_000n), metric })),
   ...batch.spans.map(span => ({
    id: `span:${span.traceId}:${span.spanId}`, worktree: context.partition, kind: span.database ? 'query' as const : 'span' as const, source: 'otlp' as const,
+   physicalRootIdentity: context.physicalRootIdentity,
    at: Number(BigInt(span.startTimeUnixNano) / 1_000_000n), traceId: span.traceId, spanId: span.spanId,
    shape: span.database?.shape, durationMs: span.durationMs, outcome: span.status,
    parentSpanId: span.parentSpanId, spanKind: span.kind, serviceName: span.serviceName, serviceVersion: span.serviceVersion,
@@ -57,6 +58,7 @@ export function createCaptureRuntime(input: {
    id: `exception:log:${log.recordUid ?? randomUUID()}`, context, origin: 'log', resource: log, exception: log.exception,
    traceId: log.traceId, spanId: log.spanId })] : []) : []),
   ...batch.logs.map(log => ({ id: randomUUID(), worktree: context.partition, kind: 'log' as const, source: 'otlp' as const,
+   physicalRootIdentity: context.physicalRootIdentity,
    at: Number(BigInt(log.timeUnixNano !== '0' ? log.timeUnixNano : log.observedTimeUnixNano) / 1_000_000n), traceId: log.traceId, spanId: log.spanId,
    serviceName: log.serviceName, severityNumber: log.severityNumber,
    detail: { log: log.exception ? (({ exception: _exception, ...rest }) => rest)(log) : log },
@@ -64,9 +66,6 @@ export function createCaptureRuntime(input: {
  ];
  return {
   store, ingest,
-  rememberWorktree(partition: string, physicalRoot: string) {
-   return ingest.exclusive(() => store.rememberWorktree(partition, physicalRoot));
-  },
   async removeWorktree(physicalRoot: string) {
    // Removal already settled; this identity must never be resolved against the filesystem again.
    await ingest.exclusive(async () => {
@@ -80,9 +79,10 @@ export function createCaptureRuntime(input: {
    });
   },
   recordCoverage(partition: string, reason: string) { ingest.recordLoss(partition, reason); },
-  observeWire(observation: WireObservation, partition: string) {
+  observeWire(observation: WireObservation, { partition, physicalRootIdentity }: CapturePartition) {
    if (observation.kind === 'transaction') {
     ingest.offer([{ id: observation.id, worktree: partition, kind: 'transaction', source: 'wire', connectionId: observation.connectionId,
+     physicalRootIdentity,
      at: observation.startedAt, durationMs: observation.durationMs, outcome: observation.outcome,
      detail: { executionIds: observation.executionIds } }]);
     return;
@@ -90,6 +90,7 @@ export function createCaptureRuntime(input: {
    const parameters = Object.fromEntries(observation.parameters.map(value => [String(value.ordinal), { ...value }]));
    const normalized = observation.sqlUnavailable ? { shape: null, fingerprint: null, maskedSql: null, maskedParameters: null, statementKind: 'unknown' as const, parameterIdentity: undefined } : input.normalizeStatement(observation.rawSql, parameters);
    ingest.offer([{ id: observation.id, worktree: partition, kind: 'query', source: 'wire', at: observation.startedAt,
+    physicalRootIdentity,
     shape: normalized.shape, durationMs: observation.durationMs, outcome: observation.outcome,
     statementKind: normalized.statementKind, parameterIdentity: normalized.parameterIdentity,
     executionIdentity: observation.id, transactionId: observation.transactionId, connectionId: observation.connectionId,

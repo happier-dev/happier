@@ -9,7 +9,7 @@ import { captureDatabaseDefinition } from './store/capture.js';
 import { readCapturePreference, type CaptureProjectScope } from './configuration.js';
 
 export type LocalCaptureInput = Omit<Parameters<typeof bindLocalCapture>[0], 'runtime'> & Readonly<{
- projectScope: CaptureProjectScope; ownerAccountId: string; physicalRootIdentity: string;
+ projectScope: CaptureProjectScope; ownerAccountId: string;
 }>;
 type LocalCaptureLease = Awaited<ReturnType<typeof bindLocalCapture>>;
 type PartitionListener = () => void;
@@ -120,10 +120,7 @@ export function createCaptureBackgroundOwner() {
   async acquireLocalCapture(input: LocalCaptureInput): Promise<LocalCaptureLease> {
    const state = running;
    if (!state || state.signal.aborted) throw new PluginError({ code: 'plugin_service_unavailable', message: 'Local database capture is not running' });
-   const acquisition = (async () => {
-    await state.runtime.rememberWorktree(input.partition, input.physicalRootIdentity);
-    return await bindLocalCapture({ ...input, runtime: state.runtime });
-   })().then(bound => {
+   const acquisition = bindLocalCapture({ ...input, runtime: state.runtime }).then(bound => {
     const lease: LocalCaptureLease = { ...bound, async release() {
      try { await bound.release(); } finally { state.leases.delete(lease); }
     } };

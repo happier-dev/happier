@@ -3,7 +3,7 @@ import type { DatabaseCaptureQueryGetResultV1 } from '@happier-dev/database-prot
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 as limits } from '@happier-dev/plugin-sdk/storage';
 import { createMetricStore, metricMigration, metricRetention, writeMetricPoint } from './metrics.js';
 import { costMigration, createCostStore } from './costs.js';
-import { worktreeMigration, createCaptureWorktrees } from './worktrees.js';
+import { worktreeMigration, createCaptureWorktrees, writeCaptureWorktree } from './worktrees.js';
 import type { DatabaseCaptureCostMetadataV1 } from '@happier-dev/database-protocol';
 import type { NormalizedMetricPoint } from '../otlp/types.js';
 import type { ExceptionApplicationOrigin } from '../exceptions/contracts.js';
@@ -87,7 +87,13 @@ export function createCaptureStore(db: DaemonDatabase, publish: (keys: readonly 
    if (!events.length) return;
    const changed = new Set<string>();
    await db.transaction(async tx => {
+    // Local observations and the lookup used by settled worktree removal commit together.
+    const indexedWorktrees = new Set<string>();
     for (const event of events) {
+     if (event.physicalRootIdentity !== undefined && !indexedWorktrees.has(event.worktree)) {
+      await writeCaptureWorktree(tx, event.worktree, event.physicalRootIdentity);
+      indexedWorktrees.add(event.worktree);
+     }
      if (event.kind === 'metric') {
       if (await writeMetricPoint(tx, event.worktree, event.metric)) changed.add(event.worktree);
       continue;
@@ -316,7 +322,7 @@ export type CaptureExceptionOccurrence = Readonly<{
 }>;
 export type CaptureExceptionEvent = CaptureExceptionOccurrence & Readonly<{ kind: 'exception'; detail: Readonly<Record<string, unknown>> }>;
 export type CaptureMetricEvent = Readonly<{id:string;worktree:string;kind:'metric';source:'otlp';at:number;metric:NormalizedMetricPoint}>;
-export type CaptureEvent = CaptureSummaryEvent | CaptureExceptionEvent | CaptureMetricEvent;
+export type CaptureEvent = (CaptureSummaryEvent | CaptureExceptionEvent | CaptureMetricEvent) & Readonly<{ physicalRootIdentity?: string }>;
 export type CaptureExceptionGroup = Readonly<{
  fingerprint: string; count: number; firstAt: number; lastAt: number; lastId: string;
  applicationOrigin?: ExceptionApplicationOrigin | null;

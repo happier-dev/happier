@@ -19,7 +19,7 @@ describe('contribution-time local bindings',()=>{
   const controller=new AbortController();
   const original=`postgres://user:p%40ss@127.0.0.1:${upstream.port}/db?sslmode=prefer`;
   const start=original.indexOf('127.0.0.1');const urls=[{name:'DATABASE_URL',original,hostSpan:{start,end:start+`127.0.0.1:${upstream.port}`.length},upstream:{host:'127.0.0.1',port:upstream.port},assignedPort:slot.port}];
-  const [first,second]=await Promise.all([bindLocalCapture({enabled:true,partition:'chosen',runtime,urls,signal:controller.signal}),bindLocalCapture({enabled:true,partition:'chosen',runtime,urls,signal:controller.signal})]);
+  const [first,second]=await Promise.all([bindLocalCapture({enabled:true,partition:'chosen',physicalRootIdentity:'/physical/chosen',runtime,urls,signal:controller.signal}),bindLocalCapture({enabled:true,partition:'chosen',physicalRootIdentity:'/physical/chosen',runtime,urls,signal:controller.signal})]);
   try{
    expect(first.failures).toEqual([]);expect(second.failures).toEqual([]);
    expect(first.replacements).toEqual(second.replacements);
@@ -34,8 +34,8 @@ describe('contribution-time local bindings',()=>{
   const occupied=await listener();const signal=new AbortController().signal;
   const offer={name:'DATABASE_URL',original:'postgres://localhost/db',hostSpan:{start:11,end:20},upstream:{host:'localhost',port:5432},assignedPort:occupied.port};
   try{
-   const failed=await bindLocalCapture({enabled:true,partition:'chosen',runtime,urls:[offer],signal});expect(failed.replacements).toEqual({});expect(failed.failures).toMatchObject([{name:'DATABASE_URL',code:'EADDRINUSE'}]);await failed.release();
-   const off=await bindLocalCapture({enabled:false,partition:'chosen',runtime,urls:[offer],signal});expect(off.replacements).toEqual({});expect(off.failures).toEqual([]);await off.release();
+   const failed=await bindLocalCapture({enabled:true,partition:'chosen',physicalRootIdentity:'/physical/chosen',runtime,urls:[offer],signal});expect(failed.replacements).toEqual({});expect(failed.failures).toMatchObject([{name:'DATABASE_URL',code:'EADDRINUSE'}]);await failed.release();
+   const off=await bindLocalCapture({enabled:false,partition:'chosen',physicalRootIdentity:'/physical/chosen',runtime,urls:[offer],signal});expect(off.replacements).toEqual({});expect(off.failures).toEqual([]);await off.release();
   }finally{await occupied.close();f.close();}
  });
 });

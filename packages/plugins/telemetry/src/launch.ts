@@ -1,5 +1,5 @@
 import { startPostgresProxy } from './proxy.js';
-import type { CaptureRuntime } from './runtime.js';
+import type { CapturePartition, CaptureRuntime } from './runtime.js';
 
 /** Eligibility/spans come from the dialect, private original values from A and ports from B. */
 export type CaptureUrlOffer = Readonly<{
@@ -16,12 +16,14 @@ const receiverSlots = new WeakMap<CaptureRuntime,Map<string,Promise<ReceiverSlot
 function slots<T>(owner:WeakMap<CaptureRuntime,Map<string,T>>,runtime:CaptureRuntime) {
  let result=owner.get(runtime);if(!result){result=new Map();owner.set(runtime,result);}return result;
 }
-async function acquireProxy(runtime:CaptureRuntime,partition:string,offer:CaptureUrlOffer) {
+type LocalPartition = Required<Pick<CapturePartition, 'partition' | 'physicalRootIdentity'>>;
+async function acquireProxy(runtime:CaptureRuntime,context:LocalPartition,offer:CaptureUrlOffer) {
+ const { partition } = context;
  const active=slots(proxySlots,runtime),key=JSON.stringify([partition,offer.assignedPort,offer.upstream]);
  let pending=active.get(key);
  if(!pending){
   pending=startPostgresProxy({listenHost:'127.0.0.1',listenPort:offer.assignedPort,upstream:offer.upstream,
-   onObservation:observation=>runtime.observeWire(observation,partition),
+   onObservation:observation=>runtime.observeWire(observation,context),
    onCoverage:coverage=>{ if(coverage.reason !== 'cancel') runtime.recordCoverage(partition,coverage.reason); },
   }).then(proxy=>({proxy,users:new Set<symbol>(),recorders:new Set<symbol>()}));
   active.set(key,pending);
@@ -34,15 +36,16 @@ async function acquireProxy(runtime:CaptureRuntime,partition:string,offer:Captur
   released??=(async()=>{stopRecording();slot.users.delete(token);if(!slot.users.size){if(active.get(key)===pending)active.delete(key);await slot.proxy.stop();}})();return released;
  }};
 }
-async function acquireReceiver(runtime:CaptureRuntime,partition:string,port:number){
- const active=slots(receiverSlots,runtime),key=JSON.stringify([partition,port]);
+async function acquireReceiver(runtime:CaptureRuntime,context:LocalPartition,port:number){
+ const active=slots(receiverSlots,runtime),key=JSON.stringify([context.partition,port]);
  let pending=active.get(key);
- if(!pending){pending=runtime.acquireReceiver({port,context:{partition}}).then(receiver=>({receiver,users:new Set<symbol>()}));active.set(key,pending);void pending.catch(()=>{if(active.get(key)===pending)active.delete(key);});}
+ if(!pending){pending=runtime.acquireReceiver({port,context}).then(receiver=>({receiver,users:new Set<symbol>()}));active.set(key,pending);void pending.catch(()=>{if(active.get(key)===pending)active.delete(key);});}
  const slot=await pending,token=Symbol();slot.users.add(token);let released:Promise<void>|undefined;
  return {endpoint:slot.receiver.endpoint,release(){released??=(async()=>{slot.users.delete(token);if(!slot.users.size){if(active.get(key)===pending)active.delete(key);await slot.receiver.release();}})();return released;}};
 }
 /** A consumes these prepared values; this function never composes an environment. */
-export async function bindLocalCapture(input:{enabled:boolean;partition:string;runtime:CaptureRuntime;urls:readonly CaptureUrlOffer[];otlpPort?:number;signal:AbortSignal}){
+export async function bindLocalCapture(input:LocalPartition & {enabled:boolean;runtime:CaptureRuntime;urls:readonly CaptureUrlOffer[];otlpPort?:number;signal:AbortSignal}){
+ const context = { partition: input.partition, physicalRootIdentity: input.physicalRootIdentity };
  const replacements:Record<string,string>={},proxies:Awaited<ReturnType<typeof acquireProxy>>[]=[];
  let receiver:Awaited<ReturnType<typeof acquireReceiver>>|undefined,released:Promise<void>|undefined;
  const failures:{name:string;code:string}[]=[];
@@ -53,10 +56,10 @@ export async function bindLocalCapture(input:{enabled:boolean;partition:string;r
  const unavailable=(name:string,error:unknown)=>failures.push({name,code:error!==null&&typeof error==='object'&&'code'in error&&typeof error.code==='string'?error.code:'action_failed'});
  if(input.enabled&&!input.signal.aborted){
   for(const offer of input.urls){try{
-   const proxy=await acquireProxy(input.runtime,input.partition,offer);proxies.push(proxy);
+   const proxy=await acquireProxy(input.runtime,context,offer);proxies.push(proxy);
    replacements[offer.name]=offer.original.slice(0,offer.hostSpan.start)+`127.0.0.1:${proxy.port}`+offer.original.slice(offer.hostSpan.end);
   }catch(error){unavailable(offer.name,error);}}
-  if(input.otlpPort!==undefined){try{receiver=await acquireReceiver(input.runtime,input.partition,input.otlpPort);}catch(error){unavailable('otlp',error);}}
+  if(input.otlpPort!==undefined){try{receiver=await acquireReceiver(input.runtime,context,input.otlpPort);}catch(error){unavailable('otlp',error);}}
   input.signal.addEventListener('abort',onAbort,{once:true});if(input.signal.aborted)await release();
  }
  return {replacements:input.signal.aborted?{}:replacements,endpoint:input.signal.aborted?undefined:receiver?.endpoint,failures,

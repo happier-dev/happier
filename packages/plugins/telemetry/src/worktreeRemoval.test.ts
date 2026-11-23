@@ -19,8 +19,7 @@ describe('settled worktree removal identity', () => {
    for (const migration of captureMigrations) await migration.up(f.db);
    const store = createCaptureStore(bounded, () => {});
    const partitions = Array.from({ length: limits.maximumResultRows + 1 }, (_, index) => `${String(index).padStart(4, '0')}:${'workspace'.repeat(32)}`);
-   for (const partition of partitions) await store.rememberWorktree(partition, '/physical/project');
-   await store.write(partitions.map(worktree => ({ id: 'event', worktree, kind: 'log' as const, source: 'otlp' as const, at: 1 })));
+   await store.write(partitions.map(worktree => ({ id: 'event', worktree, physicalRootIdentity: '/physical/project', kind: 'log' as const, source: 'otlp' as const, at: 1 })));
    expect(await store.worktreePartitions('/physical/project')).toEqual(partitions);
    expect(await store.listPartitions()).toEqual(partitions);
   } finally { f.close(); }
@@ -47,12 +46,9 @@ describe('settled worktree removal identity', () => {
    running = first.run({ signal: lifetime.signal, services });
    await vi.waitFor(() => expect(first.readRuntime()).not.toBeNull());
    const runtime = first.readRuntime()!;
-   for (const partition of ['selected', 'alias', 'sibling']) await first.acquireLocalCapture({
-    enabled: true, projectScope: { serverId: 'server', machineId: 'machine', projectId: 'project' }, ownerAccountId: 'account',
-    partition, physicalRootIdentity: partition === 'sibling' ? '/physical/project-other' : '/physical/project',
-    urls: [], signal: lifetime.signal,
-   });
-   await runtime.store.write(['selected', 'alias', 'sibling'].map(worktree => ({ id: 'event', worktree, kind: 'log' as const, source: 'otlp' as const, at: 1, detail: { body: worktree } })));
+   await runtime.store.write(['selected', 'alias', 'sibling'].map(worktree => ({ id: 'event', worktree,
+    physicalRootIdentity: worktree === 'sibling' ? '/physical/project-other' : '/physical/project',
+    kind: 'log' as const, source: 'otlp' as const, at: 1, detail: { body: worktree } })));
    lifetime.abort(); await running;
    expect(receive).toBeUndefined();
    second = restarted.run({ signal: secondLifetime.signal, services });

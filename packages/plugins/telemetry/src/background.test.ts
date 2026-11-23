@@ -5,8 +5,59 @@ import { describe, expect, it } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { DaemonDatabase, DaemonDatabaseRow, DaemonDatabaseService, DaemonDatabaseValue } from '@happier-dev/plugin-sdk/storage';
 import { DATABASE_CAPTURE_PLUGIN } from './manifest.js';
+import { createCaptureSqliteFixture } from './testing/sqlite.js';
 
 describe('local capture background lifecycle', () => {
+ it('binds local OTLP while an earlier capture write is held and indexes subsequent records for removal', async () => {
+  const { createCaptureBackgroundOwner } = await import('./background.js');
+  const owner = createCaptureBackgroundOwner();
+  const fixture = createCaptureSqliteFixture();
+  const lifetime = new AbortController();
+  const ready = Promise.withResolvers<void>();
+  const settlement = owner.run({ signal: lifetime.signal, services: {
+   storage: { daemon: { async database(_name, options) {
+    for (const migration of options.migrations ?? []) await migration.up(fixture.db);
+    return fixture.db;
+   } } }, events: { host: { subscribe() { ready.resolve(); return { dispose() {} }; } } },
+  } });
+  let capture: ReturnType<typeof owner.acquireLocalCapture> | undefined;
+  let held: ReturnType<typeof fixture.holdNextCommit> | undefined;
+  try {
+   await Promise.race([ready.promise, settlement]);
+   const runtime = owner.readRuntime()!;
+   held = fixture.holdNextCommit();
+   runtime.ingest.offer([{ id: 'earlier', worktree: 'other', kind: 'log', source: 'otlp', at: 1 }]);
+   await held.entered;
+   capture = owner.acquireLocalCapture({ enabled: true, projectScope: { serverId: 'server', machineId: 'machine', projectId: 'project' },
+    ownerAccountId: 'account', physicalRootIdentity: '/physical/first', partition: 'first', urls: [], signal: lifetime.signal, otlpPort: 0 });
+   const bound = await Promise.race([capture, new Promise<null>(resolve => {
+    // Allow actual loopback binding to finish while the transaction remains open.
+    const boundary = setTimeout(() => resolve(null), 500);
+    void capture!.then(() => clearTimeout(boundary), () => clearTimeout(boundary));
+   })]);
+   expect(bound, 'OTLP binds while SQLite commit is held').toEqual(expect.objectContaining({ endpoint: expect.stringMatching(/^http:\/\/127\.0\.0\.1:/) }));
+   expect(fixture.statements.filter(sql => sql.startsWith('INSERT INTO captureWorktrees'))).toHaveLength(0);
+   held.release();
+   await runtime.ingest.settled();
+   const response = await fetch(`${bound!.endpoint}/v1/logs`, { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ resourceLogs: [{ scopeLogs: [{ logRecords: ['first', 'second'].map(stringValue =>
+     ({ timeUnixNano: '1700000000000000000', body: { stringValue } })) }] }] }) });
+   expect(response.status).toBe(200);
+   await runtime.ingest.settled();
+   expect(await runtime.store.list({ worktree: 'first', limit: 10 })).toHaveLength(2);
+   expect(fixture.statements.filter(sql => sql.startsWith('INSERT INTO captureWorktrees'))).toHaveLength(1);
+   await runtime.removeWorktree('/physical/first');
+   expect(await runtime.store.list({ worktree: 'first', limit: 10 })).toEqual([]);
+   expect(await runtime.store.list({ worktree: 'other', limit: 10 })).toHaveLength(1);
+  } finally {
+   held?.release();
+   if (capture) await capture.then(lease => lease.release(), () => {});
+   lifetime.abort();
+   await settlement;
+   fixture.close();
+  }
+ });
+
  it('registers its executable background runner through the public entrypoint', async () => {
   const entrypoint = await import('./index.js');
   expect(entrypoint).toHaveProperty('activate', expect.any(Function));
