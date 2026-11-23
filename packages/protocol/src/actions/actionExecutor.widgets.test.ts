@@ -358,7 +358,7 @@ describe('configured widget Actions', () => {
     expect(after.items.find(item => item.kind === 'group' && item.id === groupId)).toMatchObject({ context: valid });
   });
 
-  it('admits group overrides in a caller-supplied Undo layout before writing it', async () => {
+  it('restores a saved group unchanged when its option has left the inventory', async () => {
     const boundary = createWorkBoardArtifactBoundary();
     const baseArea = { ...surface, owner: { kind: 'corePage', pageId: 'usage', area: 'main' } } as const;
     const area = { ...baseArea, owner: { ...baseArea.owner, layoutId: 'overview' } } as const;
@@ -372,16 +372,17 @@ describe('configured widget Actions', () => {
       bindings: { ...readUsagePageWidgetFollowBindingsV1(definition), metric: { kind: 'value', value: 'tokens' } },
     };
     await artifact.apply({ kind: 'add', instance: child });
-    await artifact.apply({ kind: 'group_create', groupId: 'undo-group', instanceIds: [child.id],
-      context: { period: { kind: 'value', value: { relative: 'today' } } } });
-    const reset = await artifact.resetPreset();
-    const undo = reset.undo!;
+    await artifact.apply({ kind: 'group_create', groupId: 'undo-group', instanceIds: [child.id] });
+    let todayAvailable = true;
     const widgetInputs = createWidgetActionInputResolverV1({
       readDescriptor: async ({ instance }) => readBuiltinWidgetDescriptorV1(instance.definition),
       readContext: async () => ({ period: [{ relative: '7days' }], agents: [[]], machines: [[]], projects: [[]],
         sources: [[]], session: [null], costBasis: ['auto'] }),
       readViewerValues: async () => ({ values: {} }),
-      validateValue: async () => ({ status: 'valid' }),
+      validateValue: async (field, value) =>
+        field.path === 'period' && !todayAvailable && typeof value === 'object' && value !== null &&
+          'relative' in value && value.relative === 'today'
+          ? { status: 'invalid', reasonCode: 'widget_input_option_unavailable' } : { status: 'valid' },
     });
     const executor = createActionExecutor({
       widgetAccountScope: () => surface, widgetSurfaceActions: { corePage: createWidgetAreaActionPortV1(() => artifact) }, widgetInputs,
@@ -392,16 +393,21 @@ describe('configured widget Actions', () => {
       },
     });
     const context = { surface: 'mcp', bypassApprovals: true } as const;
-    const previousLayout = { ...undo.previousLayout, items: undo.previousLayout.items.map(item => item.kind === 'group'
-      ? { ...item, context: { period: { kind: 'value', value: { relative: 'qa-invalid-period' } } } } : item) };
-    const persistedBefore = [...boundary.rows];
-    expect(await executor.execute('widgets.area.layout.undo', { capture: { ...undo, previousLayout } }, context)).toMatchObject({
-      ok: false, errorCode: 'widget_inputs_invalid', details: { blockingChildId: child.id, status: 'invalid' },
-    });
-    expect([...boundary.rows]).toEqual(persistedBefore);
+    const period = { kind: 'value', value: { relative: 'today' } } as const;
+    expect(await executor.execute('widgets.group.inputs.set', {
+      ref: { surface: area, instanceId: 'undo-group' }, bindings: { period },
+    }, context)).toMatchObject({ ok: true });
+    const saved = await artifact.read();
+    const undo = (await artifact.resetPreset()).undo!;
+    expect(undo.previousLayout).toEqual(saved);
+
+    todayAvailable = false;
+    const writesBeforeUndo = boundary.updates.length;
     expect(await executor.execute('widgets.area.layout.undo', { capture: undo }, context)).toMatchObject({
-      ok: true, result: { layout: undo.previousLayout },
+      ok: true, result: { layout: saved },
     });
+    expect(boundary.updates.length - writesBeforeUndo).toBe(1);
+    expect(await artifact.read()).toEqual(saved);
   });
 
   it('retains a WorkBoard private-input refusal on Add without reporting an unknown commit', async () => {

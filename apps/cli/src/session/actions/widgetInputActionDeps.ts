@@ -15,7 +15,7 @@ import { readWidgetActionSurfacePortV1 } from '@happier-dev/protocol/widgets/exe
 import { WidgetSurfaceReadV1Schema, readWidgetActionSessionTargetV1 } from '@happier-dev/protocol/widgets/actionsV1';
 import type { WidgetInputBindingsV1, WidgetCandidateIdentityV1, WidgetActionInputResolverV1, WidgetInputDescriptorV1 } from '@happier-dev/protocol/widgets';
 import { readInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
-import { admitWidgetActionSurfaceV1 } from '@happier-dev/protocol/widgets/widgetActionScopeV1';
+import { admitWidgetActionSurfaceV1, readWidgetActionSurfaceAdmissionV1 } from '@happier-dev/protocol/widgets/widgetActionScopeV1';
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { isPublicProfileWidgetSurfaceV1 } from '@happier-dev/protocol/widgets/widgetPublicProfileAdmissionV1';
@@ -41,16 +41,21 @@ export function createCliWidgetInputActionDepsV1(input: Readonly<{
     const descriptors = new WeakMap<Request, Descriptor>();
     const isSessionHomeAdmitted = (serverId: string) => input.getDeps().widgetAccountScope?.()?.isSameServerId?.(serverId)
         ?? areServerProfileIdentifiersEquivalent(input.serverId, serverId);
+    const readSurfaceAdmission = (request: Request) => request.admittedSurfaceRead
+        ? Promise.resolve({ ok: true as const, read: request.admittedSurfaceRead })
+        : readWidgetActionSurfaceAdmissionV1(input.getDeps(), request.ref.surface, { ...request.context, signal: request.signal });
     const groupBindings = new WeakMap<Request, Promise<WidgetInputBindingsV1 | undefined>>();
     const readGroupBindings = (request: Request) => {
         if (request.groupBindings !== undefined) return Promise.resolve(request.groupBindings);
         let pending = groupBindings.get(request);
         if (!pending) {
             pending = (async () => {
-                if (!input.accountId || await admitWidgetActionSurfaceV1(input.getDeps(), request.ref.surface, { ...request.context, signal: request.signal })) return undefined;
+                if (!input.accountId) return undefined;
+                const admitted = await readSurfaceAdmission(request);
+                if (!admitted.ok) return undefined;
                 const port = readWidgetActionSurfacePortV1(input.getDeps(), request.ref.surface);
                 if (!port) return undefined;
-                const read = WidgetSurfaceReadV1Schema.safeParse(await port.read(request.ref.surface, request.context, request.signal));
+                const read = WidgetSurfaceReadV1Schema.safeParse(admitted.read ?? await port.read(request.ref.surface, request.context, request.signal));
                 request.signal?.throwIfAborted();
                 return read.success && sameStrictJsonValue(read.data.surface, request.ref.surface)
                     ? findWidgetLayoutParentV1(read.data.items ?? [], request.ref.instanceId)?.context : undefined;
@@ -61,8 +66,9 @@ export function createCliWidgetInputActionDepsV1(input: Readonly<{
     };
     const readViewerPurpose = async (request: Request, descriptor = descriptors.get(request)):
         Promise<ReturnType<typeof resolveWidgetViewerPurposeValuesV1> | null> => {
-        if (!descriptor || !input.accountId || await admitWidgetActionSurfaceV1(input.getDeps(), request.ref.surface, { ...request.context, signal: request.signal })) return null;
+        if (!descriptor || !input.accountId) return null;
         if (!Object.values(request.instance.bindings).some(binding => binding.kind === 'viewer')) return { values: {}, fields: [] };
+        if (!(await readSurfaceAdmission(request)).ok) return null;
         const current = await input.readViewerPurposeContext?.(request.signal, request.context);
         request.signal?.throwIfAborted();
         if (!current) return { values: {}, fields: Object.entries(request.instance.bindings).flatMap(([path, binding]) =>
@@ -112,7 +118,7 @@ export function createCliWidgetInputActionDepsV1(input: Readonly<{
     }, widgetInputs: createWidgetActionInputResolverV1({
         readGroupBindings,
         readDescriptor: async request => {
-            if (!input.accountId || await admitWidgetActionSurfaceV1(input.getDeps(), request.ref.surface, { ...request.context, signal: request.signal })) return null;
+            if (!input.accountId || !(await readSurfaceAdmission(request)).ok) return null;
             if (request.instance.definition.kind === 'builtin') {
                 const descriptor = readBuiltinWidgetDescriptorV1(request.instance.definition);
                 if (descriptor && readWidgetInputTargetV1(descriptor).kind !== 'invalid') descriptors.set(request, descriptor);
@@ -255,7 +261,7 @@ export function createCliWidgetInputActionDepsV1(input: Readonly<{
             if (target?.kind === 'workspace' && target.path === field.path) {
                 const workspaceRefs = await input.readWorkspaceRefs?.(request.signal, request.context);
                 request.signal?.throwIfAborted();
-                if (await admitWidgetActionSurfaceV1(input.getDeps(), request.ref.surface, { ...request.context, signal: request.signal }))
+                if (!(await readSurfaceAdmission(request)).ok)
                     return { status: 'denied', reasonCode: 'widget_target_scope_mismatch' };
                 if (!workspaceRefs) return { status: 'unavailable', reasonCode: 'widget_workspace_authority_unavailable' };
                 return validateWidgetWorkspaceInputV1({ value, serverId: input.serverId, workspaceRefs }, {

@@ -17,7 +17,7 @@ import { resolveWidgetSizeChoicesV1, normalizeWidgetSizeForSurfaceV1, supportsWi
 import { isWidgetTargetHostableV1 } from './widgetInputAdmissionV1.js';
 import { readBuiltinWidgetDescriptorV1 } from './builtinWidgetDescriptorV1.js';
 import { buildWidgetSurfaceArtifactIdV1, WidgetAreaMutationErrorV1 } from './widgetSurfaceArtifactV1.js';
-import { findWidgetLayoutItemV1, findWidgetLayoutParentV1, WidgetLayoutMutationErrorV1, type WidgetLayoutItemV1 } from './widgetLayoutItemV1.js';
+import { findWidgetLayoutItemV1, findWidgetLayoutParentV1, WidgetLayoutMutationErrorV1 } from './widgetLayoutItemV1.js';
 import { isPublicProfileWidgetSurfaceV1, projectWidgetPublicProfileDescriptorV1 } from './widgetPublicProfileAdmissionV1.js';
 
 const failure = (errorCode: string): Extract<ActionExecuteResult, { ok: false }> => ({ ok: false, errorCode, error: errorCode });
@@ -51,9 +51,7 @@ export async function admitWidgetInstanceConfigurationV1(
   return validation.status === 'ready' ? null : { ...failure('widget_inputs_invalid'), details: validation };
 }
 
-type WidgetGroupConfigurationChangeV1 =
-  | Extract<WidgetSurfaceMutationV1, { kind: 'group_inputs' | 'group_create' | 'group_add' }>
-  | Readonly<{ kind: 'restore'; items: readonly WidgetLayoutItemV1[] }>;
+type WidgetGroupConfigurationChangeV1 = Extract<WidgetSurfaceMutationV1, { kind: 'group_inputs' | 'group_create' | 'group_add' }>;
 
 /** Both widget and Home Actions admit group inputs before invoking their owner writer. */
 export async function admitWidgetGroupConfigurationV1(
@@ -61,12 +59,12 @@ export async function admitWidgetGroupConfigurationV1(
 ): Promise<Extract<ActionExecuteResult, { ok: false }> | null> {
   const surface = state.surface;
   const currentItems = state.items ?? [];
-  let groups: readonly Readonly<{ context?: WidgetInstanceV1['bindings']; children: readonly { instance: WidgetInstanceV1 }[] }>[];
+  let group: Readonly<{ context?: WidgetInstanceV1['bindings']; children: readonly { instance: WidgetInstanceV1 }[] }>;
   switch (change.kind) {
     case 'group_inputs': {
-      const group = findWidgetLayoutItemV1(currentItems, change.instanceId);
-      if (group?.kind !== 'group') return failure('widget_group_not_found');
-      groups = [{ children: group.children, context: change.bindings }];
+      const existing = findWidgetLayoutItemV1(currentItems, change.instanceId);
+      if (existing?.kind !== 'group') return failure('widget_group_not_found');
+      group = { children: existing.children, context: change.bindings };
       break;
     }
     case 'group_create': {
@@ -75,38 +73,35 @@ export async function admitWidgetGroupConfigurationV1(
         const child = findWidgetLayoutItemV1(currentItems, id);
         return child?.kind === 'widget' ? [child] : [];
       });
-      groups = [{ children, context: change.context }];
+      group = { children, context: change.context };
       break;
     }
-    case 'group_add': groups = [change.group]; break;
-    case 'restore': groups = change.items.filter(item => item.kind === 'group'); break;
+    case 'group_add': group = change.group; break;
   }
-  for (const group of groups) {
-    const bindings = group.context ?? {};
-    if (isPublicProfileWidgetSurfaceV1(surface) && Object.keys(bindings).length) return failure('widget_public_profile_input_forbidden');
-    for (const { instance } of group.children) {
-      const previousBindings = findWidgetLayoutParentV1(currentItems, instance.id)?.context ?? {};
-      const followsChangedSlot = Object.values(instance.bindings).some(binding =>
-        binding.kind === 'context' && !sameStrictJsonValue(previousBindings[binding.slot], bindings[binding.slot]));
-      if (change.kind !== 'group_add' && !followsChangedSlot) continue;
-      const widgetInputs = deps.widgetInputs;
-      if (!widgetInputs) return failure('widget_inputs_unavailable');
-      const resolve = (groupBindings: WidgetInstanceV1['bindings']) => widgetInputs.resolve({
-        ref: { surface, instanceId: instance.id }, instance, context, groupBindings, admission: 'configuration',
-        admittedSurfaceRead: state, ...(context.signal ? { signal: context.signal } : {}),
-      });
-      const proposed = await resolve(bindings);
-      context.signal?.throwIfAborted();
-      if (proposed.status === 'ready') continue;
-      const refusal = { ...failure('widget_inputs_invalid'), details: { ...proposed, blockingChildId: instance.id } };
-      // A new imported group admits all child inputs. An edit must preserve unrelated, pre-existing issues.
-      if (change.kind === 'group_add') return refusal;
-      const blocking = proposed.fields.filter(issue => issue.status === 'invalid' || issue.status === 'selection_required');
-      if (blocking.length === 0) continue;
-      const previous = await resolve(previousBindings);
-      context.signal?.throwIfAborted();
-      if (blocking.some(issue => previous.status === 'ready' || !previous.fields.some(old => sameStrictJsonValue(old, issue)))) return refusal;
-    }
+  const bindings = group.context ?? {};
+  if (isPublicProfileWidgetSurfaceV1(surface) && Object.keys(bindings).length) return failure('widget_public_profile_input_forbidden');
+  for (const { instance } of group.children) {
+    const previousBindings = findWidgetLayoutParentV1(currentItems, instance.id)?.context ?? {};
+    const followsChangedSlot = Object.values(instance.bindings).some(binding =>
+      binding.kind === 'context' && !sameStrictJsonValue(previousBindings[binding.slot], bindings[binding.slot]));
+    if (change.kind !== 'group_add' && !followsChangedSlot) continue;
+    const widgetInputs = deps.widgetInputs;
+    if (!widgetInputs) return failure('widget_inputs_unavailable');
+    const resolve = (groupBindings: WidgetInstanceV1['bindings']) => widgetInputs.resolve({
+      ref: { surface, instanceId: instance.id }, instance, context, groupBindings, admission: 'configuration',
+      admittedSurfaceRead: state, ...(context.signal ? { signal: context.signal } : {}),
+    });
+    const proposed = await resolve(bindings);
+    context.signal?.throwIfAborted();
+    if (proposed.status === 'ready') continue;
+    const refusal = { ...failure('widget_inputs_invalid'), details: { ...proposed, blockingChildId: instance.id } };
+    // A new imported group admits all child inputs. An edit must preserve unrelated, pre-existing issues.
+    if (change.kind === 'group_add') return refusal;
+    const blocking = proposed.fields.filter(issue => issue.status === 'invalid' || issue.status === 'selection_required');
+    if (blocking.length === 0) continue;
+    const previous = await resolve(previousBindings);
+    context.signal?.throwIfAborted();
+    if (blocking.some(issue => previous.status === 'ready' || !previous.fields.some(old => sameStrictJsonValue(old, issue)))) return refusal;
   }
   return null;
 }
@@ -274,17 +269,7 @@ export async function executeWidgetInstanceActionV1(
         case 'widgets.area.layout.delete': result = await deps.widgetAreaLayouts.delete(WidgetInstanceActionInputSchemasV1[actionId].parse(args), context, context.signal); break;
         case 'widgets.area.layout.reorder': result = await deps.widgetAreaLayouts.reorder(WidgetInstanceActionInputSchemasV1[actionId].parse(args), context, context.signal); break;
         case 'widgets.area.layout.reset': result = await deps.widgetAreaLayouts.reset(WidgetInstanceActionInputSchemasV1[actionId].parse(args), context, context.signal); break;
-        case 'widgets.area.layout.undo': {
-          const { capture } = WidgetInstanceActionInputSchemasV1[actionId].parse(args);
-          if (admission.read?.canEdit && capture.previousLayout.items.some(item => item.kind === 'group')) {
-            // Undo accepts a layout from the caller, so its group overrides need the same input admission.
-            const refusal = await admitWidgetGroupConfigurationV1(deps, admission.read,
-              { kind: 'restore', items: capture.previousLayout.items }, context);
-            if (refusal) return refusal;
-          }
-          result = await deps.widgetAreaLayouts.undo(capture, context, context.signal);
-          break;
-        }
+        case 'widgets.area.layout.undo': result = await deps.widgetAreaLayouts.undo(WidgetInstanceActionInputSchemasV1[actionId].parse(args).capture, context, context.signal); break;
         default: return failure('unsupported_action');
       }
       const refused = ActionExecuteFailureSchema.safeParse(result);

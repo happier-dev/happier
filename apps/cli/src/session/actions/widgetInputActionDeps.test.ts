@@ -72,6 +72,56 @@ describe('Widget Action input transport authority', () => {
         expect(await executor.execute('widgets.item.inputs.validate', { ref: { surface: project, instanceId: instance.id }, bindings }, context))
             .toMatchObject({ ok: true, result: { status: 'ready', input: { projects: [] } } });
     });
+    it('uses one placement read for a group input write with one or three changed children', async () => {
+        async function writeGroup(childCount: number) {
+            const scope = { serverId: 'home', accountId: 'viewer' };
+            const surface = { ...scope, owner: { kind: 'project' as const, projectId: 'destination-project' } };
+            const boundary = createWorkBoardArtifactBoundary();
+            const area = createCliWidgetAreaActionDepsV1({ scope, isCurrent: () => true, transport: boundary.forAccount(scope.accountId) });
+            const project = area.widgetSurfaceActions!.project!;
+            let placementReads = 0;
+            let deps: ActionExecutorDeps = { ...createUnavailableActionTransportDeps(), ...area, widgetAccountScope: () => scope,
+                widgetSurfaceActions: { ...area.widgetSurfaceActions, project: { ...project, read: (...args) => {
+                    placementReads++;
+                    return project.read(...args);
+                } } } };
+            deps = { ...deps, ...createCliWidgetInputActionDepsV1({ ...scope, getDeps: () => deps,
+                readCandidates: async () => [], validateSession: async () => false }) };
+            const executor = createActionExecutor(deps);
+            const context = { surface: 'cli', bypassApprovals: true } as const;
+            const definition = { kind: 'builtin', id: 'usage_period_summary' } as const;
+            const query = normalizeUsageQuery({ period: { startMs: 1000 } });
+            const bindings: WidgetInputBindingsV1 = Object.fromEntries(readBuiltinWidgetDescriptorV1(definition)!.inputs!.fields.map(field => [
+                field.path, field.path === 'period' ? { kind: 'context', slot: 'period' }
+                    : { kind: 'value', value: StrictJsonValueSchema.parse(readInputPath(query, field.path)) },
+            ]));
+            const group: WidgetLayoutGroupV1 = {
+                kind: 'group', id: 'usage-group', width: 'full', frameStyle: 'card', dividers: 'hairline',
+                context: { period: { kind: 'value', value: { relative: '7days' } } },
+                children: Array.from({ length: childCount }, (_, index) => ({
+                    kind: 'widget', instance: { v: 1, id: `usage-child-${index}`, definition, bindings },
+                })),
+            };
+            expect(await executor.execute('widgets.group.add', { surface, group }, context)).toMatchObject({ ok: true });
+
+            const override = { period: { kind: 'value', value: { relative: 'today' } } } as const;
+            const readsBeforeWrite = boundary.reads.length;
+            placementReads = 0;
+            expect(await executor.execute('widgets.group.inputs.set', {
+                ref: { surface, instanceId: group.id }, bindings: override,
+            }, context)).toMatchObject({ ok: true });
+            const counts = { placement: placementReads, artifact: boundary.reads.length - readsBeforeWrite };
+
+            const stored = await executor.execute('widgets.item.list', { surface }, context);
+            if (!stored.ok) throw new Error(stored.errorCode);
+            expect(WidgetSurfaceReadV1Schema.parse(stored.result).items).toContainEqual({ ...group, context: override });
+            return counts;
+        }
+        expect({ one: await writeGroup(1), three: await writeGroup(3) }).toEqual({
+            one: { placement: 1, artifact: 2 }, three: { placement: 1, artifact: 2 },
+        });
+    });
+
     it('admits a local Session profile pin only when the captured Home owner proves equivalence', async () => {
         const scope = { serverId: 'srv_widget_home', accountId: 'viewer',
             isSameServerId: (id: string) => ['srv_widget_home', 'local-profile'].includes(id) };
