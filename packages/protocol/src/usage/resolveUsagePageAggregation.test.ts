@@ -1203,7 +1203,9 @@ describe('resolveUsagePageAggregation', () => {
     const ended = { ...quota.current!, observedAtMs: 138000, fetchedAtMs: 138000, subscription, meters: [{ ...meter, resetAtMs: 140000, resetsAt: 140000 }] };
     const resetRead = ConnectedServiceQuotaGetResultV1Schema.parse({ ...quota, current: { ...quota.current!, meters: [meter],
       subscription },
-      history: { entries: [{ id: 'one', observedAtMs: 138000, snapshot: ended }, { id: 'duplicate', observedAtMs: 138000, snapshot: ended }], nextCursor: null },
+      history: { entries: [{ id: 'one', observedAtMs: 138000, snapshot: ended }, { id: 'duplicate', observedAtMs: 138000, snapshot: ended },
+        { id: 'same-second-correction', observedAtMs: 138001, snapshot: { ...ended, observedAtMs: 138001, fetchedAtMs: 138001,
+          meters: [{ ...ended.meters[0]!, resetAtMs: 140356, resetsAt: 140356 }] } }], nextCursor: null },
     });
     expect.soft(resolveUsagePageAggregation({ queries: [query], nowMs: 150000, quota: { status: 'available', value: [resetRead] } }, bundledUsageModelPriceCatalog).results[0])
       .toMatchObject({ planInsights: { accounts: [{ pricePerReset: [{ status: 'available', amount: 20, currency: 'EUR', priceKind: 'entered',
