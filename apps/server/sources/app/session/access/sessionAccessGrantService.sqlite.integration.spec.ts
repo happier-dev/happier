@@ -1833,7 +1833,7 @@ describe("Session access grant service (SQLite integration)", () => {
             actorAccountId: fixture.owner.id,
             sessionId: fixture.session.id,
             primaryTeamId: fixture.team.id,
-        }))).toEqual({ ok: true, changed: true, primaryTeamId: fixture.team.id });
+        }))).toMatchObject({ ok: true, changed: true, primaryTeamId: fixture.team.id });
         await expect(db.session.findUniqueOrThrow({
             where: { id: fixture.session.id },
             select: { primaryTeamId: true },
@@ -1857,7 +1857,7 @@ describe("Session access grant service (SQLite integration)", () => {
             actorAccountId: fixture.owner.id,
             sessionId: fixture.session.id,
             primaryTeamId: fixture.team.id,
-        }))).toEqual({ ok: true, changed: false, primaryTeamId: fixture.team.id });
+        }))).toMatchObject({ ok: true, changed: false, primaryTeamId: fixture.team.id });
 
         expect(await inTx((tx) => setSessionAccessContextInTx(tx, {
             actorAccountId: fixture.owner.id,
@@ -1894,7 +1894,7 @@ describe("Session access grant service (SQLite integration)", () => {
             actorAccountId: fixture.owner.id,
             sessionId: fixture.session.id,
             primaryTeamId: null,
-        }))).resolves.toEqual({ ok: true, changed: true, primaryTeamId: null });
+        }))).resolves.toMatchObject({ ok: true, changed: true, primaryTeamId: null });
         await expect(db.sessionGrant.findUniqueOrThrow({
             where: { principalKind: 'team', sessionId_teamId: { sessionId: fixture.session.id, teamId: fixture.team.id } },
             select: { accessLevel: true, canApprovePermissions: true, requiredByTeamPolicy: true },
@@ -1934,7 +1934,7 @@ describe("Session access grant service (SQLite integration)", () => {
             actorAccountId: fixture.owner.id,
             sessionId: fixture.session.id,
             primaryTeamId: replacement.id,
-        }))).resolves.toEqual({ ok: true, changed: true, primaryTeamId: replacement.id });
+        }))).resolves.toMatchObject({ ok: true, changed: true, primaryTeamId: replacement.id });
         await expect(db.sessionGrant.findUniqueOrThrow({
             where: { principalKind: 'team', sessionId_teamId: { sessionId: fixture.session.id, teamId: fixture.team.id } },
             select: { accessLevel: true, canApprovePermissions: true, requiredByTeamPolicy: true },
@@ -1971,7 +1971,7 @@ describe("Session access grant service (SQLite integration)", () => {
             actorAccountId: fixture.owner.id,
             sessionId: fixture.session.id,
             primaryTeamId: null,
-        }))).resolves.toEqual({ ok: true, changed: true, primaryTeamId: null });
+        }))).resolves.toMatchObject({ ok: true, changed: true, primaryTeamId: null });
     });
 
     it("preserves an explicitly stronger Team grant while marking the required context", async () => {
@@ -2040,7 +2040,7 @@ describe("Session access grant service (SQLite integration)", () => {
             actorAccountId: fixture.owner.id,
             sessionId: fixture.session.id,
             primaryTeamId: fixture.team.id,
-        }))).toEqual({ ok: true, changed: true, primaryTeamId: fixture.team.id });
+        }))).toMatchObject({ ok: true, changed: true, primaryTeamId: fixture.team.id });
     });
 
     it("admits and lists a grant before the transcript is publishable; disclosure alone gates the recipient", async () => {

@@ -736,8 +736,9 @@ describe('withDefaultActionExecuteContext', () => {
     it('replays an approved Session-access mutation from the Inbox through the captured Home scope', async () => {
         const serverId = await addHome({ collaboration: true });
         const contextPath = '/v2/sessions/access-context/set';
-        harness.answer(serverId, contextPath, { body: { changed: true, primaryTeamId: 'team-1' } });
-        const input = { sessionId: 'session-1', primaryTeamId: 'team-1' };
+        const input = { sessionId: 'session-1', primaryTeamId: null };
+        const result = { changed: true, primaryTeamId: null, teamGrants: [{ teamId: 'team-1', name: 'Engineering', accessLevel: 'edit' }] };
+        harness.answer(serverId, contextPath, { body: result });
         const { createDefaultActionExecutor } = await loadExecutor();
         const { executeSessionAccessHttpAction } = await import('@/sync/api/session/sessionAccessApi');
         // The mounted Session access editor owns its family port.
@@ -752,7 +753,7 @@ describe('withDefaultActionExecuteContext', () => {
         const created = await mounted.execute('session.access.context.set', input, {
             serverId,
             surface: 'ui',
-            authority: 'present_user',
+            authority: 'account_automation',
             defaultSessionId: 'session-1',
             actionRequestId: 'session-context-request-1',
         });
@@ -772,7 +773,7 @@ describe('withDefaultActionExecuteContext', () => {
         expect(harness.requestsFor(contextPath)[0]).toMatchObject({ serverId, input });
         expect(storedApproval(serverId, artifactId).request).toMatchObject({
             status: 'executed',
-            execution: { ok: true, result: { changed: true, primaryTeamId: 'team-1' } },
+            execution: { ok: true, result },
         });
     });
 

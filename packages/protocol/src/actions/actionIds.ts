@@ -118,6 +118,7 @@ export function isSessionSpawnNewActionIdV1(actionId: string): actionId is typeo
 export const SESSION_OPEN_ACTION_ID_V1 = 'session.open' as const;
 export const SESSION_MESSAGE_SEND_ACTION_ID_V1 = 'session.message.send' as const;
 export const SESSION_INPUT_HANDOFF_ACTION_ID_V1 = 'session.input.handoff' as const;
+export const SESSION_ACCESS_CONTEXT_SET_ACTION_ID_V1 = 'session.access.context.set' as const;
 export const SESSION_PUBLIC_LINK_CREATE_ACTION_ID_V1 = 'session.public_link.create' as const;
 /** Prepare's existing-Session handoff is the canonical message Action. */
 export function isDeploymentPrepareSessionMessageEffectV1(rootActionId: string, effectActionId: string): boolean {
@@ -507,7 +508,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.access.grants.list',
     'session.access.grant.set',
     'session.access.grant.remove',
-    'session.access.context.set',
+    SESSION_ACCESS_CONTEXT_SET_ACTION_ID_V1,
     'session.access.encryption.prepare',
     'session.access.encryption.reprepare',
     'session.access.layout.update',

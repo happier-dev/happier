@@ -16,7 +16,7 @@ import type { PreNormalizedActionSpec } from '../definition.js';
 function createSessionAccessActionSpecs() {
   const removePublicLinkSummary = 'Turn off a session\'s public link. People who have it can no longer open the session.';
   const createPublicLinkSummary = 'Make a link that lets anyone who has it read a session.';
-  const teamContextSummary = 'Choose the Team a session is part of, which decides who sees it by default.';
+  const teamContextSummary = 'Set or clear the primary Team. Existing grants stay in place, and the selected Team gains access if its policy requires it.';
   return Object.freeze([
   {
     id: 'session.access.grants.list', approval: {result: 'none'},

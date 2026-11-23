@@ -789,14 +789,14 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
             ? { credentialBindings: current.snapshot.credentialBindingConsequences, openedCredentialDisplayNames } : {}),
     });
     return {actions,query,model:{...projection,revision:directoryRevision,
-        ...(current.snapshot && availability === 'available' ? { context: { primaryTeamId: current.snapshot.primaryTeamId, options: [{ teamId: null, label: t('session.access.private'),
+        ...(current.snapshot && availability === 'available' ? { context: { primaryTeamId: current.snapshot.primaryTeamId, options: [{ teamId: null, label: t('session.access.noPrimaryTeam'),
             ...(contextLockedByTeamPolicy ? { blockedReason: { code: 'session_access_team_policy_required', message: t('session.access.required') } }
                 : currentContextPolicyUnavailable ? { blockedReason: { code: 'session_access_context_policy_unavailable', message: t('session.access.contextPolicyUnavailable') } } : {}) }, ...namedContextTeams, ...currentContextTeam], operation: contextOperation,
             ...(contextPolicyReason ? { unavailableReason: contextPolicyReason } : {}),
             ...(contextError ? { error: contextError } : {}),
             ...(pendingContextTeamId !== undefined ? { confirmation: {
                 teamId: pendingContextTeamId,
-                label: pendingContextTeam?.name ?? t('session.access.private'),
+                label: pendingContextTeam?.name ?? t('session.access.noPrimaryTeam'),
                 consequences: pendingConsequences,
             } } : {}) } } : {}),
         content:{phase:current.refreshing?(current.snapshot?'refreshing':'initial'):current.issue?'error':current.snapshot?'ready':'initial',hasLastAcknowledgedSnapshot:current.snapshot!==null,...(current.issue?{issue:current.issue}:{})},

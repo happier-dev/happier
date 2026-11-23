@@ -10383,6 +10383,13 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+In unreleased 0.3, `session.access.context.set` returns the direct Team grants
+remaining at the end of the operation, including their access levels. An empty
+list means there are no direct Team grants. Earlier results omit `teamGrants`,
+so readers have no grant information from those results. Older strict clients
+need matching Home and Protocol sources for this closed response. The request
+shape and stored grants keep their existing contracts.
+
 In unreleased 0.3, the Source setup attachment and the admitted setup review
 can carry `publishedBy` and `publishedAt` for the selected revision. The Home
 sets both fields on a new attachment revision. The existing Source read

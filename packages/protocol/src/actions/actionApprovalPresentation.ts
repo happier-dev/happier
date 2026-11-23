@@ -1138,8 +1138,7 @@ export function describeApprovalActionFields(input: Readonly<{
       }
     }
     if (values.length === 1 && values[0] === null) {
-      const choice = field.path === 'primaryTeamId' ? { label: 'Private', labelKey: 'session.access.private' }
-        : field.path === 'description' && (spec.inputSchema === TeamUpdateInputV1Schema || input.actionId === TEAM_GROUP_UPDATE_ACTION_ID_V1)
+      const choice = field.path === 'description' && (spec.inputSchema === TeamUpdateInputV1Schema || input.actionId === TEAM_GROUP_UPDATE_ACTION_ID_V1)
           ? { label: '—', labelKey: 'common.none' } : undefined;
       if (choice) {
         rows.push({ kind: 'value', path: field.path, title: field.title, value: 'null', selectedOptions: [choice] });

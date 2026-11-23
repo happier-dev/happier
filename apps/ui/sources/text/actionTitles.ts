@@ -1298,6 +1298,7 @@ const ACTION_TITLE_KEYS = {
 } as const satisfies Partial<Record<ActionId, TranslationKeyNoParams>>;
 
 const ACTION_SUMMARY_KEYS = {
+    'session.access.context.set': 'session.access.contextChangeSummary',
     'workflow.trigger.remove': 'workflows.page.deleteBody',
     'workflow.definition.delete': 'workflows.page.deleteBody',
     'prompts.invocation.delete': 'promptLibrary.deleteTemplateConfirm',

@@ -32,6 +32,7 @@ import {
     type ShareSubjectError,
 } from "@/app/teams/shareEligibility";
 import { gainsSessionAccessDelegationCapabilityV1, type SessionAccessGrantCapabilityValueV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import type { SetSessionAccessContextResponseV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { type SessionInitialAccessMaterializedV1 } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
 import {
     enforceSessionContextExternalSharingPolicyInTx,
@@ -127,7 +128,7 @@ export type DeleteSessionAccessGrantResult =
     | Readonly<{ ok: false; error: SessionAccessGrantErrorCode }>;
 
 export type SetSessionAccessContextResult =
-    | Readonly<{ ok: true; changed: boolean; primaryTeamId: string | null }>
+    | (Readonly<{ ok: true }> & SetSessionAccessContextResponseV1)
     | Readonly<{ ok: false; error: SessionAccessGrantErrorCode }>;
 
 /** Grant writes and compound callers admit the same complete audience before
@@ -1142,7 +1143,22 @@ export async function setSessionAccessContextInTx(
     const changed = session.primaryTeamId !== params.primaryTeamId
         || !markerAlreadyCorrect
         || requiredGrantNeedsFloor;
-    if (!changed) return { ok: true, changed: false, primaryTeamId: session.primaryTeamId };
+    const readResult = async (): Promise<SetSessionAccessContextResult> => {
+        const rows = await tx.sessionGrant.findMany({
+            where: { sessionId: params.sessionId, principalKind: "team" },
+            select: { team: { select: { id: true, name: true } }, accessLevel: true },
+            orderBy: { teamId: "asc" },
+        });
+        return {
+            ok: true,
+            changed,
+            primaryTeamId: params.primaryTeamId,
+            teamGrants: rows.flatMap(({ team, accessLevel }) => team
+                ? [{ teamId: team.id, name: team.name, accessLevel }]
+                : []),
+        };
+    };
+    if (!changed) return await readResult();
 
     const affectedAccountIds = new Set(
         await resolveCurrentSessionRecipientAccountIdsInTx(tx, { sessionId: params.sessionId }),
@@ -1212,7 +1228,7 @@ export async function setSessionAccessContextInTx(
         before,
         after,
     });
-    return { ok: true, changed: true, primaryTeamId: params.primaryTeamId };
+    return await readResult();
 }
 
 /**

@@ -198,6 +198,7 @@ export function registerSessionAccessGrantRoutes(app: Fastify) {
             authentication: readSessionAccessAuthenticationFromRequest(request),
         }), { isolationLevel: "ReadCommitted" /* The grant owner fences current and prospective Team audiences before reads. */ });
         if (!result.ok) return reply.code(errorStatus(result.error)).send({ error: result.error });
-        return reply.send({ changed: result.changed, primaryTeamId: result.primaryTeamId });
+        const { ok, ...response } = result;
+        return reply.send(response);
     });
 }

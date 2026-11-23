@@ -550,6 +550,11 @@ export type SessionAccessActionResultById = {
     readonly "session.access.context.set": {
         changed: boolean;
         primaryTeamId: null | string;
+        teamGrants?: undefined | {
+            teamId: string;
+            name: string;
+            accessLevel: 'admin' | 'edit' | 'view';
+        }[];
     };
     readonly "session.responsibility.set": {
         changed: boolean;

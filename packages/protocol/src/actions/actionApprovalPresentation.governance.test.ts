@@ -13,8 +13,6 @@ it.each([
         path: 'initialOwnerAccountId', row: { value: accountId, reference: { kind: 'account', id: accountId } } },
     { actionId: 'session.access.context.set', actionArgs: { sessionId, primaryTeamId: teamId },
         path: 'primaryTeamId', row: { value: teamId, reference: { kind: 'team', id: teamId } } },
-    { actionId: 'session.access.context.set', actionArgs: { sessionId, primaryTeamId: null },
-        path: 'primaryTeamId', row: { selectedOptions: [{ labelKey: 'session.access.private' }] } },
     { actionId: 'teams.update', actionArgs: { v: 1, teamId, description: null },
         path: 'description', row: { selectedOptions: [{ labelKey: 'common.none' }] } },
     { actionId: TEAM_GROUP_UPDATE_ACTION_ID_V1, actionArgs: { v: 1, teamId, groupId: accountId, description: null },

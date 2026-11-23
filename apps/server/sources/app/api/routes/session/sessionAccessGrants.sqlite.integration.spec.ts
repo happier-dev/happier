@@ -1361,7 +1361,7 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
                 payload: { sessionId: session.id, primaryTeamId: team.id },
             });
             expect(first.statusCode, first.body).toBe(200);
-            expect(first.json()).toEqual({ changed: true, primaryTeamId: team.id });
+            expect(first.json()).toEqual({ changed: true, primaryTeamId: team.id, teamGrants: [] });
             expect(await db.session.findUnique({ where: { id: session.id }, select: { primaryTeamId: true, grants: { where: { principalKind: 'team' } } } }))
                 .toMatchObject({ primaryTeamId: team.id, grants: [] });
 
@@ -1370,7 +1370,7 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
                 payload: { sessionId: session.id, primaryTeamId: team.id },
             });
             expect(again.statusCode, again.body).toBe(200);
-            expect(again.json()).toEqual({ changed: false, primaryTeamId: team.id });
+            expect(again.json()).toEqual({ changed: false, primaryTeamId: team.id, teamGrants: [] });
 
             const denied = await app.inject({
                 method: "POST", url: "/v2/sessions/access-context/set", headers: headers(recipient.id),
@@ -1383,7 +1383,32 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
                 payload: { sessionId: session.id, primaryTeamId: null },
             });
             expect(cleared.statusCode, cleared.body).toBe(200);
-            expect(cleared.json()).toEqual({ changed: true, primaryTeamId: null });
+            expect(cleared.json()).toEqual({ changed: true, primaryTeamId: null, teamGrants: [] });
+        });
+    });
+
+
+    it("reports the Team Edit grant that remains after clearing a relaxed primary Team", async () => {
+        const { owner, team } = await fixture();
+        await db.team.update({ where: { id: team.id }, data: { sessionCreationPolicy: "team_required" } });
+        const session = await db.session.create({ data: {
+            accountId: owner.id, tag: "retained-context-grant", encryptionMode: "plain",
+            metadata: "{}", currentStorageState: "hosted",
+        } });
+        await withAuthenticatedTestApp(sessionRoutes, async (app) => {
+            const setContext = (primaryTeamId: string | null) => app.inject({
+                method: "POST", url: "/v2/sessions/access-context/set", headers: headers(owner.id),
+                payload: { sessionId: session.id, primaryTeamId },
+            });
+            const set = await setContext(team.id);
+            expect(set.statusCode, set.body).toBe(200);
+            const teamGrants = [{ teamId: team.id, name: team.name, accessLevel: "edit" }];
+            expect(set.json()).toEqual({ changed: true, primaryTeamId: team.id, teamGrants });
+
+            await db.team.update({ where: { id: team.id }, data: { sessionCreationPolicy: "team_default" } });
+            const cleared = await setContext(null);
+            expect(cleared.statusCode, cleared.body).toBe(200);
+            expect(cleared.json()).toEqual({ changed: true, primaryTeamId: null, teamGrants });
         });
     });
 
@@ -1551,7 +1576,8 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
                 payload: { sessionId: session.id, primaryTeamId: team.id },
             });
             expect(response.statusCode, response.body).toBe(200);
-            expect(response.json()).toEqual({ changed: true, primaryTeamId: team.id });
+            const teamGrants = [{ teamId: team.id, name: team.name, accessLevel: "edit" }];
+            expect(response.json()).toEqual({ changed: true, primaryTeamId: team.id, teamGrants });
             expect(await db.session.findUnique({ where: { id: session.id }, select: { primaryTeamId: true } }))
                 .toMatchObject({ primaryTeamId: team.id });
             expect(await db.sessionGrant.findUnique({
@@ -1564,7 +1590,7 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
                 payload: { sessionId: session.id, primaryTeamId: team.id },
             });
             expect(accepted.statusCode, accepted.body).toBe(200);
-            expect(accepted.json()).toEqual({ changed: false, primaryTeamId: team.id });
+            expect(accepted.json()).toEqual({ changed: false, primaryTeamId: team.id, teamGrants });
             expect(await db.sessionGrant.findUnique({ where: { principalKind: 'team', sessionId_teamId: { sessionId: session.id, teamId: team.id } }, select: { requiredByTeamPolicy: true } }))
                 .toMatchObject({ requiredByTeamPolicy: true });
 

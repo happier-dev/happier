@@ -276,5 +276,11 @@ export const SetSessionAccessContextRequestV1Schema = lazyZodSchema(() => z.stri
 export type SetSessionAccessContextRequestV1 = z.infer<typeof SetSessionAccessContextRequestV1Schema>;
 export const SetSessionAccessContextResponseV1Schema = lazyZodSchema(() => z.strictObject({
   changed: z.boolean(), primaryTeamId: z.nullable(z.string().check(z.minLength(1))),
+  /** Direct Team grants after the operation. Older Homes omit this projection. */
+  teamGrants: z.optional(z.array(z.strictObject({
+    teamId: TeamPrincipalRefV1Schema.shape.teamId,
+    name: z.string(),
+    accessLevel: SessionAccessLevelV1Schema,
+  }))),
 }));
 export type SetSessionAccessContextResponseV1 = z.infer<typeof SetSessionAccessContextResponseV1Schema>;

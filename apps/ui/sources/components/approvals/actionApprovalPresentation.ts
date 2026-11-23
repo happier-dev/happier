@@ -1,8 +1,9 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { SetSessionAccessContextResponseV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { TEAM_POLICY_SET_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
 import { readContributedActionReviewV1 } from '@happier-dev/protocol/actions/contributedActionReviewV1';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
-import { ActionIdSchema, REGISTRY_SOURCE_DELETE_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ActionIdSchema, REGISTRY_SOURCE_DELETE_ACTION_ID_V1, SESSION_ACCESS_CONTEXT_SET_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { PROVIDER_CONNECTION_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/providers/providerActionIdsV1';
 import { AccountErasureReviewV1Schema } from '@happier-dev/protocol/auth/accountErasureReview';
 import { buildApprovalPreviewSummary, readTeamCredentialApprovalSources } from '@happier-dev/protocol/actions/actionExecutor';
@@ -56,10 +57,20 @@ export function readIncomingDiscussionApprovalSource(input: Readonly<{ actionId?
 }
 
 export type ApprovalSummaryInput = Readonly<{ actionId: string; actionArgs: unknown; status?: ApprovalRequest['status'];
-    executionOriginV1?: StoredApprovalRequestV2['executionOriginV1'] }>;
+    executionOriginV1?: StoredApprovalRequestV2['executionOriginV1']; execution?: ApprovalRequest['execution'] }>;
 
 /** A supplied request summary reads through its domain owner; absent previews remain absent. */
 export function readApprovalPreviewSummary(preview: unknown, request?: ApprovalSummaryInput, subject?: string | null): string | null {
+    if (request?.actionId === SESSION_ACCESS_CONTEXT_SET_ACTION_ID_V1) {
+        if (request.execution?.ok) {
+            const result = SetSessionAccessContextResponseV1Schema.safeParse(request.execution.result);
+            if (!result.success || result.data.teamGrants === undefined) return null;
+            return result.data.teamGrants.length === 0
+                ? t('session.access.noDirectTeamGrants')
+                : result.data.teamGrants.map(grant => `${grant.name} — ${t(`session.access.${grant.accessLevel}`)}`).join('\n');
+        }
+        return presentActionApproval({ ...request, preview, subject }).summary;
+    }
     if (!preview || typeof preview !== 'object' || Array.isArray(preview)) return null;
     const storedSummary = typeof (preview as { summary?: unknown }).summary === 'string'
         ? (preview as { summary: string }).summary.trim()
