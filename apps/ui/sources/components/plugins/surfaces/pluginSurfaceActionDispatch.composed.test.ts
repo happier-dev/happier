@@ -6295,7 +6295,7 @@ describe('client Action declared SessionTarget admission', () => {
                 : await dispatchPluginSurfaceAction({ ...binding, action, input: value, isCurrent: () => callerCurrent,
                     ...(selection === 'presenter' ? { requestCurrentIntent: mountedPresenter } : {}) });
             if (selection === 'retired') {
-                expect(result).toMatchObject({ ok: false, code: 'stale_surface' });
+                expect(result).toMatchObject({ ok: false, code: 'plugin_action_generation_retired' });
                 expect(effects).toBe(0);
                 expect(confirmations).toBe(1);
             } else if (selection === 'workers') {
