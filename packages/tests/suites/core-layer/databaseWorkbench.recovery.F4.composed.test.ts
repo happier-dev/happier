@@ -481,7 +481,7 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
             action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(DATABASE_STATEMENT_RUN_ACTION_ID_V1) },
             input: semanticInput,
         }, { externalActionTarget: { kind: 'machine', machineId: machine.target.machineId } }))
-            .toMatchObject({ ok: false, errorCode: 'plugin_disabled' });
+            .toMatchObject({ ok: false, errorCode: 'contributed_action_unavailable' });
         const disabledSize = await account.execute('deployments.data.size', { serverId: backupTarget.serverId,
             environmentId: backupTarget.environmentId, expectedRevision: backupTarget.expectedRevision,
             targetLinkId: backupTarget.targetLinkId, deploymentId: backupTarget.deploymentId,
