@@ -314,3 +314,61 @@ exec "$FIXTURE_FLOCK" "$@"
 
 
 test_waiting_packets_land_in_arrival_order()
+
+
+def test_only_verified_head_restoration_jumps_the_queue():
+    with tempfile.TemporaryDirectory(prefix="p03-head-restoration-") as temp:
+        repo = Path(temp)
+        git = lambda *args: subprocess.check_output(["git", *args], cwd=repo, text=True).strip()
+        git("init", "-qb", "main")
+        git("config", "user.name", "Fixture")
+        git("config", "user.email", "fixture@example.invalid")
+        (repo / "ordinary.txt").write_text("before\n")
+        (repo / "decoy.txt").write_text("before\n")
+        git("add", "--", "ordinary.txt", "decoy.txt")
+        git("commit", "-qm", "base")
+        (repo / "consumer.mjs").write_text("import { value } from './producer.mjs';\nexport { value };\n")
+        git("add", "--", "consumer.mjs")
+        git("commit", "-qm", "break HEAD with missing import")
+        breaking = git("rev-parse", "HEAD")
+        (repo / "ordinary.txt").write_text("ordinary\n")
+        (repo / "decoy.txt").write_text("unrelated\n")
+        (repo / "producer.mjs").write_text("export const value = 1;\n")
+        env = {**os.environ, "P03_GATE_CACHE": str(repo / "cache"), "P03_COMMIT_KICK": "true"}
+        queue = repo / ".git/p03-commit-partial.lock.writers"
+        writers = {}
+        try:
+            with subprocess.Popen(["flock", "-x", str(queue.with_suffix("")), "sh", "-c",
+                                   "echo locked; read release"], cwd=repo, stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, text=True) as holder:
+                assert holder.stdout.readline().strip() == "locked"
+                for name, path, arrival in (("ordinary", "ordinary.txt", 1), ("decoy", "decoy.txt", 2),
+                                            ("repair", "producer.mjs", 3)):
+                    (repo / f"{name}.msg").write_text(f"fix: {name}\n" + (
+                        f"\nRestores-HEAD: {breaking}\n" if name != "ordinary" else ""))
+                    (repo / f"{name}.files").write_text(path + "\n")
+                    (repo / f"{name}.patch").write_text(git("diff", "--binary", "--full-index",
+                                                           breaking, "--", path) + "\n")
+                    args = [name + ".files"] if name == "repair" else ["-", name + ".patch"]
+                    writers[name] = subprocess.Popen(["bash", str(WRAPPER), name + ".msg", *args], cwd=repo,
+                                                     env={**env, "P03_CP_ARRIVED_AT": str(arrival)}, text=True,
+                                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    until = time.monotonic() + 15
+                    while not any(f"fix: {name}" in entry.read_text() for entry in queue.glob("[0-9]*/writer")):
+                        assert time.monotonic() < until and writers[name].poll() is None, name
+                        time.sleep(0.02)
+                holder.stdin.write("release\n")
+                holder.stdin.flush()
+            output = {name: writer.communicate(timeout=20) for name, writer in writers.items()}
+        finally:
+            for writer in writers.values():
+                if writer.poll() is None:
+                    writer.terminate()
+                    writer.communicate(timeout=10)
+        assert all(writer.returncode == 0 for writer in writers.values()), output
+        assert git("log", "--reverse", "--format=%s", f"{breaking}..HEAD").splitlines() == [
+            "fix: repair", "fix: ordinary", "fix: decoy"], output
+        print("PASS only verified HEAD restoration moves ahead of ordinary writers")
+
+
+test_only_verified_head_restoration_jumps_the_queue()

@@ -327,14 +327,14 @@ function buildRevisionView(repo, git, rev, trackedOnly) {
     };
     visit(source);
     if (!candidates.size) return;
-    const options = { noResolve: true, noLib: true, types: [] };
+    const options = { allowJs: true, noResolve: true, noLib: true, types: [] };
     const host = ts.createCompilerHost(options);
     host.getSourceFile = name => name === source.fileName ? source : undefined;
     const checker = ts.createProgram([source.fileName], options, host).getTypeChecker();
     for (const [identifier, specifier] of candidates) {
       if (checker.getSymbolAtLocation(identifier)) continue;
       const name = identifier.text;
-      found.set(`${source.fileName}\0binding\0${name}`, `missing binding: ${label(`${source.fileName} calls ${name} from ${specifier}`)}`);
+      found.set(`${source.fileName}\0binding\0${name}\0${specifier}`, `missing binding: ${label(`${source.fileName} calls ${name} from ${specifier}`)}`);
     }
   };
   // Findings keyed per missing name, so an inherited break never masks a new one in the same import.
@@ -377,14 +377,85 @@ export function commitChangedPaths({ repo, base, tree }) {
 
 /** Check only packet sources here. Reverse-importer discovery stays in the post-commit report. */
 export function commitLocalImportClosure({ repo, base, tree, readView }) {
+  const faults = localImportFaults({ repo, base, tree, readView });
+  return { findings: [...faults.keys.values()].sort() };
+}
+
+function localImportFaults({ repo, base, tree, readView }) {
   const roots = commitChangedPaths({ repo, base, tree })
     .filter(({ status, path }) => status !== 'D' && COMMIT_SOURCE_PATH.test(path)).map(({ path }) => path);
-  if (!roots.length) return { findings: [] };
   const options = { localOnly: true, changed: new Set(roots) };
-  const fresh = readView(tree).findings(roots, options);
-  if (!fresh.size) return { findings: [] };
-  const inherited = readView(base).findings(roots, options);
-  return { findings: [...fresh].filter(([key]) => !inherited.has(key)).map(([, message]) => message).sort() };
+  const keys = roots.length ? readView(tree).findings(roots, options) : new Map();
+  if (keys.size) for (const key of readView(base).findings(roots, options).keys()) keys.delete(key);
+  return { roots, options, keys };
+}
+
+function importBindings(file, text) {
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  const body = [];
+  const bindings = new Map();
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) {
+      body.push(statement.getText(source));
+      continue;
+    }
+    const specifier = statement.moduleSpecifier.text;
+    const clause = statement.importClause;
+    const attributes = statement.attributes?.getText(source);
+    const record = (imported, local, typeOnly = false) => {
+      const binding = { specifier, imported, local, typeOnly: typeOnly || Boolean(clause?.isTypeOnly), attributes };
+      bindings.set(JSON.stringify(binding), binding);
+    };
+    if (!clause || (!clause.name && clause.namedBindings && ts.isNamedImports(clause.namedBindings)
+      && !clause.namedBindings.elements.length)) record('', '');
+    if (clause?.name) record('default', clause.name.text);
+    if (clause?.namedBindings && ts.isNamespaceImport(clause.namedBindings)) record('*', clause.namedBindings.name.text);
+    if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+      for (const item of clause.namedBindings.elements) record((item.propertyName ?? item.name).text, item.name.text, item.isTypeOnly);
+    }
+  }
+  return { body: JSON.stringify(body), bindings };
+}
+
+function editsOnlyFaultyImports(file, before, after, faults) {
+  const old = importBindings(file, before);
+  const next = importBindings(file, after);
+  if (old.body !== next.body) return false;
+  const orderOfShared = (a, b) => JSON.stringify([...a.keys()].filter(key => b.has(key)));
+  if (orderOfShared(old.bindings, next.bindings) !== orderOfShared(next.bindings, old.bindings)) return false;
+  const removed = [...old.bindings].filter(([key]) => !next.bindings.has(key)).map(([, binding]) => binding);
+  const added = [...next.bindings].filter(([key]) => !old.bindings.has(key)).map(([, binding]) => binding);
+  const sameLocal = (a, b) => a.local === b.local && a.typeOnly === b.typeOnly && a.attributes === b.attributes;
+  return added.length > 0
+    && removed.every(binding => faults.some(([site, specifier, name]) => site === file && specifier === binding.specifier
+        && (!name || name === binding.imported)) && added.some(other => sameLocal(binding, other)))
+    && added.every(binding => removed.some(other => sameLocal(binding, other))
+      || faults.some(([site, kind, name, producer]) => site === file && kind === 'binding'
+        && binding.imported === name && binding.local === name && binding.specifier === producer));
+}
+
+/** A priority claim must repair an exact fault introduced by the named commit and still present at HEAD. */
+export function restoresHeadImports({ repo, breaking, head, tree, readView = createRevisionViewReader(repo, { trackedOnly: true }) }) {
+  const { roots, options, keys } = localImportFaults({ repo, base: breaking + '^', tree: breaking, readView });
+  if (!keys.size) return false;
+  const current = readView(head);
+  const active = [...current.findings(roots, options).keys()].filter(key => keys.has(key));
+  if (!active.length) return false;
+  const repaired = readView(tree);
+  const remaining = repaired.findings(roots, options);
+  if (active.some(key => remaining.has(key))) return false;
+  const faults = active.map(key => key.split('\0'));
+  const producers = new Set();
+  for (const [file, specifier] of faults) {
+    if (specifier === 'binding') continue;
+    const target = repaired.resolveImport(file, specifier);
+    if (target.kind === 'file' && current.resolveImport(file, specifier).kind === 'missing') producers.add(target.path);
+  }
+  const paths = commitChangedPaths({ repo, base: head, tree });
+  return paths.length > 0 && paths.every(({ path, status }) =>
+    (status === 'A' && producers.has(path)) ||
+    (status === 'M' && faults.some(([file]) => file === path)
+      && editsOnlyFaultyImports(path, current.read(path), repaired.read(path), faults)));
 }
 
 export function commitProducerClosure({ repo, base, tree, readView = createRevisionViewReader(repo), paths }) {

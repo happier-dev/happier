@@ -31,7 +31,7 @@ function openTicket(dir) {
 /** The record exists only while this admitted writer is waiting or landing. Its
  * flock releases if the process dies, even if the pathname survives the writer.
  */
-export async function withCommitLock({ repo, ref = 'HEAD', label = 'commit-gate', arrival, packet, prepare }, run) {
+export async function withCommitLock({ repo, ref = 'HEAD', label = 'commit-gate', arrival, packet, prepare, restoresHead }, run) {
   const git = gitIn(repo);
   const moveRef = ({ commit, head, reason }) => git(['update-ref', '-m', reason, ref, commit, head]);
   if (process.platform === 'win32') return await run(moveRef);
@@ -43,8 +43,11 @@ export async function withCommitLock({ repo, ref = 'HEAD', label = 'commit-gate'
   const draft = mkdtempSync(join(queue, '.writer-'));
   const ticket = openSync(join(draft, 'writer'), 'wx+', 0o600);
   const at = Number(arrival);
-  const rank = String(Number.isSafeInteger(at) && at > 0 ? at : Date.now()).padStart(16, '0');
-  const name = `${rank}-${basename(draft).slice('.writer-'.length)}`;
+  const arrived = String(Number.isSafeInteger(at) && at > 0 ? at : Date.now()).padStart(16, '0');
+  // Keep the existing sortable ticket spelling so writers already waiting see the priority too.
+  const rank = restoresHead ? '0'.repeat(16) : arrived;
+  const sequence = restoresHead ? arrived : '';
+  const name = `${rank}-${sequence}${basename(draft).slice('.writer-'.length)}`;
   let dir = draft;
   let mark;
   let lock;
@@ -55,7 +58,7 @@ export async function withCommitLock({ repo, ref = 'HEAD', label = 'commit-gate'
       process.stderr.write('commit gate: no flock on this host; plain compare-and-swap\n');
       return await run(moveRef);
     }
-    writeFileSync(ticket, JSON.stringify({ repo, ref: scopeRef, packet }));
+    writeFileSync(ticket, JSON.stringify({ repo, ref: scopeRef, packet, restoresHead }));
     renameSync(draft, join(queue, name));
     dir = join(queue, name);
 
@@ -85,7 +88,7 @@ export async function withCommitLock({ repo, ref = 'HEAD', label = 'commit-gate'
           }
           const record = readRecord(join(waiting, 'writer'));
           if (!record || record.repo !== repo || record.ref !== scopeRef) return;
-          yield { packet: record.packet, entryProof: readRecord(join(waiting, 'entry-proof')), saveLanding: result => {
+          yield { packet: record.packet, restoresHead: record.restoresHead, entryProof: readRecord(join(waiting, 'entry-proof')), saveLanding: result => {
             const pending = join(waiting, 'landing.tmp');
             writeFileSync(pending, JSON.stringify(result), { mode: 0o600 });
             renameSync(pending, join(waiting, 'landing'));

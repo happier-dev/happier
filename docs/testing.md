@@ -747,7 +747,13 @@ exports, plugin manifests, workspace and lockfile sanity, and affected
 runtime loads protect HEAD. An affected CLI or daemon entry must load even
 if the parent has the same failure. An unavailable check or failed
 compare-and-swap leaves the packet unpublished. Admitted writers take the
-commit lock in packet arrival order. After publishing its own packet, the
+commit lock in packet arrival order. A commit message with a
+`Restores-HEAD: <breaking-commit>` trailer takes the next turn when the gate
+verifies that the named ancestor introduced a missing local import that
+still breaks HEAD. The packet must close the outstanding imports using only
+their missing producers or edits to the affected import declarations. The gate
+checks against the current parent again if HEAD moves. Unverified or expired
+claims use ordinary arrival order. After publishing its own packet, the
 holder can publish consecutive waiting packets on the same ref while their
 exact rebased trees pass the same checks using previously verified inputs.
 The next writer takes over if it needs its own entry probe or projection

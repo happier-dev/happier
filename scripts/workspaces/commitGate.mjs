@@ -9,7 +9,7 @@ import { bundledPluginManifestAssetRelativePath } from '../../apps/cli/scripts/b
 import { commitSourceSyntax } from './commitSourceSyntax.mjs';
 import { commitPluginManifests } from './commitPluginManifests.mjs';
 import { commitLockfile } from './commitLockfile.mjs';
-import { commitLocalImportClosure, commitProducerClosure, createRevisionViewReader, gitIn } from './commitProducerClosure.mjs';
+import { commitLocalImportClosure, commitProducerClosure, createRevisionViewReader, gitIn, restoresHeadImports as verifyHeadImportRepair } from './commitProducerClosure.mjs';
 import { commitExtensionBoundaries } from './commitExtensionBoundaries.mjs';
 import { commitImportCycles } from './commitImportCycles.mjs';
 import { APPROVAL_DTO_PATH, commitTreeEntryLoads, EntryLoadAdmissionRequired, EntryLoadAdmissionUnavailable,
@@ -252,8 +252,11 @@ function composePacketAgainstHead({ git, head, headTree = head, packet, regenera
 }
 
 async function judgeLockedPacket({ repo, git, head, packet, regenerate, projections,
-  compareAdmittedEntryLoads, expectedEnvironment, entryProof, replayScratchRoot, message }) {
+  compareAdmittedEntryLoads, expectedEnvironment, entryProof, replayScratchRoot, message, priority }) {
   const exact = await composePacketAgainstHead({ git, head, packet, regenerate, projections, replayScratchRoot });
+  if (priority && head !== priority.head && !isHeadRestoration(repo, priority.breaking, head, exact.tree)) {
+    return { priorityExpired: true };
+  }
   if (head !== packet.base && message !== undefined) {
     const started = performance.now();
     const removals = unnamedPostBaseRemovals(git, packet.base, head, exact.replayedTree, message);
@@ -289,9 +292,33 @@ function createGroupedCommit(git, candidate, exact, packet, message) {
 
 const requireOwnAdmission = () => { throw new EntryLoadAdmissionRequired(); };
 
+function isHeadRestoration(repo, breaking, head, tree) {
+  try { gitIn(repo)(['merge-base', '--is-ancestor', breaking, head]); }
+  catch (error) { if (error.status === 1) return false; throw error; }
+  return verifyHeadImportRepair({ repo, breaking, head, tree });
+}
+
+async function identifyHeadRestoration({ repo, git, ref, packet, message, projections, replayScratchRoot }) {
+  if (!message || !/^Restores-HEAD:/imu.test(message)) return;
+  const trailers = git(['interpret-trailers', '--parse'], { input: message });
+  const claims = trailers.split('\n').filter(line => /^Restores-HEAD:/iu.test(line));
+  const requested = claims.length === 1 && /^Restores-HEAD:\s+([a-f0-9]{7,64})$/iu.exec(claims[0])?.[1];
+  if (!requested) return;
+  const head = git(['rev-parse', '--verify', ref]).trim();
+  try {
+    const breaking = git(['rev-parse', '--verify', `${requested}^{commit}`]).trim();
+    const exact = await composePacketAgainstHead({ git, head, packet, projections,
+      regenerate: requireOwnAdmission, replayScratchRoot });
+    if (isHeadRestoration(repo, breaking, head, exact.tree)) return { breaking, head };
+    console.error('commit gate: Restores-HEAD claim did not match the current missing imports');
+  } catch (error) {
+    console.error(`commit gate: Restores-HEAD claim uses ordinary arrival order (${error.message})`);
+  }
+}
+
 async function landWaitingPackets({ repo, git, ref, moveRef, queued, replayScratchRoot }) {
-  for await (const { packet: waiting, entryProof, saveLanding } of queued()) {
-    if (!waiting) break;
+  for await (const { packet: waiting, restoresHead, entryProof, saveLanding } of queued()) {
+    if (!waiting || restoresHead) break;
     try {
       const head = git(['rev-parse', '--verify', ref]).trim();
       const packet = frozenCandidate(git, waiting.candidate);
@@ -331,7 +358,7 @@ export async function finalizeGatedCommit({ repo, ref = 'HEAD', label, packet, c
   const waiting = candidate && !dry ? { candidate, label, message, environment: commitEntryLoadEnvironmentKey() } : undefined;
   const admissionAt = performance.now();
   try {
-    return await withAdmittedCommitEntryPhase({ repo, ...packet, phase: 'commit' }, (compareAdmittedEntryLoads, regenerate, hasEntryGraphs) => {
+    return await withAdmittedCommitEntryPhase({ repo, ...packet, phase: 'commit' }, async (compareAdmittedEntryLoads, regenerate, hasEntryGraphs) => {
       console.error(`commit gate: admission ${Math.round(performance.now() - admissionAt)} ms`);
       const queuedAt = performance.now();
       const prepare = waiting && hasEntryGraphs && (async predecessor => {
@@ -355,14 +382,16 @@ export async function finalizeGatedCommit({ repo, ref = 'HEAD', label, packet, c
           console.error(`commit gate: waiting entry proof unavailable (${reason})`);
         }
       });
-      return withCommitLock({ repo, ref, label, arrival, packet: waiting, prepare }, async (moveRef, queued, entryProof) => {
+      const priority = waiting && await identifyHeadRestoration({ repo, git, ref, packet, message, projections, replayScratchRoot });
+      const land = priority => withCommitLock({ repo, ref, label, arrival, packet: waiting, prepare,
+        restoresHead: priority?.breaking }, async (moveRef, queued, entryProof) => {
         const lockedAt = performance.now();
         console.error(`commit gate: lock wait ${Math.round(lockedAt - queuedAt)} ms`);
         try {
           const head = git(['rev-parse', '--verify', ref]).trim();
           const result = await judgeLockedPacket({ repo, git, head, packet, regenerate, projections,
-            compareAdmittedEntryLoads, entryProof, replayScratchRoot, message });
-          if (result.gate) return result;
+            compareAdmittedEntryLoads, entryProof, replayScratchRoot, message, priority });
+          if (result.gate || result.priorityExpired) return result;
           const { exact } = result;
           const commit = createCommit(exact);
           if (!dry) {
@@ -378,6 +407,10 @@ export async function finalizeGatedCommit({ repo, ref = 'HEAD', label, packet, c
           console.error(`commit gate: lock held ${Math.round(performance.now() - lockedAt)} ms`);
         }
       });
+      const result = await land(priority);
+      if (!result.priorityExpired) return result;
+      console.error('commit gate: Restores-HEAD claim expired; resuming in ordinary arrival order');
+      return await land();
     });
   } catch (error) {
     if (!(error instanceof EntryLoadAdmissionUnavailable)) throw error;
