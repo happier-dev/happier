@@ -34,39 +34,6 @@ async function readNativeActionContract(id: string) {
   return freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(actionId.data)));
 }
 
-/** Read only the child Artifact revisions needed by the actor-consent currentness check. */
-export async function readWorkflowTriggerChildRevisions(input: Readonly<{
-  definition: WorkflowDefinitionV1;
-  resolveWorkflow(ref: string): Promise<Readonly<{ definition: WorkflowDefinitionV1; revision?: Readonly<{ headerVersion: number; bodyVersion: number }> }>>;
-}>): Promise<Readonly<{
-  revisions: readonly { sourceKey: string; bodyVersion: number }[];
-  steps: readonly { sourceKey: string; blockId: string }[];
-  complete: boolean;
-}>> {
-  const revisions: Array<{ sourceKey: string; bodyVersion: number }> = [];
-  const steps: Array<{ sourceKey: string; blockId: string }> = [];
-  const seen = new Set<string>();
-  let complete = true;
-  const pending: WorkflowDefinitionV1[] = [input.definition];
-  for (let index = 0; index < pending.length; index += 1) {
-    const definition = pending[index]!;
-    for (const block of walkWorkflowBlocks(definition.blocks)) {
-      if (block.kind !== 'workflow') continue;
-      const sourceKey = block.workflowRef;
-      if (seen.has(sourceKey)) continue;
-      seen.add(sourceKey);
-      const child = await input.resolveWorkflow(sourceKey);
-      if (child.revision === undefined) complete = false;
-      else revisions.push({ sourceKey, bodyVersion: child.revision.bodyVersion });
-      for (const childBlock of walkWorkflowBlocks(child.definition.blocks)) {
-        if (childBlock.kind === 'step') steps.push({ sourceKey, blockId: childBlock.id });
-      }
-      pending.push(child.definition);
-    }
-  }
-  return { revisions, steps, complete };
-}
-
 /** Shared consent pins Agent instructions and resolved launch choices, including child Workflows. */
 export function projectWorkflowTriggerConsentAgentSteps(input: Readonly<{
   definition: WorkflowDefinitionV1;
@@ -88,16 +55,26 @@ export function projectWorkflowTriggerConsentAgentSteps(input: Readonly<{
 }
 
 /** One materialization supplies both projections for a shared-trigger consent decision. */
-export async function readWorkflowTriggerActorConsentSteps(input: WorkflowTriggerConsentDefinition) {
+export async function readWorkflowTriggerActorConsentSteps(input: Omit<WorkflowTriggerConsentDefinition, 'resolveWorkflow'> & Readonly<{
+  resolveWorkflow(ref: string): Promise<Readonly<{ definition: WorkflowDefinitionV1; revision?: Readonly<{ bodyVersion: number }> }>>;
+}>) {
+  const childRevisions: { sourceKey: string; bodyVersion: number }[] = [];
+  let completeChildRevisions = true;
   const { materialized, program } = await materializeWorkflowTriggerActionDefinition({ definition: input.definition,
     inputs: resolveWorkflowRunStartInputsV1(input.definition, input.context.inputs), project: input.project,
-    resolveWorkflow: input.resolveWorkflow, materializer: input.materializer, deferTargetAvailability: true });
+    resolveWorkflow: async ref => {
+      const child = await input.resolveWorkflow(ref);
+      if (child.revision === undefined) completeChildRevisions = false;
+      else childRevisions.push({ sourceKey: ref, bodyVersion: child.revision.bodyVersion });
+      return child.definition;
+    }, materializer: input.materializer, deferTargetAvailability: true });
   if (!materialized.ok) throw Object.assign(new Error(materialized.error.code), { code: materialized.error.code });
   const projection = { definition: input.definition, children: program.children,
     materializedLeaves: materialized.materializedLeaves };
   const actionSteps = projectWorkflowTriggerConsentActionSteps({ ...projection, deployment: false });
   return { steps: actionSteps.map(row => row.step), actionStepRefs: actionSteps.map(row => row.ref),
-    agentSteps: projectWorkflowTriggerConsentAgentSteps(projection), materializedLeaves: materialized.materializedLeaves };
+    agentSteps: projectWorkflowTriggerConsentAgentSteps(projection), materializedLeaves: materialized.materializedLeaves,
+    childRevisions: completeChildRevisions ? childRevisions : undefined };
 }
 
 /** The fixed-input rule and deployment SHA extension share one declaration/value binder. */

@@ -771,6 +771,15 @@ publication lock and revision check, so key replacement cannot strand a delayed 
 An author can re-save a retained Account-sealed check's definition to move it to
 the Workflow key, even when the filter and other settings stay the same.
 
+Shared Action-trigger consent tracks the root revision and the child Workflow
+body revisions in the private consent. When the root revision matches, one
+authorized batch of child Artifact headers can establish that all pinned body
+revisions match. Equal revisions skip the step comparison and read no Workflow
+bodies for currentness. A mismatch compares the executable steps and their
+identities once. Equivalent steps renew the root and child pins in the same
+consent write. Earlier private consent records remain readable and can learn
+Action block identities on their next comparison.
+
 An Account Action Link can leave the saved Workflow unassigned. Its Automation
 recipe has the structural placement `action_invocation` and omits the workspace
 from the protected Workflow definition. Home freezes the Machine admitted for

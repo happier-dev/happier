@@ -78,7 +78,7 @@ import type { WorkflowActionFailureV1 } from '../../workflows/workflowProgressV1
 import type { WorkflowApprovedOperationV1 } from '../../actions/approvedOperationV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue, StrictJsonValueSchema } from '../../json/strictJsonValue.js';
-import { readWorkflowTriggerActionConsent, readWorkflowTriggerActorConsentSteps, readWorkflowTriggerChildRevisions, normalizeStoredWorkflowTriggerConsent } from './workflowTriggerConsent.js';
+import { readWorkflowTriggerActionConsent, readWorkflowTriggerActorConsentSteps, normalizeStoredWorkflowTriggerConsent } from './workflowTriggerConsent.js';
 import type { WorkflowApprovedOperationNativeAccountV1 } from './workflowRunActions.js';
 import type { WorkflowDefinitionSavedByV1 } from '../../workflows/workflowDefinitionV1.js';
 import { resolveInitialDeploymentApprovalV1 } from '../../deployments/deploymentApprovalScopeV1.js';
@@ -164,6 +164,8 @@ export type WorkflowTriggerActionsDependencies = Readonly<{
     definition: WorkflowDefinitionV1; revision?: Readonly<{ headerVersion: number; bodyVersion: number }>;
     savedBy?: WorkflowDefinitionSavedByV1; savedAt?: number;
   }>>;
+  /** Authorized header projection, in request order. An unavailable revision cannot prove currentness. */
+  readWorkflowChildBodyVersions?: (artifactIds: readonly string[], signal?: AbortSignal) => Promise<readonly (number | undefined)[]>;
   /** Authorized Artifact grant transport; visibility policy remains shared with Run admission. */
   resolveWorkflowTeamIds?: (artifactId: string) => Promise<readonly string[]>;
   resolveWorkflowContent?: (workflowId: string) => Promise<WorkflowTriggerWorkflowContentV1>;
@@ -923,51 +925,45 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       const trigger = row.triggers.find(item => item.id === input.saved!.triggerId);
       if (!row.enabled || !trigger?.enabled || !pinned || !operation
         || operation.approvedBy.accountId !== caller.runtimeAccountId) return { current: false };
-      const { agentSteps, childRevisions: _childRevisions, ...matching } = pinned;
+      const { agentSteps, actionStepRefs, childRevisions, ...matching } = pinned;
       if (!sameStrictJsonValue(matching, actorConsentMatching(input))) return { current: false, review: { reason: 'match' } };
-      if (input.saved.workflowRevision === input.workflowRevision && pinned.childRevisions !== undefined) {
-        if (pinned.childRevisions.length === 0) return { current: true, automationId: row.id, triggerId: trigger.id,
-          triggerRevision: trigger.revision, workflowRevision: input.workflowRevision };
-        // Child currentness needs the same authorized Workflow reads, but does
-        // not need to rematerialize every Action/Agent leaf on every admission.
-        const source = await deps.resolveWorkflow(input.workflow);
-        const currentChildren = await readWorkflowTriggerChildRevisions({ definition: source.definition,
-          resolveWorkflow: deps.resolveWorkflow });
-        if (!currentChildren.complete) return { current: false, review: { reason: 'steps' } };
-        const changedChildren = pinned.childRevisions.length !== currentChildren.revisions.length
-          || pinned.childRevisions.some((child, index) => !sameStrictJsonValue(child, currentChildren.revisions[index]));
-        if (changedChildren) return { current: false, review: { reason: 'steps', changedSteps: [...currentChildren.steps] } };
-        return { current: true, automationId: row.id, triggerId: trigger.id,
-          triggerRevision: trigger.revision, workflowRevision: input.workflowRevision };
+      const rootMatches = 'consentedWorkflowRevision' in trigger && trigger.consentedWorkflowRevision === input.workflowRevision;
+      const currentReference = { current: true as const, automationId: row.id, triggerId: trigger.id,
+        triggerRevision: trigger.revision, workflowRevision: input.workflowRevision };
+      if (rootMatches && childRevisions !== undefined) {
+        if (childRevisions.length === 0) return currentReference;
+        // Independently editable children need fresh authorized revisions even when the root matches.
+        const revisions = await deps.readWorkflowChildBodyVersions?.(childRevisions.map(child => child.sourceKey), caller.signal);
+        caller.signal?.throwIfAborted();
+        if (revisions && childRevisions.every((child, index) => child.bodyVersion === revisions[index])) return currentReference;
       }
-      // R16: exactly one authorized definition read only after revision differs.
       const project = 'project' in input ? input.project : await input.resolveProject();
       const source = await deps.resolveWorkflow(input.workflow);
-      const childRevisions: Array<{ sourceKey: string; bodyVersion: number }> = [];
-      let completeChildRevisions = true;
-      const seenChildRefs = new Set<string>();
-      const current = await readWorkflowTriggerActorConsentSteps({ definition: source.definition, context,
-        project, triggerId: input.saved.triggerId, resolveWorkflow: async ref => {
-          const child = await deps.resolveWorkflow(ref);
-          if (child.revision === undefined) completeChildRevisions = false;
-          else if (!seenChildRefs.has(ref)) {
-            seenChildRefs.add(ref);
-            childRevisions.push({ sourceKey: ref, bodyVersion: child.revision.bodyVersion });
-          }
-          return child.definition;
-        },
-        materializer: await deps.resolveMaterializer?.(project, caller) });
-      const changedActions = current.steps.flatMap((step, index) => sameStrictJsonValue(step, operation.steps[index])
-        ? [] : [current.actionStepRefs[index]!]);
+      const current = await readWorkflowTriggerActorConsentSteps({ definition: source.definition, context, project,
+        triggerId: trigger.id, resolveWorkflow: deps.resolveWorkflow, materializer: await deps.resolveMaterializer?.(project, caller) });
+      const changedActions = current.steps.flatMap((step, index) => {
+        const ref = current.actionStepRefs[index]!;
+        return sameStrictJsonValue(step, operation.steps[index])
+          && (actionStepRefs === undefined || sameStrictJsonValue(ref, actionStepRefs[index])) ? [] : [ref];
+      });
       const changedAgents = current.agentSteps.filter((step, index) => !sameStrictJsonValue(step, agentSteps[index]));
       if (current.steps.length !== operation.steps.length || current.agentSteps.length !== agentSteps.length
         || changedActions.length > 0 || changedAgents.length > 0) return { current: false, review: { reason: 'steps',
         changedSteps: [...changedActions, ...changedAgents.map(({ sourceKey, blockId }) => ({ sourceKey, blockId }))] } };
+
+      const pinsMatch = sameStrictJsonValue(current.childRevisions, childRevisions)
+        && sameStrictJsonValue(current.actionStepRefs, actionStepRefs);
+      if (rootMatches && pinsMatch) return currentReference;
+      const executionRecipe = pinsMatch ? undefined : await deps.sealContext({ automationId: row.id, templateVersion: row.templateVersion + 1, caller,
+        context: { ...context, actorConsent: { ...matching, agentSteps, actionStepRefs: current.actionStepRefs,
+          ...(current.childRevisions === undefined ? {} : { childRevisions: current.childRevisions }) } },
+        deploymentEnvironment: row.executionRecipe?.v === 2 ? row.executionRecipe.deploymentEnvironment : undefined });
       const { enabled, ...consentTrigger } = input.consentTrigger;
       const saved = await deps.automations.reconcile(row.id, {
         expectedTemplateVersion: row.templateVersion, name: row.name, description: row.description, enabled: row.enabled,
-        assignments: [], triggers: [{ kind: 'existing', triggerId: trigger.id, expectedRevision: trigger.revision,
-          enabled, trigger: consentTrigger }], removedTriggers: [],
+        ...(executionRecipe === undefined ? {} : { executionRecipe }), assignments: [],
+        triggers: [{ kind: 'existing', triggerId: trigger.id, expectedRevision: trigger.revision,
+          ...(rootMatches ? {} : { enabled, trigger: consentTrigger }) }], removedTriggers: [],
       }, row, undefined, caller.signal);
       const revised = saved.triggers.find(item => item.id === trigger.id);
       if (!revised) refuse('content_unavailable');
@@ -983,22 +979,11 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       const triggerId = input.saved?.triggerId ?? AutomationTriggerIdSchema.parse(deps.newId('trigger'));
       const context: WorkflowTriggerContextV1 = { workspace: { directory: input.project.directory },
         executionTarget: { kind: 'detached_run' } };
-      const childRevisions: Array<{ sourceKey: string; bodyVersion: number }> = [];
-      let completeChildRevisions = true;
-      const seenChildRefs = new Set<string>();
       const projected = await readWorkflowTriggerActorConsentSteps({ definition: source.definition, context,
-        project: input.project, triggerId, resolveWorkflow: async ref => {
-          const child = await deps.resolveWorkflow(ref);
-          if (child.revision === undefined) completeChildRevisions = false;
-          else if (!seenChildRefs.has(ref)) {
-            seenChildRefs.add(ref);
-            childRevisions.push({ sourceKey: ref, bodyVersion: child.revision.bodyVersion });
-          }
-          return child.definition;
-        },
+        project: input.project, triggerId, resolveWorkflow: deps.resolveWorkflow,
         materializer: await deps.resolveMaterializer?.(input.project, caller) });
-      context.actorConsent = { ...actorConsentMatching(input), agentSteps: projected.agentSteps,
-        ...(completeChildRevisions ? { childRevisions } : {}) };
+      context.actorConsent = { ...actorConsentMatching(input), agentSteps: projected.agentSteps, actionStepRefs: projected.actionStepRefs,
+        ...(projected.childRevisions === undefined ? {} : { childRevisions: projected.childRevisions }) };
       const { prepareWorkflowApprovedOperation } = await import('./workflowRunActions.js');
       const operation = await prepareWorkflowApprovedOperation({ parent: { actionId: 'approval.request.decide',
         input: Object.fromEntries(Object.entries(input.decisionInput).filter(([, value]) => value !== undefined)

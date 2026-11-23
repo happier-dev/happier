@@ -186,24 +186,42 @@ it('recovers every changed automation when three recovery batches overlap', asyn
 });
 
 it.each([
-  { scenario: 'keeps equal-revision Workflow consent without a step compare', revision: 1, reads: [], hasChild: false, addsNativeAction: false },
-  { scenario: 'keeps unchanged child Workflow consent without materialization', revision: 1, reads: ['root', 'child'], hasChild: true, addsNativeAction: false },
-  { scenario: 'advances a mismatched revision with unchanged steps after one compare and no re-ask', revision: 2, reads: ['root'], hasChild: false, addsNativeAction: false },
-  { scenario: 'asks once after one mismatched-revision compare finds an added native Action', revision: 2, reads: ['root'], hasChild: false, addsNativeAction: true },
-])('$scenario', async ({ revision, reads, hasChild, addsNativeAction }) => {
+  { scenario: 'keeps equal-revision Workflow consent without a step compare', revision: 1, childRevision: 1, reads: [], hasChild: false, addsNativeAction: false },
+  { scenario: 'keeps unchanged child Workflow consent without body reads', revision: 1, childRevision: 1, reads: [], hasChild: true, addsNativeAction: false },
+  { scenario: 'advances a mismatched revision with unchanged steps after one compare and no re-ask', revision: 2, childRevision: 1, reads: ['root'], hasChild: false, addsNativeAction: false },
+  { scenario: 'asks once after one mismatched-revision compare finds an added native Action', revision: 2, childRevision: 1, reads: ['root'], hasChild: false, addsNativeAction: true },
+  { scenario: 'renews a metadata-only child revision after comparing its executable steps', revision: 1, childRevision: 2,
+    reads: ['root', 'child'], hasChild: true, addsNativeAction: false },
+  { scenario: 'renews consenting root and child revisions together after unchanged steps', revision: 2, childRevision: 2,
+    reads: ['root', 'child'], hasChild: true, addsNativeAction: false },
+  { scenario: 'renews consent only after reconfirming an Action whose child block identity changed', revision: 2, childRevision: 2,
+    reads: ['root', 'child'], hasChild: true, addsNativeAction: false, changesChildActionIdentity: true },
+])('$scenario', async ({ revision, childRevision, reads, hasChild, addsNativeAction, changesChildActionIdentity }) => {
   const childRef = '22222222-2222-4222-8222-222222222222';
   const child = WorkflowDefinitionV1Schema.parse({ version: 1,
     defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
-    blocks: [{ kind: 'step', id: 'review', document: { text: 'Review', references: [], attachments: [] } }] });
+    blocks: [{ kind: 'step', id: 'review', document: { text: 'Review', references: [], attachments: [] } },
+      ...(changesChildActionIdentity ? [{ kind: 'action', id: 'check', actionId: 'machines.command.run',
+        input: { command: { kind: 'literal', value: 'printf check' } } }] : []),
+    ] });
   const root = hasChild ? WorkflowDefinitionV1Schema.parse({ version: 1,
     blocks: [{ kind: 'workflow', id: 'child', workflowRef: childRef }] }) : child;
   const revisions = new Map([["root", 1], [childRef, 1]]);
   const definitions = new Map([["root", root], [childRef, child]]);
   const workflowReads: string[] = [];
+  const headerReads: (readonly string[])[] = [];
+  const workflowHeaderTransport = {
+    readWorkflowChildBodyVersions: async (ids: readonly string[]) => {
+      headerReads.push(ids);
+      return ids.map(id => revisions.get(id));
+    },
+  };
   let materializationCalls = 0;
   const reconciledRevisions: number[] = [];
   let retained: AutomationDefinitionDetail | null = null;
+  const readRetained = async () => retained;
   const actions = createAccountWorkflowTriggerActions({
+    ...workflowHeaderTransport,
     nativeAccount: { accountId: 'actor', serverId: 'home', isCurrent: async () => true },
     resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
     randomBytes: length => new Uint8Array(length).fill(1), newId: kind => `${kind}-1`,
@@ -219,7 +237,7 @@ it.each([
       return { effects: { readActionContract: async () => null } };
     },
     automations: {
-      get: async () => retained,
+      get: readRetained,
       list: async () => ({ automations: [], nextCursor: null }),
       listDetails: async () => ({ automations: [], nextCursor: null }),
       create: async input => {
@@ -235,12 +253,15 @@ it.each([
         const old = retained?.triggers[0];
         if (!retained || retained.id !== automationId || !old || update?.kind !== 'existing'
           || update.triggerId !== old.id || update.expectedRevision !== old.revision
-          || update.trigger?.kind !== 'action' || update.trigger.consentedWorkflowRevision === undefined) {
+          || !('consentedWorkflowRevision' in old)
+          || (update.trigger !== undefined && !('consentedWorkflowRevision' in update.trigger))) {
           throw new Error('Expected revision advance on the saved consent trigger');
         }
-        reconciledRevisions.push(update.trigger.consentedWorkflowRevision);
-        retained = { ...retained, triggers: [AutomationTriggerDetailSchema.parse({
-          ...old, ...update.trigger, revision: old.revision + 1,
+        reconciledRevisions.push(update.trigger?.consentedWorkflowRevision ?? old.consentedWorkflowRevision);
+        retained = { ...retained, ...(input.executionRecipe === undefined ? {} : {
+          executionRecipe: input.executionRecipe, templateVersion: retained.templateVersion + 1,
+        }), triggers: [AutomationTriggerDetailSchema.parse({
+          ...old, ...update.trigger, revision: update.trigger === undefined ? old.revision : old.revision + 1,
         })] };
         return retained;
       },
@@ -259,6 +280,13 @@ it.each([
   workflowReads.length = 0;
   materializationCalls = 0;
   revisions.set('root', revision);
+  revisions.set(childRef, childRevision);
+  if (childRevision !== 1) {
+    definitions.set(childRef, WorkflowDefinitionV1Schema.parse({ ...child,
+      blocks: child.blocks.map(block => changesChildActionIdentity && block.kind === 'action'
+        ? { ...block, id: 'new-check' } : { ...block, name: 'Renamed child review' }),
+    }));
+  }
   if (addsNativeAction) {
     definitions.set('root', WorkflowDefinitionV1Schema.parse({ ...root, blocks: [...root.blocks, {
       kind: 'action', id: 'write-marker', actionId: 'machines.command.run',
@@ -281,20 +309,31 @@ it.each([
   const args = { actionId: matching.actionIds[0]!, input: {}, context: { ...caller, defaultSessionMachineId: project.machineId },
     subjects: [{ role: 'operand' as const, subject }], resolveConsent };
   const observed = createApprovalAutomaticChecksV1(await port.select(args), false).consents;
+  const changedStep = addsNativeAction ? { sourceKey: '$root', blockId: 'write-marker' }
+    : changesChildActionIdentity ? { sourceKey: childRef, blockId: 'new-check' } : undefined;
   expect(observed).toEqual([expect.objectContaining({
     automationId: source.automationId, triggerId: source.triggerId,
-    ...(addsNativeAction ? { decision: 'pending',
-      review: { reason: 'steps', changedSteps: [{ sourceKey: '$root', blockId: 'write-marker' }] } }
+    ...(changedStep ? { decision: 'pending', review: { reason: 'steps', changedSteps: [changedStep] } }
       : { decision: 'allow' }),
   })]);
   expect(workflowReads).toEqual(reads.map(ref => ref === 'child' ? childRef : ref));
-  expect(materializationCalls).toBe(revision === saved.workflowRevision ? 0 : 1);
-  expect(reconciledRevisions).toEqual(revision !== saved.workflowRevision && !addsNativeAction ? [revision] : []);
-  if (!addsNativeAction && revision !== saved.workflowRevision) {
+  expect(headerReads).toEqual(hasChild && revision === saved.workflowRevision ? [[childRef]] : []);
+  const needsCompare = revision !== saved.workflowRevision || childRevision !== 1;
+  expect(materializationCalls).toBe(needsCompare ? 1 : 0);
+  expect(reconciledRevisions).toEqual(needsCompare && !changedStep ? [revision] : []);
+  if (!changedStep && needsCompare) {
+    if (hasChild) {
+      const stored = await readRetained();
+      expect(stored?.executionRecipe).toMatchObject({ workflow: { t: 'plain', v: {
+        actorConsent: { childRevisions: [{ sourceKey: childRef, bodyVersion: childRevision }] },
+      } } });
+    }
     expect(observed[0]?.actorConsent).toMatchObject({ consentedWorkflowRevision: revision });
     workflowReads.length = 0;
+    headerReads.length = 0;
     expect(createApprovalAutomaticChecksV1(await port.select(args), false).consents).toEqual(observed);
     expect(workflowReads).toEqual([]);
+    expect(headerReads).toEqual(hasChild ? [[childRef]] : []);
     expect(reconciledRevisions).toEqual([revision]);
   }
 });

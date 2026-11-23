@@ -101,7 +101,7 @@ export type WorkflowTriggerAccountHostParams = Readonly<{
   resolveRetainedSession?: (sessionId: string) => Promise<AutomationTemplateRetainedSessionV1 | null>;
   randomBytes: (length: number) => Uint8Array;
   newId: () => string;
-}> & Pick<WorkflowTriggerActionsDependencies, 'nativeAccount' | 'deploymentAction' | 'sessionList' | 'sessionRead' | 'resolveAgentStartContext' | 'resolveWorkflow' | 'resolveWorkflowContent' | 'resolveWorkflowTeamIds' | 'resolveSession' | 'resolveRunTrigger' | 'resolveRunSource' | 'resolveManagedMachine' | 'resolveMaterializer' | 'pullRequests' | 'listContributedActionDefinitions'>;
+}> & Pick<WorkflowTriggerActionsDependencies, 'nativeAccount' | 'deploymentAction' | 'sessionList' | 'sessionRead' | 'resolveAgentStartContext' | 'resolveWorkflow' | 'readWorkflowChildBodyVersions' | 'resolveWorkflowContent' | 'resolveWorkflowTeamIds' | 'resolveSession' | 'resolveRunTrigger' | 'resolveRunSource' | 'resolveManagedMachine' | 'resolveMaterializer' | 'pullRequests' | 'listContributedActionDefinitions'>;
 
 type WorkflowCodecParams = Pick<WorkflowTriggerAccountHostParams, 'resolveEncryption' | 'randomBytes' | 'deploymentAction'>;
 
@@ -1020,6 +1020,7 @@ if (trigger.kind === 'sessionLifecycle') {
       return openWorkflowAction(reference.workflowId, binding, reference.sharedDefinitionEnvelope);
     },
     resolveWorkflow: params.resolveWorkflow,
+    ...(params.readWorkflowChildBodyVersions ? { readWorkflowChildBodyVersions: params.readWorkflowChildBodyVersions } : {}),
     ...(params.resolveWorkflowTeamIds ? { resolveWorkflowTeamIds: params.resolveWorkflowTeamIds } : {}),
     openContext: async (row) => {
       if (row.executionRecipe?.v !== 2) unavailable('source_unavailable');

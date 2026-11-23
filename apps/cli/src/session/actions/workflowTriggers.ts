@@ -190,6 +190,10 @@ export function createCliWorkflowTriggerActions(params: Readonly<{
     ...(params.nativeAccount ? { nativeAccount: params.nativeAccount } : {}),
     ...(params.deploymentAction ? { deploymentAction: params.deploymentAction } : {}),
     resolveWorkflow: (ref) => onServer(() => params.resolveWorkflow(ref)),
+    readWorkflowChildBodyVersions: (artifactIds, signal) => onServer(async () => {
+      const headers = await createCredentialedAccountArtifactStore(params.credentials).readHeaders(artifactIds, { signal, prepareRecipients: false });
+      return headers.map(header => header.status === 'fulfilled' ? header.value?.bodyVersion : undefined);
+    }),
     resolveWorkflowContent: (workflowId) => onServer(async () => {
       const opened = await createCredentialedAccountArtifactStore(params.credentials).readForUpdate(workflowId,
         { prepareRecipients: false, includeSharedAudience: false });

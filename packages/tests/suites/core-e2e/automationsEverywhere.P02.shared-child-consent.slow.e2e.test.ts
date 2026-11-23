@@ -20,7 +20,7 @@ describe('AE.P02.F8 shared child consent (BUILT-H1)', () => {
   let fixture: TeamSetupFFixture | undefined;
   afterEach(async () => { await fixture?.stop(); fixture = undefined; }, 0);
 
-  it('asks the actor again after a shared child Agent prompt changes while the root revision stays equal', async () => {
+  it('keeps consent after a shared child rename and asks again after a prompt edit at the same root revision', async () => {
     const testDir = await mkdtemp(join(tmpdir(), 'ae-p02-shared-child-'));
     const agent = await createIsolatedFakeClaudeControlShim({ testDir: join(testDir, 'actor-agent'),
       captureEnvironmentKeys: [], logFullStdin: true });
@@ -119,7 +119,15 @@ describe('AE.P02.F8 shared child consent (BUILT-H1)', () => {
       .toMatchObject({ ok: true });
     await waitFor(async () => (await readApproval(pending.artifactId)).status === 'executed',
       { context: 'Allowed child check and original Action settle', failFast: true });
-    // Unchanged child content must keep the existing consent; always re-asking is wrong too.
+    const renamed = await author.executeAsPerson('workflow.definition.edit', { definitionId: child.definitionId,
+      expectedRevision: child.revision, ops: [{ kind: 'set_block_name', blockId: 'review', name: 'Renamed review' }] });
+    expect(renamed.ok, JSON.stringify(renamed)).toBe(true);
+    if (!renamed.ok) throw new Error(renamed.errorCode);
+    const renamedRevision = WorkflowDefinitionEditResultV1Schema.parse(renamed.result).revision;
+    expect(renamedRevision).not.toEqual(child.revision);
+    expect(await author.execute('workflow.definition.get', { definitionId: root.definitionId }))
+      .toMatchObject({ ok: true, result: { revision: root.revision } });
+
     const unchanged = await invoke();
     expect(unchanged.ok, JSON.stringify(unchanged)).toBe(true);
     if (!unchanged.ok) throw new Error(unchanged.errorCode);
@@ -127,7 +135,7 @@ describe('AE.P02.F8 shared child consent (BUILT-H1)', () => {
     if (checking.success) {
       expect(await readApproval(checking.data.artifactId)).not.toMatchObject({ automaticChecks: { phase: 'consent' } });
       await waitFor(async () => (await readApproval(checking.data.artifactId)).status === 'executed',
-        { context: 'Unchanged shared child reuses consent', failFast: true });
+        { context: 'Renamed shared child reuses consent', failFast: true });
     } else expect(unchanged).toMatchObject({ result: { exitCode: 0 } });
     const originalRuns = await runs();
     expect(originalRuns).toHaveLength(2);
@@ -138,10 +146,10 @@ describe('AE.P02.F8 shared child consent (BUILT-H1)', () => {
 
     const editedPrompt = `Review the changed request. SHARED_CHILD_EDIT_${randomUUID()}`;
     const edited = await author.executeAsPerson('workflow.definition.edit', { definitionId: child.definitionId,
-      expectedRevision: child.revision, ops: [{ kind: 'set_step_prompt', blockId: 'review', text: editedPrompt }] });
+      expectedRevision: renamedRevision, ops: [{ kind: 'set_step_prompt', blockId: 'review', text: editedPrompt }] });
     expect(edited.ok, JSON.stringify(edited)).toBe(true);
     if (!edited.ok) throw new Error(edited.errorCode);
-    expect(WorkflowDefinitionEditResultV1Schema.parse(edited.result).revision).not.toBe(child.revision);
+    expect(WorkflowDefinitionEditResultV1Schema.parse(edited.result).revision).not.toEqual(renamedRevision);
     expect(await author.execute('workflow.definition.get', { definitionId: root.definitionId }))
       .toMatchObject({ ok: true, result: { revision: root.revision } });
     const next = await invoke();

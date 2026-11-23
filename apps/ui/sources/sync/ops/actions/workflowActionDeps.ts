@@ -416,6 +416,10 @@ export function createUiWorkflowAction(params: Readonly<{
             if (!resolved) throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
             return resolved;
         },
+        readWorkflowChildBodyVersions: async (artifactIds, signal) => {
+            const headers = await account.readArtifactHeaders(artifactIds, { signal, fresh: true });
+            return headers.map(header => header.status === 'fulfilled' && header.value?.isDecrypted ? header.value.bodyVersion : undefined);
+        },
         resolveWorkflowTeamIds: async (artifactId) => {
             const result = await account.artifactAccessGrants.list({ artifactId });
             return result.grants.flatMap((grant) => grant.principal.kind === 'team' ? [grant.principal.teamId] : []);
