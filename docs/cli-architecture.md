@@ -7686,6 +7686,10 @@ in that relay's lifecycle directory (`--server` alone replaces the URL/profile s
 lifecycle scope). The SSH enrollment approval (`auth approve --home-target-from-request-json`) already
 binds its credentials to the Home target the request names.
 
+During Personal Home signup closure, the installer captures its internal recovery
+snapshot with the closed signup policy once the incumbent origin and loopback
+binding match. Public backups require the running Home's signup policy to be closed.
+
 In 0.3 development, local and SSH Home relay stores, CLI commands and bootstrap
 tasks consume the cli-common relay-access selection owner. Native executables
 resolve in the addressed host's environment.

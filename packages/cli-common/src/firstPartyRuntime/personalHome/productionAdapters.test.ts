@@ -471,6 +471,40 @@ describe('Personal Home production adapters', () => {
     await applied.rollback();
   });
 
+  it('projects closed signup for the admitted loopback bootstrap restore point while public backup still refuses', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-home-bootstrap-restore-point-'));
+    try {
+      const layout = resolvePersonalHomeRuntimeLayout({ homeDir, platform: 'linux', mode: 'user' });
+      const envPath = join(layout.configDir, 'server.env');
+      const origin = 'http://127.0.0.1:43110';
+      await mkdir(layout.configDir, { recursive: true });
+      const environment = (host: string) => [
+        `HAPPIER_SERVER_HOST=${host}`,
+        `HAPPIER_CANONICAL_SERVER_URL=${origin}`,
+        'AUTH_ANONYMOUS_SIGNUP_ENABLED=1',
+        '',
+      ].join('\n');
+      await writeFile(envPath, environment('127.0.0.1'));
+
+      await expect(readPersonalHomeSanitizedConfiguration(layout)).rejects.toThrow(/signup must be disabled/u);
+      await expect(readPersonalHomeSanitizedConfiguration(layout, { closingBootstrapAt: 'http://127.0.0.1:43111' }))
+        .rejects.toThrow(/signup must be disabled/u);
+      const configuration = await readPersonalHomeSanitizedConfiguration(layout, { closingBootstrapAt: origin });
+      const applied = await applyPersonalHomeSanitizedConfiguration(
+        layout,
+        normalizePersonalHomeRestorableConfigurationV1(configuration, 'home-identity'),
+      );
+      await expect(readFile(envPath, 'utf8')).resolves.toContain('AUTH_ANONYMOUS_SIGNUP_ENABLED=0');
+      await applied.rollback();
+
+      await writeFile(envPath, environment('0.0.0.0'));
+      await expect(readPersonalHomeSanitizedConfiguration(layout, { closingBootstrapAt: origin }))
+        .rejects.toThrow(/signup must be disabled/u);
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     ['enabled', '1', '0'],
     ['disabled', '0', '1'],

@@ -1818,6 +1818,12 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       ...(parsed.env ?? {}),
       ...(resolvedPortFromDesiredUrl && !(parsed.env ?? {}).PORT ? { PORT: resolvedPortFromDesiredUrl } : {}),
     };
+    const closingBootstrapAt = purpose?.kind === 'personal-home'
+      && parsed.expectedPersonalHomeState?.installed
+      && parsed.expectedPersonalHomeState.canonicalServerUrl === purpose.canonicalServerUrl
+      && envForInstaller.AUTH_ANONYMOUS_SIGNUP_ENABLED === '0'
+      ? purpose.canonicalServerUrl
+      : undefined;
     const resolvePersonalHomeUpgradeLayout = purpose?.kind === 'personal-home'
       ? async () => resolvePersistedLocalPersonalHomeLayout({
         defaults,
@@ -1894,7 +1900,7 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
             layout,
             ...identity,
             happierVersion,
-            configuration: await readPersonalHomeSanitizedConfiguration(layout),
+            configuration: await readPersonalHomeSanitizedConfiguration(layout, { closingBootstrapAt }),
             sqlite: await createPersonalHomeSqliteMaintenance(layout.databasePath),
             readIdentityFromDatabase: readPersonalHomeIdentityValueFromSqlite,
             readDataCountsFromDatabase: readPersonalHomeDataCountsFromSqlite,

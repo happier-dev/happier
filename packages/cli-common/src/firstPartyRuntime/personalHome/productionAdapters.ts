@@ -248,14 +248,25 @@ export async function readCanonicalPersonalHomeIdentity(layout: PersonalHomeRunt
   return readPersonalHomeIdentityFromSqlite(databasePath, await readInstalledMigrationCatalog(layout));
 }
 
-export async function readPersonalHomeSanitizedConfiguration(layout: PersonalHomeRuntimeLayout): Promise<Record<string, unknown>> {
+export async function readPersonalHomeSanitizedConfiguration(
+  layout: PersonalHomeRuntimeLayout,
+  options: Readonly<{ closingBootstrapAt?: string }> = {},
+): Promise<Record<string, unknown>> {
   const env = parseEnvText(await readFile(join(layout.configDir, 'server.env'), 'utf8'));
   const result: Record<string, unknown> = {};
   for (const [field, envKey] of Object.entries(PERSONAL_HOME_RESTORABLE_CONFIGURATION_ENV_KEYS)) {
     const value = env[envKey];
     if (field === 'anonymousSignupPhase') {
-      if (value !== undefined && value !== '0') throw new Error('Personal Home anonymous signup must be disabled before backup');
-      if (value === '0') result[field] = 'loopback-bootstrap-then-disabled';
+      // The installer's recovery snapshot records the closed policy even if the interrupted
+      // runtime still has its temporary signup listener enabled. Exported backups require closure.
+      const closingLoopbackBootstrap = value === '1'
+        && options.closingBootstrapAt !== undefined
+        && env.HAPPIER_CANONICAL_SERVER_URL === options.closingBootstrapAt
+        && env.HAPPIER_SERVER_HOST === '127.0.0.1';
+      if (value !== undefined && value !== '0' && !closingLoopbackBootstrap) {
+        throw new Error('Personal Home anonymous signup must be disabled before backup');
+      }
+      if (value !== undefined) result[field] = 'loopback-bootstrap-then-disabled';
     } else if (field === 'homeDeviceApprovalRequired') {
       result[field] = resolveHomeDeviceApprovalRequiredFromEnv(env);
     } else if (typeof value === 'string' && value) result[field] = value;
