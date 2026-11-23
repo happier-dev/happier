@@ -305,7 +305,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         } finally { db.$transaction = transaction; await client.$disconnect(); }
     });
 
-    it('set-reads distinct old/new audiences and delivers changes to current members and Group administrators', async () => {
+    it('set-reads distinct old/new audiences and wakes the admitted Team and Group members', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const fixtures: Array<{ team: { id: string }; accounts: { id: string }[]; groups: { id: string }[] }> = [];
         for (let index = 0; index < 4; index++) {
@@ -362,16 +362,18 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
                 && /FROM\s+"public"\."Team(?:Group)?Membership"(?:\s|$)/.test(event.query)).length;
             const published = await db.accountChange.findMany({ where: { entityId: PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } });
             const advanced = published.filter(row => row.cursor > (prior.get(row.accountId) ?? 0)).map(row => row.accountId).sort();
+            // Whole-Team grants exclude guests. Explicit Group grants reach the enrolled
+            // guest as well as the enrolled member, and confer no access through rank alone.
             const expected = [owner.id, ...[oldTeam, newTeam].flatMap(fixture => fixture.accounts
-                .filter((_, member) => member !== 2 && member !== 3).map(account => account.id)),
-                ...[oldGroups, newGroups].flatMap(fixture => [fixture.accounts[0].id, fixture.accounts[1].id, fixture.accounts[99].id])].sort();
+                .filter((_, member) => member !== 1 && member !== 2 && member !== 3).map(account => account.id)),
+                ...[oldGroups, newGroups].flatMap(fixture => [fixture.accounts[0].id, fixture.accounts[1].id])].sort();
             expect(advanced).toEqual(expected);
             expect(await inTx(tx => readProjectSourceInTx(tx, newGroups.accounts[1].id, { serverId: 'home', sourceId: created.source.id })))
                 .toMatchObject({ ok: true, source: { name: 'After' } });
             expect(await inTx(tx => readProjectSourceInTx(tx, oldTeam.accounts[0].id, { serverId: 'home', sourceId: created.source.id })))
                 .toEqual({ ok: false, error: 'source_unavailable' });
             expect(await inTx(tx => readProjectSourceInTx(tx, newGroups.accounts[99].id, { serverId: 'home', sourceId: created.source.id })))
-                .toMatchObject({ ok: true, canManage: true, source: { name: 'After' } });
+                .toEqual({ ok: false, error: 'source_unavailable' });
             console.info('SOURCE_PUBLICATION_SQL', JSON.stringify({ members: 400, audienceGrants: 26, reads, recipients: advanced.length }));
             expect(reads).toBeLessThanOrEqual(3);
         } finally { db.$transaction = transaction; await client.$disconnect(); }
