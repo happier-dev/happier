@@ -282,11 +282,19 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
     const closePresentedTab = React.useCallback((tabKey: string) => closeLastTab && tabKey === foldedTabKey && groupTabs.length === 1
         ? runGuardedTabNavigation([detailsTabNavigationKey(props.pane.scopeId, tabKey)], closeLastTab)
         : closeTab(tabKey), [closeLastTab, closeTab, foldedTabKey, groupTabs.length, props.pane.scopeId]);
-    useCurrentUiContextLocalCommands(props.presented === false ? [] : groupTabs.map(tab => ({
-        key: `details.close:${tab.key}`,
-        title: `${t('session.detailsPanel.closeTabA11y')}: ${presentedTitles.get(tab.key) ?? tab.title}`,
-        invoke: () => closePresentedTab(tab.key),
-    })), { contextKey: JSON.stringify([props.pane.scopeId, props.group.id]) });
+    useCurrentUiContextLocalCommands(props.presented === false ? [] : groupTabs.flatMap(tab => [
+        { key: `details.close:${tab.key}`,
+            title: `${t('session.detailsPanel.closeTabA11y')}: ${presentedTitles.get(tab.key) ?? tab.title}`,
+            invoke: () => closePresentedTab(tab.key) },
+        { key: `details.select:${tab.key}`, title: presentedTitles.get(tab.key) ?? tab.title,
+            invoke: () => setActiveDetailsTab(tab.key) },
+        ...(tab.isPreview ? [{ key: `details.pin:${tab.key}`,
+            title: `${t('session.detailsPanel.pinTabA11y')}: ${presentedTitles.get(tab.key) ?? tab.title}`,
+            invoke: () => pinDetailsTab(tab.key) }]
+            : tab.isPinned ? [{ key: `details.unpin:${tab.key}`,
+                title: `${t('session.detailsPanel.unpinTabA11y')}: ${presentedTitles.get(tab.key) ?? tab.title}`,
+                invoke: () => unpinDetailsTab(tab.key) }] : []),
+    ]), { contextKey: JSON.stringify([props.pane.scopeId, props.group.id]) });
     const otherTabs = React.useMemo(() => foldedTabKey === null ? null : groupTabs.filter((tab) => tab.key !== foldedTabKey),
         [foldedTabKey, groupTabs]);
     const stripMenuRows = React.useMemo((): readonly LentHeaderMenuRow[] | null => {

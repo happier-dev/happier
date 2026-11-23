@@ -16,6 +16,7 @@ export { PET_IMPORT_ACTION_ID_V1, PET_DELETE_ACTION_ID_V1, PET_ACTION_IDS_V1, is
 export { isProjectCheckoutRemovalActionIdV1 } from './projectActionIdsV1.js';
 export const SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 = 'sessions.spawn.connected_services.list' as const;
 export const ACTION_INVOKE_ACTION_ID_V1 = 'action.invoke' as const;
+export const PROJECT_SERVICE_RELOCATE_ACTION_ID_V1 = 'projects.service.relocate' as const;
 export const SESSION_SUBAGENTS_LIST_ACTION_ID = 'sessions.subagents.list' as const;
 export const SESSION_SUBAGENTS_GET_ACTION_ID = 'sessions.subagents.get' as const;
 export const REVIEW_START_ACTION_ID_V1 = 'review.start' as const;
@@ -939,7 +940,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'localServices.publicPreview.copyUrl',
   ],
   local_services_actions: [
-    'projects.service.relocate',
+    PROJECT_SERVICE_RELOCATE_ACTION_ID_V1,
     'localServices.actions.copyUrl',
     'localServices.actions.openPreview',
     'localServices.actions.forget',

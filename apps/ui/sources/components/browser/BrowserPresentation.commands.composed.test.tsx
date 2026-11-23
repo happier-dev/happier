@@ -182,3 +182,33 @@ it('opens the extension store for the mounted profile and Machine through the ag
     } finally { clearActiveUnsavedChangesGuard(); }
     await screen.unmount();
 });
+
+
+it('selects, pins and unpins retained Details tabs through the Agent command owner', async () => {
+    const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+    const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+    const { DetailsTabGroupPanel } = await import('@/components/appShell/panes/details/workspace/DetailsTabGroupPanel');
+    const { createWorkspaceFileDetailsTab } = await import('@/components/appShell/panes/details/fileDetailsTab');
+    let pane: ReturnType<typeof useAppPaneScope> | undefined;
+    function Details() {
+        pane = useAppPaneScope('parity-details');
+        const group = pane.scopeState?.details.groups?.[0];
+        return group ? <DetailsTabGroupPanel pane={pane} group={group}
+            testIds={{ tab: key => `parity-tab-${key}` }} renderTabContent={() => null} /> : null;
+    }
+    const screen = await mount(<AppPaneProvider><Details /></AppPaneProvider>);
+    try {
+        const first = createWorkspaceFileDetailsTab('first.txt');
+        const second = createWorkspaceFileDetailsTab('second.txt');
+        await act(async () => pane!.openDetailsTab(first, { intent: 'pinned' }));
+        await act(async () => pane!.openDetailsTab(second));
+        const group = () => pane!.scopeState!.details.groups![0]!;
+        expect(group().activeTabKey).toBe(second.key);
+        await invoke('first.txt');
+        expect(group().activeTabKey).toBe(first.key);
+        await invoke(`${t('session.detailsPanel.pinTabA11y')}: second.txt`);
+        expect(group().tabs.find(tab => tab.key === second.key)).toMatchObject({ isPinned: true, isPreview: false });
+        await invoke(`${t('session.detailsPanel.unpinTabA11y')}: second.txt`);
+        expect(group().tabs.find(tab => tab.key === second.key)).toMatchObject({ isPinned: false });
+    } finally { await screen.unmount(); }
+});

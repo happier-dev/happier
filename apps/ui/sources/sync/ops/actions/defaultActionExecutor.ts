@@ -11,7 +11,7 @@ import { resolveAmbientTeamCredentialModelForModelIntent } from '@happier-dev/ag
 import { actionInputValidationFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 import { readActionOutputDiagnostic, withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { logPluginSurfaceDiagnostic } from '@/components/plugins/shared/pluginSurfaceDiagnosticLog';
-import { isSessionSpawnNewActionIdV1, keepsReviewedRequestOnConfirmV1, SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { isSessionSpawnNewActionIdV1, keepsReviewedRequestOnConfirmV1, SESSION_MESSAGE_SEND_ACTION_ID_V1, PROJECT_SERVICE_RELOCATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { isComputerRuntimeActionId } from '@happier-dev/protocol/actions/executor/computer';
 import { readLocalServiceControlActionRequest, resolveLocalServiceDomainActionRpcBinding } from '@happier-dev/protocol/actions/specs/localServices';
@@ -1142,7 +1142,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     const machineOwnedAction = isMachineOwnedAdmissionAction(args.actionId, args.input) || presetArchive;
     const relationshipWrite = isWorkspaceSyncRelationshipWriteActionId(args.actionId);
     // A person's service Move runs at the SOURCE workspace's Machine, addressed exactly like a Sync write.
-    const serviceMove = args.actionId === 'projects.service.relocate';
+    const serviceMove = args.actionId === PROJECT_SERVICE_RELOCATE_ACTION_ID_V1;
     let workspaceSourceMachineId: string | undefined;
     if (relationshipWrite || serviceMove) {
       if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
