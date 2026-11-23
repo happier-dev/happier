@@ -8,6 +8,7 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHo
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { t } from '@/text';
+import { readBuiltinWidgetDescriptorV1 } from '@happier-dev/protocol/widgets';
 import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';
 
 installApprovalCommonModuleMocks({ text: () => vi.importActual<typeof import('@/text')>('@/text') });
@@ -28,7 +29,10 @@ afterEach(async () => {
     await harness.reset();
 });
 
-it.each(['readable', 'unreadable', 'other Home'] as const)('reviews the widget in a Home layout change (%s)', async visibility => {
+it.each([
+    ['widget_rename', 'readable'], ['widget_rename', 'unreadable'], ['widget_rename', 'other Home'],
+    ['visibility', 'readable'], ['visibility', 'unreadable'], ['visibility', 'other Home'],
+] as const)('names a %s target in a Home layout review (%s)', async (kind, visibility) => {
     const accountId = 'layout-reviewer';
     const serverUrl = 'https://layout-review.test';
     const serverId = await harness.addHome({ name: 'Layout Home', serverUrl, accountId, currentAccount: true });
@@ -53,7 +57,9 @@ it.each(['readable', 'unreadable', 'other Home'] as const)('reviews the widget i
         } finally { account.dispose(); }
     }
     const actionId = 'home.hub.layout.update';
-    const actionArgs = getActionSpec(actionId).inputSchema.parse({ intent: { kind: 'widget_rename', instanceId, displayName: 'Lab budget' } });
+    const actionArgs = getActionSpec(actionId).inputSchema.parse({ intent: kind === 'visibility'
+        ? { kind, sectionId: instanceId, hidden: true }
+        : { kind, instanceId, displayName: 'Lab budget' } });
     const review = (capturedHomeId: string) => (
         <InjectedAuthProvider credentials={credentials}>
             <ApprovalReviewFacts actionId={actionId} actionArgs={actionArgs}
@@ -64,18 +70,37 @@ it.each(['readable', 'unreadable', 'other Home'] as const)('reviews the widget i
     try {
         await waitForHomeGovernance(() => {
             expect(screen.getTextContent()).toContain(visibility === 'unreadable' ? t('common.unavailable') : 'Capacity lab');
-            expect(screen.getTextContent()).toContain('Lab budget');
+            if (kind === 'widget_rename') expect(screen.getTextContent()).toContain('Lab budget');
             expect(screen.getTextContent()).not.toContain(instanceId);
         });
         if (otherHomeId) {
             await screen.update(review(otherHomeId));
             const text = screen.getTextContent();
             expect(text).toContain(t('common.unavailable'));
-            expect(text).toContain('Lab budget');
+            if (kind === 'widget_rename') expect(text).toContain('Lab budget');
             expect(text).not.toContain('Capacity lab');
             expect(text).not.toContain(instanceId);
         }
         await screen.pressByTestIdAsync('approvals.technical-details.header');
         expect(screen.getTextContent()).toContain(instanceId);
+    } finally { await screen.unmount(); }
+});
+
+it.each(['profile', 'portable', 'unreadable'] as const)('names the saved Home whose reachability suggestion is dismissed (%s)', async address => {
+    const identity = 'srv_038b08e5-bdbd-4a26-bd08-f182e0e6580f';
+    const serverId = await harness.addHome({ name: 'Design Home', serverUrl: 'https://reach-review.test',
+        accountId: 'reach-reviewer', serverIdentityId: identity });
+    const homeServerId = address === 'profile' ? serverId : address === 'portable'
+        ? identity : 'srv_a44d3ea7-7277-4f6a-b1b1-2014f3a5854b';
+    const actionId = 'home.reachNudge.dismiss';
+    const actionArgs = getActionSpec(actionId).inputSchema.parse({ homeServerId });
+    const screen = await renderScreen(<ApprovalReviewFacts actionId={actionId} actionArgs={actionArgs}
+        preview={null} status="open" serverId={serverId} testID="reach-review" />);
+    try {
+        const text = screen.getTextContent();
+        expect(text).not.toContain(homeServerId);
+        expect(text).toContain(address === 'unreadable' ? t('common.unavailable') : 'Design Home');
+        await screen.pressByTestIdAsync('approvals.technical-details.header');
+        expect(screen.getTextContent()).toContain(homeServerId);
     } finally { await screen.unmount(); }
 });

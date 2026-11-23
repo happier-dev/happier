@@ -1,0 +1,1267 @@
+[
+  {
+    "actionId": "home.reachNudge.dismiss",
+    "cases": [
+      {
+        "homeServerId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "homeServerId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "clientId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "homeServerId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "clientId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "homeServerId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "homeServerId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "clientId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "homeServerId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      },
+      {
+        "homeServerId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "clientId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "homeServerId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "clientId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      }
+    ]
+  },
+  {
+    "actionId": "home.accounts.delete",
+    "cases": [
+      {
+        "accountId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "accountId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedResourceDispositions": [
+          {
+            "managedId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "expectedIntentRevision": 1,
+            "expectedAllocation": "unsubmitted",
+            "responsibility": "manual"
+          }
+        ]
+      },
+      {
+        "accountId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "managedResourceDispositions": [
+          {
+            "managedId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "expectedIntentRevision": 1,
+            "expectedAllocation": "unsubmitted",
+            "responsibility": "manual"
+          }
+        ]
+      },
+      {
+        "accountId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "accountId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "managedResourceDispositions": [
+          {
+            "managedId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "expectedIntentRevision": 1,
+            "expectedAllocation": "unsubmitted",
+            "responsibility": "manual"
+          }
+        ]
+      },
+      {
+        "accountId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      },
+      {
+        "accountId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedResourceDispositions": [
+          {
+            "managedId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+            "expectedIntentRevision": 1,
+            "expectedAllocation": "unsubmitted",
+            "responsibility": "manual"
+          }
+        ]
+      },
+      {
+        "accountId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedResourceDispositions": [
+          {
+            "managedId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+            "expectedIntentRevision": 1,
+            "expectedAllocation": "unsubmitted",
+            "responsibility": "manual"
+          }
+        ]
+      },
+      {
+        "accountId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedResourceDispositions": [
+          {
+            "managedId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "expectedIntentRevision": 1,
+            "expectedAllocation": "may-exist",
+            "responsibility": "manual"
+          }
+        ]
+      },
+      {
+        "accountId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedResourceDispositions": [
+          {
+            "managedId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "expectedIntentRevision": 1,
+            "expectedAllocation": "bound",
+            "responsibility": "manual"
+          }
+        ]
+      },
+      {
+        "accountId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedResourceDispositions": [
+          {
+            "managedId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "expectedIntentRevision": 1,
+            "expectedAllocation": "confirmed-absent",
+            "responsibility": "manual"
+          }
+        ]
+      },
+      {
+        "accountId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedResourceDispositions": [
+          {
+            "managedId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "expectedIntentRevision": 1,
+            "expectedAllocation": "unsubmitted",
+            "responsibility": "manual",
+            "expectedRecovery": {
+              "reference": "Review sample",
+              "reason": "Review sample"
+            }
+          }
+        ]
+      },
+      {
+        "accountId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedResourceDispositions": [
+          {
+            "managedId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "expectedIntentRevision": 1,
+            "expectedAllocation": "unsubmitted",
+            "responsibility": "manual",
+            "expectedRecovery": {
+              "reference": "Review sample",
+              "reason": "Review sample",
+              "consoleUrl": "https://qa.example.test"
+            }
+          }
+        ]
+      },
+      {
+        "accountId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedResourceDispositions": [
+          {
+            "managedId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "expectedIntentRevision": 1,
+            "expectedAllocation": "unsubmitted",
+            "opaquePreset": true,
+            "responsibility": "manual"
+          }
+        ]
+      },
+      {
+        "accountId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedResourceDispositions": [
+          {
+            "managedId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+            "expectedIntentRevision": 1,
+            "expectedAllocation": "unsubmitted",
+            "opaquePreset": true,
+            "responsibility": "manual"
+          }
+        ]
+      },
+      {
+        "accountId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedResourceDispositions": [
+          {
+            "managedId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+            "expectedIntentRevision": 1,
+            "expectedAllocation": "unsubmitted",
+            "opaquePreset": true,
+            "responsibility": "manual"
+          }
+        ]
+      },
+      {
+        "accountId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedResourceDispositions": [
+          {
+            "managedId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "expectedIntentRevision": 1,
+            "expectedAllocation": "may-exist",
+            "opaquePreset": true,
+            "responsibility": "manual"
+          }
+        ]
+      },
+      {
+        "accountId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedResourceDispositions": [
+          {
+            "managedId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "expectedIntentRevision": 1,
+            "expectedAllocation": "bound",
+            "opaquePreset": true,
+            "responsibility": "manual"
+          }
+        ]
+      },
+      {
+        "accountId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedResourceDispositions": [
+          {
+            "managedId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+            "expectedIntentRevision": 1,
+            "expectedAllocation": "confirmed-absent",
+            "opaquePreset": true,
+            "responsibility": "manual"
+          }
+        ]
+      },
+      {
+        "accountId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "managedResourceDispositions": []
+      }
+    ]
+  },
+  {
+    "actionId": "teams.credentials.limits.upsert",
+    "cases": [
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "limit": {
+          "subjectKind": "resource",
+          "subjectId": "",
+          "period": "day",
+          "metric": "inference_requests",
+          "maximum": "10",
+          "enabled": true
+        }
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "limit": {
+          "subjectKind": "resource",
+          "subjectId": "",
+          "period": "week",
+          "metric": "inference_requests",
+          "maximum": "10",
+          "enabled": true
+        }
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "limit": {
+          "subjectKind": "resource",
+          "subjectId": "",
+          "period": "month",
+          "metric": "inference_requests",
+          "maximum": "10",
+          "enabled": true
+        }
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "limit": {
+          "subjectKind": "each_member",
+          "subjectId": "",
+          "period": "day",
+          "metric": "inference_requests",
+          "maximum": "10",
+          "enabled": true
+        }
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "limit": {
+          "subjectKind": "each_member",
+          "subjectId": "",
+          "period": "week",
+          "metric": "inference_requests",
+          "maximum": "10",
+          "enabled": true
+        }
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "limit": {
+          "subjectKind": "each_member",
+          "subjectId": "",
+          "period": "month",
+          "metric": "inference_requests",
+          "maximum": "10",
+          "enabled": true
+        }
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "limit": {
+          "subjectKind": "team_group",
+          "subjectId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+          "period": "day",
+          "metric": "inference_requests",
+          "maximum": "10",
+          "enabled": true
+        }
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "limit": {
+          "subjectKind": "team_group",
+          "subjectId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+          "period": "week",
+          "metric": "inference_requests",
+          "maximum": "10",
+          "enabled": true
+        }
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "limit": {
+          "subjectKind": "team_group",
+          "subjectId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+          "period": "month",
+          "metric": "inference_requests",
+          "maximum": "10",
+          "enabled": true
+        }
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "limit": {
+          "subjectKind": "team_member",
+          "subjectId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+          "period": "day",
+          "metric": "inference_requests",
+          "maximum": "10",
+          "enabled": true
+        }
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "limit": {
+          "subjectKind": "team_member",
+          "subjectId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+          "period": "week",
+          "metric": "inference_requests",
+          "maximum": "10",
+          "enabled": true
+        }
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "limit": {
+          "subjectKind": "team_member",
+          "subjectId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+          "period": "month",
+          "metric": "inference_requests",
+          "maximum": "10",
+          "enabled": true
+        }
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "limit": {
+          "subjectKind": "team_group",
+          "subjectId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "period": "day",
+          "metric": "inference_requests",
+          "maximum": "10",
+          "enabled": true,
+          "id": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+        }
+      },
+      {
+        "resourceId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "expectedRevision": 1,
+        "limit": {
+          "subjectKind": "team_group",
+          "subjectId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "period": "day",
+          "metric": "inference_requests",
+          "maximum": "10",
+          "enabled": true,
+          "id": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+        }
+      },
+      {
+        "resourceId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "expectedRevision": 1,
+        "limit": {
+          "subjectKind": "team_group",
+          "subjectId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "period": "day",
+          "metric": "inference_requests",
+          "maximum": "10",
+          "enabled": true,
+          "id": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+        }
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "limit": {
+          "subjectKind": "team_group",
+          "subjectId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "period": "day",
+          "metric": "inference_requests",
+          "maximum": "10",
+          "enabled": true
+        }
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "limit": {
+          "subjectKind": "team_member",
+          "subjectId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "period": "day",
+          "metric": "inference_requests",
+          "maximum": "10",
+          "enabled": true,
+          "id": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+        }
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "limit": {
+          "subjectKind": "team_member",
+          "subjectId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+          "period": "day",
+          "metric": "inference_requests",
+          "maximum": "10",
+          "enabled": true
+        }
+      }
+    ]
+  },
+  {
+    "actionId": "teams.credentials.externalKeys.create",
+    "cases": [
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "teamMembershipId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "keyId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "label": "Review sample"
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "teamMembershipId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "keyId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "label": "Review sample",
+        "expiresAt": null
+      },
+      {
+        "resourceId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "teamMembershipId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "keyId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "label": "Review sample",
+        "expiresAt": null
+      },
+      {
+        "resourceId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "teamMembershipId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "keyId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "label": "Review sample"
+      },
+      {
+        "resourceId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "teamMembershipId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "keyId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "label": "Review sample",
+        "expiresAt": null
+      },
+      {
+        "resourceId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "teamMembershipId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "keyId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "label": "Review sample"
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "teamMembershipId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "keyId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "label": "Review sample",
+        "expiresAt": null
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "teamMembershipId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "keyId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "label": "Review sample"
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "teamMembershipId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "keyId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "label": "Review sample",
+        "expiresAt": null
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "teamMembershipId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "keyId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "label": "Review sample"
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "teamMembershipId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "keyId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "label": "Review sample",
+        "expiresAt": null
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "teamMembershipId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "keyId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "label": "Review sample"
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "teamMembershipId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "keyId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "label": "Review sample",
+        "expiresAt": null
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "teamMembershipId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "keyId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "label": "Review sample"
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "teamMembershipId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "keyId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "label": {
+          "content": {
+            "t": "plain",
+            "v": "Review sample"
+          },
+          "recipients": []
+        },
+        "expiresAt": null
+      },
+      {
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "teamMembershipId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "keyId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "label": {
+          "content": {
+            "t": "plain",
+            "v": "Review sample"
+          },
+          "recipients": []
+        }
+      }
+    ]
+  },
+  {
+    "actionId": "teams.directory.sources.sync",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      }
+    ]
+  },
+  {
+    "actionId": "teams.directory.sources.pause",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      }
+    ]
+  },
+  {
+    "actionId": "teams.directory.sources.resume",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      }
+    ]
+  },
+  {
+    "actionId": "teams.directory.sources.remove.preview",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      }
+    ]
+  },
+  {
+    "actionId": "teams.directory.sources.remove",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      }
+    ]
+  },
+  {
+    "actionId": "home.governance.get",
+    "cases": [
+      {},
+      {
+        "projection": "session_defaults"
+      }
+    ]
+  },
+  {
+    "actionId": "home.audit.list",
+    "cases": [
+      {},
+      {
+        "cursor": "Review sample",
+        "limit": 1,
+        "targetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "cursor": "Review sample"
+      },
+      {
+        "cursor": null,
+        "limit": 1,
+        "targetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "cursor": null
+      },
+      {
+        "limit": 1,
+        "targetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "limit": 1
+      },
+      {
+        "cursor": "Review sample",
+        "targetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "targetId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "cursor": "Review sample",
+        "limit": 1,
+        "targetId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "targetId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "cursor": "Review sample",
+        "limit": 1,
+        "targetId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      },
+      {
+        "targetId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      },
+      {
+        "cursor": "Review sample",
+        "limit": 1
+      }
+    ]
+  },
+  {
+    "actionId": "teams.credentials.list",
+    "cases": [
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "cursor": "Review sample",
+        "limit": 1,
+        "filter": "all"
+      },
+      {
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "cursor": "Review sample",
+        "limit": 1,
+        "filter": "all"
+      },
+      {
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "cursor": "Review sample",
+        "limit": 1,
+        "filter": "all"
+      },
+      {
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "cursor": "Review sample"
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1,
+        "filter": "all"
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "cursor": "Review sample",
+        "filter": "all"
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "filter": "all"
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "cursor": "Review sample",
+        "limit": 1,
+        "filter": "needs_attention"
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "filter": "needs_attention"
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "cursor": "Review sample",
+        "limit": 1,
+        "filter": "brokered"
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "filter": "brokered"
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "cursor": "Review sample",
+        "limit": 1,
+        "filter": "direct"
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "filter": "direct"
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "cursor": "Review sample",
+        "limit": 1,
+        "filter": "external_api"
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "filter": "external_api"
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "cursor": "Review sample",
+        "limit": 1
+      },
+      {
+        "scope": "custodian",
+        "filter": "direct"
+      },
+      {
+        "scope": "custodian",
+        "filter": "direct",
+        "cursor": "Review sample",
+        "limit": 1
+      },
+      {
+        "scope": "custodian",
+        "filter": "direct",
+        "cursor": "Review sample"
+      },
+      {
+        "scope": "custodian",
+        "filter": "direct",
+        "limit": 1
+      }
+    ]
+  },
+  {
+    "actionId": "teams.credentials.entitled.list",
+    "cases": [
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "resourceId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "resourceId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "executionMachineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "executionMachineId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "executionMachineId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "resourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "executionMachineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "cursor": "Review sample",
+        "limit": 1
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "cursor": "Review sample"
+      },
+      {
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1
+      },
+      {
+        "teamIds": [
+          "Review sample"
+        ]
+      },
+      {
+        "teamIds": []
+      },
+      {
+        "teamIds": [
+          "Review sample"
+        ],
+        "executionMachineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "teamIds": [
+          "Review sample"
+        ],
+        "executionMachineId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "teamIds": [
+          "Review sample"
+        ],
+        "executionMachineId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      },
+      {
+        "teamIds": [
+          "Review sample"
+        ],
+        "executionMachineId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "cursor": "Review sample",
+        "limit": 1
+      },
+      {
+        "teamIds": [
+          "Review sample"
+        ],
+        "cursor": "Review sample"
+      },
+      {
+        "teamIds": [
+          "Review sample"
+        ],
+        "limit": 1
+      }
+    ]
+  },
+  {
+    "actionId": "teams.directory.sources.get",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      }
+    ]
+  },
+  {
+    "actionId": "teams.directory.people.list",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1,
+        "cursor": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1,
+        "cursor": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1,
+        "cursor": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "limit": 1,
+        "cursor": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "limit": 1,
+        "cursor": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "cursor": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1,
+        "cursor": null
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "cursor": null
+      }
+    ]
+  },
+  {
+    "actionId": "teams.directory.groups.list",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1,
+        "cursor": "Review sample",
+        "query": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1,
+        "cursor": "Review sample",
+        "query": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1,
+        "cursor": "Review sample",
+        "query": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "limit": 1,
+        "cursor": "Review sample",
+        "query": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "limit": 1,
+        "cursor": "Review sample",
+        "query": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "cursor": "Review sample",
+        "query": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "cursor": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1,
+        "cursor": null,
+        "query": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "cursor": null
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1,
+        "query": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "query": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "sourceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "limit": 1,
+        "cursor": "Review sample"
+      }
+    ]
+  }
+]

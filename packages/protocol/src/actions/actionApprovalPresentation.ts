@@ -216,6 +216,7 @@ export type ApprovalActionReference =
   | Readonly<{ kind: 'group'; id: string; teamId: string }>
   | Readonly<{ kind: 'teamMembership'; id: string; teamId: string }>
   | Readonly<{ kind: 'signInConnection' | 'signInProvider'; id: string; teamId: string | null }>
+  | Readonly<{ kind: 'teamDirectorySource'; id: string; teamId: string }>
   | Readonly<{ kind: 'teamCredentialResource'; id: string; unavailableWithoutName: true }>
   | Readonly<{ kind: 'teamCredentialAudience'; id: string; resourceId: string; audience: 'group' | 'teamMembership' }>
   /** An explicit null is the default picker’s None choice. An omitted field has no reference. */
@@ -236,7 +237,7 @@ export type ApprovalActionReference =
     }>
   /** A Saved Secret, read by its name and never by its value; one that is gone reads as unavailable. */
   | Readonly<{ kind: 'savedSecret'; id: string }>
-  | Readonly<{ kind: 'managedMachine'; id: string; homeId: string }>
+  | Readonly<{ kind: 'managedMachine'; id: string; homeId?: string; unavailableWithoutName?: true }>
   | Readonly<{ kind: 'machinePreset'; id: string; homeId?: string }>
   | Readonly<{ kind: 'machinePool'; id: string }>
   | Readonly<{ kind: 'artifact' | 'skill' | 'mcpServer' | 'project' | 'agent' | 'registrySource'; id: string }>

@@ -8,13 +8,20 @@ import { MACHINE_PRESET_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/man
 import { MACHINE_POOL_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/pools/actionsV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { TEAM_SETUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineFixture, createMachineMetadataFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { teamCredentialResourceFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { storage } from '@/sync/domains/state/storage';
+import { applyTeamCredentialResource } from '@/sync/store/teams/teamsSnapshots';
 import { preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
 import machineCatalogCases from './ApprovalReviewFacts.machineCatalog.cases.json';
+import namedTargetCases from './ApprovalReviewFacts.namedTargets.cases.json';
 import signInCases from './ApprovalReviewFacts.signIn.cases.json';
+import teamSetupCases from './ApprovalReviewFacts.teamSetup.cases.json';
+import teamCredentialCases from './ApprovalReviewFacts.teamCredential.cases.json';
 import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';
 
 installApprovalCommonModuleMocks({ text: () => vi.importActual<typeof import('@/text')>('@/text') });
@@ -26,6 +33,7 @@ const presetId = '3d703df7-5a51-4be7-91ec-dc877ae861ab';
 const poolId = 'f20c797b-449f-4aa6-8b89-01fcfcaed022';
 const machineId = '67cffe92-bd4e-4b28-8512-706b1cc4ab77';
 const homeId = 'srv_preset_review';
+const workspaceId = '299c21a2-4015-40ad-8940-38867c442c2c';
 
 beforeEach(async () => { standardCleanup(); await harness.reset(); });
 afterEach(() => {
@@ -113,6 +121,36 @@ it.each([
     } finally { await omitted.unmount(); }
 });
 
+it.each([true, false])('names the Team setup checkout from the viewer’s census (readable %s)', async readable => {
+    const accountId = readable ? 'setup-reviewer' : 'other-reviewer';
+    const setupHomeId = readable ? 'srv_setup_review' : 'srv_setup_other';
+    const serverId = await harness.addHome({ name: 'Review Home', serverUrl: `https://${accountId}.test`,
+        serverIdentityId: setupHomeId, accountId, currentAccount: true });
+    storage.getState().activateProfileScope({ serverId, accountId });
+    storage.setState({ settingsScope: { serverId, accountId } });
+    if (readable) storage.getState().applyMachines([createMachineFixture({ id: machineId,
+        metadata: createMachineMetadataFixture({ displayName: 'Setup runner' }) })], true, { sourceServerId: serverId, sourceAccountId: accountId });
+    applyProjectAccountRowsFixture(storage, { workspaceRefs: readable ? [
+        { id: workspaceId, serverId, machineId, rootPath: '/work/release-notes', createdAtMs: 1 },
+    ] : [] });
+    const spec = getActionSpec(TEAM_SETUP_RUN_ACTION_ID_V1);
+    const actionArgs = spec.inputSchema.parse({ serverId, homeId: setupHomeId, machineId, repositories: [{ id: presetId, input: {
+        serverId, machineId, source: { kind: 'workspace', workspaceId }, materialization: { kind: 'attach' },
+    } }] });
+    const screen = await renderScreen(<ApprovalReviewFacts actionId={TEAM_SETUP_RUN_ACTION_ID_V1} actionArgs={actionArgs}
+        preview={{ summary: buildApprovalPreviewSummary(spec, actionArgs) }} status="open" serverId={serverId} testID="setup-review" />);
+    try {
+        expect(screen.getTextContent()).toContain(readable ? 'Setup runner' : t('common.unavailable'));
+        if (readable) expect(screen.getTextContent()).toContain('release-notes');
+        else expect(screen.getTextContent()).not.toContain('release-notes');
+        expect(screen.getTextContent()).not.toContain(machineId);
+        expect(screen.getTextContent()).not.toContain(workspaceId);
+        await screen.pressByTestIdAsync('approvals.technical-details.header');
+        expect(screen.getTextContent()).toContain(machineId);
+        expect(screen.getTextContent()).toContain(workspaceId);
+    } finally { await screen.unmount(); }
+});
+
 const authoredFields = new Set(['name', 'description', 'path', 'url', 'address', 'modelId']);
 const opaqueIdentifier = /\b(?:[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}|c[a-z0-9]{24})\b/gi;
 const codeLiteral = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/;
@@ -135,7 +173,9 @@ it('has schema-valid review cases for every Preset and Pool Action', () => {
 });
 
 const zeroDefectCases: readonly { actionId: string; cases: readonly unknown[] }[] = [
-    ...machineCatalogCases, ...signInCases,
+    // Pool create and update still expose sealed labels. Keep their cases inventoried until the label reader lands.
+    ...machineCatalogCases.filter(({ actionId }) => actionId !== 'machines.pools.create' && actionId !== 'machines.pools.update'),
+    ...signInCases, { actionId: TEAM_SETUP_RUN_ACTION_ID_V1, cases: teamSetupCases }, ...teamCredentialCases, ...namedTargetCases,
 ];
 
 it.each(zeroDefectCases)('keeps $actionId free of technical operands and untranslated sentences', async ({ actionId, cases }) => {
@@ -143,6 +183,13 @@ it.each(zeroDefectCases)('keeps $actionId free of technical operands and untrans
     setPreferredLanguageFromSettings('fr');
     const serverId = await harness.addHome({ name: 'Review Home', serverUrl: 'https://catalog-review.test',
         serverIdentityId: homeId, accountId: 'reviewer' });
+    if (teamCredentialCases.some(row => row.actionId === actionId)) {
+        for (const [id, displayName, enabled] of [[presetId, 'Studio credential', true], [poolId, 'Retired credential', false]] as const) {
+            const resource = teamCredentialResourceFixture({ id, displayName, enabled });
+            applyTeamCredentialResource({ scope: { serverId, accountId: 'reviewer' },
+                address: { serverId, teamId: resource.teamId }, resource, observedAt: 1 });
+        }
+    }
     const spec = getActionSpec(ActionIdSchema.parse(actionId));
     const scenarios = cases.map(input => {
         const actionArgs = spec.inputSchema.parse(input);

@@ -134,6 +134,10 @@ function createHomeGovernanceActionSpecs() {
     path: '/v1/home/governance/get',
     inputSchema: HomeGovernanceGetInputV1Schema,
     outputSchema: HomeGovernanceReadResultV1Schema,
+    approvalPresentation: { inputHints: { fields: [{
+      path: 'projection', title: 'Projection', widget: 'select',
+      options: [{ value: 'session_defaults', label: 'Session defaults', labelKey: 'teams.settings.sessionDefaultsSection' }],
+    }] } },
   }),
   homeDomainActionRow({
     id: 'home.governance.eligibility.get', approval: {result: 'required'},
@@ -264,10 +268,16 @@ function createHomeGovernanceActionSpecs() {
     outputSchema: HomeAccountDeleteResultV1Schema,
     accountAuthorityRetirementStatuses: ['deleted', 'disabled_pending_completion'],
     inputHints: { fields: [ACCOUNT_ID_FIELD] },
-    approvalPresentation: { summary: () => null, inputHints: { fields: [
-      ACCOUNT_ID_FIELD,
-      approvalField('managedResourceDispositions', 'Managed resource dispositions', { widget: 'json' }),
-    ] } },
+    approvalPresentation: {
+      summary: () => null,
+      referenceForField: (path, value) => path === 'managedResourceDispositions.[].managedId' && typeof value === 'string'
+        ? { kind: 'managedMachine', id: value, unavailableWithoutName: true }
+        : undefined,
+      inputHints: { fields: [
+        ACCOUNT_ID_FIELD,
+        approvalField('managedResourceDispositions', 'Managed resource dispositions', { widget: 'json' }),
+      ] },
+    },
   }),
   homeDomainActionRow({
     id: 'home.accounts.signOutEverywhere', approval: {result: 'required'},
@@ -407,6 +417,8 @@ function createHomeGovernanceActionSpecs() {
     path: '/v1/home/audit/list',
     inputSchema: HomeAuditListInputV1Schema,
     outputSchema: HomeAuditListResultV1Schema,
+    // Audit filters accept identifiers across target kinds without naming a kind.
+    approvalPresentation: { technicalInputPaths: ['targetId', 'cursor'] },
   }),
   homeDomainActionRow({
     id: 'home.reachability.get', approval: {result: 'required'},

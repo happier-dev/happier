@@ -32,6 +32,7 @@ import type { ArtifactActionResultV1 } from '@happier-dev/protocol/artifacts/art
 import type { ReviewListResponseV1 } from '@happier-dev/protocol/reviews/reviewListV1';
 import type { DiscussionOpenedSummaryV1 } from '@happier-dev/protocol/discussions/actions';
 import { snapshotReferenceSelectionKey } from '@/sync/domains/scope/snapshotReferenceSelectionKey';
+import { managedIdentityQueryKey } from '@/sync/store/home/governance/homeGovernanceSnapshots';
 import { CredentialCatalogPublication } from './credentialCatalogPublication';
 import { areSnapshotProjectionsEquivalent as areProjectionsEquivalent, retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 
@@ -266,6 +267,12 @@ export type TeamSharedArtifactRow = ArtifactActionResultV1<'artifact.list'>['ite
 export const teamSharedArtifactPages = createTeamObservations<TeamPage<TeamSharedArtifactRow>>();
 export const teamSharedDiscussionPages = createTeamObservations<TeamPage<DiscussionOpenedSummaryV1>>();
 export const teamDirectorySourcePages = createTeamObservations<TeamPage<TeamDirectorySourceSummaryV1>>();
+
+export function readTeamDirectorySourceName(scope: ServerAccountScope, teamId: string, sourceId: string): string | null {
+    return teamDirectorySourcePages.get(managedIdentityQueryKey(scope, teamId))?.items
+        .find(source => source.id === sourceId && source.teamId === teamId)?.displayName ?? null;
+}
+
 export const teamInvitationPages = createTeamObservations<TeamPage<TeamInvitationRowV1>>();
 export const teamCredentialExternalApiKeyObservations = createTeamObservations<readonly TeamCredentialExternalApiKeySummaryV1[]>();
 export const teamCredentialUsageObservations = createTeamObservations<TeamCredentialUsageQueryResultV1>();

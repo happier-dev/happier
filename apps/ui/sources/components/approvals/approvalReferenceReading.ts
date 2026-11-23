@@ -28,7 +28,7 @@ import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/use
 import { readSignInIdentityName } from '@/sync/store/home/governance/homeGovernanceSnapshots';
 import { createPrivateLabelClientForActionAccountContext } from '@/sync/ops/privateLabels/privateLabelClient';
 import { teamCredentialDisplayNameBinding } from '@/sync/ops/teams/teamCredentialLabels';
-import { readTeamCredentialResourceApprovalProjection, subscribeTeamsSnapshots } from '@/sync/store/teams/teamsSnapshots';
+import { readTeamCredentialResourceApprovalProjection, readTeamDirectorySourceName, subscribeTeamsSnapshots } from '@/sync/store/teams/teamsSnapshots';
 import { approvalProfileDefaultNoneTitle } from './approvalProfileDefaultChoiceCopy';
 import { useScopedSharingRead } from '@/components/sharing/sharePrincipalNames';
 import { readMcpServerCatalogInContext } from '@/sync/api/account/apiMcpServerCatalog';
@@ -146,6 +146,10 @@ export async function readApprovalReferenceForConfirmation(reference: ApprovalRe
         account.assertCurrent();
         sources.signInIdentityName = readSignInIdentityName(scope, reference);
     }
+    if (reference.kind === 'teamDirectorySource') {
+        account.assertCurrent();
+        sources.teamDirectorySourceName = readTeamDirectorySourceName(scope, reference.teamId, reference.id);
+    }
     if (reference.kind === 'artifact' || reference.kind === 'skill') {
         sources.artifact = await account.fetchArtifact(reference.id, { signal });
         account.assertCurrent();
@@ -155,11 +159,12 @@ export async function readApprovalReferenceForConfirmation(reference: ApprovalRe
         account.assertCurrent();
         sources.mcp = projectMcpServerCatalogSnapshot(snapshot);
     }
-    if (reference.kind === 'managedMachine' && reference.homeId === account.serverIdentityId) {
+    const managedHomeId = reference.kind === 'managedMachine' ? reference.homeId ?? account.serverIdentityId : null;
+    if (reference.kind === 'managedMachine' && managedHomeId && managedHomeId === account.serverIdentityId) {
         try {
             account.assertCurrent();
             const read = await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get',
-                { homeId: reference.homeId, managedId: reference.id }, { signal });
+                { homeId: managedHomeId, managedId: reference.id }, { signal });
             const { createManagedMachinePresetReadCustodyV1 } = await import('@/sync/ops/machines/managedMachinePresetCustody');
             const { openManagedMachineReadSnapshotsAtCustody } = await import('@/sync/ops/machines/machinePresetCollectionClient');
             const custody = createManagedMachinePresetReadCustodyV1({ account, signal });
@@ -169,7 +174,7 @@ export async function readApprovalReferenceForConfirmation(reference: ApprovalRe
             } finally {
                 await custody?.dispose();
             }
-            if (machine && machine.id === reference.id && machine.homeId === reference.homeId) sources.managedMachine = machine;
+            if (machine && machine.id === reference.id && machine.homeId === managedHomeId) sources.managedMachine = machine;
         } catch {
             // A display reference may be unreadable; it never grants resource access.
         }
@@ -295,9 +300,12 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
     const teamCredentialResourceName = useApprovalTeamCredentialResourceName(
         reference?.kind === 'teamCredentialResource' ? reference.id : null, credentialProjection);
     const signInReference = reference?.kind === 'signInConnection' || reference?.kind === 'signInProvider' ? reference : null;
-    const signInBinding = useServerCredentialAccountScopeBinding(signInReference ? approvalServerId : null).binding;
+    const directorySource = reference?.kind === 'teamDirectorySource' ? reference : null;
+    const signInBinding = useServerCredentialAccountScopeBinding(signInReference || directorySource ? approvalServerId : null).binding;
     const signInIdentityName = signInReference && signInBinding?.isCurrent()
         ? readSignInIdentityName(signInBinding.scope, signInReference) : null;
+    const teamDirectorySourceName = directorySource && signInBinding?.isCurrent()
+        ? readTeamDirectorySourceName(signInBinding.scope, directorySource.teamId, directorySource.id) : null;
     const homeLayout = useHomeHubLayoutReading(reference?.kind === 'homeLayoutItem' && ownHome);
     const homeSection = reference?.kind === 'homeLayoutItem' && ownHome
         ? homeLayout.sections.flatMap(section => section.kind === 'group' ? [section, ...section.children] : [section])
@@ -305,14 +313,15 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
     const homeLayoutItemName = homeSection ? homeSection.kind === 'group'
         ? describeWidgetGroupAmong(homeLayout.items, homeSection.group, homeChildTitle(homeLayout.sections))
         : homeHubSectionTitle(homeSection) : null;
-    return resolveApprovalReferenceReading(reference, literal, approvalServerId, { teamCredentialResourceName, signInIdentityName, homeLayoutItemName,
-        homeLayoutItemResolving: reference?.kind === 'homeLayoutItem' && ownHome && homeLayout.status === 'loading', serverId, sessionReading, viewer, ownHome, artifact, machine, machineInventory, connectedAccount, savedSecret,
+    return resolveApprovalReferenceReading(reference, literal, approvalServerId, { serverId, sessionReading, viewer, ownHome, artifact, machine, machineInventory, connectedAccount, savedSecret,
         managedMachine, managedEnrolledMachine, managedMachineLoading, sessionMachine, mcp, registries, project, projectCensusComplete, agents,
         providerConnection, providerManualModel, providerCatalogLoading, declarations, localizePluginText,
         syncLink, workspace, discussionTitle: discussion.title, discussionTitleResolving: discussion.resolving,
         principalName: principal.name, principalResolving: principal.resolving,
         approvalProfileName: profileId === null ? undefined : lookup.value ?? undefined,
         approvalProfileResolving: profileId !== null && lookup.resolving,
+        teamCredentialResourceName, signInIdentityName, teamDirectorySourceName, homeLayoutItemName,
+        homeLayoutItemResolving: reference?.kind === 'homeLayoutItem' && ownHome && homeLayout.status === 'loading',
         machineCatalogName: machineCatalogReference ? lookup.value : null,
         machineCatalogResolving: machineCatalogReference !== null && lookup.resolving });
 }
@@ -364,12 +373,15 @@ function useApprovalDiscussionTitle(reference: ApprovalReference | undefined, ap
 
 /** The managed row and its enrolled Machine behind a managed reference, read in the reference's own Home. */
 function useManagedReferenceSources(reference: ApprovalReference | undefined, approvalServerId: string | null) {
-    const managedServerId = reference?.kind === 'managedMachine' && areServerProfileIdentifiersEquivalent(reference.homeId, approvalServerId)
+    const managedServerId = reference?.kind === 'managedMachine'
+        && (!reference.homeId || areServerProfileIdentifiersEquivalent(reference.homeId, approvalServerId))
         ? approvalServerId : null;
+    const managedHomeId = reference?.kind === 'managedMachine' && managedServerId
+        ? reference.homeId ?? getServerProfileById(managedServerId)?.serverIdentityId : undefined;
     const managed = useManagedMachineInventory(managedServerId ? [managedServerId] : [],
         reference?.kind === 'managedMachine' ? reference.id : undefined);
     const managedMachine = managedServerId ? managed.machinesByServerId[managedServerId]?.find(row =>
-        reference?.kind === 'managedMachine' && row.id === reference.id && row.homeId === reference.homeId) : undefined;
+        reference?.kind === 'managedMachine' && row.id === reference.id && row.homeId === managedHomeId) : undefined;
     const managedEnrolledMachine = useServerScopedMachine(managedServerId, managedMachine?.enrolledMachineId ?? '');
     return { managedMachine, managedEnrolledMachine, managedMachineLoading: managed.loading };
 }
@@ -398,15 +410,16 @@ export function useManagedMachineName(serverId: string | null, managedId: string
 const CONNECTED_ACCOUNT_KEY = 'connectedAccount';
 
 type ApprovalReferenceSources = {
-    teamCredentialResourceName?: string | null;
-    signInIdentityName?: string | null;
-    homeLayoutItemName?: string | null;
-    homeLayoutItemResolving?: boolean;
     serverId: string | null;
     principalName?: string | null;
     principalResolving?: boolean;
     approvalProfileName?: string;
     approvalProfileResolving?: boolean;
+    teamCredentialResourceName?: string | null;
+    signInIdentityName?: string | null;
+    teamDirectorySourceName?: string | null;
+    homeLayoutItemName?: string | null;
+    homeLayoutItemResolving?: boolean;
     machineCatalogName?: string | null;
     machineCatalogResolving?: boolean;
     connectedAccount?: { accessibilityLabel: string };
@@ -456,6 +469,10 @@ function resolveApprovalReferenceReading(reference: ApprovalReference | undefine
         const name = sources.teamCredentialResourceName;
         return { text: name ?? t('common.unavailable'), named: Boolean(name) };
     }
+    if (reference?.kind === 'teamDirectorySource') {
+        const name = sources.teamDirectorySourceName;
+        return { text: name ?? t('common.unavailable'), named: Boolean(name) };
+    }
     if (reference?.kind === 'signInConnection' || reference?.kind === 'signInProvider') {
         const name = sources.signInIdentityName;
         return { text: name ?? t('common.unavailable'), named: Boolean(name) };
@@ -469,7 +486,7 @@ function resolveApprovalReferenceReading(reference: ApprovalReference | undefine
         const title = readManagedMachineName(sources);
         // The generic word stands in for a machine that could not be read; it is not a name, so a title never
         // takes it as its subject ("Delete managed machine · Machine").
-        return { text: title || t('contextBar.machine'), named: Boolean(title), subject: 'managedMachine',
+        return { text: title || t(reference.unavailableWithoutName ? 'common.unavailable' : 'contextBar.machine'), named: Boolean(title), subject: 'managedMachine',
             ...(sources.managedMachineLoading && !title ? { resolving: true } : {}) };
     }
     if (reference?.kind === 'skill' || reference?.kind === 'artifact') return readApprovalArtifactReference(reference.kind, reference.id, ownHome ? artifact : null);

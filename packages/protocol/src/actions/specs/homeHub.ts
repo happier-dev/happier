@@ -6,6 +6,7 @@ import { WidgetInstanceV1Schema } from '../../widgets/widgetInstanceV1.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { WidgetSizeV1Schema } from '../../widgets/widgetPresentationV1.js';
 import { WidgetLayoutGroupV1Schema } from '../../widgets/widgetLayoutItemV1.js';
+import { readRecord } from '../../inputs/inputRecords.js';
 
 export const HOME_HUB_LAYOUT_ACTION_IDS = ['home.hub.layout.get', 'home.hub.layout.update', 'home.reachNudge.dismiss'] as const;
 export type HomeHubLayoutActionId = typeof HOME_HUB_LAYOUT_ACTION_IDS[number];
@@ -37,6 +38,15 @@ function createHomeHubLayoutActionSpecs() {
     bindings: { mcpToolName: 'home_reach_nudge_dismiss', voiceClientToolName: 'dismissHomeReachNudge' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: false, rpc: false },
     inputSchema: HomeReachNudgeDismissInputSchema, outputSchema: HomeReachNudgeDismissResultSchema,
+    approvalPresentation: {
+      inputHints: { fields: [
+        { path: 'homeServerId', title: 'Home', widget: 'text', required: true },
+        { path: 'clientId', title: 'Client ID', widget: 'text' },
+      ] },
+      referenceForField: (path, value) => path === 'homeServerId' && typeof value === 'string'
+        ? { kind: 'home', id: value, unavailableWithoutName: true } : undefined,
+      technicalInputPaths: ['clientId'],
+    },
     inputHints: { fields: [{ path: 'homeServerId', title: 'Saved Home ID', widget: 'text', required: true }] },
     examples: { voice: { argsExample: '{"homeServerId":"home-1"}' } },
   },
@@ -67,8 +77,16 @@ function createHomeHubLayoutActionSpecs() {
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
     inputSchema: HomeHubLayoutUpdateInputSchema, outputSchema: HomeHubLayoutResultSchema,
     approvalPresentation: {
-      referenceForField: (path, value) => path === 'intent.instanceId' && typeof value === 'string'
-        ? { kind: 'homeLayoutItem', id: value } : undefined,
+      referenceForField: (path, value, input) => {
+        if (typeof value !== 'string') return undefined;
+        if (path === 'intent.sectionId' || path === 'intent.instanceId' || path === 'intent.position.anchorId'
+          || path === 'intent.sectionIds.[]' || path === 'intent.instanceIds.[]') return { kind: 'homeLayoutItem', id: value };
+        // Creating a group allocates this ID. In all other intents it selects a saved group.
+        if (path === 'intent.groupId' && readRecord(readRecord(input).intent).kind !== 'group_create') {
+          return { kind: 'homeLayoutItem', id: value };
+        }
+        return undefined;
+      },
     },
     inputHints: { fields: [{ path: 'intent', title: 'Customization intent', widget: 'json', required: true,
       description: 'Use move, move_to (sectionId, position: anchorId and before/after placement), reorder, visibility, frameStyle (card/plain/null), setup_visibility (stepId, hidden), restore_setup, reset, widget_add (instance, optional size, position and destination groupId), widget_remove (instanceId), widget_rename (instanceId, optional displayName), widget_inputs (instanceId, bindings) or widget_size (instanceId, declared size). Shared item intents include group_create, group_add, group_ungroup, group_set, group_inputs, remove, rename, size, width, frame, inputs, inputs_reset and move (instanceId, toIndex, optional groupId; null moves out). move_to preserves concurrent additions. Read the current layout first; reorder lists all sections returned by that read.' }] },

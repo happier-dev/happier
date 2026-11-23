@@ -24,6 +24,28 @@ const resourceName = 'Studio credential';
 beforeEach(async () => { standardCleanup(); resetTeamsSnapshotsForTests(); await harness.reset(); });
 afterEach(async () => { standardCleanup(); resetTeamsSnapshotsForTests(); await harness.reset(); });
 
+it.each([
+    ['teams.credentials.list', { teamId, filter: 'needs_attention' }, 'teams.credentials.state.needsAttention', 'needs_attention'],
+    ['teams.credentials.create', { teamId, resourceId, displayName: 'Research credential',
+        source: { v: 1, kind: 'provider_connection', connectionId: 'provider', connectionSecurityFingerprint: 'connection-security:v1:test', credentialSlotId: 'api-key' },
+        sessionUsePolicy: 'personal_allowed', brokerPlacement: null, requestPolicy: null,
+        allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [], usageLimits: [] },
+        'teams.credentials.usePolicy.personalAllowed', 'personal_allowed'],
+    ['teams.credentials.limits.upsert', { resourceId, expectedRevision: 1,
+        limit: { subjectKind: 'resource', subjectId: '', period: 'day', metric: 'inference_requests', maximum: '125', enabled: true } },
+        'teams.credentials.limits.metric.requests', 'inference_requests'],
+] as const)('reuses the settings picker label in a %s review', async (actionId, input, label, code) => {
+    const actionArgs = getActionSpec(actionId).inputSchema.parse(input);
+    const screen = await renderScreen(<ApprovalReviewFacts actionId={actionId} actionArgs={actionArgs}
+        preview={null} status="open" serverId={null} testID="credential-choice-review" />);
+    try {
+        const text = screen.getTextContent();
+        expect(text).toContain(t(label));
+        expect(text).not.toContain(code);
+        if (actionId === 'teams.credentials.limits.upsert') expect(text).toContain('125');
+    } finally { await screen.unmount(); }
+});
+
 it.each(['readable', 'other Account'] as const)('reviews a Team credential audience (%s)', async visibility => {
     const accountId = 'reviewer';
     const serverId = await harness.addHome({ name: 'Review Home', serverUrl: 'https://credential-review.test', accountId, teamsEnabled: true });
