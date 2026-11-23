@@ -39,9 +39,71 @@ import { createCliActionExecutorFromCredentials } from '@/session/actions/create
 import { createNativeSessionDeleteAction } from '@/daemon/sessions/sessionDeleteAction';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
+import { ExternalActionRequestEnvelopeSchema, openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions';
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { createAccountScopedCryptoMaterialSnapshotV1, resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
+import { createProductionWorkflowSessionStepExecutor } from '@/daemon/workflows/sessionStepExecutor';
+import { deliverSessionMessageReply } from '@/session/services/sessionMessageReply';
 
 const boundary = vi.hoisted(() => ({ socket: null as unknown, mode: 'timeout', connections: 0 }));
 vi.mock('socket.io-client', () => ({ io: () => { boundary.connections++; return boundary.socket; } }));
+
+async function expectStoppedSessionDelivery(credentials: Parameters<typeof deliverSessionMessageReply>[0]['credentials'],
+  sessionId: string, machineId: string, directory: string) {
+  const senderSessionId = 'c223456789012345678901234';
+  const machineAdmissionTransport = vi.fn<NonNullable<Parameters<typeof deliverSessionMessageReply>[0]['machineAdmissionTransport']>>(
+    async input => ({ status: 'accepted', localId: input.localId }));
+  const machineResumeTransport = vi.fn(async () => { throw new Error('Stopped Session reached the Machine resume boundary'); });
+  const deps = createCliActionDeps({ token: credentials.token, credentials,
+    sessionId: senderSessionId, mode: 'plain', ctx: null, getCurrentTurnWorkDepth: () => 0, getCurrentSessionWorkDepth: () => 0,
+    sessionMessageReplyPublisher: { sessionId: senderSessionId, mutateSessionMessageReply: vi.fn(), publishSessionMessageReply: vi.fn() },
+    machineAdmissionTransport, machineActionDirectTargetTransport: { machineId, invoke: machineResumeTransport },
+  });
+  const actionCaller = { kind: 'session', sessionId: senderSessionId, starterDepth: 0, turnDepth: 0 } as const;
+  const held = { status: 'held', code: 'session_input_target_unavailable', failureCause: { errorCode: 'held_by_person' } };
+  for (const reply of ['none', 'wait', 'return'] as const) {
+    const localId = `agent-${reply}`;
+    const result = await deps.sessionSendMessage({
+      context: { authority: 'account_automation', actionCaller }, actionCaller, callerSurface: 'agent',
+      sessionId, message: 'new input', localId, reply, requestedAction: { v: 1, kind: 'send_now' },
+      sessionInputSource: { sourceSessionId: senderSessionId, sourceTurnId: 'source-turn', sourceInputId: 'source-input', via: 'action',
+        causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } },
+    });
+    expect.soft(result).toMatchObject({ ...held, localId });
+  }
+
+  const returned = await deliverSessionMessageReply({ credentials, sessionId, requestSessionId: senderSessionId,
+    requestLocalId: 'original-ask', requestKind: 'session_input', acceptedTurnId: 'answer-turn',
+    message: 'returned answer', outcome: 'answer', mode: 'wait', machineAdmissionTransport, machineResumeTransport });
+  expect.soft(returned).toMatchObject({ ok: true, admissionResult: { status: 'accepted' },
+    receiverDelivery: { disposition: 'hold', reason: 'explicit_stop' } });
+  expect.soft(machineResumeTransport).not.toHaveBeenCalled();
+
+  const onInputAccepted = vi.fn();
+  const executeWorkflowStep = createProductionWorkflowSessionStepExecutor({ credentials, machineId, machineAdmissionTransport,
+    createFreshConversation: async () => { throw new Error('Expected the existing Session'); },
+    resolveSharedRunConversation: async () => null, resolveProducerConversation: async () => null,
+    resolveExistingSessionConversation: async () => ({ sessionId, machineId, directory }),
+  });
+  const workflow = await executeWorkflowStep({
+    runId: 'workflow', step: { kind: 'step', id: 'send', result: { kind: 'text' },
+      document: { text: 'Continue', references: [], attachments: [] }, input: [] },
+    invocation: { kind: 'happier.workflow-progress.v1', blockKind: 'step', invocationPath: { blockId: 'send', scope: [] },
+      attempt: '0', logicalInvocationRecordId: 'step' },
+    input: { text: 'Continue', references: [], attachments: [], values: [] },
+    execution: { conversation: { kind: 'existing_session', sessionId, machineId } }, executionTarget: { kind: 'session' },
+    authorization: { admittedPermissionCeiling: 'default', principal: { kind: 'host' } },
+    workspace: { machineId, directory, checkoutRootPath: directory },
+    beforeInputAdmission: async () => {}, onInputAccepted,
+  });
+  expect.soft(workflow).toMatchObject({ kind: 'needs_attention', code: 'held_by_person' });
+  expect.soft(onInputAccepted).toHaveBeenCalledOnce();
+  const pending = machineAdmissionTransport.mock.calls.map(([request]) => request);
+  expect.soft(pending.map(({ requestedAction }) => requestedAction.kind)).toEqual(Array(5).fill('enqueue'));
+  expect.soft(new Set(pending.map(({ localId }) => localId)).size).toBe(5);
+}
 
 describe('requestSessionStop machine transport', () => {
   const sessionId = 'cmuo0nwxt11bptmszygswp8g3';
@@ -99,8 +161,11 @@ describe('requestSessionStop machine transport', () => {
         material: { type: 'legacy', secret }, envelope: sessionMetadata.ownerMetadata });
       if (!opened.ok) throw new Error(`Fixture owner metadata unavailable: ${opened.reason}`);
       if (typeof sessionMetadata.metadata !== 'string') throw new Error('Fixture shared metadata unavailable');
+      const sharedMetadata = sessionMetadata.encryptionMode === 'e2ee'
+        ? decrypt(secret, 'legacy', decodeBase64(sessionMetadata.metadata))
+        : JSON.parse(sessionMetadata.metadata);
       return readSessionExplicitStopV1FromMetadata(projectSessionOwnerCompatibilityViewV1({
-        sharedMetadata: StoredSessionSharedMetadataV1Schema.parse(JSON.parse(sessionMetadata.metadata)),
+        sharedMetadata: StoredSessionSharedMetadataV1Schema.parse(sharedMetadata),
         ownerMetadata: opened.ownerMetadata,
       }));
     }
@@ -237,6 +302,81 @@ describe('requestSessionStop machine transport', () => {
     resetActiveAccountSettingsSnapshotForTests();
     vi.restoreAllMocks();
     vi.useRealTimers();
+  });
+
+  it('records a person Stop from a paired CLI with a fixed Home and an explicit remote Machine', async () => {
+    active = true;
+    boundary.mode = 'delete_stopped';
+    const serverIdentityId = 'srv_stop_home';
+    const machineId = 'owning-machine';
+    const accountId = 'stop-owner';
+    const authentication = { kind: 'terminal' as const, tokenEpoch: 4 };
+    const token = `header.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: authentication.tokenEpoch,
+      provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
+    const pairedCredentials = { ...credentials, token, credentialProvenance: 'stored_session' as const };
+    const crypto = createAccountScopedCryptoMaterialSnapshotV1({
+      accountEncryptionMode: 'e2ee', material: pairedCredentials.encryption,
+    });
+    const contentKeyFingerprint = convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(crypto.contentPublicKeyFingerprint);
+    const fields = buildSessionMetadataEnvelopeFields({
+      credentials: pairedCredentials, accountEncryptionMode: 'e2ee', storedContentMode: 'e2ee',
+      encryptionVariant: 'legacy', encryptionKey: secret,
+      metadata: { machineId, path: '/repo', lifecycleState: 'running',
+        claudeSessionId: 'native-session', runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} } },
+      agentState: null,
+    });
+    sessionMetadata = { ...sessionMetadata, encryptionMode: 'e2ee',
+      metadata: fields.sharedMetadata.ciphertext, ownerMetadata: fields.ownerMetadata };
+    const actionsSettings = normalizeActionsSettingsV1({ v: 1 });
+    const get = vi.mocked(axios.get).getMockImplementation()!;
+    vi.mocked(axios.get).mockImplementation(async (...args) => {
+      if (String(args[0]).endsWith('/v1/account/encryption/currentness')) return {
+        status: 200, data: { mode: 'e2ee', version: 1, updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint },
+      };
+      if (String(args[0]).endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
+      if (String(args[0]).endsWith('/delivery-mutes')) return { status: 200, data: { scopes: [] } };
+      if (String(args[0]).endsWith('/messages/reply-capability')) return { status: 200, data: { v: 1, protocolVersions: [1] } };
+      if (String(args[0]).endsWith(`/v1/machines/${machineId}`)) return { status: 200, data: { machine: {
+        id: machineId, active: true, kind: 'persistent', storageMode: 'e2ee', dataEncryptionKey: null,
+        revokedAt: null, replacedByMachineId: null, managedMachineRef: null,
+        access: { custodian: { accountId, displayName: 'Owner' }, role: 'manage', resourceMode: 'e2ee', accessState: 'ready' },
+      } } };
+      return await get(...args);
+    });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({ features: {},
+      capabilities: { serverIdentity: { serverIdentityId } } }));
+    vi.spyOn(axios, 'request').mockImplementation(async ({ url }) => {
+      expect(String(url)).toMatch(/\/v1\/automations\/actions\/index$/);
+      return { status: 200, data: { v: 1, rows: [] } };
+    });
+    const actionId = 'session.stop';
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      expect(String(url)).toBe(`https://stop.test/v1/actions/${actionId}`);
+      const envelope = ExternalActionRequestEnvelopeSchema.parse(body);
+      if (envelope.v !== 2) throw new Error('Expected the Home relay to carry encrypted Action input');
+      const binding = { serverIdentityId, accountId, actionId, requestId: envelope.requestId, authentication,
+        target: { kind: 'machine' as const, machineId } };
+      const material = { type: 'dataKey' as const, machineKey: resolveAccountContentSecretKey(pairedCredentials.encryption) };
+      const opened = openExternalActionRequestV2({ envelope, binding, material,
+        projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1 });
+      if (!opened) throw new Error('Could not open the relayed Action input');
+      // The paired HTTP relay authenticates as terminal automation. Exercise the
+      // actual receiving Action and Stop effect behind that transport boundary.
+      const receiving = createActionExecutor(createCliActionDeps({ token, credentials: pairedCredentials,
+        sessionId, mode: 'plain', ctx: null }));
+      const execution = await receiving.execute(actionId, opened.input, { surface: 'cli', authority: 'account_automation', actionsSettings });
+      return { status: 200, data: prepareExternalActionResponseV2({ request: envelope, binding, material,
+        executedMachineId: machineId, randomBytes: length => new Uint8Array(length).fill(6), execution }).response };
+    });
+    const caller = createCliActionExecutorFromCredentials({ credentials: pairedCredentials,
+      serverId: serverIdentityId, serverIdentityId, serverApiUrl: 'https://stop.test', machineId,
+      actionsSettingsProvider: { getActionsSettings: () => actionsSettings } });
+    const stopped = await caller.execute(actionId, { sessionId },
+      { surface: 'cli', authority: 'present_user', serverId: serverIdentityId, serverIdentityId });
+    expect(stopped, JSON.stringify(stopped)).toMatchObject({ ok: true, result: { stopped: true } });
+    expect(issuedMethods).toEqual(['owning-machine:stop-session']);
+    expect(readPersistedStop()).toMatchObject({ v: 1, cause: 'explicit_stop', requestId: issuedRequestIds[0] });
+    await expectStoppedSessionDelivery(pairedCredentials, sessionId, machineId, '/repo');
   });
 
   it.each(['confirmed', 'unconfirmed', 'inactive-offline'] as const)(
