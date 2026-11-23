@@ -1,4 +1,6 @@
 import * as React from 'react';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
 
 import { actionOperationSelectors, createActionOperationSelectors, selectTerminalActionOperationState, type DeploymentTargetLinkOperationQuery, type TerminalActionOperationQuery } from './actionOperationSelectors';
 import { actionOperationStore, isActionOperationTerminal, type ActionOperationReadOwner } from './actionOperationStore';
@@ -117,6 +119,30 @@ export function useActionOperationByRequestId(
             : null
     );
     return React.useSyncExternalStore(requestId ? actionOperationStore.subscribe : subscribeToNothing, read, read);
+}
+
+/** A finite invocation can settle through its exact owner record while the original reply is still pending. */
+export function useIssuedMachineActionOperation(input: Readonly<{
+    requestId: string | null;
+    machineId: string | undefined;
+    actionId: string;
+    lifetime: ServerAccountScopeLifetime | null;
+    onSettled: (result: ActionExecuteResult, requestId: string) => void;
+}>) {
+    const { actionId, lifetime, machineId, onSettled } = input;
+    const requestId = machineId ? input.requestId : null;
+    const serverId = lifetime?.scope.serverId ?? null;
+    const snapshot = useActionOperationByRequestId(requestId, serverId, lifetime?.scope.accountId);
+    const operation = useActionOperation(serverId && snapshot?.actionId === actionId && snapshot.scope.machineId === machineId
+        ? { serverId, operationId: snapshot.operationId } : null,
+    machineId && requestId ? { machineId, actionId, lifetime, requestId } : undefined);
+    const complete = operation?.snapshotComplete ? operation.snapshot : null;
+    React.useEffect(() => {
+        if (!requestId || !complete || !lifetime?.isCurrent()) return;
+        const terminal = readActionOperationTerminalResultV1(complete);
+        if (terminal) onSettled(terminal, requestId);
+    }, [complete, lifetime, onSettled, requestId]);
+    return operation;
 }
 
 export function useActiveActionOperations() {

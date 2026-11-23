@@ -401,7 +401,7 @@ describe('managed Machine detail', () => {
             expect(screen.findByTestId('managed-machine.controller-unavailable')).toBeNull();
         } finally { await screen.unmount(); }
     });
-    it('runs one shell script from Diagnostics on a retained target with no enrolled daemon', async () => {
+    it.each(['succeeded', 'failed', 'cancelled'] as const)('settles a %s managed command while the original reply is held', async settlement => {
         const profile = await upsertAndActivateServer({ serverUrl: 'https://managed-command.test', scope: 'tab' });
         const homeId = 'srv_managed_command';
         const accountId = 'owner';
@@ -430,7 +430,9 @@ describe('managed Machine detail', () => {
             }
             if (request.method === ACTION_OPERATION_RPC_METHODS_V2.get) {
                 return Promise.all([runningOperation.promise, finishedOperation.promise]).then(([operation]) => ({
-                    kind: 'found', operation: { ...operation, revision: 2, state: 'succeeded', settledAt: 3, result: output },
+                    kind: 'found', operation: { ...operation, revision: 2, state: settlement, settledAt: 3,
+                        ...(settlement === 'succeeded' ? { result: output } : {}),
+                        ...(settlement === 'failed' ? { error: { errorCode: 'provider_unavailable', error: 'provider_unavailable' } } : {}) },
                 }));
             }
             return undefined;
@@ -455,8 +457,7 @@ describe('managed Machine detail', () => {
                     revision: 1, actionId: MANAGED_EXEC_ACTION_ID_V1, state: 'running', cancellation: 'supported',
                     scope: { accountId, machineId: 'command-controller' }, title: 'Run a command', createdAt: 1, startedAt: 2 });
                 await responseReleased.promise;
-                return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, requestId: envelope.requestId,
-                    actionId: MANAGED_EXEC_ACTION_ID_V1, execution: { ok: true, result: output } }));
+                throw new TypeError('Managed command response lost');
             }
             return Response.json({ error: 'not_found' }, { status: 404 });
         });
@@ -478,12 +479,21 @@ describe('managed Machine detail', () => {
             finishedOperation.resolve();
             await waitForHomeGovernance(async () => {
                 await flushHookEffects();
-                expect(screen.getTextContent()).toContain('ready | waiting');
-                expect(screen.getTextContent()).toContain('command warning');
-                expect(screen.getTextContent()).toContain(`${t('tools.structuredResult.exit')} 7`);
-                expect(screen.findByTestId('managed-machine.command.stderr-truncated')).not.toBeNull();
+                if (settlement === 'succeeded') {
+                    expect(screen.getTextContent()).toContain('ready | waiting');
+                    expect(screen.getTextContent()).toContain('command warning');
+                    expect(screen.getTextContent()).toContain(`${t('tools.structuredResult.exit')} 7`);
+                    expect(screen.findByTestId('managed-machine.command.stderr-truncated')).not.toBeNull();
+                } else {
+                    const diagnosticCode = settlement === 'failed' ? 'provider_unavailable' : 'cancelled';
+                    expect(screen.tree.findAllByType(SurfaceStateCard).some(card => card.props.kind === 'warning'
+                        && String(card.props.diagnosticCode).startsWith(`${diagnosticCode} · `))).toBe(true);
+                }
+                expect(screen.tree.findAllByType(RoundButton).find(button => button.props.testID === 'managed-machine.command.run')
+                    ?.props.disabled).toBe(false);
             });
-            responseReleased.resolve();
+            await act(async () => responseReleased.resolve());
+            expect(screen.getTextContent()).not.toContain(t('inbox.actionOperations.status.outcomeUncertain'));
             expect(executions).toBe(1);
             expect(confirm).not.toHaveBeenCalled();
         } finally {

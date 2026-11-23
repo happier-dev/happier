@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionOutcomeUnknownErrorCodeV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { MANAGED_EXEC_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { ManagedExecOutputV1Schema, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 
@@ -24,7 +24,7 @@ import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterA
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { randomUUID } from '@/platform/randomUUID';
-import { useActionOperation, useActionOperationByRequestId } from '@/sync/domains/actionOperations/useActionOperations';
+import { useIssuedMachineActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
@@ -48,6 +48,16 @@ type CommandState =
     | Readonly<{ kind: 'finished'; output: ManagedMachineActionOutputV1<typeof MANAGED_EXEC_ACTION_ID_V1> }>
     | Readonly<{ kind: 'failed'; code: string; diagnostic?: string; reason?: string; requestId?: string }>;
 
+function projectCommandOutcome(result: ActionExecuteResult, requestId: string): Extract<CommandState, { kind: 'finished' | 'failed' }> {
+    if (!result.ok) {
+        return { kind: 'failed', code: result.errorCode,
+            reason: resolveActionExecutionFailureMessage(result, '') || undefined,
+            diagnostic: describeManagedActionFailureDiagnostic(result.errorCode, result.details, requestId, result.failureCause) };
+    }
+    const output = ManagedExecOutputV1Schema.safeParse(result.result);
+    return output.success ? { kind: 'finished', output: output.data } : { kind: 'failed', code: 'action_invalid_output' };
+}
+
 export function showManagedMachineCommandSheet(props: SheetProps): void {
     Modal.show({ component: ManagedMachineCommandSheet, props, closeOnBackdrop: false });
 }
@@ -69,17 +79,18 @@ function ManagedMachineCommandSheet(props: SheetProps & CustomModalInjectedProps
     }, [abort, binding]);
 
     const running = state.kind === 'running';
-    const requestId = 'requestId' in state ? state.requestId ?? null : null;
-    const observing = state.kind === 'running' ? state.observing : requestId !== null;
-    const snapshot = useActionOperationByRequestId(requestId, serverId, accountId);
-    const operation = useActionOperation(snapshot ? { serverId, operationId: snapshot.operationId } : null,
-        controllerId && observing && requestId
-            ? { machineId: controllerId, actionId: MANAGED_EXEC_ACTION_ID_V1, lifetime: binding, requestId } : undefined);
+    const observedRequestId = state.kind === 'running' && state.observing || state.kind === 'failed' ? state.requestId ?? null : null;
+    const onSettled = React.useCallback((result: ActionExecuteResult, requestId: string) => {
+        // The operation owner has already settled, so release the local HTTP waiter.
+        if (running) abort();
+        const outcome = projectCommandOutcome(result, requestId);
+        setState(current => 'requestId' in current && current.requestId === requestId ? outcome : current);
+    }, [abort, running]);
+    const operation = useIssuedMachineActionOperation({ requestId: observedRequestId, machineId: controllerId,
+        actionId: MANAGED_EXEC_ACTION_ID_V1, lifetime: binding, onSettled });
     const status = operation ? resolveActionOperationStatus(operation.snapshot, operation.observation) : null;
     const stopOperation = operation && canRequestActionOperationStop(operation.snapshot, operation.observation) ? operation : null;
-    const observedOutput = operation?.snapshotComplete && operation.snapshot.state === 'succeeded'
-        ? ManagedExecOutputV1Schema.safeParse(operation.snapshot.result) : null;
-    const output = state.kind === 'finished' ? state.output : observedOutput?.data;
+    const output = state.kind === 'finished' ? state.output : undefined;
 
     const submit = async () => {
         if (!binding.isCurrent() || inFlight() || script.trim().length === 0) return;
@@ -90,21 +101,15 @@ function ManagedMachineCommandSheet(props: SheetProps & CustomModalInjectedProps
             signal => props.executeAction.confirmed(MANAGED_EXEC_ACTION_ID_V1, input, {
                 surface: 'ui', serverId, expectedAccountId: accountId, actionRequestId: requestId, signal,
                 onTransportIssued: () => {
-                    if (!signal.aborted && binding.isCurrent()) setState({ kind: 'running', requestId, observing: true });
+                    if (!signal.aborted && binding.isCurrent()) setState(current => current.kind === 'running' && current.requestId === requestId
+                        ? { ...current, observing: true } : current);
                 },
             }),
             approval.requestApproval);
         if (!result || !binding.isCurrent()) return;
-        if (!result.ok) {
-            setState({ kind: 'failed', code: result.errorCode,
-                ...(isActionOutcomeUnknownErrorCodeV1(result.errorCode) ? { requestId } : {}),
-                reason: resolveActionExecutionFailureMessage(result, '') || undefined,
-                diagnostic: describeManagedActionFailureDiagnostic(result.errorCode, result.details, requestId, result.failureCause) });
-            return;
-        }
-        // The Action validates the transport; this narrows the front door's generic result for the sheet.
-        const output = ManagedExecOutputV1Schema.safeParse(result.result);
-        setState(output.success ? { kind: 'finished', output: output.data } : { kind: 'failed', code: 'action_invalid_output' });
+        const outcome = projectCommandOutcome(result, requestId);
+        setState(current => current.kind !== 'running' || current.requestId !== requestId ? current
+            : outcome.kind === 'failed' && isActionOutcomeUnknownErrorCodeV1(outcome.code) ? { ...outcome, requestId } : outcome);
     };
 
     const footer = stopOperation ? <ActionOperationDetailControls operation={stopOperation} canCancel terminal={false} onClose={onClose} /> : (
