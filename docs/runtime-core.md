@@ -15,6 +15,11 @@ result. A credential-store read exception returns `spawn_failed` with its
 sanitized cause. Missing or mismatched Machine credentials still return
 `permission_denied`.
 
+Before daemon dispatch, Session Actions carry a refused Home encryption-currentness
+check in the existing Action failure envelope. Authentication failures retain
+`not_authenticated`, the Home HTTP status and the `session_transport.account_currentness`
+stage. The transport owner records the stage and code once with the Action request ID.
+
 Hosted Sessions bind physical Stop to the runtime's ordinary Stop callback before native construction. A native-open refusal can therefore keep serving Pending input and still stop through its existing cleanup owner. Caller-owned child runtimes retain their caller's Stop binding; ending one Session never signals the shared host.
 
 Restart eligibility and runtime status read a hosted Session's own launch mode,

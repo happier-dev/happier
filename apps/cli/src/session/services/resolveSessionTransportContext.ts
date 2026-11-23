@@ -129,15 +129,13 @@ export async function resolveSessionTransportContext(params: Readonly<{
         // shared adapter so CLI, signed Actions and direct Session operations
         // expose the established control codes before generic normalization.
         const { kind, statusCode } = classifyServerEndpointError(error);
-        if (kind === 'auth_failed') {
-            throw Object.assign(new Error('Account encryption currentness authentication failed', { cause: error }), {
-                code: 'not_authenticated',
-            });
-        }
-        if (kind === 'network' || kind === 'timeout' || kind === 'server_error'
+        const authenticationFailed = kind === 'auth_failed';
+        if (authenticationFailed || kind === 'network' || kind === 'timeout' || kind === 'server_error'
             || kind === 'dependency_unavailable' || kind === 'rate_limited') {
-            const code = 'server_unreachable';
-            const message = 'Account encryption currentness Home is unavailable';
+            const code = authenticationFailed ? 'not_authenticated' : 'server_unreachable';
+            const message = authenticationFailed
+                ? 'Account encryption currentness authentication failed'
+                : 'Account encryption currentness Home is unavailable';
             const refusal = Object.assign(new Error(message, { cause: error }), { code });
             if (!params.actionRequestId) throw refusal;
             const phase = 'session_transport.account_currentness';

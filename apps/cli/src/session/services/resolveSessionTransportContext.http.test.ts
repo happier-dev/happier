@@ -1,6 +1,7 @@
 import { createServer, type ServerResponse } from 'node:http';
 import { setImmediate } from 'node:timers/promises';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { logger } from '@/ui/logger';
 import { AccountEncryptionCurrentnessResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import { V2SessionByIdResponseSchema, SessionLookupByTagsResponseV2Schema } from '@happier-dev/protocol/sessions/control/contract';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -57,6 +58,8 @@ describe('fresh Session transport HTTP resolution', () => {
     { failure: 'invalid', code: 'account_encryption_currentness_unavailable' },
   ])('preserves signed-request authority and classifies currentness $failure before transport publication', async ({ failure, code }) => {
     const authorizations: Array<string | undefined> = [];
+    const requestId = 'signed-session-currentness';
+    const diagnostics = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
     const server = createServer((request, response) => {
       authorizations.push(request.headers.authorization);
       response.setHeader('Content-Type', 'application/json');
@@ -78,16 +81,27 @@ describe('fresh Session transport HTTP resolution', () => {
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('Loopback HTTP address unavailable');
     try {
-      await expect(runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, () => resolveSessionTransportContext({
+      const pending = runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, () => resolveSessionTransportContext({
         reason: 'session-control',
         credentials: { token: 'must-not-be-used', encryption: null }, idOrPrefix: sessionId,
+        actionRequestId: requestId,
         // The signature issuer is outside this adapter; inspect its supplied HTTP authority, never substitute the host token.
         resolveAuthorizationHeaders: () => ({ Authorization: 'signed-invocation-fixture' }),
         serverFeaturesSnapshot: { status: 'unsupported', reason: 'endpoint_missing' },
-      }))).rejects.toMatchObject({ code });
+      }));
+      await expect(pending).rejects.toMatchObject({ code });
+      if (failure === '401') {
+        const stage = 'session_transport.account_currentness';
+        const output = await pending.catch(error => projectCliActionFailure(normalizeCliActionThrownError(error).failure));
+        expect(output).toMatchObject({ code, requestId, failureCause: { phase: stage, httpStatus: 401 } });
+        expect(diagnostics.mock.calls.filter(([label]) => label === '[SessionTransport] Action refused')).toEqual([
+          ['[SessionTransport] Action refused', JSON.stringify({ requestId, code, stage, kind: 'auth_failed', httpStatus: 401 })],
+        ]);
+      }
       expect(authorizations.length).toBeGreaterThan(0);
       expect(authorizations.every(value => value === 'signed-invocation-fixture')).toBe(true);
     } finally {
+      diagnostics.mockRestore();
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     }
