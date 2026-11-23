@@ -217,7 +217,7 @@
         "category": "database",
         "documentationUrl": "https://dev.mysql.com/doc/refman/8.4/en/",
         "compose": {
-          "document": "services:\n  mysql:\n    image: mysql:8.4\n    environment:\n      MYSQL_USER: ${MYSQL_APP_USER}\n      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD}\n      MYSQL_DATABASE: ${MYSQL_APP_DATABASE}\n      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}\n    volumes:\n      - mysql-data:/var/lib/mysql\n    healthcheck:\n      test: [CMD-SHELL, 'mysqladmin ping -h 127.0.0.1 -u\"$$MYSQL_USER\" -p\"$$MYSQL_PASSWORD\" --silent']\n      interval: 10s\n      timeout: 5s\n      retries: 5\nvolumes:\n  mysql-data: {}\n",
+          "document": "services:\n  mysql:\n    image: mysql:8.4\n    environment:\n      MYSQL_USER: ${MYSQL_APP_USER}\n      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD}\n      MYSQL_DATABASE: ${MYSQL_APP_DATABASE}\n      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}\n    volumes:\n      - mysql-data:/var/lib/mysql\n    healthcheck:\n      test: [CMD-SHELL, 'mysqladmin ping -h 127.0.0.1 -u\"$$MYSQL_USER\" -p\"$$MYSQL_PASSWORD\" --silent']\n      interval: 10s\n      timeout: 5s\n      start_period: 1m\n      retries: 5\nvolumes:\n  mysql-data: {}\n",
           "profiles": [],
           "services": [
             "mysql"

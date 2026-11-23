@@ -5,9 +5,21 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DeploymentTemplateV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTemplates';
+import { parseDeploymentComposeSourceV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { resolveRemoteInstalledFirstPartyBinaryPath } from '@happier-dev/cli-common/systemTasks/kinds/remoteFirstPartyPayloadInstaller';
 
 describe('bundled data-service registry source', () => {
+  it('gives fresh MySQL storage time to initialize without accepting socket-only readiness', async () => {
+    const catalog = JSON.parse(await readFile(new URL('../resources/registry/apps.json', import.meta.url), 'utf8')) as {
+      apps: { itemId: string; app: unknown }[];
+    };
+    const app = DeploymentTemplateV1Schema.parse(catalog.apps.find(entry => entry.itemId === 'mysql')?.app);
+    const compose = await parseDeploymentComposeSourceV1(app.compose.document);
+    expect(compose.services).toMatchObject({ mysql: { healthcheck: {
+      test: ['CMD-SHELL', expect.stringContaining('mysqladmin ping -h 127.0.0.1')],
+      start_period: '1m', interval: '10s', retries: 5,
+    } } });
+  });
   it('offers a daemon collector with its whole persistent home and ordinary HTTP ingress', async () => {
     const catalog = JSON.parse(await readFile(new URL('../resources/registry/apps.json', import.meta.url), 'utf8')) as {
       apps: { itemId: string; app: unknown }[];

@@ -2910,6 +2910,9 @@ service under Local Services purpose `deployment`, with ids
 Workspace, and the existing service owner supplies health and controls.
 The development template `health` hint controls deployment readiness participation,
 while each service keeps its actual Compose healthcheck and individual health report.
+The MySQL 8.4 catalog App gives the image a one-minute Docker startup grace for
+its socket-only initialization. The normal probe still requires the TCP listener.
+Docker applies the existing steady-state probe schedule after startup.
 The native owner starts the full admitted dependency graph, then waits only for
 participating services; required dependency health and successful init completion
 still apply. Its generation proof checks every service's image, process state and
