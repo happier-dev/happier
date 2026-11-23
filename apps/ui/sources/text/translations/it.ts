@@ -8850,6 +8850,8 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
         provider_incompatible_with_agent: "Questo Agente non supporta il tipo di credenziale selezionato o la fonte Team tramite broker. Per un Agente solo nativo, usa il tuo accesso personale o scegli un Agente che supporti i provider tramite broker.",
         teamCredential: "Le credenziali condivise del Team hanno rifiutato la richiesta.",
       },
+      teamReasoningEffortRefused: ({ allowed, runnable }: { allowed: string; runnable: string }) =>
+        `Per questo modello, il team consente solo i livelli di impegno ${allowed} e questo agente supporta ${runnable}.`,
       teamCredentialBinding: {
         invalid_input: "Non è stato possibile leggere il modello del team scelto per questa sessione. Scegli di nuovo il modello del team.",
         feature_disabled: "Questo Home non offre modelli del team. Scegli un altro modello.",

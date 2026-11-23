@@ -12,6 +12,7 @@ import {
     type ProviderBrokerAdmissionFailureCodeV1,
 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 
+import { formatReasoningEffortTierLabel, REASONING_EFFORT_NOT_ALLOWED } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import { presentSessionAgentAuthRequired } from './sessionAgentAuthRequiredPresentation';
 import { t, type TranslationKey } from '@/text';
 import { describeManagedAcquisitionRefusal } from '@/sync/ops/actions/managedAcquisitionFailureCopy';
@@ -181,6 +182,14 @@ function resolveSessionStartupFailureCause(
     if (preparation === 'agent_isolation_unavailable' || preparation === 'filesystem_identity_custody_unavailable'
         || isAgentIsolationLaunchMaterialFailureCode(preparation)) {
         return t('errors.agentIsolationUnavailable');
+    }
+    if (preparation === REASONING_EFFORT_NOT_ALLOWED) {
+        const actionCause = failureCause?.actionCause;
+        const effort = actionCause && 'reasoningEffort' in actionCause ? actionCause.reasoningEffort : undefined;
+        return effort ? t('session.startFailure.teamReasoningEffortRefused', {
+            allowed: effort.allowedValues.map(formatReasoningEffortTierLabel).join(', '),
+            runnable: effort.runnableValues.map(formatReasoningEffortTierLabel).join(', ') || t('common.none'),
+        }) : t('session.startFailure.cause.teamCredential');
     }
     return isTeamCredentialRefusal(preparation)
         ? t('session.startFailure.cause.teamCredential')

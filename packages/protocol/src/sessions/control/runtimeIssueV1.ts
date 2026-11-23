@@ -1,6 +1,7 @@
 import { classifyProviderOutputFailure } from '../../providers/outputFailure.js';
 export { classifyProviderOutputFailure, type ProviderOutputFailureClassification } from '../../providers/outputFailure.js';
 import { isPluginErrorData } from '../../plugins/errors.js';
+import { REASONING_EFFORT_NOT_ALLOWED, presentTeamReasoningEffortRefusal } from '../../providers/catalog/reasoningEffort.js';
 import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '../../actions/actionExecutionResult.js';
 import { ProviderErrorCodeV1Schema } from '../../providers/errors.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
@@ -169,10 +170,12 @@ export const SESSION_PREPARATION_FAILURE_PREVIEWS = {
   resource_corrupt: 'The selected Team credential needs repair. Ask its owner to repair it, then retry the session.',
   policy_denied: 'Team policy does not permit this credential use. Review the Team policy before retrying the session.',
 } as const;
-export type SessionPreparationFailureCode = keyof typeof SESSION_PREPARATION_FAILURE_PREVIEWS | ProviderBrokerAdmissionFailureCodeV1;
+export type SessionPreparationFailureCode = keyof typeof SESSION_PREPARATION_FAILURE_PREVIEWS
+  | ProviderBrokerAdmissionFailureCodeV1 | typeof REASONING_EFFORT_NOT_ALLOWED;
 
 export function readSessionPreparationFailureCode(value: unknown): SessionPreparationFailureCode | null {
   if (typeof value !== 'string') return null;
+  if (value === REASONING_EFFORT_NOT_ALLOWED) return value;
   if (Object.hasOwn(SESSION_PREPARATION_FAILURE_PREVIEWS, value)) return value as SessionPreparationFailureCode;
   const brokerCode = ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(value);
   return brokerCode.success ? brokerCode.data : null;
@@ -182,8 +185,14 @@ export function readSessionPreparationFailureCode(value: unknown): SessionPrepar
 export function readSessionStartupFailurePreview(
   value: unknown,
   agentTitle?: string | null,
-  failureCause?: Pick<z.infer<typeof SessionRuntimeFailureCauseV1Schema>, 'failureReason'>,
+  failureCause?: Pick<z.infer<typeof SessionRuntimeFailureCauseV1Schema>, 'failureReason' | 'actionCause'>,
 ): string | null {
+  if (value === REASONING_EFFORT_NOT_ALLOWED) {
+    const cause = failureCause?.actionCause;
+    return cause && 'reasoningEffort' in cause && cause.reasoningEffort
+      ? presentTeamReasoningEffortRefusal(cause.reasoningEffort, agentTitle ?? undefined)
+      : 'This Team does not allow the selected reasoning effort for this model.';
+  }
   if (value === 'agent_startup_model_reconciliation_failed'
     && failureCause?.failureReason === 'model_selection_required') {
     return 'Choose an explicit model before starting this session. The connected account has no verified default model.';

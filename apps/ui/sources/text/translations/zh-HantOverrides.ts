@@ -7133,6 +7133,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               provider_incompatible_with_agent: "此代理程式不支援所選的憑證類型或經代理的 Team 來源。對於僅支援原生登入的代理程式，請使用你自己的登入，或選擇支援經代理供應商的代理程式。",
               teamCredential: "共用的 Team 憑證拒絕了該請求。",
             },
+            teamReasoningEffortRefused: ({ allowed, runnable }: { allowed: string; runnable: string }) =>
+              `此團隊只允許該模型使用 ${allowed} 推理等級，而此代理程式支援 ${runnable}。`,
             teamCredentialBinding: {
               invalid_input: "無法讀取此工作階段選擇的 Team 模型。請重新選擇 Team 模型。",
               feature_disabled: "此 Home 不提供 Team 模型。請選擇其他模型。",

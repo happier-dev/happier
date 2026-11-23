@@ -1,3 +1,4 @@
+import { REASONING_EFFORT_NOT_ALLOWED } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import type { ManagedServiceRequest } from '@happier-dev/plugin-sdk/managed-services';
 import type { MachineProvisionerNativeCredentialBindingV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { normalizeProviderEndpointUrlSyntax, normalizeProviderOriginRelativePathSyntax } from '@happier-dev/protocol/providers/safety/url';
@@ -9,7 +10,7 @@ export type TeamCredentialRequestPolicyFailureCodeV1 =
     | 'request_malformed'
     | 'route_not_allowed'
     | 'model_not_allowed'
-    | 'reasoning_effort_not_allowed'
+    | typeof REASONING_EFFORT_NOT_ALLOWED
     | 'request_constraint_unsupported';
 
 export type TeamCredentialRequestPolicyEvaluationV1 =
@@ -185,6 +186,13 @@ export function classifyTeamCredentialRequestRouteV1(pathAndQuery: string): Read
     return route ? { kind: route.kind, generation: route.generation } : null;
 }
 
+export function isTeamCredentialRequestModelAllowed(
+    policy: TeamCredentialRequestPolicyV1 | null,
+    modelId: string,
+): boolean {
+    return policy?.allowedModelIds?.includes(modelId) ?? true;
+}
+
 function configuredEffort(
     policy: TeamCredentialRequestPolicyV1,
     value: unknown,
@@ -193,7 +201,7 @@ function configuredEffort(
     if (!policy.reasoningEffort) return { ok: true, value: value ?? null };
     const effort = value ?? policy.reasoningEffort.defaultValue;
     if (!policy.reasoningEffort.allowedValues.includes(effort)) {
-        return { ok: false, reasonCode: 'reasoning_effort_not_allowed' };
+        return { ok: false, reasonCode: REASONING_EFFORT_NOT_ALLOWED };
     }
     return { ok: true, value: effort };
 }
@@ -234,8 +242,7 @@ export function evaluateTeamCredentialRequestPolicyV1(input: Readonly<{
         ? input.resolveCanonicalModelId(requestedModelId)
         : requestedModelId;
     if (!canonicalModelId) return { ok: false, reasonCode: 'model_not_allowed' };
-    if (parsedPolicy.data.allowedModelIds
-        && !parsedPolicy.data.allowedModelIds.includes(canonicalModelId)) {
+    if (!isTeamCredentialRequestModelAllowed(parsedPolicy.data, canonicalModelId)) {
         return { ok: false, reasonCode: 'model_not_allowed' };
     }
     if (!route.generation) {

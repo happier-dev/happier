@@ -60,6 +60,21 @@ describe('closed startup-failure recovery copy', () => {
         expect(presented.summary).toBe(t('session.startFailure.teamCredentialBinding.access_removed'));
     });
 
+    it('shows the requester the conflicting effort sets on a refused Team Session start', () => {
+        const code = 'reasoning_effort_not_allowed';
+        const failureCause = { phase: 'authentication' as const, failureReason: 'unknown' as const, code,
+            actionCause: { phase: 'providers.team_credential.binding', errorClass: 'Error' as const,
+                errorCode: code, httpStatus: 403,
+                reasoningEffort: { allowedValues: ['minimal'], runnableValues: ['low', 'medium', 'high'] } },
+        };
+        const message = resolveSessionSpawnNewResultFailureMessage({
+            type: 'error', code: 'spawn_failed', retryable: false,
+            launchError: { kind: 'launch_error', code, message: '', failureCause },
+        });
+        expect(message).toContain('this Agent can run Low, Medium, High');
+        expect(message).toContain('allows only Minimal effort');
+    });
+
     it.each(Object.keys(AGENT_STARTUP_FAILURE_PREVIEWS).filter(code =>
         code.startsWith('plugin_exec_') || code.startsWith('native_adapter_'),
     ))('localizes %s without exposing its diagnostic code', async code => {

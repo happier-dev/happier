@@ -25,7 +25,8 @@ import { isSameTeamCredentialBrokerApplication } from '@/providers/broker/teamCr
 import { composeProviderBindingMaterialization } from '@/providers/spawn/compose';
 import { resolveProviderCredentialPlaintextAsync } from '@/providers/spawn/credentials';
 import { IrohNativeOperationError, MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/node';
-import { PROVIDER_BROKER_MODEL_ID_HEADER, teamCredentialBrokerLocalCredentialTransport } from './providerBrokerPrivateProtocol';
+import { readProviderReasoningEffortOption } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
+import { PROVIDER_BROKER_MODEL_ID_HEADER, PROVIDER_BROKER_RUNNABLE_EFFORTS_HEADER, teamCredentialBrokerLocalCredentialTransport } from './providerBrokerPrivateProtocol';
 import { createProviderBrokerEndpointDiscovery } from './providerBrokerEndpointDiscovery';
 import type { ExposeManagedProviderConsumerEndpoint } from './managedProviderConsumerApplication';
 import { assertTeamCredentialModelAdmission, type TeamCredentialModelCompatibilityInput } from './teamCredentialModelCompatibility';
@@ -290,7 +291,10 @@ async function openBrokeredSessionTeamCredentialProviderBinding(
     const controllerEndpointUrl = await discovery.readEndpointUrl({
       localOrigin: `http://127.0.0.1:${tunnel.localPort}`,
       headers: { [MACHINE_HTTP_LOCAL_CAPABILITY_HEADER]: tunnel.localCapability,
-        [PROVIDER_BROKER_MODEL_ID_HEADER]: selection.modelId },
+        [PROVIDER_BROKER_MODEL_ID_HEADER]: selection.modelId,
+        ...(consumer.kind === 'session' ? { [PROVIDER_BROKER_RUNNABLE_EFFORTS_HEADER]:
+          encodeURIComponent(JSON.stringify(readProviderReasoningEffortOption(descriptor)?.options?.map(option => option.value) ?? [])) } : {}),
+      },
       signal: input.signal,
     });
     exposure = await input.exposeEndpoint?.({ endpointUrl: controllerEndpointUrl, signal: input.signal }).catch(error => {

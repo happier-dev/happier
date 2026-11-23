@@ -15,6 +15,7 @@ import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { DeploymentTargetRoleFailureV1Schema } from '../plugins/contributions/deploymentTargetRoleFailureV1.js';
 import { ManagedRefusalCodeV1Schema } from '../machines/managed/managedRefusalCodeV1.js';
 import { MachineSetupRetryV1Schema } from '../machines/setup/machineSetupOperationV1.js';
+import { REASONING_EFFORT_NOT_ALLOWED, TeamReasoningEffortRefusalV1Schema, type TeamReasoningEffortRefusalV1 } from '../providers/catalog/reasoningEffort.js';
 export { readActionErrorCodeV1 } from './actionErrorClassV1.js';
 export { readActionFailurePresentationV1, projectActionFailureForAgentV1, type ActionFailurePresentationV1 } from './actionFailurePresentation.js';
 
@@ -228,6 +229,8 @@ type KnownActionFailureCauseV1 = Readonly<{
   nativeErrorCode?: string;
   /** Producer-projected public reason code; never raw vendor close prose. */
   nativeErrorReason?: string;
+  /** Only the requester's refused Team Session start carries these values. */
+  reasoningEffort?: TeamReasoningEffortRefusalV1;
 }>;
 export const UNKNOWN_ACTION_FAILURE_CAUSE_V1 = Object.freeze({
   kind: 'unknown', phase: 'dispatch', errorClass: 'UnknownThrownValue', errorCode: 'unknown_failure_cause', httpStatus: null,
@@ -244,8 +247,10 @@ export const ActionFailureCauseV1Schema: z.ZodMiniType<ActionFailureCauseV1> = l
   errorCode: z.nullable(z.string()),
   nativeErrorCode: z.optional(ActionNativeErrorCodeV1Schema),
   nativeErrorReason: z.optional(ActionNativeErrorCodeV1Schema),
+  reasoningEffort: z.optional(TeamReasoningEffortRefusalV1Schema),
   httpStatus: z.nullable(z.number().check(z.int(), z.minimum(100), z.maximum(599))),
-}).check(z.refine(value => readActionErrorCodeV1({ code: value.errorCode }) === value.errorCode || readUnexpectedActionErrorDiagnosticV1({
+}).check(z.refine(value => value.reasoningEffort === undefined || value.errorCode === REASONING_EFFORT_NOT_ALLOWED),
+  z.refine(value => readActionErrorCodeV1({ code: value.errorCode }) === value.errorCode || readUnexpectedActionErrorDiagnosticV1({
   name: value.errorClass, code: value.errorCode,
 }).errorCode === value.errorCode || (value.errorCode !== null
   && readUnexpectedActionErrorDiagnosticV1({ name: 'JsonRpcApplicationError', code: Number(value.errorCode) })

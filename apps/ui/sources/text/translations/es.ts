@@ -8625,6 +8625,8 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
         provider_incompatible_with_agent: "Este Agente no admite el tipo de credencial seleccionado ni la fuente de Team con intermediario. Para un Agente solo nativo, usa tu propio inicio de sesión o elige un Agente que admita proveedores con intermediario.",
         teamCredential: "Las credenciales compartidas del equipo rechazaron la solicitud.",
       },
+      teamReasoningEffortRefused: ({ allowed, runnable }: { allowed: string; runnable: string }) =>
+        `Este equipo solo permite los niveles de esfuerzo ${allowed} para este modelo, y este agente admite ${runnable}.`,
       teamCredentialBinding: {
         invalid_input: "No se pudo leer el modelo del equipo elegido para esta sesión. Vuelve a elegir el modelo del equipo.",
         feature_disabled: "Este Home no ofrece modelos de equipo. Elige otro modelo.",

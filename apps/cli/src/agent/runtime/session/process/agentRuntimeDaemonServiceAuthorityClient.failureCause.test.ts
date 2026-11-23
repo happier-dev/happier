@@ -5,6 +5,7 @@ import { createServer, type Server } from 'node:http';
 import { once } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAgentRuntimeDaemonServiceAuthorityFixture as createTestAuthority } from './agentRuntimeDaemonServiceAuthority.testkit';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { hashProcessCommand } from '@/daemon/sessionRegistry';
 import { publishAgentRuntimeDaemonServiceAuthority } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
 import { openCurrentRunnerTeamCredentialProviderBinding } from './agentRuntimeDaemonServiceAuthorityClient';
@@ -41,8 +42,8 @@ afterEach(async () => {
 });
 
 describe('daemon service refusal cause', () => {
-  it.each(['unparsed 500', 'typed daemon result', 'connect refused'] as const)(
-    'keeps the failed daemon boundary in an authority-unavailable cause (%s)',
+  it.each(['unparsed 500', 'typed daemon result', 'connect refused', 'Team effort refusal'] as const)(
+    'keeps the typed cause across the daemon boundary (%s)',
     async (scenario) => {
       const happyHomeDir = await mkdtemp(
         join(tmpdir(), 'happier-daemon-boundary-cause-'),
@@ -68,6 +69,9 @@ describe('daemon service refusal cause', () => {
         resolveSessionRunnerEntrypointIdentityFromProcessCommand,
       );
       const authority = await createTestAuthority({ happyHomeDir, runner });
+      const effortCause = { phase: 'providers.team_credential.binding', errorClass: 'Error',
+        errorCode: 'reasoning_effort_not_allowed', httpStatus: 403,
+        reasoningEffort: { allowedValues: ['minimal'], runnableValues: ['low', 'medium'] } };
       // The daemon control route is the HTTP boundary; the runner client is real.
       const server = createServer((_request, response) => {
         response.setHeader('content-type', 'application/json');
@@ -80,6 +84,10 @@ describe('daemon service refusal cause', () => {
               message: 'private-response-body',
             }),
           );
+        } else if (scenario === 'Team effort refusal') {
+          response.end(JSON.stringify({ ok: false, error: {
+            code: 'reasoning_effort_not_allowed', message: 'Team effort refused', failureCause: effortCause,
+          } }));
         } else
           response.end(
             JSON.stringify({
@@ -140,6 +148,18 @@ describe('daemon service refusal cause', () => {
         () => null,
         (failure: unknown) => failure,
       );
+      if (scenario === 'Team effort refusal') {
+        expect(error).toMatchObject({ code: 'reasoning_effort_not_allowed', failureCause: {
+          code: 'reasoning_effort_not_allowed', actionCause: effortCause,
+        } });
+        const publishedIssue = classifyPrimarySessionRuntimeIssue({
+          cause: 'session_error', error, startupPhase: 'client_start',
+        });
+        expect(publishedIssue.code).toBe('reasoning_effort_not_allowed');
+        expect(publishedIssue.failureCause?.actionCause?.errorCode).toBe('reasoning_effort_not_allowed');
+        expect(JSON.stringify(publishedIssue)).not.toContain('minimal');
+        return;
+      }
       expect(error).toMatchObject({
         code: 'native_agent_privileged_effect_authority_unavailable',
         failureCause: { phase: 'turn_start', actionCause: expected },

@@ -1,3 +1,4 @@
+import { REASONING_EFFORT_NOT_ALLOWED, presentTeamReasoningEffortRefusal } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import type { TeamCredentialUsageLimitDenialV1 } from '@happier-dev/protocol/teams';
 import type { ProviderBrokerRequestHandler } from './providerBrokerRequestHandler';
 import type { SessionRuntimeTeamCredentialDenialDetailsV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
@@ -86,7 +87,9 @@ export function providerBrokerApplicationFailureBody(
     const sourceReason = response.sourceOpenFailureReason;
     const cause = response.failureCause;
     const causeSummary = cause ? ` [${cause.phase}: ${cause.errorClass}${cause.errorCode ? ` (${cause.errorCode})` : ''}]` : '';
-    const message = usageLimit
+    const effortRefusal = response.reasonCode === REASONING_EFFORT_NOT_ALLOWED && cause && 'reasoningEffort' in cause
+        ? cause.reasoningEffort : undefined;
+    const message = effortRefusal ? presentTeamReasoningEffortRefusal(effortRefusal) : usageLimit
         ? `Happier refused this request: the shared credential's ${usageLimit.metric} limit is reached `
             + `(${usageLimit.remaining} remaining, resets ${usageLimit.resetsAtUtc}).`
         : `Happier refused this request: ${response.reasonCode}${sourceReason ? ` (${sourceReason})` : ''}${causeSummary}.`;

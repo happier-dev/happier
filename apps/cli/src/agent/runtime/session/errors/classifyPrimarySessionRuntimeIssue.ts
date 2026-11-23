@@ -551,12 +551,17 @@ export function classifyPrimarySessionRuntimeIssue(
   const typedDiagnostic = diagnostic?.success ? diagnostic.data : null;
   const diagnosticDetails = readRecord(typedDiagnostic?.details);
   const structuredInputFailure = readStructuredInputPreparationFailure(input.error);
-  const failureCause = SessionRuntimeFailureCauseV1Schema.safeParse((typedDiagnostic
+  const privateCause = (typedDiagnostic
     ? projectProviderSessionFailureCause(typedDiagnostic, input.startupPhase ?? 'turn', { diagnosticCode: typedDiagnostic.code })
     : readSessionRuntimeFailureCause(input.error, input.startupPhase))
     ?? (structuredInputFailure?.preparationCause ? {
       phase: 'turn_start', failureReason: 'unknown', preparationCause: structuredInputFailure.preparationCause,
-    } : undefined));
+    } : undefined);
+  // The startup response addresses the requester. Runtime issues can reach Session viewers.
+  const actionCause = privateCause?.actionCause;
+  const failureCause = SessionRuntimeFailureCauseV1Schema.safeParse(actionCause && 'reasoningEffort' in actionCause
+    ? { ...privateCause, actionCause: { ...actionCause, reasoningEffort: undefined } }
+    : privateCause);
   const requestErrorCode = typeof diagnosticDetails?.requestErrorCode === 'number'
     && Number.isSafeInteger(diagnosticDetails.requestErrorCode) ? diagnosticDetails.requestErrorCode : null;
   // Reuse SessionRuntimeIssueV1.sanitizedPreview's existing 2,000-code-unit boundary.

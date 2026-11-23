@@ -8461,6 +8461,8 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
         provider_incompatible_with_agent: "Ten Agent nie obsługuje wybranego rodzaju danych uwierzytelniających ani źródła Teamu przez brokera. W przypadku Agenta wyłącznie natywnego użyj własnego logowania lub wybierz Agenta obsługującego dostawców przez brokera.",
         teamCredential: "Współdzielone dane uwierzytelniające Teamu odrzuciły żądanie.",
       },
+      teamReasoningEffortRefused: ({ allowed, runnable }: { allowed: string; runnable: string }) =>
+        `Ten zespół zezwala dla tego modelu tylko na poziomy ${allowed}, a ten agent obsługuje ${runnable}.`,
       teamCredentialBinding: {
         invalid_input: "Nie udało się odczytać modelu zespołu wybranego dla tej sesji. Wybierz model zespołu ponownie.",
         feature_disabled: "Ten Home nie oferuje modeli zespołu. Wybierz inny model.",

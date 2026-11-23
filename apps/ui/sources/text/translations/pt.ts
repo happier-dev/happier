@@ -8731,6 +8731,8 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
         provider_incompatible_with_agent: "Este Agente não oferece suporte ao tipo de credencial selecionado nem à fonte de Team via intermediário. Para um Agente somente nativo, use seu próprio login ou escolha um Agente que ofereça suporte a provedores via intermediário.",
         teamCredential: "As credenciais compartilhadas da equipe recusaram a solicitação.",
       },
+      teamReasoningEffortRefused: ({ allowed, runnable }: { allowed: string; runnable: string }) =>
+        `Esta equipe só permite os níveis de esforço ${allowed} para este modelo, e este agente aceita ${runnable}.`,
       teamCredentialBinding: {
         invalid_input: "Não foi possível ler o modelo da equipe escolhido para esta sessão. Escolha o modelo da equipe novamente.",
         feature_disabled: "Este Home não oferece modelos de equipe. Escolha outro modelo.",

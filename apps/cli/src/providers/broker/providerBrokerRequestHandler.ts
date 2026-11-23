@@ -11,7 +11,7 @@ import type {
     UsageObservationTokens,
 } from '@happier-dev/protocol';
 import type { ProviderBrokerRouteGrantExpectedBindingV1 } from '@/daemon/peer/mediation/verifyProviderBrokerRouteGrantV1';
-import { evaluateTeamCredentialRequestPolicyV1, sanitizeProviderBrokerRequestV1, type TeamCredentialRequestPolicyFailureCodeV1 } from './requestPolicyV1';
+import { evaluateTeamCredentialRequestPolicyV1, isTeamCredentialRequestModelAllowed, sanitizeProviderBrokerRequestV1, type TeamCredentialRequestPolicyFailureCodeV1 } from './requestPolicyV1';
 import type {
     TeamCredentialProviderBrokerApplicationCarrierRequestV1,
     TeamCredentialRequestPolicyV1,
@@ -25,10 +25,11 @@ import { isSameTeamCredentialBrokerApplication } from './teamCredentialModelCata
 import { readProviderBrokerTransportFailure } from './providerBrokerTransportFailure';
 import { providerBrokerEndpointPhaseDiagnostic, runProviderBrokerApplicationPhase } from './providerBrokerApplicationFailureContext';
 import { PROVIDER_BROKER_PRIVATE_CLOSE_PATH, PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH,
-    PROVIDER_BROKER_MODEL_ID_HEADER, projectProviderBrokerEndpointMetadata } from './providerBrokerPrivateProtocol';
+    PROVIDER_BROKER_MODEL_ID_HEADER, PROVIDER_BROKER_RUNNABLE_EFFORTS_HEADER, projectProviderBrokerEndpointMetadata } from './providerBrokerPrivateProtocol';
 import type { SignedProviderBrokerModelRouteGrantV1, ProviderBrokerModelRouteGrantPayloadV1,
     SignedProviderBrokerRouteGrantV2, SignedProviderBrokerWatcherRouteGrantV1,
     ProviderBrokerSourceApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { REASONING_EFFORT_NOT_ALLOWED, ReasoningEffortValuesV1Schema } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import type { TeamCredentialBrokerApplicationFailureCodeV1 } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
 import type { TeamCredentialBrokerSourceOpenFailureReason } from './teamCredentialBrokerSourceOwner';
 import { ProviderBrokerApplicationFailureError } from './providerBrokerApplicationFailure';
@@ -619,7 +620,33 @@ export function createProviderBrokerRequestHandler(input: Readonly<{
                     expectedResourceRevision: policySnapshot.resourceRevision, request,
                 }), phaseDiagnostic);
             if (!authorized.ok) return authorized;
-            if (!request.signal?.aborted) input.retainAdmittedRequestPolicy?.(authority.payload, policySnapshot);
+            request.signal?.throwIfAborted();
+            const runnableEffortsHeader = Object.entries(request.headers ?? {})
+                .find(([name]) => name.toLowerCase() === PROVIDER_BROKER_RUNNABLE_EFFORTS_HEADER)?.[1];
+            if (authority.payload.consumer.kind === 'session' && runnableEffortsHeader !== undefined) {
+                const policy = policySnapshot.policy;
+                if (!isTeamCredentialRequestModelAllowed(policy, modelId)) return { ok: false, reasonCode: 'model_not_allowed' };
+                if (policy?.allowedProtocolKinds && !policy.allowedProtocolKinds.some(kind =>
+                    routeMatchesApplicationProtocol(kind, authority.payload.application.protocol))) {
+                    return { ok: false, reasonCode: 'route_not_allowed' };
+                }
+                if (policy?.reasoningEffort) {
+                    let declaredEfforts: unknown;
+                    try { declaredEfforts = JSON.parse(decodeURIComponent(runnableEffortsHeader)); }
+                    catch { return { ok: false, reasonCode: 'request_malformed' }; }
+                    const runnable = ReasoningEffortValuesV1Schema.safeParse(declaredEfforts);
+                    if (!runnable.success) return { ok: false, reasonCode: 'request_malformed' };
+                    const { allowedValues } = policy.reasoningEffort;
+                    if (!runnable.data.some(value => allowedValues.includes(value))) {
+                        return { ok: false, reasonCode: REASONING_EFFORT_NOT_ALLOWED, failureCause: {
+                            phase: 'providers.team_credential.binding', errorClass: 'Error',
+                            errorCode: REASONING_EFFORT_NOT_ALLOWED, httpStatus: 403,
+                            reasoningEffort: { allowedValues, runnableValues: runnable.data },
+                        } };
+                    }
+                }
+            }
+            input.retainAdmittedRequestPolicy?.(authority.payload, policySnapshot);
             // The exact runtime must be materialized to read its declaration.
             // Home authorizes this private metadata demand first; no inference,
             // upstream credential disclosure or UsageEvent is performed.

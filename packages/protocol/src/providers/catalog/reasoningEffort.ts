@@ -1,7 +1,23 @@
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import type { AgentModelOption, ProviderModelDescriptorV1 } from '../../models/descriptor.js';
+import { AgentModelOptionValueIdSchema, type AgentModelOption, type ProviderModelDescriptorV1 } from '../../models/descriptor.js';
 import type { AgentProviderRequirementsV1 } from '../compatibility/v1.js';
+
+export const REASONING_EFFORT_NOT_ALLOWED = 'reasoning_effort_not_allowed' as const;
+export const ReasoningEffortValuesV1Schema = lazyZodSchema(() => z.array(AgentModelOptionValueIdSchema));
+export const TeamReasoningEffortRefusalV1Schema = lazyZodSchema(() => z.strictObject({
+  allowedValues: ReasoningEffortValuesV1Schema.check(z.minLength(1)),
+  runnableValues: ReasoningEffortValuesV1Schema,
+}));
+export type TeamReasoningEffortRefusalV1 = z.infer<typeof TeamReasoningEffortRefusalV1Schema>;
+
+export function presentTeamReasoningEffortRefusal(refusal: TeamReasoningEffortRefusalV1, agentTitle = 'this Agent'): string {
+  const allowed = refusal.allowedValues.map(formatReasoningEffortTierLabel).join(', ');
+  const runnable = refusal.runnableValues.map(formatReasoningEffortTierLabel).join(', ');
+  return runnable
+    ? `This Team allows only ${allowed} effort for this model, and ${agentTitle} can run ${runnable}.`
+    : `This Team allows only ${allowed} effort for this model, and ${agentTitle} cannot apply any reasoning effort for it.`;
+}
 
 export const PROVIDER_REASONING_EFFORT_OPTION_ID = 'reasoning_effort' as const;
 

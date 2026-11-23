@@ -7930,6 +7930,8 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
             provider_incompatible_with_agent: "Aquest Agent no admet el tipus de credencial seleccionat ni la font de Team amb intermediari. Per a un Agent només natiu, utilitza el teu propi inici de sessió o tria un Agent que admeti proveïdors amb intermediari.",
             teamCredential: "Les credencials compartides de l’equip han rebutjat la sol·licitud.",
           },
+          teamReasoningEffortRefused: ({ allowed, runnable }: { allowed: string; runnable: string }) =>
+            `Aquest equip només permet els nivells d’esforç ${allowed} per a aquest model, i aquest agent admet ${runnable}.`,
           teamCredentialBinding: {
             invalid_input: "No s’ha pogut llegir el model de l’equip triat per a aquesta sessió. Torna a triar el model de l’equip.",
             feature_disabled: "Aquest Home no ofereix models d’equip. Tria un altre model.",

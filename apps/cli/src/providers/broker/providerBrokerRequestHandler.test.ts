@@ -18,6 +18,10 @@ import { TeamCredentialSourceBindingV1Schema } from '@happier-dev/protocol/teams
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 import { createProviderBrokerRequestHandler } from './providerBrokerRequestHandler';
 import { createProviderConnectionHttpTransport } from './providerConnectionHttpTransport';
+import { writeProviderBrokerApplicationFailure } from './providerBrokerApplicationServer';
+import { readProviderBrokerEndpointUrl } from './providerBrokerPrivateProtocol';
+import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
+import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
 
 const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(11));
 const payload: ProviderBrokerModelRouteGrantPayloadV1 = {
@@ -207,6 +211,70 @@ describe('createProviderBrokerRequestHandler', () => {
             request: { method: 'GET', pathAndQuery: '/v1/models' },
         });
         expect(admit).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        { allowed: 'minimal', authorized: true, modelAllowed: true, expected: 'reasoning_effort_not_allowed' },
+        { allowed: 'low', authorized: true, modelAllowed: true, expected: 'opened' },
+        { allowed: 'minimal', authorized: false, modelAllowed: true, expected: 'session_not_active' },
+        { allowed: 'minimal', authorized: true, modelAllowed: false, expected: 'model_not_allowed' },
+    ])('returns $expected on a private Session endpoint request', async ({ allowed, authorized, modelAllowed, expected }) => {
+        const acquireSource = vi.fn(async () => ({ access: access(), sourceMemberKey: 'member' }));
+        const handle = createProviderBrokerRequestHandler({
+            ...handlerSecurity,
+            admit: vi.fn(),
+            authorizeModelCatalog: async () => authorized ? { ok: true } : { ok: false, reasonCode: 'session_not_active' },
+            resolveRequestPolicy: async () => ({
+                ...await handlerSecurity.resolveRequestPolicy(),
+                policy: {
+                    allowedProtocolKinds: ['openai_chat_completions'],
+                    allowedModelIds: [modelAllowed ? 'gpt-5' : 'another-model'],
+                    reasoningEffort: { allowedValues: [allowed], defaultValue: allowed },
+                },
+            }),
+        });
+        const result = await handle({
+            context: { ...context, streamLifetime: { acquireSource, retire: async () => {}, close: async () => {} } },
+            request: { method: 'GET', pathAndQuery: '/v1/_happier/provider-broker/endpoint', headers: {
+                'x-happier-provider-model-id': 'gpt-5',
+                'x-happier-provider-broker-runnable-efforts': encodeURIComponent(JSON.stringify(['low', 'medium', 'high'])),
+            } },
+        });
+        if (expected === 'opened') {
+            expect(result).toMatchObject({ ok: true, response: { status: 204 } });
+            expect(acquireSource).toHaveBeenCalledOnce();
+        } else {
+            expect(acquireSource).not.toHaveBeenCalled();
+            expect(result).toMatchObject({ ok: false, reasonCode: expected });
+            if (expected === 'reasoning_effort_not_allowed') {
+                expect(result).toMatchObject({ failureCause: { errorCode: expected, reasoningEffort: {
+                    allowedValues: ['minimal'], runnableValues: ['low', 'medium', 'high'],
+                } } });
+                if (result.ok) throw new Error('expected broker refusal');
+                const responseHeaders = new Headers();
+                let response: Response | undefined;
+                writeProviderBrokerApplicationFailure({
+                    header: (name, value) => responseHeaders.set(name, value),
+                    code: status => ({ send: body => { response = new Response(JSON.stringify(body), { status, headers: responseHeaders }); } }),
+                }, result);
+                const error = await readProviderBrokerEndpointUrl({
+                    localOrigin: 'http://127.0.0.1:1', headers: {}, signal: new AbortController().signal,
+                    fetchImpl: async () => { if (!response) throw new Error('expected HTTP refusal'); return response; },
+                }).catch(error => error);
+                if (!(error instanceof SessionTeamCredentialLaunchUnavailableError)) throw error;
+                const launch = projectSessionSpawnFailure({
+                    errorCode: 'CHILD_EXITED_BEFORE_WEBHOOK', errorMessage: 'runner exited', agentId: 'claude',
+                    errorDetail: { kind: 'launch_error', code: 'CHILD_EXITED_BEFORE_WEBHOOK',
+                        message: 'runner exited', failureCause: error.failureCause },
+                });
+                expect(launch).toMatchObject({ type: 'error', retryable: false,
+                    launchError: { code: expected, failureCause: { actionCause: result.failureCause } } });
+                if (launch.code !== 'spawn_failed') throw new Error('expected typed launch error');
+                expect(launch.launchError?.message).toContain('Claude can run Low, Medium, High');
+            } else {
+                expect(result).not.toHaveProperty('failureCause');
+            }
+        }
     });
 
     it('fails closed when current Home facts no longer authorize model-list metadata', async () => {

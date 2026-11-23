@@ -10043,6 +10043,8 @@ const enSession = {
       | Exclude<keyof typeof SESSION_PREPARATION_FAILURE_PREVIEWS,
         'agent_isolation_unavailable' | 'filesystem_identity_custody_unavailable' | AgentIsolationLaunchMaterialFailureCode>, string> & Record<string, string>,
     /** Why a Team credential binding was refused, by its closed reason; the reused reasons keep the start-failure cause. */
+    teamReasoningEffortRefused: ({ allowed, runnable }: { allowed: string; runnable: string }) =>
+      `This Team allows only ${allowed} effort for this model, and this Agent can run ${runnable}.`,
     teamCredentialBinding: {
       invalid_input: "This session’s Team model choice couldn’t be read. Choose the Team model again.",
       feature_disabled: "This Home doesn’t offer Team models. Choose another model.",

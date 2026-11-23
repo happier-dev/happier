@@ -1,3 +1,4 @@
+import { REASONING_EFFORT_NOT_ALLOWED } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import type { SessionBrokerApplicationFailureEvidence } from '@/providers/broker/sessionBrokerApplicationEvidence';
 import { randomUUID } from 'node:crypto';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
@@ -333,6 +334,9 @@ export async function openCurrentRunnerTeamCredentialProviderBinding(
     return response.result;
   }
   if (!response.ok) {
+    if (response.error.code === REASONING_EFFORT_NOT_ALLOWED) {
+      throw new SessionTeamCredentialLaunchUnavailableError(REASONING_EFFORT_NOT_ALLOWED, 'binding', response.error);
+    }
     if (response.error.code === 'team_credential_provider_selection_not_current') {
       throw new SessionTeamCredentialLaunchUnavailableError(undefined, 'binding', response.error);
     }

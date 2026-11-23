@@ -8313,6 +8313,8 @@ export const zhHans: TranslationStructure = {
         provider_incompatible_with_agent: "此智能体不支持所选的凭据类型或经代理的 Team 来源。对于仅支持原生登录的智能体，请使用你自己的登录，或选择支持经代理提供方的智能体。",
         teamCredential: "共享的 Team 凭据拒绝了该请求。",
       },
+      teamReasoningEffortRefused: ({ allowed, runnable }: { allowed: string; runnable: string }) =>
+        `此团队只允许该模型使用 ${allowed} 推理级别，而此智能体支持 ${runnable}。`,
       teamCredentialBinding: {
         invalid_input: "无法读取此会话选择的 Team 模型。请重新选择 Team 模型。",
         feature_disabled: "此 Home 不提供 Team 模型。请选择其他模型。",

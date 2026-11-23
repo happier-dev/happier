@@ -8643,6 +8643,8 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
             provider_incompatible_with_agent: "Dieser Agent unterstützt die gewählte Art von Zugangsdaten oder die vermittelte Team-Quelle nicht. Verwende bei einem rein nativen Agent deinen eigenen Login oder wähle einen Agent, der vermittelte Anbieter unterstützt.",
             teamCredential: "Die geteilten Team-Zugangsdaten haben die Anfrage abgelehnt.",
           },
+          teamReasoningEffortRefused: ({ allowed, runnable }: { allowed: string; runnable: string }) =>
+            `Dieses Team erlaubt für dieses Modell nur ${allowed}. Dieser Agent unterstützt ${runnable}.`,
           teamCredentialBinding: {
             invalid_input: "Die Team-Modellauswahl dieser Sitzung konnte nicht gelesen werden. Wähle das Team-Modell erneut.",
             feature_disabled: "Dieses Home bietet keine Team-Modelle an. Wähle ein anderes Modell.",

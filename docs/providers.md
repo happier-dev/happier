@@ -2447,6 +2447,11 @@ Team consumers use the same endpoint metadata projection and reader. The signed
 application and current Home metadata authorization admit the selected model's
 runtime materialization before its endpoint path is published; this demand does
 not forward inference, expose upstream credentials or create a UsageEvent.
+A brokered Session start with no overlap between the selected Agent's runnable
+efforts and the Team policy is refused before the broker opens the source.
+After authorizing the current job and selected model, the broker returns
+`reasoning_effort_not_allowed` to the requester with both effort sets.
+The Team catalog and resource editor do not project this refusal.
 Ordinary inference still passes through the request-policy and Home admission
 owners, including the canonical Anthropic `/v1/messages` route.
 

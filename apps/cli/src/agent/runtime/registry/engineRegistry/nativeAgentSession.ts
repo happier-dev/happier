@@ -6501,9 +6501,13 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     if (request) {
                         // Carry typed diagnostics only; native error bodies remain in their owning process.
                         const projectedCause = projectSessionRuntimeFailureCause(failure, 'client_start');
+                        const actionCause = projectedCause?.actionCause;
                         const failureCause = issue.failureCause
                             ? (({ providerErrorMessage: _privateMessage, ...safe }) => safe)({
                                 ...projectedCause, ...issue.failureCause,
+                                // The requester-facing attestation carries the original cause.
+                                // The published Session issue deliberately projects less.
+                                ...(actionCause && 'reasoningEffort' in actionCause && actionCause.reasoningEffort ? { actionCause } : {}),
                             })
                             : undefined;
                         try {

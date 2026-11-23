@@ -7,6 +7,7 @@ import { sanitizeConnectedServiceDiagnosticString } from '@/daemon/connectedServ
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { ProviderErrorCodeV1Schema, createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { readTeamCredentialLaunchFailureCode } from '@/session/services/sessionTeamCredentialLaunchError';
+import { REASONING_EFFORT_NOT_ALLOWED } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import type { SpawnFailureV1 } from '@happier-dev/protocol';
 
 /** The creation adapter retains the daemon's redacted cause, not just its outcome. */
@@ -111,12 +112,16 @@ export function projectSessionSpawnFailure(input: Readonly<{
         ...(detail.success && detail.data.failureCause ? { failureCause: detail.data.failureCause } : {}) } };
   }
   const providerCode = ProviderErrorCodeV1Schema.safeParse(code);
-  const retryable = (detail.success ? detail.data.failureCause?.retryable : undefined) ?? (modelSelectionRequired || code === 'profile_launch_unavailable' || code === 'update_required' || code === 'team_credential_model_selection_required'
+  const effortRefusal = code === REASONING_EFFORT_NOT_ALLOWED;
+  const retryable = (detail.success ? detail.data.failureCause?.retryable : undefined) ?? (effortRefusal || modelSelectionRequired || code === 'profile_launch_unavailable' || code === 'update_required' || code === 'team_credential_model_selection_required'
     || code === 'agent_isolation_unavailable' || code === 'plugin_code_unreadable' || code === 'SOURCE_RUNTIME_RELOAD_REQUIRED'
     || code === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired ? false
     : providerCode.success ? createProviderErrorV1(providerCode.data).retryable : true);
   return { type: 'error', code: 'spawn_failed', retryable,
     launchError: detail.success ? { ...detail.data, code,
-      ...(modelSelectionRequired ? { message: readSessionStartupFailurePreview(code, null, detail.data.failureCause)! } : {}) } : fallback.success ? fallback.data
+      ...(modelSelectionRequired || effortRefusal ? {
+        message: readSessionStartupFailurePreview(code, typeof input.agentId === 'string' ? resolveAgentDisplayTitle(input.agentId) : null,
+          detail.data.failureCause)!,
+      } : {}) } : fallback.success ? fallback.data
       : { kind: 'launch_error', code: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, message: 'Session launch failed' } };
 }

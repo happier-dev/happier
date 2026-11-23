@@ -8931,6 +8931,8 @@ localTailscale: {
         provider_incompatible_with_agent: "このエージェントは、選択した認証情報の種類またはブローカー経由の Team ソースに対応していません。ネイティブ専用のエージェントでは自分のログインを使うか、ブローカー経由のプロバイダーに対応したエージェントを選んでください。",
         teamCredential: "共有された Team の認証情報がリクエストを拒否しました。",
       },
+      teamReasoningEffortRefused: ({ allowed, runnable }: { allowed: string; runnable: string }) =>
+        `このモデルでチームが許可する推論レベルは ${allowed} のみです。このエージェントは ${runnable} に対応しています。`,
       teamCredentialBinding: {
         invalid_input: "このセッションで選んだ Team モデルを読み取れませんでした。Team モデルをもう一度選んでください。",
         feature_disabled: "この Home では Team モデルを利用できません。別のモデルを選んでください。",

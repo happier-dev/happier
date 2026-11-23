@@ -8465,6 +8465,8 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
         provider_incompatible_with_agent: "Cet Agent ne prend pas en charge le type d’identifiant choisi ni la source Team via courtier. Pour un Agent uniquement natif, utilise ta propre connexion ou choisis un Agent compatible avec les fournisseurs via courtier.",
         teamCredential: "Les identifiants partagés de la Team ont refusé la requête.",
       },
+      teamReasoningEffortRefused: ({ allowed, runnable }: { allowed: string; runnable: string }) =>
+        `Cette équipe autorise uniquement les niveaux d’effort ${allowed} pour ce modèle, et cet agent prend en charge ${runnable}.`,
       teamCredentialBinding: {
         invalid_input: "Le modèle d’équipe choisi pour cette session n’a pas pu être lu. Choisissez à nouveau le modèle d’équipe.",
         feature_disabled: "Ce Home ne propose pas de modèles d’équipe. Choisissez un autre modèle.",
