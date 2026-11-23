@@ -2,7 +2,6 @@ import type { TriageDataActionContext, TriageDataActionHandler } from './dataCon
 import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import {
     type TriageAdmittedReviewV1,
-    type TriageLinkedSessionProjectionV1,
     type TriageReviewSkipV1,
     type TriageEntryRefV1,
 } from '@happier-dev/triage-protocol/v1';
@@ -14,7 +13,7 @@ import {
     CORPUS_SOURCE_INSTANCE_LIFECYCLE,
 } from '../corpus/collections/ids.js';
 import { readReviewOutcome } from '../corpus/marks/setPinned.js';
-import { createTriageSourceSessionRelations, type TriageSourceSessionLinkV1 } from '../sessions/sourceSessionRelations.js';
+import { createTriageSourceSessionRelations } from '../sessions/sourceSessionRelations.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { resolveTriageCallerSources } from './callerSource.js';
 import type {
@@ -39,22 +38,7 @@ import type {
 
 const UNAVAILABLE: TriageReadEntryDetailResultV1 = Object.freeze({ kind: 'unavailable' });
 
-/**
- * The generic Session facts one link may present.
- *
- * A Session the generic owner cannot currently answer for keeps its
- * `sessionId` and loses only the two presentation fields (`CONTRACT.md` §7): an
- * unavailable Session is not evidence that the link never existed, and a reader
- * that dropped the row would tell a person their work is not connected to
- * anything.
- */
-export type TriageLinkedSessionSummaryReaderV1 = (
-    sessionId: string,
-    options?: PluginCancellationOptions,
-) => Promise<Readonly<{ title?: string; updatedAtMs?: number }> | null>;
-
 export type TriageReadEntryDetailDepsV1 = Readonly<{
-    readSessionSummary: TriageLinkedSessionSummaryReaderV1;
     sourceRelations: Pick<ReturnType<typeof createTriageSourceSessionRelations>, 'findConfiguredInstance' | 'read'>;
     /** The user-mark owner's recorded Review relation and latest skip for the entry; absent reads as none. */
     readReviewOutcome?: (entryRef: TriageEntryRefV1, options?: PluginCancellationOptions) => Promise<Readonly<{
@@ -62,39 +46,6 @@ export type TriageReadEntryDetailDepsV1 = Readonly<{
     }>>;
     signal?: AbortSignal;
 }>;
-
-/**
- * Project one admitted relationship page; ownership and acquisition stay with
- * sourceSessionRelations, including corpus paging and its opaque cursor.
- */
-async function readLinkedSessions(
-    deps: TriageReadEntryDetailDepsV1,
-    sourceLinks: readonly TriageSourceSessionLinkV1[],
-    options?: PluginCancellationOptions,
-): Promise<Readonly<{
-    sessions: readonly TriageLinkedSessionProjectionV1[];
-    nextCursor?: string;
-}>> {
-    const projections: TriageLinkedSessionProjectionV1[] = [];
-    for (const link of sourceLinks) {
-        let summary: Awaited<ReturnType<TriageLinkedSessionSummaryReaderV1>> = null;
-        try {
-            summary = await deps.readSessionSummary(link.sessionId, options);
-        } catch {
-            // The generic Session owner is a boundary. An unavailable answer
-            // costs the two presentation fields and never the link itself.
-            summary = null;
-        }
-        projections.push(Object.freeze({
-            sessionId: link.sessionId,
-            ...(summary?.title === undefined ? {} : { displayTitle: summary.title }),
-            ...(summary?.updatedAtMs === undefined ? {} : { updatedAtMs: summary.updatedAtMs }),
-        }));
-    }
-    return Object.freeze({
-        sessions: Object.freeze(projections),
-    });
-}
 
 export async function readTriageEntryDetail(
     input: TriageReadEntryDetailInputV1,
@@ -121,17 +72,11 @@ export async function readTriageEntryDetail(
 
     const sourceLinks = await deps.sourceRelations.read({ entryRef: input.entryRef, sourceInstanceId: input.sourceInstanceId,
         paged: true, readFailure: 'throw', ...(input.linkedSessionsCursor === undefined ? {} : { cursor: input.linkedSessionsCursor }) });
-    const linkedSessionPage = await readLinkedSessions(
-        deps,
-        sourceLinks.links,
-        options,
-    );
-
     const { admittedReview, reviewSkip } = await deps.readReviewOutcome?.(input.entryRef, options) ?? {};
     return Object.freeze({
         kind: 'read',
         instance: configured,
-        linkedSessions: linkedSessionPage.sessions,
+        linkedSessions: Object.freeze(sourceLinks.links.map(({ sessionId }) => Object.freeze({ sessionId }))),
         ...(admittedReview === undefined ? {} : { admittedReview }),
         ...(reviewSkip === undefined ? {} : { reviewSkip }),
         ...(sourceLinks.nextCursor === undefined
@@ -162,9 +107,6 @@ export function createTriageReadEntryDetailActionHandler(): TriageDataActionHand
             sourceRelations: createTriageSourceSessionRelations(context, { sourceInstances, sessionLinks }, {
                 entryRef: input.entryRef, sources, ...(record === undefined ? {} : { record }),
             }),
-            // Portable Account execution has no Session service. These optional
-            // display facts stay absent while authoritative links remain present.
-            readSessionSummary: async () => null,
             readReviewOutcome: (entryRef, readOptions) => readReviewOutcome({ collections: { userMarks }, entryRef,
                 ...(readOptions?.signal ? { signal: readOptions.signal } : {}) }),
             ...(context.signal ? { signal: context.signal } : {}),

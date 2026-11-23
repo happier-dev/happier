@@ -197,7 +197,9 @@ describe('the entry detail read', () => {
         const handler = createTriageReadEntryDetailActionHandler();
         const input = { v: 1 as const, entryRef, sourceInstanceId: record.value.configured.instance.sourceInstanceId };
         const ordinary = await handler(input, context);
-        expect(ordinary).toMatchObject({ kind: 'read', instance: record.value.configured, linkedSessions: [{ sessionId: SESSION_ID }] });
+        expect(ordinary).toMatchObject({ kind: 'read', instance: record.value.configured });
+        if (ordinary.kind !== 'read') throw new Error('Expected the admitted detail');
+        expect(ordinary.linkedSessions).toEqual([{ sessionId: SESSION_ID }]);
         expect(await handler({ ...input, sourceInstanceRowId: record.rowId }, context)).toEqual(ordinary);
         expect(await handler({ ...input, sourceInstanceRowId: 'missing-exceptions-row' }, context)).toEqual({ kind: 'unavailable' });
         expect((await collections.sourceInstances.query({ index: 'by-lifecycle', order: 'asc' })).rows).toEqual([]);

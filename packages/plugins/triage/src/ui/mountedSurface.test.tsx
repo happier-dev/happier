@@ -410,7 +410,6 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
         if (options.details && String(request.action) === TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1) {
             return await readTriageEntryDetail(TriageReadEntryDetailInputV1Schema.parse(request.input), {
                 sourceRelations: createTestkitSourceSessionRelations({ collections, contributions: admitted }),
-                readSessionSummary: async () => null,
             });
         }
         if (options.details && String(request.action) === TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_LOCAL_ID_V1) {

@@ -217,7 +217,7 @@ describe('one opened GitHub issue read owner', () => {
           if (id === TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1) {
             await entryDetail.promise;
             return readTriageEntryDetail(TriageReadEntryDetailInputV1Schema.parse(request.input),
-              { sourceRelations: relations, readSessionSummary: async () => ({ title: 'Linked issue work', updatedAtMs: 3 }), signal: request.signal });
+              { sourceRelations: relations, signal: request.signal });
           }
           if (id === TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_LOCAL_ID_V1) {
             fixReads++;
@@ -244,7 +244,7 @@ describe('one opened GitHub issue read owner', () => {
       expect(document.body.textContent).toContain('Session');
       expect(document.body.textContent).toContain('monalisa');
       expect(document.body.textContent).toContain(route);
-      expect(availableSessions).toMatchObject([{ sessionId: 'session-composed-issue', updatedAtMs: 3 }]);
+      expect(availableSessions).toMatchObject([{ sessionId: 'session-composed-issue' }]);
       const paths = transport.requests.map(request => new URL(request.url).pathname).sort();
       expect(fixReads).toBe(1);
       expect(paths).toEqual([`/repos/${route}`, `/repos/${route}/assignees`, `/repos/${route}/labels`,

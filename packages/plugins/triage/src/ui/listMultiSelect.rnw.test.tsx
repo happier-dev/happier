@@ -434,7 +434,6 @@ function createHarness(options: Readonly<{
         if (action === 'entries/read-detail-v1') {
             return await readTriageEntryDetail(TriageReadEntryDetailInputV1Schema.parse(request.input), {
                 sourceRelations: createTestkitSourceSessionRelations({ collections, contributions: admitted, signal: request.signal }),
-                readSessionSummary: async () => null,
                 signal: request.signal,
             });
         }

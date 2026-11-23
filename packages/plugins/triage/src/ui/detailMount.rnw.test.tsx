@@ -712,11 +712,6 @@ function createHarness(options: Readonly<{
                 detailInput,
                 {
                     sourceRelations: createTestkitSourceSessionRelations({ collections, contributions: admitted }),
-                    readSessionSummary: async (sessionId) => ({
-                        title: sessionId === finalLinkedSessionId
-                            ? 'Linked Session 201'
-                            : `Linked ${sessionId}`,
-                    }),
                 },
             );
             if (detailInput.linkedSessionsCursor !== undefined && repeatNextLinkedSessionCursor) {

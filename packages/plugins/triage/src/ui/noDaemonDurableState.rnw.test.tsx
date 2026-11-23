@@ -567,7 +567,6 @@ describe('durable Account state with no daemon reachable', () => {
             sourceInstanceId: '00000000-0000-4000-8000-000000000002',
         }, {
             sourceRelations: createTestkitSourceSessionRelations({ collections: harness.corpus.collections }),
-            readSessionSummary: async () => null,
         });
         expect(directDetail.kind === 'read' ? directDetail.linkedSessions : []).toHaveLength(1);
 

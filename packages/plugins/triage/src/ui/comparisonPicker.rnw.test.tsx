@@ -101,7 +101,7 @@ async function mountPicker(options: Readonly<{ getAvailable?: boolean; wrongIden
             }, nowMs: () => Date.now(),
           });
           if (requested === TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1) { reads.details += 1; return await readTriageEntryDetail(TriageReadEntryDetailInputV1Schema.parse(input), {
-            sourceRelations: createTestkitSourceSessionRelations({ collections, contributions: admitted }), readSessionSummary: async () => null,
+            sourceRelations: createTestkitSourceSessionRelations({ collections, contributions: admitted }),
           }); }
           expect(requested).toEqual(action);
           getInputs.push(TriageGetInputV1Schema.parse(input));
