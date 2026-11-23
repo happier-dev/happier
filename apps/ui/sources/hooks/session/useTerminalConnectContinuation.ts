@@ -20,6 +20,7 @@ export function useTerminalConnectContinuation(options: Readonly<{
     const auth = useAuth();
     const { request, replace, allowLoopbackServerOverride, onCaptured } = options;
     const [preAuthTarget, setPreAuthTarget] = React.useState<TerminalConnectPreAuthTargetDecision | null>(null);
+    const [preparedSignIn, setPreparedSignIn] = React.useState<{ request: ParsedTerminalConnectUrl; serverUrl: string } | null>(null);
     const linkState = resolveTerminalConnectLinkState(request);
     const requiresUpdate = linkState === 'update_required';
     const requestKey = request?.publicKeyB64Url ?? null;
@@ -50,13 +51,21 @@ export function useTerminalConnectContinuation(options: Readonly<{
             const serverUrl = await focusTerminalConnectTarget({ request, serverUrl: target.pendingServerUrl, refreshAuth: auth.refreshFromActiveServer });
             if (!cancelled && serverUrl) {
                 onCaptured?.();
-                replace(buildTerminalConnectAuthRedirectHref({ serverUrl }));
+                setPreparedSignIn({ request, serverUrl });
             }
         })().catch((error: unknown) => {
             if (!cancelled) Modal.alert(t('common.error'), error instanceof Error ? error.message : t('common.error'));
         }), { tag: 'terminalConnect.continueToAuth' });
         return () => { cancelled = true; };
-    }, [allowLoopbackServerOverride, auth.isAuthenticated, auth.refreshFromActiveServer, linkState, onCaptured, replace, request]);
+    }, [allowLoopbackServerOverride, auth.isAuthenticated, auth.refreshFromActiveServer, linkState, onCaptured, request]);
 
-    return { ...approval, approve, reject, preAuthTarget, requiresUpdate, linkState, connected };
+    const signInAction = !auth.isAuthenticated && linkState === 'ready' && preparedSignIn && preparedSignIn.request === request
+        ? {
+            testID: 'terminal-connect-sign-in',
+            label: t('server.homes.signIn'),
+            onPress: () => replace(buildTerminalConnectAuthRedirectHref({ serverUrl: preparedSignIn.serverUrl })),
+        }
+        : undefined;
+
+    return { ...approval, approve, reject, preAuthTarget, signInAction, requiresUpdate, linkState, connected };
 }

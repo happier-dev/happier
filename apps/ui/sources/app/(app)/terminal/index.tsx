@@ -24,7 +24,7 @@ export default function TerminalScreen() {
     const serverUrl = parsed?.serverUrl ?? parsed?.homeConnectionDescriptor?.canonicalServerUrl ?? null;
     const onSuccess = React.useCallback(() => { resolvePostAuthLanding({ replace: router.replace }); }, [router]);
     const onReject = React.useCallback(() => { safeRouterBack({ router, fallbackHref: '/' }); }, [router]);
-    const { approve: handleConnect, reject: handleReject, isLoading, approvalDetails, retryApprovalDetails, preAuthTarget, linkState, connected } = useTerminalConnectContinuation({
+    const { approve: handleConnect, reject: handleReject, isLoading, approvalDetails, retryApprovalDetails, preAuthTarget, signInAction, linkState, connected } = useTerminalConnectContinuation({
         request: parsed, replace: router.replace, onReject,
     });
     const publicKey = linkState === 'ready' ? parsed?.publicKeyB64Url ?? null : null;
@@ -67,6 +67,7 @@ export default function TerminalScreen() {
                 state={{
                     kind: 'message',
                     title: t('modals.pleaseSignInFirst'),
+                    action: signInAction,
                 }}
             />
         );

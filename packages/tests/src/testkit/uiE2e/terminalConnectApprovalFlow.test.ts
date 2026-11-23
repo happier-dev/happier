@@ -121,6 +121,36 @@ describe('terminalConnectApprovalFlow', () => {
     await expect(waitForTerminalConnectReadySurface(page, 500)).resolves.toBe('restore');
   });
 
+  it('opens sign-in from a standalone terminal link before restoring the Account', async () => {
+    let nowMs = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+    let restored = false;
+    const signIn = vi.fn(async () => {});
+    const page = {
+      ...createPage({}),
+      locator: (selector: string) => ({
+        count: async () => selector === '[data-testid="terminal-connect-approve"]:visible' && restored ? 1 : 0,
+      }),
+      getByTestId: (testId: string) => ({
+        isVisible: async () => testId === 'terminal-connect-sign-in' && !restored,
+        click: signIn,
+      }),
+      waitForTimeout: async (ms: number) => { nowMs += ms; },
+    };
+    const restoreAccount = async () => {
+      expect(signIn).toHaveBeenCalledTimes(1);
+      restored = true;
+    };
+    await expect(ensurePendingTerminalConnectReadyForApproval({
+      page,
+      connectUrlForBrowser: 'http://127.0.0.1:3000/terminal/connect#key=abc',
+      gotoConnectUrl: async () => { expect(restored).toBe(true); },
+      restoreAccount,
+      timeoutMs: 500,
+    })).resolves.toBe('approve');
+    expect(restored).toBe(true);
+  });
+
   it('revisits the pending connect URL after restore and waits for approval before returning', async () => {
     const page = createPage({ restore: [1, 0], approve: [0, 1] });
     const gotoConnectUrl = vi.fn(async () => {});

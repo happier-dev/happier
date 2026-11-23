@@ -21,7 +21,7 @@ export default function TerminalConnectScreen() {
     const onReject = React.useCallback(() => {
         safeRouterBack({ router, fallbackHref: '/' });
     }, [router]);
-    const { approve: handleConnect, reject: handleReject, isLoading, approvalDetails, retryApprovalDetails, preAuthTarget, linkState, connected } = useTerminalConnectContinuation({
+    const { approve: handleConnect, reject: handleReject, isLoading, approvalDetails, retryApprovalDetails, preAuthTarget, signInAction, linkState, connected } = useTerminalConnectContinuation({
         request, replace: router.replace, onReject, allowLoopbackServerOverride: true, onCaptured: scrubIfResumable,
     });
     const publicKey = linkState === 'ready' ? request?.publicKeyB64Url ?? null : null;
@@ -78,6 +78,7 @@ export default function TerminalConnectScreen() {
                 state={{
                     kind: 'message',
                     title: t('modals.pleaseSignInFirst'),
+                    action: signInAction,
                 }}
             />
         );

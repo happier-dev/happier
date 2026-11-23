@@ -162,6 +162,9 @@ it('adopts a preauth terminal Home address and opens its sign-in without changin
     const active = await upsertAndActivateServer({ serverUrl: 'https://saved.example.test', source: 'manual', scope: 'device' });
     const beforeService = profiles.resolveSelectedAccountServiceEndpoint();
     const screen = await renderScreen(<InjectedAuthProvider credentials={null}><TerminalConnectScreen /></InjectedAuthProvider>);
+    await vi.waitFor(() => expect(screen.findByTestId('terminal-connect-sign-in')).not.toBeNull());
+    expect(replaceSpy).not.toHaveBeenCalled();
+    await screen.pressByTestIdAsync('terminal-connect-sign-in');
     await vi.waitFor(() => expect(replaceSpy).toHaveBeenCalledWith(`/?server=${encodeURIComponent(address)}`));
     expect(profiles.resolveSelectedAccountServiceEndpoint()).toEqual(beforeService);
     expect(profiles.listServerProfiles().some((profile) => profile.serverUrl === address)).toBe(true);
@@ -213,6 +216,8 @@ it('prepares the exact same-origin Home for sign-in from a bound web terminal li
     expect(resolveReverseQrTargetProfileId(profiles.getActiveServerId())).toBeNull();
 
     const screen = await renderScreen(<InjectedAuthProvider credentials={null}><TerminalConnectScreen /></InjectedAuthProvider>);
+    await vi.waitFor(() => expect(screen.findByTestId('terminal-connect-sign-in')).not.toBeNull());
+    await screen.pressByTestIdAsync('terminal-connect-sign-in');
     await vi.waitFor(() => expect(replaceSpy).toHaveBeenCalledWith(`/?server=${encodeURIComponent(address)}`));
 
     const targetProfileId = resolveReverseQrTargetProfileId(profiles.getActiveServerId());
@@ -292,6 +297,9 @@ it.each(['web-link', 'native-link', 'scanner-hook', 'same-address'])(
             ? <TerminalScreen />
             : <TerminalConnectScreen />}
     </InjectedAuthProvider>);
+    await vi.waitFor(() => expect(screen.findByTestId('terminal-connect-sign-in')).not.toBeNull());
+    expect(replaceSpy).not.toHaveBeenCalled();
+    await screen.pressByTestIdAsync('terminal-connect-sign-in');
     await vi.waitFor(() => expect(replaceSpy).toHaveBeenCalledWith(`/?server=${encodeURIComponent(homeConnectionDescriptor.canonicalServerUrl)}`));
     if (entryPoint === 'web-link' || entryPoint === 'same-address') expect(custodyAtHashClear).toMatchObject(captured);
 

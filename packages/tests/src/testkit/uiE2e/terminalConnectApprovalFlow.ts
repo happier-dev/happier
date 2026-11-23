@@ -1,5 +1,9 @@
 export type TerminalConnectApprovalReadyPage = Readonly<{
   locator: (selector: string) => Readonly<{ count: () => Promise<number> }>;
+  getByTestId?: (testId: string) => Readonly<{
+    isVisible: () => Promise<boolean>;
+    click: (options: Readonly<{ timeout: number }>) => Promise<void>;
+  }>;
   getByRole?: (role: 'button', options: Readonly<{ name: string; exact?: boolean }>) => Readonly<{ count: () => Promise<number> }>;
   waitForTimeout: (ms: number) => Promise<void>;
   waitForURL: (matcher: (url: URL) => boolean, options?: Readonly<{ timeout?: number }>) => Promise<void>;
@@ -49,6 +53,11 @@ export async function waitForTerminalConnectReadySurface(
     const approveButton = page.getByRole?.('button', { name: 'Accept Connection', exact: true });
     if (approveButton && (await approveButton.count()) > 0) {
       return 'approve';
+    }
+    const signIn = page.getByTestId?.('terminal-connect-sign-in');
+    if (signIn && await signIn.isVisible()) {
+      await signIn.click({ timeout: Math.max(1, timeoutMs - (Date.now() - startedAt)) });
+      return 'restore';
     }
     if ((await page.locator('[data-testid="welcome-restore"]:visible').count()) > 0) {
       return 'restore';
