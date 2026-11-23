@@ -1,8 +1,9 @@
 import * as React from 'react';
-import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionOutcomeUnknownErrorCodeV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { MachineRebootResultV1Schema, type MachineRebootResultV1 } from '@happier-dev/protocol/actions/specs/machine/reboot';
 
 import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
+import { randomUUID } from '@/platform/randomUUID';
 import { isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';
 import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
 import {
@@ -32,6 +33,7 @@ export type MachineSecurityReboot =
   | Readonly<{ kind: 'failed'; code: string }>;
 
 const defaultExecute = createFrontDoorActionExecute();
+const rebootAction = 'machines.reboot';
 
 export function useMachineSecurityReboot(
   input: Readonly<{
@@ -48,11 +50,16 @@ export function useMachineSecurityReboot(
   const [reboot, setReboot] = React.useState<MachineSecurityReboot>({
     kind: 'idle',
   });
+  const [issued, setIssued] = React.useState<{
+    requestId: string;
+    lifetime: NonNullable<typeof lifetime>;
+  } | null>(null);
   const { onSettled } = input;
 
   React.useEffect(
     () => () => {
       abort();
+      setIssued(null);
       setReboot({ kind: 'idle' });
     },
     [input.serverId, input.machineId, lifetime, abort],
@@ -65,24 +72,32 @@ export function useMachineSecurityReboot(
       machineId: input.machineId,
       expectedInstallationId: input.installationId,
     };
+    const requestId = randomUUID();
+    setIssued(null);
     setReboot({ kind: 'starting', approval: null });
     const result = await run(
-      'machines.reboot',
+      rebootAction,
       actionInput,
       (signal, bound) =>
-        execute('machines.reboot', actionInput, {
+        execute(rebootAction, actionInput, {
           surface: 'ui',
           serverId: input.serverId,
           expectedAccountId: bound.scope.accountId,
+          actionRequestId: requestId,
           signal,
+          onTransportIssued: () => {
+            if (!signal.aborted && bound.isCurrent()) setIssued({ requestId, lifetime: bound });
+          },
         }),
       (approval) => setReboot({ kind: 'starting', approval }),
     );
     if (!result) return;
     if (!result.ok) {
+      if (!isActionOutcomeUnknownErrorCodeV1(result.errorCode)) setIssued(null);
       setReboot(settleFailure(result));
       return;
     }
+    setIssued(null);
     const parsed = MachineRebootResultV1Schema.safeParse(result.result);
     if (!parsed.success) {
       setReboot({ kind: 'failed', code: 'action_invalid_output' });
@@ -117,21 +132,22 @@ export function useMachineSecurityReboot(
     run,
   ]);
 
-  const operation = useActionOperation({
-    serverId: reboot.kind === 'restarting' ? input.serverId : null,
-    operationId: reboot.kind === 'restarting' ? reboot.operationId : '',
-  }, { machineId: input.machineId, actionId: 'machines.reboot', lifetime });
-  const operationState = operation?.snapshot.state ?? null;
+  const accepted = reboot.kind === 'restarting' ? { serverId: input.serverId, operationId: reboot.operationId } : null;
+  const operation = useActionOperation(accepted, {
+    machineId: input.machineId,
+    actionId: rebootAction,
+    lifetime,
+    requestId: issued && issued.lifetime === lifetime ? issued.requestId : undefined,
+  });
+  const operationId = operation?.snapshot.operationId;
+  const operationState = operation?.snapshot.state;
   React.useEffect(() => {
-    if (
-      reboot.kind !== 'restarting' ||
-      !operationState ||
-      !isActionOperationTerminal(operationState)
-    )
-      return;
+    if (!operationId || !operationState || !isActionOperationTerminal(operationState) || !lifetime?.isCurrent()) return;
+    abort();
+    setIssued(null);
     setReboot({
       kind: 'settled',
-      operationId: reboot.operationId,
+      operationId,
       state:
         operationState === 'succeeded'
           ? 'succeeded'
@@ -140,14 +156,18 @@ export function useMachineSecurityReboot(
             : 'failed',
     });
     onSettled();
-  }, [onSettled, operationState, reboot]);
+  }, [abort, lifetime, onSettled, operationId, operationState]);
 
   const dismiss = React.useCallback(() => {
     abort();
+    setIssued(null);
     setReboot({ kind: 'idle' });
   }, [abort]);
 
-  return { reboot, start, dismiss };
+  const visible: MachineSecurityReboot = operationId && operationState && !isActionOperationTerminal(operationState)
+    ? { kind: 'restarting', operationId }
+    : reboot;
+  return { reboot: visible, start, dismiss };
 }
 
 /** Declining the confirmation is the person's choice, not a failure to show. */

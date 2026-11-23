@@ -64,15 +64,20 @@ export function useActionOperationUnavailable(address: ActionOperationAddress | 
 }
 
 export function useActionOperation(address: ActionOperationAddress | null, acceptedRead?: AcceptedActionOperationRead) {
-    const operation = useActionOperationSelector(() => (
-        address ? actionOperationSelectors.selectById(actionOperationStore.getSnapshot(), address) : null
-    ));
     const serverId = address?.serverId ?? acceptedRead?.lifetime?.scope.serverId;
     const operationId = address?.operationId;
     const machineId = acceptedRead?.machineId;
     const actionId = acceptedRead?.actionId;
     const lifetime = acceptedRead?.lifetime;
     const requestId = acceptedRead?.requestId;
+    const operation = useActionOperationSelector(() => {
+        const state = actionOperationStore.getSnapshot();
+        if (address) return actionOperationSelectors.selectById(state, address);
+        if (!requestId || !serverId || !machineId || !actionId || !lifetime?.isCurrent()) return null;
+        const snapshot = actionOperationSelectors.selectSnapshotByRequestId(state, requestId, serverId, lifetime.scope.accountId);
+        if (snapshot?.actionId !== actionId || snapshot.scope.machineId !== machineId) return null;
+        return actionOperationSelectors.selectById(state, { serverId, operationId: snapshot.operationId });
+    });
     const terminalComplete = operation?.snapshotComplete === true && isActionOperationTerminal(operation.snapshot.state);
     React.useEffect(() => {
         if (!serverId || !machineId || !actionId || !lifetime || terminalComplete || !lifetime.isCurrent()) return;
@@ -131,11 +136,7 @@ export function useIssuedMachineActionOperation(input: Readonly<{
 }>) {
     const { actionId, lifetime, machineId, onSettled } = input;
     const requestId = machineId ? input.requestId : null;
-    const serverId = lifetime?.scope.serverId ?? null;
-    const snapshot = useActionOperationByRequestId(requestId, serverId, lifetime?.scope.accountId);
-    const operation = useActionOperation(serverId && snapshot?.actionId === actionId && snapshot.scope.machineId === machineId
-        ? { serverId, operationId: snapshot.operationId } : null,
-    machineId && requestId ? { machineId, actionId, lifetime, requestId } : undefined);
+    const operation = useActionOperation(null, machineId && requestId ? { machineId, actionId, lifetime, requestId } : undefined);
     const complete = operation?.snapshotComplete ? operation.snapshot : null;
     React.useEffect(() => {
         if (!requestId || !complete || !lifetime?.isCurrent()) return;
