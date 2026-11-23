@@ -9,7 +9,6 @@ import {
   Form,
   MarkdownEditor,
   ReviewPublicationSheet,
-  reviewPublicationDefaultSelection,
   reviewPublicationPublish,
   Row,
   Stack,
@@ -20,6 +19,7 @@ import {
   isPluginActionConfirmationDeclined,
   useHappierReviewPublicationEvidence,
   usePluginTranslation,
+  useReviewPublicationSelection,
   type PluginActionExecution,
   type PluginTranslate,
   type ReviewCommentProposalReadV1,
@@ -365,20 +365,12 @@ export function GitlabMergeRequestPublicationControls({
   const completePostMutation = useTriagePostMutationCompletion();
   const [submitExecution, setSubmitExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
   const [createExecution, setCreateExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
-  const [selectedIds, setSelectedIds] = React.useState<readonly string[]>([]);
+  const [selectedIds, setSelectedIds] = useReviewPublicationSelection(proposals.proposals);
   const [verdict, setVerdict] = React.useState<GitlabVerdictChoice>('none');
   const [summary, setSummary] = React.useState('');
   const [acknowledgement, setAcknowledgement] = React.useState<readonly string[] | null>(null);
   const [includeWalkthrough, setIncludeWalkthrough] = React.useState(true);
   const { quality, walkthrough } = useHappierReviewPublicationEvidence(input.admittedReview?.reviewId, input.admittedReview?.roundOrdinal);
-
-  React.useEffect(() => {
-    if (proposals.status !== 'ready') return;
-    setSelectedIds((current) => {
-      const retained = current.filter((id) => proposals.proposals.some((item) => item.id === id));
-      return retained.length > 0 ? retained : reviewPublicationDefaultSelection(proposals.proposals);
-    });
-  }, [proposals]);
 
   React.useEffect(() => {
     setAcknowledgement(null);

@@ -3,9 +3,9 @@ import {
   Button,
   MarkdownEditor,
   ReviewPublicationSheet,
-  reviewPublicationDefaultSelection,
   reviewPublicationPublish,
   usePluginTranslation,
+  useReviewPublicationSelection,
   type ReviewCommentProposalWithBodyV1,
 } from '@happier-dev/plugin-ui';
 import { buildReviewPublicationSummaryV1 } from '@happier-dev/plugin-sdk/reviews';
@@ -85,9 +85,7 @@ export function ReviewPublicationSheetSpecimen() {
   const [summary, setSummary] = React.useState(
     'One blocker: the backoff timer survives a manual reconnect, so a second reconnect starts with a long wait. One smaller note below.',
   );
-  const [selectedIds, setSelectedIds] = React.useState(() =>
-    reviewPublicationDefaultSelection(PROPOSALS),
-  );
+  const [selectedIds, setSelectedIds] = useReviewPublicationSelection(PROPOSALS);
   const [includeWalkthrough, setIncludeWalkthrough] = React.useState(true);
   const selected = PROPOSALS.filter((candidate) =>
     selectedIds.includes(candidate.id),

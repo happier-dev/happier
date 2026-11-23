@@ -1,7 +1,7 @@
 import * as React from 'react';
 import {
-  Banner, Button, Form, MarkdownEditor, ReviewPublicationSheet, reviewPublicationDefaultSelection, reviewPublicationPublish, Stack, Status,
-  useHappierReviewPublicationEvidence, usePluginTranslation, type ReviewCommentProposalReadV1,
+  Banner, Button, Form, MarkdownEditor, ReviewPublicationSheet, reviewPublicationPublish, Stack, Status,
+  useHappierReviewPublicationEvidence, usePluginTranslation, useReviewPublicationSelection, type ReviewCommentProposalReadV1,
 } from '@happier-dev/plugin-ui';
 import {
   buildReviewCommentPublicationEntryV1, buildReviewPublicationSummaryV1, parseReviewCommentPublicationPlanV1,
@@ -184,18 +184,10 @@ export function PullRequestReviewPublicationWrite({
   const text = usePluginTranslation();
   const [verdict, setVerdict] = React.useState<GithubPullRequestReviewVerdictV1>('comment');
   const { proposals, status: proposalRead } = publicationProposals;
-  const [selectedIds, setSelectedIds] = React.useState<readonly string[]>([]);
+  const [selectedIds, setSelectedIds] = useReviewPublicationSelection(proposals);
   const [verdictBody, setVerdictBody] = React.useState('');
   const [includeWalkthrough, setIncludeWalkthrough] = React.useState(true);
   const { quality, walkthrough } = useHappierReviewPublicationEvidence(input.admittedReview?.reviewId, input.admittedReview?.roundOrdinal);
-  React.useEffect(() => {
-    if (proposalRead !== 'ready') return;
-    setSelectedIds((selected) => {
-      const retained = selected.filter((id) => proposals.some((proposal) => proposal.id === id));
-      return retained.length > 0 ? retained : reviewPublicationDefaultSelection(proposals);
-    });
-  }, [proposalRead, proposals]);
-
   const selected = React.useMemo(
     () => proposals.filter(proposal => selectedIds.includes(proposal.id)),
     [proposals, selectedIds],

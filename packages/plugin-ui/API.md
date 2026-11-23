@@ -1912,7 +1912,6 @@ Declaration: `dist/index.d.ts`
 - value `resolveHappierWorkTheme` from `dist/index.d.ts`
 - value `resolveWidgetGroupCells` from `dist/index.d.ts`
 - value `resolveWidgetGroupColumns` from `dist/index.d.ts`
-- value `reviewPublicationDefaultSelection` from `dist/index.d.ts`
 - value `reviewPublicationPublish` from `dist/index.d.ts`
 - value `scaleTextStyleMetrics` from `dist/index.d.ts`
 - value `settleHappierRaisedEdge` from `dist/index.d.ts`
@@ -1983,6 +1982,7 @@ Declaration: `dist/index.d.ts`
 - value `useRemoteViewerActions` from `dist/index.d.ts`
 - value `useResizableSize` from `dist/index.d.ts`
 - value `useReviewCommentProposalsForEntry` from `dist/index.d.ts`
+- value `useReviewPublicationSelection` from `dist/index.d.ts`
 - value `useScmFileViewed` from `dist/index.d.ts`
 - value `useScmFileViewedFile` from `dist/index.d.ts`
 - value `useScmFileViewedStatus` from `dist/index.d.ts`
@@ -3897,7 +3897,6 @@ Declaration: `dist/components/index.d.ts`
 - value `resolveHappierWorkTheme` from `dist/components/index.d.ts`
 - value `resolveWidgetGroupCells` from `dist/components/index.d.ts`
 - value `resolveWidgetGroupColumns` from `dist/components/index.d.ts`
-- value `reviewPublicationDefaultSelection` from `dist/components/index.d.ts`
 - value `reviewPublicationPublish` from `dist/components/index.d.ts`
 - value `scaleTextStyleMetrics` from `dist/components/index.d.ts`
 - value `settleHappierRaisedEdge` from `dist/components/index.d.ts`
@@ -3950,6 +3949,7 @@ Declaration: `dist/components/index.d.ts`
 - value `usePluginUiFocusTarget` from `dist/components/index.d.ts`
 - value `useRemoteViewerActions` from `dist/components/index.d.ts`
 - value `useResizableSize` from `dist/components/index.d.ts`
+- value `useReviewPublicationSelection` from `dist/components/index.d.ts`
 - value `useSurfaceContext` from `dist/components/index.d.ts`
 - value `useTabPanelActivity` from `dist/components/index.d.ts`
 - value `useVoiceAttempt` from `dist/components/index.d.ts`

@@ -1,4 +1,4 @@
-import type { ReactElement, ReactNode } from 'react';
+import { useCallback, useMemo, useState, type ReactElement, type ReactNode } from 'react';
 import type { ReviewPublicationSummaryPartsV1 } from '@happier-dev/plugin-sdk/reviews';
 
 import type { ReviewCommentProposalWithBodyV1 } from '../hostApi/reviewCommentProposals.public.js';
@@ -77,13 +77,35 @@ export function reviewPublicationPublish(
   };
 }
 
-/** What the sheet checks before the person changes anything: every proposed finding except nits. */
-export function reviewPublicationDefaultSelection(
+/** A proposal the person has not chosen yet starts checked unless it is a nit. */
+function includedByDefault(proposal: ReviewCommentProposalWithBodyV1): boolean {
+  return proposal.finding?.severity !== 'nit';
+}
+
+const NO_CHOICES: ReadonlyMap<string, boolean> = new Map();
+
+/**
+ * The publication's finding selection, decided once for every forge. A proposal the person has checked or
+ * unchecked keeps that choice; one they have not chosen yet takes its kind's default. So a page of proposals that
+ * loads later adds its own defaults and never undoes a choice, including clearing every finding.
+ */
+export function useReviewPublicationSelection(
   proposals: readonly ReviewCommentProposalWithBodyV1[],
-): readonly string[] {
-  return proposals
-    .filter((proposal) => proposal.finding?.severity !== 'nit')
-    .map((proposal) => proposal.id);
+): readonly [selectedIds: readonly string[], setSelectedIds: (ids: readonly string[]) => void] {
+  const [choices, setChoices] = useState(NO_CHOICES);
+  const selectedIds = useMemo(
+    () => proposals.filter((proposal) => choices.get(proposal.id) ?? includedByDefault(proposal)).map((proposal) => proposal.id),
+    [choices, proposals],
+  );
+  const setSelectedIds = useCallback((ids: readonly string[]) => {
+    const chosen = new Set(ids);
+    setChoices((current) => {
+      const next = new Map(current);
+      for (const proposal of proposals) next.set(proposal.id, chosen.has(proposal.id));
+      return next;
+    });
+  }, [proposals]);
+  return [selectedIds, setSelectedIds];
 }
 
 function severityLabel(

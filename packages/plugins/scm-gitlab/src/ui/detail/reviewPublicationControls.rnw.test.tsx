@@ -133,10 +133,22 @@ let completed = 0;
 
 type MountedControl = 'merge-request' | 'thread-reply' | 'issue-comment';
 
+/** The proposals reader's continuation: each Read more publishes the next page appended to the ready list. */
+function PagedProposalControls(props: Readonly<{ input: TriageDetailSurfaceInputV1; pages: readonly (readonly GitlabStringReviewProposalV1[])[] }>) {
+  const [loaded, setLoaded] = React.useState(1);
+  const read = React.useMemo<GitlabReviewProposalReadV1>(() => ({
+    status: 'ready',
+    proposals: props.pages.slice(0, loaded).flat(),
+    ...(loaded < props.pages.length ? { loadMore: () => setLoaded((count) => count + 1) } : {}),
+  }), [loaded, props.pages]);
+  return <GitlabMergeRequestPublicationControls input={props.input} proposals={read} />;
+}
+
 async function mountControl(kind: MountedControl, options?: Readonly<{
   input: TriageDetailSurfaceInputV1;
   proposals: GitlabReviewProposalReadV1;
   withWalkthrough?: boolean;
+  pages?: readonly (readonly GitlabStringReviewProposalV1[])[];
 }>): Promise<MountedFixture> {
   const { reviewRevision: _reviewRevision, ...issueSnapshot } = INPUT.observation.snapshot;
   const issueInput = kind === 'issue-comment'
@@ -163,7 +175,9 @@ async function mountControl(kind: MountedControl, options?: Readonly<{
       surface: defineUiSurface(() => (
         <TriagePostMutationCompletionProvider onComplete={async () => { completed += 1; }}>
           {kind === 'merge-request'
-            ? <GitlabMergeRequestPublicationControls input={options?.input ?? INPUT} proposals={options?.proposals ?? PROPOSALS} />
+            ? options?.pages
+              ? <PagedProposalControls input={options.input} pages={options.pages} />
+              : <GitlabMergeRequestPublicationControls input={options?.input ?? INPUT} proposals={options?.proposals ?? PROPOSALS} />
             : kind === 'thread-reply'
               ? <GitlabThreadReplyPublicationControl input={INPUT} discussionId="discussion-7" proposals={PROPOSALS} />
               : <GitlabIssueCommentPublicationControl input={issueInput} proposals={PROPOSALS} />}
@@ -515,6 +529,25 @@ describe('mounted GitLab Review publication controls', () => {
         await act(async () => detail.press(await detail.getByRole('checkbox', { name })));
       }
       await expect(detail.getByText('0 of 3 · ignored ones are never posted')).resolves.toBeDefined();
+      expect(detail.controls.presentation('Publish 0 comments')?.disabled).toBe(true);
+      expect(recorded).toHaveLength(0);
+    });
+
+    it('keeps every finding unchecked when the next page of proposals loads', async () => {
+      const detail = await mountControl('merge-request', { input: INPUT, proposals: THREE, pages: [
+        THREE.proposals,
+        [finding('review-comment-4', 'nit', 'Comment repeats the function name', 9)],
+      ] });
+      for (const name of [PROPOSAL.body, 'Timer survives a manual reconnect']) {
+        await act(async () => detail.press(await detail.getByRole('checkbox', { name })));
+      }
+      await expect(detail.getByText('0 of 3 · ignored ones are never posted')).resolves.toBeDefined();
+      // Reading more proposals republishes the ready list with the next page appended.
+      await act(async () => detail.press(await detail.getByRole('button', { name: 'Read more' })));
+      await expect(detail.getByText('0 of 4 · ignored ones are never posted')).resolves.toBeDefined();
+      for (const name of [PROPOSAL.body, 'Timer survives a manual reconnect', 'Comment repeats the function name']) {
+        await expect(detail.getByRole('checkbox', { name })).resolves.toMatchObject({ state: { checked: false } });
+      }
       expect(detail.controls.presentation('Publish 0 comments')?.disabled).toBe(true);
       expect(recorded).toHaveLength(0);
     });
