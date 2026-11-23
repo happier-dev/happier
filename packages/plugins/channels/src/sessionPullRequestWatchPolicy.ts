@@ -6,7 +6,7 @@ import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginSettingsContribution } from '@happier-dev/plugin-sdk/settings';
 
 export { SESSION_PULL_REQUEST_WATCH_SETTINGS } from '@happier-dev/channels-protocol/v1';
-export const SESSION_PULL_REQUEST_WATCH_SETTINGS_DECLARATION = {
+export const SESSION_PULL_REQUEST_WATCH_SETTINGS_DECLARATION: Omit<PluginSettingsContribution, 'id'> = {
     title: { key: 'plugins.channels.prWatch.settings.title', fallback: 'Pull requests' },
     description: { key: 'plugins.channels.prWatch.settings.description',
         fallback: 'When a session opens or links a PR, it can keep watching it and act on CI and reviews.' },
@@ -40,7 +40,7 @@ export const SESSION_PULL_REQUEST_WATCH_SETTINGS_DECLARATION = {
                 fallback: 'Only when it’s idle and nothing is waiting on you. Archiving can be undone.' },
             schema: { type: 'boolean' }, default: false },
     ],
-} satisfies Omit<PluginSettingsContribution, 'id'>;
+};
 
 export type SessionPullRequestWatchDefaults = Readonly<{
     defaultMode: SessionPullRequestWatchPolicyV1['mode']; fixAttemptLimit: number | null;
