@@ -11,7 +11,7 @@ import { getDeviceType } from '@/utils/platform/responsive';
 import { useAppPaneContext, useOptionalAppPaneContext } from '../AppPaneProvider';
 import { AppPaneContext } from '../AppPaneContext';
 import { usePaneOverlayFocusReturnRef } from './usePaneOverlayFocusReturnRef';
-import type { AppPaneAction, DetailsTab } from '../model/appPaneReducer';
+import type { AppPaneAction, AppPaneState, DetailsTab } from '../model/appPaneReducer';
 import { readLocalSettingWithPreview } from '@/sync/store/settingsPreview';
 import { resolveDetailsTabOpenAs, type LastPreviewOpen } from './resolveDetailsTabOpenAs';
 import { buildDetailsWorkspaceStateView } from '../details/workspace/detailsWorkspaceSelectors';
@@ -60,6 +60,20 @@ export type NativeOverlayFocusReturnCaptureProps = Readonly<{
     onTouchStartCapture: (event: unknown) => void;
 }>;
 
+type DetailsTabCommandResult =
+    | Readonly<{ ok: true; result: { tabKey: string; activeTabKey: string | null; isPinned: boolean; isPreview: boolean } }>
+    | Readonly<{ ok: false; code: 'stale_surface' }>;
+
+/** Project the reducer's settlement, including a draft that keeps its tab pinned. */
+function detailsTabCommandResult(state: AppPaneState, scopeId: string, tabKey: string): DetailsTabCommandResult {
+    const details = state.scopes[scopeId]?.details;
+    const tab = details && getOwnDetailsWorkspaceRecordEntry(details.tabsByKey, tabKey);
+    if (!details || !tab) return { ok: false, code: 'stale_surface' };
+    const activeTabKey = details.focusedGroupId
+        ? details.groupsById[details.focusedGroupId]?.activeTabKey ?? null : null;
+    return { ok: true, result: { tabKey, activeTabKey, isPinned: tab.isPinned, isPreview: tab.isPreview } };
+}
+
 export type AppPaneScopeApi = {
     scopeId: string;
     scopeState: AppPaneScopeStateView | null;
@@ -99,8 +113,8 @@ export type AppPaneScopeApi = {
     }>) => void;
     setDetailsTabState: (tabKey: string, nextState: unknown, options?: Readonly<{ persist?: boolean }>) => void;
     patchDetailsTabState: (tabKey: string, patch: Readonly<Record<string, unknown>>, options?: Readonly<{ persist?: boolean }>) => void;
-    pinDetailsTab: (tabKey: string, options?: Readonly<{ persist?: boolean }>) => void;
-    unpinDetailsTab: (tabKey: string) => void;
+    pinDetailsTab: (tabKey: string, options?: Readonly<{ persist?: boolean }>) => DetailsTabCommandResult;
+    unpinDetailsTab: (tabKey: string) => DetailsTabCommandResult;
     closeDetails: () => void;
     /** Opens the host-owned overlay and acknowledges its accepted selection. */
     openDetailsOverlay?: (input: Readonly<{
@@ -109,7 +123,7 @@ export type AppPaneScopeApi = {
     }>) => boolean | Promise<boolean>;
     closeDetailsOverlay?: () => void;
     closeDetailsTab: (tabKey: string) => void;
-    setActiveDetailsTab: (tabKey: string) => void;
+    setActiveDetailsTab: (tabKey: string) => DetailsTabCommandResult;
     splitDetailsGroup?: (options: Readonly<{
         axis: DetailsWorkspaceAxis;
         groupId?: string;
@@ -391,11 +405,11 @@ export function useAppPaneScope<T>(scopeId: string, selector?: (scope: PaneScope
     }, [dispatch, scopeId]);
 
     const pinDetailsTab = React.useCallback<AppPaneScopeApi['pinDetailsTab']>((tabKey, options) => {
-        dispatch({ type: 'pinDetailsTab', scopeId, tabKey, ...options });
+        return detailsTabCommandResult(dispatch({ type: 'pinDetailsTab', scopeId, tabKey, ...options }, 'state'), scopeId, tabKey);
     }, [dispatch, scopeId]);
 
     const unpinDetailsTab = React.useCallback((tabKey: string) => {
-        dispatch({ type: 'unpinDetailsTab', scopeId, tabKey });
+        return detailsTabCommandResult(dispatch({ type: 'unpinDetailsTab', scopeId, tabKey }, 'state'), scopeId, tabKey);
     }, [dispatch, scopeId]);
 
     const closeDetails = React.useCallback(() => {
@@ -436,7 +450,7 @@ export function useAppPaneScope<T>(scopeId: string, selector?: (scope: PaneScope
     }, [dispatch, scopeId]);
 
     const setActiveDetailsTab = React.useCallback((tabKey: string) => {
-        dispatch({ type: 'setActiveDetailsTab', scopeId, tabKey });
+        return detailsTabCommandResult(dispatch({ type: 'setActiveDetailsTab', scopeId, tabKey }, 'state'), scopeId, tabKey);
     }, [dispatch, scopeId]);
 
     const splitDetailsGroup = React.useCallback((options: Readonly<{

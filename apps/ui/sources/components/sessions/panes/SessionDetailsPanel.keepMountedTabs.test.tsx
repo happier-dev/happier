@@ -53,7 +53,7 @@ describe('SessionDetailsPanel (keep mounted tabs)', () => {
         expect(inactive[0].props.style).toMatchObject({ display: 'flex', visibility: 'hidden' });
         expect(inactive[0].props.accessibilityElementsHidden).toBeUndefined();
         expect(inactive[0].props.importantForAccessibility).toBeUndefined();
-        await act(async () => runtime.pane.setActiveDetailsTab('file:a.txt'));
+        await act(async () => { runtime.pane.setActiveDetailsTab('file:a.txt'); });
         expect(screen.tree.findAllByType(SessionFileDetailsView)).toHaveLength(1);
         expect(screen.tree.findAllByType(SessionScmReviewDetailsView)).toHaveLength(1);
         expect(runtime.pane.scopeState?.details.activeTabKey).toBe('file:a.txt');

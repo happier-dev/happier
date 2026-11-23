@@ -568,12 +568,12 @@ describe('SessionDetailsPanel local service launcher handoff', () => {
             await expect.poll(() => getLocalServicePreviewState({ machineId: 'machine-a', serverId: runtime.serverId,
                 accountId: runtime.accountScope?.accountId }))
                 .toMatchObject({ generatedAt: 3_000, refreshState: 'idle' });
-            await act(async () => runtime.pane.setActiveDetailsTab('file:a.txt'));
+            await act(async () => { runtime.pane.setActiveDetailsTab('file:a.txt'); });
             await flushHookEffects();
             const hiddenMethods = [...serviceMethods];
             await flushHookEffects();
             expect(serviceMethods).toEqual(hiddenMethods);
-            await act(async () => runtime.pane.setActiveDetailsTab(browser.key));
+            await act(async () => { runtime.pane.setActiveDetailsTab(browser.key); });
             await expect.poll(() => launcherWatches().length).toBe(2);
             await expect.poll(() => serviceMethods.filter(method => method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT).length).toBe(2);
         } finally { inventoryRead.resolve(); await screen.unmount(); }

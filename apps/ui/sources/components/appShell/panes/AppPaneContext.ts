@@ -18,7 +18,10 @@ export type AppPaneContextValue = Readonly<{
     persistenceFailed?: boolean;
     /** Explicit transfer flush; ordinary edits continue to retain their in-memory draft on failure. */
     flushPersistence?: () => boolean;
-    dispatch: (action: AppPaneAction) => void;
+    dispatch: {
+        (action: AppPaneAction): void;
+        (action: AppPaneAction, result: 'state'): AppPaneState;
+    };
     registerDriver: (driver: PaneDriver) => () => void;
     getDriver: (scopeId: PaneScopeId) => PaneDriver | null;
     driverRegistryVersion: number;

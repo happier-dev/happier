@@ -250,7 +250,7 @@ describe('/session/[id]/details', () => {
             });
         });
         routerSetParamsSpy.mockClear();
-        await act(async () => runtime.pane.setActiveDetailsTab('commit:abc1234'));
+        await act(async () => { runtime.pane.setActiveDetailsTab('commit:abc1234'); });
         expect(runtime.pane.scopeState?.details.activeTabKey).toBe('commit:abc1234');
         await waitForHomeGovernance(() => expect(routerSetParamsSpy).toHaveBeenCalledWith({
             details: 'commit', path: undefined, sha: 'abc1234', terminalInstanceId: undefined,

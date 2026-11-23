@@ -213,7 +213,9 @@ export const AppPaneProvider = React.memo((props: Readonly<{ children: React.Rea
     }
     const overlayFocusReturnOwner = overlayFocusReturnOwnerRef.current;
     const pendingFileFocusReturns = useRef<Array<() => void>>([]);
-    const dispatch = React.useCallback((action: AppPaneAction) => {
+    function apply(action: AppPaneAction): void;
+    function apply(action: AppPaneAction, result: 'state'): AppPaneState;
+    function apply(action: AppPaneAction, result?: 'state'): AppPaneState | void {
         const capture = resolveOverlayFocusCapture(stateRef.current, action);
         if (capture) {
             overlayFocusReturnOwner.capture(capture.scopeId, capture.surface);
@@ -321,7 +323,9 @@ export const AppPaneProvider = React.memo((props: Readonly<{ children: React.Rea
                 driversRef.current.get(action.scopeId)?.onTerminalWorkspaceReveal?.({ tabId: tab.id, terminalId });
             }
         }
-    }, [overlayFocusReturnOwner, persistScopes, props.presentedPaneTab, readPaneAccountScope, restoreOpenPanes]);
+        if (result === 'state') return nextState;
+    }
+    const dispatch = React.useCallback(apply, [overlayFocusReturnOwner, persistScopes, props.presentedPaneTab, readPaneAccountScope, restoreOpenPanes]);
     const [driverRegistryVersion, setDriverRegistryVersion] = useState(0);
 
     React.useLayoutEffect(() => {

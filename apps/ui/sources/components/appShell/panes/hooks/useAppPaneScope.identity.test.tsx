@@ -122,7 +122,7 @@ describe('useAppPaneScope identity', () => {
             for (let index = 0; index < 20; index += 1) {
                 await act(async () => commands.patchDetailsTabState('file:a.ts', { accountId: 'alice', isEditingFile: true, editorText: `draft ${index}` }));
             }
-            await act(async () => commands.pinDetailsTab('file:a.ts'));
+            await act(async () => { commands.pinDetailsTab('file:a.ts'); });
             expect(commits - before).toBe(0);
             await act(async () => commands.setRightTab('find'));
             expect(commits - before).toBe(1);

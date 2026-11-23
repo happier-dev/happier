@@ -237,7 +237,7 @@ describe('desktop app-window lifecycle', () => {
         try {
             await waitForDesktopAppWindowPresentation({ input: {}, serverId: 'home', accountId: 'account' });
             expect(await closePaneDetailsWindowGroup({ getReadState: () => paneState,
-                dispatch: (action: AppPaneAction) => { paneState = appPaneReduce(paneState, action); } }, scope, groupId)).toBe(false);
+                dispatch: (action: AppPaneAction) => { paneState = appPaneReduce(paneState, action); return paneState; } }, scope, groupId)).toBe(false);
             expect(paneState).toBe(original);
             expect(host.invoke).toHaveBeenCalledWith('desktop_window_emit_action', expect.objectContaining({ payload: expect.objectContaining({
                 actionIdentifier: 'desktop.window.return', targetWindowLabel: 'destination_dirty-pane', data: { intent: 'close' },

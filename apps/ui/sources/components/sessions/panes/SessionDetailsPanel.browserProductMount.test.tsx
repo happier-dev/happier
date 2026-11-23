@@ -143,7 +143,7 @@ describe('SessionDetailsPanel browser product mount', () => {
         const shell = screen.findByType(BrowserShell);
         expect(retained.getPortalSnapshot()).toHaveLength(1);
         await act(async () => runtime.pane.openDetailsTab(createWorkspaceFileDetailsTab('sibling.txt'), { intent: 'pinned' }));
-        await act(async () => runtime.pane.setActiveDetailsTab(browser.key));
+        await act(async () => { runtime.pane.setActiveDetailsTab(browser.key); });
         expect(screen.findByType(BrowserShell)).toBe(shell);
         await act(async () => shell.props.onCloseTab());
         await flushHookEffects();

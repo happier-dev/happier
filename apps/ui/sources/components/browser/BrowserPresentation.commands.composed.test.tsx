@@ -204,11 +204,35 @@ it('selects, pins and unpins retained Details tabs through the Agent command own
         await act(async () => pane!.openDetailsTab(second));
         const group = () => pane!.scopeState!.details.groups![0]!;
         expect(group().activeTabKey).toBe(second.key);
-        await invoke('first.txt');
+        expect.soft(await invoke('first.txt')).toMatchObject({ ok: true, result: {
+            tabKey: first.key, activeTabKey: first.key, isPinned: true, isPreview: false,
+        } });
         expect(group().activeTabKey).toBe(first.key);
-        await invoke(`${t('session.detailsPanel.pinTabA11y')}: second.txt`);
+        expect.soft(await invoke(`${t('session.detailsPanel.pinTabA11y')}: second.txt`)).toMatchObject({ ok: true, result: {
+            tabKey: second.key, activeTabKey: first.key, isPinned: true, isPreview: false,
+        } });
         expect(group().tabs.find(tab => tab.key === second.key)).toMatchObject({ isPinned: true, isPreview: false });
-        await invoke(`${t('session.detailsPanel.unpinTabA11y')}: second.txt`);
+        expect.soft(await invoke(`${t('session.detailsPanel.unpinTabA11y')}: second.txt`)).toMatchObject({ ok: true, result: {
+            tabKey: second.key, activeTabKey: second.key, isPinned: false, isPreview: true,
+        } });
         expect(group().tabs.find(tab => tab.key === second.key)).toMatchObject({ isPinned: false });
+        // The person's callback returns the same settlement the Agent receives.
+        await act(async () => {
+            expect(pane!.setActiveDetailsTab(first.key)).toEqual({ ok: true, result: {
+                tabKey: first.key, activeTabKey: first.key, isPinned: true, isPreview: false,
+            } });
+            pane!.pinDetailsTab(second.key);
+            const { readWorkspaceFileEditorDraft } = await import('@/components/workspaces/files/details/workspaceFileDetails/workspaceFileEditorDraft');
+            pane!.setDetailsTabState(second.key, readWorkspaceFileEditorDraft({ accountId: 'presentation_owner',
+                isEditingFile: true, editorOriginalHash: null, editorText: 'retained draft' }, 'presentation_owner'));
+        });
+        expect(await invoke(`${t('session.detailsPanel.unpinTabA11y')}: second.txt`)).toMatchObject({ ok: true, result: {
+            tabKey: second.key, activeTabKey: first.key, isPinned: true, isPreview: false,
+        } });
+        expect(group().tabs.find(tab => tab.key === second.key)).toMatchObject({ isPinned: true, isPreview: false });
+        await act(async () => {
+            pane!.closeDetailsTab(first.key);
+            expect(pane!.setActiveDetailsTab(first.key)).toEqual({ ok: false, code: 'stale_surface' });
+        });
     } finally { await screen.unmount(); }
 });

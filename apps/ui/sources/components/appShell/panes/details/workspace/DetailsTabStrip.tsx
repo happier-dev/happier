@@ -22,7 +22,7 @@ export type DetailsTabStripProps = Readonly<{
     serverId?: string | null;
     paneScopeId?: string;
     resolveTabHref?: (tab: DetailsTabState) => string | null;
-    pane: Pick<AppPaneScopeApi, 'setActiveDetailsTab' | 'pinDetailsTab' | 'unpinDetailsTab' | 'closeDetailsTab'>;
+    pane: { [K in 'setActiveDetailsTab' | 'pinDetailsTab' | 'unpinDetailsTab' | 'closeDetailsTab']: (...args: Parameters<AppPaneScopeApi[K]>) => void };
     group: DetailsWorkspaceGroupView;
     resolveTabIconName?: ((tab: DetailsTabState) => string | null | undefined) | null;
     resolveTabPresentation?: ((tab: DetailsTabState) => DetailsTabPresentation | null | undefined) | null;
