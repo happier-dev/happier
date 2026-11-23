@@ -9,7 +9,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { projectWorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeSchema, ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema, ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionApi';
 
-import { createMachineFixture, invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createHydratedPlainMachineFixture, invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { applyProjectAccountRowsFixture, createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createWorkspaceSyncHarness, type WorkspaceSyncRpcRequest } from '@/dev/testkit/harness/workspaceSyncHarness';
 import { projectWorkspaceSyncRelationshipSummaries, projectWorkspaceSyncRelationships } from '@/sync/domains/sessionHandoff/workspaceSyncRelationshipModel';
@@ -195,9 +195,11 @@ beforeEach(async () => {
     targetFolder = 'nonempty';
     receivedCreates = [];
     const machines = [['machine-a', 'Source', '/home/source'], ['machine-b', 'Target', '/home/target']].map(([id, displayName, homeDir]) => {
-        // Both Machines are the person's own (Manage) unless a case says otherwise.
-        const machine = createMachineFixture({ id, activeAt: Date.now(), isShared: false });
-        return { ...machine, metadata: { ...machine.metadata!, displayName, homeDir } };
+        const machine = createHydratedPlainMachineFixture({ id, accountId: workspace.accountId,
+            machine: { activeAt: Date.now(), isShared: false } });
+        return { ...machine, metadata: { ...machine.metadata!, displayName, homeDir },
+            operationProtocolCapabilities: { irohMachineEndpoint: { protocolVersions: [1] as const,
+                endpointId: (id === 'machine-a' ? 'a' : 'b').repeat(64) } }, operationProtocolCapabilitiesRevision: 1 };
     });
     storage.getState().applyMachines(machines, true, { sourceServerId: workspace.serverId, sourceAccountId: workspace.accountId });
     storage.getState().markMachineListSettled(workspace.serverId);
@@ -423,6 +425,32 @@ describe('Project Add machine modal', () => {
         expect(reviewedLink().actionArgs).toMatchObject({ sourceWorkspaceRefId: source().id, targetMachineId: 'machine-b',
             targetPath: '/chosen-worker', purpose: 'worker_clean_copy', mode: 'keep_synced', destinationIntent: 'materialize_from_source_workspace' });
         expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)).toEqual([]);
+    });
+
+    it.each(['machine-a', 'machine-b'])('keeps an online worker copy unavailable until %s publishes its carrier', async missingCarrierId => {
+        const setCarrier = (ready: boolean) => act(async () => {
+            const machines = Object.values(storage.getState().machines).map(machine => machine.id === missingCarrierId ? {
+                ...machine,
+                operationProtocolCapabilities: ready ? { irohMachineEndpoint: { protocolVersions: [1] as const,
+                    endpointId: (missingCarrierId === 'machine-a' ? 'a' : 'b').repeat(64) } } : {},
+                operationProtocolCapabilitiesRevision: ready ? 3 : 2,
+            } : machine);
+            storage.getState().applyMachines(machines, true, { sourceServerId: workspace.serverId, sourceAccountId: workspace.accountId });
+        });
+        await setCarrier(false);
+        owner.openWorkspaceSyncAddMachine(source(), vi.fn(), { targetMachineId: 'machine-b', purpose: 'worker_clean_copy' });
+        const modal = await renderOpenedModal();
+        const selector = () => modal.screen.findByType(MachineSelector).findByType(DropdownMenu);
+        const worker = () => selector().props.items.find((item: { id: string }) => item.id === 'machine-b');
+        expect(worker()).toMatchObject({ disabled: true });
+        await act(async () => invokeTestInstanceHandler(modal.screen.findByType(PathSelectionList), 'onCommit', '/worker'));
+        await vi.waitFor(() => expect(modal.submit().props).toMatchObject({ disabled: true,
+            accessibilityHint: 'files.transfers.failureReasons.carrierUnavailable' }));
+        await act(async () => { modal.submit().props.onPress(); });
+        expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)).toEqual([]);
+        await setCarrier(true);
+        expect(worker()).toMatchObject({ disabled: false });
+        await vi.waitFor(() => expect(modal.submit().props.disabled).toBe(false));
     });
 
     it('does not open setup for stale source facts or an unrelated refusal', () => {

@@ -180,7 +180,7 @@ export type BuildMachineSelectionListModelParams<TMachine extends MachineDisplay
     onSelectMachine: (machine: TMachine) => void;
     onSelectScopedMachine: (machine: ScopedSelectionMachine<TMachine>) => void;
     /** Domain-owned availability; omit it to keep the canonical presence rule. */
-    resolveMachineAvailability?: (machine: TMachine, serverId: string) => MachineSelectionAvailability;
+    resolveMachineAvailability?: (machine: TMachine, serverId: string) => MachineSelectionAvailability | undefined;
     /** Domain-owned naming or detail; omitted titles retain canonical Machine naming. */
     resolveMachinePresentation?: (machine: TMachine) => MachineSelectionPresentation;
     onSelectPool?: (selection: ServerScopedMachinePoolSelection) => void;

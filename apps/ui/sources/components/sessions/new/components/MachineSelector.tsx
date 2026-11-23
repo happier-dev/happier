@@ -71,6 +71,8 @@ export interface MachineSelectorProps {
      * When true, offline machines are visible but non-selectable (greyed out + not-allowed cursor on web).
      */
     disableOfflineMachines?: boolean;
+    /** An additional domain-owned reason the row cannot be selected. */
+    resolveMachineUnavailableReason?: (machine: Machine) => string | undefined;
     /**
      * Keeps the selected revoked or replaced machine visible as a disabled row.
      * New-session callers keep the default false; administration surfaces opt in
@@ -167,10 +169,14 @@ function MachineSelectorWithListModel(props: MachineSelectorProps & Readonly<{
         favorites: props.favoritesSectionTitle ?? t('newSession.machinePicker.favoritesTitle'),
         all: allSectionTitle,
     }), [props.recentSectionTitle, props.favoritesSectionTitle, allSectionTitle]);
+    const { disableOfflineMachines, resolveMachineUnavailableReason } = props;
     const resolveAvailability = React.useCallback((machine: Machine) => {
+        const detail = resolveMachineUnavailableReason?.(machine);
+        if (detail !== undefined) return { selectable: false, detail };
+        if (disableOfflineMachines !== false) return undefined;
         const presence = resolveMachinePickerPresence(machine, undefined, scope);
-        return { selectable: presence.selectable || (props.disableOfflineMachines === false && presence.status === 'offline') };
-    }, [props.disableOfflineMachines, scope]);
+        return { selectable: presence.selectable || presence.status === 'offline' };
+    }, [disableOfflineMachines, resolveMachineUnavailableReason, scope]);
     const selectMachine = React.useCallback((machine: Machine) => {
         const original = props.machines.find(candidate => candidate.id === machine.id);
         if (original) {
@@ -198,7 +204,7 @@ function MachineSelectorWithListModel(props: MachineSelectorProps & Readonly<{
         showCliGlyphs: presentation === 'list' && (props.showCliGlyphs ?? true), autoDetectCliGlyphs: props.autoDetectCliGlyphs ?? true,
         serverId: props.serverId, favoriteGroupPlacement: props.favoriteGroupPlacement, testIdPrefix: props.testIdPrefix,
         disableOfflineMachines: props.disableOfflineMachines,
-        resolveMachineAvailability: props.disableOfflineMachines === false ? resolveAvailability : undefined,
+        resolveMachineAvailability: disableOfflineMachines === false || resolveMachineUnavailableReason ? resolveAvailability : undefined,
         resolveMachinePresentation: describeMachine ? resolveMachinePresentation : undefined,
         includeSelectedUnavailableMachineId: props.includeSelectedUnavailableMachine ? props.selectedMachine?.id : null,
         searchPlaceholder: props.searchPlaceholder ?? t('newSession.machinePicker.searchPlaceholder'),

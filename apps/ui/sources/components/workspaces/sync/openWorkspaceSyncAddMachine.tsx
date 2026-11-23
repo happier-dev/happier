@@ -33,6 +33,7 @@ import {
 } from '@/sync/domains/sessionHandoff/sessionHandoffDefaults';
 import { useMachineListStatusByServerId, useMachineRecordValues, useMachineListByServerId } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { readCurrentMachineIrohEndpoint } from '@/sync/domains/transfers/runtime/transferRuntime/routing/resolveMachineCarrierPreselection';
 import { tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
@@ -82,6 +83,15 @@ const ignoreClose = () => {};
  */
 /** A failure the form shows: the sentence, and the typed code when a Sync refusal carried one. */
 type AddMachineFailure = Readonly<{ message: string; technicalDetails?: WorkspaceSyncFailurePresentation['technicalDetails'] }>;
+
+function readWorkerCopyEndpoint(machine: Machine | undefined) {
+    return readCurrentMachineIrohEndpoint({
+        capabilities: machine?.operationProtocolCapabilities,
+        revision: machine?.operationProtocolCapabilitiesRevision,
+        active: machine?.active,
+        revokedAt: machine?.revokedAt,
+    });
+}
 
 /**
  * A caught failure in words. A Project Open refusal (destination open) is said by the Project Open owner
@@ -165,6 +175,19 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
     );
     const hubMachine = allMachines.find((machine: Machine) => machine.id === hub?.machineId);
     const hubMachineLabel = hubMachine ? getMachineDisplayName(hubMachine) : undefined;
+    const isWorkerCopy = props.options.purpose === 'worker_clean_copy';
+    const workerCopiesWithoutCarrier = React.useMemo(() => {
+        if (!isWorkerCopy) return null;
+        const sourceEndpoint = readWorkerCopyEndpoint(hubMachine);
+        return new Set(machines
+            .filter(machine => machine.id !== hubMachineId && (!sourceEndpoint || !readWorkerCopyEndpoint(machine)))
+            .map(machine => machine.id));
+    }, [hubMachine, hubMachineId, isWorkerCopy, machines]);
+    const resolveWorkerCopyUnavailableReason = React.useCallback(
+        (machine: Machine) => workerCopiesWithoutCarrier?.has(machine.id)
+            ? t('files.transfers.failureReasons.carrierUnavailable') : undefined,
+        [workerCopiesWithoutCarrier],
+    );
     React.useEffect(() => {
         if (sync.getCredentials()) void sync.refreshMachinesThrottled({ force: true });
     }, [props.source.serverId]);
@@ -235,6 +258,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
         setError(null);
     }, []);
     const placement = selectedMachine && hub ? resolveWorkspaceSyncDestinationPlacement(selectedMachine) : null;
+    const workerCopyUnavailableReason = selectedMachine ? resolveWorkerCopyUnavailableReason(selectedMachine) : undefined;
     const blockedReason = hubConflict || !hub
         ? t('workspaceSync.error.needsAttention')
         : !selectedMachine
@@ -243,6 +267,8 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
             ? t('workspaceSync.error.manageRequired')
         : !canAttemptMachineSpawn({ machine: selectedMachine, selectedMachineId: machineId, scope })
             ? t('workspaceSync.start.blocked.targetMachineOffline')
+        : workerCopyUnavailableReason
+            ? workerCopyUnavailableReason
         : !sourceRoots || !targetRoots
             ? t('workspaceSync.error.needsAttention')
         : !targetPath.trim() || !pathSafety.allowed || insideSource
@@ -463,6 +489,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
                 machine={{
                     machines, selectedMachine, serverId: props.source.serverId, showSearch: true, presentation: 'dropdown',
                     showCliGlyphs: false, autoDetectCliGlyphs: false, disableOfflineMachines: true, describeMachine,
+                    resolveMachineUnavailableReason: isWorkerCopy ? resolveWorkerCopyUnavailableReason : undefined,
                     ...(selectedMachine ? {} : { dropdownSubtitle: t('workspaceSync.addMachine.machineHint') }),
                     testIdPrefix: 'workspace-sync-add-machine',
                     onSelect: (machine) => { setMachineId(machine.id); setTargetPath(''); invalidateDraft(); },
