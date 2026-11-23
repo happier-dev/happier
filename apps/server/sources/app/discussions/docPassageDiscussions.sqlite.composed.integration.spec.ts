@@ -10,6 +10,7 @@ import { DiscussionMessageContentV1StoredSchema } from '@happier-dev/protocol/di
 import { DiscussionSummaryV1Schema } from '@happier-dev/protocol/discussions/models';
 import { prepareDocDiscussionMutationV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
 import { deriveDiscussionMutationEqualityTagV1, serializeDiscussionMutationEqualityIntentV1 } from '@happier-dev/protocol/discussions/equality';
+import { deriveSessionMessageReplyReturnLocalIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import tweetnacl from 'tweetnacl';
@@ -17,6 +18,8 @@ import { encrypt } from '../../../../cli/src/api/encryption';
 import { openSessionStoredContent, sealSessionStoredContent } from '../../../../cli/src/session/transport/encryption/sessionStoredContentCodec';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
+import { createSessionInputReplyProgressInTx } from '@/app/session/messages/sessionMessageReply';
+import { applySessionTurnMutation } from '@/app/session/sessionWriteService';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
@@ -338,7 +341,7 @@ describe('Doc passage Discussions through the canonical writer and client codec 
         expect(await db.discussionMessage.count({ where: { discussionId } })).toBe(2);
     });
 
-    it.each(['first comment', 'reply'] as const)('admits a Doc reader’s invited Session in the %s before its proposal, without self-invitation', async entry => {
+    it.each(['first comment', 'reply'] as const)('settles the addressed Doc %s with one invited Session proposal before final completion', async entry => {
         const { owner, reader, doc, passage, request } = await fixture();
         await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: doc.ref.artifactId, accountId: reader.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
@@ -354,26 +357,53 @@ describe('Doc passage Discussions through the canonical writer and client codec 
         expect(created).toMatchObject({ ok: true });
         if (!created.ok) throw new Error(created.error);
         const discussionId = created.value.discussion.id;
+        let parent = created.value.firstMessage;
         if (entry === 'reply') {
             expect(await inviteDiscussionParticipant({ authentication, actorAccountId: reader.id, discussionId,
                 request: { participant: { kind: 'session', sessionId: session.id } } })).toMatchObject({ ok: true });
-            expect(await postDiscussionMessage({ authentication, actorAccountId: reader.id, discussionId,
+            const reply = await postDiscussionMessage({ authentication, actorAccountId: reader.id, discussionId,
                 request: DiscussionPostRequestV1Schema.parse({ ...addressed, localId: randomUUID(),
-                    content: { t: 'plain', v: content }, replyTarget: { kind: 'message', messageId: created.value.firstMessage.id } }) }))
-                .toMatchObject({ ok: true, value: { message: { addressingV1: { participantSessionIds: [session.id] } } } });
+                    content: { t: 'plain', v: content }, replyTarget: { kind: 'message', messageId: parent.id } }) });
+            if (!reply.ok) throw new Error(reply.error);
+            parent = reply.value.message;
         }
         expect(await db.discussionParticipant.findUnique({ where: { discussionId_sessionId: { discussionId, sessionId: session.id } } }))
             .toMatchObject({ removedAt: null, answerPolicy: 'when_addressed' });
-        const prepared = prepareDocDiscussionMutationV1('doc.edit.propose', { localId: randomUUID(), target: passage,
+        const discussion = { serverId: 'test-home', discussionId };
+        const inputId = randomUUID(), turnId = randomUUID();
+        const progress = await inTx(tx => createSessionInputReplyProgressInTx(tx, { accountId: reader.id, requestSessionId: session.id,
+            reply: { mode: 'return', discussion: { discussionId, messageId: parent.id, throughSeq: parent.seq,
+                participantSessionId: session.id } } }));
+        if (!progress) throw new Error('Original addressed Doc reply unavailable');
+        await db.sessionMessage.create({ data: { sessionId: session.id, localId: inputId, seq: 1, messageRole: 'user',
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Propose a clearer version' } } },
+            replyDisposition: progress.disposition, replyProgress: { ...progress, acceptedTurnId: turnId } } });
+        await db.sessionTurn.create({ data: { sessionId: session.id, turnId, status: 'in_progress', startedAt: 1n, updatedAt: 2n,
+            transcriptAnchorsJson: JSON.stringify({ startUserMessageSeq: 1, userMessageSeqs: [1] }) } });
+        const prepared = prepareDocDiscussionMutationV1('doc.edit.propose', { target: passage,
+            localId: deriveSessionMessageReplyReturnLocalIdV1({ sessionId: session.id, localId: inputId, acceptedTurnId: turnId }),
             baseRevision: doc.revision, before: passage.quote, after: 'once more', reason: 'Clarify',
-            discussionRef: { serverId: 'test-home', discussionId }, replyTo: createDiscussionMessageRefV1({ serverId: 'test-home', discussionId }, created.value.firstMessage) }, 'test-home');
-        if (prepared.actionId === 'discussion.create') throw new Error('Expected a proposal in the admitted thread');
-        expect(await postDiscussionMessage({ authentication: { ...authentication, contentDisclosureSessionId: session.id },
+            discussionRef: discussion, replyTo: createDiscussionMessageRefV1(discussion, parent) }, discussion.serverId);
+        if (prepared.actionId !== 'discussion.reply') throw new Error('Expected a proposal reply to the addressed message');
+        const result = await postDiscussionMessage({ authentication: { ...authentication, contentDisclosureSessionId: session.id },
             actorAccountId: reader.id, discussionId, producer: { v: 1, kind: 'agent', sessionId: session.id },
+            replyReturn: { serverId: discussion.serverId, requestLocalId: inputId, acceptedTurnId: turnId },
             request: DiscussionPostRequestV1Schema.parse({ localId: prepared.input.localId, replyTarget: prepared.input.replyTarget, mentionedAccountIds: [],
-                content: { t: 'plain', v: prepared.input.content } }) }))
-            .toMatchObject({ ok: true, value: { message: { producerV1: { kind: 'agent', sessionId: session.id },
-                docEditProposalDispositionV1: { state: 'open' } } } });
+                content: { t: 'plain', v: prepared.input.content } }) });
+        if (!result.ok) throw new Error(result.error);
+        const proposalMessageId = result.value.message.id;
+        expect(result.value.message).toMatchObject({ replyTarget: { kind: 'message', messageId: parent.id },
+            producerV1: { kind: 'agent', sessionId: session.id, replyReturn: { outcome: 'answer' } },
+            docEditProposalDispositionV1: { state: 'open' } });
+        await db.sessionMessage.create({ data: { sessionId: session.id, localId: randomUUID(), seq: 2, messageRole: 'agent',
+            content: { t: 'plain', v: { role: 'agent', content: { type: 'output', data: 'Proposal submitted' } } } } });
+        expect(await applySessionTurnMutation({ actorUserId: reader.id, authentication,
+            mutation: { v: 1, sessionId: session.id, mutationId: randomUUID(), action: 'complete', turnId, observedAt: 3,
+                transcriptAnchors: { startUserMessageSeq: 1, userMessageSeqs: [1], startSeqInclusive: 1,
+                    endSeqInclusive: 2, finalAssistantMessageSeq: 2 } } })).toMatchObject({ ok: true });
+        expect(await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId: inputId } } }))
+            .toMatchObject({ replyDisposition: 'returned', replyProgress: { outcome: { kind: 'answer', publicationRef: { messageId: proposalMessageId } } } });
+        expect(await db.discussionMessage.count({ where: { discussionId } })).toBe(parent.seq + 1);
     });
 
     it('admits a same-Doc redo from another client Home label without admitting a different Doc', async () => {

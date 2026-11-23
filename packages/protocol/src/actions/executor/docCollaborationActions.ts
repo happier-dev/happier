@@ -191,11 +191,17 @@ export async function readCommittedDiscussionMessage(parent: DiscussionMessageRe
   return { ok: true, message };
 }
 
-/** Parent refs identify a committed passage root, never a caller-authored substitute anchor. */
+/** Resolve an opened passage basis without changing the exact parent the proposal will reply to. */
 async function readPassageRoot(parent: DiscussionMessageRefV1, context: ActionExecutorContext,
-  discussionAction: NonNullable<ActionExecutorDeps['discussionAction']>, sameHome: SameHome): Promise<
+  discussionAction: NonNullable<ActionExecutorDeps['discussionAction']>, sameHome: SameHome, followReplyParents: boolean): Promise<
     { ok: true; passage: DocPassageRefV1 } | ActionExecuteFailure> {
-  const read = await readCommittedDiscussionMessage(parent, context, discussionAction, undefined, sameHome);
+  let read = await readCommittedDiscussionMessage(parent, context, discussionAction, undefined, sameHome);
+  while (followReplyParents && read.ok && read.message.content && read.message.replyTarget?.kind === 'message') {
+    const { seq, replyTarget } = read.message;
+    if (seq <= 1) return refuse('doc_passage_mismatch');
+    read = await readCommittedDiscussionMessage({ ...parent, messageId: replyTarget.messageId }, context, discussionAction,
+      { throughSeq: seq - 1 }, sameHome);
+  }
   if (!read.ok) return read;
   const { message } = read;
   if (!message.content) return refuse('content_unavailable');
@@ -288,7 +294,7 @@ export async function executeDocDiscussionWriteV1(actionId: 'doc.comment.reply' 
   const target = DocPassageRefV1Schema.parse({ ...request.target, ref: { ...request.target.ref,
     serverId: request.target.ref.serverId ?? context.serverId } });
   if (parent) {
-    const root = await readPassageRoot(parent, context, discussionAction, sameHome);
+    const root = await readPassageRoot(parent, context, discussionAction, sameHome, !isComment);
     if (!root.ok) return root;
     if (root.passage.ref.artifactId !== target.ref.artifactId || !sameHome(root.passage.ref.serverId, target.ref.serverId)
       || (isComment && createCanonicalJsonSigningInput({ ...root.passage, ref: target.ref }) !== createCanonicalJsonSigningInput(target))) {

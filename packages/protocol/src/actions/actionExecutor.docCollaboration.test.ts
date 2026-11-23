@@ -173,10 +173,14 @@ describe('Doc collaboration Actions', () => {
         source: currentSource, proposal: content.proposal })).toThrow('version_mismatch');
     });
 
-  it.each(['direct', 'explicit-approval'] as const)('resolves a thread-addressed proposal before review and preserves that basis on replay (%s)', async path => {
+  it.each(['direct', 'explicit-approval', 'nested-reply'] as const)('replays the exact reviewed proposal basis and parent (%s)', async path => {
     let stored: ApprovalRequest | undefined;
     let reads = 0;
     const writes: unknown[] = [];
+    const nestedRef = { ...rootMessage.messageRef, messageId: 'addressed-comment' };
+    const nested = { ...rootMessage, id: nestedRef.messageId, messageRef: nestedRef, seq: 2,
+      content: text, replyTarget: { kind: 'message', messageId: rootMessage.id } };
+    const replyTo = path === 'nested-reply' ? { replyTo: nestedRef } : {};
     const storedTarget = { ...target, prefix: 'Notes\n\n', suffix: '.',
       ref: { ...ref, serverId: 'creator-cli-only-profile' } };
     const executor = createActionExecutor({
@@ -185,11 +189,13 @@ describe('Doc collaboration Actions', () => {
       discussionAction: async ({ actionId, input }) => {
         if (actionId === 'discussion.read') {
           reads++;
-          expect(input).toEqual({ discussionId: 'thread' });
+          const read = DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.read'].parse(input);
+          const root = { ...rootMessage, content: { ...rootMessage.content, passage: storedTarget },
+            replyTarget: { ...rootMessage.replyTarget, doc: { ...rootMessage.replyTarget.doc, ref: storedTarget.ref } } };
           return { v: 1, serverId: 'home', discussionId: 'thread', messageSeq: 2, hasMoreOlder: false, incomplete: false,
-            messages: [{ ...rootMessage, content: { ...rootMessage.content, passage: storedTarget } }] };
+            messages: [read.messageId === nested.id ? nested : root] };
         }
-        if (actionId !== 'discussion.post') throw new Error('Unexpected Discussion operation');
+        if (actionId !== (path === 'nested-reply' ? 'discussion.reply' : 'discussion.post')) throw new Error('Unexpected Discussion operation');
         const post = DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.post'].parse(input);
         writes.push(post);
         return DiscussionPostResultV1Schema.parse({ v: 1, serverId: 'home', messageSeq: 2,
@@ -202,27 +208,31 @@ describe('Doc collaboration Actions', () => {
       isApprovalExecutionOriginCurrent: async () => true,
       sessionSendMessage: async ({ localId }) => ({ status: 'accepted', localId }),
     });
-    const authored = { discussionRef, localId: proposal.localId, after: proposal.after };
+    const reviewedTarget = { ...target, range: { start: 9, end: 19 }, quote: 'Read this.', prefix: '', suffix: '' };
+    const authored = path === 'nested-reply'
+      ? { ...proposal, ...replyTo, target: reviewedTarget, before: reviewedTarget.quote, reason: '' }
+      : { discussionRef, localId: proposal.localId, after: proposal.after };
     const invocation: ActionExecutorContext = { ...context, defaultSessionId: 'receiver', defaultSessionMachineId: 'machine',
       runtimeAccountId: 'reader', serverIdentityId: 'srv_home', actionRequestId: 'thread-proposal-request',
       actionCaller: { kind: 'session', sessionId: 'receiver', starterDepth: 0, turnDepth: 0 } };
-    const result = path === 'direct' ? await executor.execute('doc.edit.propose', authored, invocation)
+    const result = path !== 'explicit-approval' ? await executor.execute('doc.edit.propose', authored, invocation)
       : await executor.execute('approval.request.create', { actionId: 'doc.edit.propose', actionArgs: authored,
         summary: 'Propose a document edit', createdBy: { surface: 'agent' } }, invocation);
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: path === 'direct'
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: path !== 'explicit-approval'
       ? { kind: 'approval_request_created' } : { artifactId: 'thread-proposal' } });
-    expect(stored?.actionArgs).toEqual({ discussionRef, localId: proposal.localId,
-      target: { ...target, ref, range: { start: 9, end: 19 }, quote: 'Read this.', prefix: '', suffix: '' }, baseRevision: revision, before: 'Read this.', after: proposal.after, reason: '' });
+    expect(stored?.actionArgs).toEqual({ discussionRef, localId: proposal.localId, ...replyTo,
+      target: reviewedTarget, baseRevision: revision, before: reviewedTarget.quote, after: proposal.after, reason: '' });
     expect(writes).toEqual([]);
-    expect(reads).toBe(1);
+    expect(reads).toBe(path === 'nested-reply' ? 0 : 1);
     const decision = await executor.execute('approval.request.decide', { artifactId: 'thread-proposal', decision: 'approve' },
       { ...person, runtimeAccountId: 'reader', serverIdentityId: 'srv_home', actionCaller: { kind: 'host' } });
     expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
+    expect(stored?.status, JSON.stringify(stored?.execution)).toBe('executed');
     expect(writes).toEqual([{ discussionId: 'thread', localId: proposal.localId,
       content: { kind: 'doc_edit_proposal', proposal: { target: { ...target, ref, range: { start: 9, end: 19 }, quote: 'Read this.', prefix: '', suffix: '' }, baseRevision: revision,
-        before: 'Read this.', after: proposal.after, reason: '' } }, replyTarget: rootMessage.replyTarget }]);
-    expect(reads).toBe(1);
-    expect(stored?.status).toBe('executed');
+        before: 'Read this.', after: proposal.after, reason: '' } }, replyTarget: path === 'nested-reply'
+        ? { kind: 'message', messageId: nested.id } : rootMessage.replyTarget }]);
+    expect(reads).toBe(path === 'nested-reply' ? 2 : 1);
   });
 
   it.each(['accepted', 'accepted-paged', 'unchanged-passage', 'reattached', 'reattached-paged', 'missing-passage', 'ambiguous-passage'] as const)(
