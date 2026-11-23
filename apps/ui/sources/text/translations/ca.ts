@@ -7271,6 +7271,8 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
     },
 
   newSession: {
+    managedProjectInPlace: ({ folder }: { folder: string }) => `A ${folder}`,
+    managedProjectControllerCopy: ({ machine }: { machine: string }) => `A ${machine}, treballant en una còpia`,
         ghCliBanner: { title: 'CLI de GitHub', install: 'Instal·la', update: 'Actualitza', reinstall: 'Reinstal·la' },
         ghCliInstallModal: { installTitle: 'Vols instal·lar el CLI de GitHub?', updateTitle: 'Vols actualitzar el CLI de GitHub?', reinstallTitle: 'Vols reinstal·lar el CLI de GitHub?', description: 'Després de confirmar-ho, s’instal·la la dependència opcional del CLI de GitHub que fan servir els fluxos de control de versions de GitHub.' },
     terminalHostUnavailableTitle: "Terminal no disponible",

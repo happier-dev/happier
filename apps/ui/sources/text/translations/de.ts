@@ -7787,6 +7787,8 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
     },
 
     newSession: {
+      managedProjectInPlace: ({ folder }: { folder: string }) => `In ${folder}`,
+      managedProjectControllerCopy: ({ machine }: { machine: string }) => `Auf ${machine}, in einer Kopie arbeiten`,
       terminalHostUnavailableTitle: "Terminal-Host nicht verfügbar",
       terminalHostUnavailableBody: ({ host }: { host: string }) => `Installiere oder aktualisiere ${host} und starte dessen Server auf diesem Rechner neu, oder wähle einen anderen Terminal-Host. Dein Entwurf bleibt erhalten.`,
         folder: folderlessSessionTranslations.de.composer,

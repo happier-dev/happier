@@ -8054,6 +8054,8 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
   },
 
   newSession: {
+    managedProjectInPlace: ({ folder }: { folder: string }) => `In ${folder}`,
+    managedProjectControllerCopy: ({ machine }: { machine: string }) => `Su ${machine}, lavorando in una copia`,
     terminalHostUnavailableTitle: "Host del terminale non disponibile",
     terminalHostUnavailableBody: ({ host }: { host: string }) => `Installa o aggiorna ${host} e riavvia il suo server su questa macchina, oppure scegli un altro host del terminale. La bozza viene conservata.`,
     folder: folderlessSessionTranslations.it.composer,

@@ -96,6 +96,10 @@ export type NewSessionMachineSelectionContentProps<TMachine extends MachineDispl
      * marked while it holds, as the folder picker's "No folder".
      */
     defaultOption?: MachineSelectionDefaultOption;
+    leadingOptions?: Readonly<{
+        options: readonly Readonly<{ id: string; label: string; testID: string; onSelect: () => void }>[];
+        selectedId: string;
+    }>;
     /** The work a Session started from this list is; each reachable row then says what it does there (lab scene 2). */
     isolationWorkKind?: MachineIsolationWorkKind;
 }>;
@@ -163,21 +167,21 @@ export function NewSessionMachineSelectionContent<TMachine extends MachineDispla
     });
 
     const defaultOption = props.defaultOption;
-    const rootStep = React.useMemo((): SelectionListStep => defaultOption ? {
-        ...listModel.rootStep,
-        sections: [{
-            kind: 'static',
+    const leadingOptions = props.leadingOptions;
+    const rootStep = React.useMemo((): SelectionListStep => {
+        const options = leadingOptions?.options ?? (defaultOption ? [{
             id: DEFAULT_OPTION_ID,
-            options: [{
-                id: DEFAULT_OPTION_ID,
-                label: defaultOption.title,
-                ...(defaultOption.subtitle === undefined ? {} : { subtitle: defaultOption.subtitle }),
-                ...(props.testIdPrefix ? { testID: `${props.testIdPrefix}-option:default` } : {}),
-                onSelect: defaultOption.onSelect,
-            }],
-        }, ...listModel.rootStep.sections],
-    } : listModel.rootStep, [defaultOption, listModel.rootStep, props.testIdPrefix]);
-    const selectedOptionId = defaultOption?.selected ? DEFAULT_OPTION_ID : listModel.selectedOptionId;
+            label: defaultOption.title,
+            ...(defaultOption.subtitle === undefined ? {} : { subtitle: defaultOption.subtitle }),
+            ...(props.testIdPrefix ? { testID: `${props.testIdPrefix}-option:default` } : {}),
+            onSelect: defaultOption.onSelect,
+        }] : []);
+        return options.length ? { ...listModel.rootStep,
+            sections: [{ kind: 'static', id: DEFAULT_OPTION_ID, options }, ...listModel.rootStep.sections],
+        } : listModel.rootStep;
+    }, [defaultOption, leadingOptions, listModel.rootStep, props.testIdPrefix]);
+    const selectedOptionId = leadingOptions?.selectedId
+        ?? (defaultOption?.selected ? DEFAULT_OPTION_ID : listModel.selectedOptionId);
 
     const inline = props.presentation === 'inline';
     const maxHeight = inline ? undefined : props.maxHeight;

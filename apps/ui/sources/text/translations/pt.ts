@@ -7938,6 +7938,8 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
   },
 
   newSession: {
+    managedProjectInPlace: ({ folder }: { folder: string }) => `Em ${folder}`,
+    managedProjectControllerCopy: ({ machine }: { machine: string }) => `Em ${machine}, trabalhando em uma cópia`,
     terminalHostUnavailableTitle: "Host de terminal indisponível",
     terminalHostUnavailableBody: ({ host }: { host: string }) => `Instale ou atualize ${host} e reinicie seu servidor nesta máquina, ou escolha outro host de terminal. Seu rascunho é mantido.`,
     folder: folderlessSessionTranslations.pt.composer,

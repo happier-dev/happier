@@ -8139,6 +8139,8 @@ localTailscale: {
   },
 
   newSession: {
+    managedProjectInPlace: ({ folder }: { folder: string }) => `${folder} 内`,
+    managedProjectControllerCopy: ({ machine }: { machine: string }) => `${machine} でコピーを使って作業`,
     terminalHostUnavailableTitle: "ターミナルホストを利用できません",
     terminalHostUnavailableBody: ({ host }: { host: string }) => `このマシンで ${host} をインストールまたは更新してサーバーを再起動するか、別のターミナルホストを選択してください。下書きは保持されます。`,
     folder: folderlessSessionTranslations.ja.composer,

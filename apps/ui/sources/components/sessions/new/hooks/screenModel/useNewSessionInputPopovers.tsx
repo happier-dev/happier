@@ -19,7 +19,7 @@ import type { ManagedSessionPlacementV1 } from '@happier-dev/protocol/teams/mana
 import type { ServerScopedMachinePoolGroup } from '@/components/sessions/new/components/machineSelection/useMachineSelectionListModel';
 import type { TemporaryComputerAvailability } from '@/components/sessions/new/hooks/useTemporaryComputerAvailability';
 import type { TemporaryComputerLaunchBlock } from '@/components/sessions/new/hooks/temporaryComputerLaunchReadiness';
-import { useSessionMachineChoicePopover, useSessionPathChoicePopover } from '@/components/sessions/new/placement/sessionPlacementPopovers';
+import { useSessionMachineChoicePopover, useSessionPathChoicePopover, type SessionMachineChoiceParams } from '@/components/sessions/new/placement/sessionPlacementPopovers';
 import { type ManagedMachineSelectionDraft, type ManagedMachineSelectionOffer, type ManagedMachineUse } from '@/components/sessions/new/components/machineSelection/managedMachineSelection';
 import type { SessionPlacementCandidateRow } from '@/components/sessions/new/serverStartDraftCandidateSelection';
 import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
@@ -64,6 +64,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
     selectMachineTarget: (machine: Machine, serverId: string | null) => void;
     toggleFavoriteMachine: (machine: Machine) => void;
     useMachinePickerSearch: boolean;
+    leadingMachineOptions?: SessionMachineChoiceParams['leadingOptions'];
     machinePoolGroups: ReadonlyArray<ServerScopedMachinePoolGroup>;
     machinePoolRequestKey: string;
     selectMachinePoolTarget: (target: Readonly<{ serverId: string; poolId: string; machineId: string }>) => void;
@@ -147,6 +148,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
         selectMachineTarget: params.selectMachineTarget,
         toggleFavoriteMachine: params.toggleFavoriteMachine,
         useMachinePickerSearch: params.useMachinePickerSearch,
+        leadingOptions: params.leadingMachineOptions,
         executionTarget: params.executionTarget,
         onRefreshMachines: params.onRefreshMachines,
         machinePoolGroups: params.machinePoolGroups,

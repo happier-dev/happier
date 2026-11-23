@@ -208,6 +208,7 @@ export type SessionMachineChoiceParams = Readonly<{
   awayMachinesChoosable?: boolean;
   /** The host's choice that is no particular Machine, listed first ("Your usual Machine"). */
   defaultChoice?: Omit<MachineSelectionDefaultOption, 'onSelect'> & Readonly<{ onChoose: () => void }>;
+  leadingOptions?: MachineSelectionContentProps['leadingOptions'];
   /** The work a Session started here is; each reachable Machine row then says what it does there. */
   isolationWorkKind?: MachineIsolationWorkKind;
 }>;
@@ -280,6 +281,7 @@ export function useSessionMachineChoicePopover(
     currentUiContextCommandScope: params.currentUiContextCommandScope,
     awayMachinesChoosable: params.awayMachinesChoosable === true,
     defaultChoice: params.defaultChoice,
+    leadingOptions: params.leadingOptions,
     isolationWorkKind: params.isolationWorkKind,
   });
 
@@ -301,6 +303,7 @@ export function useSessionMachineChoicePopover(
         awayMachinesChoosable: params.awayMachinesChoosable === true,
         isolationWorkKind: params.isolationWorkKind ?? null,
         defaultChoice: params.defaultChoice ? { title: params.defaultChoice.title, subtitle: params.defaultChoice.subtitle, selected: params.defaultChoice.selected } : null,
+        leadingOptions: params.leadingOptions,
         temporaryComputerTargets:
           params.temporaryComputers?.availability.status === 'available'
             ? params.temporaryComputers.availability.artifacts.map(
@@ -332,6 +335,7 @@ export function useSessionMachineChoicePopover(
       params.defaultChoice?.title,
       params.defaultChoice?.subtitle,
       params.defaultChoice?.selected,
+      params.leadingOptions,
       machinePoolSelection.status,
     ],
   );
@@ -457,6 +461,17 @@ export function useSessionMachineChoicePopover(
             {...(renderParams.awayMachinesChoosable
               ? { disableOfflineMachines: false, resolveMachineAvailability: AWAY_MACHINE_CHOOSABLE }
               : {})}
+            leadingOptions={renderParams.leadingOptions && {
+              selectedId: renderParams.leadingOptions.selectedId,
+              options: renderParams.leadingOptions.options.map(option => ({
+                ...option,
+                onSelect: () => {
+                  renderParams.machinePoolSelection.cancelPendingSelection();
+                  option.onSelect();
+                  requestClose();
+                },
+              })),
+            }}
             {...(renderParams.defaultChoice
               ? {
                   defaultOption: {

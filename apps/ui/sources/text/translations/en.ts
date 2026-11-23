@@ -8982,6 +8982,8 @@ const enDeps = {
 };
 
 const enNewSession = {
+  managedProjectInPlace: ({ folder }: { folder: string }) => `In ${folder}`,
+  managedProjectControllerCopy: ({ machine }: { machine: string }) => `On ${machine}, working in a copy`,
   terminalHostUnavailableTitle: 'Terminal host unavailable',
   terminalHostUnavailableBody: ({ host }: { host: string }) =>
     `Install or update ${host} and restart its server on this machine, or choose another terminal host. Your draft is kept.`,

@@ -7650,6 +7650,8 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
   },
 
   newSession: {
+    managedProjectInPlace: ({ folder }: { folder: string }) => `Dans ${folder}`,
+    managedProjectControllerCopy: ({ machine }: { machine: string }) => `Sur ${machine}, en travaillant dans une copie`,
         reviewPresetToStart: ({ name }: { name: string }) => `Vérifiez ${name} pour démarrer la session`,
       terminalHostUnavailableTitle: "Hôte de terminal indisponible",
       terminalHostUnavailableBody: ({ host }: { host: string }) => `Installe ou mets à jour ${host} et redémarre son serveur sur cette machine, ou choisis un autre hôte de terminal. Ton brouillon est conservé.`,

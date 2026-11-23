@@ -7546,6 +7546,8 @@ export const zhHans: TranslationStructure = {
   },
 
   newSession: {
+    managedProjectInPlace: ({ folder }: { folder: string }) => `在 ${folder} 中`,
+    managedProjectControllerCopy: ({ machine }: { machine: string }) => `在 ${machine} 上使用副本工作`,
     terminalHostUnavailableTitle: "终端宿主不可用",
     terminalHostUnavailableBody: ({ host }: { host: string }) => `请在此机器上安装或更新 ${host} 并重启其服务器，或选择其他终端宿主。草稿已保留。`,
     folder: folderlessSessionTranslations.zhHans.composer,

@@ -6557,6 +6557,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
   newSession: {
+    managedProjectInPlace: ({ folder }: { folder: string }) => `在 ${folder} 中`,
+    managedProjectControllerCopy: ({ machine }: { machine: string }) => `在 ${machine} 上使用副本工作`,
 
     actionDefault: newSessionActionDefaultTranslations['zh-Hant'],    terminalHostUnavailableTitle: '終端宿主無法使用',
     terminalHostUnavailableBody: ({ host }: { host: string }) => `請在此機器上安裝或更新 ${host} 並重新啟動其伺服器，或選擇其他終端宿主。草稿已保留。`,

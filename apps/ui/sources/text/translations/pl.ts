@@ -7679,6 +7679,8 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
   },
 
   newSession: {
+    managedProjectInPlace: ({ folder }: { folder: string }) => `W ${folder}`,
+    managedProjectControllerCopy: ({ machine }: { machine: string }) => `Na ${machine}, z pracą na kopii`,
     terminalHostUnavailableTitle: "Host terminala niedostępny",
     terminalHostUnavailableBody: ({ host }: { host: string }) => `Zainstaluj lub zaktualizuj ${host} i uruchom jego serwer ponownie na tej maszynie albo wybierz inny host terminala. Szkic zostaje zachowany.`,
     folder: folderlessSessionTranslations.pl.composer,

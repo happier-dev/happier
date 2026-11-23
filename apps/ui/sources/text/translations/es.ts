@@ -7829,6 +7829,8 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
   },
 
   newSession: {
+    managedProjectInPlace: ({ folder }: { folder: string }) => `En ${folder}`,
+    managedProjectControllerCopy: ({ machine }: { machine: string }) => `En ${machine}, trabajando en una copia`,
     reviewPresetToStart: ({ name }: { name: string }) => `Revisa ${name} para iniciar la sesión`,
     terminalHostUnavailableTitle: "Host de terminal no disponible",
     terminalHostUnavailableBody: ({ host }: { host: string }) => `Instala o actualiza ${host} y reinicia su servidor en esta máquina, o elige otro host de terminal. Se conserva tu borrador.`,

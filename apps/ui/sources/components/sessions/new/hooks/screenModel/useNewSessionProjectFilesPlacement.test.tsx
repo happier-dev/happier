@@ -29,6 +29,46 @@ describe('Project files authoring in the current placement', () => {
         await hook.unmount();
     });
 
+    it.each(['ssh', 'coder'])('offers the controller copy for a %s root through its managed address', async provider => {
+        const target = { serverId: 'home', machineId: 'controller' };
+        const workspace = { v: 2 as const, kind: 'managed' as const, serverId: target.serverId,
+            workspaceId: `${provider}-checkout`, managedId: `${provider}-resource`, rootPath: '/repo',
+            controller: { machineId: target.machineId, installationId: 'install' } };
+        let machineId = target.machineId;
+        let hydratedPlacement: Parameters<typeof useNewSessionProjectFilesPlacement>[0]['hydratedPlacement'] = { kind: 'in_place', workspace };
+        const hook = await renderHook(() => useNewSessionProjectFilesPlacement({
+            draftKey: 'project', selectedPath: workspace.rootPath,
+            executionTarget: { kind: 'machine', target: { ...target, machineId } },
+            managedMachineSelection: null, hydratedPlacement,
+            projectFilesSource: { target, directory: workspace.rootPath },
+        }));
+
+        expect(hook.getCurrent().managedProjectPlacement).toMatchObject({ workspace, selected: 'in_place' });
+        await act(async () => hook.getCurrent().managedProjectPlacement?.select('copy'));
+        const copyPlacement = {
+            kind: 'machine' as const, target, projectFilesSource: { kind: 'managed' as const, workspace },
+            projectFiles: { kind: 'copy_once' as const },
+        };
+        expect(hook.getCurrent().sessionPlacement).toEqual(copyPlacement);
+        expect(hook.getCurrent().managedProjectPlacement?.selected).toBe('copy');
+        await hook.unmount();
+
+        hydratedPlacement = copyPlacement;
+        const reopened = await renderHook(() => useNewSessionProjectFilesPlacement({
+            draftKey: 'project', selectedPath: workspace.rootPath,
+            executionTarget: { kind: 'machine', target: { ...target, machineId } },
+            managedMachineSelection: null, hydratedPlacement,
+            projectFilesSource: { target, directory: workspace.rootPath },
+        }));
+        expect(reopened.getCurrent().sessionPlacement).toEqual(copyPlacement);
+        await act(async () => reopened.getCurrent().managedProjectPlacement?.select('in_place'));
+        expect(reopened.getCurrent().sessionPlacement).toEqual({ kind: 'in_place', workspace });
+        machineId = 'other-controller';
+        await reopened.rerender();
+        expect(reopened.getCurrent().managedProjectPlacement).toBeUndefined();
+        await reopened.unmount();
+    });
+
     it('keeps the chosen method and its Included policy when restoring a draft', async () => {
         const policy = { v: 1 as const, selection: 'all_files' as const,
             extraIgnorePatterns: ['private/**'], extraIncludePatterns: ['build/result.txt'] };

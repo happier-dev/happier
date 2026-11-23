@@ -73,9 +73,11 @@ export function ProjectFilesOutcomeChoice(
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
   // The folder as the composer's folder chip names it: home-relative on its own Machine.
-  const homeDir = useMachineField(props.source?.target.machineId ?? '', 'metadata', 'homeDir',
-    { enabled: props.source !== undefined, serverId: props.source?.target.serverId ?? null });
-  const folder = props.source ? formatPathRelativeToHome(props.source.directory, homeDir,
+  const source = props.source;
+  const enrolledSource = source && 'target' in source ? source : undefined;
+  const homeDir = useMachineField(enrolledSource?.target.machineId ?? '', 'metadata', 'homeDir',
+    { enabled: enrolledSource !== undefined, serverId: enrolledSource?.target.serverId ?? null });
+  const folder = source ? formatPathRelativeToHome('workspace' in source ? source.workspace.rootPath : source.directory, homeDir,
     // The home folder itself reads in words in a sentence, never as a bare ~.
     { homeLabel: t('machineDetailPage.projectFiles.homeFolder') }) : null;
   const effective = props.override ?? props.presetDefault;

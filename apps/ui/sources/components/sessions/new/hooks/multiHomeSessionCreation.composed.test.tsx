@@ -629,6 +629,55 @@ describe('multi-Home Session creation composition', () => {
         } finally { await hook.unmount(); }
     });
 
+    it('offers a controller copy for an attached SSH Project through Where', async () => {
+        const coreHttp = await createDraftSurfaceCoreHttpBoundary();
+        sessionHttpBoundary = url => coreHttp(new URL(url).pathname);
+        ({ homeA, homeAScopeId, homeAToken } = await arrangeFocusedHomeA('managed-project-controller-copy'));
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { seedNewSessionDraftV1 } = await import('../newSessionDraftSeed');
+        const { readNewSessionDraftFromRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+        const scope = { serverId: homeAScopeId, accountId: 'account-a' };
+        const controller = createMachineFixture({ id: 'controller', activeAt: Date.now() });
+        const target = { serverId: homeAScopeId, machineId: controller.id };
+        const workspace = {
+            v: 2 as const, kind: 'managed' as const, serverId: homeAScopeId,
+            workspaceId: 'ssh-project-checkout', managedId: 'ssh-guest', rootPath: '/guest/project',
+            controller: { machineId: controller.id, installationId: 'controller-installation' },
+        };
+        machineHttpSnapshots.set(new URL(homeA.serverUrl).origin, [controller]);
+        storage.getState().applyMachines([controller], true, { sourceServerId: homeAScopeId });
+        storage.getState().applySettingsLocal({ useEnhancedSessionWizard: false });
+        const draftId = seedNewSessionDraftV1({ scope, seed: {
+            placement: { kind: 'exactTarget', ...target, directory: workspace.rootPath },
+            origin: { kind: 'project', purpose: 'session', accountId: scope.accountId, workspace, page: 'overview' },
+        } });
+        routeBoundary.params = { draftId };
+        const hook = await renderProductionCreateCaller({ activeServerId: homeAScopeId, draftId });
+        try {
+            const model = hook.getCurrent();
+            if (model.variant !== 'simple') throw new Error('Expected the simple composer');
+            const renderPicker = model.simpleProps.machinePopover?.renderContent;
+            if (typeof renderPicker !== 'function') throw new Error('Expected the production Where picker');
+            const requestClose = vi.fn();
+            const screen = await renderScreen(<InjectedAuthProvider credentials={{ token: homeAToken }}>
+                {renderPicker({ requestClose, maxHeight: 420 })}
+            </InjectedAuthProvider>);
+            try {
+                await screen.pressByTestIdAsync('new-session-machine-managed-project-copy');
+                expect(requestClose).toHaveBeenCalled();
+                await vi.waitFor(() => expect(readNewSessionDraftFromRepository({ scope, draftId })?.sessionPlacement).toEqual({
+                    kind: 'machine', target, projectFilesSource: { kind: 'managed', workspace },
+                    projectFiles: { kind: 'copy_once' },
+                }));
+            } finally {
+                await screen.unmount();
+            }
+        } finally {
+            await hook.unmount();
+        }
+    });
+
     it.each(['offline', 'absent'] as const)('reopens a seeded authoring draft on its persisted exact placement when the Machine is %s', async (availability) => {
         const coreHttp = await createDraftSurfaceCoreHttpBoundary();
         sessionHttpBoundary = url => coreHttp(new URL(url).pathname);

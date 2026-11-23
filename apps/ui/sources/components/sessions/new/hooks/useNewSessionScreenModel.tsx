@@ -10,6 +10,7 @@ import { resolveApprovalProfileMachineDefault, useApprovalProfiles } from '@/hoo
 import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import { readMachineIsolationV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
+import { readSessionPathName } from '@/utils/sessions/formatPathRelativeToHome';
 import { readSessionPlacementProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 import { projectAccountManagedSessionDefaults } from '@/sync/ops/teams/managedSessionDefaults';
 import { sanitizeNewSessionConfigOverridesForModelSelection } from '@/components/sessions/new/modules/newSessionConfigOptionOverrideSanitization';
@@ -3214,7 +3215,24 @@ export function useNewSessionScreenModel(input?: Readonly<{
     // The work this draft starts, for the isolation owner: the picker rows and the outcome line read the same kind.
     const isBotDraft = Boolean(effectiveCurrentAuthoringDraft.initialSessionFacts?.bot);
     const isolationWorkKind = resolveSessionSpawnIsolationWorkKind({ bot: isBotDraft });
+    const managedProjectPlacement = projectFilesPlacement.managedProjectPlacement;
+    const leadingMachineOptions = React.useMemo(() => {
+        if (!managedProjectPlacement) return undefined;
+        const { workspace, selected, select } = managedProjectPlacement;
+        const folder = readSessionPathName(workspace.rootPath) ?? workspace.rootPath;
+        const machine = selectedMachineSentenceName ?? workspace.controller.machineId;
+        return {
+            selectedId: `managed-project-${selected}`,
+            options: [
+                { id: 'managed-project-in_place', testID: 'new-session-machine-managed-project-in-place',
+                    label: t('newSession.managedProjectInPlace', { folder }), onSelect: () => select('in_place') },
+                { id: 'managed-project-copy', testID: 'new-session-machine-managed-project-copy',
+                    label: t('newSession.managedProjectControllerCopy', { machine }), onSelect: () => select('copy') },
+            ],
+        };
+    }, [managedProjectPlacement, selectedMachineSentenceName]);
     const { pathPopover: composerPathPopover, machinePopover, resumePopover } = useNewSessionInputPopovers({
+        leadingMachineOptions,
         isolationWorkKind,
         managedPlacementPreset,
         managedPlacementSourceLabel: managedPlacementPreset ? describeInheritedDefaultSource(managedPlacementSource, inheritedSourceNames) : null,

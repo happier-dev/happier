@@ -7576,6 +7576,8 @@ export const ru: TranslationStructure = {
   },
 
   newSession: {
+    managedProjectInPlace: ({ folder }: { folder: string }) => `В ${folder}`,
+    managedProjectControllerCopy: ({ machine }: { machine: string }) => `На ${machine}, с работой в копии`,
     terminalHostUnavailableTitle: "Терминал недоступен",
     terminalHostUnavailableBody: ({ host }: { host: string }) => `Установите или обновите ${host} и перезапустите его сервер на этой машине либо выберите другой терминал. Черновик сохранён.`,
     folder: folderlessSessionTranslations.ru.composer,
