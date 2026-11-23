@@ -89,7 +89,7 @@ import { createProjectWorkerAction } from '@/workspaces/execution/projectWorkerA
 import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
-import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { ActionIdSchema, isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import type { ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -97,6 +97,11 @@ import { createDaemonSessionAccountActionExecutor } from '../agentRuntime/create
 import { createDaemonSessionAccountActionAuthorizationPreparer } from './createDaemonSessionAccountActionAuthorizationPreparer';
 
 /** Real Sync receiver/native/controller composition; callers install OS boundaries only. */
+type RelationshipWriteActionId = 'workspace.sync.relationship.create' | 'workspace.sync.relationship.replace';
+/** A Replace names the link it replaces; the UI sends it under the Replace root. */
+const relationshipWriteActionId = (request: WorkspaceSyncRelationshipCreateRpcRequestV1): RelationshipWriteActionId =>
+  'replaceRelationshipId' in request.actionInput ? 'workspace.sync.relationship.replace' : 'workspace.sync.relationship.create';
+
 export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
   cold?: true;
   role: 'use' | 'manage';
@@ -314,11 +319,12 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
     return wire;
   };
   const createHomeAuthorization = (envelope: ExternalActionRequestEnvelope, token = 'member-sync-root', session?:
-    Pick<ExternalActionExecutionAuthorizationRequestV1, 'sessionActionOrigin' | 'sessionActionSource'>) => {
+    Pick<ExternalActionExecutionAuthorizationRequestV1, 'sessionActionOrigin' | 'sessionActionSource'>,
+    actionId: RelationshipWriteActionId = 'workspace.sync.relationship.create') => {
     return adoptHomeAuthorization({ v: 1, token, binding: {
       accountId: 'member-a', custodianAccountId: sourceCustodianAccountId, serverIdentityId: installed.homeServerIdentityId,
       machineId: installed.machineId, installationId: installed.installation.installationId,
-      actionId: 'workspace.sync.relationship.create', accountEncryptionMode: accountMode, admittedMachineRole: role,
+      actionId, accountEncryptionMode: accountMode, admittedMachineRole: role,
       authentication: { kind: session ? 'terminal' : 'account', tokenEpoch: 0 }, requestId: envelope.requestId,
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target: envelope.target, ...session } });
   };
@@ -636,6 +642,11 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
         effectActionId, target: root.binding.target,
         installationId: installed.installation.installationId, requestId: root.binding.requestId,
         method: 'POST', path: new URL(url).pathname, body });
+      // Home's Account row family never admits a Sync relationship-write root:
+      // that root verifies only its own effect (Home's owner test of 2026-11-23).
+      if (signedRequester && isWorkspaceSyncRelationshipWriteActionId(effectActionId)) {
+        return { status: 401, data: { error: 'invalid_token', authorizationRefusal: 'verification_purpose' } };
+      }
       const bearer = config?.headers?.Authorization;
       const requester = (typeof bearer === 'string' && bearer.startsWith('Bearer ')
         && readAccountIdFromToken(bearer.slice(7)) === 'member-a')
@@ -702,13 +713,15 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
     envelope: ExternalActionRequestEnvelope; authorization: ExternalActionExecutionAuthorizationV1;
   }>) => {
     const invocation = WorkspaceSyncRelationshipCreateRpcRequestV1Schema.parse(input);
+    const actionId = relationshipWriteActionId(invocation);
     const encryptionBinding = { accountId: 'member-a', serverIdentityId: installed.homeServerIdentityId,
-      actionId: 'workspace.sync.relationship.create' as const, authentication: { kind: 'account' as const, tokenEpoch: 0 },
+      actionId, authentication: { kind: 'account' as const, tokenEpoch: 0 },
       requestId: invocation.operationId, target: { kind: 'machine' as const, machineId: installed.machineId } };
     const envelope = original?.envelope ?? (accountMode === 'e2ee' ? sealExternalActionRequestV2({ binding: encryptionBinding,
       projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, material, input: invocation.actionInput, randomBytes: tweetnacl.randomBytes })
       : { v: 1 as const, requestId: invocation.operationId, target: encryptionBinding.target, input: invocation.actionInput });
-    const wire = original?.authorization ?? createHomeAuthorization(envelope);
+    const wire = original?.authorization ?? (actionId === 'workspace.sync.relationship.create' ? createHomeAuthorization(envelope)
+      : createHomeAuthorization(envelope, `member-sync-root-${invocation.operationId}`, undefined, actionId));
     requesterRoots.set(wire.token, wire);
     const hostInvocation = { surface: 'ui', authority: 'present_user', caller: { kind: 'host' } } as const;
     const account = await admitRequesterAccountActionContext({ authorization: wire, credentials,
@@ -944,11 +957,12 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
         agentStartCaller: { kind: 'session', sessionId: agentSessionId, starterDepth: 0, turnDepth: 0 } } },
     { sessionId: agentSessionId, isCurrent });
   };
-  const executeRelationshipAction = async (invocation: PreparedInvocation = { request, envelope, authorization }) => {
+  /** `decide: false` returns the person's review instead of approving it. */
+  const executeRelationshipAction = async (invocation: PreparedInvocation = { request, envelope, authorization }, decide = true) => {
     const { executor, context } = await prepareExecutorContext(invocation);
-    const result = await executor.execute('workspace.sync.relationship.create', invocation.request.actionInput,
+    const result = await executor.execute(relationshipWriteActionId(invocation.request), invocation.request.actionInput,
       { ...context, actionRequestId: invocation.request.operationId });
-    if (result.ok && result.result && typeof result.result === 'object' && 'kind' in result.result
+    if (decide && result.ok && result.result && typeof result.result === 'object' && 'kind' in result.result
       && result.result.kind === 'approval_request_created' && 'artifactId' in result.result
       && typeof result.result.artifactId === 'string') {
       const decision = await executor.execute('approval.request.decide', { artifactId: result.result.artifactId, decision: 'approve' }, context);

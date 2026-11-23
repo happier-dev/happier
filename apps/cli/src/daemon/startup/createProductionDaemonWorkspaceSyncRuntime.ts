@@ -756,6 +756,14 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     refreshProjectSnapshot: async (signal, context, relationshipId) => {
       const retained = relationshipId ? readRequesterPrivateExecution(relationshipId, context) : null;
       if (retained) return await refreshPrivateRows(retained.execution, signal);
+      // A Sync relationship-write root verifies only its own effect; Home's
+      // Account row family refuses it. Its requester's rows come through the
+      // requester's open Account custody, as at the SOURCE preflight.
+      if (context?.callerInputAuthorization && isWorkspaceSyncRelationshipWriteActionId(context.callerInputAuthorization.binding.actionId)) {
+        const snapshot = await readRequesterProjectSnapshot(context, signal);
+        if (!snapshot) throw compositionError('project_requester_authority_unavailable', 'Requester Sync projection is unavailable');
+        return snapshot;
+      }
       return context?.callerInputAuthorization ? await factories.refreshProjectRows({
       authorization: context.callerInputAuthorization,
       effectActionId: context.callerInputAuthorization.binding.actionId,
@@ -2851,7 +2859,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     return current && resolveWorkspaceRefById(current.workspaceRefs, sourceWorkspaceRefId, semanticServerId)
       ? current : await refreshInstalledProjectRows(context.signal);
   };
-  const readRequesterProjectSnapshot = async (context?: RpcHandlerContext) => {
+  const readRequesterProjectSnapshot = async (context?: RpcHandlerContext, signal = context?.signal) => {
     const requester = readRequesterAccountActionContext(context?.callerInputAuthorization);
     const accountId = context?.machineAdmission?.actorAccountId;
     if (!requester || !accountId) return null;
@@ -2861,7 +2869,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     return factories.refreshProjectRows({ credentials: requester.credentials,
       sessionCustody: { serverId: semanticServerId, accountId, serverHttpBaseUrl: requester.serverHttpBaseUrl,
         isCurrent: requester.isCustodyCurrent ?? requester.isCurrent },
-      serverId: semanticServerId, selection: { kinds: ['workspace-ref', 'relationship-graph'] }, signal: context?.signal });
+      serverId: semanticServerId, selection: { kinds: ['workspace-ref', 'relationship-graph'] }, signal });
   };
   /** Handoff TARGET capture for a requester without Manage (owner ruling 2026-11-15). The
    * capture is the Project Open/requester-create capture owner, keyed by the handoff's

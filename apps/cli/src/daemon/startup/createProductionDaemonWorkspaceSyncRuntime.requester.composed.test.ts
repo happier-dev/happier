@@ -41,6 +41,7 @@ import { workspaceCheckoutNativeBoundary as native } from '@/workspaces/activati
 import { createRequesterWorkspaceSyncFixture } from './createRequesterWorkspaceSyncFixture.testkit';
 import { prepareProjectServiceMoveChildren } from '@/daemon/local/services/actions/projectServiceMoveChildren';
 import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
+import { deriveWorkspaceSyncRelationshipId } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 import { registerMachineWorkspaceSyncRpcHandlers, resolvePrivateWorkspaceSyncTargetExecution } from '@/api/machine/rpcHandlers.workspaceSync';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
@@ -1003,6 +1004,43 @@ it.skipIf(process.platform !== 'linux').each([
     actionInput: { ...setup.request.actionInput, targetPath: secondPath } });
   expect(await setup.executeRelationshipAction(second)).toMatchObject({ ok: true, result: { created: true } });
   expect(await readFile(join(secondPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+});
+
+// READY208 e3b96ce8: a person's own-Machine "Replace link" reached the TARGET
+// preflight and Home refused its Project rows read, signed under the Replace
+// root, at verification_purpose. That root verifies only its own effect; the
+// person's rows come through the requester's open Account custody.
+it.skipIf(process.platform !== 'linux').each(['member-a', 'requester'] as const)(
+  'replaces a person\'s own same-Machine link through the requester Account rows (custodian %s)', async sourceCustodianAccountId => {
+  executionBoundary.member = false;
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', sourceCustodianAccountId, socketIo,
+    accountMode: 'plain', targetResourceMode: 'plain', allowRelationshipAction: true });
+  const rejectedSelfCalls = rejectSelfCalls(setup);
+  await setup.prepareActionIngress();
+  const created = await setup.executeRelationshipAction();
+  if (!created.ok) throw new Error(`Original link refused: ${JSON.stringify(created)}`);
+  const original = WorkspaceSyncRelationshipCreateResultV1Schema.parse(created.result);
+  const replace = async (operationId: string, input: Partial<typeof setup.request.actionInput> & { replaceRelationshipId: string }) =>
+    setup.executeRelationshipAction(await setup.prepareInvocation({ ...setup.request, operationId,
+      actionInput: { ...setup.request.actionInput, destinationIntent: 'use_existing', ...input } }), false);
+  // A link the person does not own lends nothing: its root stays held.
+  const foreign = await replace('member-sync-replace-foreign', { replaceRelationshipId: 'another-link' });
+  expect(foreign, JSON.stringify(foreign)).toMatchObject({ ok: false, failureCause: { errorCode: 'workspace_root_in_use' } });
+  // The person's own link passes the TARGET preflight under its own loan.
+  const service = setup.fixture.parent.workspaceSync;
+  const preflight = service.preflightHandoffTargetReplacement.bind(service);
+  const preflights: unknown[] = [];
+  vi.spyOn(service, 'preflightHandoffTargetReplacement').mockImplementation(async (...args) => {
+    try {
+      const value = await preflight(...args);
+      preflights.push({ value });
+      return value;
+    } catch (error) { preflights.push({ error: readRpcErrorCode(error) ?? String(error) }); throw error; }
+  });
+  const replaced = await replace('member-sync-replace', { replaceRelationshipId: original.relationshipId });
+  expect(preflights, JSON.stringify({ replaced, rejectedSelfCalls })).toEqual([{ value: expect.objectContaining({ type: 'not_required' }) }]);
+  expect(rejectedSelfCalls).toEqual([]);
+  expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
 });
 
 it.skipIf(process.platform !== 'linux')('restores requester target custody through the controller reconnect after target daemon restart', async () => {
