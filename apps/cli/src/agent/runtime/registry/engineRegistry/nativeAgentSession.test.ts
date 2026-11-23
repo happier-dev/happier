@@ -16507,7 +16507,7 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
         return { emit, published, runtime };
     }
 
-    it('keeps rejected usage out of the reply stream and drains the accepted reply after transport acknowledgement', async () => {
+    it('keeps unwitnessed usage out of accounting and drains the accepted reply after transport acknowledgement', async () => {
         const { createKeyedStreamedTranscriptBridge } = await import('@/api/session/createKeyedStreamedTranscriptBridge');
         const { projectRuntimeTranscriptEvent } = await import('@/agent/runtime/session/transcripts/projectRuntimeTranscriptEvent');
         const { emit, published, runtime } = createUsagePublishHarness();
@@ -16541,13 +16541,13 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
         const shared = { sessionId: 'session-usage', emittedAtMs: 1 };
         emit({ ...shared, sequence: 1, kind: 'turn-start', turnId: 'host-turn', agentTurnId: 'native-turn', startedBy: 'provider' });
         emit(AgentSessionRuntimeEventSchema.parse({ ...shared, sequence: 2, kind: 'usage-observed', observationId: 'native-usage', turnId: 'native-turn',
-            scope: 'session_cumulative', source: 'codex-app-server-token-usage',
+            scope: 'session_cumulative', source: 'codex-app-server-token-usage', accounting: { nativeSessionId: 'unwitnessed-native' },
             tokens: { input: 1, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 2 } }));
         emit({ ...shared, sequence: 3, kind: 'message-delta', turnId: 'host-turn', channel: 'assistant', text: 'QA_HOST_R6_OK' });
         emit({ ...shared, sequence: 4, kind: 'turn-complete', turnId: 'host-turn', agentTurnId: 'native-turn' });
 
         await vi.waitFor(() => expect(committedBodies).toEqual([{ type: 'message', message: 'QA_HOST_R6_OK' }]));
-        expect(acceptedKinds).toEqual(['turn-start', 'message-delta', 'turn-complete']);
+        expect(acceptedKinds).toEqual(['turn-start', 'usage-observed', 'message-delta', 'turn-complete']);
         expect(published).toEqual([]);
         expect(liveBodies).toContainEqual({ type: 'message', message: 'QA_HOST_R6_OK' });
         let drained = false;
