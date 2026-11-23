@@ -14,7 +14,7 @@ import { createDaemonPluginChangeService } from '@/plugins/daemon/changeService'
 import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { createCommittedContributedActionInvoker, listRuntimeContributedActionDefinitions } from './invocation/actions/createCommittedContributedActionDeps';
-import * as daemonControl from '@/daemon/controlClient';
+import { requestDaemonPluginActionExecution } from '@/daemon/controlClient';
 import { createDiscordGatewaySupervisor } from '../../../../../packages/plugins/channel-discord/src/discordGatewaySupervisor';
 import { listConversationProviderConnectionsForInvocation, readConversationProviderConnectionForInvocation } from '../../../../../packages/plugins/channels/src/reconciliation';
 import { MemoryCollection } from '../../../../../packages/plugins/channels/src/testkit/memoryCollection';
@@ -38,16 +38,18 @@ afterEach(() => vi.restoreAllMocks());
 
 async function fixture(crossMachine = false, captureOrigin = false, providerUrl?: string) {
     const nativeFetch = globalThis.fetch;
+    let daemonOrigin: string | undefined;
     let effects = 0;
     const callers: unknown[] = [];
     const accountReads: string[] = [];
-    const transportRequests: Parameters<typeof daemonControl.requestDaemonPluginActionExecution>[0][] = [];
+    const transportRequests: unknown[] = [];
     const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'placefix-account' })).toString('base64url')}.signature`,
         encryption: null, credentialProvenance: 'stored_session' as const };
-    // Home HTTP and daemon control are the external boundaries. Keep both
-    // daemon executions, plugin admission, SDK services and Action policy real.
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async url => {
-        if (!['/v1/features', '/v1/features/authenticated'].includes(new URL(String(url)).pathname)) throw new Error('Unexpected fetch');
+    // Stub Home HTTP while keeping the daemon control client and route real.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+        const requested = new URL(String(url));
+        if (requested.origin === daemonOrigin) return nativeFetch(url, init);
+        if (!['/v1/features', '/v1/features/authenticated'].includes(requested.pathname)) throw new Error('Unexpected fetch');
         return new Response(JSON.stringify(FeaturesResponseSchema.parse({ features: {},
             capabilities: { serverIdentity: { serverIdentityId } } })), { status: 200 });
     });
@@ -119,14 +121,14 @@ async function fixture(crossMachine = false, captureOrigin = false, providerUrl?
             resolveTarget: createDaemonExternalActionTargetResolver({ credentials }),
             executor, resolvePatExecutor: () => executor },
     });
-    vi.spyOn(daemonControl, 'requestDaemonPluginActionExecution').mockImplementation(async request => {
-        transportRequests.push(request);
-        const result = await app.inject({ method: 'POST', url: '/plugins/actions/execute', payload: request,
-            headers: { 'x-happier-daemon-token': 'placefix-control' } });
-        expect(result.statusCode).toBe(200);
-        return result.json();
+    app.addHook('preHandler', async request => {
+        if (request.url === '/plugins/actions/execute') transportRequests.push(request.body);
     });
-    return { ...runtime, app, accountReads, transportRequests, callers, effects: () => effects,
+    daemonOrigin = await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.server.address();
+    if (!address || typeof address === 'string') throw new Error('Missing daemon address');
+    const target = { pid: process.pid, httpPort: address.port, controlToken: 'placefix-control' };
+    return { ...runtime, target, accountReads, transportRequests, callers, effects: () => effects,
         async dispose() { try { await app.close(); } finally { await runtime.dispose(); } } };
 }
 
@@ -144,16 +146,11 @@ describe('daemon plugin caller execution placement', () => {
         await once(provider, 'listening');
         const address = provider.address();
         if (!address || typeof address === 'string') throw new Error('Missing provider address');
-        const invoke = daemonControl.requestDaemonPluginActionExecution;
         const f = await fixture(false, false, `http://127.0.0.1:${address.port}`);
         const controller = new AbortController();
-        await f.app.listen({ port: 0, host: '127.0.0.1' });
-        const daemonAddress = f.app.server.address();
-        if (!daemonAddress || typeof daemonAddress === 'string') throw new Error('Missing daemon address');
-        const pending = invoke({ actionId, surface: 'cli', input: actionId === 'action.invoke' ? {
+        const pending = requestDaemonPluginActionExecution({ actionId, surface: 'cli', input: actionId === 'action.invoke' ? {
             action: { pluginId: receiverId, localId: 'read' }, input: {},
-        } : {} }, { target: { pid: process.pid, httpPort: daemonAddress.port, controlToken: 'placefix-control' },
-            signal: controller.signal, timeoutMs: null });
+        } : {} }, { target: f.target, signal: controller.signal, timeoutMs: null });
         try {
             await vi.waitFor(() => expect(opened).toBe(true), { timeout: 10_000 });
             controller.abort();
@@ -312,8 +309,8 @@ describe('daemon plugin caller execution placement', () => {
     it('keeps the plugin-only descriptor and handler unavailable to a CLI caller', async () => {
         const runtime = await fixture();
         try {
-            expect(await daemonControl.requestDaemonPluginActionExecution({ actionId: 'action.spec.get',
-                input: { id: `${receiverId}/actions/read` }, surface: 'cli' }))
+            expect(await requestDaemonPluginActionExecution({ actionId: 'action.spec.get',
+                input: { id: `${receiverId}/actions/read` }, surface: 'cli' }, { target: runtime.target }))
                 .toMatchObject({ matched: true, result: { ok: false, errorCode: 'invalid_parameters' } });
             expect(await executeAppliedDaemonPluginActionWithController({ actionId: `${receiverId}/read`,
                 input: {}, surface: 'cli' }, runtime.controller)).toMatchObject({ matched: true, result: { ok: false } });
