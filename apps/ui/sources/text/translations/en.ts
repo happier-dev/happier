@@ -5742,7 +5742,7 @@ export const en = {
 	            waitingForRuntimeActivityNotice: 'Waiting for runtime activity to finish',
 	            runtimeActivityUnknownNotice: 'Waiting for runtime activity status',
 	            waitingForRuntimeNotice: 'Waiting for the runtime to reconnect',
-	            steerUnavailableWaitingForTurnNotice: 'Can’t join this turn right now · sends when it finishes',
+	            steerUnavailableWaitingForTurnNotice: 'Can’t steer this turn right now · sends when it finishes',
 	            deliveryBlockedReasons: {
 	                terminalComposerDraft: 'Terminal draft is blocking delivery',
 	                runtimeConfigBlocked: 'Runtime settings are blocking delivery',
@@ -8177,11 +8177,11 @@ settingsSession: {
               title: 'Message sending',
               footer: 'Choose what happens when you send a message while the agent is working.',
               busySend: {
-                addToTurnTitle: 'Add it to the current turn',
+                addToTurnTitle: 'Steer into the current turn',
                 addToTurnSubtitle: 'The agent reads it right away and keeps working, like typing in its own terminal. If it can’t take the message mid-turn, the message waits in Pending until the turn ends.',
-                waitForTurnTitle: 'Wait until the turn ends',
+                waitForTurnTitle: 'Queue until the turn ends',
                 waitForTurnSubtitle: 'Keep the message in Pending, where you can edit or reorder it, and send it when the turn finishes.',
-                interruptTitle: 'Stop the turn and send',
+                interruptTitle: 'Interrupt and send',
                 interruptSubtitle: 'Stop what the agent is doing and send the message right away.',
               },
               inactiveSessionsTitle: 'Inactive sessions',

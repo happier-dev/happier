@@ -5895,7 +5895,7 @@ export const zhHans: TranslationStructure = {
 	        waitingForRuntimeActivityNotice: '正在等待运行时活动结束',
 	        runtimeActivityUnknownNotice: '正在等待运行时活动状态',
 	        waitingForRuntimeNotice: '正在等待运行时重新连接',
-	        steerUnavailableWaitingForTurnNotice: '暂时无法加入本轮 · 结束后发送',
+	        steerUnavailableWaitingForTurnNotice: '暂时无法插入本轮 · 结束后发送',
 	        nonSteerableNotice: "当前轮次在此次模式切换后不能再接受插入。它会在下一轮运行，或使用立即发送来中断。",
 	        steerBlockedTerminalDraftNotice: '等待中：终端输入框中的草稿阻止了消息送达。请在终端中清除草稿或中断本轮。',
 	        clearTerminalComposer: {
@@ -8351,11 +8351,11 @@ settingsSession: {
       title: "消息发送",
       footer: '选择在代理工作时发送消息会发生什么。',
       busySend: {
-        addToTurnTitle: '加入当前轮次',
+        addToTurnTitle: '插入当前轮次',
         addToTurnSubtitle: '代理会立即读取并继续工作，就像在它自己的终端里输入一样。如果它无法在轮次中途接收，消息会在待发送中等到本轮结束。',
-        waitForTurnTitle: '等本轮结束',
+        waitForTurnTitle: '加入队列，等本轮结束',
         waitForTurnSubtitle: '将消息留在待发送中，你可以编辑或调整顺序，本轮结束后再发送。',
-        interruptTitle: '停止本轮并发送',
+        interruptTitle: '中断并发送',
         interruptSubtitle: '停止代理当前的工作并立即发送消息。',
       },
       inactiveSessionsTitle: '非活动会话',
