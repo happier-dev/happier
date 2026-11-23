@@ -5,6 +5,8 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { SessionRequesterBootstrapCredentialsV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
 import { ManagedWorkspaceRefV2WriteSchema, type ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { WorkspaceSyncSourceRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
 import { configuration } from '@/configuration';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { bindRequesterSessionCredentialScope, decodeStoredCredentials, type StoredCredentials } from '@/persistence';
@@ -25,6 +27,19 @@ const IsolatedExecutionIdentitySchema = z.strictObject({
   accountAutomation: z.optional(z.literal(true)),
 });
 
+/**
+ * The SOURCE's standing proof that Home admitted this relationship's creation:
+ * the creation's Home-signed Action authorization (token and binding only) and
+ * its signed SOURCE routing. It is bound to that request, SOURCE Machine,
+ * requester Account and TARGET folder, and is weaker than the credentials kept
+ * beside it. Later calls still pass the Home grant-current check at use.
+ */
+export const WorkspaceSyncSourceStandingAdmissionSchema = z.strictObject({
+  authorization: ExternalActionExecutionAuthorizationV1Schema,
+  routing: WorkspaceSyncSourceRoutingV1Schema,
+});
+export type WorkspaceSyncSourceStandingAdmission = z.infer<typeof WorkspaceSyncSourceStandingAdmissionSchema>;
+
 export const CustodySchema = z.strictObject({
   v: z.literal(1),
   sessionId: z.string().check(z.minLength(1)),
@@ -41,11 +56,12 @@ export const CustodySchema = z.strictObject({
     custodianAccountId: z.string().check(z.minLength(1)),
     role: z.optional(z.enum(['use', 'manage'])),
   })),
+  sourceAdmission: z.optional(WorkspaceSyncSourceStandingAdmissionSchema),
   credentials: SessionRequesterBootstrapCredentialsV1Schema,
-}).check(z.refine(value => value.scope === 'workspace_sync_relationship'
+}).check(z.refine(value => (value.sourceAdmission === undefined || value.endpointRole === 'source') && (value.scope === 'workspace_sync_relationship'
   ? value.endpointRole === 'source' ? value.executionIdentity === undefined
     : value.executionIdentity !== undefined && isDeepStrictEqual(value.executionIdentity.requester, value.attribution)
-  : value.executionIdentity === undefined && value.endpointRole === undefined));
+  : value.executionIdentity === undefined && value.endpointRole === undefined)));
 
 export const CustodyStoredReadSchema = createStoredReadSchema(CustodySchema);
 

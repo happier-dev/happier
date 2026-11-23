@@ -12,6 +12,8 @@ import { listRequesterSessionCredentialBindings, resolveWorkspaceSyncRelationshi
   resolveWorkspaceSyncSourceCredentialCustody, resolveWorkspaceSyncManagedTargetCredentialCustody, retireRequesterSessionCredentialCustody,
   verifyWorkspaceSyncSourceMachineAdmissionCurrent, type RequesterSessionMachineAdmissionBoundary } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import type { ProductionDaemonWorkspaceSyncFactories } from './createProductionDaemonWorkspaceSyncRuntime';
+import type { WorkspaceSyncSourceStandingAdmission } from '@/daemon/sessionEncryption/requesterSessionCustody';
+import { deriveWorkspaceSyncRelationshipId } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 
 /** Recovery feeds the existing operation/relationship owner, never a parallel registry. */
 export async function recoverPrivateWorkspaceSyncExecutions(input: Readonly<{
@@ -28,6 +30,9 @@ export async function recoverPrivateWorkspaceSyncExecutions(input: Readonly<{
     relationship: WorkspaceSyncRelationshipV1; snapshot: ActiveProjectAccountRowsSnapshot;
     credentials: StoredCredentials; custody: ProjectAccountSessionCustody;
     sourceExecutionIdentity?: HostRequesterExecutionIdentity; assertTransferCurrent(): Promise<void> }>): Promise<WorkspaceSyncPrivateExecution>;
+  /** The SOURCE's TARGET caller over creation's standing admission; absent, a recovered SOURCE cannot prepare its TARGET. */
+  createSourceTargetPhaseCaller?(standing: Readonly<{ admission: WorkspaceSyncSourceStandingAdmission;
+    verifyMachineAdmissionCurrent(): Promise<boolean> }>): NonNullable<WorkspaceSyncPrivateExecution['callTargetPhase']>;
 }>): Promise<boolean> {
   const installation = input.boundary.readInstallation();
   if (!installation || !input.boundary.isHomeCurrent()) return false;
@@ -49,13 +54,20 @@ export async function recoverPrivateWorkspaceSyncExecutions(input: Readonly<{
         ...(input.boundary.signal ? { signal: input.boundary.signal } : {}) };
       let recovered: Readonly<{ credentials: StoredCredentials; executionIdentity?: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>;
         managedWorkspace?: ManagedWorkspaceRefV2 }> | null;
+      let sourceAdmission: WorkspaceSyncSourceStandingAdmission | undefined;
       if (binding.endpointRole === 'managed_target') {
         const native = await resolveWorkspaceSyncManagedTargetCredentialCustody({ ...scope, workspace: binding.workspace });
         recovered = native ? { credentials: native.credentials, managedWorkspace: native.workspace,
           ...(native.sourceExecutionIdentity ? { executionIdentity: native.sourceExecutionIdentity } : {}) } : null;
       } else if (endpointRole === 'source') {
-        const credentials = await resolveWorkspaceSyncSourceCredentialCustody(scope);
-        recovered = credentials ? { credentials } : null;
+        const source = await resolveWorkspaceSyncSourceCredentialCustody(scope);
+        recovered = source ? { credentials: source.credentials } : null;
+        // Standing admission serves only the relationship, SOURCE Machine and Account it was signed for.
+        const admission = source?.sourceAdmission;
+        if (admission && deriveWorkspaceSyncRelationshipId(admission.routing.operationId) === relationshipId
+          && admission.routing.sourceMachineId === input.boundary.machineId
+          && admission.authorization.binding.machineId === input.boundary.machineId
+          && admission.authorization.binding.accountId === binding.attribution.accountId) sourceAdmission = admission;
       } else recovered = await resolveWorkspaceSyncRelationshipCredentialCustody(scope);
       if (!recovered) continue;
       const { credentials } = recovered;
@@ -106,6 +118,10 @@ export async function recoverPrivateWorkspaceSyncExecutions(input: Readonly<{
       } else if (endpointRole === 'source') {
         execution = { credentials, accountRowsCustody: custody, assertTransferCurrent,
           getSnapshot: () => snapshot, replaceSnapshot: async next => { snapshot = next; },
+          ...(sourceAdmission && input.createSourceTargetPhaseCaller ? { callTargetPhase: input.createSourceTargetPhaseCaller({
+            admission: sourceAdmission, verifyMachineAdmissionCurrent: () => verifyWorkspaceSyncSourceMachineAdmissionCurrent({
+              credentials, sessionId: relationshipId, attribution: binding.attribution,
+              serverHttpBaseUrl: input.serverHttpBaseUrl, boundary: input.boundary }) }) } : {}),
           release: async () => { active = false; } };
       } else {
         const executionIdentity = recovered.executionIdentity;

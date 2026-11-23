@@ -738,6 +738,48 @@ it.skipIf(process.platform !== 'linux').each([false, true])(
   }
 });
 
+it.skipIf(process.platform !== 'linux').each(['its own', 'another relationship\'s'] as const)(
+  'a recovered requester relationship reaches its TARGET after the SOURCE daemon restarts only with %s standing admission', async admission => {
+  executionBoundary.member = false;
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo, remoteTarget: true,
+    targetCustodianAccountId: 'requester', workerCleanCopy: true, originalActionHomeHttp: true });
+  const first = await setup.executeNativeRelationshipAction();
+  expect(first).toMatchObject({ ok: true, result: { created: true } });
+  if (!first.ok) throw new Error('Initial Worker copy failed');
+  const { relationshipId } = WorkspaceSyncRelationshipCreateResultV1Schema.parse(first.result);
+  if (admission !== 'its own') {
+    // Present creation's signed admission as if it belonged to a different operation.
+    // The SOURCE daemon's home is the testkit's private temp root for its Machine.
+    const roots = (await readdir(tmpdir())).filter(name => name.startsWith('happier-bind-child-source-phase-'))
+      .map(name => join(tmpdir(), name, setup.sourceRef.machineId, 'requester-session-credentials', 'source'));
+    const files = (await Promise.all(roots.map(root => readdir(root, { recursive: true })
+      .then(names => names.map(name => join(root, String(name))), () => []))))
+      .flat().filter(path => path.endsWith(`relationship-${encodeURIComponent(relationshipId)}.json`));
+    expect(files).toHaveLength(1);
+    const stored = JSON.parse(await readFile(files[0]!, 'utf8'));
+    expect(stored.sourceAdmission?.routing.operationId).toBe(setup.request.operationId);
+    stored.sourceAdmission.routing.operationId = `${setup.request.operationId}-other`;
+    await writeFile(files[0]!, JSON.stringify(stored));
+  }
+  // Daemon start rebuilds the SOURCE execution from its retained custody, with the
+  // same installed target-phase transport; no person or Action is in the loop.
+  await setup.restartSourceParent();
+  const controller = setup.fixture.parentManagedWorkspaceSync;
+  if (!(controller instanceof WorkspaceSyncController)) throw new Error('Recovered SOURCE controller is unavailable');
+  // Startup recovery runs in the background; wait for R1's settled runtime state.
+  const listed = await vi.waitFor(async () => {
+    const entry = (await controller.listRelationships({})).relationships
+      .find(value => value.definition.relationshipId === relationshipId);
+    expect(['watching', 'error']).toContain(entry?.status.state);
+    return entry;
+  }, { timeout: 60_000, interval: 100 });
+  if (admission === 'its own') {
+    expect(listed?.status, JSON.stringify(listed?.status)).toMatchObject({ state: 'watching' });
+  } else {
+    expect(listed?.status, JSON.stringify(listed?.status)).toMatchObject({ state: 'error', errorCode: 'workspace_sync_unavailable' });
+  }
+});
+
 it.skipIf(process.platform !== 'linux')('preflights the shared Manage destination through the source Action before creating its worker copy', async () => {
   executionBoundary.member = false;
   const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo, remoteTarget: true,

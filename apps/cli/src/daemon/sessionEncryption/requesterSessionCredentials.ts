@@ -1,6 +1,7 @@
 import { CustodySchema, WorkspaceSyncManagedTargetCustodySchema, RequesterCredentialCustodyStoredReadSchema,
   type RequesterSessionCredentialBinding, type RequesterCredentialCustodyBinding, type ManagedWorkspaceSyncCredentialCustodyBinding,
-  requesterSessionCredentialPath, requesterSessionCredentialDirectory, requesterSessionCredentialFilePrefix } from './requesterSessionCustody';
+  requesterSessionCredentialPath, requesterSessionCredentialDirectory, requesterSessionCredentialFilePrefix,
+  type WorkspaceSyncSourceStandingAdmission } from './requesterSessionCustody';
 import type { ReadonlyTrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 export { REQUESTER_SESSION_CREDENTIAL_FILE_ENV, REQUESTER_SESSION_ID_ENV, type RequesterSessionCredentialBinding, requesterSessionCredentialPath, readRequesterSessionCredentialsForChild } from './requesterSessionCustody';
 import { readRequesterHomeWithinActionLifetime, recordRequesterCurrentnessRefusal, rethrowRequesterHomeReadFailure,
@@ -931,7 +932,8 @@ async function readBoundCustody(path: string, expected: Pick<RequesterCredential
   return credentials ? { credentials, homeServerIdentityId: value.homeServerIdentityId,
     executionIdentity: value.v === 1 ? value.executionIdentity : undefined,
     workspace: value.v === 2 ? value.workspace : undefined,
-    sourceExecutionIdentity: value.v === 2 ? value.sourceExecutionIdentity : undefined }
+    sourceExecutionIdentity: value.v === 2 ? value.sourceExecutionIdentity : undefined,
+    sourceAdmission: value.v === 1 ? value.sourceAdmission : undefined }
     : refuse('requester_session_custody_record_read_failed');
 }
 
@@ -1140,6 +1142,7 @@ export async function createRequesterSessionCredentialCustody(input: RequesterSe
   automationScopePending?: true;
   machineAdmission?: Readonly<{ custodianAccountId: string; role?: 'use' | 'manage' }>;
   executionIdentity?: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>;
+  sourceAdmission?: WorkspaceSyncSourceStandingAdmission;
 }>): Promise<Readonly<{ path: string; created: boolean; cleanup(): Promise<void> }>> {
   const contents = JSON.stringify(CustodySchema.parse({ v: 1, sessionId: input.sessionId,
     ...(input.scope ? { scope: input.scope } : {}),
@@ -1150,7 +1153,10 @@ export async function createRequesterSessionCredentialCustody(input: RequesterSe
     attribution: input.attribution, credentials: encodeStoredCredentials(input.credentials),
     ...(input.homeServerIdentityId ? { homeServerIdentityId: input.homeServerIdentityId } : {}),
     ...(input.machineAdmission ? { machineAdmission: { custodianAccountId: input.machineAdmission.custodianAccountId,
-      ...(input.machineAdmission.role ? { role: input.machineAdmission.role } : {}) } } : {}) }));
+      ...(input.machineAdmission.role ? { role: input.machineAdmission.role } : {}) } } : {}),
+    // Token and binding only: the in-memory carrier may also hold sealed requester context.
+    ...(input.sourceAdmission ? { sourceAdmission: { authorization: { v: 1, token: input.sourceAdmission.authorization.token,
+      binding: input.sourceAdmission.authorization.binding }, routing: input.sourceAdmission.routing } } : {}) }));
   return await writeRequesterCredentialCustody(input, contents);
 }
 
@@ -1331,9 +1337,10 @@ export async function createWorkspaceSyncSourceCredentialCustody(input: Workspac
 export async function resolveWorkspaceSyncSourceCredentialCustody(input: WorkspaceSyncRelationshipCredentialBinding
   & Omit<Parameters<typeof resolveRequesterSessionCredentials>[0], keyof RequesterSessionCredentialBinding | 'onSessionReadRefused' | 'verifyMachineAdmissionCurrent'>
   & Readonly<{ machineAdmissionBoundary: RequesterSessionMachineAdmissionBoundary }>
-): Promise<StoredCredentials | null> {
-  return (await resolveRequesterSessionCustody({ ...input, sessionId: input.relationshipId,
-    scope: 'workspace_sync_relationship', endpointRole: 'source' }))?.credentials ?? null;
+): Promise<Readonly<{ credentials: StoredCredentials; sourceAdmission?: WorkspaceSyncSourceStandingAdmission }> | null> {
+  const stored = await resolveRequesterSessionCustody({ ...input, sessionId: input.relationshipId,
+    scope: 'workspace_sync_relationship', endpointRole: 'source' });
+  return stored ? { credentials: stored.credentials, ...(stored.sourceAdmission ? { sourceAdmission: stored.sourceAdmission } : {}) } : null;
 }
 
 export async function bindRequesterSessionMachineControl(input: Readonly<{

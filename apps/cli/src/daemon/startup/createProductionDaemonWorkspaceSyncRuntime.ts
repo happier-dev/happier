@@ -11,6 +11,7 @@ import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protoc
 import * as z from 'zod/mini';
 import { isProjectWorkspaceSyncPreparationActionV1, isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
+import { buildRequesterTargetPhaseContext, projectRequesterStandingAdmission } from './requesterTargetPhaseContext';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readReviewedExternalActionInput } from '@/api/externalActionExecutionAuthorization';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
@@ -677,6 +678,13 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       serverId: semanticServerId, serverHttpBaseUrl: readServerHttpBaseUrl(),
       boundary: input.requesterMachineAdmissionBoundary, privateCheckout: input.privateCheckout,
       adapter: runtime.handoffAdapter, readProjectRows: factories.refreshProjectRows,
+      // A recovered SOURCE presents creation's standing admission; Home's grant check runs at each use.
+      ...(input.callWorkspaceTargetPhase ? { createSourceTargetPhaseCaller: standing => {
+        const call = createRequesterTargetPhaseCaller(buildRequesterTargetPhaseContext({ kind: 'standing', ...standing }));
+        // The TARGET admitted this relationship under creation's operation id; recovery keys it by relationship id.
+        const operationId = standing.admission.routing.operationId;
+        return descriptor => call({ ...descriptor, routing: { ...descriptor.routing, operationId } });
+      } } : {}),
       ...(input.openManagedWorkspaceTarget ? { recoverManagedExecution: async recovered => {
         const retained = retainManagedExecution({ operationId: recovered.relationship.relationshipId, ...recovered });
         return retained.execution;
@@ -1605,6 +1613,27 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       }),
     };
   };
+  // One requester TARGET caller: a retained capture forwards its admitted SOURCE
+  // context, and cleanup after its prepare uses the installed writer identity.
+  const createRequesterTargetPhaseCaller = (context: RpcHandlerContext,
+    sourceWriter?: Readonly<{ machineId: string; installationId: string }>,
+  ): NonNullable<WorkspaceSyncPrivateExecution['callTargetPhase']> => {
+    let preparedTargetEndpoint: MachineInstallationPublicIdentityV1 | undefined;
+    return async descriptor => {
+      if (isWorkspaceSyncSourceWriterCleanupPhaseV1(descriptor.routing.phase) && preparedTargetEndpoint) {
+        return await input.callWorkspaceTargetPhase!({ ...descriptor, physicalEndpoint: preparedTargetEndpoint },
+          { ...createInstalledTargetCleanupContext(context.workspaceSyncSourceRouting!, sourceWriter, descriptor.routing),
+            ...(descriptor.operationContext ? { localActionContext: descriptor.operationContext } : {}),
+            ...(descriptor.callerInputAuthorization ? { callerInputAuthorization: descriptor.callerInputAuthorization } : {}) });
+      }
+      const result = await input.callWorkspaceTargetPhase!(descriptor, { ...context,
+        ...(descriptor.operationContext ? { localActionContext: descriptor.operationContext } : {}) });
+      if (descriptor.routing.phase === 'prepare') {
+        preparedTargetEndpoint = WorkspaceSyncTargetBootstrapPrepareResultV1Schema.parse(result).physicalEndpoint;
+      }
+      return result;
+    };
+  };
   const resolveHandoffExecutionInput: NonNullable<DaemonWorkspaceSyncRuntimeDependencies['resolveHandoffExecutionInput']> = async (request, authority, context) => {
     const accepted = await readHandoffExecutionBasis(request, context, authority);
     const requester = readRequesterAccountActionContext(context?.callerInputAuthorization);
@@ -1622,30 +1651,15 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         machineId: admission.machineId, installationId: admission.installationId };
       let relationshipId: string | undefined;
       let snapshot = accepted.snapshot;
-      let preparedTargetEndpoint: MachineInstallationPublicIdentityV1 | undefined;
       runtime?.handoffAdapter.retainPrivateExecution?.({ input: request, execution: {
         credentials: requester.credentials,
         accountRowsCustody: { serverId: semanticServerId, accountId: context.callerInputAuthorization.binding.accountId,
           serverHttpBaseUrl: requester.serverHttpBaseUrl, isCurrent: custody.isCurrent },
         getSnapshot: () => snapshot,
         replaceSnapshot: async next => { snapshot = next; },
-        ...(input.callWorkspaceTargetPhase ? { callTargetPhase: async descriptor => {
-          if (isWorkspaceSyncSourceWriterCleanupPhaseV1(descriptor.routing.phase) && preparedTargetEndpoint) {
-            const source = context.workspaceSyncSourceRouting!;
-            const sourceWriter = accepted.childMachines.find(child => child.machineId === source.sourceMachineId)?.controller
-              ?? context.callerInputAuthorization?.binding.workspaceSyncAdmission?.source;
-            return await input.callWorkspaceTargetPhase!({ ...descriptor, physicalEndpoint: preparedTargetEndpoint },
-              { ...createInstalledTargetCleanupContext(source, sourceWriter, descriptor.routing),
-                ...(descriptor.operationContext ? { localActionContext: descriptor.operationContext } : {}),
-                ...(descriptor.callerInputAuthorization ? { callerInputAuthorization: descriptor.callerInputAuthorization } : {}) });
-          }
-          const result = await input.callWorkspaceTargetPhase!(descriptor, { ...context,
-            ...(descriptor.operationContext ? { localActionContext: descriptor.operationContext } : {}) });
-          if (descriptor.routing.phase === 'prepare') {
-            preparedTargetEndpoint = WorkspaceSyncTargetBootstrapPrepareResultV1Schema.parse(result).physicalEndpoint;
-          }
-          return result;
-        } } : {}),
+        ...(input.callWorkspaceTargetPhase ? { callTargetPhase: createRequesterTargetPhaseCaller(context,
+          accepted.childMachines.find(child => child.machineId === context.workspaceSyncSourceRouting?.sourceMachineId)?.controller
+            ?? context.callerInputAuthorization?.binding.workspaceSyncAdmission?.source) } : {}),
         assertTransferCurrent: async () => {
           if (!relationshipId || !await custody.isCurrent() || !await verifyWorkspaceSyncSourceMachineAdmissionCurrent({
             credentials: requester.credentials, sessionId: relationshipId, attribution,
@@ -2691,10 +2705,10 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
               expectedTargetReplacementApproval: requestedTargetReplacementApproval });
           }
         }
-        if (input.callWorkspaceTargetPhase) targetPhaseContext = { ...context, workspaceSyncSourceRouting: WorkspaceSyncSourceRoutingV1Schema.parse({
+        if (input.callWorkspaceTargetPhase) targetPhaseContext = buildRequesterTargetPhaseContext({ kind: 'admitted', ingress: context, routing: {
           v: 1, phase: 'prepare', operationId: request.operationId, accountServerId: semanticServerId,
           sourceMachineId: source.machineId, sourceRootPath: source.rootPath, originalActionEnvelope: envelope,
-          sourceContext: projectWorkspaceSyncPhysicalContextFromActionContext(buildActionExecutorContextForRpc(context)) }) };
+          sourceContext: projectWorkspaceSyncPhysicalContextFromActionContext(buildActionExecutorContextForRpc(context)) } });
       }
       const localRoot = localTarget ? request.actionInput.targetPath : source.rootPath;
       const existing = resolveWorkspaceRefForMachineRoot(snapshot.workspaceRefs,
@@ -2781,7 +2795,8 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
           await createWorkspaceSyncSourceCredentialCustody({ happyHomeDir: input.happyHomeDir, relationshipId: id,
             attribution: { ...executionIdentity.requester, serverId: localProfileId }, credentials: requester.credentials,
             homeServerIdentityId: semanticServerId,
-            machineAdmission: { custodianAccountId: admission.custodianAccountId, role: admission.role } });
+            machineAdmission: { custodianAccountId: admission.custodianAccountId, role: admission.role },
+            ...(projectRequesterStandingAdmission(targetPhaseContext) ? { sourceAdmission: projectRequesterStandingAdmission(targetPhaseContext)! } : {}) });
           bindRetainedRelationship(id);
         },
         release: async () => { try { await native?.release(); } finally { await custody.release(); } },

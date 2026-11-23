@@ -660,7 +660,7 @@ describe('requester Session lifecycle custody', () => {
       { sessionId: binding.relationshipId, scope: 'workspace_sync_relationship', attribution },
     ] });
     expect(await requesterCredentialOwner.resolveWorkspaceSyncSourceCredentialCustody({ ...binding,
-      serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary })).toMatchObject(credentials);
+      serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary })).toMatchObject({ credentials });
     expect(host.requests.some(request => request.path.startsWith('/v2/sessions/'))).toBe(false);
     host.setAccess(false);
     expect(await requesterCredentialOwner.resolveWorkspaceSyncSourceCredentialCustody({ ...binding,
@@ -678,7 +678,7 @@ describe('requester Session lifecycle custody', () => {
     const fresh = { credentials, attribution, sessionId: binding.relationshipId, serverHttpBaseUrl: origin, boundary: host.boundary };
     const machineReads = () => host.requests.filter(request => request.path === '/v1/machines/machine').length;
     expect(await requesterCredentialOwner.resolveWorkspaceSyncSourceCredentialCustody({ ...binding,
-      serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary })).toMatchObject(credentials);
+      serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary })).toMatchObject({ credentials });
     host.setMachineRole('use');
     expect(await requesterCredentialOwner.resolveWorkspaceSyncSourceCredentialCustody({ ...binding,
       serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary })).toBeNull();
@@ -708,7 +708,7 @@ describe('requester Session lifecycle custody', () => {
     expect(await verifyRequesterSessionMachineAdmissionCurrent(fresh)).toBe(false);
     const beforeSync = host.requests.length;
     expect(await requesterCredentialOwner.resolveWorkspaceSyncSourceCredentialCustody({ ...binding,
-      serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary })).toMatchObject(credentials);
+      serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary })).toMatchObject({ credentials });
     expect(await requesterCredentialOwner.verifyWorkspaceSyncSourceMachineAdmissionCurrent(fresh)).toBe(true);
     host.setMachineRole('use');
     expect(await requesterCredentialOwner.resolveWorkspaceSyncRelationshipCredentialCustody({ ...binding,
