@@ -19,7 +19,10 @@ const { ItemRowActions } = await import('@/components/ui/lists/ItemRowActions');
 // The bar is a size scope around one row of controls; its children are that row's.
 function barOf(header: React.ReactElement<{ children: React.ReactNode }>): React.ReactNode {
     const row = header.props.children as React.ReactElement<{ children: React.ReactNode }>;
-    return row.props.children;
+    // The bar holds its primary, and its "⋯" with a page's trailing trigger, in fit slots: read the controls in order.
+    return React.Children.toArray(row.props.children).flatMap(child => React.isValidElement(child)
+        && typeof child.type === 'function' && child.type.name === 'HeaderFitSlot'
+        ? React.Children.toArray((child.props as { children?: React.ReactNode }).children) : [child]);
 }
 const { Button: PluginButton } = await import('../../../../../../../packages/plugin-ui/src/components/Button');
 

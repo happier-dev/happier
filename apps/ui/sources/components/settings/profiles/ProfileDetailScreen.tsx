@@ -550,32 +550,21 @@ const ProfileDetailHeader = React.memo(function ProfileDetailHeader(props: Reado
                 disabled: props.isDraft ? typedName.length === 0 : !props.dirty,
                 onPress: props.onSave,
             }}
-            actions={(
-                <View style={styles.actions}>
-                    {props.showMachineChip ? (
-                        <MachineAdministrationTargetSelector
-                            presentation="chip"
-                            selection={collection.administrationTargetSelection}
-                            testIDPrefix="settings.profiles.administration.target"
-                        />
-                    ) : null}
-                    <PageHeaderMenu testID="settings.profiles.detail.menu" actions={props.menuActions} />
-                </View>
-            )}
+            actions={props.showMachineChip ? (
+                <MachineAdministrationTargetSelector
+                    presentation="chip"
+                    selection={collection.administrationTargetSelection}
+                    testIDPrefix="settings.profiles.administration.target"
+                />
+            ) : undefined}
+            menu={<PageHeaderMenu testID="settings.profiles.detail.menu" actions={props.menuActions} />}
         />
     );
 });
 
-const styles = StyleSheet.create((theme) => ({
+const styles = StyleSheet.create(() => ({
     migration: {
         flex: 1,
         minHeight: 0,
-    },
-    actions: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        alignItems: 'center',
-        justifyContent: 'flex-end',
-        gap: theme.space.s12,
     },
 }));

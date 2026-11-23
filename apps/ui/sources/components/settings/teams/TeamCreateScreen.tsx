@@ -549,7 +549,7 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
     // One eligible Home is a fact about the draft, named on the header's meta line; a choice between
     // several is a radio group below.
     const singleHome = homes.length === 1 ? homes[0]! : null;
-    const draftHeader = (props: Readonly<{ actions?: React.ReactNode; primaryAction?: PageHeaderPrimaryAction; details?: React.ReactNode }> = {}) => (
+    const draftHeader = (props: Readonly<{ menu?: React.ReactNode; primaryAction?: PageHeaderPrimaryAction; details?: React.ReactNode }> = {}) => (
         <PageHeader
             testID="teams-create-header"
             // The draft's own name heads the page once typed; until then the navigation title says it.
@@ -566,7 +566,7 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
                 text: singleHome.homeName,
                 testID: `teams-create-home:${singleHome.scope.serverId}`,
             }] : undefined}
-            actions={props.actions}
+            menu={props.menu}
             primaryAction={props.primaryAction}
         />
     );
@@ -699,7 +699,7 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
                         : !canSubmit,
                     onPress: submit,
                 },
-                actions: committedTeam === null ? (
+                menu: committedTeam === null ? (
                     <PageHeaderMenu
                         testID="teams-create-menu"
                         actions={[{ id: 'discard', title: t('teams.create.discard'), onSelect: discardDraft }]}

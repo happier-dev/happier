@@ -53,7 +53,7 @@ export function CapabilityDetailHeader(props: Readonly<{
             // A listing's icon row is its mark and name; its purpose and facts read from the content edge.
             markSpan="title"
             titleAccessory={speaks && props.status ? <CapabilityStatusChip status={props.status} placement="header" testID={`${props.testID}.status`} /> : undefined}
-            actions={props.menuItems && props.menuItems.length > 0
+            menu={props.menuItems && props.menuItems.length > 0
                 ? <PageHeaderMenu testID={`${props.testID}.menu`} actions={props.menuItems} />
                 : undefined}
             actionsPlacement="page"

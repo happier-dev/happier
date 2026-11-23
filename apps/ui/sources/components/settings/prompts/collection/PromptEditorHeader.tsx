@@ -54,7 +54,7 @@ export const PromptEditorHeader = React.memo(function PromptEditorHeader(props: 
                 loading: props.saving,
                 onPress: props.onSave,
             }}
-            actions={props.menuActions.length > 0 ? (
+            menu={props.menuActions.length > 0 ? (
                 <PageHeaderMenu testID={`${props.testID}.menu`} actions={props.menuActions} />
             ) : undefined}
         />

@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { View } from 'react-native';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -418,11 +417,7 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
                     disabled: !settingsLoaded || (!dirty && !isNew),
                     onPress: save,
                 },
-                actions: (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 }}>
-                        <PageHeaderMenu testID={`${TEST_ID}.menu`} actions={menuActions} />
-                    </View>
-                ),
+                menu: <PageHeaderMenu testID={`${TEST_ID}.menu`} actions={menuActions} />,
             }}
         >
 

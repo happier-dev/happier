@@ -563,23 +563,19 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
                 // on phones. The page header owns that placement.
                 primaryAction={readOnly ? undefined : primaryAction}
                 cancelAction={cancelAction ?? undefined}
-                actions={(
-                    <View style={styles.headerActions}>
-                        {!isNew && !featureUnavailable && !existingMissing && existing?.access?.canManage !== false ? (
-                            <PageHeaderMenu
-                                testID="settings.machinePools.editor.menu"
-                                actions={[{
-                                    id: 'delete',
-                                    testID: 'settings.machinePools.editor.delete',
-                                    title: t('machinePools.delete'),
-                                    destructive: true,
-                                    disabled: formDisabled,
-                                    onSelect: () => { void remove(); },
-                                }]}
-                            />
-                        ) : null}
-                    </View>
-                )}
+                menu={!isNew && !featureUnavailable && !existingMissing && existing?.access?.canManage !== false ? (
+                    <PageHeaderMenu
+                        testID="settings.machinePools.editor.menu"
+                        actions={[{
+                            id: 'delete',
+                            testID: 'settings.machinePools.editor.delete',
+                            title: t('machinePools.delete'),
+                            destructive: true,
+                            disabled: formDisabled,
+                            onSelect: () => { void remove(); },
+                        }]}
+                    />
+                ) : undefined}
             />
             {homeOffline ? <AttentionBanner testID="settings.machinePools.editor.offline" title={t('machinePools.homeOffline')} /> : null}
             {refreshFailed ? <AttentionBanner
@@ -869,7 +865,6 @@ export function MachinePoolEditorRoute(props: Readonly<{ params: { serverId?: st
 }
 
 const styles = StyleSheet.create((theme) => ({
-    headerActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
     // The field's quiet "Optional" suffix beside its label.
     optionalMarker: { ...Typography.default('regular'), fontSize: 15, color: theme.colors.text.tertiary },
     tierActions: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s4 },

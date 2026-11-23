@@ -1,6 +1,6 @@
 import type { IconName } from '@/components/ui/icons/Icon';
 import * as React from 'react';
-import { View } from 'react-native';
+import { Dimensions, View } from 'react-native';
 import { useDestinationRouteNavigation as useNavigation } from '@/components/appShell/workspace/destinationInstanceContext';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -215,6 +215,22 @@ export function useNavigationHeaderActions(input: Readonly<{
     const actions = input.enabled ? input.actions : null;
     const trailing = input.enabled ? input.trailing ?? null : null;
     const foldedActions = React.useMemo(() => foldContextActions(actions), [actions]);
+    // A bar too narrow for everything gives up its own controls (a state switch) to "⋯" first, and its primary only
+    // after that; "⋯" itself is never cut. Folded controls return when the window grows past where they did not fit.
+    const [barControlsFoldedAt, setBarControlsFoldedAt] = React.useState<number | null>(null);
+    React.useEffect(() => {
+        if (barControlsFoldedAt === null) return undefined;
+        const subscription = Dimensions.addEventListener('change', ({ window }) => {
+            if (window.width > barControlsFoldedAt) setBarControlsFoldedAt(null);
+        });
+        return () => subscription.remove();
+    }, [barControlsFoldedAt]);
+    const barControlsFolded = barControlsFoldedAt !== null;
+    const overflowRef = React.useRef<() => void>(undefined);
+    overflowRef.current = () => {
+        if (foldedActions.barControls.length > 0 && !barControlsFolded) setBarControlsFoldedAt(Dimensions.get('window').width);
+        else primaryDoesNotFitRef.current?.();
+    };
     const primaryKey = primary ? [primary.title, primary.disabled === true, primary.loading === true, primary.testID ?? '',
         primary.presentation ?? ''] : null;
     const cancelKey = cancel ? [cancel.title, cancel.disabled === true, cancel.testID ?? ''] : null;
@@ -224,17 +240,18 @@ export function useNavigationHeaderActions(input: Readonly<{
         const screen = navigation;
         if ((!primary && !cancel && !actions && !trailing) || !screen || typeof screen.setOptions !== 'function') return undefined;
         const options: Record<string, unknown> = {};
+        const menuContent = barControlsFolded && foldedActions.barControls.length > 0
+            ? <>{foldedActions.barControls}{foldedActions.content}</> : foldedActions.content;
+        const menuShown = Boolean(actions) && (foldedActions.operations.length > 0 || menuContent !== undefined);
         if (primary || actions || trailing) {
             // The bar's controls carry their own chrome, so iOS's shared item glass stays off (one chrome).
             Object.assign(options, ownChromeHeaderRight(() => (
-                <RoundButtonSizeScope size="normal"><HeaderActionsRow onPrimaryDoesNotFit={primaryDoesNotFitRef}>
+                <RoundButtonSizeScope size="normal"><HeaderActionsRow key={barControlsFolded ? 'folded' : 'bar'} onOverflow={overflowRef}>
                     {routeContextActions?.actions}
-                    {foldedActions.barControls}
-                    {actions && (foldedActions.operations.length > 0 || foldedActions.content) ? <PageHeaderMenu actions={foldedActions.operations} content={foldedActions.content}
-                        openRequested={foldedActions.openRequested} testID="page-header-actions"
-                        interactiveTargetGapPx={HEADER_ACTIONS_GAP_PX} /> : null}
+                    {barControlsFolded ? null : foldedActions.barControls}
+                    {/* One order for every header: the bar's controls, the primary, then "⋯" (and a page's own trailing trigger). */}
                     {primary ? (
-                        <HeaderPrimarySlot>
+                        <HeaderFitSlot>
                             <RoundButton
                                 testID={primary.testID}
                                 title={primary.title}
@@ -244,9 +261,16 @@ export function useNavigationHeaderActions(input: Readonly<{
                                 {...(primary.presentation === 'secondary' ? { display: 'secondary' as const } : {})}
                                 action={() => Promise.resolve(primaryRef.current?.onPress())}
                             />
-                        </HeaderPrimarySlot>
+                        </HeaderFitSlot>
                     ) : null}
-                    {trailing}
+                    {menuShown || trailing ? (
+                        <HeaderFitSlot end>
+                            {menuShown ? <PageHeaderMenu actions={foldedActions.operations} content={menuContent}
+                                openRequested={foldedActions.openRequested} testID="page-header-actions"
+                                interactiveTargetGapPx={HEADER_ACTIONS_GAP_PX} /> : null}
+                            {trailing}
+                        </HeaderFitSlot>
+                    ) : null}
                 </HeaderActionsRow></RoundButtonSizeScope>
             )));
         }
@@ -278,7 +302,7 @@ export function useNavigationHeaderActions(input: Readonly<{
         };
         // `key` carries the structured actions' rendered fields; context nodes keep their own props.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [navigation, key, actions, foldedActions, routeContextActions, trailing]);
+    }, [navigation, key, actions, foldedActions, routeContextActions, trailing, barControlsFolded]);
 }
 
 /**
@@ -318,54 +342,54 @@ const NavigationHeaderActionsPublisher = React.memo(function NavigationHeaderAct
     return null;
 });
 
-type PrimaryFitReport = (edge: Readonly<{ right: number }>) => void;
-const HeaderPrimaryFitContext = React.createContext<PrimaryFitReport | null>(null);
+type FitReport = (slot: 'primary' | 'end', edge: Readonly<{ right: number }>) => void;
+const HeaderFitContext = React.createContext<FitReport | null>(null);
 
 /**
- * The bar's action row. It reads where its primary is drawn against its own width: a primary that runs
- * past the row (the bar holds Back, a title and the overflow before it) is reported once to the page that
- * owns it, rather than drawn cut off.
+ * The bar's action row. It reads where its last control is drawn against its own width: a row that runs past
+ * it (the bar holds Back and a title before it) reports the overflow once, and the bar gives up its own
+ * controls to "⋯", then its primary to the page that owns it, rather than drawing anything cut off.
  */
 function HeaderActionsRow(props: Readonly<{
-    onPrimaryDoesNotFit: React.RefObject<(() => void) | undefined>;
+    onOverflow: React.RefObject<(() => void) | undefined>;
     children: React.ReactNode;
 }>) {
     const rowWidthRef = React.useRef<number | null>(null);
-    const primaryRightRef = React.useRef<number | null>(null);
+    const edgesRef = React.useRef<Partial<Record<'primary' | 'end', number>>>({});
     const reportedRef = React.useRef(false);
-    const { onPrimaryDoesNotFit } = props;
+    const { onOverflow } = props;
     const check = React.useCallback(() => {
         const rowWidth = rowWidthRef.current;
-        const primaryRight = primaryRightRef.current;
-        if (reportedRef.current || rowWidth === null || primaryRight === null) return;
+        const edges = Object.values(edgesRef.current);
+        if (reportedRef.current || rowWidth === null || edges.length === 0) return;
         // Sub-pixel rounding is not a cut; a whole pixel is.
-        if (primaryRight - rowWidth < 1) return;
+        if (Math.max(...edges) - rowWidth < 1) return;
         reportedRef.current = true;
-        onPrimaryDoesNotFit.current?.();
-    }, [onPrimaryDoesNotFit]);
-    const reportPrimary = React.useCallback<PrimaryFitReport>((edge) => {
-        primaryRightRef.current = edge.right;
+        onOverflow.current?.();
+    }, [onOverflow]);
+    const report = React.useCallback<FitReport>((slot, edge) => {
+        edgesRef.current = { ...edgesRef.current, [slot]: edge.right };
         check();
     }, [check]);
     return (
-        <HeaderPrimaryFitContext.Provider value={reportPrimary}>
+        <HeaderFitContext.Provider value={report}>
             <View style={stylesheet.actions} onLayout={(event) => {
                 rowWidthRef.current = event.nativeEvent.layout.width;
                 check();
             }}>
                 {props.children}
             </View>
-        </HeaderPrimaryFitContext.Provider>
+        </HeaderFitContext.Provider>
     );
 }
 
-/** Holds the bar's primary at its own width (it never shrinks its words) and reports its trailing edge. */
-function HeaderPrimarySlot(props: Readonly<{ children: React.ReactNode }>) {
-    const report = React.useContext(HeaderPrimaryFitContext);
+/** Holds the primary (or "⋯" with the bar's trailing trigger, `end`) at its own width and reports its trailing edge. */
+function HeaderFitSlot(props: Readonly<{ end?: boolean; children: React.ReactNode }>) {
+    const report = React.useContext(HeaderFitContext);
     return (
-        <View style={stylesheet.primary} onLayout={(event) => {
+        <View style={props.end ? stylesheet.end : stylesheet.primary} onLayout={(event) => {
             const { x, width } = event.nativeEvent.layout;
-            report?.({ right: x + width });
+            report?.(props.end ? 'end' : 'primary', { right: x + width });
         }}>
             {props.children}
         </View>
@@ -376,6 +400,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     foldedControls: { flexWrap: 'wrap', minWidth: 0, maxWidth: '100%' },
     actions: { flexDirection: 'row', alignItems: 'center', gap: HEADER_ACTIONS_GAP_PX, minWidth: 0, maxWidth: '100%' },
     primary: { flexShrink: 0 },
+    end: { flexDirection: 'row', alignItems: 'center', gap: HEADER_ACTIONS_GAP_PX, flexShrink: 0 },
     cancel: {
         paddingHorizontal: theme.space.s8,
         paddingVertical: theme.space.s6,

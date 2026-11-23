@@ -158,11 +158,7 @@ const RemoteHostEditorPage = React.memo(function RemoteHostEditorPage(props: Rea
                     disabled: saving || !collection.canMutate || !editor.valid || (!editor.dirty && !isNew),
                     onPress: () => { void save(); },
                 }}
-                actions={(
-                    <View style={styles.headerActions}>
-                        <PageHeaderMenu testID="settings.remoteHosts.host.menu" actions={menuActions} />
-                    </View>
-                )}
+                menu={<PageHeaderMenu testID="settings.remoteHosts.host.menu" actions={menuActions} />}
             />
 
             {useActions.length > 0 ? (
@@ -315,11 +311,6 @@ const HostActionButtons = React.memo(function HostActionButtons(props: Readonly<
 });
 
 const styles = StyleSheet.create(() => ({
-    headerActions: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-    },
     buttonRow: {
         flexDirection: 'row',
         flexWrap: 'wrap',

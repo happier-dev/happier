@@ -88,7 +88,7 @@ export const ApprovalProfilePageHeader = React.memo(function ApprovalProfilePage
                 description={profile ? t('workflows.triggers.guided.profile.pageDescription')
                     : t('workflows.triggers.guided.profile.notFoundDescription')}
                 {...(meta ? { meta } : {})}
-                actions={profile ? (
+                actions={profile && (manages || !changes || props.machineChip) ? (
                     <View style={stylesheet.headerActions}>
                         {manages ? (
                             <SectionActionButton testID="settings-actions:approval-profile-page:share" icon="users"
@@ -98,9 +98,9 @@ export const ApprovalProfilePageHeader = React.memo(function ApprovalProfilePage
                                 title={t('workflows.triggers.guided.profile.duplicateToChange')} onPress={() => { void duplicate(); }} />
                         )}
                         {props.machineChip}
-                        {menu.length > 0 ? <PageHeaderMenu testID="settings-actions:approval-profile-page:menu" actions={menu} /> : null}
                     </View>
                 ) : undefined}
+                menu={profile && menu.length > 0 ? <PageHeaderMenu testID="settings-actions:approval-profile-page:menu" actions={menu} /> : undefined}
             />
             {profile ? <ApprovalProfileDefaultOn profile={profile} machineApprovalProfiles={props.machineApprovalProfiles} write={write} /> : null}
             {profile && serverId ? (

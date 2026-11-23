@@ -262,6 +262,39 @@ describe('PageHeader primary action placement', () => {
         expect(inHeader.findAllByType(RoundButton as never).find(node => node.props.testID === 'preset-create')?.props.display).toBe('secondary');
     });
 
+    // One order for every page header (UI refinements 2026-11-23 22:10Z): the page's controls, then the primary, then "⋯",
+    // so "⋯" keeps its place whether a primary is offered, arrives later or goes away. A page like a profile editor (a
+    // machine chip, Save, and its menu) draws it the same way in the page and in the phone bar.
+    it('draws the page controls, then the primary, then "⋯" last, in the page and in the phone bar', async () => {
+        const page = (showsTitle: boolean) => (
+            <NavigationTitleChromeProvider showsTitle={showsTitle}>
+                <PageHeader title="Profile" primaryAction={{ title: 'Save', onPress: () => {}, testID: 'order-save' }}
+                    actions={<View testID="order-chip" />}
+                    menu={<PageHeaderMenu testID="order-menu"
+                        actions={[{ id: 'delete', testID: 'order-delete', title: 'Delete', destructive: true, onSelect: () => {} }]} />} />
+            </NavigationTitleChromeProvider>
+        );
+        (router.state as { navigation: unknown }).navigation = { setOptions, getParent: () => ({ setOptions: parentSetOptions }) };
+        const positions = (tree: unknown, ids: readonly string[]) => ids.map(id => JSON.stringify(tree).indexOf(`"${id}"`));
+        const wide = await renderScreen(page(false));
+        const [chip, save, menu] = positions(wide.tree.toJSON(), ['order-chip', 'order-save', 'order-menu.trigger']);
+        expect(chip).toBeGreaterThanOrEqual(0);
+        expect(save).toBeGreaterThan(chip);
+        expect(menu).toBeGreaterThan(save);
+        await wide.unmount();
+        const phone = await renderScreen(page(true));
+        const inHeader = await renderScreen(lastHeaderRight() as unknown as React.ReactElement);
+        const [barSave, barMenu] = positions(inHeader.tree.toJSON(), ['order-save', 'page-header-actions.trigger']);
+        expect(barSave).toBeGreaterThanOrEqual(0);
+        expect(barMenu).toBeGreaterThan(barSave);
+        // The page's "⋯" rows still reach the one bar menu, beside its folded controls.
+        await openContextActions(inHeader);
+        expect(inHeader.findHostByTestId('order-delete')).not.toBeNull();
+        expect(inHeader.findHostByTestId('order-chip')).not.toBeNull();
+        await inHeader.unmount();
+        await phone.unmount();
+    });
+
     it('hands the primary action to the native header on phones instead of stacking it under the purpose', async () => {
         const onPress = vi.fn();
         const screen = await renderScreen(header(true, onPress));

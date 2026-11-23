@@ -161,7 +161,7 @@ export function ReviewDetailView(
         {...(props.primaryAction && !props.submit
           ? { primaryAction: props.primaryAction }
           : {})}
-        actions={
+        menu={
           props.menu.length > 0 ? (
             <PageHeaderMenu testID="review-detail:more" actions={props.menu} />
           ) : undefined

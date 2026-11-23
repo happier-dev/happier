@@ -151,7 +151,7 @@ export const ThemeProfileEditorView = React.memo(
                 }
               : undefined
           }
-          actions={
+          menu={
             <PageHeaderMenu
               testID="settings-theme-profile-menu"
               actions={headerMenu}
