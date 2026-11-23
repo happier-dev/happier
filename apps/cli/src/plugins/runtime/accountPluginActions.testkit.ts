@@ -91,6 +91,7 @@ export async function buildAuthoredAccountActionRelease(input: Readonly<{ manife
 /** Real public-author compiler and release producers, with only Home HTTP storage replaced. */
 export async function registerAuthoredAccountActionRelease(app: FastifyInstance, accountId: string,
     options: Readonly<{ includeAccountProvider?: boolean; includeBundledPluginIds?: readonly string[]; encryptionMode?: 'plain' | 'e2ee';
+        scopedProjectKeys?: readonly string[];
         /** A package-owned author fixture using this same compiler/release/storage boundary. */
         primary?: AuthoredAccountReleaseSource; additional?: readonly AuthoredAccountReleaseSource[] }> = {}) {
     const primary = await buildAuthoredAccountActionRelease({ manifest: options.primary?.manifest ?? authoredAccountManifest, artifactId: options.primary?.artifactId ?? 'account-runtime',
@@ -111,7 +112,9 @@ export async function registerAuthoredAccountActionRelease(app: FastifyInstance,
         hostingCapability: { enabled: true, maxArtifactBytes: 16 * 1024 * 1024, maxAccountBytes: 256 * 1024 * 1024 },
         intent: !fixture || (bundledFallback && fixture === primary) ? null : {
             pluginId: fixture.pluginId, desiredVersion: fixture.manifest.version, enabled: enabled.get(fixture.pluginId),
-            offlineUiHosting: 'enabled', revision: '1', writableCollections: [] },
+            offlineUiHosting: 'enabled', revision: '1', writableCollections: [],
+            ...(fixture === primary && options.scopedProjectKeys
+                ? { projectScope: { kind: 'only', projectKeys: [...options.scopedProjectKeys] } } : {}) },
         release: !fixture || (bundledFallback && fixture === primary) ? null : fixture.release,
         uiArtifacts: !fixture || (bundledFallback && fixture === primary) ? [] : fixture.release.uiSlots.map(slot => ({ release: fixture.release.ref, contributionId: slot.contributionId,
             artifactId: slot.artifactId, tier: slot.tier, platform: slot.platform,

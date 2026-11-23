@@ -32,7 +32,7 @@ import { bindPluginRuntimeSourceAuthority, resolvePluginSourceCustody } from './
 import { isImmutablePluginModuleLoaded, loadPluginModule } from './loadPluginModule';
 import type { createBundledActivationSourceResolver } from './bundledActivationSource';
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
-import { resolveBundledPluginEnablement } from '@/plugins/projection/registry/builtIn/enablement';
+import { resolveBundledPluginEnablement, withAccountPluginProjectScopes } from '@/plugins/projection/registry/builtIn/enablement';
 import { resolveUnavailableAgentPluginsByBackendId } from '@/plugins/projection/registry/builtIn/snapshot';
 import { PluginDiagnosticError } from './moduleFailure';
 
@@ -242,10 +242,11 @@ export async function resolveAccountPluginActivationSources(input: AccountPlugin
     const bundledDeclarations = (input.contributes.pluginDeclarations ?? []).filter(plugin => plugin.sourceSpec.kind === 'bundled');
     const bundledPluginIds = bundledDeclarations.map(plugin => plugin.pluginId).sort();
     const reads = await readCurrentAccountPluginIntentCensus({ ...input, pluginIds: bundledPluginIds });
-    const pluginEnablementById = resolveBundledPluginEnablement({ pluginIds: [...reads.keys()],
+    const enablement = resolveBundledPluginEnablement({ pluginIds: [...reads.keys()],
         accountEnabledById: new Map([...reads].map(([pluginId, read]) => [pluginId, read.intent?.enabled ?? true])),
         machineEnabledById: input.machineEnabledById,
     });
+    const pluginEnablementById = withAccountPluginProjectScopes(enablement, [...reads].map(([pluginId, read]) => [pluginId, read.intent] as const));
 
     const sourcesByPluginId = new Map<string, PluginActivationSource<PluginDaemonModuleNamespace>>();
     const selected = new Map<string, Readonly<{ selection: PluginAccountExecutionSelectionV1;

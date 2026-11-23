@@ -32,6 +32,33 @@ import * as persistence from '@/persistence';
 import { manifest as authoredAccountManifest } from '../../../../../packages/plugin-sdk/fixtures/account-actions/src/index';
 
 describe('Account activation source assembly', () => {
+    it('retains the persisted Project restriction on the admitted Account plugin registry', async () => {
+        const home = await mkdtemp(join(tmpdir(), 'account-project-scope-'));
+        const app = fastify();
+        const projectKey = 'qa-project';
+        const { pluginId } = await registerAuthoredAccountActionRelease(app, 'owner', { scopedProjectKeys: [projectKey] });
+        await app.ready();
+        const serverUrl = 'http://account-project-scope.test';
+        const restore = installAxiosFastifyAdapter({ app, origin: serverUrl });
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | undefined;
+        try {
+            runtime = await resolveExecutablePluginRuntimeRegistry({
+                happyHomeDir: home,
+                contributes: createResolvedContributionRegistry({}),
+                accountExecution: { credentials: { token: 'fixture', encryption: null }, serverUrl, isCurrent: () => true },
+            });
+            expect(runtime.contributes.pluginEnablementById?.[pluginId]).toMatchObject({
+                enabled: true,
+                projectScope: { kind: 'only', projectKeys: [projectKey] },
+            });
+        } finally {
+            await runtime?.dispose();
+            restore();
+            await app.close();
+            await rm(home, { recursive: true, force: true });
+        }
+    });
+
     it('selects mounted Account bundled custody independently of the Machine development source, retaining Account refusals', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'mounted-account-development-source-'));
         const home = join(directory, 'home');

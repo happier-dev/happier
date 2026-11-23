@@ -115,6 +115,45 @@ describe('bundled admission Account boundary', () => {
         }
     });
 
+    it('carries an installed plugin’s saved Project scope into the cold Machine registry', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'installed-project-scope-'));
+        const pluginId = 'acme.project-mcp';
+        const projectScope = { kind: 'only', projectKeys: ['0b54db2b-c37b-4cc0-9ad3-a8c54aab2616'] };
+        const pluginRoot = join(happyHomeDir, 'plugin');
+        const manifestPath = join(pluginRoot, '.happier-plugin', 'plugin.json');
+        const app = fastify();
+        app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], async request => {
+            const pluginIds = readRequestedIntentPluginIds(request.body);
+            return { availabilityCursor: 1, pluginIds, failedPluginIds: [], intentReads: pluginIds.map(id => ({
+                pluginId: id,
+                response: { availabilityCursor: 1, hostingCapability: { enabled: false }, release: null,
+                    uiArtifacts: [], packageAssets: [], intent: id === pluginId ? {
+                        pluginId, desiredVersion: null, enabled: true, offlineUiHosting: 'disabled', writableCollections: [],
+                        revision: '1', projectScope,
+                    } : null },
+            })) };
+        });
+        await app.ready();
+        const origin = 'http://installed-project-scope.test';
+        const restore = installAxiosFastifyAdapter({ app, origin });
+        try {
+            await mkdir(dirname(manifestPath), { recursive: true });
+            await writeFile(manifestPath, JSON.stringify(createPluginManifestV2Fixture({
+                id: pluginId, entrypoints: {}, contributes: {},
+            })));
+            await seedCurrentLocalPathPluginFixture({ happyHomeDir, pluginRoot, pluginId, manifestVersion: '1.0.0' });
+            const registry = await resolveMergedContributionRegistry({ happyHomeDir, accountStorageDependencies: {
+                readCredentials: async () => ({ token: 'fixture', encryption: null }), resolveBaseUrl: () => origin,
+            } });
+            expect(registry.pluginDeclarations?.some(plugin => plugin.pluginId === pluginId)).toBe(true);
+            expect(registry.pluginEnablementById?.[pluginId]).toMatchObject({ enabled: true, projectScope });
+        } finally {
+            restore();
+            await app.close();
+            await rm(happyHomeDir, { recursive: true, force: true });
+        }
+    });
+
     it.each([
         { status: 503, code: 'database_connection_unavailable', ingress: 'creation' },
         { status: 429, code: 'usage_limit_exceeded', ingress: 'creation' },

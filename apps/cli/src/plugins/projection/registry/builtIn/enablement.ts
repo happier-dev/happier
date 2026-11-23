@@ -1,6 +1,7 @@
 import type { ResolvedPluginEnablement, UnavailableAgentPlugin } from '../types';
 import { createActionExecuteFailureError, isActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1';
+import type { PluginProjectScopeV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import { isDeepStrictEqual } from 'node:util';
 
 export const ACCOUNT_PLUGIN_CENSUS_UNAVAILABLE_MESSAGE = 'Account plugin availability could not be checked. Try again in a moment.';
@@ -31,6 +32,21 @@ export function resolveBundledPluginEnablement(params: Readonly<{
             } : {}),
         })];
     })));
+}
+
+/** Attach the saved Account scope to the same admission facts in each runtime. */
+export function withAccountPluginProjectScopes(
+    enablement: Readonly<Record<string, ResolvedPluginEnablement>>,
+    intents: Iterable<readonly [string, Readonly<{ projectScope?: PluginProjectScopeV1 }> | null | undefined]>,
+): Readonly<Record<string, ResolvedPluginEnablement>> {
+    const scoped = new Map<string, ResolvedPluginEnablement>();
+    for (const [pluginId, intent] of intents) {
+        if (!intent?.projectScope) continue;
+        scoped.set(pluginId, Object.freeze({ ...(enablement[pluginId] ?? { machineEnabled: true, enabled: true }),
+            projectScope: intent.projectScope,
+        }));
+    }
+    return scoped.size === 0 ? enablement : Object.freeze({ ...enablement, ...Object.fromEntries(scoped) });
 }
 
 /** Session entry points carry the admission owner's cause to Action settlement. */

@@ -2,7 +2,7 @@ import type { AgentCatalogEntry, CatalogAgentId } from '@/agent/catalog/types';
 import { createResolvedContributionRegistry } from '../createResolvedContributionRegistry';
 import { resolveBuiltInContributions } from '../resolveBuiltInContributions';
 import type { ResolvedContributionRegistry, ResolvedPluginEnablement, UnavailableAgentPlugin } from '../types';
-import { resolveBundledPluginEnablement } from './enablement';
+import { resolveBundledPluginEnablement, withAccountPluginProjectScopes } from './enablement';
 import { applyMachineRoleAdmission } from './machineRoles';
 import { BUNDLED_FIRST_PARTY_PLUGIN_METADATA } from '../sources/generatedBundledPluginManifests';
 import type { AccountPluginDataStorageHostDependencies } from '@/plugins/runtime/context/accountPluginDataStorage';
@@ -13,7 +13,6 @@ import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { projectActionFailureCauseV1, readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions/externalActionHttpError';
 import { logger } from '@/ui/logger';
-import type { PluginProjectScopeV1 } from '@happier-dev/protocol/plugins/availability/v1';
 
 /** Read desired scope facts once for this admission, never from its consumers. */
 export async function readCurrentBundledPluginEnablement(params?: Readonly<{
@@ -22,17 +21,17 @@ export async function readCurrentBundledPluginEnablement(params?: Readonly<{
   accountStorageDependencies?: Pick<AccountPluginDataStorageHostDependencies, 'readCredentials' | 'resolveBaseUrl'>;
   installedPluginIds?: readonly string[] | 'current';
 }>): Promise<Readonly<Record<string, ResolvedPluginEnablement>>> {
-  const state = params?.machineEnabledById === undefined || params.installedPluginIds === 'current'
+  const snapshot = params?.machineEnabledById === undefined || params.installedPluginIds === 'current'
     ? await (await import('@/plugins/store/registry/currentState'))
       .createPluginRegistryStateStore({ happyHomeDir: params?.happyHomeDir }).readSnapshot()
     : undefined;
-  const machineEnabledById = params?.machineEnabledById ?? state?.bundledPluginEnabledById;
+  const machineEnabledById = params?.machineEnabledById ?? snapshot?.bundledPluginEnabledById;
   const installedPluginIds = params?.installedPluginIds === 'current'
-    ? Object.entries(state?.plugins ?? {}).flatMap(([id, installation]) => installation.enabled ? [id] : [])
+    ? Object.entries(snapshot?.state.plugins ?? {}).flatMap(([id, installation]) => installation.state.enabled ? [id] : [])
     : params?.installedPluginIds ?? [];
   const pluginIds = BUNDLED_FIRST_PARTY_PLUGIN_METADATA.map(plugin => plugin.pluginId);
   let accountEnabledById: ReadonlyMap<string, boolean> | undefined;
-  const projectScopes = new Map<string, PluginProjectScopeV1>();
+  let accountIntents: Parameters<typeof withAccountPluginProjectScopes>[1] = [];
   let accountFailure: Parameters<typeof resolveBundledPluginEnablement>[0]['accountFailure'];
   try {
     const [{ readStoredCredentials }, { returnNullOnCliReloginRequired }] = await Promise.all([
@@ -48,7 +47,7 @@ export async function readCurrentBundledPluginEnablement(params?: Readonly<{
         serverUrl: params?.accountStorageDependencies?.resolveBaseUrl?.() ?? resolveServerHttpBaseUrl(),
         pluginIds: [...pluginIds, ...installedPluginIds] });
       accountEnabledById = new Map(pluginIds.map(pluginId => [pluginId, intents.get(pluginId)?.enabled ?? true]));
-      for (const [pluginId, intent] of intents) if (intent?.projectScope) projectScopes.set(pluginId, intent.projectScope);
+      accountIntents = intents;
     }
   } catch (error) {
     // No exception prose, request configuration or payload leaves this boundary.
@@ -69,10 +68,7 @@ export async function readCurrentBundledPluginEnablement(params?: Readonly<{
     logger.warnLocalFile('[PLUGIN RUNTIME] Account plugin census failed', accountFailure);
   }
   const enablement = resolveBundledPluginEnablement({ pluginIds, accountEnabledById, machineEnabledById, accountFailure });
-  if (projectScopes.size === 0) return enablement;
-  return Object.freeze({ ...enablement, ...Object.fromEntries([...projectScopes].map(([pluginId, projectScope]) => [pluginId,
-    Object.freeze({ ...(enablement[pluginId] ?? { machineEnabled: true, enabled: true }), projectScope }),
-  ])) });
+  return withAccountPluginProjectScopes(enablement, accountIntents);
 }
 
 /**
