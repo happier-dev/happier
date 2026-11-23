@@ -3081,6 +3081,15 @@ material: persisted Account mode still controls every Account-scoped read and wr
 Ordinary same-Account token refresh preserves genuine retained keys in the existing
 scoped credential. An unknown predecessor Account binding refuses refresh without
 changing its stored bytes; a known different Account never adopts those keys.
+
+A CLI token-only credential write for a different Account on the same Home
+replaces the credential and drops this computer's stored keys for the previous
+Account. The owner accepted this behavior on 2026-11-23 because refusing the
+replacement would block Account switching. The previous Account's keys can be
+recovered through its Account recovery path. In `cliAccountServiceSetupEntry.ts`,
+`commitHomeCredential` uses its own same-Account comparison to distinguish
+conflicting key material from missing material during setup.
+
 Terminal and Home QR provisioning read the authenticated target Home's persisted
 Account mode: a plain Account provisions typed token-only material even when this
 device retains historical keys. E2EE provisioning requires genuine material whose
