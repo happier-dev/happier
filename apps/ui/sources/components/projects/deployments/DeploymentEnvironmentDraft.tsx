@@ -83,6 +83,7 @@ import { openActionOperationDetail } from '@/components/inbox/actionOperations/o
 import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { DeploymentPlatformInspectState } from './DeploymentPlatformInspectState';
 import { DeploymentPlatformTargetEditor, useDeploymentPlatformTargets } from './DeploymentPlatformTargetSheet';
 import { DeploymentOwnMachineCost, DeploymentTargetPlans, DeploymentTargetPlansForAccount } from './DeploymentTargetPlans';
 import { describeDeploymentPlatformRefusal } from './deploymentPlatformRefusal';
@@ -700,6 +701,8 @@ export const DeploymentEnvironmentDraft = React.memo(
               title={t('projects.deployments.createApprovalTitle')}
               description={t('projects.deployments.createApprovalBody')}
             />
+          ) : platformRefusal?.code === 'needsGitAccess' ? (
+            <DeploymentPlatformInspectState outcome={null} refusal={{ code: platformRefusal.code, details: platformRefusal.failure?.details }} />
           ) : platformRefusal && platformRefusalCopy ? (
             <AttentionBanner
               testID="project-deployments.draft.refused"

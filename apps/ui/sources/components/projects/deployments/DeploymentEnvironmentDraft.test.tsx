@@ -1451,11 +1451,13 @@ describe('Environment draft Machine Home', () => {
 
   // AUTO-LIVE-REVIEW F-REVFAIL (journey-deploy revFail, A3): Create saved the Environment, then the platform refused to
   // make its project (Vercel 409: the name is taken). Review keeps the stepped plan and says, row by row, what exists.
-  type PlatformRefusalCause = { phase: string; errorClass: string; errorCode: string; httpStatus: number };
+  type PlatformRefusalCause = { phase: string; errorClass: string; errorCode: string | null; nativeErrorCode?: string; httpStatus: number };
   type PlatformRefusalScreen = Readonly<{ text: () => string; rowText: (testID: string) => string;
-    banner: () => Readonly<{ description?: string; details?: readonly string[] }> | undefined }>;
+    banner: () => Readonly<{ description?: string; details?: readonly string[] }> | undefined;
+    press: (testID: string) => Promise<void> }>;
   async function refusePlatformCreateAfterSave(host: string, failureCause: PlatformRefusalCause,
-    check: (screen: PlatformRefusalScreen) => Promise<void>) {
+    check: (screen: PlatformRefusalScreen) => Promise<void>,
+    refusal: { code: string; details?: unknown } = { code: 'provider_request_failed' }) {
     const serverId = await homes.addHome({ name: 'Project', serverUrl: `https://${host}.test`, accountId: 'alice',
       serverIdentityId: `srv_${'f'.repeat(32)}`, currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);
@@ -1495,12 +1497,12 @@ describe('Environment draft Machine Home', () => {
           serverId: `srv_${'f'.repeat(32)}`, controllerMachineId: 'runtime' }), targetLinks: [] } });
       homes.answer(serverId, 'POST /v1/deployments/targets/list', {
         body: { ok: true, items: [], nextCursor: null, coverage: 'complete' } });
-      // The provider refuses the project at link time: HTTP 409 conflict, as Vercel answers a taken project name.
+      // The provider refuses to create its resource after the Home has saved the Environment.
       await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
         actionId: 'deployments.targets.link', tokenEpoch: 0, execute: () => { links++; return { refused: true }; },
         failure: result => typeof result === 'object' && result !== null && 'refused' in result
-          ? { errorCode: 'provider_request_failed', error: 'provider_request_failed', effectAttempted: true,
-            failureCause } : null });
+          ? { errorCode: refusal.code, error: refusal.code, effectAttempted: true,
+            details: refusal.details, failureCause } : null });
       await publishMachineInventoryForTest(account.accountLifetime.scope,
         [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
       const steps = { onFrame: (frame: DeploymentDraftFrame) => { frames.push(frame); }, onExit: () => {} };
@@ -1536,14 +1538,16 @@ describe('Environment draft Machine Home', () => {
       await settle(() => expect(frame().primary.disabled).toBe(false));
       await act(async () => frame().press());
       await settle(() => expect(links, screen.getTextContent()).toBe(1));
-      await settle(() => expect(screen.findByTestId('project-deployments.draft.refused'), screen.getTextContent()).not.toBeNull());
+      await settle(() => expect(screen.findByTestId('project-deployments.draft.creates.platform.refused'),
+        screen.getTextContent()).not.toBeNull());
       const { t } = await import('@/text');
       const rowText = (testID: string) => screen.findByTestId(testID)?.findAll(() => true)
         .flatMap(node => node.children.filter(value => typeof value === 'string')).join(' ') ?? '';
       expect(rowText('project-deployments.draft.creates.environment')).toContain(t('newApp.deploy.plan.saved'));
       const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
       await check({ text: () => screen.getTextContent(), rowText, banner: () => screen.findAllByType(AttentionBanner)
-        .find(node => node.props.testID === 'project-deployments.draft.refused')?.props });
+        .find(node => node.props.testID === 'project-deployments.draft.refused')?.props,
+        press: async testID => { await screen.pressByTestIdAsync(testID); } });
       // The generic partial-progress view (raw Environment id, "Couldn't change this setting") is not this Review.
       expect(screen.findByTestId('project-deployments.draft.progress')).toBeNull();
       expect(frame().refused, 'something was created, so the dialog does not say nothing was').toBe(false);
@@ -1583,6 +1587,22 @@ describe('Environment draft Machine Home', () => {
       expect(screen.text()).not.toContain(t('newApp.deploy.plan.platformNameTaken', { platform: 'Beta runtime' }));
       expect(screen.rowText('project-deployments.draft.creates.platform.refused')).toContain(t('newApp.deploy.plan.refusedRow'));
     });
+  });
+
+  it('opens the provider Git grant from the refused Create review after saving the Environment', async () => {
+    const grantUrl = 'https://dash.cloudflare.com/fixture/workers-and-pages';
+    const browserOpen = vi.fn();
+    vi.stubGlobal('open', browserOpen);
+    try {
+      await refusePlatformCreateAfterSave('draft-platform-create-git-grant',
+        { phase: 'deployment.provider.link', errorClass: 'Error', errorCode: null, nativeErrorCode: '8000008', httpStatus: 404 },
+        async screen => {
+          await screen.press('project-deployments.platform.needsGitAccess-action');
+          await waitForHomeGovernance(() => expect(browserOpen.mock.calls.map(call => call[0])).toEqual([grantUrl]));
+        }, { code: 'needsGitAccess', details: { phase: 'link', grantUrl } });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('waits for declarations before calling a previously chosen platform unavailable', async () => {
