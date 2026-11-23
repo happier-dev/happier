@@ -23,26 +23,40 @@ export function useStoredDefinitionDocument(environmentId: string, definition: D
 }
 
 /** Overview reads the current definition; Settings remains the one editor and Move owner. */
+/**
+ * The Overview's one Definition section (PAGE-ACCEPT-176 R13-D4, lab rdEnv-envOv): one Compose file row, a Compare row
+ * when the deployed revision differs (it opens the serving receipt, where the deployed document and the diff live), and
+ * what a repository would add as a row of its own, with Move… as its action.
+ */
 export function StoredDefinitionOverview(props: Readonly<{
   revision: number;
+  /** The serving receipt's revision, once known; a different one offers Compare. */
+  deployedRevision: number | null;
   editable: boolean;
   onOpen: () => void;
+  onCompare: () => void;
   onMove: (() => void) | null;
 }>) {
-  return <>
+  const deployedDiffers = props.deployedRevision !== null && props.deployedRevision !== props.revision;
+  return (
     <ItemGroup testID="project-deployments.environment.definition"
       title={t('projects.deployments.overviewStatus.definitionTitle')}
       description={t('projects.deployments.overviewStatus.definitionStoredDescription', { revision: props.revision })}
       action={<SectionActionButton testID="project-deployments.environment.definition.edit"
         title={t(props.editable ? 'common.edit' : 'common.open')} onPress={props.onOpen} />}>
       <Item title={t('projects.deployments.composeFile')} onPress={props.onOpen} />
+      {deployedDiffers ? <Item testID="project-deployments.environment.definition.compare"
+        title={t('projects.scripts.definition.compare')}
+        subtitle={t('projects.deployments.review.versionStored', { revision: props.deployedRevision! })}
+        onPress={props.onCompare} /> : null}
+      <Item testID="project-deployments.environment.definition.repositoryRequired"
+        title={t('projects.deployments.overviewStatus.definitionRepositoryRequiredTitle')}
+        subtitle={t('projects.deployments.overviewStatus.definitionRepositoryRequiredBody')} subtitleLines={0}
+        showChevron={false} accessoryLayout="adaptive"
+        rightElement={props.onMove ? <SectionActionButton testID="project-deployments.environment.definition.move"
+          title={t('projects.deployments.overviewStatus.definitionMoveOpen')} onPress={props.onMove} /> : undefined} />
     </ItemGroup>
-    <ItemGroup testID="project-deployments.environment.definition.repositoryRequired"
-      title={t('projects.deployments.overviewStatus.definitionRepositoryRequiredTitle')}
-      description={t('projects.deployments.overviewStatus.definitionRepositoryRequiredBody')}
-      action={props.onMove ? <SectionActionButton testID="project-deployments.environment.definition.move"
-        title={t('projects.deployments.overviewStatus.definitionMoveOpen')} onPress={props.onMove} /> : undefined}>{null}</ItemGroup>
-  </>;
+  );
 }
 
 /** Only Save crosses the incumbent update Action; selectors and sidecar files retain their owner. */

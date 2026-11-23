@@ -194,7 +194,8 @@ describe('native confirmation of a carried executor review', () => {
       const copyReview = screen.getTextContent();
       expect(copyReview).toContain('Repository');
       // Each item says what it is (PAGE-ACCEPT-176 R12-D6: "Kept for rollback · 1 · A machine · database").
-      expect(copyReview).toContain('Keeps 1 previous version for rollback');
+      // How many are kept is said once, by the defaults row (R13-D8: Duplicate's Review said it in both groups).
+      expect(copyReview).not.toContain('Keeps 1 previous version for rollback');
       expect(copyReview).toContain('Rollout and restore settings');
       expect(copyReview).toContain('Private share: database, on the Happier network');
       expect(copyReview).not.toContain('A machine');

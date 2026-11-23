@@ -335,10 +335,10 @@ function DeploymentDispositionSheet(
                 machine,
               })
             : t('projects.deployments.deleteLeadIdle', { name: props.name })}
+        {/* Who may do this without asking is one more sentence of the lead, not a stray caption (R11-D8, R13-D8). */}
+        {agentsAskFirst ? <Text testID="project-deployments.disposition.agentsAskFirst">
+          {` ${t('projects.deployments.agentsAskFirstNote')}.`}</Text> : null}
       </Text>
-      {/* Who may do this without asking is part of what the person reads first, not a note beside Cancel (R11-D8). */}
-      {agentsAskFirst ? <Text testID="project-deployments.disposition.agentsAskFirst" variant="meta"
-        style={{ color: theme.colors.text.secondary }}>{t('projects.deployments.agentsAskFirstNote')}</Text> : null}
       {props.running || props.hasRetainedAssociations ? (
         <SelectionTiles<Choice>
           testIdPrefix="project-deployments.disposition.choice"

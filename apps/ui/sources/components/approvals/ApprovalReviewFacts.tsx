@@ -231,6 +231,9 @@ export function DeploymentCreationReviewFacts(props: Readonly<{
   const defaultsRows = renderDeploymentCreationDefaultsRows({ defaults: review.creationDefaults, machineName, testID: `${testID}.defaults`,
     namedMachineId: plan?.runs ? plan.runsOn.machineId : null });
   const runsOn = plan?.runsOn;
+  // How many versions are kept is said once, by its defaults row (PAGE-ACCEPT-176 R13-D8).
+  const copyIncluded = (review.copy?.included ?? []).filter(value => !(value.startsWith('retainPreviousDeployments:copy')
+    && review.creationDefaults.values.retainPreviousDeployments !== undefined));
   // What is left out reads as the same names the Deploy review lists, collapsed past a handful by the shared value.
   const folderRows = review.folder ? describeDeploymentFolderReviewFiles(review.folder).map((row) => 'names' in row
     ? <Item key={row.key} testID={`${testID}.${row.key}`} title={row.label} accessoryLayout="stacked" showChevron={false}
@@ -277,8 +280,8 @@ export function DeploymentCreationReviewFacts(props: Readonly<{
         {folderRows}
         {defaultsRows}
       </ItemGroup>}
-      {review.copy?.included.length ? <ItemGroup title={t('projects.deployments.copy.include')}>
-        {review.copy.included.map(value => <Item key={value} mode="info" title={deploymentCopyReviewLabel(value)} />)}
+      {copyIncluded.length ? <ItemGroup title={t('projects.deployments.copy.include')}>
+        {copyIncluded.map(value => <Item key={value} mode="info" title={deploymentCopyReviewLabel(value)} />)}
       </ItemGroup> : null}
       {review.copy?.omitted.length ? <ItemGroup title={t('projects.deployments.copy.omit')}>
         {review.copy.omitted.map(value => <Item key={value} mode="info" title={deploymentCopyReviewLabel(value)} />)}

@@ -487,6 +487,36 @@ it.each(['update_available', 'removed_from_source', 'unchecked'] as const)(
   },
 );
 
+// PAGE-ACCEPT-176 R13-D4 (lab rdEnv-envOv): what runs leads under the facts; the Definition is one section with one
+// Compose file row (the deployed revision is compared from there), never a second "Deployed definition" document row.
+it('leads the deployed Overview with what runs, then one Definition with one Compose file row', async () => {
+  const { t } = await import('@/text');
+  const base = environmentDetailForHome();
+  const definition = { kind: 'stored' as const, document: 'services: {app: {image: nginx:2}}', composeDigest: `sha256:${'b'.repeat(64)}`,
+    contentRevision: 3, profiles: [], services: ['app'] };
+  const detail = environmentDetailForHome({ content: { ...base.content, definition } });
+  const servingId = detail.targetLinks.find(row => row.targetLink.id === detail.environment.runtimeTargetLinkId)?.targetLink.activeDeploymentId;
+  const fixture = createDeploymentReceiptDetailV1();
+  const serving = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: servingId! }), content: { ...fixture.content,
+    sourceIntent: { ...definition, document: 'services: {app: {image: nginx:1}}', contentRevision: 2, composeDigest: `sha256:${'a'.repeat(64)}` } } });
+  const { controller } = controllerFor({ detail, receipt: serving });
+  const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+  try {
+    const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+      demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null}
+      review={noReview} onOpenReceipt={() => {}} lifetime={lifetime} />);
+    await waitForContent(screen, 'project-deployments.environment.services');
+    await waitForContent(screen, 'project-deployments.environment.definition');
+    const text = screen.getTextContent();
+    expect(text.indexOf(t('projects.deployments.overviewStatus.whatRunsTitle')))
+      .toBeLessThan(text.indexOf(t('projects.deployments.overviewStatus.definitionTitle')));
+    // One Compose file row on the page (the deployed document no longer repeats it in a second section).
+    const { Item } = await import('@/components/ui/lists/Item');
+    expect(screen.findAllByType(Item).filter(node => node.props.title === t('projects.deployments.composeFile'))).toHaveLength(1);
+    expect(screen.findByTestId('project-deployments.receipt.definition')).toBeNull();
+  } finally { controller.retire(); }
+});
+
 // Deploy from CI closes the Overview (pfc-redesign r4 dEnvOv KEEP, owner-approved 11-13).
 it.each(['repository', 'stored'] as const)('opens CI token setup only for a %s Environment', async kind => {
   const { ModalProvider } = await import('@/modal');

@@ -32,6 +32,8 @@ import type { CustomModalInjectedProps } from '@/modal';
 import type { BaseModalConfig } from '@/modal/types';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { subscribeMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjection';
@@ -248,9 +250,13 @@ export function SetupOriginRow(props: Readonly<{
         : (all ?? []).filter(candidate => choices.some(choice => choice.machineId === candidate.id)), [all, choices]);
     if (machines && machines.length > 1 && props.serverId) {
         const selected = choices?.find(choice => choice.selected)?.machineId ?? props.machineId;
-        return <SessionMachineField testID="plugin-event-automation-setup-surface-origin" serverId={props.serverId}
-            machines={machines} machineId={selected} title={props.label}
-            onSelectMachine={next => { if (next.id !== selected) props.chooseWatcher(next.id); }} />;
+        // The field's row bleeds to the form's edge, so its label stands where the plugin's labels below it do
+        // (R13-D8: as a bare row it sat one row inset further in, x 470 against the tiles' 456).
+        return <ListPresentationProvider value="page" pageInsets="contained"><ItemGroup surface="none" header="none">
+            <SessionMachineField testID="plugin-event-automation-setup-surface-origin" serverId={props.serverId}
+                machines={machines} machineId={selected} title={props.label}
+                onSelectMachine={next => { if (next.id !== selected) props.chooseWatcher(next.id); }} />
+        </ItemGroup></ListPresentationProvider>;
     }
     // It stands on the form's own edge and rhythm, as the plugin's fields below it do: a label over its value.
     return (

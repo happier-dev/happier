@@ -1163,44 +1163,9 @@ export const DeploymentEnvironmentDetail = React.memo(
               ) : null}
               {/* Before anything serves, the Environment's agent actions are the next step under the facts. */}
               {arrival.agentActions === 'primary' ? environmentAgentActions : null}
-              {/* The kept order (pfc-redesign r4 dEnvOv KEEP item 3, owner-approved 11-13): Definition and Needs a
-                  repository, Deployed definition, Data, Previews; what runs, triggers, push setup and CI follow. */}
-              {detail.content.definition.kind === 'stored' ? <StoredDefinitionOverview
-                revision={detail.content.definition.contentRevision}
-                editable={environmentEditing !== null && detail.environment.capabilities.role === 'manager'}
-                onOpen={() => openTab('settings')}
-                onMove={environmentEditing?.actions.moveToRepository && detail.environment.capabilities.role === 'manager'
-                  ? () => openTab('settings') : null} /> : null}
-              {/* What the latest Receipt decides is appended once it settles, never inserted above (R12-D3). */}
               {arrival.body === 'held' ? <PageLoadingRows testID="project-deployments.environment.body.loading" /> : <>
-              {active.snapshot.value?.content?.sourceIntent ? <DeploymentVersionComparison presentation="summary"
-                source={active.snapshot.value.content.sourceIntent} current={detail.content.definition}
-                workspaceRef={props.workspaceRef} serverId={props.serverId} accountId={props.accountId} demand={props.demand} /> : null}
-              <DeploymentDataCard scope={navigationScope} detail={detail} place={knownMachine(machineIds[0])}
-                lifetime={props.lifetime} presented={props.demand.mounted && props.demand.visible && props.demand.focused}
-                onOpen={props.onOpenDatabase}
-                onBackups={() => openTab('settings', 'backups')}
-                onAdd={() => { openAddDatabase?.(); }} />
-              {/* A stored definition's own section already says previews follow a repository: one cause, said once
-                  (PAGE-ACCEPT-176 R10-D9). */}
-              {previewAvailability !== 'preview'
-                && !(previewAvailability === 'needsRepository' && detail.content.definition.kind === 'stored') ? (
-                // Previews are a section of their own (title, purpose, current state), never a lone card under Triggers.
-                <ItemGroup testID="project-deployments.environment.overview.previewsSection"
-                  title={t('projects.deployments.sectionPreviews')}
-                  description={t('projects.deployments.sectionPreviewsDescription')}>
-                  <Item testID="project-deployments.environment.overview.previews"
-                    icon={<Icon name="git-pull-request" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
-                    title={previewAvailability === 'needsRepository'
-                      ? t('projects.deployments.settingsSections.previewsNeedRepository')
-                      : t('projects.deployments.settingsSections.previewEditor.configure')}
-                    subtitle={previewAvailability === 'needsRepository' ? undefined
-                      : t(previewAvailability === 'on'
-                        ? 'projects.deployments.settingsSections.previewsOn'
-                        : 'projects.deployments.settingsSections.previewsOff')}
-                    onPress={previewAvailability === 'needsRepository' ? undefined : () => openTab('settings', 'previews')} />
-                </ItemGroup>
-              ) : null}
+              {/* What runs leads under the facts (PAGE-ACCEPT-176 R13-D4, lab rdEnv-envOv); the one Definition section
+                  follows, then Data and Previews; triggers, push setup and CI close the Overview. */}
               {services.length > 0 ? (
                 <ItemGroup
                   testID="project-deployments.environment.services"
@@ -1250,6 +1215,46 @@ export const DeploymentEnvironmentDetail = React.memo(
                     onOpenDomains={() => openTab('domains')}
                     onOpenServing={openAdminAddress}
                   />
+              ) : null}
+              {detail.content.definition.kind === 'stored' ? <StoredDefinitionOverview
+                revision={detail.content.definition.contentRevision}
+                deployedRevision={active.snapshot.value?.content?.sourceIntent?.kind === 'stored'
+                  ? active.snapshot.value.content.sourceIntent.contentRevision : null}
+                editable={environmentEditing !== null && detail.environment.capabilities.role === 'manager'}
+                onOpen={() => openTab('settings')}
+                onCompare={openServingReceipt}
+                onMove={environmentEditing?.actions.moveToRepository && detail.environment.capabilities.role === 'manager'
+                  ? () => openTab('settings') : null} /> : null}
+              {/* A repository's deployed commit against its branch stays with its comparison; a stored definition's
+                  deployed revision is compared from the Definition section. */}
+              {active.snapshot.value?.content?.sourceIntent && active.snapshot.value.content.sourceIntent.kind !== 'stored'
+                ? <DeploymentVersionComparison presentation="summary"
+                source={active.snapshot.value.content.sourceIntent} current={detail.content.definition}
+                workspaceRef={props.workspaceRef} serverId={props.serverId} accountId={props.accountId} demand={props.demand} /> : null}
+              <DeploymentDataCard scope={navigationScope} detail={detail} place={knownMachine(machineIds[0])}
+                lifetime={props.lifetime} presented={props.demand.mounted && props.demand.visible && props.demand.focused}
+                onOpen={props.onOpenDatabase}
+                onBackups={() => openTab('settings', 'backups')}
+                onAdd={() => { openAddDatabase?.(); }} />
+              {/* A stored definition's own section already says previews follow a repository: one cause, said once
+                  (PAGE-ACCEPT-176 R10-D9). */}
+              {previewAvailability !== 'preview'
+                && !(previewAvailability === 'needsRepository' && detail.content.definition.kind === 'stored') ? (
+                // Previews are a section of their own (title, purpose, current state), never a lone card under Triggers.
+                <ItemGroup testID="project-deployments.environment.overview.previewsSection"
+                  title={t('projects.deployments.sectionPreviews')}
+                  description={t('projects.deployments.sectionPreviewsDescription')}>
+                  <Item testID="project-deployments.environment.overview.previews"
+                    icon={<Icon name="git-pull-request" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
+                    title={previewAvailability === 'needsRepository'
+                      ? t('projects.deployments.settingsSections.previewsNeedRepository')
+                      : t('projects.deployments.settingsSections.previewEditor.configure')}
+                    subtitle={previewAvailability === 'needsRepository' ? undefined
+                      : t(previewAvailability === 'on'
+                        ? 'projects.deployments.settingsSections.previewsOn'
+                        : 'projects.deployments.settingsSections.previewsOff')}
+                    onPress={previewAvailability === 'needsRepository' ? undefined : () => openTab('settings', 'previews')} />
+                </ItemGroup>
               ) : null}
               <DeploymentPendingRequest pending={detail.pendingDeployment} serverId={props.serverId} />
               {detail.content.definition.kind === 'repository' ? <DeploymentPullRequestDeploy
@@ -1912,8 +1917,9 @@ function DeploymentHistoryPage(
   }, [receipts]);
   return (
     <>
-      {/* The filter line stands on the list's column, the same inset as the day sections below it. */}
-      <ItemGroup surface="none" header="none">
+      {/* The filter line stands on the list's column, the same inset as the day sections below it. An untitled
+          section, not header="none": it keeps one section gap below the notice slot's banner (R13-D8). */}
+      <ItemGroup surface="none">
       <View style={styles.historyFilters}>
         <View style={styles.historyTokens}>
           <SegmentedTabBar<HistoryOutcome> role="radiogroup" segmentSizing="content"
