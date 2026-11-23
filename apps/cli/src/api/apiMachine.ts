@@ -472,8 +472,8 @@ export const CURRENT_MACHINE_OPERATION_PROTOCOL_CAPABILITIES_V1:
         sessionFollow: { contextV1: true, wakeOnHumanChangeV1: true },
         sessionInputAdmission: { protocolVersions: [1, 2, 3] as const },
         sessionSpawn: { protocolVersions: [1, 2] as const },
-        pluginWebhookClaim: { protocolVersions: [1] },
-        externalActionExecutionAuthorization: { protocolVersions: [1] },
+        pluginWebhookClaim: { protocolVersions: [1] as const },
+        externalActionExecutionAuthorization: { protocolVersions: [1] as const },
     });
 
 export type AccountSettingsVersionHintNotification = Readonly<{
