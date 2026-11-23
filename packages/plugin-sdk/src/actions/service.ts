@@ -321,4 +321,5 @@ export interface ActionsService {
   }>>;
 }
 
+export { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 export { readExecutionRunStartRunCreation } from '@happier-dev/protocol/execution/runs/responseSchemas';

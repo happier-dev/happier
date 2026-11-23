@@ -120,4 +120,5 @@ export { seedInputByFieldHints } from './inputHints.js';
 export { databaseActionMetadata, databaseActionOperationClass } from './contracts.js';
 export { databaseActionLocalIdV1, isDatabaseActionIdV1 } from './contracts.js';
 
+export { readPluginActionFailureAuthorPayload } from './service.js';
 export { readExecutionRunStartRunCreation } from './service.js';
