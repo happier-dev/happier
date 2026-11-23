@@ -131,6 +131,10 @@ const TAB_LABEL_KEYS = {
 export function ReviewDetailView(
   props: ReviewDetailViewProps,
 ): React.ReactElement {
+  const [viewportHeight, setViewportHeight] = React.useState(0);
+  const measureViewport = React.useCallback((event: { nativeEvent: { layout: { height: number } } }) => {
+    setViewportHeight(event.nativeEvent.layout.height);
+  }, []);
   const tabs = React.useMemo(
     (): readonly SegmentedTab<ReviewDetailTabId>[] =>
       props.tabs.map((tab) => ({
@@ -150,7 +154,7 @@ export function ReviewDetailView(
   const qualityReviewers = props.qualityReviewers ?? props.quality?.reviewers ?? NO_QUALITY_REVIEWERS;
   const showsQuality = Boolean(props.quality) || (props.qualityUnavailableReason === 'partial' && qualityReviewers.length > 0);
   return (
-    <ItemList testID={props.testID ?? 'review-detail'} pageColumn="wide">
+    <ItemList testID={props.testID ?? 'review-detail'} pageColumn="wide" onLayout={measureViewport}>
       <PageHeader
         title={props.title}
         meta={props.meta}
@@ -186,7 +190,10 @@ export function ReviewDetailView(
         {props.detailPending ? <ItemGroup header="none"><ItemLoadStateRows state={LOADING_STATE} rows={3} /></ItemGroup> : <>
           {props.submit ?? null}
           <ReviewDetailTabsLine tabs={tabs} activeTab={props.activeTab} onSelectTab={props.onSelectTab} />
-          <View testID={`review-detail:panel:${props.activeTab}`}>
+          {/* Changes owns an inner code/index scroller. Its viewport is this physical page's viewport,
+              never the wrapped code's content height; the page's heading can still scroll above it. */}
+          <View testID={`review-detail:panel:${props.activeTab}`}
+            style={props.activeTab === 'changes' ? { height: viewportHeight, minHeight: 0 } : undefined}>
             {props.children}
           </View>
         </>}

@@ -132,6 +132,7 @@ const excerptStyles = StyleSheet.create((theme) => ({
     list: { gap: theme.space.s16 },
     // On the Review page's sheet edge, with the glance and tabs above it.
     inset: { paddingHorizontal: resolveItemGroupContentHorizontalInsetPx() },
+    viewport: { flex: 1, minHeight: 0 },
     item: { gap: theme.space.s6 },
     head: { flexDirection: 'row', alignItems: 'baseline', gap: theme.space.s8, flexWrap: 'wrap' },
     title: { color: theme.colors.text.primary, flexShrink: 1 },
@@ -201,7 +202,7 @@ function BoundReviewChanges(props: ReviewChangesHostProps & Readonly<{
         {excerpts}
     </> : <SurfaceStateCard kind="loading" title={t('common.loading')} />;
     // The changes keep the page's column, on the edge its sections and tabs stand on.
-    return <View style={excerptStyles.inset}><WorkspaceScmReviewBody hosted comparison={comparison} view={props.view} scopeLabel={scopeLabel}
+    return <View style={[excerptStyles.inset, excerptStyles.viewport]}><WorkspaceScmReviewBody hosted comparison={comparison} view={props.view} scopeLabel={scopeLabel}
         scopeOptions={NO_SCOPE_OPTIONS} onSelectComparison={ignore} onSelectView={selectView} rootPath={cwd}
         activeReviewFile={activeReviewFile} onVisibleFileRowCountChange={setIndexPageSize}
         explain={false} onExplainChange={ignore} filesState={filesState}
