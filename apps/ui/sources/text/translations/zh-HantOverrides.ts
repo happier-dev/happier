@@ -1648,7 +1648,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     failureNoReason: '未記錄原因。',
     failureNamed: ({ action }: { action: string }) => `未能完成：${action}`,
     pluginChangeDaemonUnavailable: 'Happier 無法連線到這台機器來變更其外掛程式，因此沒有任何變更。',
-    failureNotRun: '請求未執行',
+    failureNotRun: ({ action }: { action: string }) => `未執行：${action}`,
     failureNotAuthorized: "此 Home 未接受該請求，因此沒有執行任何操作。",
     failureFileWrite: '無法寫入檔案',
     failureFileRead: '無法讀取檔案',

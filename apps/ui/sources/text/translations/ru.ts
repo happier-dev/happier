@@ -2199,7 +2199,7 @@ export const ru: TranslationStructure = {
     failureNoReason: 'Причина не записана.',
     failureNamed: ({ action }: { action: string }) => `Не удалось завершить: ${action}`,
     pluginChangeDaemonUnavailable: 'Happier не смог связаться с машиной, чтобы изменить её плагины, поэтому ничего не изменилось.',
-    failureNotRun: 'Запрос не выполнен',
+    failureNotRun: ({ action }: { action: string }) => `Не выполнено: ${action}`,
     failureNotAuthorized: "Этот Home не принял запрос, поэтому ничего не выполнено.",
     failureFileWrite: 'Не удалось записать файл',
     failureFileRead: 'Не удалось прочитать файл',

@@ -82,6 +82,7 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key, params) => {
         if (key === 'workflows.triggers.checks.consentFacts' && params && 'name' in params) return `Set up by ${params.name}`;
         if (key === 'workflows.triggers.checks.consentTitle' && params && 'workflow' in params) return String(params.workflow);
+        if (key === 'approvals.failureNotRun' && params && 'action' in params) return `approvals.failureNotRun:${String(params.action)}`;
         return key;
     } });
 });
@@ -778,7 +779,9 @@ describe('ApprovalPromptCard', () => {
             execution: { executedAtMs: 3, ok: false, errorCode: 'approval_stale', error: 'approval_stale' } });
         const screen = await renderCard(approval, { chrome: 'inline' });
         const text = screen.getTextContent();
-        expect(text).toContain('approvals.failureNotRun');
+        // Like its sibling "Couldn't finish: <Action>", the not-run headline names the Action it did not run.
+        const { resolveApprovalActionTitle } = await import('./approvalFailureOutcome');
+        expect(text).toContain(`approvals.failureNotRun:${resolveApprovalActionTitle(approval)}`);
         expect(text).not.toContain('approvals.failureFileWrite');
         expect(text).toContain('approvals.staleFailure');
     });

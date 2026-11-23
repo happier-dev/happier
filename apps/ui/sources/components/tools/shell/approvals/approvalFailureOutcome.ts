@@ -139,7 +139,8 @@ export function resolveApprovalActionTitle(approval: ApprovalRequest): string {
 function readFailureHeadline(approval: ApprovalRequest, failure: ActionExecuteFailure): string {
     if (approval.status === 'outcome_unknown') return t('automations.detail.runMeta.dispatchState.outcomeUnknown');
     if ((approval.v === 2 && approval.execution?.effectAttempted === false) || isApprovalDecisionStale(failure)) {
-        return t('approvals.failureNotRun');
+        // Named like its sibling "Couldn't finish: <Action>": what was not run, said once here for every kind.
+        return t('approvals.failureNotRun', { action: resolveApprovalActionTitle(approval) });
     }
     const actionId = approval.actionId;
     switch (actionId) {

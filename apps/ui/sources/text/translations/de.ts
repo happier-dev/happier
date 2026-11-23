@@ -1979,7 +1979,7 @@ export const de: TranslationStructure = {
         failureNoReason: 'Es wurde kein Grund aufgezeichnet.',
         failureNamed: ({ action }: { action: string }) => `Nicht abgeschlossen: ${action}`,
         pluginChangeDaemonUnavailable: 'Happier konnte den Rechner nicht erreichen, um seine Plugins zu ändern, daher wurde nichts geändert.',
-        failureNotRun: 'Anfrage nicht ausgeführt',
+        failureNotRun: ({ action }: { action: string }) => `Nicht ausgeführt: ${action}`,
         failureNotAuthorized: "Dieses Home hat die Anfrage nicht angenommen, daher wurde nichts ausgeführt.",
         failureFileWrite: 'Datei konnte nicht geschrieben werden',
         failureFileRead: 'Datei konnte nicht gelesen werden',

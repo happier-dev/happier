@@ -2183,7 +2183,7 @@ export const zhHans: TranslationStructure = {
     failureNoReason: '未记录原因。',
     failureNamed: ({ action }: { action: string }) => `未能完成：${action}`,
     pluginChangeDaemonUnavailable: 'Happier 无法连接到这台机器来更改其插件，因此没有任何更改。',
-    failureNotRun: '请求未执行',
+    failureNotRun: ({ action }: { action: string }) => `未执行：${action}`,
     failureNotAuthorized: "此 Home 未接受该请求，因此没有运行任何操作。",
     failureFileWrite: '无法写入文件',
     failureFileRead: '无法读取文件',

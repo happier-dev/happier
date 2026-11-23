@@ -1772,7 +1772,7 @@ const enApprovals = {
   failureNoReason: 'No reason was recorded.',
   failureNamed: ({ action }: { action: string }) => `Couldn't finish: ${action}`,
   pluginChangeDaemonUnavailable: 'Happier couldn’t reach the Machine to change its plugins, so nothing changed.',
-  failureNotRun: 'Request not run',
+  failureNotRun: ({ action }: { action: string }) => `Not run: ${action}`,
   failureNotAuthorized: "This Home didn’t accept the request, so nothing ran.",
   failureFileWrite: "Couldn't write the file",
   failureFileRead: "Couldn't read the file",

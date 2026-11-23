@@ -2352,7 +2352,7 @@ export const ja: TranslationStructure = {
     failureNoReason: '理由は記録されていません。',
     failureNamed: ({ action }: { action: string }) => `完了できませんでした：${action}`,
     pluginChangeDaemonUnavailable: 'Happier がマシンに接続できずプラグインを変更できなかったため、何も変更されていません。',
-    failureNotRun: 'リクエストは実行されませんでした',
+    failureNotRun: ({ action }: { action: string }) => `未実行：${action}`,
     failureNotAuthorized: "このホームがリクエストを受け付けなかったため、何も実行されませんでした。",
     failureFileWrite: 'ファイルを書き込めませんでした',
     failureFileRead: 'ファイルを読み取れませんでした',

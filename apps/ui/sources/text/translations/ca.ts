@@ -2205,7 +2205,7 @@ export const ca: TranslationStructure = {
         failureNoReason: "No s'ha registrat cap motiu.",
         failureNamed: ({ action }: { action: string }) => `No s'ha pogut completar: ${action}`,
         pluginChangeDaemonUnavailable: "Happier no ha pogut connectar amb la màquina per canviar-ne els connectors, així que no s'ha canviat res.",
-        failureNotRun: 'Sol·licitud no executada',
+        failureNotRun: ({ action }: { action: string }) => `No executada: ${action}`,
         failureNotAuthorized: "Aquest Home no ha acceptat la sol·licitud, així que no s’ha executat res.",
         failureFileWrite: "No s'ha pogut escriure el fitxer",
         failureFileRead: "No s'ha pogut llegir el fitxer",

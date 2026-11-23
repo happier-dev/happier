@@ -2406,7 +2406,7 @@ export const pt: TranslationStructure = {
     failureNoReason: 'Nenhum motivo foi registrado.',
     failureNamed: ({ action }: { action: string }) => `Não foi possível concluir: ${action}`,
     pluginChangeDaemonUnavailable: 'O Happier não conseguiu alcançar a máquina para alterar seus plugins, então nada foi alterado.',
-    failureNotRun: 'Pedido não executado',
+    failureNotRun: ({ action }: { action: string }) => `Não executado: ${action}`,
     failureNotAuthorized: "Esta Home não aceitou o pedido, por isso nada foi executado.",
     failureFileWrite: 'Não foi possível escrever o ficheiro',
     failureFileRead: 'Não foi possível ler o ficheiro',
