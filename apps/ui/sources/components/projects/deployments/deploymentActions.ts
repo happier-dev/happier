@@ -19,7 +19,7 @@ import { getWorkflowStarterExamplesV1 } from '@happier-dev/protocol/workflows/bu
 import { DeploymentTemplateInstantiateResultV1Schema, type DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { buildDeploymentBackupActionInputV1, deploymentBackupPolicyV1, DeploymentBackupActionResultSchemasV1,
     type DeploymentBackupConfigurationV1,
-    type DeploymentBackupInventoryInputV1, type DeploymentBackupPruneInputV1, type DeploymentBackupVerifyInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
+    type DeploymentBackupActionResultV1, type DeploymentBackupInventoryInputV1, type DeploymentBackupPruneInputV1, type DeploymentBackupVerifyInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { type DeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -79,6 +79,8 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
     const execute = createFrontDoorUiActionExecutor(undefined, {
         serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId,
     });
+    // Database facts and the Restore sheet share the same read while it is pending.
+    const pendingBackupInventory = new Map<string, Promise<DeploymentBackupActionResultV1<'deployments.backups.inventory'>>>();
     function assertCurrent() {
         if (!lifetime.isCurrent()) throw Object.assign(new Error('action_account_scope_changed'), {
             code: 'action_account_scope_changed' as const,
@@ -178,10 +180,17 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
         },
         async backupInventory(input: Omit<DeploymentBackupInventoryInputV1, 'serverId'>) {
             assertCurrent();
-            return DeploymentBackupActionResultSchemasV1['deployments.backups.inventory'].parse(await invoke(
-                'deployments.backups.inventory', buildDeploymentBackupActionInputV1('deployments.backups.inventory', {
-                    ...input, serverId: lifetime.scope.serverId,
-                })));
+            const actionId = 'deployments.backups.inventory';
+            const operands = buildDeploymentBackupActionInputV1(actionId, { ...input, serverId: lifetime.scope.serverId });
+            const key = JSON.stringify(operands);
+            const pending = pendingBackupInventory.get(key);
+            if (pending) return pending;
+            const read = invoke(actionId, operands).then(result => {
+                assertCurrent();
+                return DeploymentBackupActionResultSchemasV1[actionId].parse(result);
+            }).finally(() => pendingBackupInventory.delete(key));
+            pendingBackupInventory.set(key, read);
+            return read;
         },
         /**
          * Add a catalog template to this existing Environment (P10): `preview` returns the review and capacity facts,

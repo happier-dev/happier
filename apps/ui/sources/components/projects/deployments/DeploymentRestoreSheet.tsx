@@ -70,6 +70,8 @@ export type DeploymentRestoreSheetInput = Readonly<{
    * A point the restore Action can't admit yet is listed but not selectable.
    */
   loadChoices?: (signal: AbortSignal) => Promise<readonly DeploymentRestoreChoice[]>;
+  /** A capture with its own receipt can still be offered when inventory is unavailable. */
+  fallbackChoice?: DeploymentRestoreChoice;
 }>;
 
 /** One backup the person can pick; `restore` is null when the restore Action can't restore it yet. */
@@ -83,7 +85,7 @@ export type DeploymentRestoreChoice = Readonly<{
 type Choices =
   | Readonly<{ status: 'loading' }>
   | Readonly<{ status: 'ready'; choices: readonly DeploymentRestoreChoice[] }>
-  | Readonly<{ status: 'failed' }>;
+  | Readonly<{ status: 'failed'; failure: ReturnType<typeof presentActionFailureOutcome> | null }>;
 
 type Settled = Exclude<DeploymentBackupRestoreResultV1, { kind: 'prepared' }>;
 type Step =
@@ -188,7 +190,13 @@ function DeploymentRestoreSheet(
     setChoices({ status: 'loading' });
     loadChoices(controller.signal).then(
       (loaded) => { if (!controller.signal.aborted) setChoices({ status: 'ready', choices: loaded }); },
-      () => { if (!controller.signal.aborted) setChoices({ status: 'failed' }); },
+      (error: unknown) => {
+        if (controller.signal.aborted) return;
+        const outcome = readDeploymentActionError(error);
+        const failure = outcome.kind === 'refused' ? presentActionFailureOutcome(outcome.failure
+          ?? { errorCode: outcome.code, error: outcome.code }, 'deployment') : null;
+        setChoices({ status: 'failed', failure });
+      },
     );
     return () => controller.abort();
   }, [loadChoices, choicesGeneration]);
@@ -392,6 +400,8 @@ function DeploymentRestoreSheet(
   ) : null;
 
   if (step.kind === 'choose') {
+    const availableChoices = choices.status === 'ready' ? choices.choices
+      : choices.status === 'failed' && props.fallbackChoice ? [props.fallbackChoice] : [];
     return (
       <ListPresentationProvider value="page" pageInsets="contained">
         <View testID="project-deployments.restore" style={deploymentSheetStyles.body}>
@@ -404,11 +414,14 @@ function DeploymentRestoreSheet(
             ) : choices.status === 'failed' ? (
               <SurfaceStateCard testID="project-deployments.restore.choices.failed" size="line" kind="error"
                 title={t('projects.deployments.restoreChooseFailed')}
+                reason={choices.failure?.reason ?? undefined}
+                diagnosticCode={choices.failure?.code}
                 action={{ label: t('common.retry'), onPress: () => setChoicesGeneration((value) => value + 1) }} />
-            ) : choices.choices.length === 0 ? (
+            ) : availableChoices.length === 0 ? (
               <SurfaceStateCard testID="project-deployments.restore.choices.empty" size="line" kind="empty"
                 title={t('projects.deployments.databaseRestoreNone')} />
-            ) : choices.choices.map((choice) => {
+            ) : null}
+            {availableChoices.map((choice) => {
               const kind = choice.kind === 'beforeMigration'
                 ? t('projects.deployments.restorePointBeforeMigration') : t('projects.deployments.restorePointScheduled');
               const source = choice.backupSource;

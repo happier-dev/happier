@@ -38,6 +38,7 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { decodeBase64 } from '@happier-dev/plugin-sdk/protocol';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
@@ -138,10 +139,13 @@ function manifest(environmentId: string, id: string, time: string) {
   };
 }
 
+type InventoryRefusal = 'effect_in_progress' | 'repository_password_incorrect';
+
 type Answers = Readonly<{
   history?: unknown;
   bindingRefusal?: string;
   missedSchedule?: boolean;
+  inventoryBeforeRead?: () => Promise<InventoryRefusal | null> | InventoryRefusal | null;
 }>;
 
 /** A Postgres Environment opened on its Database page; the receipt keeps a pre-migration backup when asked. */
@@ -462,11 +466,18 @@ async function renderDatabase(
       installationId: 'installation-a',
       actionId,
       tokenEpoch: 0,
-      execute: (operand) => {
+      failure: result => result === 'effect_in_progress' || result === 'repository_password_incorrect' ? {
+        errorCode: result, error: result, details: projectDeploymentFailureRecoveryV1({}, result),
+      } : null,
+      execute: async (operand) => {
         effects.push({
           actionId,
           input: DeploymentBackupActionInputSchemasV1[actionId].parse(operand),
         });
+        if (actionId === 'deployments.backups.inventory') {
+          const refusal = await input.answers?.inventoryBeforeRead?.();
+          if (refusal) return refusal;
+        }
         return actionId === 'deployments.backups.prune'
             ? { kind: 'pruned', environmentId, configRevision: 1, forgottenSnapshotIds: ['f'.repeat(64)] }
             : actionId === 'deployments.backups.inventory'
@@ -705,6 +716,47 @@ async function renderDatabase(
 }
 
 describe('Environment → Database → Private console', () => {
+  it('shares the active inventory read between Database and Restore and retries only on request', async () => {
+    let readCount = 0;
+    let startRead!: () => void;
+    const started = new Promise<void>(resolve => { startRead = resolve; });
+    let finishRead!: (refusal: InventoryRefusal) => void;
+    const firstRead = new Promise<InventoryRefusal>(resolve => { finishRead = resolve; });
+    let firstPending = true;
+    const view = await renderDatabase({
+      restore: async () => { throw new Error('Restore must not run during inventory'); },
+      answers: { inventoryBeforeRead: () => {
+        readCount += 1;
+        if (readCount === 1) {
+          startRead();
+          return firstRead;
+        }
+        return firstPending ? 'effect_in_progress' : null;
+      } },
+    });
+    const picker = 'project-deployments.restore';
+    try {
+      expect(await view.settle(`${page}.restore`)).not.toBeNull();
+      await started;
+      await view.screen.pressByTestIdAsync(`${page}.restore`);
+      expect(await view.settle(`${picker}.choices.loading`)).not.toBeNull();
+      firstPending = false;
+      await act(async () => finishRead('repository_password_incorrect'));
+      expect(await view.settle(`${picker}.choices.failed`)).not.toBeNull();
+      const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+      const card = view.screen.findAllByType(SurfaceStateCard)
+        .find(node => node.props.testID === `${picker}.choices.failed`);
+      expect(card?.props.reason).toContain('repository rejected its password');
+      expect(readCount).toBe(1);
+      await view.screen.pressByTestIdAsync(`${picker}.choices.failed-action`);
+      expect(await view.settle(`${picker}.choice.${'f'.repeat(64)}`)).not.toBeNull();
+      expect(readCount).toBe(2);
+    } finally {
+      finishRead('repository_password_incorrect');
+      await view.dispose();
+    }
+  });
+
   it('shows one console row: Open where the workbench can open it, never beside a contradicting unavailable row', async () => {
     const view = await renderDatabase({ storedDefinition: true });
     try {
