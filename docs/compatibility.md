@@ -9622,14 +9622,19 @@ and uses the normal revision-fenced approval update. A transient refusal leaves
 the accepted Delete successful; the next accepted-delete/currentness transition
 retries the same lifecycle convergence without a timer or Inbox-side filter.
 
-Project Service Starts in 0.3 development use the existing private
-`approvalSubjectKey` header index to identify the SOURCE Machine/checkout before
-mounting body readers. This private Home/Account-scoped index hashes only Machine
-and checkout ids, contains no command or Service name, and grants no execution authority. A supplied hint must agree with
-the strict V2 body. Headers without this development hint remain readable;
-Project observation can reuse an already-admitted local body to select them,
-but does not hydrate unknown identities across the Account. Released V1 history
-and predecessor V1 writers are unchanged. A Service census shares demanded
+Project Service Starts in 0.3 development use the private acquisition hint
+`subjectIndexKey` to select the SOURCE Machine/checkout with one scoped inventory
+read. It carries the existing `approvalSubjectKey` value, which hashes only
+Machine and checkout ids; that matched binding is unchanged.
+The same private header builder projects the reviewed Service name, target
+Machine and origin request/Account/server ids for pending Start presentation;
+these facts are already visible to the body's recipients. This display needs no
+body read. Opening a card still uses strict body admission; the existing subject
+binding remains matched, while display facts are ignored by the matcher and
+grant no execution authority. Headers
+without these development facts remain readable from the Inbox but are not
+backfilled into Project observation. Released V1 history and predecessor V1
+writers are unchanged. A Service census shares demanded
 Devcontainer child facts only for that observation; reconnect or a real later
 observation reads them again, including after a failed read.
 

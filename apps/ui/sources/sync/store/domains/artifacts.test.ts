@@ -17,6 +17,7 @@ import { selectArtifactInventoryRows } from './artifactInventoryIndex';
 import { createServiceHealthNoticeArtifactFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
 import { deploymentNoticeIndexedKindV1 } from '@happier-dev/protocol/activity/accountNoticeArtifactKindsV1';
 import { readAccountNoticeListHeader } from '@/sync/domains/artifacts/usageNoticeArtifacts';
+import { approvalArtifactSubjectIndexedKindV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 
 function createHarness() {
     return createStore<ArtifactsDomain>((set, get) => createArtifactsDomain({ set, get }));
@@ -30,6 +31,27 @@ function artifact(id: number): Extract<DecryptedArtifact, { isDecrypted: true }>
 }
 
 describe('createArtifactsDomain', () => {
+    it('reads only the requested subject for pending approvals, independent of Inbox size', () => {
+        const store = createHarness();
+        const subject = 'service_start:source';
+        const rows = Array.from({ length: 1002 }, (_, index) => ({ ...artifact(index), header: {
+            kind: 'approval_request.v1', approvalStatus: index === 1 ? 'executing' : 'approved',
+            subjectIndexKey: index < 2 ? subject : `unrelated-${index}`,
+        } }));
+        store.getState().applyArtifacts(rows);
+        let unrelatedReads = 0;
+        const state = store.getState();
+        const artifacts = new Proxy(state.artifacts, { get(target, property, receiver) {
+            if (typeof property === 'string' && property.startsWith('artifact-') && Number(property.slice(9)) >= 2) unrelatedReads++;
+            return Reflect.get(target, property, receiver);
+        } });
+        const selected = selectArtifactInventoryRows({ ...state, artifacts }, {
+            kinds: [approvalArtifactSubjectIndexedKindV1(subject)], approvalStates: ['approved', 'executing'],
+        });
+        expect(Object.keys(selected)).toEqual(['artifact-0', 'artifact-1']);
+        console.info('Pending subject selection cost', { unrelatedRows: 1000, unrelatedReads });
+        expect(unrelatedReads).toBe(0);
+    });
     it('indexes notice headers by Environment and withdraws removed or unauthorised facts', () => {
         const store = createHarness();
         const selection = [deploymentNoticeIndexedKindV1('environment')];

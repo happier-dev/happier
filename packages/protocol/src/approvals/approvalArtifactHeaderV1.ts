@@ -3,7 +3,8 @@ import { APPROVAL_ARTIFACT_KINDS_V1, approvalArtifactSubjectIndexedKindV1 } from
 import { ActionIdSchema, type ActionId } from '../actions/actionIds.js';
 import type { ApprovalQueueListItemV1, ApprovalQueueListResultV1 } from '../actions/executor/types.js';
 import type { ArtifactListSelectionOptionsV1 } from '../artifacts/artifactListSelectionV1.js';
-import { DaemonLocalServiceLauncherStartRequestV1Schema } from '../local/services/launcher/v1.js';
+import { DaemonLocalServiceLauncherStartRequestV1Schema, LocalServiceStartApprovalReviewV1Schema } from '../local/services/launcher/v1.js';
+import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
 import { ManagedDeleteInputV1Schema, ManagedPowerInputV1Schema } from '../machines/managed/actionsV1.js';
 import { MANAGED_POWER_SET_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
@@ -168,6 +169,42 @@ export function readApprovalArtifactHeaderListFactsV1(header: ApprovalArtifactHe
     ...(discussionId ? { discussionId, ...(Reflect.get(facts, 'discussionDraftReview') === true ? { discussionDraftReview: true as const } : {}) } : {}) };
 }
 
+/** Presentation only; execution still admits the full approval body at its existing owner. */
+export type ProjectServiceStartApprovalDisplayV1 = Readonly<{
+  serviceName: string;
+  machineId: string;
+  requestId: string;
+  accountId: string;
+  serverId: string;
+}>;
+
+function deriveProjectServiceStartApprovalDisplayV1(request: ApprovalRequest, subjectIndexKey: string | null): ProjectServiceStartApprovalDisplayV1 | null {
+  if (request.v !== 2 || request.actionId !== 'localServices.launcher.start' || !subjectIndexKey) return null;
+  const preview = request.preview;
+  const reviewed = LocalServiceStartApprovalReviewV1Schema.safeParse(
+    preview && typeof preview === 'object' ? Reflect.get(preview, 'serviceStartReview') : undefined,
+  );
+  if (!reviewed.success || !sameStrictJsonValue(reviewed.data.request, request.actionArgs)) return null;
+  const declaration = reviewed.data.request.declaration;
+  if (declaration?.selection.kind !== 'manifest' || !request.executionOriginV1.accountId) return null;
+  return { serviceName: declaration.selection.name, machineId: reviewed.data.target.machineId,
+    requestId: request.executionOriginV1.requestId, accountId: request.executionOriginV1.accountId,
+    serverId: reviewed.data.target.serverId };
+}
+
+/** Older headers stay reviewable, but never demand a body merely to supply row feedback. */
+export function readProjectServiceStartApprovalDisplayV1(header: ApprovalArtifactHeaderCandidateV1 | null | undefined): ProjectServiceStartApprovalDisplayV1 | null {
+  if (header?.kind !== APPROVAL_ARTIFACT_KINDS_V1.builtIn || header.actionId !== 'localServices.launcher.start'
+    || (header.approvalStatus !== 'approved' && header.approvalStatus !== 'executing')) return null;
+  const value = header.projectServiceStart;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const facts = value as Readonly<Record<string, unknown>>;
+  const read = (key: keyof ProjectServiceStartApprovalDisplayV1) => typeof facts[key] === 'string' && facts[key].length > 0 ? facts[key] : null;
+  const serviceName = read('serviceName'), machineId = read('machineId'), requestId = read('requestId');
+  const accountId = read('accountId'), serverId = read('serverId');
+  return serviceName && machineId && requestId && accountId && serverId ? { serviceName, machineId, requestId, accountId, serverId } : null;
+}
+
 export function buildApprovalRequestArtifactHeaderV1(
   request: ApprovalRequest,
   options: Readonly<{ legacyServerId?: string | null }> = {},
@@ -179,6 +216,7 @@ export function buildApprovalRequestArtifactHeaderV1(
   const approvalSubjectKey = readApprovalRequestArtifactSubjectKeyV1(request);
   const subjectIndexKey = readApprovalRequestArtifactSubjectIndexKeyV1(request, approvalSubjectKey);
   const targetKind = approvalObservationTargetKind(origin?.target, sessionId, origin?.machineId);
+  const projectServiceStart = deriveProjectServiceStartApprovalDisplayV1(request, subjectIndexKey);
   return {
     v: 1,
     kind: APPROVAL_ARTIFACT_KINDS_V1.builtIn,
@@ -188,6 +226,7 @@ export function buildApprovalRequestArtifactHeaderV1(
     ...(targetKind ? { approvalTargetKind: targetKind } : {}),
     ...(approvalSubjectKey ? { approvalSubjectKey } : {}),
     ...(subjectIndexKey ? { subjectIndexKey } : {}),
+    ...(projectServiceStart ? { projectServiceStart } : {}),
     ...(sessionId ? { sessions: [sessionId], sessionId } : {}),
     ...(origin ? { serverId: origin.serverId } : legacyServerId ? { serverId: legacyServerId } : {}),
     ...(origin?.serverIdentityId ? { serverIdentityId: origin.serverIdentityId } : {}),

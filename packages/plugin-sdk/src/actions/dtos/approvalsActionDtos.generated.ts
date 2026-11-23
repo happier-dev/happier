@@ -988,8 +988,8 @@ export type ApprovalsActionResultById = {
             qualifiedActionId: string;
             subjectFingerprint: string;
             policyFingerprint: string;
-            accountId?: string | undefined;
             resourceId?: string | undefined;
+            accountId?: string | undefined;
             detail?: string | undefined;
             approvalInputCustody?: 'live_only' | undefined;
             secretInputPaths?: string[] | undefined;

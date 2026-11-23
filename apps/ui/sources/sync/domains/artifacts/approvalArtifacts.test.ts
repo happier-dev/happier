@@ -14,7 +14,6 @@ import {
     listOpenApprovalArtifactsForSession,
     listApprovalArtifactIdsNeedingHydrationForSession,
     listTranscriptApprovalArtifactsForSession,
-    listProjectServiceStartApprovalArtifactIds,
     resolveOpenApprovalSessionKeys,
 } from './approvalArtifacts';
 import { buildSessionListServerScopedRowKey } from '@/sync/domains/session/listing/sessionListKeyNormalization';
@@ -126,36 +125,6 @@ function durableApprovalBody(sessionId: string) {
         summary: 'Set session title',
     };
 }
-
-describe('Project Start approval identities', () => {
-    it('selects only pending SOURCE identities and reuses admitted local bodies without broad hydration', () => {
-        const source = { serverId: 'server-a', refId: 'checkout', machineId: 'source' };
-        const actionArgs = { machineId: 'worker', targetId: 'web', workspace: { serverId: source.serverId, machineId: source.machineId,
-            workspaceId: source.refId, rootPath: '/source' },
-            declaration: { workspaceRefId: source.refId, selection: { kind: 'manifest', name: 'web' } } };
-        const request = ApprovalRequestV2Schema.parse({ ...durableApprovalBody('session-1'), status: 'approved',
-            decision: { kind: 'approve', decidedAtMs: 2 }, actionId: 'localServices.launcher.start',
-            executionOriginV1: { ...durableApprovalBody('session-1').executionOriginV1, actionId: 'localServices.launcher.start',
-                machineId: 'worker', target: { kind: 'machine', machineId: 'worker' } },
-            actionArgs });
-        const other = ApprovalRequestV2Schema.parse({ ...request,
-            executionOriginV1: { ...request.executionOriginV1, requestId: 'other-request' },
-            actionArgs: { ...actionArgs, workspace: { ...actionArgs.workspace, workspaceId: 'other', rootPath: '/other' },
-                declaration: { ...actionArgs.declaration, workspaceRefId: 'other' } } });
-        const header = buildApprovalRequestArtifactHeaderV1(request);
-        const { approvalSubjectKey: _index, ...olderHeader } = header;
-        const stored = artifact('matching', header);
-        const local = artifact('admitted-local', olderHeader, request);
-        expect(listProjectServiceStartApprovalArtifactIds([
-            stored, local, artifact('unknown', olderHeader), artifact('wrong-home', { ...header, serverId: 'server-b' }),
-            artifact('other-project', buildApprovalRequestArtifactHeaderV1(other)),
-            artifact('open', { ...header, approvalStatus: 'open' }), artifact('terminal', { ...header, approvalStatus: 'executed' }),
-            artifact('executing', { ...header, approvalStatus: 'executing' }), artifact('malformed', { ...header, approvalSubjectKey: {} }),
-        ], source)).toEqual(['matching', 'admitted-local', 'executing']);
-        expect(listProjectServiceStartApprovalArtifactIds([stored, local], { ...source, refId: 'other' })).toEqual([]);
-        expect(listProjectServiceStartApprovalArtifactIds([stored, local], { ...source, machineId: 'other' })).toEqual([]);
-    });
-});
 
 describe('listOpenApprovalArtifactsForSession', () => {
     it('projects an open contributed Action approval into its bound Session', () => {

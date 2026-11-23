@@ -15,7 +15,6 @@ import { useServerCredentialAccountScopeBinding, type ServerCredentialAccountSco
 import { useActiveServerAccountScope, useServerScopedMachine } from '@/sync/store/hooks';
 import { storage } from '@/sync/domains/state/storage';
 import { useShallow } from 'zustand/react/shallow';
-import { createProjectServiceStartApprovalArtifactIdsSelector } from '@/sync/domains/artifacts/approvalArtifacts';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { t } from '@/text';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
@@ -24,13 +23,12 @@ import type { ServiceRelocationOutcome } from './serviceRelocationAction';
 import { publishActionOperationObservation } from '@/sync/domains/actionOperations/actionOperationRuntime';
 import { invalidateLocalServiceLauncherStores } from '@/sync/domains/local/services/launch/sharedStore';
 import { LocalServiceManagedServiceActionTargetV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
-import { LocalServiceStartApprovalReviewV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
-import { approvalArtifactBodyMatchesHeaderV1, APPROVAL_ARTIFACT_KINDS_V1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
-import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { useApprovalArtifact } from '@/components/approvals/useApprovalArtifact';
+import { deriveProjectServiceStartApprovalSubjectKeyV1, readProjectServiceStartApprovalDisplayV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { approvalArtifactSubjectIndexedKindV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
+import { selectApprovalSubjectRows } from '@/sync/store/domains/artifactInventoryIndex';
 import { sync } from '@/sync/sync';
 
-const pendingStartApprovals = { kinds: [APPROVAL_ARTIFACT_KINDS_V1.builtIn], approvalStates: ['approved', 'executing'] } as const;
+const pendingStartApprovalStates = ['approved', 'executing'] as const;
 
 export type ProjectServicePlacementOperationAttachment = Readonly<{
   operationId: string;
@@ -136,43 +134,7 @@ function ServiceMoveApprovalObserver(props: Readonly<{
   return null;
 }
 
-/** Header-only socket updates wake the existing exact-Home Artifact body reader. */
-function ServiceStartApprovalObserver(props: Readonly<{
-  artifactId: string;
-  source: ProjectServiceSource;
-  binding: ServerCredentialAccountScopeBinding;
-  publish: (artifactId: string, start: ApprovedStart | null) => void;
-}>) {
-  const { artifact } = useApprovalArtifact({ artifactId: props.artifactId, serverId: props.source.serverId,
-    scope: props.binding.scope, observeWhileUnfocused: true });
-  React.useLayoutEffect(() => {
-    let start: ApprovedStart | null = null;
-    const parsed = artifact?.isDecrypted !== false && typeof artifact?.body === 'string'
-      ? approvalArtifactBodyMatchesHeaderV1(artifact.header ?? {}, artifact.body) : null;
-    if (props.binding.isCurrent() && parsed?.family === 'built_in' && parsed.request.v === 2
-      && parsed.request.actionId === 'localServices.launcher.start'
-      && (parsed.request.status === 'approved' || parsed.request.status === 'executing')
-      && parsed.request.executionOriginV1.accountId === props.binding.accountId
-      && areServerProfileIdentifiersEquivalent(parsed.request.executionOriginV1.serverIdentityId
-        ?? parsed.request.executionOriginV1.serverId, props.source.serverId)) {
-      const preview = parsed.request.preview;
-      const review = LocalServiceStartApprovalReviewV1Schema.safeParse(preview && typeof preview === 'object'
-        && 'serviceStartReview' in preview ? preview.serviceStartReview : undefined);
-      const declaration = review.success ? review.data.request.declaration : null;
-      if (review.success && sameStrictJsonValue(review.data.request, parsed.request.actionArgs)
-        && declaration?.selection.kind === 'manifest' && declaration.workspaceRefId === props.source.refId
-        && review.data.request.workspace?.machineId === props.source.machineId
-        && areServerProfileIdentifiersEquivalent(review.data.target.serverId, props.source.serverId)) {
-        start = { serviceName: declaration.selection.name, machineId: review.data.target.machineId,
-          requestId: parsed.request.executionOriginV1.requestId };
-      }
-    }
-    props.publish(props.artifactId, start);
-  }, [artifact, props.artifactId, props.binding, props.publish, props.source.machineId, props.source.refId, props.source.serverId]);
-  React.useEffect(() => () => props.publish(props.artifactId, null), [props.artifactId, props.publish]);
-  return null;
-}
-
+/** Project Start presentation observes its indexed headers without opening approval bodies. */
 function ScopedObservationProvider(props: Readonly<{
   source: ProjectServiceSource;
   binding: ServerCredentialAccountScopeBinding | null;
@@ -181,38 +143,26 @@ function ScopedObservationProvider(props: Readonly<{
 }>) {
   const [retainedEntries, setEntries] = React.useState<ReadonlyMap<string, Entry>>(() => new Map());
   const activeScope = useActiveServerAccountScope();
+  const startKind = approvalArtifactSubjectIndexedKindV1(deriveProjectServiceStartApprovalSubjectKeyV1(props.source));
   React.useEffect(() => {
     if (!props.binding?.isCurrent() || !activeScope || activeScope.accountId !== props.binding.accountId
       || !areServerProfileIdentifiersEquivalent(activeScope.serverId, props.source.serverId)) return;
-    return sync.observeArtifactInventory(activeScope, pendingStartApprovals, { refreshOnAdmission: true });
-  }, [props.binding, activeScope?.serverId, activeScope?.accountId, props.source.serverId]);
-  const [approvalObservations, setApprovalObservations] = React.useState<ReadonlyMap<string, ApprovedStart>>(() => new Map());
-  const publishApproval = React.useCallback((artifactId: string, start: ApprovedStart | null) => setApprovalObservations(current => {
-    const previous = current.get(artifactId);
-    if (previous?.serviceName === start?.serviceName && previous?.machineId === start?.machineId
-      && previous?.requestId === start?.requestId) return current;
-    const next = new Map(current);
-    if (start) next.set(artifactId, start); else next.delete(artifactId);
-    return next;
-  }), []);
-  const selectApprovalIds = React.useMemo(() => createProjectServiceStartApprovalArtifactIdsSelector(props.source),
-    [props.source.serverId, props.source.machineId, props.source.refId]);
-  const approvalIds = storage(useShallow(state => props.binding?.isCurrent() && activeScope?.accountId === props.binding.accountId
+    return sync.observeArtifactInventory(activeScope, { kinds: [startKind], approvalStates: pendingStartApprovalStates }, { refreshOnAdmission: true });
+  }, [props.binding, activeScope?.serverId, activeScope?.accountId, props.source.serverId, startKind]);
+  const approvalHeaders = storage(useShallow(state => props.binding?.isCurrent() && activeScope?.accountId === props.binding.accountId
     && areServerProfileIdentifiersEquivalent(activeScope.serverId, props.source.serverId)
-    ? selectApprovalIds(state.artifacts)
+    ? selectApprovalSubjectRows(state, startKind, pendingStartApprovalStates).map(row => row.header)
     : []));
-  const previousApprovedStarts = React.useRef<ReadonlyMap<string, ApprovedStart>>(new Map());
   const approvedStarts = React.useMemo(() => {
     const result = new Map<string, ApprovedStart>();
-    for (const id of approvalIds) {
-      const start = approvalObservations.get(id);
-      if (start && !result.has(start.serviceName)) result.set(start.serviceName, start);
+    for (const header of approvalHeaders) {
+      const start = readProjectServiceStartApprovalDisplayV1(header);
+      if (start && start.accountId === props.binding?.accountId
+        && areServerProfileIdentifiersEquivalent(start.serverId, props.source.serverId)
+        && !result.has(start.serviceName)) result.set(start.serviceName, start);
     }
-    const previous = previousApprovedStarts.current;
-    if (previous.size === result.size && [...result].every(([name, start]) => previous.get(name) === start)) return previous;
-    previousApprovedStarts.current = result;
     return result;
-  }, [approvalIds, approvalObservations]);
+  }, [approvalHeaders, props.binding?.accountId, props.source.serverId]);
   const cleared = React.useRef(new Set<string>());
   const received = useProjectServiceActionOperations({ ...props.source, accountId: props.binding?.accountId ?? null });
   const entries = React.useMemo(() => {
@@ -392,8 +342,6 @@ function ScopedObservationProvider(props: Readonly<{
     runtimeActionExecute: props.runtimeActionExecute }),
     [source, attach, clear, acknowledgeBinding, executeMove, pendingRequests, approvedStarts, startRequests, observePlacement, executeStart, entries, resolveStart, managedSelections, managedContinuations, selectManaged, observeManaged, props.runtimeActionExecute]);
   return <StartContext.Provider value={executeStart}><Context.Provider value={context}>
-    {props.binding ? approvalIds.map(artifactId => <ServiceStartApprovalObserver key={artifactId} artifactId={artifactId}
-      source={source} binding={props.binding!} publish={publishApproval} />) : null}
     {[...approvals].map(([serviceName, registration]) => <ServiceMoveApprovalObserver key={serviceName}
       source={props.source} serviceName={serviceName} registration={registration} />)}
     {[...managedSelections].map(([name, selection]) => <ServiceManagedMachineObserver key={name} source={props.source}

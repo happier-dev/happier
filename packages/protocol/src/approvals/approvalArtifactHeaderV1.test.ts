@@ -144,6 +144,28 @@ describe('approval Artifact header correspondence', () => {
     expect(buildApprovalRequestArtifactHeaderV1({ ...start, actionArgs: { ...start.actionArgs as object, declaration: undefined } }).approvalSubjectKey).toBeUndefined();
   });
 
+  it('projects pending Project Start display facts from the reviewed request without changing older header admission', () => {
+    const workspace = { serverId: 'profile-1', machineId: 'source', workspaceId: 'checkout', rootPath: '/source' };
+    const actionArgs = { machineId: 'worker', targetId: 'web', workspace,
+      declaration: { workspaceRefId: workspace.workspaceId, selection: { kind: 'manifest', name: 'web' } } };
+    const serviceStartReview = { request: actionArgs, target: { ...workspace, machineId: 'worker', workspaceId: 'copy', rootPath: '/copy' },
+      reviewedEffectDigest: 'a'.repeat(64), reviewedEffect: {}, setup: { required: false,
+        project: { serverId: 'profile-1', projectId: 'project' }, reviewedEffectDigest: 'b'.repeat(64), reviewedEffect: {} } };
+    const start = ApprovalRequestV2Schema.parse({ ...builtIn, actionId: 'localServices.launcher.start', actionArgs,
+      executionOriginV1: { ...builtIn.executionOriginV1, actionId: 'localServices.launcher.start', machineId: 'worker' },
+      preview: { serviceStartReview } });
+    const header = buildApprovalRequestArtifactHeaderV1(start);
+    expect(header.projectServiceStart).toEqual({ serviceName: 'web', machineId: 'worker', requestId: 'request-1',
+      accountId: 'account-1', serverId: 'profile-1' });
+    expect(approvalArtifactBodyMatchesHeaderV1(header, JSON.stringify(start))?.family).toBe('built_in');
+    const { projectServiceStart: _display, ...previousHeader } = header;
+    expect(approvalArtifactBodyMatchesHeaderV1(previousHeader, JSON.stringify(start))?.family).toBe('built_in');
+    expect(approvalArtifactBodyMatchesHeaderV1({ ...header, projectServiceStart: { display: 'unknown to this reader' } },
+      JSON.stringify(start))?.family).toBe('built_in');
+    expect(buildApprovalRequestArtifactHeaderV1({ ...start, preview: { serviceStartReview: { ...serviceStartReview,
+      request: { ...actionArgs, targetId: 'different-reviewed-start' } } } }).projectServiceStart).toBeUndefined();
+  });
+
   it('resumes a bounded approval page and filters plugin approvals through their canonical Action id', async () => {
     const rows = [
       { artifactId: 'built-in', updatedAt: 2, header: buildApprovalRequestArtifactHeaderV1(builtIn), body: JSON.stringify(builtIn) },

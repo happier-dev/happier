@@ -1,5 +1,4 @@
-import { deriveProjectServiceStartApprovalSubjectKeyV1,
-    readOpenWorkflowPublicationApprovalTargetV1,
+import { readOpenWorkflowPublicationApprovalTargetV1,
     type ParsedApprovalArtifactBodyV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -17,7 +16,7 @@ export { isOpenApprovalInboxArtifact, listOpenApprovalInboxArtifactHydrationRequ
     type OpenApprovalArtifactForSession, type OpenApprovalAttentionArtifactForSession,
     type ApprovalDiscussionAddress, type DiscussionRequesterApproval } from './approvalArtifactAdmission';
 import { sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
-import { areServerProfileIdentifiersEquivalent, getServerProfilesGeneration, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 
 export function isBuiltInOpenApprovalArtifactForSession(
     entry: OpenApprovalAttentionArtifactForSession,
@@ -72,45 +71,6 @@ function readApprovalArtifactSnapshot(artifact: DecryptedArtifact): AdmittedAppr
     snapshot.admitted = { parsed, subjectKey, sessionEntry,
         references: collectApprovalLinkedSessionReferences(snapshot, parsed) };
     return snapshot.admitted;
-}
-
-/** Select pending identities before mounting body readers. Older private headers
- * can reuse an already-admitted body; missing identity never demands unrelated bodies. */
-export function listProjectServiceStartApprovalArtifactIds(
-    artifacts: Iterable<DecryptedArtifact>,
-    source: Readonly<{ serverId: string; refId: string; machineId: string }>,
-): readonly string[] {
-    const subjectKey = deriveProjectServiceStartApprovalSubjectKeyV1(source);
-    const selected: DecryptedArtifact[] = [];
-    for (const artifact of artifacts) {
-        const header = artifact.header;
-        if (artifact.draft || !artifact.isDecrypted || header?.kind !== APPROVAL_ARTIFACT_KINDS_V1.builtIn
-            || header.actionId !== 'localServices.launcher.start'
-            || (header.approvalStatus !== 'approved' && header.approvalStatus !== 'executing')) continue;
-        const homeId = readString(header.serverIdentityId) ?? readString(header.serverId);
-        if (!homeId || !areServerProfileIdentifiersEquivalent(homeId, source.serverId)) continue;
-        const indexed = header.approvalSubjectKey === undefined ? readApprovalArtifactSnapshot(artifact)?.subjectKey : header.approvalSubjectKey;
-        if (indexed === subjectKey) selected.push(artifact);
-    }
-    return selected.sort((left, right) => right.updatedAt - left.updatedAt).map(artifact => artifact.id);
-}
-
-/** Unrelated store domains cannot restart the private-header selection work. */
-export function createProjectServiceStartApprovalArtifactIdsSelector(
-    source: Parameters<typeof listProjectServiceStartApprovalArtifactIds>[1],
-): (artifacts: Readonly<Record<string, DecryptedArtifact>>) => readonly string[] {
-    let previous: Readonly<Record<string, DecryptedArtifact>> | undefined;
-    let profilesGeneration = -1;
-    let ids: readonly string[] = [];
-    return artifacts => {
-        const currentProfilesGeneration = getServerProfilesGeneration();
-        if (artifacts !== previous || profilesGeneration !== currentProfilesGeneration) {
-            ids = listProjectServiceStartApprovalArtifactIds(Object.values(artifacts), source);
-            previous = artifacts;
-            profilesGeneration = currentProfilesGeneration;
-        }
-        return ids;
-    };
 }
 
 /** Management links to the ordinary request; its captured operands and Inbox retain decision authority. */

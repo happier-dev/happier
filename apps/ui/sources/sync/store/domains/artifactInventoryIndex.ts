@@ -1,5 +1,5 @@
 import { deriveApprovalArtifactQueryHintsV1, isApprovalArtifactSubjectIndexedKindV1,
-  readApprovalArtifactSubjectIndexedKindV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
+  readApprovalArtifactSubjectIndexedKindV1, type ApprovalArtifactStateV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import { ACCOUNT_NOTICE_ARTIFACT_KIND_V1, USAGE_NOTICE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { deploymentNoticeEnvironmentIndexedKindV1, readDeploymentNoticeIndexedKindV1 } from '@happier-dev/protocol/activity/accountNoticeArtifactKindsV1';
 import type { DecryptedArtifact } from '../../domains/artifacts/artifactTypes';
@@ -10,7 +10,7 @@ import { doesArtifactInventorySelectionMatchHeader, isApprovalSessionInventorySe
 /** Header-query membership, not body admission or authority. Only Artifact ingress writes it. */
 export type ArtifactInventoryIndex = ReadonlyMap<string, ReadonlySet<string>>;
 
-const key = (dimension: 'kind' | 'state' | 'session' | 'openSubject', value: string) => JSON.stringify([dimension, value]);
+const key = (dimension: 'kind' | 'state' | 'session' | 'subject', value: string) => JSON.stringify([dimension, value]);
 const browserKey = 'browser';
 
 function memberships(artifact: DecryptedArtifact | undefined): readonly string[] {
@@ -29,24 +29,29 @@ function memberships(artifact: DecryptedArtifact | undefined): readonly string[]
     const hints = deriveApprovalArtifactQueryHintsV1(header);
     if (hints.approvalState !== null) keys.push(key('state', hints.approvalState));
     if (hints.approvalSessionId !== null) keys.push(key('session', hints.approvalSessionId));
-    if (hints.approvalState === 'open' && !artifact.draft) {
+    if (hints.approvalState !== null && !artifact.draft) {
       const subjectKind = readApprovalArtifactSubjectIndexedKindV1(header);
-      if (subjectKind !== null) keys.push(key('openSubject', subjectKind));
+      if (subjectKind !== null) keys.push(key('subject', subjectKind));
     }
   }
   if (readArtifactBrowserMembership(artifact) === true) keys.push(browserKey);
   return keys;
 }
 
-/** The named review link needs only the newest filed ID in its exact open-subject bucket. */
-export function selectNewestOpenApprovalSubjectId(state: Readonly<{
+/** Filed approval headers for one subject, newest update first; never opens bodies. */
+export function selectApprovalSubjectRows(state: Readonly<{
   artifacts: Readonly<Record<string, DecryptedArtifact>>;
   artifactInventoryIndex: ArtifactInventoryIndex;
-}>, indexedKind: string): string | null {
+}>, indexedKind: string, statuses: readonly ApprovalArtifactStateV1[]): readonly DecryptedArtifact[] {
+  return Object.values(selectArtifactInventoryRows(state, { kinds: [indexedKind], approvalStates: statuses }))
+    .sort((left, right) => right.updatedAt - left.updatedAt);
+}
+
+/** The named review link needs only the newest filed open ID. */
+export function selectNewestOpenApprovalSubjectId(state: Parameters<typeof selectApprovalSubjectRows>[0], indexedKind: string): string | null {
   let newest: DecryptedArtifact | undefined;
-  for (const id of state.artifactInventoryIndex.get(key('openSubject', indexedKind)) ?? []) {
-    const row = state.artifacts[id];
-    if (row && (!newest || row.createdAt > newest.createdAt)) newest = row;
+  for (const row of selectApprovalSubjectRows(state, indexedKind, ['open'])) {
+    if (!newest || row.createdAt > newest.createdAt) newest = row;
   }
   return newest?.id ?? null;
 }
@@ -82,9 +87,8 @@ export function selectArtifactInventoryRows(state: Readonly<{
   const keys = selection === 'browserListed' ? [browserKey]
     : selection === 'inboxOpen' ? [key('state', 'open'), key('kind', ACCOUNT_NOTICE_ARTIFACT_KIND_V1), key('kind', USAGE_NOTICE_ARTIFACT_KIND_V1)]
     : isApprovalSessionInventorySelection(selection) ? selection.approvalSessionIds.map(id => key('session', id))
-    : isApprovalStateInventorySelection(selection) ? selection.approvalStates.length === 1 && selection.approvalStates[0] === 'open'
-        && selection.kinds.every(isApprovalArtifactSubjectIndexedKindV1)
-      ? selection.kinds.map(kind => key('openSubject', kind)) : selection.approvalStates.map(state => key('state', state))
+    : isApprovalStateInventorySelection(selection) ? selection.kinds.every(isApprovalArtifactSubjectIndexedKindV1)
+      ? selection.kinds.map(kind => key('subject', kind)) : selection.approvalStates.map(state => key('state', state))
     : selection.map(kind => key('kind', kind));
   const selected: Record<string, DecryptedArtifact> = {};
   for (const membership of keys) for (const id of state.artifactInventoryIndex.get(membership) ?? []) {
