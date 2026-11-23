@@ -47,7 +47,7 @@ export type SentryGetOutcomeInputV1 = Readonly<{
 export type SentryGetOutcomeV1 =
   | Readonly<{
       kind: 'present'; localRef: SentryLocalRefV1; snapshot: SentryIssueSnapshotV1;
-      /** Source-private confirming facts, never forwarded with the observation. */
+      /** Allowlisted issue overview that the Triage source forwards as detail data. */
       overview?: SentryIssueOverviewProjectionV1;
       nativeStatus: string;
       nativeSubstatus: string | null;
