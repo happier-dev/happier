@@ -16,7 +16,7 @@ import {
 } from '../index.js';
 import { z } from 'zod/mini';
 import { filterResolvedActionOptions, projectActionDefinitionForExternalDiscovery, projectActionDefinitionSummaryForExternalDiscovery } from './actionCatalog.js';
-import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
 import { prepareExternalActionResponseEnvelopeV1 } from './externalActionApi.js';
 import { compileProtocolJsonSchema } from '../plugins/actions/jsonSchemaCompiler.js';
@@ -90,6 +90,12 @@ describe('actionCatalog action-definition adapter', () => {
     ));
     expect(spawn.inputHints?.fields.filter(field => field.path === 'modelSelection' || field.path.startsWith('modelSelection.')))
       .toMatchObject([{ path: 'modelSelection', optionsSourceId: 'agents.models.available' }]);
+  });
+
+  it('finds the Store app installation Action from a plain-word Agent search', async () => {
+    const result = await createActionExecutor({}).execute('action.spec.search', { query: 'install Store app', limit: 1 },
+      { surface: 'agent', authority: 'present_user' });
+    expect(result).toMatchObject({ ok: true, result: { actionSpecs: [{ id: DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 }] } });
   });
 
   it('validates the primary subject pair at the strict discovery boundary', () => {
