@@ -1107,7 +1107,105 @@ describe('Account Workflow Library and settings', () => {
         } finally { roster.resolve(); await hook.unmount(); }
     });
 
-    it.each(['environment', 'machine'] as const)('keeps Resource Link declined read-only and awaits reviewed sharing before its one Workflow trigger write (%s)', async kind => {
+    it.each([
+        { kind: 'environment', response: 'offline' },
+        { kind: 'managed_deployment', response: 'denied' },
+        { kind: 'managed_deployment', response: 'ready' },
+    ] as const)('settles the Workbench $kind Database Link from its owning Source when the Source is $response', async ({ kind, response }) => {
+        const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployments/testing/v1');
+        const { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } = await import('@happier-dev/deployment-protocol/v1');
+        const { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionIdsV1');
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const { ProjectSourcesReadOutputV1Schema } = await import('@happier-dev/protocol/projects/sources/projectSourceV1');
+        const { ArtifactAccessGrantsListResponseV1Schema } = await import('@happier-dev/protocol/artifacts/artifactAccessV1');
+        const { createWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
+        const definitionId = '00000000-0000-4000-8000-000000000207';
+        await createWorkflowDefinition({ definitionId, definition: { version: 1, inputs: [], defaults: {},
+            blocks: [{ id: 'read', name: 'Read own Machines', kind: 'action', actionId: 'machines.list', input: {} }] },
+            metadata: { title: 'Workbench Database check' } });
+        const detail = createDeploymentEnvironmentDetailV1();
+        const { id: environmentId, projectSourceId, contentArtifactId } = detail.environment;
+        const account = await captureLazyActionAccountContext(serverId);
+        await account.createArtifactDocument({ artifactId: contentArtifactId,
+            header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: detail.content.name }, body: JSON.stringify(detail.content) });
+        const environmentPath = `/v1/deployments/environments/${environmentId}`;
+        const managedData = createDeploymentTargetLinkHeaderV1({ id: 'managed-data', environmentId, role: 'data',
+            targetKind: 'neon', machines: [], members: [], source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.neon', localId: 'database' } } });
+        home.answer(serverId, `GET ${environmentPath}`, { body: { ok: true, environment: { ...detail.environment, serverId },
+            targetLinks: [...detail.targetLinks.map(row => row.targetLink), ...(kind === 'managed_deployment' ? [managedData] : [])] } });
+        const owner = { kind: 'account', accountId: 'account-a' } as const;
+        const recipient = { kind: 'team', teamId: 'workbench-audience' } as const;
+        const sourcePath = `/v1/projects/sources/${projectSourceId}`;
+        const sourceGate = createDeferred<void>();
+        let sourceUnavailable = response === 'offline';
+        home.answer(serverId, `GET ${sourcePath}`, { select: async () => {
+            await sourceGate.promise;
+            if (response === 'denied') return { status: 403, body: { ok: false, error: 'source_access_denied' } };
+            if (sourceUnavailable) return { status: 503, body: { ok: false, error: 'source_backend_unavailable' } };
+            return { body: ProjectSourcesReadOutputV1Schema.parse({ ok: true, canManage: true, source: {
+                id: projectSourceId, name: 'Workbench Source', revision: 1, createdByAccountId: owner.accountId,
+                owner, audience: [{ principal: recipient, level: 'view' }],
+            } }) };
+        } });
+        const grantPath = `/v1/artifacts/${definitionId}/access/grants`;
+        const reviewed: unknown[] = [];
+        home.answer(serverId, `GET ${grantPath}`, { select: (_body, request) => {
+            reviewed.push(JSON.parse(new URL(request.url).searchParams.get('requestedAudience') ?? 'null'));
+            return { body: ArtifactAccessGrantsListResponseV1Schema.parse({ artifactId: definitionId,
+                ownerAccountId: owner.accountId, access: 'owner', grants: [], missingAudience: [recipient] }) };
+        } });
+        home.answer(serverId, 'POST /v3/automations/query', { body: AutomationDefinitionListResponseSchema.parse({
+            automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0,
+        }) });
+        const target = kind === 'environment' ? { kind, environmentId, service: 'postgres', database: 'main' } as const
+            : { kind, environmentId, targetLinkId: managedData.id, databaseName: 'main' } as const;
+        const hook = await renderHook(() => useResourceAutomationsSection({
+            subject: { kind: 'database', serverId, target }, machineId: project.machineId, accountLifetime: account.accountLifetime,
+        }), { wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active>{children}</PluginSurfaceFocusEligibilityProvider> });
+        const requestsTo = (path: string) => home.requests.filter(request => request.path.split('?')[0] === path);
+        const trigger = { kind: 'action' as const, enabled: true, phase: 'after' as const, actionIds: [DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1] };
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).toBe('ready'));
+            await act(async () => hook.getCurrent().link.setDraft({ workflow: 'builtin:review-and-converge', trigger }));
+            expect(requestsTo(environmentPath)).toEqual([]);
+            await act(async () => hook.getCurrent().link.setDraft({ workflow: definitionId, trigger }));
+            expect(hook.getCurrent().link.loading).toBe(true);
+            await waitForHomeGovernance(() => expect(requestsTo(sourcePath)).toHaveLength(1));
+            expect(hook.getCurrent().link.missingAudience).toBeUndefined();
+            await act(async () => expect(await hook.getCurrent().link.submit('accept')).toMatchObject({ ok: false, phase: 'sharing' }));
+            expect(requestsTo(grantPath)).toEqual([]);
+            expect(rows).toEqual([]);
+            await act(async () => sourceGate.resolve());
+            if (response !== 'ready') {
+                const issue = { code: response === 'denied' ? 'source_access_denied' : 'source_backend_unavailable',
+                    retryable: response === 'offline' };
+                await waitForHomeGovernance(() => expect(hook.getCurrent().link).toMatchObject({ loading: false, issue }));
+                await act(async () => expect(await hook.getCurrent().link.submit('accept')).toMatchObject({
+                    ok: false, phase: 'sharing', error: issue,
+                }));
+                expect(requestsTo(grantPath)).toEqual([]);
+                expect(rows).toEqual([]);
+                if (response === 'denied') return;
+                sourceUnavailable = false;
+                await act(async () => hook.getCurrent().link.retryReview());
+            }
+            await waitForHomeGovernance(() => expect(hook.getCurrent().link.missingAudience).toEqual([recipient]));
+            expect(reviewed).toEqual([[owner, recipient]]);
+            expect(requestsTo(environmentPath)).toHaveLength(1);
+            expect(requestsTo(sourcePath)).toHaveLength(response === 'offline' ? 2 : 1);
+            expect(requestsTo('/v1/projects/sources')).toEqual([]);
+            expect(requestsTo(grantPath).every(request => request.method === 'GET')).toBe(true);
+            expect(rows).toEqual([]);
+        } finally { sourceGate.resolve(); await hook.unmount(); account.dispose(); }
+    });
+
+    it.each([
+        { kind: 'environment', principal: { kind: 'account', accountId: 'reader' } },
+        { kind: 'environment', principal: { kind: 'team', teamId: 'team-studio' } },
+        { kind: 'machine', principal: { kind: 'account', accountId: 'reader' } },
+    ] as const)('keeps Resource Link declined read-only and awaits reviewed $kind sharing for $principal.kind before its one Workflow trigger write', async ({ kind, principal }) => {
         const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
         home.answer(serverId, 'POST /v3/automations/query', { body: AutomationDefinitionListResponseSchema.parse({
@@ -1126,7 +1224,6 @@ describe('Account Workflow Library and settings', () => {
                 kind: 'workflow-definition.v1', definition: definition.definition,
             })) }),
         }) });
-        const principal = { kind: 'account' as const, accountId: 'reader' };
         const machineAddress = `/v1/machines/${project.machineId}/access`;
         const machineGate = createDeferred<void>();
         home.answer(serverId, `GET ${machineAddress}`, { select: async () => {
@@ -1153,16 +1250,24 @@ describe('Account Workflow Library and settings', () => {
                 createdAt: 1, display: { name: 'Reader' } });
             return { body: ArtifactAccessGrantMutationResponseV1Schema.parse({ ...snapshot(), changed: true }) };
         } });
-        const hook = await renderHook(() => useResourceAutomationsSection({
+        const hook = await renderHook(({ hasAudience }: { hasAudience: boolean }) => useResourceAutomationsSection({
             serverId,
             subject: kind === 'environment' ? { kind: 'environment', machineId: project.machineId, environmentId: 'source-environment' }
                 : { kind: 'machine', machineId: project.machineId },
-            ...(kind === 'environment' ? { sourceAudience: [principal] } : {}),
-        }), { wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active>{children}</PluginSurfaceFocusEligibilityProvider> });
+            ...(kind === 'environment' && hasAudience ? { sourceAudience: [principal] } : {}),
+        }), { initialProps: { hasAudience: false },
+            wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active>{children}</PluginSurfaceFocusEligibilityProvider> });
         await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).toBe('ready'));
         const grantRequests = () => home.requests.filter(request => request.path.startsWith(grantAddress));
         expect(grantRequests()).toEqual([]);
         expect(home.requests.filter(request => request.path === machineAddress)).toEqual([]);
+        if (kind === 'machine') {
+            await act(async () => hook.getCurrent().link.setDraft({ workflow: 'builtin:review-and-converge',
+                trigger: { kind: 'schedule', enabled: true,
+                    schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: null } } }));
+            expect(hook.getCurrent().link).toMatchObject({ loading: false, missingAudience: [] });
+            expect(home.requests.filter(request => request.path === machineAddress)).toEqual([]);
+        }
         await act(async () => hook.getCurrent().link.setDraft({ workflow: definitionId,
             trigger: { kind: 'schedule', enabled: true,
                 schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: null } } }));
@@ -1170,6 +1275,14 @@ describe('Account Workflow Library and settings', () => {
             expect(hook.getCurrent().link.loading).toBe(true);
             expect(grantRequests()).toEqual([]);
             await act(async () => machineGate.resolve());
+        } else {
+            expect(hook.getCurrent().link).toMatchObject({ loading: false, issue: { code: 'source_unavailable', retryable: false } });
+            await act(async () => expect(await hook.getCurrent().link.submit('accept')).toMatchObject({
+                ok: false, phase: 'sharing', error: { code: 'source_unavailable' },
+            }));
+            expect(grantRequests()).toEqual([]);
+            expect(rows).toEqual([]);
+            await hook.rerender({ hasAudience: true });
         }
         await waitForHomeGovernance(() => expect(hook.getCurrent().link.missingAudience).toEqual([principal]));
         await act(async () => { expect(await hook.getCurrent().link.submit('decline')).toEqual({ ok: false, phase: 'declined', shared: [] }); });

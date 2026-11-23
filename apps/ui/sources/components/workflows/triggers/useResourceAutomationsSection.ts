@@ -13,6 +13,10 @@ import { presentSessionAccessFailure } from '@/components/sessions/access/presen
 import { useScopedSharingRead } from '@/components/sharing/sharePrincipalNames';
 import { createSessionAccessClient, SessionAccessApiError } from '@/sync/api/session/sessionAccessApi';
 import { useMachineShareController } from '@/components/sharing/machines/useMachineShareController';
+import { useDeploymentAccountController } from '@/components/projects/deployments/useDeploymentProject';
+import { useDeploymentEnvironmentRecord } from '@/components/projects/deployments/useDeploymentReads';
+import { useProjectSource } from '@/components/projects/sources/useProjectSources';
+import { presentProjectSourceIssue } from '@/components/projects/sources/projectSourceIssue';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import type { addWorkflowTrigger, WorkflowTriggerWriteResult } from '@/sync/domains/workflows/workflowTriggerActions';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
@@ -22,6 +26,7 @@ import { useSessionCollaborationAvailabilityState } from '@/hooks/session/useSes
 import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { retryServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { areServerProfileIdentifiersEquivalent, getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 
 import { useAccountWorkflowEditor } from './AccountTriggersSection';
@@ -235,7 +240,9 @@ export function useResourceAutomationsSection(props: ResourceSectionInput): Reso
         if (actionCatalog.phase === 'error' || actionCatalog.phase === 'unsupported') actionCatalog.retry();
         if (eventCatalog.status === 'unavailable') eventCatalog.retry();
     });
-    const { link, audience } = useWorkflowLinkController({ subject, subjectName: props.subjectName, sourceAudience: props.sourceAudience,
+    // A native Source host remains the reader even while its roster is unavailable.
+    const { link, audience } = useWorkflowLinkController({ subject, subjectName: props.subjectName,
+        ...('sourceAudience' in props ? { sourceAudience: props.sourceAudience } : {}),
         binding, demanded, editor, project, whenOptions, whenStatus, retryWhen });
     return { accountLifetime, read, editor, rows, also, skippedNotSharedCount, machineId: actionCatalog.machineId, project, audience, session, link };
 }
@@ -260,15 +267,16 @@ function useWorkflowLinkController(input: Readonly<{
                 subject: draft.trigger.kind === 'pluginEvent' ? eventStart?.subject ?? subject : subject } } : draft);
     }, [subject]);
 
+    const workflow = linkDraft ? parseWorkflowDefinitionRefV1(linkDraft.workflow) : null;
+    const needsAudience = workflow?.kind === 'artifact' && subject !== null;
     const machineId = subject?.kind === 'machine' ? subject.machineId : '';
     const machineSubject = subject?.kind === 'machine';
     const machineSharing = useMachineShareController({ machineId,
         machineName: subjectName ?? machineId,
-        scope: demanded && linkDraft !== null && machineSubject && binding ? binding.scope : null });
+        scope: demanded && needsAudience && machineSubject && binding ? binding.scope : null });
     const profileSubject = subject?.kind === 'approvalProfile';
-    const profileSharing = useDocumentShareController(demanded && linkDraft !== null && profileSubject && binding
+    const profileSharing = useDocumentShareController(demanded && needsAudience && profileSubject && binding
         ? { scope: binding.scope, artifactId: subject.profileId, kind: 'approval-profile.v1' } : null);
-    const workflow = linkDraft ? parseWorkflowDefinitionRefV1(linkDraft.workflow) : null;
     const sessionId = demanded && binding && workflow?.kind === 'artifact' && sourceAudience === undefined
         && subject?.kind === 'session' ? subject.sessionId : null;
     const sessionAvailability = useSessionCollaborationAvailabilityState(sessionId ? binding?.scope.serverId ?? '' : '');
@@ -279,13 +287,22 @@ function useWorkflowLinkController(input: Readonly<{
             isCurrent: () => isCurrent() && binding.isCurrent() }).list();
         return projectSessionAccessAudience(snapshot, scope.accountId);
     });
+    // A Workbench subject supplies the Environment identity. The admitted Environment supplies its Source.
+    const environmentId = demanded && needsAudience && !('sourceAudience' in input) && subject?.kind === 'database'
+        && (subject.target.kind === 'environment' || subject.target.kind === 'managed_deployment') && binding?.isCurrent()
+        && areServerProfileIdentifiersEquivalent(subject.serverId, binding.scope.serverId) ? subject.target.environmentId : null;
+    const readsEnvironment = environmentId !== null;
+    const environmentDemand = { mounted: readsEnvironment, visible: readsEnvironment, focused: readsEnvironment };
+    const deployment = useDeploymentAccountController(binding ?? null, readsEnvironment, environmentDemand);
+    const environment = useDeploymentEnvironmentRecord(deployment, environmentId, environmentDemand);
+    const projectSourceId = environment.snapshot.status === 'ready' ? environment.snapshot.value?.environment.projectSourceId ?? null : null;
+    const databaseSource = useProjectSource(projectSourceId ? binding ?? null : null, projectSourceId);
     // These subject identities have no shared grant roster. Environment-bound
     // databases still use their containing Source's audience.
     const privateSubject = subject?.kind === 'project' || subject?.kind === 'healthCheck' || subject?.kind === 'plugin'
         || (subject?.kind === 'database' && (subject.target.kind === 'worktree' || subject.target.kind === 'manual'));
     const audience = machineSubject ? machineSharing.audience : profileSubject ? profileSharing.audience
-        : sourceAudience ?? (privateSubject ? NO_SHARED_AUDIENCE : sessionAudience.value ?? undefined);
-    const needsAudience = workflow?.kind === 'artifact' && subject !== null;
+        : sourceAudience ?? (privateSubject ? NO_SHARED_AUDIENCE : databaseSource.audience ?? sessionAudience.value ?? undefined);
     const review = useDocumentShareController(demanded && binding && workflow?.kind === 'artifact'
         && audience && audience.length > 0 ? { scope: binding.scope, artifactId: workflow.artifactId,
             requestedAudience: audience } : null);
@@ -297,15 +314,29 @@ function useWorkflowLinkController(input: Readonly<{
         }
         return undefined;
     }, [sessionAudience.failure, sessionId, sessionAvailability]);
+    const databaseIssue = React.useMemo(() => {
+        const environmentFailure = environment.snapshot.failure;
+        if (environmentFailure) return { ...presentDocumentShareFailure(environmentFailure.code), retryable: environmentFailure.retryable };
+        if (!databaseSource.issue || databaseSource.audience !== undefined || !binding) return undefined;
+        const homeName = getServerProfileById(binding.scope.serverId)?.name ?? binding.scope.serverId;
+        const issue = presentProjectSourceIssue(databaseSource.issue, homeName);
+        return { code: databaseSource.issue, message: issue?.description ?? issue?.title
+            ?? describeWorkflowOperationProblem('source_unavailable').message, retryable: databaseSource.status === 'offline' };
+    }, [environment.snapshot.failure, databaseSource.issue, databaseSource.audience, databaseSource.status, binding]);
+    const databaseLoading = readsEnvironment && (environment.snapshot.status === 'idle' || environment.snapshot.status === 'loading'
+        || (projectSourceId !== null && (databaseSource.status === 'initial' || databaseSource.status === 'loading')));
     const sourceLoading = (linkDraft !== null && sourceSharing?.loading === true)
-        || (sessionId !== null && (sessionAvailability === 'loading' || sessionAudience.resolving));
-    const sourceIssue = sourceSharing?.issue ?? sessionIssue
+        || (sessionId !== null && (sessionAvailability === 'loading' || sessionAudience.resolving)) || databaseLoading;
+    const sourceIssue = sourceSharing?.issue ?? sessionIssue ?? databaseIssue
         ?? (needsAudience && audience === undefined && !sourceLoading
             ? { code: 'source_unavailable', message: describeWorkflowOperationProblem('source_unavailable').message, retryable: false }
             : undefined);
     const reviewIssue = sourceIssue ?? review.issue;
     const reviewLoading = sourceLoading || review.loading;
-    const retryReview = sourceSharing?.issue ? sourceSharing.retryContent : sessionIssue ? sessionAudience.retry : review.retryContent;
+    const retryDatabaseSource = environment.snapshot.failure?.retryable ? environment.refresh
+        : databaseSource.status === 'offline' ? databaseSource.resolveSource : undefined;
+    const retryReview = sourceSharing?.issue ? sourceSharing.retryContent : sessionIssue ? sessionAudience.retry
+        : retryDatabaseSource ?? review.retryContent;
     const submitLink = React.useCallback(async (decision: 'accept' | 'decline'): Promise<ResourceAutomationLinkResult> => {
         if (decision === 'decline') return { ok: false, phase: 'declined', shared: [] };
         // Catalog Workflows have no Artifact grant roster; their ordinary trigger admission
