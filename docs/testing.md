@@ -149,8 +149,9 @@ their narrower contracts.
 
 The exact-tree commit gate selects affected runtime entry graphs from the
 packet's workspace dependency closure. It reserves entry-load capacity
-before the commit lock, runs the selected graphs on the tree formed under
-the lock and updates the ref only after they pass. When two packets conflict
+before the commit lock and runs the selected graphs on the proposed exact tree.
+It uses that result only if the expected parent still matches the ref at
+publication. When two packets conflict
 only in generated CLI Action projections, the gate runs the bundled-plugin
 generator on the combined source tree before checking it. A conflict in
 authored source still requires the author to reconcile it. Broad entry probes
@@ -738,10 +739,12 @@ are served before ordinary waiters. The rolling HEAD typecheck
 focused runs are served in arrival order and later focused runs cannot starve it
 (P03 ORCH, 2026-11-17). The commit gate admits affected runtime entry loads as
 `gate-entry-loads` before taking the commit lock. The broker learns memory by command and project selection.
-While locked, the gate composes
-the frozen packet against the current ref, regenerates affected approvals DTOs
-and bundled-plugin declarations or manifests from that tree, and checks the
-result once.
+Before locking, the gate composes each eligible frozen packet against its
+expected parent, regenerates affected approvals DTOs and bundled-plugin
+declarations or manifests as needed, and checks the exact tree. It reuses a
+prepared projection only for the same immutable inputs. Under the lock, the
+gate verifies the parent and writer order and updates the ref. If the
+parent changes, the gate prepares against the new parent.
 Changed-source syntax, new eager import cycles, dependency imports and
 exports, plugin manifests, workspace and lockfile sanity, and affected
 runtime loads protect HEAD. An affected CLI or daemon entry must load even
@@ -760,7 +763,7 @@ The next writer takes over if it needs its own entry probe or projection
 generation, or if its packet cannot be replayed and checked in the group.
 When an admitted writer has one predecessor, it can use its own admission to
 load affected entries against the tree expected after that predecessor lands.
-The holder reruns the fast checks and reuses a passing entry verdict only when
+The planned publisher reruns the fast checks before locking and reuses a passing entry verdict only when
 the rebased graph inputs, installed dependencies, and waiting writer's environment
 match its proof. Server route composition requires the identical Git tree.
 Each packet retains its own commit and post-commit report.

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // The exact-tree safety checks and ref lock shared by every commit writer.
-import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
@@ -12,7 +12,7 @@ import { commitLockfile } from './commitLockfile.mjs';
 import { commitLocalImportClosure, commitProducerClosure, createRevisionViewReader, gitIn, restoresHeadImports as verifyHeadImportRepair } from './commitProducerClosure.mjs';
 import { commitExtensionBoundaries } from './commitExtensionBoundaries.mjs';
 import { commitImportCycles } from './commitImportCycles.mjs';
-import { APPROVAL_DTO_PATH, commitTreeEntryLoads, EntryLoadAdmissionRequired, EntryLoadAdmissionUnavailable,
+import { APPROVAL_DTO_PATH, commitTreeEntryLoads, defaultCommitTreeLedger, EntryLoadAdmissionRequired, EntryLoadAdmissionUnavailable,
   commitEntryLoadEnvironmentKey, withAdmittedCommitEntryPhase } from './commitTreeEntryLoads.mjs';
 import { withCommitLock } from './commitWriterLock.mjs';
 export { commitGateLockPath, withCommitLock } from './commitWriterLock.mjs';
@@ -78,8 +78,9 @@ async function judgeCommit({ repo, base, tree, cacheDir, compareAdmittedEntryLoa
     repo, base, tree, env, phase: 'commit', compareAdmittedEntryLoads, expectedEnvironment, entryProof,
   }));
   if (loads.selected.length) notes.push(`tree entry loads: ${loads.selected.length} graph(s), ${JSON.stringify(loads.timings)}`);
-  if (loads.findings.length) return refused("entry loads of the commit's own tree", loads.findings);
-  return { verdict: 'pass', check: null, findings: [], notes };
+  const entryGenerationMs = loads.timings.generatedMs ?? 0;
+  if (loads.findings.length) return { ...refused("entry loads of the commit's own tree", loads.findings), entryGenerationMs };
+  return { verdict: 'pass', check: null, findings: [], notes, entryGenerationMs };
 }
 
 export function formatCommitGateIncomplete(result) {
@@ -162,8 +163,16 @@ function unnamedPostBaseRemovals(git, base, head, tree, message) {
   return removals;
 }
 
-/** Compose the frozen delta against the exact locked parent in a private index. */
-async function composeLockedPacket({ git, packet, head, regenerate, projections, headTree = head, scratchRoot = tmpdir() }) {
+/** Compose the frozen delta against a proposed parent in a private index. */
+async function composeReplayedPacket({ git, packet, head, regenerate, projections, headTree, scratchRoot = tmpdir(),
+  preparedProjection, onProjection, timing }) {
+  const parentTree = git(['rev-parse', `${headTree}^{tree}`]).trim();
+  // Both inputs are immutable: a different parent or frozen packet needs its own projection.
+  if (preparedProjection?.parentTree === parentTree && preparedProjection.packetBase === packet.base
+    && preparedProjection.packetTree === packet.tree) {
+    git(['merge-base', '--is-ancestor', packet.base, head]);
+    return { base: head, tree: preparedProjection.tree, replayedTree: preparedProjection.replayedTree };
+  }
   const scratch = await mkdtemp(join(scratchRoot, 'replay-index-'));
   const env = { ...process.env, GIT_INDEX_FILE: join(scratch, 'index'), GIT_LITERAL_PATHSPECS: '1' };
   const gitIndex = (args, options) => git(args, { ...options, env: options?.env ?? env });
@@ -197,9 +206,17 @@ async function composeLockedPacket({ git, packet, head, regenerate, projections,
     const cliConflict = conflicts.some(path => path !== APPROVAL_DTO_PATH);
     const cli = cliConflict || projections.fieldTitles || projections.plugins.size > 0;
     const approvals = projections.approvals || conflicts.includes(APPROVAL_DTO_PATH);
-    if (cli || approvals) {
+    const projected = cli || approvals;
+    if (projected) {
       const output = join(scratch, 'projections');
-      await regenerate(replayedTree, output, { cli, approvals, plugins: [...projections.plugins] });
+      const started = performance.now();
+      try { await regenerate(replayedTree, output, { cli, approvals, plugins: [...projections.plugins] }); }
+      finally {
+        if (timing) {
+          timing.regenerationMs += performance.now() - started;
+          if (regenerate !== requireOwnAdmission) timing.regenerations++;
+        }
+      }
       const emitted = new Map((existsSync(output) ? readdirSync(output, { recursive: true, withFileTypes: true }) : [])
         .filter(entry => entry.isFile()).map(entry => {
           const file = join(entry.parentPath, entry.name);
@@ -235,7 +252,8 @@ async function composeLockedPacket({ git, packet, head, regenerate, projections,
       env: { ...env, GIT_LITERAL_PATHSPECS: '0' },
     });
     const tree = writeTree();
-    if (tree === git(['rev-parse', `${headTree}^{tree}`]).trim()) throw new Error('Packet is already present at HEAD');
+    if (tree === parentTree) throw new Error('Packet is already present at HEAD');
+    if (projected) onProjection?.({ parentTree, packetBase: packet.base, packetTree: packet.tree, tree, replayedTree });
     return { base: head, tree, replayedTree };
   } catch (cause) {
     if (cause instanceof EntryLoadAdmissionRequired) throw cause;
@@ -245,15 +263,35 @@ async function composeLockedPacket({ git, packet, head, regenerate, projections,
   }
 }
 
-function composePacketAgainstHead({ git, head, headTree = head, packet, regenerate, projections, replayScratchRoot }) {
+function composePacketAgainstHead({ git, head, headTree = head, packet, regenerate, projections, replayScratchRoot, ...projection }) {
   return headTree === packet.base && !projections.approvals && !projections.fieldTitles && !projections.plugins.size
     ? packet
-    : composeLockedPacket({ git, packet, head, headTree, regenerate, projections, scratchRoot: replayScratchRoot });
+    : composeReplayedPacket({ git, packet, head, headTree, regenerate, projections, scratchRoot: replayScratchRoot, ...projection });
 }
 
-async function judgeLockedPacket({ repo, git, head, packet, regenerate, projections,
+async function judgePreparedPacket({ repo, git, head, packet, regenerate, projections, timing,
   compareAdmittedEntryLoads, expectedEnvironment, entryProof, replayScratchRoot, message, priority }) {
-  const exact = await composePacketAgainstHead({ git, head, packet, regenerate, projections, replayScratchRoot });
+  const applyAt = performance.now();
+  const regenerationBefore = timing.regenerationMs;
+  let exact;
+  try {
+    exact = await composePacketAgainstHead({ git, head, packet, regenerate, projections, replayScratchRoot,
+      preparedProjection: entryProof?.projection, timing });
+  } finally {
+    timing.applyMs += performance.now() - applyAt - (timing.regenerationMs - regenerationBefore);
+  }
+  const recheckAt = performance.now();
+  const entryGenerationBefore = timing.entryGenerationMs;
+  try {
+    return await checkPreparedPacket({ repo, git, head, packet, exact, compareAdmittedEntryLoads,
+      expectedEnvironment, entryProof, message, priority, timing });
+  } finally {
+    timing.recheckMs += Math.max(0, performance.now() - recheckAt - (timing.entryGenerationMs - entryGenerationBefore));
+  }
+}
+
+async function checkPreparedPacket({ repo, git, head, packet, exact, compareAdmittedEntryLoads,
+  expectedEnvironment, entryProof, message, priority, timing }) {
   if (priority && head !== priority.head && !isHeadRestoration(repo, priority.breaking, head, exact.tree)) {
     return { priorityExpired: true };
   }
@@ -267,6 +305,7 @@ async function judgeLockedPacket({ repo, git, head, packet, regenerate, projecti
     } };
   }
   const gate = await runCommitGate({ repo, base: head, tree: exact.tree, compareAdmittedEntryLoads, expectedEnvironment, entryProof });
+  timing.entryGenerationMs += gate.entryGenerationMs ?? 0;
   for (const note of gate.notes) console.error(`commit gate: ${note}`);
   return gate.verdict === 'pass' ? { exact } : { gate };
 }
@@ -316,14 +355,15 @@ async function identifyHeadRestoration({ repo, git, ref, packet, message, projec
   }
 }
 
-async function landWaitingPackets({ repo, git, ref, moveRef, queued, replayScratchRoot }) {
-  for await (const { packet: waiting, restoresHead, entryProof, saveLanding } of queued()) {
+async function planWaitingPackets({ repo, git, head, queued, timing, replayScratchRoot }) {
+  const group = [];
+  if (!queued) return group;
+  for await (const { id, packet: waiting, restoresHead, entryProof } of queued()) {
     if (!waiting || restoresHead) break;
     try {
-      const head = git(['rev-parse', '--verify', ref]).trim();
       const packet = frozenCandidate(git, waiting.candidate);
       const projections = packetProjectionInputs(git, packet);
-      const { exact } = await judgeLockedPacket({ repo, git, head, packet, projections,
+      const { exact } = await judgePreparedPacket({ repo, git, head, packet, projections, timing,
         regenerate: requireOwnAdmission, compareAdmittedEntryLoads: requireOwnAdmission,
         expectedEnvironment: waiting.environment, entryProof, replayScratchRoot, message: waiting.message });
       if (!exact) {
@@ -332,23 +372,50 @@ async function landWaitingPackets({ repo, git, ref, moveRef, queued, replayScrat
       }
       const commit = createGroupedCommit(git, waiting.candidate, exact, packet, waiting.message);
       if (!commit) break;
-      // Store the proposed result before CAS. The waiting writer only accepts it
-      // if the commit is in its ref, including when the holder exits mid-handoff.
-      saveLanding({ commit, head, tree: exact.tree });
-      moveRef({ commit, head, reason: `${waiting.label}: grouped by pid ${process.pid}` });
-      console.error(`commit gate: grouped ${commit} after ${head}`);
+      group.push({ id, commit, head, tree: exact.tree, label: waiting.label });
+      head = commit;
     } catch (error) {
       const reason = error instanceof EntryLoadAdmissionRequired ? 'needs its own entry admission or generator' : error.message;
       console.error(`commit gate: next writer resumes individually (${reason})`);
       break;
     }
   }
+  return group;
+}
+
+async function publishWaitingPackets({ group, queued, publish, landed }) {
+  let next = 0;
+  if (!group.length) return;
+  for await (const { id, saveLanding } of queued()) {
+    const prepared = group[next];
+    if (prepared.id !== id) return;
+    const { commit, head, tree, label } = prepared;
+    // A writer accepts its receipt only after its commit is reachable from the ref.
+    saveLanding({ commit, head, tree });
+    publish({ commit, head, reason: `${label}: grouped by pid ${process.pid}` });
+    landed.push(prepared);
+    next++;
+    if (next === group.length) return;
+  }
+}
+
+function reportHold(repo, { refUpdateMs, ...preparation }, holdMs, grouped) {
+  const rounded = Object.fromEntries(Object.entries(preparation).map(([key, value]) => [key, Math.round(value)]));
+  const record = { timestamp: new Date().toISOString(), pid: process.pid, grouped, preparation: rounded,
+    hold: { elapsedMs: Math.round(holdMs), applyMs: 0, recheckMs: 0, regenerationMs: 0, refUpdateMs: Math.round(refUpdateMs) } };
+  console.error(`commit gate: lock held ${record.hold.elapsedMs} ms ${JSON.stringify(record)}`);
+  try {
+    const dir = dirname(defaultCommitTreeLedger(repo));
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(join(dir, 'holds.jsonl'), `${JSON.stringify(record)}\n`);
+  } catch (error) {
+    console.error(`commit gate: could not record hold timing (${error.message})`);
+  }
 }
 
 /**
- * Admission is outside the lock. Compose and judge against the current ref.
- * The same holder can publish subsequent frozen packets using verified inputs,
- * without obtaining another grant or doing generation under the shared lock.
+ * Prepare the eligible arrival-ordered prefix from immutable trees before locking.
+ * Publish it only while the expected parent and writer order still hold.
  */
 export async function finalizeGatedCommit({ repo, ref = 'HEAD', label, packet, createCommit, replayScratchRoot, message,
   candidate, dry = false }) {
@@ -361,52 +428,77 @@ export async function finalizeGatedCommit({ repo, ref = 'HEAD', label, packet, c
     return await withAdmittedCommitEntryPhase({ repo, ...packet, phase: 'commit' }, async (compareAdmittedEntryLoads, regenerate, hasEntryGraphs) => {
       console.error(`commit gate: admission ${Math.round(performance.now() - admissionAt)} ms`);
       const queuedAt = performance.now();
-      const prepare = waiting && hasEntryGraphs && (async predecessor => {
+      const preparesProjection = projections.approvals || projections.fieldTitles || projections.plugins.size;
+      const prepare = waiting && (hasEntryGraphs || preparesProjection) && (async (predecessor, predecessorProof) => {
         try {
           const head = git(['rev-parse', '--verify', ref]).trim();
           let headTree = head;
           if (predecessor?.candidate) {
             const previous = frozenCandidate(git, predecessor.candidate);
             const preview = await composePacketAgainstHead({ git, head, packet: previous,
-              projections: packetProjectionInputs(git, previous), regenerate: requireOwnAdmission, replayScratchRoot });
+              projections: packetProjectionInputs(git, previous), regenerate: requireOwnAdmission, replayScratchRoot,
+              preparedProjection: predecessorProof?.projection });
             headTree = preview.tree;
           }
-          const exact = await composePacketAgainstHead({ git, head, headTree, packet, projections,
-            regenerate: requireOwnAdmission, replayScratchRoot });
-          const proof = await commitTreeEntryLoads({ repo, base: headTree, tree: exact.tree, phase: 'commit',
+          let projection;
+          const exact = await composePacketAgainstHead({ git, head, headTree, packet, projections, regenerate,
+            replayScratchRoot, onProjection: value => { projection = value; } });
+          const proof = hasEntryGraphs && await commitTreeEntryLoads({ repo, base: headTree, tree: exact.tree, phase: 'commit',
             compareAdmittedEntryLoads, prepare: true });
           if (proof) console.error(`commit gate: waiting entry proof over ${Object.keys(proof.keys).length} graph(s)`);
-          return proof;
+          if (proof || projection) return { ...proof, projection };
         } catch (error) {
           const reason = error instanceof EntryLoadAdmissionRequired ? 'entry admission or generator still needed' : error.message;
           console.error(`commit gate: waiting entry proof unavailable (${reason})`);
         }
       });
       const priority = waiting && await identifyHeadRestoration({ repo, git, ref, packet, message, projections, replayScratchRoot });
-      const land = priority => withCommitLock({ repo, ref, label, arrival, packet: waiting, prepare,
-        restoresHead: priority?.breaking }, async (moveRef, queued, entryProof) => {
-        const lockedAt = performance.now();
-        console.error(`commit gate: lock wait ${Math.round(lockedAt - queuedAt)} ms`);
-        try {
-          const head = git(['rev-parse', '--verify', ref]).trim();
-          const result = await judgeLockedPacket({ repo, git, head, packet, regenerate, projections,
-            compareAdmittedEntryLoads, entryProof, replayScratchRoot, message, priority });
-          if (result.gate || result.priorityExpired) return result;
-          const { exact } = result;
-          const commit = createCommit(exact);
-          if (!dry) {
-            try { moveRef({ commit, head, reason: `${label}: pid ${process.pid}` }); }
-            catch (error) { throw new CommitGateUnavailable('ref update', error); }
-            if (queued) {
-              try { await landWaitingPackets({ repo, git, ref, moveRef, queued, replayScratchRoot }); }
-              catch (error) { console.error(`commit gate: group landing stopped (${error.message})`); }
+      const land = async priority => {
+        const timing = { applyMs: 0, recheckMs: 0, regenerationMs: 0, regenerations: 0, entryGenerationMs: 0,
+          refUpdateMs: 0 };
+        const landed = [];
+        let own;
+        const plan = async (head, queued, entryProof) => {
+          try {
+            if (own?.head !== head) {
+              const result = await judgePreparedPacket({ repo, git, head, packet, regenerate, projections,
+                compareAdmittedEntryLoads, entryProof, replayScratchRoot, message, priority, timing });
+              if (result.gate || result.priorityExpired) return result;
+              own = { head, commit: createCommit(result.exact), tree: result.exact.tree };
             }
+            const group = dry ? [] : await planWaitingPackets({ repo, git, head: own.commit, queued, timing, replayScratchRoot });
+            return { result: own, group };
+          } catch (error) {
+            if (error instanceof EntryLoadAdmissionRequired) throw error;
+            return { error };
           }
-          return { commit, head, tree: exact.tree };
+        };
+        const publish = async (moveRef, queued, _entryProof, prepared) => {
+          console.error(`commit gate: queue and preparation ${Math.round(performance.now() - queuedAt)} ms`);
+          const update = input => {
+            const started = performance.now();
+            try { moveRef(input); }
+            finally { timing.refUpdateMs += performance.now() - started; }
+          };
+          if (prepared.error) throw prepared.error;
+          const { result, group } = prepared;
+          if (!result) return prepared;
+          if (!dry) {
+            const { commit, head } = result;
+            try { update({ commit, head, reason: `${label}: pid ${process.pid}` }); }
+            catch (error) { throw new CommitGateUnavailable('ref update', error); }
+            try { await publishWaitingPackets({ group, queued, publish: update, landed }); }
+            catch (error) { console.error(`commit gate: group landing stopped (${error.message})`); }
+          }
+          return result;
+        };
+        try {
+          return await withCommitLock({ repo, ref, label, arrival, packet: waiting, prepare, plan,
+            restoresHead: priority?.breaking, onPublishedHold: elapsed => reportHold(repo, timing, elapsed, landed.length) }, publish);
         } finally {
-          console.error(`commit gate: lock held ${Math.round(performance.now() - lockedAt)} ms`);
+          for (const { commit, head } of landed) console.error(`commit gate: grouped ${commit} after ${head}`);
         }
-      });
+      };
       const result = await land(priority);
       if (!result.priorityExpired) return result;
       console.error('commit gate: Restores-HEAD claim expired; resuming in ordinary arrival order');
