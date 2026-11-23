@@ -284,29 +284,23 @@ describe('workflow Action projections', () => {
     });
   });
 
-  it('keeps only the four interactive Workflow MCP tools direct and discovers the remaining Actions', () => {
-    const tools = listBuiltInHappierTools({
-      surface: 'mcp',
-      registry: createResolvedContributionRegistry({ agents: [] }),
-    });
-    const workflowActionIds = tools
+  it('discovers Workflow MCP Actions by default and publishes a direct tool when requested', () => {
+    const registry = createResolvedContributionRegistry({ agents: [] });
+    const workflowActionIds = (tools: ReturnType<typeof listBuiltInHappierTools>) => tools
       .map((tool) => String(tool.actionId))
       .filter((actionId) => actionId.startsWith('workflow.'))
       .sort();
 
-    expect(workflowActionIds).toEqual([
-      'workflow.run.cancel',
-      'workflow.run.get',
-      'workflow.run.start',
-      'workflow.run.wait',
-    ]);
-    const discoverableOnlyWorkflowIds = listActionSpecsForSurface('mcp')
-      .filter((spec) => spec.id.startsWith('workflow.') && spec.toolExposure?.mcp === 'discoverable_only')
+    expect(workflowActionIds(listBuiltInHappierTools({ surface: 'mcp', registry, actionsSettings: null }))).toEqual([]);
+    expect(workflowActionIds(listBuiltInHappierTools({ surface: 'mcp', registry,
+      actionsSettings: { v: 1, actions: { 'workflow.run.get': { toolExposureModes: { mcp: 'direct' } } } },
+    }))).toEqual(['workflow.run.get']);
+    const workflowIds = listActionSpecsForSurface('mcp')
+      .filter((spec) => spec.id.startsWith('workflow.'))
       .map((spec) => String(spec.id));
-    expect(workflowActionIds.filter((actionId) => discoverableOnlyWorkflowIds.includes(actionId))).toEqual([]);
     const discovered = new Set(searchSerializedActionSpecsForSurface({ surface: 'mcp', query: 'workflow',
       limit: 100, isActionEnabled: () => true }).map(spec => String(spec.id)));
-    expect(discoverableOnlyWorkflowIds.filter(actionId => !discovered.has(actionId))).toEqual([]);
+    expect(workflowIds.filter(actionId => !discovered.has(actionId))).toEqual([]);
   });
 
   it('keeps every agent-exposed workflow Action discoverable', () => {
