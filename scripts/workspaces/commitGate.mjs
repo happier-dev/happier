@@ -141,10 +141,23 @@ function cliProjectionOwned(git, revision, path) {
 
 function packetProjectionInputs(git, packet) {
   const paths = git(['diff', '--name-only', '--no-renames', '-z', packet.base, packet.tree]).split('\0');
-  const plugins = new Set(paths.flatMap(path => {
-    const plugin = /^packages\/plugins\/([^/]+)\/src\/manifest\.ts$/u.exec(path)?.[1];
-    return plugin ? [plugin] : [];
-  }));
+  const candidates = new Map();
+  for (const path of paths) {
+    const match = /^packages\/plugins\/([^/]+)\/(src\/.+|package\.json)$/u.exec(path);
+    if (!match || /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(path)) continue;
+    const [, plugin, source] = match;
+    candidates.set(plugin, candidates.get(plugin) || source === 'src/manifest.ts');
+  }
+  const plugins = new Set();
+  if (candidates.size) {
+    const tracked = new Set(git(['ls-tree', '-r', '--name-only', '-z', packet.base, '--', manifestAssetRoot]).split('\0'));
+    for (const [plugin, manifestChanged] of candidates) {
+      // This includes imported inputs such as accountDefinition.ts for an enrolled bundle.
+      if (manifestChanged || tracked.has(`${CLI_PROJECTION_ROOT}/${bundledPluginManifestAssetRelativePath(plugin)}`)) {
+        plugins.add(plugin);
+      }
+    }
+  }
   return {
     plugins,
     fieldTitles: paths.includes('packages/protocol/src/actions/schemaInputHints.ts'),

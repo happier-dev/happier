@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { watch } from 'node:fs';
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
@@ -368,11 +369,31 @@ async function replaceBoard(board, current, candidate, archived, mode, minimumBy
   }
 }
 
+export function commitLane(git, commit) {
+  const lane = git(['show', '-s', '--format=%(trailers:key=Lane,valueonly,unfold,separator=%x00)', commit])
+    .split('\0').at(-1).trim();
+  return lane || undefined;
+}
+
+// Already-running report drainers spawn this writer for every publication.
+function routeCommitReport(entry, repo) {
+  const report = entry.toString('utf8');
+  const heading = /^(### 20\d{2}-\d{2}-\d{2} \d{2}:\d{2} UTC — P03-COMMIT-CHECKS → )P03 ORCH( — URGENT — (?:Broad post-commit checks failed for|new type errors from) ([a-f0-9]{11})\r?\n)/u.exec(report);
+  if (!heading) return entry;
+  const action = /^- P03 ORCH: route to [^\r\n]+? for a fix forward(?=[.:])/u.exec(report.slice(heading[0].length));
+  if (!action) return entry;
+  const lane = commitLane(args => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }), heading[3]);
+  if (!lane) return entry;
+  const body = report.slice(heading[0].length + action[0].length);
+  return Buffer.from(`${heading[1]}${lane}${heading[2]}- ${lane}: fix forward${body}`);
+}
+
 /** Post raw entry bytes; optional rotation archives older posts under the same lock. */
-export async function postBoardEntry(board, entryFile, { rotateBefore } = {}) {
+export async function postBoardEntry(board, entryFile, { rotateBefore, repo = repoRoot } = {}) {
   refuseArchivedBoard(board);
-  validateEntry(await fs.readFile(entryFile));
-  const entry = await screenEntry(board, await fs.readFile(entryFile));
+  const original = await fs.readFile(entryFile);
+  validateEntry(original);
+  const entry = await screenEntry(board, routeCommitReport(original, repo));
   let cutoff;
   if (rotateBefore !== undefined) {
     const normalized = /^\d{4}-\d{2}-\d{2}$/.test(rotateBefore)

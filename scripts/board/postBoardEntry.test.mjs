@@ -420,3 +420,25 @@ test('an ALL leads post must say what it affects', async (t) => {
   await fs.writeFile(entryFile, '### 2026-11-02 12:00 UTC — Writer → Other — ASK — subject\n- no tag needed\n');
   await run(process.execPath, [writer, board, entryFile]);
 });
+
+test('routes queued legacy commit reports to the exact Lane trailer when published', async (t) => {
+  const { directory, board, entryFile } = await fixture(t);
+  const git = async (...args) => (await run('git', ['-C', directory, ...args])).stdout.trim();
+  await git('init', '-q');
+  await git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+    'commit', '--allow-empty', '-qm', 'fix: update triage', '-m', 'Lane: TRIAGE-ACCEPT-FIX-UI-254');
+  const routed = await git('rev-parse', 'HEAD');
+  await git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+    'commit', '--allow-empty', '-qm', 'fix: update without a lane');
+  const fallback = await git('rev-parse', 'HEAD');
+  for (const [commit, lane] of [[routed, 'TRIAGE-ACCEPT-FIX-UI-254'], [fallback, 'P03 ORCH']]) {
+    const subject = `Broad post-commit checks failed for ${commit.slice(0, 11)}`;
+    const entry = `### 2026-11-23 14:12 UTC — P03-COMMIT-CHECKS → P03 ORCH — URGENT — ${subject}\n`
+      + `- P03 ORCH: route to author Fixture for a fix forward. The exact commit ${commit} adds an entry, bundle or export failure over its parent ${routed}.\n`;
+    await fs.writeFile(entryFile, entry);
+    await postBoardEntry(board, entryFile, { repo: directory });
+    const published = await fs.readFile(board, 'utf8');
+    assert.match(published, new RegExp(`→ ${lane} — URGENT — ${subject}`));
+    assert.ok(published.includes(lane === 'P03 ORCH' ? entry : `- ${lane}: fix forward. The exact commit ${commit}`));
+  }
+});

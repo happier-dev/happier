@@ -43,7 +43,7 @@ import { fileURLToPath } from 'node:url';
 import { compilerDiagnosticFromLine } from '../testing/lib/compilerBaseline.mjs';
 import { diagnosticHunks, newDiagnostics } from './commitTypeCoherenceDiagnostics.mjs';
 import { WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE, withWorkspaceBundleLock } from './workspaceBundleLock.mjs';
-import { BOARD_PATH } from '../board/postBoardEntry.mjs';
+import { BOARD_PATH, commitLane } from '../board/postBoardEntry.mjs';
 import packageExportMatch from '../../packages/cli-common/packageExportMatch.cjs';
 import { packageNameOfSpecifier, resolveWorkspaceSource, workspaceSourcePackageClosure } from '../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { readCommitTreeWorkspacePackages } from './commitTreeEntryLoads.mjs';
@@ -847,12 +847,6 @@ export async function drainCommitGateReports({ repo, env = process.env, worker, 
 
 const ROLLING_HEAD = 'rolling-head';
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
-
-function commitLane(git, commit) {
-  const lane = git(['show', '-s', '--format=%(trailers:key=Lane,valueonly,unfold,separator=%x00)', commit])
-    .split('\0').at(-1).trim();
-  return lane || undefined;
-}
 
 const inlineCode = value => `\`${value.replaceAll('`', '\\`')}\``;
 

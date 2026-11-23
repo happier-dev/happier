@@ -146,6 +146,7 @@ def test_projection_producers_land_current_outputs():
         git("config", "user.email", "fixture@example.invalid")
         titles = "packages/protocol/src/actions/schemaInputHints.ts"
         manifest = "packages/plugins/test/src/manifest.ts"
+        account = "packages/plugins/test/src/accountDefinition.ts"
         approvals = "packages/protocol/src/approvals/approvalRequestV2.ts"
         dto = "packages/plugin-sdk/src/actions/dtos/approvalsActionDtos.generated.ts"
         declaration = "apps/cli/assets/bundled-plugin-manifests/declarations/test.summary.json"
@@ -159,7 +160,7 @@ def test_projection_producers_land_current_outputs():
         write("apps/cli/scripts/build-owned/generateBundledPluginEntries.ts", rf'''
 import {{ mkdirSync, readFileSync, writeFileSync }} from 'node:fs';
 import {{ dirname, join }} from 'node:path';
-for (const [producer, projection] of [[{titles!r}, {declaration!r}], [{manifest!r}, {bundled!r}]]) {{
+for (const [producer, projection] of [[{titles!r}, {declaration!r}], [{account!r}, {bundled!r}]]) {{
   const out = join(process.argv.at(-1), projection);
   mkdirSync(dirname(out), {{ recursive: true }});
   writeFileSync(out, readFileSync(producer, 'utf8').match(/= (\d+);/)[1] + '\n');
@@ -175,14 +176,15 @@ export const prepareActionTypeMap = () => ({{ outputs: new Map([[resolve({dto!r}
         write("packages/cli-common/sourceRuntimeEntries.mjs", "export const resolveWorkspaceSource = () => {};\n")
         write("packages/protocol/src/plugins/manifest/ingest.ts", "export const ingestPluginManifestV2 = () => ({ ok: true });\n")
         write("packages/plugin-sdk/src/manifest.ts", "export const parsePluginManifest = () => ({ ok: true });\n")
-        for path in (titles, manifest, approvals, dto, declaration, bundled):
+        write(manifest, 'export { value } from "./accountDefinition";\n')
+        for path in (titles, account, approvals, dto, declaration, bundled):
             write(path, "export const value = 0;\n" if path.endswith(".ts") else '0\n')
         git("add", ".")
         git("commit", "-qm", "fixture base")
-        for producer in (titles, manifest, approvals):
+        for producer in (titles, account, approvals):
             write(producer, "export const value = 1;\n")
         patch = repo / "own.patch"
-        patch.write_text(git("diff", "--binary", "--full-index", "HEAD", "--", titles, manifest, approvals))
+        patch.write_text(git("diff", "--binary", "--full-index", "HEAD", "--", titles, account, approvals))
         msg = repo / "message"
         msg.write_text("fix: update projection producers\n")
         env = {**os.environ, "P03_GATE_CACHE": str(repo / "cache"), "P03_COMMIT_KICK": "true"}
