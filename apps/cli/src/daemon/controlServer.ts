@@ -25,10 +25,11 @@ import { DoctorSnapshotResourceVitalsSchema, type DoctorSnapshotResourceVitals }
 import { createDaemonAdmissionDrain, DaemonAdmissionRefusalCodeSchema, EXECUTION_RUN_ADMISSION_PATH, ExecutionRunDaemonAdmissionResponseSchema, waitForDaemonAdmission, waitForSessionSpawnAdmission, type DaemonAdmissionDrain } from './lifecycle/admissionDrain';
 import { AUTHORITY_CEILING_HEADER_V1, resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { logger } from '@/ui/logger';
-import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, hasDeclaredActionDaemonIngress, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions';
 import { requiresOriginalAccountMachineActionProof } from '@/api/externalActionExecutionAuthorization';
 import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS } from '@happier-dev/protocol/local/services/actionIdsV1';
 import { requiresManagedMachineDaemonIngress } from './externalActions/reconcileExternalActionTarget';
 import { projectExternalActionRunNowIdempotencyKeyV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { SessionStopIntent } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
@@ -1341,8 +1342,11 @@ export function createDaemonControlApp({
             : resolveInvocationAuthority({ credential: 'terminal', surface });
           const controlControllerTarget = await externalActionApi.resolveManagedControlControllerTarget?.(
             parsed.data.actionId, parsed.data.input, lifetime.signal) ?? null;
-          if ((parsed.data.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 || requiresManagedMachineDaemonIngress(parsed.data.actionId,
-            resolveActionExecutionPlacementForInput(getActionSpec(parsed.data.actionId), parsed.data.input, undefined, surface), controlControllerTarget, parsed.data.input))
+          const spec = getActionSpec(parsed.data.actionId);
+          if ((parsed.data.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
+            || (Object.hasOwn(LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS, parsed.data.actionId) && hasDeclaredActionDaemonIngress(spec, 'cli'))
+            || requiresManagedMachineDaemonIngress(parsed.data.actionId,
+            resolveActionExecutionPlacementForInput(spec, parsed.data.input, undefined, surface), controlControllerTarget, parsed.data.input))
             && requiresOriginalAccountMachineActionProof(parsed.data.actionId, parsed.data.input, { surface })) {
             if (!externalActionApi.executeOriginalAccountAction)
               return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };

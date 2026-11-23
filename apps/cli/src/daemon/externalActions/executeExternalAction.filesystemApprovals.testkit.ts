@@ -211,11 +211,12 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       ...(actionId === 'projects.service.relocate' ? { services: { web: { execution: 'portable', source: {
         kind: 'command', command: `${JSON.stringify(process.execPath)} -e "setInterval(() => {}, 1000)"` } } } } : {}) }));
   }
-  if (actionId === 'localServices.launcher.start') {
+  if (actionId === 'localServices.launcher.start' || actionId === 'localServices.actions.restartManaged') {
+    const serviceName = actionId === 'localServices.launcher.start' ? 'checked' : 'web';
     await mkdir(join(rootPath, '.happier'), { recursive: true });
     await writeFile(join(rootPath, '.happier/project.json'), JSON.stringify({ version: 1,
       ...(setup ? { workspace: { setup: [{ kind: 'command', command: 'echo setup-reviewed' }] } } : {}),
-      services: { checked: { ...(worker ? { execution: 'portable' } : {}),
+      services: { [serviceName]: { ...(worker ? { execution: 'portable' } : {}),
         source: { kind: 'command', command: `${JSON.stringify(process.execPath)} -e "setInterval(() => {}, 1000)"` } } } }));
   }
   await writeFile(join(directory, 'outside'), 'outside unchanged');
@@ -1295,14 +1296,14 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     stopSession: async () => true, requestShutdown() {} }, { actionsSettingsProvider: settings,
     externalActionIngressOwner: installed });
   if (actionId === 'deployments.templates.instantiate') client.registerDeploymentChildRoutes(new AbortController().signal);
-  if (actionId === 'projects.open' || worker) {
-    // The real installed Open receiver is reached on a connected Machine.
+  const connectInstalledMachine = async () => {
     // Connect the public client rather than bypassing its live transport check.
     await bootstrapAccountSettingsContext({ credentials, mode: 'blocking', refresh: 'force',
       honorAccountSettingsModeEnv: false, expectedAccountEncryptionMode: 'plain' });
     client.connect();
     await expect.poll(() => installedSocket?.connected).toBe(true);
-  }
+  };
+  if (actionId === 'projects.open' || worker) await connectInstalledMachine();
   const store = createCliApprovalsArtifactStore({ credentials, serverId: 'srv_n2' });
   const issuerParams = { ...params, ...(features ? { resolveServerFeaturesSnapshot: () => features } : {}) };
   // The production CLI composer supplies Account Actions used by placement,
@@ -1346,6 +1347,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   const personMoveExecutions: ActionExecuteResult[] = [];
   const harness = { personMoveExecutions, rootPath, directory, ref, workerRef, workerRelationship: relationship, rows, rpcOutcomes, networkPaths, finiteIngress, spawned, installation, sourceInstallation, deploymentRuntime,
     nativeAgentRoots,
+    connectInstalledMachine,
     useNativeStreamCopy() { nativeStreamCopy = true; },
     runRootControl: (input: unknown, requestedActionId: Parameters<typeof requestDaemonSignedRootActionExecution>[0]['actionId']) => requestDaemonSignedRootActionExecution({
       actionId: requestedActionId, input, target,
@@ -1375,7 +1377,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     deliverMachineRpc: (method: string, params: unknown) => rpcInstallation.run(installation, () => rpc.handleRequest({
       method: target.machineId + ':' + method, params, callerAuthority: 'present_user', machineAdmission: admission,
     })),
-    async seedMoveService(endpoint: string | null = null) {
+    async seedMoveService(endpoint: string | null = null, serviceId = 'web') {
       if (!pluginRuntime) throw new Error('Missing installed Service owner');
       let phase: 'running' | 'stopped' = 'running';
       let stopCalls = 0;
@@ -1386,7 +1388,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       // the accepted approval has returned and its ingress custody is disposed.
       const handle = await pluginRuntime.registry.projectManagedServices.superviseProject({ kind: 'workspace', workspace: ref,
         declaration: { workspaceRefId: ref.id, selection: { kind: 'manifest', name: 'web' } },
-        cwd: ref.rootPath, serviceId: 'web', specIdentity: 'web', execution: 'portable', isCurrent: () => true,
+        cwd: ref.rootPath, serviceId, specIdentity: 'web', execution: 'portable', isCurrent: () => true,
         requester: { serverId: homeId, accountId: 'account', machineId: ref.machineId, installationId: sourceInstallation.installationId },
         processSpec: { mode: { kind: 'native', instance: { adapter: { pluginId: 'fixture.plugin', localId: 'web' }, nativeResourceId: 'web' },
           lifecycle: { inspect: async () => ({ phase, readiness: 'not_reported', endpoint }),
@@ -1465,14 +1467,15 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
         return output.json();
       } finally { output.restore(); process.exitCode = previousExitCode; }
     },
-    async runSavedProfileMcp(input: unknown, requestedActionId: ActionId) {
+    async runSavedProfileMcp(input: unknown, requestedActionId: ActionId, installedDaemon = false) {
       if (!features) throw new Error('Missing server features');
       writeDaemonState({ pid: process.pid, startedAt: Date.now(), startedWithCliVersion: 'test',
         httpPort: runtime.controlPort, controlToken: runtime.controlToken, machineId: target.machineId, accountId: 'account' });
       // Standalone MCP receives its presentation policy through the command's environment snapshot.
       env.patch({ HAPPIER_ACTIONS_SETTINGS_V1: JSON.stringify(accountSettings.actionsSettingsV1) });
       const { mcp } = runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => createExternalMcpServer({
-        credentials: cliCredentials, machineId: target.machineId, daemonControlTarget: null,
+        credentials: cliCredentials, machineId: target.machineId,
+        ...(installedDaemon ? {} : { daemonControlTarget: null }),
         serverFeaturesSnapshot: features,
       }));
       const client = new Client({ name: 'managed-service-stop', version: '1' });

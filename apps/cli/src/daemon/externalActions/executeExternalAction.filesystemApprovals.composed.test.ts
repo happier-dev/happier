@@ -40,7 +40,8 @@ import { createHarness, resetFilesystemApprovalSocketBoundary } from './executeE
 import { SignedRootActionExecuteRequestSchema } from './signedRootActionControl';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { projectServiceMoveStartInput } from '@/daemon/local/services/actions/projectServiceMoveChildren';
-import { createLocalServiceActionConfirmationNonceV1 } from '@happier-dev/protocol/local/services/actions/v1';
+import { createLocalServiceActionConfirmationNonceV1, createProjectServiceDeclarationTargetIdV1, LocalServiceCopyUrlResultV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
+import { parseLocalServiceDeclarationPreviewLandingUrlV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import { ProjectAccountRowV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 
 // Each Home HTTP fixture is independent even though it uses the same origin.
@@ -620,6 +621,53 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       expect(h.serviceInstances()).toHaveLength(1);
     } finally {
       await Promise.all(h.serviceInstances().map(service => service.stop()));
+      await h.close();
+    }
+  });
+  it.each([
+    { actionId: 'localServices.actions.copyUrl', action: 'copy_url' },
+    { actionId: 'localServices.actions.restartManaged', action: 'restart_managed' },
+  ] as const)('reaches the installed Service owner from standalone MCP for $action', async ({ actionId, action }) => {
+    const h = await createHarness(actionId, 'default', false, 'srv_n2', undefined, false, false,
+      { authentication: 'terminal' });
+    const targetId = createProjectServiceDeclarationTargetIdV1(h.ref, { kind: 'manifest', name: 'web' });
+    const service = await h.seedMoveService('http://127.0.0.1:31415', targetId);
+    try {
+      await h.connectInstalledMachine();
+      service.finishStop();
+      const request = { requestId: randomUUID(), target: service.request.currentTarget, action };
+      const proposed = await h.runSavedProfileMcp(request, actionId, true);
+      const approval = ActionApprovalRequestCreatedResultSchema.safeParse(proposed);
+      let receipt = proposed;
+      if (action === 'restart_managed') {
+        expect(approval.success, JSON.stringify(proposed)).toBe(true);
+        if (!approval.success) throw approval.error;
+        expect(service.snapshot().state).toBe('running');
+        expect(service.stopCalls()).toBe(0);
+        const decided = await h.runPublicCli({ artifactId: approval.data.artifactId, decision: 'approve' },
+          'approval.request.decide', { yes: true });
+        const { execution } = await h.approval();
+        expect(execution, JSON.stringify(execution)).toMatchObject({ ok: true });
+        expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, data: { status: 'executed' } });
+        receipt = execution?.result;
+      }
+      expect(receipt, JSON.stringify({ receipt, outcomes: h.rpcOutcomes })).toMatchObject({ status: 'succeeded', action });
+      assertActionOutputContract(actionId, receipt);
+      if (action === 'copy_url') {
+        const copied = LocalServiceCopyUrlResultV1Schema.parse(receipt);
+        expect(parseLocalServiceDeclarationPreviewLandingUrlV1(copied.destinationUrl ?? '')).toEqual({
+          serverId: h.ref.serverId, machineId: h.ref.machineId, targetId,
+        });
+        expect(service.snapshot().state).toBe('running');
+        expect(service.stopCalls()).toBe(0);
+      } else {
+        expect(service.snapshot().state).toBe('stopped');
+        expect(service.stopCalls()).toBe(1);
+        expect(h.serviceInstances().filter(instance => instance.snapshot().state === 'running')).toHaveLength(1);
+      }
+    } finally {
+      service.finishStop();
+      await Promise.all(h.serviceInstances().map(instance => instance.stop()));
       await h.close();
     }
   });

@@ -223,9 +223,10 @@ function createRuntimeActionSpecFor<
     ...(requiresAnsweringClient ? { executionPlacement: 'client' as const } : {}),
     ...(controlKind === 'copy_url' ? {
       executionPlacements: ['client', 'machine'] as const,
-      // The Machine resolves the destination. The invoking UI writes the returned URL.
+      // The Machine resolves the destination for concrete callers. The invoking UI owns its clipboard.
       executionPlacementForInput: (_input: unknown, _caller: Readonly<{ kind: string }> | undefined, surface: keyof PreNormalizedActionSurfaces) =>
-        surface === 'rpc' || surface === 'cli' || surface === 'ui' ? 'machine' as const : 'client' as const,
+        surface === 'rpc' || surface === 'cli' || surface === 'ui' || surface === 'agent' || surface === 'mcp'
+          ? 'machine' as const : 'client' as const,
     } : {}),
     ...(actionId === 'projects.service.relocate' ? {
       executionPlacement: 'machine' as const,
