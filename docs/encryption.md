@@ -2174,6 +2174,24 @@ another source import. SSH consumers resolve references only within their
 originating Account and host revision, borrow material through task acceptance,
 and retain the native host-key trust flow.
 
+An attached SSH workspace retains the saved `remoteHostId` in the managed
+resource. The Project Account row stores the managed V2 workspace reference
+and guest root, using the Project row's existing plaintext or E2EE envelope.
+The controller's managed invocation binds the resource to its custodian
+Account. `remoteHostStore.readWorkspaceSshBinding` opens the selected host
+record, establishes SSH host-key trust on the controller, then resolves that
+record's password or private-key SavedSecret. Device-local identity paths and
+SSH agent authentication are outside this attachment path.
+
+`MachineProvisionersService.materializeBootstrapCredential` lends the resolved
+SSH binding to the native exec, file-transfer or stream invocation. It includes
+the controller's known-hosts path so the transport can enforce strict host-key
+checking. The SSH transport disposes of the material after use. The attach
+Action carries the host ID. On first use, a pending acquire can publish the
+host-key question through its existing Action operation before a managed row
+exists. Declining settles the operation before attachment. Later workspace
+demand uses the same controller trust and SavedSecret owners.
+
 These are development-source ownership contracts. The shared SavedSecret batch
 integration and composed loaded-runtime catalog journey are still being
 integrated; this section does not claim released availability or certification.

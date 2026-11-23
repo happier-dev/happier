@@ -1812,16 +1812,45 @@ folder selection goes through the admitted Open workflow.
 
 ### Workspace source (0.3 development)
 
-Every reader and writer of a Session's workspace reaches files, metadata,
+Readers and writers of Project and Session workspaces reach files, metadata,
 commands, tools and change events through one port, `WorkspaceSource`
 (`apps/cli/src/workspaces/source/`). The source is chosen once per admitted
 request by `selectWorkspaceSource`: this Machine's disk (`localWorkspaceSource`,
 today's native leaves) or, when the Session placement owner supplies
 `resolveWorkspaceTarget` to `createFilesystemEffectAdmission`, the Session's
-execution target. The filesystem RPC registrar, the daemon filesystem Action
+execution target or an attached managed Project. The filesystem RPC registrar, the daemon filesystem Action
 executor, the SCM registrar and the native-transfer registrar bind that decision;
 Session runtime work reads the hosted Session scope's `workspaceSource`
 (`bindHostedSessionWorkspaceSource`). Consumers read `currentWorkspaceSource()`.
+
+For an existing remote workspace, the selected controller invokes the
+`machineProvisioners` contribution through `machines.managed.acquire`.
+Coder lists workspaces for the selected Connected Account and binds the selected
+`existingWorkspaceId`. The SSH contribution binds a saved `remoteHostId`.
+`prepareManagedWorkspaceAttachment` establishes the native transport and probes
+the guest for holder support before Home admits the prepared attachment.
+Home records an existing resource with manual lifecycle responsibility and
+`until-delete` retention. The bootstrap path uses the guest's existing user.
+See [SSH credential custody](encryption.md#private-remote-host-catalog-03-development).
+
+After the folder picker returns a path, `projects.open` uses
+`materialization.targetManaged` to write the managed V2 Project workspace row.
+The runtime address includes the Home, Project workspace ID, managed resource
+ID, controller Machine and installation IDs, and guest root path.
+Clients route the effect to the controller. `readWorkspaceSourcePlacement` and
+`selectWorkspaceSource` use the exact managed address at admission.
+An unavailable attachment settles as `workspace_target_unavailable` when there
+is no target to bind. A matching directory on the controller cannot satisfy
+that address.
+
+`sessionTargetWorkspaces.ts` owns the attached workspace source by exact
+address and requester Account. Its Agent-less holder runs in `workspace` stdio
+mode over the provisioner's stream. In-flight work, watches and Project PTYs
+hold the channel while they use it. The last release closes the channel and
+the holder exits. A later demand opens a fresh channel, including after a drop.
+The retained attachment by itself opens no channel. An in-place Session
+uses its own Agent holder in the guest, independently of the Project's
+panel channel.
 
 The binding uses AsyncLocalStorage because the canonical Action dispatcher
 rebuilds the admitted context into the protocol-owned `ActionExecutorContext`,
@@ -1856,6 +1885,9 @@ Project without a usable Git watch still revalidates on the reconnect signal.
 Git keeps the last successful snapshot while the replacement watch attaches and
 the recovery read settles. Closed surfaces release demand.
 
+See [managed Project recovery states](surface-states.md#managed-project-recovery-03-development)
+for the presentation of these observations.
+
 Path policy stays in `filesystemPathAuthorization.ts`: it uses this Machine's link
 facts only for the local source; a target confines each operation to its root
 with its own facts (`confineWorkspaceTargetPath`) and never falls back to this
@@ -1881,8 +1913,7 @@ That observation ends when the Stop settles or the admission is cancelled.
 Streaming producers (checkpoint materialization from `git cat-file`) write through the port's `openWrite` stream; workspace-export readers (manifest scan, file hashing, transfer resolution) read the exported workspace through the source, while export import/promotion into a sync or handoff destination stays this Machine's directory owner. Copy installs through `installWorkspaceTree` (stage beside the
 destination, swap, restore on failure); folder ZIP download, prepared entry
 exports and prepared entry imports stage through host temp space and reuse the
-existing ZIP and confined capture/apply owners. Language servers of a target Session start inside the target through the source's long-lived `spawn` (`apps/cli/src/lsp/sourceProtocol.ts`); LSP sessions and roots are keyed by source. Machine members working in a target Session are served by the target's source: no per-member OS identity exists inside the container, so the container boundary, the source's workspace-root confinement and the member's Session access admitted at ingress gate the request (owner ruling 2026-11-12); without admitted Session access a member is refused, and this Machine's disk keeps the requester-isolated native channel. No Session selects a target source yet: the placement owner has not wired
-`resolveWorkspaceTarget`.
+existing ZIP and confined capture/apply owners. Language servers of a target Session start inside the target through the source's long-lived `spawn` (`apps/cli/src/lsp/sourceProtocol.ts`); LSP sessions and roots are keyed by source. Machine members working in a target Session are served by the target's source: no per-member OS identity exists inside the container, so the container boundary, the source's workspace-root confinement and the member's Session access admitted at ingress gate the request (owner ruling 2026-11-12); without admitted Session access a member is refused, and this Machine's disk keeps the requester-isolated native channel.
 
 In 0.3 development, Copy once supports unborn Git repositories, copying the
 named branch and working files without requiring a first commit.

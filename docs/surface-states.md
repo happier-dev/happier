@@ -4,6 +4,21 @@ Use one state composition for a page, pane, details area or compact list line. A
 
 This page describes **0.3 development source**, not completed platform or live-fidelity certification.
 
+## Managed Project recovery (0.3 development)
+
+Files and Git use the admitted workspace's typed `managed_power_required`
+outcome to offer **Start**. The existing managed power Action submits the start
+intent. Observed running allows the panes' shared recovery path to read again.
+Controller **Offline** comes from Machine presence and keeps the last successful
+content visible when available. **Reconnecting** represents pending recovery
+work after reachability returns. The Files tree and Git consume the shared
+workspace recovery facts as the replacement watch and reads settle.
+
+A dropped holder ends its watch. The next admitted demand can open a new holder
+channel and refresh from the guest. Recovery follows current presence,
+controller readiness, power observations, and watch delivery through the
+[workspace source](cli-architecture.md#workspace-source-03-development).
+
 ## Retained workspace destinations (0.3 development)
 
 A destination moved into a desktop window keeps its source layout entry while that

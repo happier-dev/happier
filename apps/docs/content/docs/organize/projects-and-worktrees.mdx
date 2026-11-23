@@ -48,6 +48,46 @@ Open returns to Projects when there is no previous route; Source detail falls
 back to Sources. This includes a Source detail that is still loading or has
 become unavailable.
 
+## Open a folder in a remote workspace
+
+Remote workspace attachment is unreleased 0.3 development behavior.
+You need an online Happier machine to reach the workspace. This machine is
+the **controller**. The Project folder stays on the remote workspace, and
+Happier uses a small helper there while it needs access.
+
+To attach an existing Coder workspace, make sure the controller has the Coder
+Machines plugin available and connect your Coder account through **Connected
+services**.
+
+1. In **Projects**, open **Add** and choose **A folder on a server…**.
+2. Choose the connected Coder account, then select an existing workspace.
+3. Choose the folder in that workspace and select **Use**, then **Open project**.
+
+For a saved SSH host, follow the [Remote hosts steps](/apps/remote-hosts#use-ssh-folders-in-a-project).
+
+### Work in the remote folder
+
+Open **Code** to browse and preview remote **Files**, inspect **Git** status
+and diffs, and search the checkout. Text search uses ripgrep (`rg`) in the
+workspace. Open the Project's **Shell** to run commands from the remote
+checkout. These tools can run before you start an Agent session.
+
+Start **New session** from the remote Project with its checkout selected to
+run the Agent on the server in that folder. Edits are made in place. To work
+in a copy, choose **Open this branch on another machine** from the checkout
+selector and create a copy on the controller. Open the copied checkout and
+start the session there.
+
+### Start, reconnect or forget
+
+If a Coder workspace is stopped, select **Start** when Files or Git offers it.
+Happier can refresh those panes once the workspace is running. If the
+controller goes offline, the Project keeps previously loaded content when
+available. Bring the controller back online to resume access to the folder.
+
+To remove the remote Project from Happier, choose **Remove**, then **Forget**.
+The remote workspace and its files stay where they are.
+
 ## Shared setup (0.3 development)
 
 The unreleased setup flow can accept a Source's protected setup publication into

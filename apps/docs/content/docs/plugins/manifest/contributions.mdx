@@ -111,6 +111,36 @@ for each family's source availability, optional maintained consumer evidence,
 unblock condition, loaded-platform evidence, and release availability. This keeps
 mutable support status in one generated owner rather than duplicating it here.
 
+## Machine provisioner workspace attachment (0.3 development source)
+
+Use a `machineProvisioners` contribution on matching unreleased 0.3 hosts
+to expose an existing workspace through the managed acquire flow.
+Import `MachineProvisionerAuthorDefinitionV1` and
+`defineMachineProvisionerSchemas` from
+`@happier-dev/plugin-sdk/machine-provisioners`.
+
+- Set `workspaceAttachment.when` to a predicate over the declared launch
+  selectors that identifies the attach variant. Its acquire handler returns a
+  `bound` result for the existing resource.
+- Use `workspaceAttachment.optionsWhen` to identify attach-specific options
+  requests when the contribution offers a listing. Return options that assign
+  the launch selector for an existing resource.
+- Declare `bootstrapTransport` as `kind: 'native'` with `exec`, `putFile` and
+  `stream` Action IDs. The controller uses these handlers to probe the guest,
+  deliver the helper when needed, and open its bidirectional channel.
+- Put durable native identity fields in `workspaceAttachment.resourceIdentityPaths`
+  if Home should reuse a matching active attachment. Each path must be a
+  declared text or number field in every resource schema arm. Home scopes
+  reuse to the same controller installation, contribution and Account and
+  credential binding.
+
+The host checks guest platform support and owns the Project row and holder
+lifecycle. Keep the credential in its declared binding and give the acquire
+handler selectors and native resource identifiers.
+
+See the public [SDK entrypoints](/plugins/api/sdk-entrypoints) and the
+generated [SDK surface](/plugins/api/surface).
+
 ## Machine roles (0.3 development source)
 
 A Machine owner chooses which roles each Machine runs (see [Machine roles](/apps/daemon#machine-roles)).
