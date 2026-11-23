@@ -50,7 +50,7 @@ export function projectDeploymentControllerPlacementFailure(controllerMachineId:
 }
 export function projectDeploymentRuntimeInstallationReplacedFailure(installationId: string): ActionExecuteFailure {
     return projectDeploymentPlacementRefusal({ reason: DEPLOYMENT_MACHINE_INSTALLATION_REPLACED_REASON_V1, requiredFact: `installationId=${installationId}`,
-        remedy: 'This Machine was reinstalled. Create a new Environment on its current installation and add the required secrets.' },
+        remedy: 'This Machine was reinstalled. Keep this Environment: link its runtime target to the Machine\'s current installation, save its secrets again, then deploy.' },
     'deployment.runtime.machine_installation');
 }
 /** The Source owner principal cannot use the selected Machine (admitDeploymentMachinesInTx); other Machine failures stay bare. */

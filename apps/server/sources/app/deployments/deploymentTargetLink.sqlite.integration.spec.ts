@@ -1016,4 +1016,93 @@ describe('current runtime membership replacement', () => {
 
         });
     });
+
+    it('reinstalls a fleet member on the same Machine by selecting its current installation, keeping the Environment', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId,
+            requestKey: crypto.randomUUID(), name: 'Reinstall', audience: [], owner: { kind: 'account', accountId: owner.id },
+            repository: { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+                repository: { nameWithOwner: 'owner/reinstall', cloneUrl: 'https://github.com/owner/reinstall.git' }, protocol: 'https' },
+        }));
+        if (!source.ok) throw new Error(source.error);
+        const [reinstalled, kept] = await Promise.all(['a', 'b'].map(label => db.machine.create({ data: {
+            id: `${label}-${crypto.randomUUID()}`, accountId: owner.id,
+            metadata: encodePlainMachineStoredContent({ host: 'Reinstall', platform: 'linux', happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER), installationId: crypto.randomUUID(),
+        } })));
+        async function artifact(kind: string, value: unknown = {}) {
+            const created = await createArtifact({ actorUserId: owner.id, artifactId: crypto.randomUUID(),
+                header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind, title: 'Reinstall' })),
+                body: privacyKit.decodeBase64(encodePlainArtifactStoredContent(value)),
+                dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+            if (!created.ok) throw new Error(created.error);
+            return { contentArtifactId: created.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        }
+        const environment = await db.deploymentEnvironment.create({ data: {
+            projectSourceId: source.source.id, createdByAccountId: owner.id, protection: 'nonProduction', purpose: 'standard',
+            deployerMode: 'managers', controllerMachineId: kept!.id, buildMachineId: kept!.id,
+            ...await artifact('deployment-environment.v1'),
+        } });
+        const content = await artifact('deployment-target-link.v1');
+        const retired = [reinstalled!, kept!].map(machine => ({ machineId: machine.id, installationId: machine.installationId! }));
+        const previous = await db.deploymentTargetLink.create({ data: { environmentId: environment.id,
+            createdByAccountId: owner.id, role: 'runtime', sourceKind: 'host', hostTargetId: 'own-server',
+            targetKind: 'ownServer', state: 'deployed', ...content,
+            machines: { create: retired.map((member, position) => ({ ...member, position, state: 'active' })) },
+        } });
+        const basis = createDeploymentReceiptDetailV1().content;
+        const servingId = crypto.randomUUID();
+        const serving = await db.deployment.create({ data: { id: servingId, environmentId: environment.id, targetLinkId: previous.id,
+            operation: 'deploy', state: 'succeeded', requestKey: crypto.randomUUID(), requestedByAccountId: owner.id,
+            actionOperationId: crypto.randomUUID(), ...await artifact('deployment-receipt.v1', { ...basis,
+                machines: retired.map(member => member.machineId), buildMachineId: kept!.id,
+                machineResults: retired.map(member => ({ ...member, steps: [], activation: 'succeeded',
+                    health: 'healthy', currentDeploymentId: servingId })),
+            }),
+        } });
+        await db.deploymentTargetLink.update({ where: { id: previous.id }, data: { activeDeploymentId: serving.id } });
+        await db.deploymentEnvironment.update({ where: { id: environment.id }, data: { runtimeTargetLinkId: previous.id } });
+        // The person reinstalls Happier on Machine a: its own Account registers a new installation for the same id.
+        const currentInstallationId = crypto.randomUUID();
+        await db.machine.update({ where: { accountId_id: { accountId: owner.id, id: reinstalled!.id } },
+            data: { installationId: currentInstallationId } });
+        const current = [{ machineId: reinstalled!.id, installationId: currentInstallationId }, retired[1]!];
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const url = `/v1/deployments/environments/${environment.id}/targets`;
+            const send = (accountId: string, machines: typeof current) => app.inject({ method: 'POST', url,
+                headers: { 'x-test-user-id': accountId }, payload: { serverId, environmentId: environment.id,
+                    expectedRevision: environment.revision, targetId: 'own-server', role: 'runtime', requestKey: crypto.randomUUID(),
+                    machines, replacesLinkId: previous.id, expectedTargetLinkRevision: previous.revision, ...content } });
+            // Someone without the Environment, or a request naming the retired installation, changes nothing.
+            const foreign = await send(outsider.id, current);
+            expect(foreign.statusCode, foreign.body).not.toBe(200);
+            const stale = await send(owner.id, retired);
+            expect(stale.statusCode, stale.body).toBe(503);
+            expect(stale.json()).toMatchObject({ error: 'machine_unavailable', role: 'target', machineIds: [reinstalled!.id] });
+            expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } })).runtimeTargetLinkId).toBe(previous.id);
+
+            // Reinstall on this Machine: the same Machines at their current installation, no teardown of a retired installation.
+            const linked = await send(owner.id, current);
+            expect(linked.statusCode, linked.body).toBe(200);
+            const selected = DeploymentTargetLinkResultV1Schema.parse(linked.json());
+            if (!selected.ok) throw new Error(selected.error);
+            expect(selected.environmentId).toBe(environment.id);
+            expect(await inTx(tx => readDeploymentTargetInTx(tx, environment.id, selected.targetLinkId))).toMatchObject({
+                predecessorTargetLinkId: previous.id, activeDeploymentId: serving.id,
+                members: [{ ...current[0], state: 'joining' }, { ...current[1], state: 'active' }],
+            });
+            // The ordinary Deploy owner admits the Environment's serving release on the reinstalled member.
+            const deploy = await app.inject({ method: 'POST', url: `/v1/deployments/environments/${environment.id}/rollback`,
+                headers: { 'x-test-user-id': owner.id }, payload: { serverId, environmentId: environment.id,
+                    expectedRevision: selected.revision, targetLinkId: selected.targetLinkId, expectedTargetLinkRevision: selected.targetLinkRevision,
+                    deploymentId: serving.id, requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(),
+                    ...await artifact('deployment-receipt.v1', { ...basis, machines: current.map(member => member.machineId),
+                        buildMachineId: kept!.id, machineResults: [] }) } });
+            expect(deploy.statusCode, deploy.body).toBe(200);
+            expect(await db.deployment.findUniqueOrThrow({ where: { id: deploy.json().deploymentId } }))
+                .toMatchObject({ environmentId: environment.id, targetLinkId: selected.targetLinkId });
+            expect(await db.deployment.count({ where: { environmentId: environment.id, operation: 'teardown' } })).toBe(0);
+        });
+    });
 });

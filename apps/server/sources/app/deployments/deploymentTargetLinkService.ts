@@ -161,8 +161,11 @@ export async function linkDeploymentTargetForAdmittedEnvironmentInTx(tx: Tx, act
     } else if (input.role === 'runtime' && loaded.row.runtimeTargetLinkId) return deploymentFailure('deployment_conflict');
     const retainsOwnServer = !plugin && previous?.sourceKind === 'host';
     if (previous && retainsOwnServer) {
-        const selectedInstallations = new Map(input.machines.map(member => [member.machineId, member.installationId]));
-        const removed = previous.machines.filter(member => selectedInstallations.get(member.machineId) !== member.installationId);
+        // A member whose Machine stays selected was admitted by the writer at that Machine's
+        // current installation, so a different recorded one is retired: that Machine
+        // was reinstalled and rejoins through Deploy; it has no removal to prove.
+        const selectedMachines = new Set(input.machines.map(member => member.machineId));
+        const removed = previous.machines.filter(member => !selectedMachines.has(member.machineId));
         const retainsMembers = removed.length < previous.machines.length;
         // A fleet reduction consumes the existing signed member teardown. A Move
         // to disjoint Machines retains predecessor custody through disposition.

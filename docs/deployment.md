@@ -6026,10 +6026,20 @@ reported as unavailable; current health and vitals cannot reconstruct the past.
 
 Reinstalling a runtime Machine can keep its Machine ID while replacing the
 installation and its keys. Deployment admission remains bound to the recorded
-installation. To resume deployment, create a new Environment on the current
-installation and add its required secrets. Existing backup snapshots still
-need their original backup repository credential. Review domain routes and
-private shares explicitly during cutover.
+installation, because every Machine secret grant is sealed to one installation
+key. Only the Machine's own Account can register a new installation for its ID.
+To resume, keep the Environment. Replace its runtime Target Link with the same
+Machines at their current installations (`deployments.targets.link` with
+`replacesLinkId`). In a fleet, the reinstalled member rejoins and needs no
+teardown proof, because the retired installation can no longer run anything.
+Then save the bindings again (`deployments.bindings.set`). That step re-seals
+Saved Secrets and Environment values to the new installation, and it refuses a
+reference the person can no longer open. Then deploy. The Compose project name
+comes from the Home and Environment IDs, so any volumes that survived the
+reinstall are reused. Backups keep the Environment's repository and credential
+bindings, so existing snapshots open with the same repository credential. The predecessor Link stays as history
+until it is detached. Review domain routes and private shares explicitly during
+cutover.
 
 An unavailable Saved Secret keeps its metadata-only binding notice. After withdrawal or
 deletion, Overview and Variables offer the existing Machine service controls for the
