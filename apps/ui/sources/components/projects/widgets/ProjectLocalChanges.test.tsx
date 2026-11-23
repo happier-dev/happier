@@ -7,7 +7,6 @@ import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/ma
 import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '@happier-dev/protocol/account/authoringMemory';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { SCM_OPERATION_ERROR_CODES, ScmWorkingSnapshotSchema } from '@happier-dev/protocol/scm';
 import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
 
@@ -45,12 +44,14 @@ beforeAll(async () => {
             importCandidates: [],
         }),
     });
-    // c0719bda197 routes browser reads through the admitted Action transport.
+    // The repository directory owner lists through the admitted daemon.filesystem.listDirectory Action.
     directoryBrowsing = await createExternalActionAccountHttpBoundary({
         serverUrl: 'https://session-pane.test', serverIdentityId: 'srv_session_pane', accountId: 'account-a', machineId: 'm1',
-        installationId: 'project-test-installation', actionId: FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory, tokenEpoch: 0,
-        execute: input => ({ ok: true, path: z.looseObject({ path: z.string() }).parse(input).path, truncated: false,
-            entries: boundary.rootReadme ? [{ name: 'readme.MD', path: '/repo/readme.MD', type: 'file' }] : [] }),
+        installationId: 'project-test-installation', actionId: 'daemon.filesystem.listDirectory', tokenEpoch: 0,
+        execute: input => {
+            boundary.directoryReads.push(input);
+            return { success: true, entries: boundary.rootReadme ? [{ name: 'readme.MD', type: 'file' }] : [] };
+        },
     });
 });
 afterAll(() => disposeActionLoader?.());
@@ -59,7 +60,7 @@ const boundary = vi.hoisted(() => ({ navigate: vi.fn(), denied: false, confirmDi
     manifestPresent: true,
     alerts: [] as unknown[][],
     pathname: '/', routeParams: {} as Record<string, string | string[] | undefined>, writes: [] as { method: string; params: unknown }[],
-    snapshotReads: [] as unknown[] }));
+    snapshotReads: [] as unknown[], directoryReads: [] as unknown[] }));
 installSessionDetailsPanelNonRnModuleMocks({ router: () => createExpoRouterMock({ router: { push: boundary.navigate },
     pathname: () => boundary.pathname, params: () => boundary.routeParams }).module });
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -200,6 +201,7 @@ beforeEach(async () => {
     resetActiveReviewFilesForTests();
     boundary.writes.length = 0;
     boundary.snapshotReads.length = 0;
+    boundary.directoryReads.length = 0;
     boundary.alerts.length = 0;
     currentSnapshot = snapshot(['src/a.ts', 'src/b.ts']);
     storage.setState({ sessions: {} });
@@ -240,7 +242,7 @@ async function mount(rootPath = '/repo', id: 'project_changes' | 'project_checko
             if (failure) throw new Error(`Fixture Scripts inspection failed: ${failure.props.diagnosticCode}`);
             expect(screen.findHostByTestId(boundary.manifestPresent ? 'local-changes.script:build' : 'local-changes.setup')).not.toBeNull();
         } else if (id === 'project_readme') {
-            const workspaceCacheKey = tryBuildWorkspaceCacheKey({ serverId: runtime.serverId, machineId: 'm1', rootPath });
+            const workspaceCacheKey = tryBuildWorkspaceCacheKey(workspaceScopeFromProject(checkout, rootPath));
             if (!workspaceCacheKey) throw new Error('Exact fixture scope missing');
             expect(getCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey, directoryPath: '' })).not.toBeNull();
         } else expect(screen.findHostByTestId('local-changes-footer-open')).not.toBeNull();
@@ -602,6 +604,24 @@ describe('Project Local Changes', () => {
         });
         expect(screen.findHostByTestId('local-changes')).not.toBeNull();
         expect(storage.getState().sessions).toEqual({});
+    });
+    it('shows an attached workspace README read from its guest while the controller is online (RWS QA cut 34)', async () => {
+        // Cut 34 saw no README contents on attached checkouts with an online controller: the body lists and opens it on the guest.
+        const managed = { v: 2 as const, kind: 'managed' as const, id: 'wr_1', serverId: runtime.serverId, managedId: 'native-guest',
+            controller: { machineId: 'm1', installationId: 'project-test-installation' }, rootPath: '/home/coder/repo',
+            projectKey: 'project', createdAtMs: 1 };
+        boundary.rootReadme = true;
+        const screen = await mount(managed.rootPath, 'project_readme', { checkout: managed });
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(screen.findByType(WorkspaceFileDetailsView).props.filePath).toBe('readme.MD');
+        });
+        // The file itself is read from the same guest address.
+        expect(screen.findByType(WorkspaceFileDetailsView).props.scope.workspace).toMatchObject({ kind: 'managed', managedId: 'native-guest' });
+        // The listing went to the guest through its controller, with the managed address intact.
+        expect(boundary.directoryReads).toContainEqual(expect.objectContaining({ rootPath: managed.rootPath,
+            workspace: expect.objectContaining({ kind: 'managed', managedId: 'native-guest' }) }));
+        await screen.unmount();
     });
     it('opens captured Explain into the real editable ordinary draft without sending or creating a Session', async () => {
         const { openWorkspaceScmAuthoringDraft } = await import('@/components/projects/scm/workspaceScmAuthoring');
