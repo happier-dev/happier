@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
-import { act, renderSettingsView, standardCleanup } from '@/dev/testkit';
+import { act, renderHook, renderSettingsView, standardCleanup } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
@@ -97,4 +97,26 @@ describe('deployment defaults pages', () => {
         } finally { standardCleanup(); await account.dispose(); }
     });
 
+});
+
+it('refreshes an open deployment defaults page after an off-focus Account wake', async () => {
+    const { saveAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+    const { useDeploymentAccountDefaults } = await import('./useDeploymentAccountDefaults');
+    const settings = settingsParse({ deploymentDefaultsV1: { retainPreviousDeployments: 2 } });
+    const home = await createSecretSettingsTestHarness({ mode: 'plain', settings });
+    const context = await captureLazyActionAccountContext(home.scope.serverId);
+    saveAccountSettings(home.scope, settings, 1);
+    storage.setState({ settingsScope: null, settingsVersion: null });
+    const screen = await renderHook(() => useDeploymentAccountDefaults(context.accountLifetime));
+    try {
+        await vi.waitFor(() => expect(screen.getCurrent().preferences?.retainPreviousDeployments).toBe(2));
+        await act(async () => {
+            home.replaceSettings(settingsParse({ ...settings, deploymentDefaultsV1: { retainPreviousDeployments: 4 } }),
+                { version: 2, publish: false });
+            publishHomeAccountChange(home.scope.serverId, ['self'], { changeKinds: ['account'], accountSettingsAffects: true });
+        });
+        await vi.waitFor(() => expect(screen.getCurrent().preferences?.retainPreviousDeployments).toBe(4));
+    } finally { await screen.unmount(); context.dispose(); await home.dispose(); }
 });

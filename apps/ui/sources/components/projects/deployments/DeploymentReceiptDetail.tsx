@@ -293,6 +293,7 @@ export const DeploymentReceiptDetail = React.memo(
       );
     }
     const { deployment, content, facts } = opened;
+    const sourceLabel = deploymentSourceLabel(content);
     // Where it ran is the facts owner's answer (placement), never re-read from the content here.
     const platform = facts.placement === 'platform';
     // The canonical remedy and next action for the recorded cause (RECOVERY-COPY); no page-local copy.
@@ -558,14 +559,14 @@ export const DeploymentReceiptDetail = React.memo(
             {!pressAttention && deploymentInProgressStates().includes(deployment.state)
               ? <DeploymentPendingRequest pending={environmentValue?.pendingDeployment} serverId={props.serverId} /> : null}
             {pressAttention && latestPress && !pressInPinnedBar ? outcomeBanner(pressed, latestPress) : null}
-            {!pressAttention && releasePruned && againTarget && againSha ? (
+            {!pressAttention && releasePruned && againTarget && sourceLabel !== null ? (
               <AttentionBanner
                 testID="project-deployments.receipt.pruned"
                 tone="neutral"
                 title={t('projects.deployments.receipt.prunedTitle')}
-                description={t('projects.deployments.receipt.prunedBody', { sha: deploymentSourceLabel(content) ?? againSha.slice(0, 7) })}
+                description={t('projects.deployments.receipt.prunedBody', { sha: sourceLabel })}
                 action={{
-                  label: t('projects.deployments.receipt.deployShaAgain', { sha: deploymentSourceLabel(content) ?? againSha.slice(0, 7) }),
+                  label: t('projects.deployments.receipt.deployShaAgain', { sha: sourceLabel }),
                   icon: 'arrow-clockwise',
                   testID: 'project-deployments.receipt.pruned.deployAgain',
                   loading: againPress.running,
@@ -599,7 +600,8 @@ export const DeploymentReceiptDetail = React.memo(
                   onPress: chooseRecovery,
                 } : retryRollbackTo ? {
                   // A failed rollback's way forward is the same rollback again, to the release it was restoring.
-                  label: t('projects.deployments.rollbackTo', { version: deploymentSourceLabel(content) ?? retryRollbackTo.slice(0, 7) }),
+                  label: sourceLabel === null ? t('projects.deployments.rollback')
+                    : t('projects.deployments.rollbackTo', { version: sourceLabel }),
                   icon: 'arrow-arc-left',
                   display: 'default',
                   loading: rollingBack,
