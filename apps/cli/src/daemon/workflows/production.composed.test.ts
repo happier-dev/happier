@@ -32,6 +32,7 @@ import type { SessionInputWorkflowV2 } from '@happier-dev/protocol/sessions/mess
 import { deriveSessionMessageReplyReturnLocalIdV1, SessionMessageReplyAccountMutationV1Schema,
   SessionMessageReplyReadResultV1Schema, type SessionMessageReplyPublicationV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { isTerminalWorkflowInvocationLifecycleV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { createSocketTransportAdapter, socketRpcCodec } from '@happier-dev/sync-client';
 import { createApiSessionSocketStub, createAvailableSessionSpawnMachineSnapshot } from '@/testkit/backends/apiSessionSocketHarness';
 
@@ -1024,11 +1025,10 @@ describe('production workflow coordinator', () => {
         if (deniedActive && operation.operation === 'transition' && operation.custodyState === 'settled') {
           // Match workflowRunService's real unsettled-index guard. An accepted
           // sibling whose observation failed still owns native input custody.
-          const terminal = new Set(['completed', 'failed', 'skipped', 'cancelled', 'outcome_uncertain', 'superseded']);
           const unsettled = new Set<string>(WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1);
           // This opaque storage boundary receives the public transition packet.
           const transitions = (operation.invocationTransitions ?? []) as ReadonlyArray<Readonly<{ id: string; lifecycle: string }>>;
-          const closing = new Set(transitions.filter(row => terminal.has(row.lifecycle)).map(row => row.id));
+          const closing = new Set(transitions.filter(row => isTerminalWorkflowInvocationLifecycleV1(row.lifecycle)).map(row => row.id));
           if (boundary.rows().some(row => unsettled.has(row.index.lifecycle) && !closing.has(row.index.id))) {
             throw Object.assign(new Error('currentness_conflict'), { response: { status: 409, data: { error: 'currentness_conflict' } } });
           }
