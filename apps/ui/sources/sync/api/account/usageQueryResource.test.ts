@@ -2306,9 +2306,12 @@ describe('usage query captured Resource adapter', () => {
     expect(UsageQueryBatchResultSchema.safeParse(result).success).toBe(true);
     scmTransport.mockRejectedValue(new RetryableServerResponseError(503, 'Unavailable'));
     const retained = await readUiUsageQueryBatch(captured, { queries: [summary, profile] }, undefined, result);
-    expect(retained.results.find(slice => slice.key === getUsageQueryKey(summary))?.workSummary).toEqual({ mergedPrCount: 1, pullRequestsRead: true });
+    const retainedSummary = retained.results.find(slice => slice.key === getUsageQueryKey(summary))!;
+    expect(retainedSummary.workSummary).toBeUndefined();
+    expect(retainedSummary.sources).toContainEqual(expect.objectContaining({ source: 'work', status: 'stale' }));
     const retainedProfile = retained.results.find(slice => slice.key === getUsageQueryKey(profile))!;
-    expect(retainedProfile.publicProfileEvidence?.facts).toMatchObject({ agentTimeMs: 300, mergedPrs: 1 });
+    expect(retainedProfile.publicProfileEvidence?.facts.agentTimeMs).toBe(300);
+    expect(retainedProfile.publicProfileEvidence?.facts.mergedPrs).toBeUndefined();
     expect(retainedProfile.sources).toContainEqual(expect.objectContaining({ source: 'work', status: 'stale' }));
     scmTransport.mockRejectedValue(new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN));
     const refused = await readUiUsageQueryBatch(captured, { queries: [summary, profile] }, undefined, retained);
