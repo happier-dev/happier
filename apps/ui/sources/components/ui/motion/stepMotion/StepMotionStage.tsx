@@ -107,7 +107,14 @@ function createStepMotionStage(
     let pressed: StepAnchor | null = null;
     let pressedChrome: { layer: string; regions: readonly StepWebLeaf[] } | undefined;
     let pending: PendingMove | null = null;
-    let active: { layer: string; animation?: StepAnimation; endpoints?: StepEndpoints; openingInput?: OpeningInput; stop: () => void } | null = null;
+    let active: {
+        layer: string;
+        animation?: StepAnimation;
+        endpoints?: StepEndpoints;
+        openingInput?: OpeningInput;
+        retargetOpening?: (layer: StepMotionLayerHandle) => void;
+        stop: () => void;
+    } | null = null;
     let commitOrder = 0;
     let glyphReady = false;
     let buildPrepared = false;
@@ -407,10 +414,11 @@ function createStepMotionStage(
             building: true,
             finish: releaseHomeArrival,
         } : null;
-        const finish = (outcome: StepBuildResult) => {
+        const finish = (outcome?: StepBuildResult) => {
             if (active?.stop !== skip) return;
             active = null;
             for (const cleanup of cleanups) cleanup();
+            if (outcome === undefined) return;
             publish(null);
             if (homeArrival) {
                 if (outcome === 'skipped') releaseHomeArrival();
@@ -443,7 +451,13 @@ function createStepMotionStage(
                 return testID !== undefined && revealed(openingFront(), (incoming.y + incoming.height - rect.y - rect.height / 2) / incoming.height);
             },
         } : undefined;
-        active = { layer: layer.key, animation, endpoints, openingInput, stop: skip };
+        active = { layer: layer.key, animation, endpoints, openingInput, stop: skip,
+            retargetOpening: openingInput ? (destination) => {
+                if (destination === layer) return;
+                finish();
+                showAnimated({ ...input, layer: destination });
+            } : undefined,
+        };
         syncPresentation();
         if (homeArrival) publishHomeArrival(homeArrival);
         publish({ animation, duration, freeze, freezeOpacity, scene, releaseFreeze, finish: () => finish('settled') });
@@ -601,14 +615,27 @@ function createStepMotionStage(
             syncPresentation();
             return () => {
                 layers.delete(layer);
-                if (layers.size === 0 && !pending) settle();
-                else syncPresentation();
+                if (layers.size !== 0 || pending) {
+                    syncPresentation();
+                } else if (active?.retargetOpening) {
+                    // React detaches the loading shell before attaching its replacement in the same commit.
+                    const opening = active;
+                    queueMicrotask(() => {
+                        if (active === opening && layers.size === 0 && !pending) settle();
+                    });
+                } else {
+                    settle();
+                }
             };
         },
         commit(layer: StepMotionLayerHandle, reactivated = false) {
             const alreadyCommitted = committedSteps.has(layer);
             committedSteps.add(layer);
             commitOrder++;
+            if (active?.retargetOpening && active.layer === layer.key) {
+                active.retargetOpening(layer);
+                return;
+            }
             if (pending?.destination !== layer.key) {
                 if (alreadyCommitted && !reactivated && layer.warmOnMount && !pending) {
                     settle();

@@ -15,7 +15,7 @@ import { isHomeArrivalMotionPending } from '@/components/hub/homeArrival';
 
 import { StepEntranceBody } from './StepEntranceBody';
 import { StepMotionLayer } from './StepMotionLayer';
-import { holdFirstArrivalStep, playBuild, runStepMove, skipStepMotion, StepMotionStage } from './StepMotionStage';
+import { holdFirstArrivalStep, playBuild, runStepMove, skipStepMotion, StepMotionStage, useOpeningBuildGlyphs } from './StepMotionStage';
 import { stepMotionTiming } from './stepMotionTiming';
 import { useStepFocal } from './useStepFocal';
 
@@ -385,6 +385,57 @@ it.each(['back', 'blur', 'settle'] as const)('keeps stage continuity when a late
         rect.mockRestore();
         clock.mockRestore();
         Object.defineProperty(HTMLElement.prototype, 'animate', { value: previousAnimate });
+        setReducedMotionPreferenceOverride(null);
+        vi.unstubAllGlobals();
+    }
+});
+
+it.each(['new-layer', 'same-layer'] as const)('continues the cold-link opening when the loading content resolves in a %s', async (replacement) => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    setReducedMotionPreferenceOverride(false);
+    const previousAnimate = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'animate');
+    const animate = vi.fn(function (this: HTMLElement, _frames: Keyframe[], timing: KeyframeAnimationOptions) {
+        return { element: this, timing, onfinish: null, cancel() {} };
+    });
+    Object.defineProperty(HTMLElement.prototype, 'animate', { configurable: true, value: animate });
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 800, 600));
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(1000);
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const opening: { current: ReturnType<typeof useOpeningBuildGlyphs> } = { current: null };
+    const settled = vi.fn();
+    function Link({ ready }: { ready: boolean }) {
+        opening.current = useOpeningBuildGlyphs();
+        const step = ready ? 'offer' : 'loading';
+        return <StepMotionLayer key={replacement === 'new-layer' ? step : 'link'} layerKey="workflow" stepKey={step}>
+            <h1>{ready ? 'Team invitation' : 'Loading'}</h1>
+        </StepMotionLayer>;
+    }
+    try {
+        await act(async () => root.render(<StepMotionStage><Link ready={false} /></StepMotionStage>));
+        await act(async () => { await vi.dynamicImportSettled(); });
+        await act(async () => {
+            void playBuild({ layer: 'workflow', choreography: 'opening', epoch: 1000, leadSeconds: 2.7, interactive: true }).then(settled);
+        });
+        const epoch = opening.current?.animation.epoch;
+        expect(epoch).toBe(3700);
+        clock.mockReturnValue(2000);
+        await act(async () => root.render(<StepMotionStage><Link ready /></StepMotionStage>));
+        expect(container.querySelector('h1')?.textContent).toBe('Team invitation');
+        expect(settled).not.toHaveBeenCalled();
+        expect(opening.current?.animation.epoch).toBe(epoch);
+        expect(animate.mock.results.map(result => result.value).some(effect =>
+            effect.element === container.querySelector('h1') && effect.timing.delay === 1700)).toBe(true);
+        await act(async () => opening.current?.finish());
+        expect(settled).toHaveBeenCalledExactlyOnceWith('settled');
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+        clock.mockRestore();
+        rect.mockRestore();
+        if (previousAnimate) Object.defineProperty(HTMLElement.prototype, 'animate', previousAnimate);
+        else Reflect.deleteProperty(HTMLElement.prototype, 'animate');
         setReducedMotionPreferenceOverride(null);
         vi.unstubAllGlobals();
     }
