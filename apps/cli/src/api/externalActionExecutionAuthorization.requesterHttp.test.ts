@@ -993,6 +993,79 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     expect(opened).toMatchObject({ token });
   });
 
+  // Owner ruling 2026-11-23 "tell once, never block": a Workflow leaf on a Machine
+  // another person holds seals to Home's verified destination like any other use.
+  it.each(['sealed', 'installation', 'custodian', 'account_automation'] as const)(
+    'seals a Workflow leaf on another person\'s Machine to the Home-verified installation only (%s)', async variant => {
+    const token = variant === 'account_automation' ? accountToken
+      : `${encodeTokenPart({ alg: 'none' })}.${encodeTokenPart({ sub: 'bob', tokenEpoch: 9,
+        provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })}.signature`;
+    const actionId = DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1;
+    const runId = 'foreign-run';
+    const requestId = `${runId}/invocation/0`;
+    const controller = { kind: 'machine' as const, machineId: 'alice-controller' };
+    const input = { serverId: 'srv_bob_home', projectSourceId: 'source', requestKey: 'preview-pr-1', mode: 'apply',
+      name: 'pr-1', purpose: 'preview', protection: 'nonProduction', deployerMode: 'managers', deployerPrincipals: [],
+      preview: { templateEnvironmentId: 'template', expectedTemplateRevision: 8, runtimeTargetLinkId: 'runtime-link',
+        pullRequestId: '1', headSha: 'a'.repeat(40) } };
+    const context = { surface: 'agent', authority: 'account_automation', actionRequestId: requestId,
+      executionRunWorkflowRunId: runId, actionCaller: { kind: 'workflowRun', runId,
+        authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } } } satisfies ActionExecutorContext;
+    const recipient = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23));
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      if (String(url) === 'https://home.test/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (String(url) === `https://home.test/v1/machines/${controller.machineId}`) return { status: 200, data: { machine: {
+        id: controller.machineId, kind: 'persistent', active: true, installationId: 'alice-controller-installation',
+        managedMachineRef: null, revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
+        installationPublicKey: Buffer.from(recipient.publicKey).toString('base64'),
+        access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use', resourceMode: 'plain', accessState: 'ready' },
+      } } };
+      throw new Error(`Unexpected read ${String(url)}`);
+    });
+    let minted = 0;
+    let delivered: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse> | undefined;
+    vi.spyOn(axios, 'post').mockImplementation(async (url, raw) => {
+      const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(JSON.stringify(raw)));
+      if (String(url).endsWith('/execution-authorization')) {
+        minted += 1;
+        return { status: 200, data: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'foreign-leaf-root', binding: {
+          serverIdentityId: 'srv_bob_home', accountId: 'bob', authentication: { kind: 'terminal', tokenEpoch: 9 },
+          admittedMachineRole: 'use', actionId, requestId, target: controller, machineId: controller.machineId,
+          installationId: variant === 'installation' ? 'replaced-installation' : 'alice-controller-installation',
+          custodianAccountId: variant === 'custodian' ? 'mallory' : 'alice', accountEncryptionMode: 'plain',
+          requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+          deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId, input),
+          workflowActionOrigin: request.workflowActionOrigin,
+        } }) };
+      }
+      expect(String(url)).toBe(`https://home.test/v1/actions/${actionId}`);
+      delivered = request;
+      return { status: 200, data: { v: 1, actionId, requestId, execution: { ok: true, result: { ok: true } } } };
+    });
+    const outcome = await executionAuthorizationOwner.dispatchOriginalAccountAction({ actionId, input, requestId, target: controller,
+      credentials: { token, encryption: null }, serverHttpBaseUrl: 'https://home.test', serverIdentityId: 'srv_bob_home',
+      authority: 'account_automation',
+      installedWorkflow: { context, machineId: 'publisher', installationId: 'publisher-installation', privateKey: keys.secretKey } });
+    if (variant === 'account_automation') {
+      // A requester with no sign-in to seal keeps the non-Workflow refusal, before any mint.
+      expect(outcome).toMatchObject({ ok: false, errorCode: 'requester_account_material_unavailable' });
+      expect(minted).toBe(0);
+      expect(delivered).toBeUndefined();
+      return;
+    }
+    if (variant !== 'sealed') {
+      expect(outcome).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+      expect(delivered).toBeUndefined();
+      return;
+    }
+    expect(outcome).toMatchObject({ ok: true });
+    expect(delivered?.executionAuthorization?.binding).toMatchObject({ custodianAccountId: 'alice',
+      installationId: 'alice-controller-installation', workflowActionOrigin: { runId, requestId } });
+    expect(openExternalActionRequesterAccountContextV1({ authorization: delivered!.executionAuthorization!,
+      machineId: controller.machineId, installationId: 'alice-controller-installation', serverIdentityId: 'srv_bob_home',
+      installationPrivateKey: recipient.secretKey, purpose: { kind: 'external_action' } })).toMatchObject({ token });
+  });
+
   it.each(['action_not_admitted', 'action_outcome_unknown', 'project_requester_home_unavailable', 'target_not_local', 'target_unavailable'] as const)('preserves original Account correlation for %s and refuses a mismatched reply', async code => {
     const machine = { id: target.machineId, managedMachineRef: null, kind: 'persistent', active: true, installationId: 'installation',
       revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,

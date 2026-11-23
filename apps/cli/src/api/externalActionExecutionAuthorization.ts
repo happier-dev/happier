@@ -1377,6 +1377,16 @@ async function prepareOriginalAccountAction(
   }
   let body: unknown = envelope;
   const access = machine?.access;
+  // Sealing the requester's sign-in to a Machine another person holds is
+  // ordinary use (owner ruling 2026-11-23): no prompt and no refusal for
+  // that reason. Only a requester with no sign-in to seal refuses here.
+  const foreignSealRefusal = (): ActionExecuteFailure | null => {
+    if (kind === 'account' && input.authority === 'account_automation'
+      || input.credentials.credentialProvenance === 'api_token') return fail('requester_account_material_unavailable');
+    // A plain Account's requester carries no active keys.
+    if (mode.mode === 'plain' && readAccountE2eeCustody(input.credentials) === 'active') return fail('content_unavailable');
+    return null;
+  };
   const nativeCredentialSpawnChild = spawnChild ? (() => {
     if (managedAdmission?.actionId !== 'machines.managed.credentials.install') return null;
     const authorization = spawnChild.context.externalActionExecutionAuthorization!;
@@ -1415,7 +1425,12 @@ async function prepareOriginalAccountAction(
       const installed = await readInstalledPublication(input.target.machineId);
       if (!installed?.installationPublicKey || installed.access?.accessState !== 'ready'
         || !await isCurrent()) return fail('admission_unavailable', 'dispatch.workflow_installation');
-      if (installed.access.custodian.accountId !== accountId) return fail('requester_credential_disclosure_required');
+      const custodianAccountId = installed.access.custodian.accountId;
+      const foreignLeaf = custodianAccountId !== accountId;
+      if (foreignLeaf) {
+        const refusal = foreignSealRefusal();
+        if (refusal) return refusal;
+      }
       const minted = await phase('mint_authorization', () => mintExternalActionExecutionAuthorization({
         actionId, envelope, machineId: workflow.machineId, pat: input.credentials.token, serverHttpBaseUrl: homeUrl,
         workflowActionOrigin, installationProof: proposal.installationProof,
@@ -1429,7 +1444,7 @@ async function prepareOriginalAccountAction(
         ...(minted.failureCause === undefined ? {} : { failureCause: minted.failureCause }) };
       const root = minted.authorization.binding;
       if (!('authentication' in root) || !sameStrictJsonValue(root.authentication, authentication.data)
-        || root.accountId !== accountId || root.custodianAccountId !== accountId
+        || root.accountId !== accountId || root.custodianAccountId !== custodianAccountId
         || root.serverIdentityId !== input.serverIdentityId || root.machineId !== input.target.machineId
         || root.installationId !== installed.installationId || root.accountEncryptionMode !== mode.mode
         || !sameStrictJsonValue(root.workflowActionOrigin, workflowActionOrigin)
@@ -1438,8 +1453,9 @@ async function prepareOriginalAccountAction(
         || !isExternalActionAuthorizationBoundToEnvelope(root, { actionId, machineId: input.target.machineId, envelope })
         || !await isCurrent()) return fail('admission_unavailable', 'dispatch.workflow_authorization');
       try {
-        // Own-Account target (custodian checked above): the sealer checks Home's key against its own content.
-        const executorKeyPin = readOwnInstalledExecutorKeyPin(installed, input.credentials, mode.mode);
+        // Own-Account target: the sealer checks Home's key against its own content. A foreign
+        // custodian's content is not ours to open; its delivered key stays Home-vouched (docs/encryption.md).
+        const executorKeyPin = foreignLeaf ? undefined : readOwnInstalledExecutorKeyPin(installed, input.credentials, mode.mode);
         const authorization = controllerCodec && material
           ? sealManagedControllerActionCodecV1({ authorization: minted.authorization, material, executorKeyPin,
             ...(input.invocation ? { invocation: input.invocation } : {}),
@@ -1511,16 +1527,6 @@ async function prepareOriginalAccountAction(
         || root.managedContinuation.expectedIntentRevision !== input.managedContinuation.expectedIntentRevision
         : root.managedContinuation !== undefined)
       || !await isCurrent()) return fail('admission_unavailable', 'dispatch.machine_authorization');
-    // Sealing the requester's sign-in to a Machine another person holds is
-    // ordinary use (owner ruling 2026-11-23): no prompt and no refusal for
-    // that reason. Only a requester with no sign-in to seal refuses here.
-    const foreignSealRefusal = (): ActionExecuteResult | null => {
-      if (kind === 'account' && input.authority === 'account_automation'
-        || input.credentials.credentialProvenance === 'api_token') return fail('requester_account_material_unavailable');
-      // A plain Account's requester carries no active keys.
-      if (mode.mode === 'plain' && readAccountE2eeCustody(input.credentials) === 'active') return fail('content_unavailable');
-      return null;
-    };
     const { telemetryReadInstallationPublicKey, ...signedAuthorization } = minted.authorization;
     const prepareDelivery = async (invocation = input.invocation, signal = input.signal): Promise<Exclude<OriginalAccountActionPreparation, null>> => {
       if (signal?.aborted) return fail('cancelled');
