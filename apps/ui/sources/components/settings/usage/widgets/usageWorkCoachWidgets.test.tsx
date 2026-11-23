@@ -225,9 +225,13 @@ describe('Work and Coach widget bodies', () => {
       initialFilters: resolveUsagePageInitialFilters(Object.fromEntries(href.searchParams)),
       sessionId: 's1', nowMs: 1000, timeZoneOffsetMinutes: 0,
     });
-    const actionQuery = normalizeUsageQuery({ session: 's1' });
+    const directQuery = resolveUsageWidgetPageInitialQuery({
+      initialFilters: resolveUsagePageInitialFilters({ metric: 'cost', costMode: 'reported' }),
+      sessionId: 's1', nowMs: 1000, timeZoneOffsetMinutes: 0,
+    });
     const openedRead = usageQueryToAnalyticsRequest(openedQuery, 1000);
-    expect(openedRead.dateRange).toEqual(usageQueryToAnalyticsRequest(actionQuery, 1000).dateRange);
+    expect(openedRead).toEqual(usageQueryToAnalyticsRequest(directQuery, 1000));
+    expect(openedRead.dateRange).toEqual({ endMs: 1000 });
     expect(openedRead.filters?.sessionIds).toEqual(['s1']);
     expect(usagePeriodPhrase(openedQuery)).toBe(t('usage.board.page.thisSession'));
     const reader = hook.getCurrent().reader!;

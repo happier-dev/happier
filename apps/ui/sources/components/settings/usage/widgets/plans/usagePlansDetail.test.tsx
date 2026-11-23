@@ -2000,7 +2000,12 @@ it('charts the picked window in the same chart, labels the empirical range with 
   expect(chart()).toBe(first);
 });
 
-it('keeps the accepted reset witness and Start control on a saved whole-Session Resets placement', async () => {
+it.each([
+  { placement: 'omitted period', session: 's1', period: {}, exact: true },
+  { placement: 'omitted period with duplicate Session values', session: ['s1', 's1'], period: {}, exact: true },
+  { placement: 'explicit All', session: 's1', period: { relative: 'all' }, exact: false },
+  { placement: 'explicit Year', session: 's1', period: { relative: 'year' }, exact: false },
+])('reads saved Resets history as on the loaded cut for $placement', async ({ session, period, exact }) => {
   const now = Date.now();
   const read = quotaRead('work', now, [
     { meterId: 'weekly', label: 'Weekly', usedPct: 80, resetAtMs: now + DAY, windowDurationMs: 7 * DAY },
@@ -2021,8 +2026,8 @@ it('keeps the accepted reset witness and Start control on a saved whole-Session 
   const previous = storage.getState().sessionPending;
   storage.setState({
     profileScope: { serverId: server.id, accountId: profile.id }, profile,
-    sessionPending: { ...previous, s1: { messages: [{ id: 'p1', localId: 'local-1', createdAt: now,
-      updatedAt: now, text: 'Run the follow-up', rawRecord: null }], discarded: [], isLoaded: true } },
+    sessionPending: { ...previous, s1: { messages: exact ? [{ id: 'p1', localId: 'local-1', createdAt: now,
+      updatedAt: now, text: 'Run the follow-up', rawRecord: null }] : [], discarded: [], isLoaded: true } },
   });
   try {
     const { readBuiltinWidgetDescriptorV1, resolveWidgetBindingsV1, WidgetInstanceV1Schema } = await import('@happier-dev/protocol/widgets');
@@ -2030,7 +2035,7 @@ it('keeps the accepted reset witness and Start control on a saved whole-Session 
     const { UsageResetPlannerWidget } = await import('../UsageResetPlannerWidget');
     const instance = WidgetInstanceV1Schema.parse({
       v: 1, id: 'saved-resets', definition: { kind: 'builtin', id: 'usage_resets' },
-      bindings: { session: { kind: 'value', value: 's1' }, period: { kind: 'value', value: {} },
+      bindings: { session: { kind: 'value', value: session }, period: { kind: 'value', value: period },
         costBasis: { kind: 'value', value: 'auto' } },
     });
     const descriptor = readBuiltinWidgetDescriptorV1(instance.definition)!;
@@ -2044,6 +2049,15 @@ it('keeps the accepted reset witness and Start control on a saved whole-Session 
       const props = () => screen.findAllByType(UsageResetPlannerWidget)[0]?.props;
       await expect.poll(() => props()?.slice.quota?.[0]?.current?.fetchedAtMs).toBe(now);
       await expect.poll(() => props()?.slice.pending).toBe(false);
+      const historyRequests = comparisonHome!.requests.filter(request => request.method === 'GET'
+        && request.path.endsWith('/provider-account-usage/history'));
+      if (!exact) {
+        expect(comparisonHome!.requests.some(request => request.path.endsWith('/provider-account-usage/day-summaries'))).toBe(true);
+        expect(historyRequests).toHaveLength(0);
+        expect(props()?.slice.quota?.[0]?.pageFacts?.resetWitness).toBeNull();
+        return;
+      }
+      expect(historyRequests.length).toBeGreaterThan(0);
       expect.soft(props()?.slice.quota?.[0]?.pageFacts?.resetWitness?.id).toBe('accepted');
       const picker = screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'saved-resets.resetStart.local-1.pick');
       expect(picker?.props.items).toHaveLength(1);

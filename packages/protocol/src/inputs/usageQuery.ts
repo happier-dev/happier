@@ -78,15 +78,11 @@ const normalizedBatchKeys = new WeakMap<UsageQueryBatchInput, string | null>();
 export function normalizeUsageQuery(value: unknown): UsageQuery {
   if (typeof value === 'object' && value !== null && normalizedQueryKeys.has(value as UsageQuery)) return value as UsageQuery;
   const query = UsageQuerySchema.parse(value);
-  const sessions = query.session === null ? [] : typeof query.session === 'string' ? [query.session] : sortedSet(query.session);
+  const sessions = query.session === null ? [] : typeof query.session === 'string' ? [query.session] : query.session;
   const normalized: UsageQuery = { ...query,
-    // Match a Session page's whole-life read, including its upper bound at read time.
-    period: sessions.length === 1 && query.period.relative === undefined
-      && query.period.startMs === undefined && query.period.endMs === undefined
-      ? { relative: resolveUsageScopeDefaultPeriod(sessions) } : query.period,
     population: query.population ?? 'all_personal_history',
     agents: sortedSet(query.agents), machines: sortedSet(query.machines), projects: sortedSet(query.projects),
-    sources: sortedSet(query.sources), session: sessions.length ? sessions : null,
+    sources: sortedSet(query.sources), session: sessions.length ? sortedSet(sessions) : null,
     modelIds: sortedSet(query.modelIds), workspaceIds: sortedSet(query.workspaceIds), backendModes: sortedSet(query.backendModes),
     breakdown: [...new Set(query.breakdown)].sort(),
     includeInsights: query.includeInsights ?? false, includeActivity: query.includeActivity ?? false,

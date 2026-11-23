@@ -1,3 +1,4 @@
+import { normalizeUsageQuery, usageQueryToAnalyticsRequest } from '@happier-dev/protocol/inputs/usageQuery';
 import { addUsageMeasurements } from '@happier-dev/protocol/usage/usageAggregation';
 import { describe, expect, it, vi } from 'vitest';
 import { getUsageAnalyticsQueryRequestKey, UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryBatchResponseSchema, UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
@@ -67,6 +68,31 @@ function row(id: string, total: number, metadata: CapturedRow['metadata'], optio
 }
 
 describe('captured usage query projection', () => {
+    function readSessionUsageWithPageAndAction(pageReadMs: number, observedAtMs: readonly number[]) {
+        const nowMs = 1000;
+        const rows = observedAtMs.map((at, index) => ({
+            ...row(String(index), index === 0 ? 5 : 12, null),
+            observedAt: new Date(at),
+            createdAt: new Date(nowMs - 100),
+        }));
+        const snapshot: UsageAnalyticsSnapshot = { rows, legacyReports: [], priceCatalog: { fetchEnabled: false, stored: null } };
+        const read = (input: Parameters<typeof normalizeUsageQuery>[0], now: number) =>
+            projectUsageAnalytics(snapshot, usageQueryToAnalyticsRequest(normalizeUsageQuery(input), now)).totals.tokens.total;
+        return {
+            page: read({ session: 'session', period: { relative: 'all' } }, pageReadMs),
+            action: read({ session: 'session' }, nowMs),
+        };
+    }
+
+    it('matches Session Usage to the no-period Usage Read for events before the page read', () => {
+        expect(readSessionUsageWithPageAndAction(1000, [100, 900])).toEqual({ page: 17, action: 17 });
+    });
+
+    it('includes an event at the Session Usage cutoff on the next admitted read', () => {
+        expect(readSessionUsageWithPageAndAction(1000, [100, 1000])).toEqual({ page: 5, action: 17 });
+        expect(readSessionUsageWithPageAndAction(1001, [100, 1000])).toEqual({ page: 17, action: 17 });
+    });
+
     it('conserves decimal source facts and selected totals through rich and compact query projection', () => {
         const rows = [0.1, 0.2, 0.3].map((reportedCostUsd, index) => ({
             ...row(String(index), 10, { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true } }),

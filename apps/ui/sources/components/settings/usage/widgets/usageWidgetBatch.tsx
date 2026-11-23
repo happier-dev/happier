@@ -331,9 +331,7 @@ export function resolveUsageWidgetQuery(
       // into a summary body or turn a detailed Work body into a summary.
       includeContributions: false, workProjection: 'detail',
       includeSeries: false, includeInsights: false, includeActivity: false, activityResolution: 'both',
-      includeLeaders: false, includeModelTimeline: false, includeMessageStats: false, includeQuotaHistory: false, includeComparison: false,
-      // Session Resets binds pending messages to the accepted observation. Daily history omits that witness.
-      includeQuotaExactHistory: includeQuotaExactHistory || widgetId === 'usage_resets' && singleSession,
+      includeLeaders: false, includeModelTimeline: false, includeMessageStats: false, includeQuotaHistory: false, includeQuotaExactHistory, includeComparison: false,
       includeTranscriptEvidence: false, includeCoach: false, includeQuota: false,
       ...USAGE_WIDGET_DEMAND[widgetId],
       ...(typeof queryInput.includeQuotaHistory === 'boolean' ? { includeQuotaHistory: queryInput.includeQuotaHistory } : {}),
@@ -373,7 +371,6 @@ export function resolveUsageWidgetQuery(
 export function useUsageWidgetModel(
   input: Readonly<Record<string, JsonValue>>,
   widgetId: UsageQueryWidgetId,
-  options?: Readonly<{ exactQuotaHistory?: boolean }>,
 ): Readonly<{
   model: UsageWidgetBodyModel;
   query: UsageQuery | null;
@@ -392,7 +389,7 @@ export function useUsageWidgetModel(
     setExactReaders(value => value + 1);
     return () => setExactReaders(value => value - 1);
   }, []);
-  const includeQuotaExactHistory = options?.exactQuotaHistory === true || exactReaders > 0;
+  const includeQuotaExactHistory = exactReaders > 0;
   const registration = React.useMemo(
     () => resolveUsageWidgetQuery(clauses, input, widgetId, includeQuotaExactHistory),
     [clauses, inputKey, widgetId, includeQuotaExactHistory],

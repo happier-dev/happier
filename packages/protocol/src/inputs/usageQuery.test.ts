@@ -74,11 +74,11 @@ describe('shared UsageQuery', () => {
     expect(usageQueryToAnalyticsRequest(query, 0).filters?.projectKeys).toEqual(['payments']);
   });
 
-  it('uses the same whole-Session accounting read for equivalent Session selections', () => {
+  it('keeps omitted periods unbounded for equivalent Session selections', () => {
     const single = normalizeUsageQuery({ session: 'session' });
     const repeated = normalizeUsageQuery({ session: ['session', 'session'] });
     expect(usageQueryToAnalyticsRequest(repeated, 123)).toEqual(usageQueryToAnalyticsRequest(single, 123));
-    expect(usageQueryToAnalyticsRequest(repeated, 123).dateRange).toEqual({ endMs: 123 });
+    expect(usageQueryToAnalyticsRequest(repeated, 123).dateRange).toEqual({});
     expect(getUsageQueryKey(repeated)).toEqual(getUsageQueryKey(single));
   });
 

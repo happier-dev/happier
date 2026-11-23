@@ -176,8 +176,7 @@ it('keeps standalone All Capacity independent of accounting across unrelated Acc
   const { UsageCapacityWidget } = await import('./UsageCapacityWidget');
   const { default: AgentInputResetStartPicker } = await import('@/components/sessions/agentInput/components/AgentInputResetStartPicker');
   function ResetProbe() {
-    resetModel = useUsageWidgetModel({ session: 'session', includeQuotaHistory: true },
-      'usage_capacity', { exactQuotaHistory: true }).model;
+    resetModel = useUsageWidgetModel({ session: 'session', includeQuotaHistory: true }, 'usage_capacity').model;
     return null;
   }
   function Capacity(props: Readonly<{ reset: boolean }>) {
