@@ -770,6 +770,123 @@ it.skipIf(process.platform !== 'linux').each([false, true])(
   }
 });
 
+it.skipIf(process.platform !== 'linux')('creates a second Worker copy after recovering an earlier relationship at SOURCE startup', async () => {
+  executionBoundary.member = false;
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo, remoteTarget: true,
+    targetCustodianAccountId: 'requester', workerCleanCopy: true, originalActionHomeHttp: true });
+  const first = await setup.executeNativeRelationshipAction();
+  expect(first).toMatchObject({ ok: true, result: { created: true } });
+  if (!first.ok) throw new Error('Initial Worker copy failed');
+  const { relationshipId } = WorkspaceSyncRelationshipCreateResultV1Schema.parse(first.result);
+  await setup.restartSourceParent();
+  const phases: string[] = [];
+  const callTargetPhase = setup.installed.machine.callWorkspaceSyncTargetPhase.bind(setup.installed.machine);
+  vi.spyOn(setup.installed.machine, 'callWorkspaceSyncTargetPhase').mockImplementation(async descriptor => {
+    const result = await callTargetPhase(descriptor);
+    phases.push(descriptor.routing.phase);
+    return result;
+  });
+  const secondPath = `${setup.targetPath}-after-restart`;
+  const second = await setup.prepareInvocation({ ...setup.request, operationId: `${setup.request.operationId}-after-restart`,
+    actionInput: { ...setup.request.actionInput, targetPath: secondPath } });
+  const result = await setup.executeNativeRelationshipAction(second);
+  expect(setup.fixture.parent.handoffAdapter.resolvePrivateExecution?.({ relationshipId })).not.toBeNull();
+  expect(phases).toEqual(expect.arrayContaining(['prepare', 'release']));
+  expect(result).toMatchObject({ ok: true, result: { created: true } });
+  const controller = setup.fixture.parentManagedWorkspaceSync;
+  if (!(controller instanceof WorkspaceSyncController)) throw new Error('Recovered SOURCE controller is unavailable');
+  expect((await controller.listRelationships({})).relationships).toEqual(expect.arrayContaining([
+    expect.objectContaining({ definition: expect.objectContaining({ relationshipId }),
+      status: expect.objectContaining({ state: 'watching' }) }),
+  ]));
+  const snapshot = await readProjectAccountRows({ credentials: setup.credentials, serverId: setup.installed.homeServerIdentityId,
+    selection: { kinds: ['workspace-ref', 'relationship-graph'] } });
+  expect(snapshot.relationships).toEqual(expect.arrayContaining([
+    expect.objectContaining({ relationshipId, committedAtMs: expect.any(Number) }),
+    expect.objectContaining({ relationshipId: WorkspaceSyncRelationshipCreateResultV1Schema.parse(result.ok ? result.result : {}).relationshipId,
+      committedAtMs: expect.any(Number) }),
+  ]));
+  expect(await readFile(join(secondPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+});
+
+it.skipIf(process.platform !== 'linux').each(['missing admission', 'withdrawn grant'] as const)(
+  'isolates a recovered relationship with %s while a new Worker copy commits', async failure => {
+  executionBoundary.member = false;
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo, remoteTarget: true,
+    targetCustodianAccountId: 'requester', workerCleanCopy: true, originalActionHomeHttp: true });
+  const first = await setup.executeNativeRelationshipAction();
+  expect(first).toMatchObject({ ok: true, result: { created: true } });
+  if (!first.ok) throw new Error('Initial Worker copy failed');
+  const { relationshipId } = WorkspaceSyncRelationshipCreateResultV1Schema.parse(first.result);
+  // Model an existing custody file written before sourceAdmission was persisted.
+  const roots = (await readdir(tmpdir())).filter(name => name.startsWith('happier-bind-child-source-phase-'))
+    .map(name => join(tmpdir(), name, setup.sourceRef.machineId, 'requester-session-credentials', 'source'));
+  const files = (await Promise.all(roots.map(root => readdir(root, { recursive: true })
+    .then(names => names.map(name => join(root, String(name))), () => []))))
+    .flat().filter(path => path.endsWith(`relationship-${encodeURIComponent(relationshipId)}.json`));
+  expect(files).toHaveLength(1);
+  const stored = JSON.parse(await readFile(files[0]!, 'utf8'));
+  expect(stored.sourceAdmission).toBeDefined();
+  if (failure === 'missing admission') {
+    delete stored.sourceAdmission;
+    await writeFile(files[0]!, JSON.stringify(stored));
+  }
+  const get = vi.mocked(axios.get).getMockImplementation();
+  if (!get) throw new Error('HTTP boundary is unavailable');
+  let refusedReads = 0;
+  const withdrawal = failure === 'withdrawn grant' ? vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+    if (String(url).endsWith('/v1/machines/machine')) {
+      refusedReads++;
+      throw new axios.AxiosError('Machine access withdrawn', undefined, undefined, undefined,
+        { ...await get(url, config), status: 403, data: { error: 'access_denied' } });
+    }
+    return get(url, config);
+  }) : undefined;
+  await setup.restartSourceParent();
+  const controller = setup.fixture.parentManagedWorkspaceSync;
+  if (!(controller instanceof WorkspaceSyncController)) throw new Error('Recovered SOURCE controller is unavailable');
+  if (withdrawal) {
+    await vi.waitFor(async () => {
+      await expect(readFile(files[0]!, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+    expect(refusedReads).toBeGreaterThan(0);
+    vi.mocked(axios.get).mockImplementation(get); // A fresh grant permits R2; R1's retired custody stays absent.
+  }
+  const phases: string[] = [];
+  const callTargetPhase = setup.installed.machine.callWorkspaceSyncTargetPhase.bind(setup.installed.machine);
+  vi.spyOn(setup.installed.machine, 'callWorkspaceSyncTargetPhase').mockImplementation(async descriptor => {
+    const result = await callTargetPhase(descriptor);
+    phases.push(descriptor.routing.phase);
+    return result;
+  });
+  const secondPath = `${setup.targetPath}-after-restart`;
+  const second = await setup.prepareInvocation({ ...setup.request, operationId: `${setup.request.operationId}-after-restart`,
+    actionInput: { ...setup.request.actionInput, targetPath: secondPath } });
+  const result = await setup.executeNativeRelationshipAction(second);
+  expect(phases).toEqual(expect.arrayContaining(['prepare', 'release']));
+  expect(result).toMatchObject({ ok: true, result: { created: true } });
+  const relationships = (await controller.listRelationships({})).relationships;
+  if (failure === 'missing admission') {
+    expect(relationships).toEqual(expect.arrayContaining([
+      expect.objectContaining({ definition: expect.objectContaining({ relationshipId }),
+        status: expect.objectContaining({ state: 'error', errorCode: 'workspace_sync_unavailable' }) }),
+    ]));
+  } else {
+    expect(relationships).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ definition: expect.objectContaining({ relationshipId }) }),
+    ]));
+  }
+  const snapshot = await readProjectAccountRows({ credentials: setup.credentials, serverId: setup.installed.homeServerIdentityId,
+    selection: { kinds: ['workspace-ref', 'relationship-graph'] } });
+  expect(snapshot.relationships).toEqual(expect.arrayContaining([
+    expect.objectContaining({ relationshipId, committedAtMs: expect.any(Number) }),
+    expect.objectContaining({ relationshipId: WorkspaceSyncRelationshipCreateResultV1Schema.parse(result.ok ? result.result : {}).relationshipId,
+      committedAtMs: expect.any(Number) }),
+  ]));
+  expect(await readFile(join(secondPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+});
+
+
 it.skipIf(process.platform !== 'linux').each(['its own', 'another relationship\'s'] as const)(
   'a recovered requester relationship reaches its TARGET after the SOURCE daemon restarts only with %s standing admission', async admission => {
   executionBoundary.member = false;

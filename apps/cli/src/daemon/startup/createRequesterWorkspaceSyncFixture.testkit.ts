@@ -983,6 +983,11 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
         inputDigest: computeActionInputApprovalDigestV1('workspace.sync.relationship.create', invocation.request.actionInput) });
   };
   return { installed, fixture, identity, member, rows, custodianRows, custodianRef, custodianBefore,
+    restartSourceParent: async () => {
+      await fixture.restartSourceParent();
+      registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: diagnosticRegistrarFor(rpc), service: fixture.parent.workspaceSync });
+      registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: diagnosticRegistrarFor(installed.rpcHandlerManager), service: fixture.parent.workspaceSync });
+    },
     restartTargetParent: async () => {
       await fixture.restartTargetParent();
       if (!targetRpc || !fixture.targetParent) throw new Error('Physical target RPC is unavailable');

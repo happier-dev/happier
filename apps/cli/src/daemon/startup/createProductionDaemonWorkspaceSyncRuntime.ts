@@ -1806,7 +1806,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
           await capture.nativeSync.releaseBootstrapHere(wire);
           return;
         }
-        if (!capture.callTargetPhase) throw compositionError('workspace_sync_update_required', 'Private Sync target transport is unavailable');
+        if (!capture.callTargetPhase) throw compositionError('workspace_sync_unavailable', 'Private Sync target transport is unavailable');
         await capture.callTargetPhase({ machineId: target.machineId,
           method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE, request: wire,
           routing: { v: 1, phase: 'release', operationId: retained.input.operationId, accountServerId: semanticServerId,
@@ -1889,7 +1889,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         const prepared = await retained.execution.nativeSync.prepareBootstrapAtTarget(prepare);
         return prepared.ownershipHandles ? { ownershipHandles: prepared.ownershipHandles } : undefined;
       }
-      if (!retained.execution.callTargetPhase) throw compositionError('workspace_sync_update_required', 'Private Sync target transport is unavailable');
+      if (!retained.execution.callTargetPhase) throw compositionError('workspace_sync_unavailable', 'Private Sync target transport is unavailable');
       await retained.execution.callTargetPhase({ machineId: target.machineId,
         method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE, request: wire,
         routing: { v: 1, phase: 'prepare', operationId: retained.input.operationId, accountServerId: semanticServerId,

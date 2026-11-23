@@ -643,6 +643,8 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
 
   private projectObservedStatus(id: string, observed: WorkspaceSyncStatusV1 | null): WorkspaceSyncStatusV1 | null {
     const held = this.statuses.get(id);
+    // A preparation failure has no native session to supply its status.
+    if (!observed && held?.state === 'error' && this.definitions.has(id)) return held;
     // Recovery pauses belong to the controller, not the native status reader.
     // A fresh engine observation cannot clear one; a command or changed desired
     // definition must settle recovery before publishing its replacement.
@@ -1469,7 +1471,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     // call; a stale caller filter yields found:false, never another scope.
     const local = [...this.definitions.values()].filter(definition => admittedRelationshipIds === undefined
       || admittedRelationshipIds.has(definition.relationshipId));
-    const statuses = await this.adapter.list(signal);
+    const statuses = await this.list(signal);
     const statusById = new Map(statuses.map((status) => [status.relationshipId, status] as const));
     const topology = await this.deriveRuntimeTopology(local);
     const matchingSets = valid.workspaceRefId === undefined
@@ -2660,36 +2662,48 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
         handles: WorkspaceRootOwnershipHandle[];
         ownedHandles: WorkspaceRootOwnershipHandle[];
       }>>();
+      const failedPreparations = new Map<string, string>();
       try {
         for (const relationship of activeRelationships) {
-          const current = this.definitions.get(relationship.relationshipId);
-          if (current && areWorkspaceSyncRelationshipDefinitionsEqual(current, relationship)
-            && this.fences.has(relationship.relationshipId)
-            && !this.ownershipLost.has(relationship.relationshipId)) {
-            try {
-              await this.assertRelationshipOwnershipCurrent(relationship.relationshipId);
-            } catch (error) {
-              if (!(typeof error === 'object' && error !== null && 'code' in error
-                && error.code === 'workspace_root_ownership_lost')) throw error;
+          try {
+            const current = this.definitions.get(relationship.relationshipId);
+            if (current && areWorkspaceSyncRelationshipDefinitionsEqual(current, relationship)
+              && this.fences.has(relationship.relationshipId)
+              && !this.ownershipLost.has(relationship.relationshipId)) {
+              try {
+                await this.assertRelationshipOwnershipCurrent(relationship.relationshipId);
+              } catch (error) {
+                if (!(typeof error === 'object' && error !== null && 'code' in error
+                  && error.code === 'workspace_root_ownership_lost')) throw error;
+              }
             }
-          }
-          if (!current || !areWorkspaceSyncRelationshipDefinitionsEqual(current, relationship)
-            || !this.fences.has(relationship.relationshipId)
-            || this.ownershipLost.has(relationship.relationshipId)) {
-            const sourceHandles = await this.acquireSourceRoots(relationship);
-            // Recorded before target preparation so a failure there still
-            // releases the source fence through the loop's cleanup.
-            pendingFences.set(relationship.relationshipId, {
-              handles: [...sourceHandles],
-              ownedHandles: [],
-            });
-            const targetPreparation = await this.prepareTarget(relationship, undefined);
-            const carriedHandles = [...sourceHandles, ...(targetPreparation?.ownershipHandles ?? [])];
-            const acquiredHandles = await this.acquireRoots(relationship, carriedHandles);
-            pendingFences.set(relationship.relationshipId, {
-              handles: [...carriedHandles, ...acquiredHandles],
-              ownedHandles: [...acquiredHandles],
-            });
+            if (!current || !areWorkspaceSyncRelationshipDefinitionsEqual(current, relationship)
+              || !this.fences.has(relationship.relationshipId)
+              || this.ownershipLost.has(relationship.relationshipId)) {
+              const sourceHandles = await this.acquireSourceRoots(relationship);
+              // Recorded before target preparation so a failure there still
+              // releases the source fence through the loop's cleanup.
+              pendingFences.set(relationship.relationshipId, {
+                handles: [...sourceHandles],
+                ownedHandles: [],
+              });
+              const targetPreparation = await this.prepareTarget(relationship, undefined);
+              const carriedHandles = [...sourceHandles, ...(targetPreparation?.ownershipHandles ?? [])];
+              const acquiredHandles = await this.acquireRoots(relationship, carriedHandles);
+              pendingFences.set(relationship.relationshipId, {
+                handles: [...carriedHandles, ...acquiredHandles],
+                ownedHandles: [...acquiredHandles],
+              });
+            }
+          } catch (error) {
+            // Recovery belongs to this link. A different link's creation can
+            // reconcile the same Account without inheriting this refusal.
+            const id = relationship.relationshipId;
+            await this.releaseRootHandles(pendingFences.get(id)?.ownedHandles ?? []);
+            await this.closeActiveIngress(id);
+            await this.releaseRelationshipOwnership(id);
+            pendingFences.delete(id);
+            failedPreparations.set(id, readErrorCode(error) ?? 'action_failed');
           }
         }
         for (const relationship of disabledRelationships) {
@@ -2764,6 +2778,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
         for (const recovery of await this.adapter.discoverCopyOnceRecoveries()) recoveries.set(recovery.operationId, recovery);
         for (const recovery of recoveries.values()) await this.recoverCopyOnce(recovery);
         for (const relationship of activeRelationships) {
+          if (failedPreparations.has(relationship.relationshipId)) continue;
           const previousDefinition = stagedPrevious.has(relationship.relationshipId)
             ? stagedPrevious.get(relationship.relationshipId)?.definition
             : this.definitions.get(relationship.relationshipId);
@@ -2784,7 +2799,9 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
             recoveryHoldCodes.set(relationship.relationshipId, code ?? 'workspace_sync_recovery_needed');
           }
         }
-        existing = new Map((await this.adapter.rehydrate([...desired.values()], undefined, holdPausedRelationshipIds))
+        existing = new Map((await this.adapter.rehydrate([...desired.values()].filter(
+          relationship => !failedPreparations.has(relationship.relationshipId),
+        ), undefined, holdPausedRelationshipIds))
           .map((item) => [item.relationshipId, item]));
       } catch (error) {
         await rollbackStaged();
@@ -2812,6 +2829,24 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       }
       const statuses: WorkspaceSyncStatusV1[] = [];
       for (const relationship of activeRelationships) {
+        const preparationError = failedPreparations.get(relationship.relationshipId);
+        if (preparationError) {
+          this.definitions.set(relationship.relationshipId, relationship);
+          const [alpha, beta] = await Promise.all([
+            this.resolveRef(relationship.alphaWorkspaceRefId, relationship.relationshipId),
+            this.resolveRef(relationship.betaWorkspaceRefId, relationship.relationshipId),
+          ]);
+          statuses.push(this.publish({
+            relationshipId: relationship.relationshipId,
+            controllerMachineId: relationship.controllerMachineId,
+            state: 'error', errorCode: preparationError,
+            alphaPath: alpha?.rootPath ?? relationship.alphaWorkspaceRefId,
+            betaPath: beta?.rootPath ?? relationship.betaWorkspaceRefId,
+            mode: relationship.mode, endpointStates: { alpha: null, beta: null },
+            conflictCount: 0, lastCycleObservedAtMs: null,
+          }));
+          continue;
+        }
         const adopted = existing.get(relationship.relationshipId);
         const recoveringOwnership = this.ownershipLost.has(relationship.relationshipId);
         if (!this.definitions.has(relationship.relationshipId) || recoveringOwnership) {

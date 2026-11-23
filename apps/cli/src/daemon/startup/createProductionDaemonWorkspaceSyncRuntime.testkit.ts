@@ -530,7 +530,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
         if (!signal) throw new Error('Native change wait requires cancellation');
         return { stateIndex: await nativeChanges.waitForChange(input.previousStateIndex, signal) };
       }
-      if (input.t === 'shutdown') { if (!options.nativeCarrierRefusal && !options.nativeCarrierHome) endSidecar?.(); return null; }
+      if (input.t === 'shutdown') return null;
       if (input.t === 'list') return { sessions: [...sessions.values()].sort((a, b) => a.identifier < b.identifier ? -1 : a.identifier > b.identifier ? 1 : 0).map(nativeSummary), nextCursor: null };
       if (input.t === 'create') {
         await options.onNativeCreate?.();
@@ -756,7 +756,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
     productions.push(production);
     return production;
   }
-  const parent = await compose(sourceRef.machineId);
+  let parent = await compose(sourceRef.machineId);
   if (!parentManagedWorkspaceSync) throw new Error('The physical source managed Sync runtime is unavailable');
   const registerSeedExport = async (rpcHandlerManager: RpcHandlerRegistrar) => {
     const lifecycle = seedTransferLifecycle;
@@ -812,7 +812,10 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
   // restored its original absence. Probe its root loan without inventing bytes.
   const probeTarget = async () => await rootOwner.tryAcquire({ ownerId: 'target-custody-probe', canonicalRoot: targetPath,
     operation: 'handoff', deferRootIdentityBinding: true });
-  return { child, parent, parentManagedWorkspaceSync, prepareInput, targetPath, sourcePath, probeSource, probeTarget, workerAdmissions, nativeCarrierRuntimes,
+  return { child, get parent() { return parent; }, get parentManagedWorkspaceSync() {
+    if (!parentManagedWorkspaceSync) throw new Error('The physical source managed Sync runtime is unavailable');
+    return parentManagedWorkspaceSync;
+  }, prepareInput, targetPath, sourcePath, probeSource, probeTarget, workerAdmissions, nativeCarrierRuntimes,
     settleProjects: async (machineId?: string) => {
       if (machineId !== undefined) {
         const runtime = daemonRuntimes.get(machineId);
@@ -824,6 +827,13 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
     },
     sourceRef, childRef, childInstallationId, targetRef, projection, managedChild, callWorkspaceSourcePhase, parentRpcHandlers: handlers,
     get targetParent() { return targetParent; },
+    restartSourceParent: async () => {
+      await parent.stop();
+      parent = await compose(sourceRef.machineId);
+      handlers.clear();
+      await registerSeedExport(registrar);
+      registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: registrar, service: parent.workspaceSync });
+    },
     restartTargetParent: async () => {
       if (!targetParent) throw new Error('Physical target runtime is unavailable');
       await targetParent.stop();
