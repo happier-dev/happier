@@ -2,7 +2,7 @@ import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automation
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
 import { readWorkflowActionOutputSchemaV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { decodeExecutionRunResultObservation, validateExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
-import { classifyWorkflowReviewEntryV1, applyWorkflowInvocationFactV1, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { classifyWorkflowReviewEntryV1, applyWorkflowInvocationFactV1, isTerminalWorkflowInvocationLifecycleV1, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { resolveWorkflowInvocationStructureV1, type WorkflowInvocationBindingRowV1 } from '@happier-dev/protocol/workflows/workflowInvocationStructureV1';
 import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { WorkflowRunRecipientCensusResponseV1Schema, WorkflowRunRecipientKeyEnvelopeCommitResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
@@ -31,10 +31,6 @@ import { WorkflowDiscussionPublicationUnavailable } from './workflowDiscussionPu
 import { hasRetainedWorkflowActionOperation, LOST_ACTION_OPERATION_CODE } from './actionOperationObservation';
 import { resolveWorkflowSessionLaunch } from './sessionStepLaunch';
 import { WORKFLOW_RECOVERABLE_INVOCATION_LIFECYCLES_V1 as RECOVERABLE_INVOCATION_LIFECYCLES } from '@happier-dev/protocol/workflows';
-
-const TERMINAL_INVOCATION_LIFECYCLES = new Set<WorkflowInvocationLifecycleV1>([
-  'completed', 'failed', 'cancelled', 'skipped', 'superseded', 'outcome_uncertain',
-]);
 
 function hasActiveWorkflowRunCustody(run: WorkflowRunSummaryV1): boolean {
   return !isTerminalAutomationRunStateV3(run.state) && run.workflowCustodyState === 'pending';
@@ -160,7 +156,7 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
     if (opened.kind !== 'available') return;
     const root = await readInvocation(opened.content.rootRecordId);
     if (!root || root.progress.blockKind !== 'root') return;
-    if (!includeTerminalRoot && TERMINAL_INVOCATION_LIFECYCLES.has(root.index.lifecycle)) return;
+    if (!includeTerminalRoot && isTerminalWorkflowInvocationLifecycleV1(root.index.lifecycle)) return;
     const currentRun = WorkflowRunSummaryV1Schema.parse(body.run);
     // Reuse the executing owner's stored invocation projection and publisher;
     // reattach never acquires a coordinator claim or changes root lifecycle.
@@ -235,7 +231,7 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
     return accepted ? await resolveWorkflowInvocationStructureV1({ definition: accepted.definition,
       frozenChildren: accepted.frozenChildren, inputs: accepted.inputs, invocation, readInvocation,
       ...(params.requireActiveCustody ? { isAncestryCurrent: (row: WorkflowInvocationBindingRowV1) =>
-        row.index.lifecycle !== 'cancel_requested' && !TERMINAL_INVOCATION_LIFECYCLES.has(row.index.lifecycle) } : {}),
+        row.index.lifecycle !== 'cancel_requested' && !isTerminalWorkflowInvocationLifecycleV1(row.index.lifecycle) } : {}),
       keyOfInvocation: (row) => row.index.id }) : undefined;
   };
   const resolveFrozenActionContract = async (invocation: NonNullable<Awaited<ReturnType<typeof readInvocation>>>) => {

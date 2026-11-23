@@ -71,6 +71,18 @@ export const WORKFLOW_INVOCATION_LIFECYCLES_V1 = [
 export const WorkflowInvocationLifecycleV1Schema = lazyZodSchema(() => z.enum(WORKFLOW_INVOCATION_LIFECYCLES_V1));
 export type WorkflowInvocationLifecycleV1 = z.infer<typeof WorkflowInvocationLifecycleV1Schema>;
 
+/**
+ * Final execution outcomes for ordinary fact publication. An uncertain outcome
+ * may still retain custody until an authorized observation resolves it.
+ */
+const terminalInvocationLifecycles: ReadonlySet<string> = new Set([
+  'completed', 'failed', 'skipped', 'cancelled', 'outcome_uncertain', 'superseded',
+] as const satisfies readonly WorkflowInvocationLifecycleV1[]);
+
+export function isTerminalWorkflowInvocationLifecycleV1(lifecycle: string): boolean {
+  return terminalInvocationLifecycles.has(lifecycle);
+}
+
 /** Indexed custody that must resolve before a terminal Run may settle. */
 export const WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1 = [
   'pending', 'waiting_for_capacity', 'admitting', 'running', 'waiting_for_approval',

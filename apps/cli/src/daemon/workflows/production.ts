@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { WorkflowStepProgress } from './stepProgress';
 
-import { applyWorkflowInvocationFactV1, classifyWorkflowHoldV1, WorkflowAuthoredInputV1Schema, WorkflowCheckpointEnvelopeV1Schema, WorkflowProgressEnvelopeV1Schema, WorkflowInvocationFactV1Schema, WorkflowInvocationFactResultV1Schema, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema, WorkflowOperationErrorCodeV1Schema, WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1, WORKFLOW_INVOCATION_LIFECYCLES_V1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { applyWorkflowInvocationFactV1, classifyWorkflowHoldV1, isTerminalWorkflowInvocationLifecycleV1, WorkflowAuthoredInputV1Schema, WorkflowCheckpointEnvelopeV1Schema, WorkflowProgressEnvelopeV1Schema, WorkflowInvocationFactV1Schema, WorkflowInvocationFactResultV1Schema, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema, WorkflowOperationErrorCodeV1Schema, WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1, WORKFLOW_INVOCATION_LIFECYCLES_V1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { getWorkflowActionOutputKindV1, WorkflowMachineCommandOutputV1Schema } from '@happier-dev/protocol/workflows/stepActionsV1';
@@ -110,14 +110,6 @@ import {
 } from './executionRunStepExecutor';
 
 type StorageClient = ReturnType<typeof createWorkflowRunStorageClient>;
-
-// Aggregate projection has no terminal-resolution authority. Keep settled
-// content intact while its children/publication retain custody.
-// outcome_uncertain remains resolvable through observed_terminal_execution;
-// these aggregate writes never carry that explicit resolution.
-const IMMUTABLE_INVOCATION_LIFECYCLES = new Set<WorkflowRunInvocationIndexV1['lifecycle']>([
-  'completed', 'failed', 'skipped', 'cancelled', 'outcome_uncertain', 'superseded',
-]);
 
 /** Durable correspondence failures keep their original generic-error routing. */
 function workflowConversationResolverUnavailable(...args: Parameters<typeof workflowConversationUnavailable>) {
@@ -933,7 +925,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
   private async refreshLoopProgress(key: string): Promise<void> {
     await this.serializedInvocation(key, async () => {
       const invocation = this.records.get(key);
-      if (!invocation || IMMUTABLE_INVOCATION_LIFECYCLES.has(invocation.lifecycle)) return;
+      if (!invocation || isTerminalWorkflowInvocationLifecycleV1(invocation.lifecycle)) return;
       const loopProgress = await this.projectLoopProgress(invocation);
       if (!loopProgress || sameStrictJsonValue(this.persisted.get(key)?.progress.loopProgress, loopProgress)) return;
       await this.commitFactNow({ key, lifecycle: invocation.lifecycle }, undefined, loopProgress);
@@ -1001,7 +993,8 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
     await this.serializedInvocation(root.key, async () => {
       const currentRoot = this.recordsById.get(this.params.rootRecordId);
       if (!currentRoot) throw new Error('workflow_root_invocation_missing');
-      if (IMMUTABLE_INVOCATION_LIFECYCLES.has(currentRoot.lifecycle)) return;
+      // Aggregate writes cannot resolve an uncertain execution outcome.
+      if (isTerminalWorkflowInvocationLifecycleV1(currentRoot.lifecycle)) return;
       const stepProgress = await this.projectStepProgress();
       const discussionRound = await this.readDiscussionRoundProgress();
       const roundChanged = !sameStrictJsonValue(this.lastDiscussionRoundProgress, discussionRound);

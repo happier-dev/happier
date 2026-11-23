@@ -4,7 +4,7 @@ import { randomBytes as nodeRandomBytes } from 'node:crypto';
 import axios from '@/api/client/credentialAxios';
 
 import { AutomationEventActionHttpPathsV1, AutomationEventActionHttpRequestSchemasV1, AutomationEventAdmitHttpRequestV1Schema } from '@happier-dev/protocol/automations/event';
-import { AutomationEventActionOutputSchemasV1, AutomationEventAdmitHttpResultV1Schema, AutomationEventAdmitInputV1Schema, AutomationEventAdmitResultV1Schema, AutomationEventSourceStatusReportV1Schema, AutomationEventSourcesListInputV1Schema } from '@happier-dev/protocol/automations/automationActionSpecsV1';
+import { AUTOMATION_EVENT_ACTION_IDS_V1, AutomationEventActionOutputSchemasV1, AutomationEventAdmitHttpResultV1Schema, AutomationEventAdmitInputV1Schema, AutomationEventAdmitResultV1Schema, AutomationEventSourceStatusReportV1Schema, AutomationEventSourcesListInputV1Schema } from '@happier-dev/protocol/automations/automationActionSpecsV1';
 import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
 import { PluginMachineMaterializationRefV1Schema } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
@@ -36,11 +36,7 @@ import {
 
 type ExecuteAutomationEventAction = NonNullable<ActionExecutorDeps['automationEventAction']>;
 
-const INSTALLED_AUTOMATION_EVENT_ACTION_PRODUCERS_V1: ReadonlySet<AutomationEventActionIdV1> = new Set([
-  'automation.event.sources.list',
-  'automation.event.admit',
-  'automation.event.source.status.report',
-]);
+const INSTALLED_AUTOMATION_EVENT_ACTION_PRODUCERS_V1: ReadonlySet<AutomationEventActionIdV1> = new Set(AUTOMATION_EVENT_ACTION_IDS_V1);
 
 /**
  * Resolves the one generation-local adopted set that owns Event definitions

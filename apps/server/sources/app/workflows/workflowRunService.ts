@@ -2,7 +2,7 @@ import { decodeMachineStoredContent, withMachineContentSelect } from '@/storage/
 import { canObserveLostWorkflowActionOperationV1 } from '@happier-dev/protocol/workflows';
 import { decodeKeysetCursorV1, encodeKeysetCursorV1, readKeysetCursorIdV1, readKeysetCursorTextV1 } from '@happier-dev/protocol/pagination/keysetCursorV1';
 import { measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from '@happier-dev/protocol/actions/externalActionLimits';
-import { projectWorkflowBigIntV1, WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1, type WorkflowInvocationLifecycleV1, type WorkflowRunOriginV1, type WorkflowRunSummaryV1, type WorkflowRunLastStartedSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { isTerminalWorkflowInvocationLifecycleV1, projectWorkflowBigIntV1, WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1, type WorkflowInvocationLifecycleV1, type WorkflowRunOriginV1, type WorkflowRunSummaryV1, type WorkflowRunLastStartedSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { toAutomationRunExecutionInputV1Origin } from '@happier-dev/protocol/automations/automationApiV3';
 import { projectAutomationAccountCurrentnessWitnessV1, sameAutomationAccountContentIdentityV1, type AutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
@@ -1579,14 +1579,6 @@ async function summarizeLatestTriggerableRuns(params: AutomationSummaryReadParam
     }, { transactionClass: "workflow-summarize-runs" });
 }
 
-const WORKFLOW_TERMINAL_INVOCATION_LIFECYCLES = [
-    "completed",
-    "failed",
-    "skipped",
-    "cancelled",
-    "outcome_uncertain",
-    "superseded",
-] as const satisfies readonly WorkflowInvocationLifecycleV1[];
 /**
  * Returns only exact-machine Runs whose persisted custody still requires the
  * existing worker startup/reconnect owner. This is a targeted indexed read,
@@ -2205,7 +2197,7 @@ export async function commitWorkflowInvocationFact(params: WorkflowInvocationFac
             throw new WorkflowRunServiceError("currentness_conflict");
         }
         if (current.lifecycle === params.lifecycle && current.contentEnvelope === params.contentEnvelope) return await acknowledge(current);
-        if (WORKFLOW_TERMINAL_INVOCATION_LIFECYCLES.some((lifecycle) => lifecycle === current.lifecycle)
+        if (isTerminalWorkflowInvocationLifecycleV1(current.lifecycle)
             && !(current.lifecycle === "outcome_uncertain" && resolvesObservedTerminal)) {
             throw new WorkflowRunServiceError("currentness_conflict");
         }
@@ -2302,7 +2294,7 @@ export async function transitionWorkflowRun(params: Readonly<{ accountId: string
             if (!current || current.lifecycle !== transition.expectedLifecycle || current.contentRevision !== transition.expectedContentRevision) {
                 throw new WorkflowRunServiceError("currentness_conflict");
             }
-            const terminal = WORKFLOW_TERMINAL_INVOCATION_LIFECYCLES.some((lifecycle) => lifecycle === current.lifecycle);
+            const terminal = isTerminalWorkflowInvocationLifecycleV1(current.lifecycle);
             if (terminal && transition.lifecycle !== current.lifecycle) {
                 throw new WorkflowRunServiceError("currentness_conflict");
             }
@@ -2312,7 +2304,7 @@ export async function transitionWorkflowRun(params: Readonly<{ accountId: string
             await assertCurrentWorkflowInvocationTx(tx, current as InvocationRow);
             if (
                 terminal
-                || WORKFLOW_TERMINAL_INVOCATION_LIFECYCLES.some((lifecycle) => lifecycle === transition.lifecycle)
+                || isTerminalWorkflowInvocationLifecycleV1(transition.lifecycle)
             ) reconciledTerminalInvocationIds.push(transition.id);
         }
         const transitionsToTerminal = AUTOMATION_RUN_TERMINAL_STATES.some(

@@ -1,5 +1,5 @@
 import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
-import { WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1, WorkflowRunInvocationIndexV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { isTerminalWorkflowInvocationLifecycleV1, WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1, WorkflowRunInvocationIndexV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { canObserveLostWorkflowActionOperationV1 } from '@happier-dev/protocol/workflows';
 import type { WorkflowInvocationLifecycleV1, WorkflowRunInvocationIndexV1, WorkflowRunOriginV1, WorkflowRunStateV1, WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
@@ -30,15 +30,6 @@ const ATTENTION_LIFECYCLES = WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1;
 
 const CANCELLABLE_LIFECYCLES = [
   'pending', 'waiting_for_capacity', 'admitting', 'running', 'waiting_for_approval', 'needs_attention', 'waiting_for_review',
-] as const satisfies readonly WorkflowInvocationLifecycleV1[];
-
-/**
- * The server keeps settled lifecycle and sealed bytes immutable: only an
- * identical terminal fact is acknowledged, apart from observed uncertainty
- * resolution. Reconstruction tests must retain that same storage contract.
- */
-const TERMINAL_INVOCATION_LIFECYCLES = [
-  'completed', 'failed', 'skipped', 'cancelled', 'outcome_uncertain', 'superseded',
 ] as const satisfies readonly WorkflowInvocationLifecycleV1[];
 
 type StoredRow = {
@@ -425,7 +416,7 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
               || (operation.expectedLifecycle === 'outcome_uncertain' && operation.lifecycle === 'outcome_uncertain')
               || ((operation.lifecycle === 'failed' || operation.lifecycle === 'cancelled')
                 && isTerminalAutomationRunStateV3(state)));
-        if (TERMINAL_INVOCATION_LIFECYCLES.some((candidate) => candidate === row.index.lifecycle)
+        if (isTerminalWorkflowInvocationLifecycleV1(row.index.lifecycle)
           && !(row.index.lifecycle === 'outcome_uncertain' && resolvesObservedTerminal)) {
           throw storageError('currentness_conflict');
         }
