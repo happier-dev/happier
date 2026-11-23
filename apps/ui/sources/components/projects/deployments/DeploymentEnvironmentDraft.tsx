@@ -797,6 +797,19 @@ export const DeploymentEnvironmentDraft = React.memo(
     ) : null;
     const soleTarget = props.platformAvailable && targetTiles.length === 1 && targetTiles[0]?.id === OWN_SERVER_TARGET
       ? targetTiles[0] : null;
+    const controllerField = machineEmpty ?? (
+      <SessionMachineField
+        testID="project-deployments.draft.machine"
+        serverId={props.lifetime?.scope.serverId ?? ''}
+        machines={machines}
+        machineId={machineId ?? chosen?.id ?? null}
+        machineName={t('approvals.machineNotKnown')}
+        title={t(onPlatform ? 'projects.deployments.platformLink.deploysFrom' : 'projects.deployments.machine')}
+        {...(soleTarget?.subtitle ? { subtitle: soleTarget.subtitle } : {})}
+        awayMachinesChoosable={!stepped}
+        onSelectMachine={(machine) => setMachineId(machine.id)}
+      />
+    );
     const whereGroup = <>
           <ItemGroup
             // Stepped, the host's step description asks the question; the group keeps the recommendation's reason.
@@ -816,21 +829,7 @@ export const DeploymentEnvironmentDraft = React.memo(
                 maximumColumns={props.phone ? 1 : targetTileColumns(targetTiles.length)}
               />
             ) : null}
-            {machineEmpty ?? (
-              <SessionMachineField
-                testID="project-deployments.draft.machine"
-                serverId={props.lifetime?.scope.serverId ?? ''}
-                machines={machines}
-                machineId={machineId ?? chosen?.id ?? null}
-                machineName={t('approvals.machineNotKnown')}
-                title={onPlatform
-                  ? t('projects.deployments.platformLink.deploysFrom')
-                  : t('projects.deployments.machine')}
-                {...(soleTarget?.subtitle ? { subtitle: soleTarget.subtitle } : {})}
-                awayMachinesChoosable
-                onSelectMachine={(machine) => setMachineId(machine.id)}
-              />
-            )}
+            {controllerField}
             {/* Stepped, how long it keeps running is one of More settings (journey-deploy cfgM). */}
             {stepped ? null : machineAwayNotice}
             {stepped ? null : retentionChoice}
@@ -934,6 +933,7 @@ export const DeploymentEnvironmentDraft = React.memo(
           ) : null}
     </> : null;
     const configureGroups = <>
+          {stepped && onPlatform && platformDefinitionAccepted ? <ItemGroup>{controllerField}</ItemGroup> : null}
           {platformTarget && platformDefinitionAccepted && platformEnvironment && props.lifetime && actions ? (
             <DeploymentPlatformTargetEditor key={`${platformTarget.key}:${chosen?.id ?? ''}:${source?.revision ?? ''}`}
               name={name} environment={platformEnvironment} ownerAccountId={props.lifetime.scope.accountId}
