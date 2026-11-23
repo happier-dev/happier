@@ -1,0 +1,42 @@
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import type { UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+
+type CoverageStatus = Pick<UsageQuerySourceState, 'source' | 'status' | 'errorCode'>;
+
+export function usagePageReadFamily(source: string): string {
+    return source.startsWith('quota:') ? 'quota' : source;
+}
+
+export function isUsageCoverageFailure(source: CoverageStatus): boolean {
+    return source.status === 'error' || source.source === 'work' && source.errorCode === 'work_evidence_failed'
+        || source.status === 'stale' && source.errorCode !== undefined && usagePageReadFamily(source.source) === 'quota';
+}
+
+export function needsNewerServer(gap: Pick<UsageQuerySourceState, 'status' | 'updateRequired'>): boolean {
+    return gap.status === 'error' && gap.updateRequired?.component === 'server';
+}
+
+export function isUsageQuotaOwnershipUnproven(state: UsageQuerySourceState): boolean {
+    return usagePageReadFamily(state.source) === 'quota' && state.errorCode === 'ownership_unproven';
+}
+
+/** Typed scope denials keep their cause and require a scope or authority change. */
+export function usageScopeRefusalCode(state: CoverageStatus) {
+    if (!isUsageCoverageFailure(state)) return null;
+    switch (state.errorCode) {
+        case 'denied':
+        case 'permission_denied':
+        case 'unauthorized':
+        case 'forbidden':
+        case RPC_ERROR_CODES.FORBIDDEN:
+        case 'not_found':
+            return state.errorCode;
+        default:
+            return null;
+    }
+}
+
+export function canRetryUsageCoverageFailure(state: UsageQuerySourceState): boolean {
+    return isUsageCoverageFailure(state) && !needsNewerServer(state)
+        && !isUsageQuotaOwnershipUnproven(state) && !usageScopeRefusalCode(state);
+}
