@@ -178,6 +178,20 @@ describe('Files reads the canonical captured comparison through authenticated RP
         expect(captures()[1]?.payload).toMatchObject({ comparisonId: comparison.id,
             projection: { kind: 'index', cursor: expected, limit: Math.ceil(720 / resolveScmChangeCompactRowHeight(false)) } });
         expect(screen.findByType(CapturedComparisonFilesView).props.comparison.inventory.files).toHaveLength(expected * 3);
+        await screen.unmount();
+        // Finish the cursor at the same owner without asking the renderer's recycler
+        // boundary to mount every row of the large inventory at once.
+        const terminal = await renderHook(() => useSessionCapturedScmComparison({ sessionId, serverId,
+            comparison: { kind: 'session' }, indexPageSize: files.length }));
+        await act(async () => terminal.getCurrent().loadMore());
+        expect(captures()).toHaveLength(3);
+        expect(captures()[2]?.payload).toMatchObject({ comparisonId: comparison.id,
+            projection: { kind: 'index', cursor: expected * 3, limit: files.length } });
+        expect(terminal.getCurrent().page).toEqual({ totalFiles: files.length, nextCursor: null });
+        expect(terminal.getCurrent().comparison?.inventory.files.map(file => file.path)).toEqual(files.map(file => file.path));
+        await act(async () => terminal.getCurrent().loadMore());
+        expect(captures()).toHaveLength(3);
+        await terminal.unmount();
     });
     it.each(['unavailable', 'incomplete', 'complete'] as const)('shows an empty %s capture without claiming unavailable evidence has no changes', async state => {
         const prior = await mount({ kind: 'session' }, false);
