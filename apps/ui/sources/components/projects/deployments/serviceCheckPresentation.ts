@@ -66,7 +66,23 @@ const NO_CHECKS: Checks = Object.freeze([]);
  */
 export function readServiceCheckFacts(
   state: ConfiguredHealthResultsState,
+  latest?: Pick<Checks[number], 'checkId' | 'result'> | null,
 ): ServiceCheckFacts {
+  if (latest) {
+    const checks = state.kind === 'available' ? state.checks : NO_CHECKS;
+    const retained = checks.find((check) => check.checkId === latest.checkId);
+    if (!retained) {
+      state = { kind: 'available', checks: [...checks, latest] };
+    } else if (retained.result.observedAt < latest.result.observedAt) {
+      const current = {
+        ...retained,
+        result: latest.result,
+        recentResults: [...(retained.recentResults ?? [retained.result]), latest.result],
+        ...(latest.result.status !== retained.result.status ? { failingSince: null, failureStreak: undefined } : {}),
+      };
+      state = { kind: 'available', checks: checks.map((check) => check === retained ? current : check) };
+    }
+  }
   if (state.kind === 'loading')
     return { status: 'loading', uptimePercent: null, checks: NO_CHECKS };
   if (state.kind === 'neverObserved' || state.kind === 'notLoaded')

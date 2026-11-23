@@ -5,6 +5,7 @@ import { definePlugin, HEALTH_CHECK_KINDS_V1, HealthCheckTcpConfigV1ProtocolSche
 import { PluginWebhookHeartbeatManageInputV1ProtocolSchema, PluginWebhookHeartbeatManageResultV1ProtocolSchema } from '@happier-dev/plugin-sdk';
 import { httpRequestActions } from './httpRequest.js';
 import { systemdRuntime } from './systemd.js';
+import { savedBuiltinHealthCheckActionId } from './actionIds.js';
 import { healthCatalogActions } from './healthCatalog.js';
 import { retainedHealthActions } from './healthResults.js';
 import { monitorActions } from './monitorWebhooks.js';
@@ -111,7 +112,7 @@ export const plugin = definePlugin({
     }])), 'health-heartbeat': { title: 'Health heartbeat', verifier: { kind: 'capabilityUrl_v1', routing: 'accountEndpoint' },
         delivery: 'recordReceiptOnly' } },
     healthCheckKinds: Object.fromEntries([...HEALTH_CHECK_KINDS_V1.map(id => [id, { ...healthKinds[id],
-        action: `health/${id}` } satisfies Omit<HealthCheckKindContributionV1, 'id'>]), ...monitorKinds.map(kind => [kind, {
+        action: savedBuiltinHealthCheckActionId(id) } satisfies Omit<HealthCheckKindContributionV1, 'id'>]), ...monitorKinds.map(kind => [kind, {
         title: monitorDefinitions[kind].title, configSchema: monitorDefinitions[kind].configSchema.jsonSchema,
         action: `health/${kind}` } satisfies Omit<HealthCheckKindContributionV1, 'id'>])]),
     events: { ...machineOutcomeEvents, ...Object.fromEntries(monitorKinds.map(kind => [monitorDefinitions[kind].observedEventId, { declaration: {

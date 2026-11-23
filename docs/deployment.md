@@ -530,6 +530,11 @@ uses the Automation id, trigger id, trigger revision and source selector, so an
 edited check cannot inherit an earlier configuration's result. No new probe,
 schedule or health evaluator runs for this view.
 
+Check now invokes the saved kind's public Action on its configured observer.
+Built-in checks resolve that Action from their declaration. The open Check
+detail shows the returned observation until the observer supplies a newer
+one. The observer's checkpoint owns retained history and uptime.
+
 ## Home target admission (0.3 development)
 
 Deployment Actions normalize the selected local profile to its admitted portable

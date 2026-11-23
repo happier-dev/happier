@@ -330,7 +330,7 @@ it('keeps saved Check settings readable with the observing Machine offline and l
   }
 });
 
-it('sends one saved probe to the ready observer even when its displayed presence is offline', async () => {
+it('settles one exact saved HTTP Action and displays the newer result from its ready observer', async () => {
   const { row, scope, observer, checkId } = await restoreSavedHttpCheck();
   const parsed = ingestPluginManifestV2(healthPlugin.manifest);
   if (!parsed.ok) throw new Error('Expected the bundled Machine Services declaration');
@@ -352,7 +352,12 @@ it('sends one saved probe to the ready observer even when its displayed presence
     })),
   }));
   const requests = vi.fn();
-  const result = { status: 'up', observedAt: NOW, evidence: { v: 1, items: [] } } as const;
+  const result = HealthCheckResultV1Schema.parse({ status: 'down', observedAt: NOW, latencyMs: 11,
+    cause: { kind: 'http', vantage: 'sameMachine', observerMachineId: observer.id, expectStatus: 503, httpStatus: 200 },
+    evidence: { v: 1, items: [{ source: { kind: 'alert', label: 'HTTP' }, author: { kind: 'process' }, text: 'HTTP 200' }] } });
+  const previous = HealthCheckResultV1Schema.parse({ ...result, observedAt: NOW - 60_000 });
+  const savedRow: ManagedConfiguredCheckRow = { ...row,
+    lastResults: { kind: 'available', checks: [{ checkId, result: previous }] } };
   const kit = await createPluginTestkit({ manifest: healthPlugin.manifest, module: healthPlugin, services: {
     healthChecks: {
       listKinds: async () => catalog,
@@ -373,7 +378,7 @@ it('sends one saved probe to the ready observer even when its displayed presence
       if (!action) throw new Error('Unexpected Machine Services Action');
       return { supported: true, result: { ok: true, result: await kit.invokeAction(action.id, normalizeStrictJsonValue(invocation.input)) } };
     });
-  const screen = await renderScreen(<ServiceCheckDetail row={row} nowMs={NOW} renderHeader={actions => actions} />);
+  const screen = await renderScreen(<ServiceCheckDetail row={savedRow} nowMs={NOW} renderHeader={actions => actions} />);
   try {
     await vi.waitFor(() => expect(screen.findByTestId('services.check.checkNow')).not.toBeNull());
     expect(screen.findByTestId('services.check.offline')).not.toBeNull();
@@ -383,6 +388,8 @@ it('sends one saved probe to the ready observer even when its displayed presence
         kind: 'machineService', machineId: observer.id, serviceId: 'systemd:qa-health',
       }), [checkId]);
       expect(screen.findByTestId('services.check.checkNow.pending')).toBeNull();
+      expect(screen.findByTestId('services.check.checkNow.failed')).toBeNull();
+      expect([transport.mock.calls.length, Boolean(screen.findByTestId(`services.check.result.${NOW}`))]).toEqual([1, true]);
     });
   } finally {
     await screen.unmount();

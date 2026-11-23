@@ -7,6 +7,7 @@ import { requireAccountStorage } from '@happier-dev/plugin-sdk/storage';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
     type PluginCheckpointedEventSourceAdapterV1 } from '@happier-dev/plugin-sdk/background-services';
 
+import { savedBuiltinHealthCheckActionId } from './actionIds.js';
 import { HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT, MACHINE_SERVICES_PLUGIN_ID } from './healthSetup.js';
 import { HEALTH_RESULT_CHECKPOINT_PREFIX, healthResultProjectionSchema, healthResultProjectionIdentity, retainHealthResult } from './healthResultProjection.js';
 import { fitHealthResultCheckpoint } from './healthResultCheckpoint.js';
@@ -323,7 +324,7 @@ export async function runHealthCheckObserver(context: BackgroundServiceContext):
         context.services.events.host, context.services.events.plugin) });
 }
 
-export const savedHealthActions = Object.fromEntries(HEALTH_CHECK_KINDS_V1.map(kind => [`health/${kind}`, {
+export const savedHealthActions = Object.fromEntries(HEALTH_CHECK_KINDS_V1.map(kind => [savedBuiltinHealthCheckActionId(kind), {
     title: `Check saved ${kind === 'http' ? 'HTTP' : kind === 'dns' ? 'DNS' : kind === 'tcp' ? 'TCP' : kind}`,
     scopes: ['machine', 'global'] as const, surfaces: ['ui', 'cli', 'agent', 'mcp', 'plugin'] as const,
     dangerLevel: 'safe' as const, readOnly: true, execution: { target: 'daemon' as const },

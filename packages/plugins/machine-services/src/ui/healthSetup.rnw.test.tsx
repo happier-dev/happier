@@ -363,10 +363,6 @@ it('checks a saved Domain through its declared finite Action and preserves its r
   const { page } = await mount({ initialInput: { v: 1, subject: environment, checks: [check] } }, {
     executeAction: async ({ action, input }) => {
       calls.push({ action, input });
-      if (typeof action === 'object' && action.localId === 'health/kinds') return [{
-        pluginId: MACHINE_SERVICES_PLUGIN_ID, id: 'http', title: 'HTTP', action: 'health/http',
-        configSchema: { type: 'object', additionalProperties: false, properties: {} },
-      }];
       if (refuse) throw new Error('observer unavailable');
       return { status: 'up', observedAt: 1000, evidence: { v: 1, items: [{
         source: { kind: 'alert', label: 'Domain check' }, author: { kind: 'process' }, text: 'HTTP status 200',
@@ -375,8 +371,7 @@ it('checks a saved Domain through its declared finite Action and preserves its r
   });
   expect(calls).toEqual([]);
   await act(async () => { await page.press(await page.getByRole('button', { name: 'Check now' })); });
-  expect(calls).toEqual([expect.objectContaining({ action: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'health/kinds' } }),
-    expect.objectContaining({ action: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'health/http' },
+  expect(calls).toEqual([expect.objectContaining({ action: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'health/http' },
       input: expect.objectContaining({ checkId: 'public-http', sourceInstanceId: expect.stringMatching(/^health:/) }),
     })]);
   await expect(page.getByText('Up')).resolves.toBeDefined();

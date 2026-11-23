@@ -183,7 +183,7 @@ export function ServiceCheckDetail(
   const { row } = props;
   const { theme } = useUnistyles();
   const router = useRouter();
-  const facts = readServiceCheckFacts(row.lastResults);
+  const retained = readServiceCheckFacts(row.lastResults);
   const nowMs = props.nowMs ?? Date.now();
   const pluginTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
   const { seed, unavailable: seedUnavailable, retry: retrySeed } = useCheckSeed(row);
@@ -194,15 +194,13 @@ export function ServiceCheckDetail(
     // Saved failure and recovery Events can carry native check settings. The status Event owns their editor.
     return { ...seed, eventRef: HEALTH_CHECK_EVENT_REFS_V1.status };
   }, [seed]);
-  const shown =
-    facts.checks.find(
-      (check) =>
-        serviceCheckStatusTone(check.result.status) !== null,
-    ) ??
-    facts.checks[0] ??
-    null;
-  const settings = readServiceCheckSettings(seed, shown?.checkId ?? null);
+  const retainedCheckId = (retained.checks.find(
+    (check) => serviceCheckStatusTone(check.result.status) !== null,
+  ) ?? retained.checks[0])?.checkId ?? null;
+  const settings = React.useMemo(() => readServiceCheckSettings(seed, retainedCheckId), [seed, retainedCheckId]);
   const checkNow = useCheckNow(settings?.run ?? null, settings?.observerMachineId ?? null, row.scope);
+  const facts = checkNow.latest ? readServiceCheckFacts(row.lastResults, checkNow.latest) : retained;
+  const shown = facts.checks.find((check) => check.checkId === (retainedCheckId ?? checkNow.latest?.checkId)) ?? null;
   const serverIdForSubject = row.scope.serverId;
   const investigateSubject = React.useMemo(
     () => serviceCheckInvestigationSubject(seed, shown?.checkId ?? null, serverIdForSubject),
@@ -212,9 +210,9 @@ export function ServiceCheckDetail(
   // The retained health source owns this Check's identity; a saved Check with no result yet reads it from its saved
   // source, so its Automations are there before the first result.
   const automationSubject = React.useMemo(
-    () => shown ? configuredHealthCheckAutomationSubject(row.lastResults, shown.checkId, serverId)
-      : serviceCheckSavedAutomationSubject(seed, null, serverId),
-    [row.lastResults, shown, serverId, seed],
+    () => (shown ? configuredHealthCheckAutomationSubject(row.lastResults, shown.checkId, serverId) : null)
+      ?? serviceCheckSavedAutomationSubject(seed, shown?.checkId ?? null, serverId),
+    [row.lastResults, shown?.checkId, serverId, seed],
   );
   const observer = useServerScopedMachineLabel(
     serverId,
@@ -713,12 +711,25 @@ function keyFlowRuleText(config: NonNullable<ServiceCheckSettings['keyFlow']>): 
 
 /** Check now runs the saved kind's public Action through the ordinary front door (policy, approval, Machine). */
 type CheckNowState = Readonly<{ kind: 'idle' | 'running' }> | Readonly<{ kind: 'failed'; error: unknown }>;
-type CheckNowControl = Readonly<{ state: CheckNowState; run: () => void; cancel: () => void }>;
+type CheckNowResult = Awaited<ReturnType<typeof checkNowConfiguredHealthCheck>>;
+type CheckNowControl = Readonly<{
+  state: CheckNowState;
+  latest: Readonly<{ checkId: string; result: CheckNowResult }> | null;
+  run: () => void;
+  cancel: () => void;
+}>;
 
 /** One Check now per page: the button (header or body) and what it says while it waits share this state. */
 function useCheckNow(run: ServiceCheckSettings['run'] | null, observerMachineId: string | null,
   scope: ManagedConfiguredCheckRow['scope']): CheckNowControl {
   const [state, setState] = React.useState<CheckNowState>({ kind: 'idle' });
+  const [settled, setSettled] = React.useState<Readonly<{
+    run: ServiceCheckSettings['run'];
+    scope: ManagedConfiguredCheckRow['scope'];
+    result: CheckNowResult;
+  }> | null>(null);
+  const latest = run && settled?.run === run && areServerAccountScopesEqual(settled.scope, scope)
+    ? { checkId: run.check.checkId, result: settled.result } : null;
   const controller = React.useRef<AbortController | null>(null);
   React.useEffect(() => () => controller.current?.abort(), []);
   const start = React.useCallback(async () => {
@@ -728,7 +739,7 @@ function useCheckNow(run: ServiceCheckSettings['run'] | null, observerMachineId:
     controller.current = current;
     setState({ kind: 'running' });
     try {
-      await checkNowConfiguredHealthCheck({
+      const result = await checkNowConfiguredHealthCheck({
         subject: run.subject,
         check: run.check,
         observerMachineId,
@@ -736,17 +747,20 @@ function useCheckNow(run: ServiceCheckSettings['run'] | null, observerMachineId:
         serverId: scope.serverId,
         expectedAccountId: scope.accountId,
       });
-      if (!current.signal.aborted) setState({ kind: 'idle' });
+      if (!current.signal.aborted) {
+        setSettled({ run, scope, result });
+        setState({ kind: 'idle' });
+      }
     } catch (error) {
       if (!current.signal.aborted) setState({ kind: 'failed', error });
     }
-  }, [run, observerMachineId, scope.accountId, scope.serverId]);
+  }, [run, observerMachineId, scope]);
   // The person can stop waiting: the Action's own signal is aborted; a result its Machine still sends arrives as usual.
   const cancel = React.useCallback(() => {
     controller.current?.abort();
     setState({ kind: 'idle' });
   }, []);
-  return React.useMemo(() => ({ state, run: () => void start(), cancel }), [cancel, start, state]);
+  return { state, latest, run: () => void start(), cancel };
 }
 
 function CheckNowButton(props: Readonly<{ checkNow: CheckNowControl }>) {
