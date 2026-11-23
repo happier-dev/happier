@@ -331,8 +331,9 @@ export const LOCAL_SERVICES_RUNTIME_ACTION_SPEC_FAMILY = Object.freeze({
     'localServices.actions.copyUrl': { daemonIngressSurfaces: ['cli'] },
     'localServices.actions.stopManaged': { requesterCredentials: 'none' },
     'localServices.actions.restartManaged': { daemonIngressSurfaces: ['cli', 'ui'] },
-    // The SOURCE admits, reviews and confirms the person's Move; the UI forwards its carried review.
-    'projects.service.relocate': { daemonIngressSurfaces: ['ui'] },
+    // The SOURCE admits, reviews and confirms the person's Move; the UI forwards its carried
+    // review and the person's CLI enters the same SOURCE ingress.
+    'projects.service.relocate': { daemonIngressSurfaces: ['cli', 'ui'] },
   },
   confirmationFacts: {
     'localServices.publicPreview.revoke': { irreversible: true },

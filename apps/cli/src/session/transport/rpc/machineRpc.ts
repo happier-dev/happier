@@ -37,6 +37,7 @@ import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { readDeploymentReferenceServiceListEnvironmentIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { readProjectServiceMoveReviewedStopInput } from '@/daemon/local/services/actions/projectServiceMoveChildren';
 import {
   createExternalActionAuthorizedRequestHeaders,
   resolveExternalActionRequesterServerRequestHeaders,
@@ -573,7 +574,10 @@ export async function callExactMachineRpc(params: Readonly<{
         if (moveAuthorization.binding.actionId === 'projects.service.relocate') {
           const child = ActionIdSchema.safeParse(params.externalAction.effectActionId);
           const wrapper = TargetedActionRpcRequestV1Schema.safeParse(params.request);
-          const normalized = child.success ? getActionSpec(child.data).inputSchema.safeParse(wrapper.success ? wrapper.data.input : params.request) : null;
+          // Execution stamps Stop's derived confirmation nonce after review; the receiver
+          // compares the reviewed operand through the same projection.
+          const normalized = child.success ? getActionSpec(child.data).inputSchema.safeParse(
+            readProjectServiceMoveReviewedStopInput(wrapper.success ? wrapper.data.input : params.request)) : null;
           if (!child.success || !normalized?.success || !readHostReviewedChildOperationV1(params.externalAction.context,
             child.data, projectNativeJsonValueForTransport(normalized.data))) throw new MachineRpcTargetNotCurrentError(machineId, 'child_not_derived');
         }

@@ -1,4 +1,4 @@
-import { projectActionFailureCauseV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, type ActionExecuteResult, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { LocalServiceManagedServiceActionTargetV1Schema, type LocalServiceActionTargetV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import type { WorkspaceSyncPrepareBetweenRequestV1, WorkspaceSyncPrepareBetweenResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
@@ -29,7 +29,7 @@ export interface ProjectServiceRelocationPorts {
     status: 'resolved'; workspace: WorkspaceRefV1;
   }>>;
   saveDesiredPlacement(input: ProjectServiceRelocateInputV1['desiredPlacement'], signal?: AbortSignal): Promise<ProjectServicePlacementMutationResultV1>;
-  stopService(target: ManagedTarget, signal?: AbortSignal): Promise<ManagedServiceProcessStopResult>;
+  stopService(target: ManagedTarget, signal?: AbortSignal): Promise<ManagedServiceProcessStopResult | ActionExecuteFailure>;
   reviewDestinationSetup(input: ProjectServiceRelocateInputV1, destination: WorkspaceRefV1, signal?: AbortSignal): Promise<Refusal | Readonly<{ status: 'admitted' }>>;
   /** Must be production handoffPrepareBetween: it routes to the real Sync controller. */
   handoffPrepareBetween(request: WorkspaceSyncPrepareBetweenRequestV1, signal?: AbortSignal): Promise<WorkspaceSyncPrepareBetweenResultV1>;
@@ -132,12 +132,13 @@ export function createProjectServiceRelocation(ports: ProjectServiceRelocationPo
           workspaceId: beforeStop.workspace.id, rootPath: beforeStop.workspace.rootPath },
         declaration: beforeStop.currentTarget.declaration, currentTarget: beforeStop.currentTarget } });
       progress('stopping', 'Stopping service');
-      let stopped: ManagedServiceProcessStopResult;
+      let stopped: ManagedServiceProcessStopResult | ActionExecuteFailure;
       try {
         stopped = await ports.stopService(input.currentTarget, signal);
-      } catch {
-        return failure('stop_unconfirmed');
+      } catch (error) {
+        return projectActionOperationFailure(error, 'stop_unconfirmed', 'local_service.move.stop');
       }
+      if ('ok' in stopped) return stopped;
       if (stopped.status !== 'stopped') {
         return failure(stopped.status === 'unsupported' ? 'service_control_unsupported' : 'stop_unconfirmed');
       }

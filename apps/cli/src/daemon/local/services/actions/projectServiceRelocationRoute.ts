@@ -185,16 +185,19 @@ export function createProjectServiceRelocationRoute(input: Readonly<{
             stopService: async (target, signal) => {
                 const resolved = input.projectManagedServices.resolveProjectService(target);
                 if (resolved.status === 'found') return await resolved.handle.stop(signal ? { signal } : undefined);
-                if (resolved.status === 'mismatch' || !execute) return { status: 'termination_incomplete' as const };
+                if (resolved.status === 'mismatch' || !execute) return { ok: false as const,
+                    errorCode: resolved.status === 'mismatch' ? 'service_inputs_changed' : 'unknown_managed_service',
+                    error: resolved.status === 'mismatch' ? 'service_inputs_changed' : 'unknown_managed_service' };
                 const stopInput = projectServiceMoveStopInput(request);
                 const result = await execute('localServices.actions.stopManaged', stopInput);
-                if (!result.ok) return { status: 'termination_incomplete' as const };
+                if (!result.ok) return result;
                 const stopped = LocalServiceActionResultV1Schema.parse(result.result);
                 if (stopped.requestId !== stopInput.requestId || stopped.action !== 'stop_managed') {
-                    return { status: 'termination_incomplete' as const };
+                    return { ok: false as const, errorCode: 'service_inputs_changed', error: 'service_inputs_changed' };
                 }
-                return { status: stopped.status === 'succeeded' ? 'stopped' as const
-                    : stopped.reasonCode === 'service_control_unsupported' ? 'unsupported' as const : 'termination_incomplete' as const };
+                if (stopped.status === 'succeeded') return { status: 'stopped' as const };
+                const errorCode = stopped.reasonCode ?? 'stop_unconfirmed';
+                return { ok: false as const, errorCode, error: errorCode };
             },
             reviewDestinationSetup: async (_request, _destination, signal) => {
                 if (!execute || !request.setupReview) return refusal('project_setup_review_unavailable');

@@ -100,7 +100,11 @@ function isUnconfirmedNativeOutcome(actionId: string, result: ActionExecuteResul
     || actionId === 'machines.agentIsolation.set' && result.errorCode === 'outcome_unknown');
 }
 
-function isUnconfirmedOwnedOutcome(actionId: string, result: ActionExecuteResult): boolean {
+function isUnconfirmedOwnedOutcome(actionId: string, result: ActionExecuteResult,
+  progress?: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1['progress']): boolean {
+  // Stop/copy failures finish this coordinator without starting a replacement.
+  // Only a dispatched destination Start can leave establishment uncertain.
+  if (actionId === 'projects.service.relocate' && (progress?.kind !== 'phase' || progress.phase !== 'starting')) return false;
   // These native owners explicitly could not verify physical process exit.
   if (!result.ok && (result.errorCode === 'plugin_exec_termination_incomplete'
     || result.errorCode === 'native_toolchain_termination_incomplete')) return true;
@@ -290,6 +294,10 @@ export function createActionOperationRunner(deps: Readonly<{
       };
       const cancellationListeners = new Set<Parameters<ActionOperationCancellation['onRequest']>[0]>();
       const ownerEvidence: { outcome?: ActionExecuteResult } = {};
+      const isUnconfirmedMoveStop = () => {
+        const progress = deps.store.get(request.scope, operationId)?.progress;
+        return action.actionId === 'projects.service.relocate' && progress?.kind === 'phase' && progress.phase === 'stopping';
+      };
       let restartUserServices: Parameters<RegisterSetupUserServiceRestart>[0] | undefined;
       const restartObserver = action.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1 && request.response === 'admission'
         && deps.store.canRetainSetupRestart ? Promise.withResolvers<void>() : undefined;
@@ -531,7 +539,7 @@ export function createActionOperationRunner(deps: Readonly<{
             deps.store.fail(operationId, failure, projectOpen.data);
             return executionResult;
           }
-          if (isUnconfirmedOwnedOutcome(action.actionId, executionResult) && !executionResult.ok) {
+          if (isUnconfirmedOwnedOutcome(action.actionId, executionResult, deps.store.get(request.scope, operationId)?.progress) && !executionResult.ok) {
             deps.store.updateObservation(operationId, { kind: executionResult.errorCode === 'stop_unconfirmed' ? 'stop_unconfirmed' : 'outcome_uncertain',
               code: executionResult.errorCode }, undefined, {
               errorCode: executionResult.errorCode, error: executionResult.error,
@@ -564,7 +572,7 @@ export function createActionOperationRunner(deps: Readonly<{
             ? (executionResult.errorCode === 'cancelled' ? undefined : request.failureResult?.project(executionResult))
               ?? projectDeploymentTargetLinkFailureV1(action.actionId, executionResult.details)?.details
               ?? projectDeploymentBackupFailureResultV1(action.actionId, executionResult.errorCode, executionResult.details) : undefined;
-          if (!executionResult.ok && executionResult.errorCode === 'cancelled') {
+          if (!executionResult.ok && executionResult.errorCode === 'cancelled' && !isUnconfirmedMoveStop()) {
             deps.store.cancel(operationId, failureResult);
           } else if (executionResult.ok) {
             deps.store.succeed(operationId, executionResult.result);
@@ -630,13 +638,13 @@ export function createActionOperationRunner(deps: Readonly<{
               code: projected.errorCode });
             throw error;
           }
-          if (isUnconfirmedOwnedOutcome(action.actionId, { ok: false, ...projected })) {
+          if (isUnconfirmedOwnedOutcome(action.actionId, { ok: false, ...projected }, deps.store.get(request.scope, operationId)?.progress)) {
             deps.store.updateObservation(operationId, { kind: projected.errorCode === 'stop_unconfirmed' ? 'stop_unconfirmed' : 'outcome_uncertain',
               code: projected.errorCode }, undefined, projected);
           }
-          if (!isUnconfirmedOwnedOutcome(action.actionId, { ok: false, ...projected })
+          if (!isUnconfirmedOwnedOutcome(action.actionId, { ok: false, ...projected }, deps.store.get(request.scope, operationId)?.progress)
             && (action.actionId !== 'session.handoff' || projected.errorCode !== 'indeterminate')) {
-            if (projected.errorCode === 'cancelled') deps.store.cancel(operationId);
+            if (projected.errorCode === 'cancelled' && !isUnconfirmedMoveStop()) deps.store.cancel(operationId);
             else deps.store.fail(operationId, projected);
           }
           throw error;

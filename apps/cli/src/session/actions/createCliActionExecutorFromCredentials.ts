@@ -2153,7 +2153,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       // A semantic Machine selector needs the same admitted delivery as an
       // outer CLI selector, even for Machine-placed friendly commands.
       const needsDaemonIngress = managedMachineDaemonIngress || Boolean(boundWorkflowStart) || requiresSessionDaemonAdmission
-        || selectedOriginalMachine?.kind === 'ready' || workspaceMachineId !== undefined || liveResultCustody || requireDaemonIngress || declaredDaemonIngress;
+        || selectedOriginalMachine?.kind === 'ready' || workspaceMachineId !== undefined && allowsDaemonIngress || liveResultCustody || requireDaemonIngress || declaredDaemonIngress;
       const usesDaemonIngress = needsDaemonIngress || params.externalActionClient && allowsDaemonIngress;
       const originalDaemonTarget = usesDaemonIngress && originalCliCaller
         ? await (await import('@/daemon/multiDaemon')).resolveLiveDaemonControlTargetForServer(
@@ -2200,7 +2200,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       const originalFiniteProjectAction = Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId) && originalCliCaller;
       if (usesDaemonIngress && hasStoredSessionCredentialProvenance(credentials)
         && originalCliCaller && (!settingsAction || clientAction && (ownDaemon || originalMachineTarget))
-        && (ordinary || pairedSessionCreation?.success || (pairedTerminal && ownDaemon) || originalMachineTarget || actionId === 'projects.service.relocate')
+        && (ordinary || pairedSessionCreation?.success || (pairedTerminal && ownDaemon) || originalMachineTarget)
         && !mountedFilesystemCopy && !originalFiniteProjectAction) {
         const parsedActionId = SignedRootActionIdSchema.safeParse(actionId);
         if (!parsedActionId.success) return { context: originalContext,

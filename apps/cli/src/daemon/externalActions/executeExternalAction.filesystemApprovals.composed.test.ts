@@ -723,6 +723,51 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       await h.close();
     }
   });
+  it('settles original CLI Move with the remote Stop exact-target refusal', async () => {
+    const h = await createHarness('projects.service.relocate', 'allowed', false, 'srv_portableHome', undefined, true, false,
+      { authentication: 'terminal', requireMoveChild: true });
+    const service = await h.seedMoveService(null, 'web', 'stopped', true);
+    const refusal = new machineRpcTransport.MachineRpcTargetNotCurrentError(h.workerRef.machineId, 'child_not_derived');
+    // Captured dispatch refusal from cut-142ca29-1123; only the RPC boundary is replaced.
+    for (const method of ['callMachineRpc', 'callExactMachineRpc'] as const) {
+      const call = machineRpcTransport[method];
+      vi.spyOn(machineRpcTransport, method).mockImplementation(async request => {
+        if (request.method.endsWith('daemon.localServices.actions.stopManaged')) throw refusal;
+        return await call(request);
+      });
+    }
+    try {
+      expect(await h.ensureWorkerLink()).toMatchObject({ state: 'watching' });
+      service.finishStop();
+      const terminal = ActionOperationGetV1ResponseSchema.parse(await h.prepareSignedMove({ sourceCoordinator: true,
+        executeMove: service.request, originalCli: 'default', approveRequiredChild: true }));
+      expect(terminal).toMatchObject({ kind: 'found', operation: { state: 'failed',
+        error: { errorCode: 'machine_target_not_current', error: refusal.message },
+        domainRef: { currentTarget: service.request.currentTarget } } });
+      expect(service.snapshot().state).toBe('running');
+      expect(service.stopCalls()).toBe(0);
+      expect(h.copies()).toBe(0);
+      expect(h.serviceInstances().filter(instance => instance.workspace.rootPath === h.workerRef.rootPath
+        || instance.workspace.rootPath === h.ref.rootPath)).toHaveLength(1);
+    } finally { service.finishStop(); await h.close(); }
+  });
+  it('settles original CLI Move when native Stop cannot confirm exit', async () => {
+    const h = await createHarness('projects.service.relocate', 'allowed', false, 'srv_portableHome', undefined, true, false,
+      { authentication: 'terminal', requireMoveChild: true });
+    const service = await h.seedMoveService(null, 'web', 'accepted');
+    try {
+      expect(await h.ensureWorkerLink()).toMatchObject({ state: 'watching' });
+      service.finishStop();
+      const terminal = ActionOperationGetV1ResponseSchema.parse(await h.prepareSignedMove({ sourceCoordinator: true,
+        executeMove: service.request, originalCli: 'default', approveRequiredChild: true }));
+      expect(terminal).toMatchObject({ kind: 'found', operation: { state: 'failed',
+        error: { errorCode: 'plugin_managed_server_termination_incomplete' }, domainRef: { currentTarget: service.request.currentTarget } } });
+      expect(service.snapshot().state).not.toBe('stopped');
+      expect(service.stopCalls()).toBe(1);
+      expect(h.copies()).toBe(0);
+      expect(h.serviceInstances().filter(instance => instance.workspace.rootPath === h.workerRef.rootPath)).toHaveLength(0);
+    } finally { service.finishStop(); await h.close(); }
+  });
   it('refuses an Agent-asked Move at the ask with its typed reason and leaves the Service running', async () => {
     const h = await createHarness('projects.service.relocate', 'allowed', false, 'srv_portableHome', undefined, true, false,
       { authentication: 'terminal', requireMoveChild: true });
@@ -976,11 +1021,10 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       service.finishStop();
       const terminal = ActionOperationGetV1ResponseSchema.parse(await h.waitForTerminal(operation.operationId));
       if (outcome === 'cancelled') {
-        // Cancellation during an unacknowledged native Stop cannot certify it.
-        expect(terminal).toMatchObject({ kind: 'found', operation: { state: 'running', progress: { phase: 'stopping' },
-          observation: { kind: 'stop_unconfirmed' } } });
-        await expect.poll(() => h.readOperation(operation.operationId)).toMatchObject({ kind: 'found', operation: {
-          cancellation: 'unsupported', observation: { kind: 'stop_unconfirmed' } } });
+        // Cancellation during Stop fails the Move with the native cause; the
+        // Service owner independently observes whether the process stopped.
+        expect(terminal).toMatchObject({ kind: 'found', operation: { state: 'failed', progress: { phase: 'stopping' },
+          error: { errorCode: 'plugin_operation_aborted' }, domainRef: { currentTarget: service.request.currentTarget } } });
         expect(h.copies()).toBe(0);
         return;
       }

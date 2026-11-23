@@ -1377,30 +1377,32 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     deliverMachineRpc: (method: string, params: unknown) => rpcInstallation.run(installation, () => rpc.handleRequest({
       method: target.machineId + ':' + method, params, callerAuthority: 'present_user', machineAdmission: admission,
     })),
-    async seedMoveService(endpoint: string | null = null, serviceId = 'web') {
+    async seedMoveService(endpoint: string | null = null, serviceId = 'web', nativeStop: 'stopped' | 'accepted' = 'stopped', onWorker = false) {
       if (!pluginRuntime) throw new Error('Missing installed Service owner');
       let phase: 'running' | 'stopped' = 'running';
       let stopCalls = 0;
       let finishStop!: () => void;
       const stopped = new Promise<void>(resolve => { finishStop = resolve; });
       onTestFinished(() => finishStop());
+      const serviceWorkspace = onWorker ? workerRef : ref;
       // Native lifecycle IO only: hold the physical Stop acknowledgement until
       // the accepted approval has returned and its ingress custody is disposed.
-      const handle = await pluginRuntime.registry.projectManagedServices.superviseProject({ kind: 'workspace', workspace: ref,
-        declaration: { workspaceRefId: ref.id, selection: { kind: 'manifest', name: 'web' } },
-        cwd: ref.rootPath, serviceId, specIdentity: 'web', execution: 'portable', isCurrent: () => true,
-        requester: { serverId: homeId, accountId: 'account', machineId: ref.machineId, installationId: sourceInstallation.installationId },
+      const handle = await pluginRuntime.registry.projectManagedServices.superviseProject({ kind: 'workspace', workspace: serviceWorkspace,
+        declaration: { workspaceRefId: serviceWorkspace.id, selection: { kind: 'manifest', name: 'web' } },
+        cwd: serviceWorkspace.rootPath, serviceId, specIdentity: 'web', execution: 'portable', isCurrent: () => true,
+        requester: { serverId: homeId, accountId: 'account', machineId: serviceWorkspace.machineId, installationId: onWorker ? installation.installationId : sourceInstallation.installationId },
         processSpec: { mode: { kind: 'native', instance: { adapter: { pluginId: 'fixture.plugin', localId: 'web' }, nativeResourceId: 'web' },
           lifecycle: { inspect: async () => ({ phase, readiness: 'not_reported', endpoint }),
-            stop: async () => { stopCalls++; await stopped; phase = 'stopped'; return { status: 'stopped' }; } } } },
+            stop: async () => { stopCalls++; await stopped; if (nativeStop === 'stopped') phase = 'stopped'; return { status: nativeStop }; } } } },
         authorizeLaunch: async () => ({ command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'], env: {}, release: async () => {} }),
       });
       const workspace = { serverId: homeId, refId: ref.id };
-      const destination = { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: workerRef.machineId } };
+      const destination = onWorker ? { kind: 'primary' as const }
+        : { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: workerRef.machineId } };
       const request = ProjectServiceRelocateInputV1Schema.parse({ workspace, sourceMachineId: ref.machineId, serviceName: 'web', requestId: 'retained-move',
         currentTarget: LocalServiceManagedServiceActionTargetV1Schema.parse({ kind: 'managed_service', managedServiceId: handle.instanceId,
-          machineId: ref.machineId, workspaceId: ref.id, cwd: ref.rootPath, declaration: handle.declaration }),
-        destination, selectedTarget: { machineId: workerRef.machineId }, desiredPlacement: { workspace, serviceName: 'web',
+          machineId: serviceWorkspace.machineId, workspaceId: serviceWorkspace.id, cwd: serviceWorkspace.rootPath, declaration: handle.declaration }),
+        destination, selectedTarget: { machineId: onWorker ? ref.machineId : workerRef.machineId }, desiredPlacement: { workspace, serviceName: 'web',
           expectedRevision: 'absent', expected: { kind: 'absent' }, value: { runsOn: destination, unavailable: 'fail' } } });
       return { request, finishStop, snapshot: handle.snapshot, stopCalls: () => stopCalls };
     },
@@ -1651,8 +1653,13 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
           registerActionOperationRpcHandlers(sourceRpc, operations.handlers);
           const featureGate = createLocalServicesDaemonFeatureGate({ env: {}, resolveServerFeaturesSnapshot: () => features });
           await featureGate.refresh();
+          // A coordinator cannot resolve another Machine's native handle locally.
+          const sourceServices = input.currentTarget.machineId === ref.machineId ? pluginRuntime
+            : await createAdmittedPluginRuntimeFixture({ happyHomeDir: configuration.happyHomeDir,
+              runtimeOptions: { pluginIds: [], resolveCurrentMachineId: () => ref.machineId } });
+          if (sourceServices !== pluginRuntime) onTestFinished(() => sourceServices.dispose());
           const relocate = createProjectServiceRelocationRoute({ serverBaseUrl: params.serverHttpBaseUrl, credentials,
-            projectManagedServices: pluginRuntime.registry.projectManagedServices,
+            projectManagedServices: sourceServices.registry.projectManagedServices,
             resolveWorkspaceSyncHandoffAdapter: () => sourceWorkspaceSync?.handoffAdapter ?? null });
           const sourceWork = new AbortController();
           const prepareSourceRequesterAccountContext: NonNullable<Parameters<typeof executeExternalAction>[0]['prepareRequesterAccountContext']> =
@@ -1670,6 +1677,10 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
               invoke: (method, input, options) => sourceRpc.invokeLocal(method, input, options) },
             runActionOperation: operations.runActionOperation,
             projectDefinitionAction: sourceDefinitionAction,
+            projectWorkerAction: createProjectWorkerAction({ machineId: ref.machineId, serverId: 'srv_n2',
+              serverHttpBaseUrl: params.serverHttpBaseUrl, credentials, accountId: 'account',
+              admission: workerAdmission,
+              isFiniteExecutionLive: () => false, isServiceExecutionLive: () => true }),
             prepareApprovalExecutionAuthorization: createDaemonApprovalExecutionAuthorizationPreparer({
               machineId: moveTarget.machineId, serverId: 'srv_n2', serverBaseUrl: params.serverHttpBaseUrl,
               resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({
@@ -1812,7 +1823,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
                 }
                 expect(request).toMatchObject({ actionId: 'projects.service.relocate', status: 'open', preview: {
                   hostReviewedChildren: { children: expect.arrayContaining([expect.objectContaining({
-                    action: 'localServices.launcher.start', input: expect.objectContaining({ machineId: workerRef.machineId }),
+                    action: 'localServices.launcher.start', input: expect.objectContaining({ machineId: input.selectedTarget.machineId }),
                   })]) },
                 } });
                 const decided = await createCliActionExecutorFromCredentials({ credentials, serverId: 'srv_n2',

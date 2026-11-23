@@ -184,7 +184,7 @@ describe('confirmed service relocation', () => {
         version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'detail' },
       } }),
     });
-    ports.startService = async () => { effects.push('start'); return { status: 'denied', reasonCode: 'outcome_uncertain' }; };
+    ports.startService = async () => { effects.push('start'); return { status: 'failed', reasonCode: 'outcome_uncertain' }; };
     const invoke = { actionId: 'projects.service.relocate', requestId: request.requestId, input: request, scope,
       cancellation: 'supported' as const,
       execute: createProjectServiceRelocation(ports).bind(undefined, request),
@@ -226,14 +226,14 @@ describe('confirmed service relocation', () => {
     await runner.observe(invoke);
     await runner.waitForTerminal(scope, 'unknown-stop-operation');
     expect(store.get(scope, 'unknown-stop-operation')).toMatchObject({
-      state: 'running', scope: { machineId: 'source-coordinator' }, observation: { kind: 'stop_unconfirmed' },
+      state: 'failed', scope: { machineId: 'source-coordinator' }, error: { errorCode: 'stop_unconfirmed' },
       domainRef: { kind: 'projectService', purpose: 'relocation',
         workspace: { serverId: 'home', machineId: 'old', workspaceId: 'old-ref', rootPath: '/old' },
         declaration, currentTarget: oldTarget },
     });
-    expect(store.get(scope, 'unknown-stop-operation')).not.toHaveProperty('settledAt');
+    expect(store.get(scope, 'unknown-stop-operation')).toHaveProperty('settledAt');
     expect(handle.snapshot().state).not.toBe('stopped');
-    await expect(runner.observe(invoke)).resolves.toMatchObject({ ok: false, errorCode: 'action_operation_unavailable' });
+    await expect(runner.observe(invoke)).resolves.toMatchObject({ ok: false, errorCode: 'stop_unconfirmed' });
     expect(effects).toEqual(['stop']);
   });
   it('retains confirmed Stop when cancelled before copying', async () => {
@@ -375,7 +375,7 @@ describe('confirmed service relocation', () => {
     expect(handle.snapshot().state).toBe('stopped');
     expect(effects).toEqual(['stop', 'prepare']);
   });
-  it('keeps cancellation nonterminal without a replacement when native Stop observation becomes unconfirmed', async () => {
+  it('fails cancellation with the native cause without a replacement when Stop observation becomes unconfirmed', async () => {
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     const { effects, ports, handle, request } = await harness('stopped', gate);
@@ -392,8 +392,8 @@ describe('confirmed service relocation', () => {
         .resolves.toMatchObject({ ok: true, result: { status: 'accepted' } });
       expect(runner.cancel(scope, 'cancel-move')).toEqual({ kind: 'requested' });
       await runner.waitForTerminal(scope, 'cancel-move');
-      expect(store.get(scope, 'cancel-move')).toMatchObject({ state: 'running', observation: { kind: 'stop_unconfirmed' } });
-      expect(store.get(scope, 'cancel-move')).not.toHaveProperty('settledAt');
+      expect(store.get(scope, 'cancel-move')).toMatchObject({ state: 'failed', error: { errorCode: 'plugin_managed_server_aborted' } });
+      expect(store.get(scope, 'cancel-move')).toHaveProperty('settledAt');
       expect(handle.snapshot().state).not.toBe('stopped');
       expect(effects).toEqual(['stop']);
     } finally { release(); }

@@ -1171,7 +1171,6 @@ describe('action operation canonical execution observer', () => {
     expect(starts).toBe(1);
   });
   it.each([
-    ['projects.service.relocate', 'stop_unconfirmed'],
     ['projects.service.relocate', 'outcome_uncertain'],
     ['localServices.launcher.start', 'outcome_uncertain'],
   ])('keeps %s %s running without replay or false cancellation', async (actionId, errorCode) => {
@@ -1182,10 +1181,13 @@ describe('action operation canonical execution observer', () => {
       } }),
     });
     let effects = 0;
-    const request = { actionId, requestId: 'move-request',
+    const request: Parameters<typeof runner.observe>[0] = { actionId, requestId: 'move-request',
       input: { currentTarget: 'old-instance', destination: 'new-machine' }, scope,
       cancellation: 'supported' as const,
-      execute: async () => { effects += 1; return { ok: false as const, errorCode, error: errorCode }; },
+      execute: async (context) => {
+        if (actionId === 'projects.service.relocate') context.updateProgress({ phase: 'starting', label: 'Starting service' });
+        effects += 1; return { ok: false as const, errorCode, error: errorCode };
+      },
     };
     await expect(runner.observe(request)).resolves.toMatchObject({ ok: false, errorCode });
     expect(store.get(scope, 'service-move')).toMatchObject({ state: 'running' });
@@ -1194,6 +1196,20 @@ describe('action operation canonical execution observer', () => {
     await expect(runner.observe(request)).resolves.toMatchObject({ ok: false, errorCode: 'action_operation_unavailable' });
     expect(effects).toBe(1);
   });
+  it('fails a Move with the child cancellation cause when source Stop is unconfirmed', async () => {
+    const store = createActionOperationStore();
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'cancelled-child-stop',
+      resolveAction: actionId => ({ actionId, title: 'Move service', operation: {
+        version: 1, visibility: 'activity', progress: 'reported',
+      } }) });
+    await runner.observe({ actionId: 'projects.service.relocate', scope, input: {}, execute: async context => {
+      context.updateProgress({ phase: 'stopping', label: 'Stopping service' });
+      return { ok: false, errorCode: 'cancelled', error: 'cancelled', effectAttempted: false };
+    } });
+    expect(store.get(scope, 'cancelled-child-stop')).toMatchObject({ state: 'failed',
+      error: { errorCode: 'cancelled', effectAttempted: false } });
+  });
+
   it('returns admitted managed identity while keeping its native execution and replay in the same operation', async () => {
     const store = createActionOperationStore();
     const runner = createActionOperationRunner({
