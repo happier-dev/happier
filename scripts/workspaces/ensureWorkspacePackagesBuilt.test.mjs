@@ -209,7 +209,7 @@ test('source SDK publication can refuse busy package-dist admission without queu
   writeFileSync(launcher, `#!/bin/sh
 for arg do
   case "$arg" in
-    --no-wait) printf '%s\\n' 'heavyweight admission refused (HSTACK_MEMORY_BUSY)' >&2; exit 75 ;;
+    --no-wait) printf '%s\\n' '[preferred-execution] heavyweight admission refused (HSTACK_MEMORY_BUSY)' >&2; exit 75 ;;
     --) break ;;
   esac
 done
@@ -227,7 +227,7 @@ exit 75
     }),
   };
   await assert.rejects(syncSharedDepsForSourceDev({ ...options, waitForWorkspaceBuildAdmission: false }),
-    { code: 'EEXIT', exitCode: 75, message: /\bHSTACK_MEMORY_BUSY\b/ });
+    { code: 'HSTACK_MEMORY_BUSY', exitCode: 75, message: /\bHSTACK_MEMORY_BUSY\b/ });
   await assert.rejects(syncSharedDepsForSourceDev(options),
     { code: 'EEXIT', exitCode: 75, message: /would enter its admission queue/ });
   assert.equal(existsSync(join(packageDir, 'dist', 'index.js')), false);

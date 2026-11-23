@@ -10,6 +10,14 @@ function diagnosticTail(stderr: string, stdout: string): string {
   return trimBugReportTextToMaxBytes(redactBugReportSensitiveText(stderr.trim() || stdout.trim()), diagnosticTailBytes);
 }
 
+export type PluginAuthorAdmissionRefusalCode = `HSTACK_${string}`;
+
+export function readPluginAuthorAdmissionRefusalCode(error: unknown): PluginAuthorAdmissionRefusalCode | undefined {
+  if (!(error instanceof Error) || !('code' in error) || typeof error.code !== 'string') return undefined;
+  const isAdmissionCode = (code: string): code is PluginAuthorAdmissionRefusalCode => /^HSTACK_[A-Z0-9_]+$/u.test(code);
+  return isAdmissionCode(error.code) ? error.code : undefined;
+}
+
 export function createDiagnostic(
   code: PluginAuthorToolchainDiagnostic['code'],
   message: string,

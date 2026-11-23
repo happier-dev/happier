@@ -156,9 +156,15 @@ export async function runWorkspaceBuildAdmission({ command, args = [], locks = [
 /** The error for an admitted worker that ended without its result: its exit and its stderr tail. */
 export function incompleteWorkerError(message, terminal, env = process.env) {
   const exit = terminal.signal ? `signal ${terminal.signal}` : `exit ${terminal.status ?? 'unknown'}`;
-  const diagnostic = formatFailureDiagnostic({ err: terminal.stderrTail ?? '', truncated: terminal.stderrTailTruncated, env });
+  const stderr = terminal.stderrTail ?? '';
+  // Exit 75 also has untyped callers. Carry the broker's reason only when
+  // the native launcher emitted its refusal diagnostic.
+  const refusalCode = terminal.status === 75 && !terminal.signal
+    ? /^\[preferred-execution\] heavyweight admission refused \((HSTACK_[A-Z0-9_]+)(?=[:)])/mu.exec(stderr)?.[1]
+    : undefined;
+  const diagnostic = formatFailureDiagnostic({ err: stderr, truncated: terminal.stderrTailTruncated, env });
   return Object.assign(new Error(`${message} (${exit})${diagnostic}`),
-    { code: 'EEXIT', exitCode: terminal.status, signal: terminal.signal });
+    { code: refusalCode ?? 'EEXIT', exitCode: terminal.status, signal: terminal.signal });
 }
 
 function parseLocks(raw) {

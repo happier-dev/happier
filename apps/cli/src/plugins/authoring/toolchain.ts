@@ -39,7 +39,10 @@ import {
   resolveInstalledRuntimePackage,
 } from '@happier-dev/cli-common/workspaceRuntimeDependencies';
 import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
-import { createDiagnostic, childToolFailureMessage, processFailureDiagnostic } from './toolchainDiagnostics';
+import {
+  createDiagnostic, childToolFailureMessage, processFailureDiagnostic, readPluginAuthorAdmissionRefusalCode,
+  type PluginAuthorAdmissionRefusalCode,
+} from './toolchainDiagnostics';
 
 import { readPluginManifest } from '@/plugins/manifest/read';
 import type { ParsedPluginManifestV2 } from '@happier-dev/protocol';
@@ -81,7 +84,8 @@ export type PluginAuthorToolchainDiagnostic = Readonly<{
   code:
     | 'plugin_author_invalid_input'
     | 'plugin_author_managed_tool_unavailable'
-    | 'plugin_author_tool_failed';
+    | 'plugin_author_tool_failed'
+    | PluginAuthorAdmissionRefusalCode;
   message: string;
   /**
    * Where the author has to look, relative to their own project root. The
@@ -315,28 +319,18 @@ export async function materializePrepublicationAuthorWorkspacePackages(params: R
   }
 }
 
-async function materializeSourceCliBundledPrepublicationPackages(
+export async function materializeSourceCliBundledPrepublicationPackages(
   runtimeRoot: string,
   packageNames: readonly string[],
   projectRoot: string,
 ): Promise<PluginAuthorBundledPrepublicationMaterialization> {
   const repoRoot = findRepoRoot(runtimeRoot);
-  // Source execution does not prepare dist. The repository publisher owns
-  // compilation and its shared lock; author materialization must consume its
-  // current output rather than copying a previous SDK build into a new cache.
-  // This dynamically loaded repository build program is an untyped boundary.
+  // The repository publisher is loaded only by the source workspace host.
   const publisher: unknown = await import(pathToFileURL(join(runtimeRoot, 'scripts', 'buildSharedDeps.mjs')).href);
-  if (!isRecord(publisher) || typeof publisher.syncSharedDepsForSourceDev !== 'function') {
+  if (!isRecord(publisher) || typeof publisher.prepareSourceDevAuthorPackages !== 'function') {
     throw new Error('The source Happier CLI public author package publisher is unavailable');
   }
-  await publisher.syncSharedDepsForSourceDev({
-    repoRoot,
-    workspaceNames: packageNames.map((name) => name.slice('@happier-dev/'.length)),
-    publishBundledPluginArtifacts: false,
-    prepareBundledPluginCompilerInputs: false,
-    // An interactive registration can retry when the native broker has capacity.
-    waitForWorkspaceBuildAdmission: false,
-  });
+  await publisher.prepareSourceDevAuthorPackages({ repoRoot, packageNames });
   return await materializePrepublicationAuthorWorkspacePackages({
     projectRoot,
     bundles: resolveWorkspaceBundlesFromPackageJson({
@@ -805,7 +799,7 @@ export async function preparePluginAuthorDependencies(
       ok: false,
       projectRoot,
       diagnostic: createDiagnostic(
-        'plugin_author_tool_failed',
+        readPluginAuthorAdmissionRefusalCode(error) ?? 'plugin_author_tool_failed',
         childToolFailureMessage(error, 'Plugin author dependency preparation failed'),
       ),
     };
@@ -1286,7 +1280,7 @@ async function runPluginAuthorToolchainImplementation(
       diagnostic: createDiagnostic(
         error instanceof PluginAuthorBundlerUnavailableError
           ? 'plugin_author_managed_tool_unavailable'
-          : 'plugin_author_tool_failed',
+          : readPluginAuthorAdmissionRefusalCode(error) ?? 'plugin_author_tool_failed',
         error instanceof Error ? error.message : `Plugin author ${params.operation} failed`,
       ),
     });

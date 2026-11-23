@@ -1,6 +1,7 @@
 import { lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createDaemonPluginChangeService as createBaseDaemonPluginChangeService } from './changeService';
@@ -37,7 +38,10 @@ import { updateSelectedPluginOptionalAccess } from './optionalAccessSelections';
 import { preserveValidPluginOptionalSelections } from './updateReviewPolicy';
 import { bindProcessLogger, Logger } from '@/ui/logger';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
-import { runPluginUiArtifactBuild } from '@/plugins/authoring/toolchain';
+import { createSpawnHappyCliEnvScope, withTempHappyCliEntrypoint } from '@/testkit/process/spawnHappyCliHarness';
+import { materializeSourceCliBundledPrepublicationPackages, runManagedPluginPnpm, runPluginUiArtifactBuild } from '@/plugins/authoring/toolchain';
+import { syncSharedDepsForSourceDev } from '../../../scripts/buildSharedDeps.mjs';
+import { ensureWorkspacePackagesBuiltByName } from '../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 import { readInstalledPluginCatalog } from '@/plugins/projection/catalog/installed';
 import { loadInstalledPlugins, loadPluginsFromState } from '@/plugins/discovery/load/installed';
 import { projectPluginCatalogEntrySnapshot } from '@/plugins/projection/introspection/catalogSnapshot';
@@ -411,6 +415,151 @@ describe('createDaemonPathPluginChangePreparer', () => {
       expect(JSON.stringify(result)).not.toContain('private-settings-value');
       expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins).toEqual({});
     } finally { await service.shutdown(); }
+  });
+
+  it('registers a cold author from prepublished workspace outputs with zero CLI republishes', async () => {
+    const repoRoot = await mkdtemp(join(tmpdir(), 'happier-author-prepublished-'));
+    roots.push(repoRoot);
+    const cliDir = join(repoRoot, 'apps/cli');
+    const sdkDir = join(repoRoot, 'packages/plugin-sdk');
+    const installedSdk = join(cliDir, 'node_modules/@happier-dev/plugin-sdk');
+    const sdkName = '@happier-dev/plugin-sdk';
+    const sdkSource = 'export const fromPublishedSdk = true;\n';
+    await mkdir(join(cliDir, 'scripts'), { recursive: true });
+    await mkdir(join(sdkDir, 'src'), { recursive: true });
+    for (const app of ['ui', 'server']) {
+      await mkdir(join(repoRoot, 'apps', app), { recursive: true });
+      await writeFile(join(repoRoot, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
+    }
+    await writeFile(join(repoRoot, 'package.json'), '{"private":true}');
+    await writeFile(join(repoRoot, 'pnpm-workspace.yaml'), 'packages:\n  - apps/*\n  - packages/*\n');
+    await writeFile(join(repoRoot, 'pnpm-lock.yaml'), '# fixture\n');
+    await writeFile(join(cliDir, 'package.json'), JSON.stringify({
+      name: '@happier-dev/cli', dependencies: { [sdkName]: 'workspace:*' }, bundledDependencies: [sdkName],
+    }));
+    const publisher = pathToFileURL(resolve(import.meta.dirname, '../../../scripts/buildSharedDeps.mjs')).href;
+    const republishLog = join(repoRoot, 'cli-republish.log');
+    await writeFile(republishLog, '');
+    await writeFile(join(cliDir, 'scripts/buildSharedDeps.mjs'), `
+      import { appendFile } from 'node:fs/promises';
+      import { syncSharedDepsForSourceDev as publish } from ${JSON.stringify(publisher)};
+      export { prepareSourceDevAuthorPackages } from ${JSON.stringify(publisher)};
+      export async function syncSharedDepsForSourceDev(options) {
+        await appendFile(${JSON.stringify(republishLog)}, 'publish\\n');
+        return await publish(options);
+      }
+    `);
+    await writeFile(join(sdkDir, 'package.json'), JSON.stringify({
+      name: sdkName, version: '0.0.0', type: 'module', main: './dist/index.js', types: './dist/index.d.ts',
+      files: ['dist'], scripts: { build: 'fixture-compiler' },
+      happier: { publicSdkRelease: { posture: 'developer_preview' } },
+    }));
+    await writeFile(join(sdkDir, 'src/index.ts'), sdkSource);
+    await writeFile(join(sdkDir, 'tsconfig.json'), '{}');
+    let compiles = 0;
+    const publication = await syncSharedDepsForSourceDev({
+      repoRoot, workspaceNames: ['plugin-sdk'], includeRuntimeDependencies: false,
+      prepareBundledPluginCompilerInputs: false, publishBundledPluginArtifacts: false,
+      ensureWorkspacePackagesBuiltByNameImpl: (root: string, names: string[], options: object) =>
+        ensureWorkspacePackagesBuiltByName(root, names, {
+          ...options,
+          workspaceBuildBoundary: {
+            prepareEnv: async (_dir: string, env: NodeJS.ProcessEnv) => env,
+            async runPackageBuild(_dir: string, params: { env: NodeJS.ProcessEnv }) {
+              compiles += 1;
+              const output = params.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR;
+              if (!output) throw new Error('Workspace compiler capture is missing');
+              await mkdir(output, { recursive: true });
+              await writeFile(join(output, 'index.js'), sdkSource);
+              await writeFile(join(output, 'index.d.ts'), 'export declare const fromPublishedSdk: true;\n');
+            },
+          },
+        }),
+    });
+    expect(publication).toMatchObject({ synced: true, stamped: true });
+    expect(compiles).toBe(1);
+    expect(await readFile(join(installedSdk, 'dist/index.js'), 'utf8')).toBe(sdkSource);
+    // Author materialization consumes the canonical workspace package, even
+    // when a separate CLI host copy is missing.
+    await rm(installedSdk, { recursive: true });
+
+    const pluginRoot = await createDescriptorPlugin({ development: true });
+    await writeFile(join(pluginRoot, 'package.json'), JSON.stringify({
+      name: 'prepublished-author-fixture', type: 'module', dependencies: { [sdkName]: '0.0.0' },
+    }));
+    let installs = 0;
+    const prepare = createDaemonPathPluginChangePreparer({
+      happyHomeDir: join(repoRoot, 'daemon-home'),
+      runtimeLifecycle: { prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }) },
+      runManagedPluginPnpm: (input) => runManagedPluginPnpm(input, {
+        processEnv: {},
+        ensureManagedPnpmCommand: async () => '/managed/pnpm',
+        managedPnpmBinPath: () => '/managed/pnpm',
+        buildManagedPnpmEnvironment: () => ({}),
+        materializeBundledPrepublicationPackages: (names) =>
+          materializeSourceCliBundledPrepublicationPackages(cliDir, names, pluginRoot),
+        spawn: async () => {
+          installs += 1;
+          const config = await readFile(join(pluginRoot, 'pnpm-workspace.yaml'), 'utf8');
+          const prefix = `  "${sdkName}": `;
+          const line = config.split('\n').find((entry) => entry.startsWith(prefix));
+          if (!line) throw new Error('Managed install is missing the source SDK override');
+          const override: unknown = JSON.parse(line.slice(prefix.length));
+          if (typeof override !== 'string') throw new Error('Expected a file URL for the SDK override');
+          expect(await readFile(new URL('dist/index.js', `${override}/`), 'utf8')).toBe(sdkSource);
+          return { exitCode: 0, signal: null, stdout: '', stderr: '' };
+        },
+      }),
+    });
+    const worker = pathToFileURL(resolve(import.meta.dirname, '../authoring/materializationProcess.ts')).href;
+    const envScope = createSpawnHappyCliEnvScope();
+    try {
+      await withTempHappyCliEntrypoint(async (entrypoint) => {
+        await writeFile(entrypoint, `import { runPluginAuthorMaterializationChild } from ${JSON.stringify(worker)};
+await runPluginAuthorMaterializationChild();
+`);
+        envScope.patch({
+          HAPPIER_CLI_SUBPROCESS_RUNTIME: 'node',
+          HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: entrypoint,
+          HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: undefined,
+          HAPPIER_MANAGED_NODE_BIN: process.execPath,
+        });
+        const candidate = await prepare({ kind: 'development', sourceRootPath: pluginRoot });
+        await candidate.cleanup();
+        expect(candidate).toMatchObject({ kind: 'preparedDevelopmentCandidate', pluginId: 'acme.descriptor' });
+      });
+    } finally {
+      envScope.restore();
+    }
+    expect(installs).toBe(1);
+    expect((await readFile(republishLog, 'utf8')).split('\n').filter(Boolean)).toHaveLength(0);
+    expect(await readdir(join(cliDir, 'node_modules/@happier-dev'))).toEqual([]);
+  });
+
+  it('preserves the source SDK publisher refusal in the author registration result', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-development-busy-'));
+    const pluginRoot = await createDescriptorPlugin({ development: true });
+    roots.push(happyHomeDir);
+    await writeFile(join(pluginRoot, 'package.json'), '{"name":"busy-author-fixture","type":"module"}');
+    const service = createBaseDaemonPluginChangeService({
+      prepare: createDaemonPathPluginChangePreparer({
+        happyHomeDir,
+        runtimeLifecycle: { prepare: async () => { throw new Error('Refused registration must not activate'); } },
+        runManagedPluginPnpm: async () => {
+          throw Object.assign(new Error('Host admission refused the task'), { code: 'HSTACK_MEMORY_BUSY' });
+        },
+      }),
+    });
+    try {
+      const result = await service.requestPluginChange({ kind: 'development', sourceRootPath: pluginRoot });
+      expect(result).toMatchObject({ kind: 'failed', code: 'HSTACK_MEMORY_BUSY' });
+      if (result.kind !== 'failed') throw new Error('Expected a failed author registration');
+      expect(describeUserPluginChangeFailure(result)).toMatchObject({
+        code: 'HSTACK_MEMORY_BUSY', details: { causeCode: 'HSTACK_MEMORY_BUSY' },
+      });
+    } finally {
+      await service.shutdown();
+    }
   });
 
   it.each(['dependencies', 'ui', 'compile', 'admission', 'runtime', 'runtimeUnavailable'] as const)('logs the original local %s failure before publishing a redacted diagnostic', async (phase) => {

@@ -13677,10 +13677,14 @@ become author dependencies.
 
 Prepublication dependency preparation uses a content-addressed file override
 for the complete SDK package closure. When the CLI runs from the source
-workspace, preparation first asks the canonical source-development publisher to
-prepare the requested public packages and their dependencies; copying an older
-`dist` tree into a new author root does not establish source freshness.
-Packaged hosts and admitted source bundles use their supplied package closure. In 0.3 development, the synchronous closure
+workspace, the workspace package builder uses its existing build records to
+reuse current outputs for the requested public packages and their dependencies.
+Author preparation reads the workspace outputs directly. CLI host copies and
+their shared-deps stamp serve CLI launch and distribution. If a build is needed
+and the host refuses admission, development registration returns the broker's
+code, such as `HSTACK_MEMORY_BUSY`. The author can retry as capacity becomes available.
+Packaged hosts and admitted source bundles use their supplied package closure.
+In 0.3 development, the synchronous closure
 publisher runs in a finite binary-safe CLI child, so copying the SDK cannot block
 the daemon heartbeat and lose an activation acknowledgement. The parent awaits
 the existing publisher's result; native failure codes and messages cross this

@@ -34,6 +34,7 @@ import {
 import { join, relative } from 'node:path';
 import type { PluginStateRecord } from '@/plugins/store/state';
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
+import { readPluginAuthorAdmissionRefusalCode } from '@/plugins/authoring/toolchainDiagnostics';
 import { readPluginManifest, readAdmittedGenerationNpmPackageName } from '@/plugins/manifest/read';
 import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
@@ -249,7 +250,7 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
         ...(params.runManagedPluginPnpm ? { runManagedPluginPnpm: params.runManagedPluginPnpm } : {}),
       }).catch((error: unknown) => {
         throw new DaemonPluginChangePreparationError(
-          'plugin_dev_dependency_preparation_failed',
+          readPluginAuthorAdmissionRefusalCode(error) ?? 'plugin_dev_dependency_preparation_failed',
           projectPluginFailureText(error),
           { cause: error },
         );
