@@ -60,6 +60,9 @@ export function createNativeComposeGenerationProof(input: Readonly<{
             proveImage(reference: string, image: DeploymentImageV1): Promise<unknown>; signal?: AbortSignal;
             /** Losing-generation identity for witnessed retirement, never readiness. */
             purpose?: 'retire';
+            /** Restore preserves services the admitted native observation found stopped. */
+            stoppedServices?: readonly string[];
+            reboundVolume?: Readonly<{ physicalName: string; targetsByService: ReadonlyMap<string, readonly string[]> }>;
             snapshot?: Awaited<ReturnType<typeof read>> }>) {
             const retiring = current.purpose === 'retire';
             const { rows } = current.snapshot ?? await read(current.signal);
@@ -78,6 +81,7 @@ export function createNativeComposeGenerationProof(input: Readonly<{
             }
             const completed = nativeComposeCompletedServices(current.model);
             const participants = new Set(current.healthServices);
+            const stopped = new Set(current.stoppedServices);
             const serviceNativeIds = new Map<string, readonly string[]>();
             const serviceContainerImages = new Map<string, readonly Readonly<{ id: string; nativeImageId: string; imageConfigDigest: string;
                 configurationMatches: NativeComposeConfigurationMatcher }>[]>();
@@ -88,12 +92,21 @@ export function createNativeComposeGenerationProof(input: Readonly<{
                 const containerImages: { id: string; nativeImageId: string; imageConfigDigest: string;
                     configurationMatches: NativeComposeConfigurationMatcher }[] = [];
                 const init = completed.has(service);
+                const reboundVolume = current.reboundVolume;
+                const mountTargets = reboundVolume?.targetsByService.get(service);
                 for (const row of containers) {
                     if (!record(row.State) || typeof row.Image !== 'string' || !/^sha256:[a-f0-9]{64}$/u.test(row.Image)
                         || !retiring && row.RestartCount !== (baseline.get(row.Id) ?? 0)) return refuse('deployment_activation_failed');
                     const finished = init && row.State.Status === 'exited' && row.State.ExitCode === 0;
-                    if (!retiring && !finished && (init || row.State.Status !== 'running'
+                    if (!retiring && stopped.has(service) && row.State.Status !== 'created' && row.State.Status !== 'exited') return refuse('deployment_activation_failed');
+                    if (!retiring && !stopped.has(service) && !finished && (init || row.State.Status !== 'running'
                         || participants.has(service) && record(row.State.Health) && row.State.Health.Status !== 'healthy')) return refuse('deployment_activation_failed');
+                    if (reboundVolume && mountTargets) {
+                        const mounts = row.Mounts;
+                        if (!Array.isArray(mounts) || !mountTargets.every(target => mounts.some(mount =>
+                            record(mount) && mount.Type === 'volume' && mount.Name === reboundVolume.physicalName
+                            && mount.Destination === target))) return refuse('deployment_activation_failed');
+                    }
                     if (participants.has(service) && !finished && !record(row.State.Health)) health = 'unverified';
                     const image = input.pin(service);
                     await current.proveImage(row.Image, image);

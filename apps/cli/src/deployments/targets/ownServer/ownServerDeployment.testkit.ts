@@ -506,8 +506,12 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
     const project = args[args.indexOf('--project-name') + 1];
     ensureNetworks(model, project);
     const incarnation = state.recreateContainerIds ? '/up-' + (state.incarnation = (state.incarnation || 0) + 1) : '';
-    state.containers = [...state.containers.filter(row => row.Config.Labels['com.docker.compose.project'] !== project),
+    const retainedVolumeMounts = state.retainContainersForVolumeNameOnlyChanges === true;
+    const selected = retainedVolumeMounts && args.includes('--no-deps') ? args.slice(args.indexOf('--pull') + 2) : undefined;
+    state.containers = [...state.containers.filter(row => row.Config.Labels['com.docker.compose.project'] !== project
+        || selected && !selected.includes(row.Config.Labels['com.docker.compose.service'])),
         ...Object.entries(model.services).flatMap(([service, definition]) => {
+        if (selected && !selected.includes(service)) return [];
         const image = imageFor(definition.image);
         if (!image || definition.build !== undefined || definition.pull_policy !== 'never') throw new Error('fixture_unpinned_image');
         return Array.from({ length: definition.deploy?.replicas ?? 1 }, (_, replica) => {
@@ -515,7 +519,15 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
                 .map(mount => model.volumes[mount.source].name).join('/');
             const id = hash(project + '/' + service + '/' + definition.image + (replica ? '/'+replica : '') + volumeIdentity + incarnation);
             const previous = state.containers.find(row => row.Id === id);
-            return { Id: id, Name: '/' + project + '-' + service + '-' + (replica + 1), Image: image.nativeId,
+            // Compose v5.6 retains a container when only the top-level volume
+            // name changes, unless recreation is explicit.
+            const retained = retainedVolumeMounts && (!args.includes('--force-recreate') || state.retainStaleVolumeBinding === volumeIdentity)
+                ? state.containers.find(row =>
+                row.Config.Labels['com.docker.compose.project'] === project
+                && row.Config.Labels['com.docker.compose.service'] === service
+                && row.Config.Labels['com.docker.compose.container-number'] === String(replica + 1)
+                && row.Image === image.nativeId) : undefined;
+            return { Id: retained ? retained.Id : id, Name: '/' + project + '-' + service + '-' + (replica + 1), Image: image.nativeId,
             Config: { Labels: { 'com.docker.compose.project': project, 'com.docker.compose.service': service,
                 'com.docker.compose.project.working_dir': args[args.indexOf('--project-directory') + 1],
                 'com.docker.compose.project.config_files': files.map(file => file.path).join(','),
@@ -526,11 +538,12 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
                     : Number(String(definition.stop_grace_period).replace(/s$/, '')) },
             HostConfig: { RestartPolicy: { Name: definition.restart || 'no', MaximumRetryCount: 0 },
                 Memory: 0, CpuShares: 0 },
-            State: { Status: state.imageExit?.[image.image.configDigest] ? 'exited' : args.includes('--no-start') ? 'created' : 'running',
+            State: { Status: state.imageExit?.[image.image.configDigest] ? 'exited'
+                : args.includes('--no-start') ? retained?.State.Status ?? 'created' : 'running',
                 ExitCode: state.imageExit?.[image.image.configDigest] ?? 0,
                 Health: definition.healthcheck?.disable ? undefined
                     : { Status: state.imageHealth[image.image.configDigest] || state.health[service] || 'healthy' } },
-            Mounts: (definition.volumes || []).filter(mount => mount.type === 'volume').map(mount => ({
+            Mounts: retained ? retained.Mounts : (definition.volumes || []).filter(mount => mount.type === 'volume').map(mount => ({
                 Type: 'volume', Name: model.volumes[mount.source].name,
                 Source: '/var/lib/docker/volumes/' + model.volumes[mount.source].name + '/_data',
                 Destination: mount.target, RW: mount.read_only !== true })),

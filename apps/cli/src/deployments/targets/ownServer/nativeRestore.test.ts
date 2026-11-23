@@ -1,5 +1,5 @@
 import { describe, expect, it, onTestFailed } from 'vitest';
-import { readFile, writeFile, access } from 'node:fs/promises';
+import { readFile, writeFile, access, mkdir } from 'node:fs/promises';
 import { watch } from 'node:fs';
 import { join } from 'node:path';
 import nacl from 'tweetnacl';
@@ -45,7 +45,7 @@ describe('native restore adapter', () => {
             { signal: new AbortController().signal }, async () => { throw failure; })).rejects.toBe(failure);
     });
 
-    it.each(['success', 'amcheckMissing', 'failure', 'cancel', 'missingTool', 'healthFailure', 'cancelPublication', 'safety', 'copySafety', 'copySafetyFailure', 'receiptCapture', 'publicRestore', 'publicRestoreMissing', 'publicRestoreUnknown', 'publicRestoreFailure', 'dumpFailure', 'repositoryOnly', 'volumeBackup', 'volumeBackupFailure', 'volumeRestore', 'volumeRestoreStopped', 'volumeRestoreFailure', 'volumeUpload', 'volumeRender', 'sqlUploadUnsafe', 'sqlUploadBinary', 'sqlUploadCustom', 'sqlUploadCustomChunks', 'sqliteBackup'] as const)(
+    it.each(['success', 'amcheckMissing', 'failure', 'cancel', 'missingTool', 'healthFailure', 'cancelPublication', 'safety', 'copySafety', 'copySafetyFailure', 'receiptCapture', 'publicRestore', 'publicRestoreMissing', 'publicRestoreUnknown', 'publicRestoreFailure', 'dumpFailure', 'repositoryOnly', 'volumeBackup', 'volumeBackupFailure', 'volumeRestore', 'volumeRestoreStopped', 'volumeRestoreFailure', 'volumeUpload', 'volumeUploadStaleMount', 'volumeRender', 'sqlUploadUnsafe', 'sqlUploadBinary', 'sqlUploadCustom', 'sqlUploadCustomChunks', 'sqliteBackup'] as const)(
         'settles the real restore and releases its one backup preparation: %s', async mode => {
             await withFiniteComposeFixture(async ({ project, docker, source, root, exec, io }) => {
                 await docker.registerRecordedImage('restic', RESTIC_RUNTIME_V1.image, nativeRestic0191);
@@ -228,27 +228,37 @@ describe('native restore adapter', () => {
                             if (custom) expect(events.some(row => row.argv?.[0] === 'pg_restore' && row.argv.includes('--list'))).toBe(true);
                             return;
                         }
-                        if (mode === 'volumeRestore' || mode === 'volumeRestoreStopped' || mode === 'volumeRestoreFailure' || mode === 'volumeUpload') {
+                        if (mode === 'volumeRestore' || mode === 'volumeRestoreStopped' || mode === 'volumeRestoreFailure' || mode === 'volumeUpload' || mode === 'volumeUploadStaleMount') {
+                            const staleMount = mode === 'volumeUploadStaleMount';
+                            const uploadVolume = staleMount || mode === 'volumeUpload';
                             const volumeSnapshot = { ...sourceManifest, sourceId: 'data', kind: 'volume' as const, producerChecksumSha256: undefined,
                                 snapshot: { ...sourceManifest.snapshot, paths: ['/happier/source'],
                                     tags: ['happier', `env:${source.environmentId}`, 'kind:volume', 'src:data'] } };
                             const state = JSON.parse(await readFile(boundary.stateFile, 'utf8'));
                             await writeFile(boundary.stateFile, JSON.stringify({ ...state,
                                 snapshot: { ...state.snapshot, paths: volumeSnapshot.snapshot.paths, tags: volumeSnapshot.snapshot.tags } }));
-                            if (mode === 'volumeRestoreStopped') {
-                                const dockerState = JSON.parse(await readFile(`${root}/tools/docker-state.json`, 'utf8'));
-                                dockerState.containers.find((row: { Config: { Labels: Record<string, string> } }) =>
-                                    row.Config.Labels['com.docker.compose.service'] === 'writer').State.Status = 'exited';
-                                await writeFile(`${root}/tools/docker-state.json`, JSON.stringify(dockerState));
-                            }
+                            const dockerStatePath = join(root, 'tools', 'docker-state.json');
+                            const dockerState = JSON.parse(await readFile(dockerStatePath, 'utf8'));
+                            dockerState.retainContainersForVolumeNameOnlyChanges = true;
+                            const stoppedWriter = dockerState.containers.find((row: { Config: { Labels: Record<string, string> } }) =>
+                                row.Config.Labels['com.docker.compose.service'] === 'writer');
+                            if (mode === 'volumeRestoreStopped') stoppedWriter.State.Status = 'exited';
+                            await writeFile(dockerStatePath, JSON.stringify(dockerState));
                             const capture = { operationId: 'volume-restore-prepare', source: volumeSnapshot, sourceFormat: 'volume',
                                 destination: { environmentId: source.environmentId, revision: 1, adapter: 'volume-v1',
                                     service: 'worker', volume: 'data', currentVolume: 'fixture-physical-data',
                                     stagingVolume: 'happier-volume-restore-stage', hasMeaningfulData: false,
                                     writerServices: ['worker'], runningServices: ['worker'] } };
+                            if (staleMount) {
+                                dockerState.retainStaleVolumeBinding = capture.destination.stagingVolume;
+                                await writeFile(dockerStatePath, JSON.stringify(dockerState));
+                                const currentVolumePath = join(root, 'tools', `volume-${capture.destination.currentVolume}`);
+                                await mkdir(currentVolumePath, { recursive: true });
+                                await writeFile(join(currentVolumePath, 'restored.txt'), 'incumbent\n');
+                            }
                             let nativeInput: adapter.OwnServerNativeRestoreInput | adapter.OwnServerNativeUploadRestoreInput = input;
                             let admittedCapture: unknown = capture;
-                            if (mode === 'volumeUpload') {
+                            if (uploadVolume) {
                                 const bytes = volumeTarFixture;
                                 const filePath = join(root, 'uploaded.tar');
                                 await writeFile(filePath, bytes);
@@ -273,8 +283,20 @@ describe('native restore adapter', () => {
                             }
                             const restored = await Reflect.apply(adapter.confirmOwnServerNativeRestore, undefined, [nativeInput,
                                 { ...prepared, prepare: prepared }]);
+                            if (uploadVolume) {
+                                const tool = await exec.systemTools.resolve({ toolId: 'docker', purpose: 'deployment-native-compose', cwd: source.rootPath });
+                                const marker = await exec.run({ executable: tool.executable, cwd: source.rootPath,
+                                    args: ['compose', '--file', join(source.rootPath, 'compose.yaml'), 'exec', '-T', 'worker', 'cat', '/data/restored.txt'] });
+                                expect(marker.termination.observed).toMatchObject({ kind: 'exit', exitCode: 0 });
+                                expect(Buffer.from(marker.stdout).toString('utf8')).toBe(staleMount ? 'incumbent\n' : 'restored\n');
+                            }
                             const nativeOperations = (await docker.readInvocations()).slice(-8).map(row => row.args.slice(0, 3));
-                            expect(restored, JSON.stringify({ restored, nativeOperations, nativeFailures: await docker.readFailures() }))
+                            if (staleMount) {
+                                expect(await readFile(join(root, 'tools', `volume-${capture.destination.stagingVolume}`, 'restored.txt'), 'utf8'))
+                                    .toBe('restored\n');
+                                expect(restored, 'A verified stage with the running service still mounted on incumbent data must roll back')
+                                    .toMatchObject({ kind: 'rolledBack', verified: false });
+                            } else expect(restored, JSON.stringify({ restored, nativeOperations, nativeFailures: await docker.readFailures() }))
                                 .toMatchObject(mode === 'volumeRestoreFailure'
                                     ? { kind: 'rolledBack', verified: false, nextAction: 'checkServiceHealth', code: 'restore_failed',
                                         failureCause: { phase: 'deployment.native.compose.native_compose_command_failed' } }
@@ -282,14 +304,13 @@ describe('native restore adapter', () => {
                             const stateAfter = JSON.parse(await readFile(`${root}/tools/docker-state.json`, 'utf8'));
                             expect(stateAfter.containers.filter((row: { State: { Status: string }; Config: { Labels: Record<string, string> } }) =>
                                 row.State.Status === 'running' && row.Config.Labels['com.docker.compose.service'] === 'worker'))
-                                .toEqual([expect.objectContaining({ Mounts: [expect.objectContaining({ Name: mode === 'volumeRestoreFailure'
+                                .toEqual([expect.objectContaining({ Mounts: [expect.objectContaining({ Name: staleMount || mode === 'volumeRestoreFailure'
                                     ? capture.destination.currentVolume : capture.destination.stagingVolume })] })]);
                             if (mode === 'volumeRestoreStopped') expect(stateAfter.containers.filter((row: { Config: { Labels: Record<string, string> } }) =>
                                 row.Config.Labels['com.docker.compose.service'] === 'writer')).toEqual([
-                                expect.objectContaining({ State: expect.objectContaining({ Status: 'created' }) })]);
+                                expect.objectContaining({ Id: stoppedWriter.Id, State: expect.objectContaining({ Status: 'exited' }) })]);
                             const requests = (await docker.readInvocations()).filter(row => row.args[0] === 'create' && row.args.includes('restore'));
-                            if (mode === 'volumeUpload') {
-                                expect(await readFile(join(root, 'tools', 'volume-happier-volume-restore-stage', 'restored.txt'), 'utf8')).toBe('restored\n');
+                            if (uploadVolume) {
                                 const tarRequests = (await docker.readInvocations()).filter(row => row.args[0] === 'create' && row.args.includes('/bin/tar'));
                                 expect(tarRequests).toHaveLength(2);
                                 const extraction = tarRequests.find(row => row.args.includes('-xf'));
@@ -632,7 +653,7 @@ describe('native restore adapter', () => {
                     if (mode !== 'missingTool') throw error;
                     expect(error).toMatchObject({ code: 'unsupported_action' });
                 } finally { await activation.dispose(); }
-                if (mode === 'volumeUpload' || mode === 'volumeRender' || mode === 'sqlUploadUnsafe' || mode === 'sqlUploadBinary' || mode === 'sqlUploadCustom' || mode === 'sqlUploadCustomChunks') { expect(passwordPath).toBeUndefined(); return; }
+                if (mode === 'volumeUpload' || mode === 'volumeUploadStaleMount' || mode === 'volumeRender' || mode === 'sqlUploadUnsafe' || mode === 'sqlUploadBinary' || mode === 'sqlUploadCustom' || mode === 'sqlUploadCustomChunks') { expect(passwordPath).toBeUndefined(); return; }
                 if (!passwordPath) throw new Error('Expected an acquired backup environment');
                 if (mode === 'dumpFailure') {
                     // Natural dump exit plus the exact restic helper's proven
@@ -703,7 +724,7 @@ describe('native restore adapter', () => {
                     expect(events.some(row => row.kind === 'restic' && row.argv.includes('s3:https://fixture.invalid/changed-destination'))).toBe(false);
                 }
                 expect(await docker.readOperationContainerIds()).toEqual([]);
-            }, { nativeExecutableIo: true, ...(mode === 'volumeBackup' || mode === 'volumeBackupFailure' || mode === 'volumeRestore' || mode === 'volumeRestoreStopped' || mode === 'volumeRestoreFailure' || mode === 'volumeUpload' || mode === 'volumeRender' || mode === 'sqliteBackup' ? { namedVolume: true } : {}),
+            }, { nativeExecutableIo: true, ...(mode === 'volumeBackup' || mode === 'volumeBackupFailure' || mode === 'volumeRestore' || mode === 'volumeRestoreStopped' || mode === 'volumeRestoreFailure' || mode === 'volumeUpload' || mode === 'volumeUploadStaleMount' || mode === 'volumeRender' || mode === 'sqliteBackup' ? { namedVolume: true } : {}),
                 ...(mode === 'sqliteBackup' ? { sqliteRuntime: true } : {}),
                 ...(mode === 'healthFailure' || mode === 'cancelPublication' || mode === 'volumeRestoreStopped' ? { writerService: true } : {}) });
         }, 60_000);

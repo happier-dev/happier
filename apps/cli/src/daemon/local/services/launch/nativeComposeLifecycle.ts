@@ -200,7 +200,7 @@ export type NativeComposeEnvironmentProject = Readonly<{
         status: 'matching' | 'different' | 'unknown'; health: 'healthy' | 'unhealthy' | 'unverified';
     }>>;
     activate(input: Readonly<{ render: NativeComposeProjectRender; context: MachineNativeEffectContext; signal?: AbortSignal;
-        runningServices?: readonly string[];
+        volumeRebind?: Readonly<{ volume: string; physicalName: string; runningServices: readonly string[] }>;
         cleanupOnFailure?: boolean; onIncumbentServicesChanged?(services: readonly string[]): Promise<void> }>): Promise<NativeComposeActivatedProject>;
     settleNative(): Promise<void>;
     dispose(): Promise<void>;
@@ -1000,8 +1000,8 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
     const nativeGeneration = async (signal?: AbortSignal) => (await generation.snapshot(signal)).rows
         .map(row => ({ id: row.Id, restartCount: row.RestartCount })).sort((a, b) => a.id.localeCompare(b.id));
     const inspectGeneration = (current: NativeComposeProjectRender, identity: ReturnType<typeof createNativeComposeImageIdentity>, signal?: AbortSignal,
-        observation?: Readonly<{ snapshot?: Awaited<ReturnType<typeof generation.snapshot>>; purpose?: 'retire'; stoppedServices?: readonly string[];
-            healthServices?: readonly string[] }>) =>
+        observation?: Partial<Pick<Parameters<typeof generation.inspect>[0],
+            'snapshot' | 'purpose' | 'stoppedServices' | 'healthServices' | 'reboundVolume'>>) =>
         generation.inspect({ services: current.services, healthServices: current.healthServices,
             model: renderedCaptures.get(current)?.model ?? nativeRefusal('deployment_generation_unavailable'),
             proveImage: (reference, image) => identity.prove(reference, image), signal, ...observation });
@@ -1621,8 +1621,28 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
             const selectiveHealth = current.healthServices.length !== current.services.length;
             // C11: Compose owns readiness settlement. Keep its native health/exit
             // verdict and the caller's cancellation, without a derived deadline.
-            const upArgs = [...capture.composeArgs, 'up', '--detach', ...(request.runningServices ? ['--no-start'] : selectiveHealth ? [] : ['--wait']), '--remove-orphans', '--no-build', '--pull', 'never',
-                ...current.services];
+            const volumeRebind = request.volumeRebind;
+            const runningServices = volumeRebind?.runningServices;
+            let reboundVolume: Parameters<typeof generation.inspect>[0]['reboundVolume'];
+            if (volumeRebind) {
+                const targetsByService = new Map<string, readonly string[]>();
+                const modelServices = capture.model.services;
+                for (const service of current.services) {
+                    const definition = record(modelServices) ? modelServices[service] : undefined;
+                    if (!record(definition) || !Array.isArray(definition.volumes)) continue;
+                    const targets = definition.volumes.flatMap(mount => record(mount) && mount.type === 'volume'
+                        && mount.source === volumeRebind.volume && typeof mount.target === 'string' ? [mount.target] : []);
+                    if (targets.length) targetsByService.set(service, targets);
+                }
+                if (!targetsByService.size) return nativeRefusal('native_target_missing');
+                reboundVolume = { physicalName: volumeRebind.physicalName, targetsByService };
+            }
+            // Compose compares service definitions, so a change to a top-level
+            // volume's physical name needs explicit recreation of its consumers.
+            const upOptions = volumeRebind ? ['--no-start', '--no-deps', '--force-recreate']
+                : [...(selectiveHealth ? [] : ['--wait']), '--remove-orphans'];
+            const upServices = reboundVolume ? [...reboundVolume.targetsByService.keys()] : current.services;
+            const upArgs = [...capture.composeArgs, 'up', '--detach', ...upOptions, '--no-build', '--pull', 'never', ...upServices];
             // Capture unchanged native counters before up, not after a crash.
             // The same witnessed ids also delimit first-deploy failure cleanup.
             const preexisting = await generation.captureBaseline(request.signal);
@@ -1655,18 +1675,18 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
                 // From this effect onward, the stopped incumbent no longer proves an outage.
                 if (incumbentQuiesced) await request.onIncumbentServicesChanged?.([]);
                 await runAuthorized(launch, request.signal, true, authority);
-                if (request.runningServices?.length) {
+                if (runningServices?.length) {
                     // Supported Compose builds expose --wait on up but not start.
-                    // The preceding up created every container; start only the
-                    // admitted running set without recreating it or starting dependencies.
-                    const startArgs = ['up', '--wait', '--no-deps', '--no-recreate', '--no-build', '--pull', 'never', ...request.runningServices];
+                    // Resume the admitted running set without recreating containers
+                    // or starting dependencies that were deliberately stopped.
+                    const startArgs = ['up', '--wait', '--no-deps', '--no-recreate', '--no-build', '--pull', 'never', ...runningServices];
                     const start = await authorize([...capture.composeArgs, ...startArgs], request.signal,
                         undefined, false, runtimeProjection(startArgs));
                     try { await runAuthorized(start, request.signal, true, authority); } finally { await start.release(); }
                 }
                 input.onReferenceAddresses?.(launch.deploymentReferenceAddresses ?? []);
                 input.onTelemetryProjection?.(telemetryProjection);
-                if (selectiveHealth && !request.runningServices) {
+                if (selectiveHealth && !runningServices) {
                     // Compose 2.39.4 start.go:72-107 waits on every service in
                     // the selected project. up.go:60-67 makes --no-deps select
                     // only participants, after the ordinary dependency start.
@@ -1683,9 +1703,9 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
                         finally { await waitLaunch.release(); }
                     }
                 }
-                const proof = await inspectGeneration(current, identity, request.signal, request.runningServices ? {
-                    healthServices: current.healthServices.filter(service => request.runningServices!.includes(service)),
-                    stoppedServices: current.services.filter(service => !request.runningServices!.includes(service)) } : undefined);
+                const proof = await inspectGeneration(current, identity, request.signal, runningServices ? {
+                    healthServices: current.healthServices.filter(service => runningServices.includes(service)),
+                    stoppedServices: current.services.filter(service => !runningServices.includes(service)), reboundVolume } : undefined);
                 provenServiceIds = proof.serviceNativeIds;
                 if (!launch.detachDeploymentEnvironmentForObservation) return nativeRefusal('secret_redaction_unavailable');
                 launch = launch.detachDeploymentEnvironmentForObservation();

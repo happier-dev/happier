@@ -288,14 +288,14 @@ async function withNativeRestore<T>(input: OwnServerNativeRestoreInput | OwnServ
                         physicalName: request.destination.stagingVolume, destinationAttachment: attachment, signal }));
                     }
                     case 'switchVolume': {
-                        const bindings = input.render.namedVolumes.map(binding => binding.volume === request.destination.volume
-                            ? { volume: binding.volume, physicalName: request.physicalName } : binding);
+                        const reboundVolume = { volume: request.destination.volume, physicalName: request.physicalName };
+                        const bindings = input.render.namedVolumes.map(binding => binding.volume === reboundVolume.volume ? reboundVolume : binding);
                         const project = input.project.createVolumeRestoreCandidate(bindings);
                         volumeProjects.push(project);
                         const render = await project.render({ signal });
                         await input.retainSource();
                         const active = await project.activate({ render, context: input.context, signal,
-                            runningServices: request.destination.runningServices });
+                            volumeRebind: { ...reboundVolume, runningServices: request.destination.runningServices } });
                         await input.onNamedVolumeBindingsChanged?.(bindings, { project: active, render });
                         for (const name of request.destination.writerServices) stoppedServices.delete(name);
                         await input.onIncumbentServicesChanged?.([...stoppedServices]);

@@ -4311,10 +4311,12 @@ SQLite and uploaded imports remain incomplete.
 Development-source named-volume restore uses a fresh staging volume and restic's
 verified restore. The native owner admits a volume that is unreferenced by both
 running and stopped services, then activates its logical-to-physical mapping
-through P41's existing rendered-generation and receipt owner. Docker volume
-renaming is not involved. Activation preserves the original running service set;
-a previously stopped service stays stopped. The original volume remains available
-for the ordinary restore failure and recovery path.
+through P41's existing rendered-generation and receipt owner. Activation
+recreates the services that use the restored volume and preserves the admitted
+running and stopped service set. The restore reports verified only after the
+native generation proof confirms that Docker mounted the restored volume at
+every declared destination on those services. A stale mount fails activation and
+uses the existing recovery path to return to the original volume.
 
 The development-source `restore-drill` Workflow starter selects an existing
 isolated Environment and keeps its volumes and sealed grants between runs. It
