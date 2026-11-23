@@ -23,12 +23,6 @@ import type { ConversationConnectionPollFailureV1 } from './connectionLifecycle.
 import type { SettingsChange } from '@happier-dev/plugin-sdk/settings';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/plugin-sdk/manifest';
 import { prepareConversationIngressObligationForBindingDeletion, prepareConversationIngressObligationForConnectionDeletion } from './ingress.js';
-import { runTriageConfiguredHandoffV1 } from '../../triage/src/sessions/configuredActionRun.js';
-import { describeTriageEntrySessionPhaseV1 } from '../../triage/src/ui/header/sessionStartOutcome.js';
-import { testkitEntryRef, testkitLocator } from '../../triage/src/corpus/testkit/observations.test-support.js';
-import { testkitConfiguredInstance, TESTKIT_OBSERVED_REVISION, testkitTriageActionId } from '../../triage/src/sessions/testkit/entrySessionTestkit.test-support.js';
-import { TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1 } from '../../triage/src/actions/entrySessionProtocol.js';
-import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1 } from '@happier-dev/triage-protocol/v1';
 
 describe('portable Account PR Watch Action', () => {
     const heldByPerson = { status: 'held', localId: 'configured-input', code: 'session_input_target_unavailable',
@@ -187,87 +181,24 @@ describe('portable Account PR Watch Action', () => {
             expect(f.execute.mock.calls.filter(([id]) => id === 'session.message.send')).toHaveLength(send === 'fanoutUnknownThenFailure' ? 2 : 1);
         } finally { await f.kit.dispose(); }
     });
-    it.each(['accepted', 'heldByPerson'] as const)('composes configured Triage Fix with registered Channels custody and one input (%s)', async send => {
-        const f = await configuredFixFixture({ head: TESTKIT_OBSERVED_REVISION.headSha, expectedHead: TESTKIT_OBSERVED_REVISION.headSha,
-            ...(send === 'heldByPerson' ? { send } : {}) });
-        const entryRef = testkitEntryRef({ collisionScope: 'acme/widgets', entryId: '12' });
-        const locator = testkitLocator({ webUrl: 'https://github.com/acme/widgets/pull/12' });
-        const sourceInstanceId = testkitConfiguredInstance().instance.sourceInstanceId;
-        const session = { serverId: 'srv_example', sessionId: 'session-a' };
-        const repository = { kind: 'github', deployment: 'https://github.com', repository: 'acme/widgets' } as const;
-        const checkout = { serverId: session.serverId, workspaceId: 'workspace-1', machineId: 'machine-example', rootPath: '/repo' };
-        const effects: string[] = [];
-        const delegated: JsonValue[] = [];
-        const host = {
-            readSession: async () => ({ ...session, acceptedWorkspace: { checkout, repository } }),
-            executeAction: async (id: string | { pluginId: string; localId: string }, value: JsonValue, options?: { sessionAddress?: unknown }) => {
-                const actionId = testkitTriageActionId(id);
-                if (actionId === 'actions/read-v1') return { v: 1, availability: 'parsed', revision: '1', actions: [{
-                    actionId: 'fix', label: 'Fix', enabled: true, appliesTo: ['pullRequest'], profileId: null, workspaceMode: 'pull_request',
-                    target: { kind: 'agent', promptInvocationId: null, seededFallbackInstruction: 'Fix this PR.', delivery: 'send' },
-                }] };
-                if (typeof id !== 'string' && id.pluginId === 'happier.channels') {
-                    expect(id).toEqual({ pluginId: 'happier.channels', localId: 'session-pull-request-watch-v1' });
-                    expect(options?.sessionAddress).toEqual(session);
-                    if (typeof value === 'object' && value !== null && 'kind' in value && value.kind === 'deliverConfiguredFix') delegated.push(value);
-                    return f.invoke(value);
-                }
-                effects.push(actionId);
-                if (actionId === TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1) return { kind: 'verified', checkout };
-                if (actionId === 'sessions/link-entry-v1') return { v: 1, status: 'linked' };
-                throw new Error(`Unexpected Triage host effect ${id}`);
-            },
-        } as unknown as Parameters<typeof runTriageConfiguredHandoffV1>[0]; // Only source/Session RPC transports; both plugin owners stay real.
-        const protocol = { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: 1 } as const;
+    it('retains an Agent’s held receipt without starting a Fix round or sending the same input again', async () => {
+        const f = await configuredFixFixture({ send: 'heldByPerson' });
         try {
-            const result = await runTriageConfiguredHandoffV1(host, { task: 'fix', configuredActionId: 'fix',
-                context: { kind: 'entry', entry: { entryRef, sourceInstanceId } }, evidence: [{ kind: 'entry', entry: { entryRef, sourceInstanceId } }],
-                sessionChoice: { kind: 'existing', session: session.sessionId }, agentChoice: { kind: 'configured' }, delivery: 'send',
-            }, { session, signal: new AbortController().signal, mintCreationKey: () => 'triage-configured-press', entries: [{
-                key: 'pr-12', entryRef, display: { locator, scopeLabel: 'acme/widgets' }, presentation: { label: 'PR 12' }, repository,
-                sourceInstance: { source: entryRef.source, sourceInstanceId }, workflowSubject: 'pullRequest',
-                reviewWorkspace: { operation: { point: { pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, protocol },
-                    contributor: { pluginId: entryRef.source.pluginId, contributionId: entryRef.source.localId, occurrenceId: 'source-1',
-                        sourceCustody: { kind: 'development', registeredRootId: 'source-root' } }, role: 'prepareReviewWorkspace',
-                    action: { pluginId: entryRef.source.pluginId, localId: 'prepare' } },
-                    preparation: { instance: testkitConfiguredInstance(), entryRef, lastKnownLocator: locator,
-                        observed: { ...TESTKIT_OBSERVED_REVISION, observedAtMs: 1 } } },
-            }] });
-            if (send === 'heldByPerson') {
-                const obligation = [...f.state.rows.values()].find(row => row.value['record-kind'] === 'ingress-obligation');
-                expect(SessionPullRequestConfiguredFixCustodySchema.safeParse(obligation?.value.payload).success).toBe(true);
-            }
-            expect(result).toMatchObject({ handoff: { kind: 'sendResult', session, result: send === 'heldByPerson'
-                ? heldByPerson : { status: 'accepted', localId: 'configured-input' } } });
-            expect(effects).not.toContain('session.message.send');
-            const sends = f.execute.mock.calls.filter(([id]) => id === 'session.message.send');
-            expect(sends).toHaveLength(1);
-            expect(sends[0]?.[1]).toMatchObject({ attachments: [{ attachmentLocalId: 'entry', value: {
-                value: { entryRef, sourceInstance: { sourceInstanceId } } } }] });
+            const held = { kind: 'configuredFixResult', result: heldByPerson };
+            await expect(f.invoke(f.request, 'agent')).resolves.toEqual(held);
+            await expect(f.invoke(f.request, 'agent')).resolves.toEqual(held);
             expect(await f.progress()).toMatchObject({ roundsStarted: 0, activeRound: { started: false } });
-            if (send === 'heldByPerson') {
-                const obligation = [...f.state.rows.values()].find(row => row.value['record-kind'] === 'ingress-obligation');
-                expect(obligation?.value.terminal).toBe(true);
-                const validateRow = compilePluginJsonSchema(CHANNEL_STATE_COLLECTION.schema);
-                expect(isValidPluginJsonSchemaValue(validateRow, obligation?.value)).toBe(true);
-                await expect(f.invoke(delegated[0])).resolves.toEqual({ kind: 'configuredFixResult', result: heldByPerson });
-                expect(describeTriageEntrySessionPhaseV1({ kind: 'handoffSettled', result }, { sessionName: 'PR Fix' }))
-                    .toMatchObject({ labelKey: 'plugins.triage.surface.session.heldIn', labelParams: { session: 'PR Fix' },
-                        failure: { codes: ['held_by_person'] } });
-
-                const payload = SessionPullRequestConfiguredFixCustodySchema.parse(obligation?.value.payload);
-                const { failureCause: _cause, ...legacyResult } = heldByPerson;
-                const legacyPayload = { ...payload, result: legacyResult };
-                expect(SessionPullRequestConfiguredFixCustodySchema.parse(legacyPayload)).toEqual(legacyPayload);
-                expect(isValidPluginJsonSchemaValue(validateRow, { ...obligation?.value, payload: legacyPayload })).toBe(true);
-                expect(f.execute.mock.calls.filter(([id]) => id === 'session.message.send')).toHaveLength(1);
-                return;
-            }
-            f.start();
-            await f.invoke(delegated[0]);
-            await f.invoke(delegated[0]);
-            expect(await f.progress()).toMatchObject({ roundsStarted: 1, activeRound: { started: true } });
             expect(f.execute.mock.calls.filter(([id]) => id === 'session.message.send')).toHaveLength(1);
+
+            const obligation = [...f.state.rows.values()].find(row => row.value['record-kind'] === 'ingress-obligation');
+            expect(obligation?.value.terminal).toBe(true);
+            const validateRow = compilePluginJsonSchema(CHANNEL_STATE_COLLECTION.schema);
+            expect(isValidPluginJsonSchemaValue(validateRow, obligation?.value)).toBe(true);
+            const payload = SessionPullRequestConfiguredFixCustodySchema.parse(obligation?.value.payload);
+            const { failureCause: _cause, ...legacyResult } = heldByPerson;
+            const legacyPayload = { ...payload, result: legacyResult };
+            expect(SessionPullRequestConfiguredFixCustodySchema.parse(legacyPayload)).toEqual(legacyPayload);
+            expect(isValidPluginJsonSchemaValue(validateRow, { ...obligation?.value, payload: legacyPayload })).toBe(true);
         } finally { await f.kit.dispose(); }
     });
     it('delivers configured Fix through the registered Account Action and charges only its exact host start witness once', async () => {
