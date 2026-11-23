@@ -28,6 +28,7 @@ import {
   readConversationConnectionPollFailureAttention,
   type ConversationConnectionPollFailureAttentionV1,
 } from '../connectionPollFailure.js';
+import { hasConversationConnectionOriginMismatch } from '../connectionLifecycle.js';
 import { projectConversationConnectionDeliveryAttention } from '../connectionsResource.js';
 import { selectChannelsConversationSessionState, type ChannelsConversationSessionState } from './conversationSessionState.js';
 
@@ -700,6 +701,9 @@ export function providerReadinessLabel(
   providerReadiness: NonNullable<ConnectionProviderReadiness>,
   t: Translate,
 ): string {
+  if (hasConversationConnectionOriginMismatch(providerReadiness)) {
+    return t('plugins.channels.surface.connectionOriginMismatch', 'This connection is on another Home or Machine');
+  }
   if (providerReadiness.code === 'providerPermissionMissing') {
     return t('plugins.channels.surface.providerPermissionMissing', 'Provider permission needs attention');
   }

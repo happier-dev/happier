@@ -6230,6 +6230,10 @@ Setup resolves the current connection-test role after the setup operation and
 keeps its proved transport placement. Retest retains a completed native readiness
 observation across a same-ID reload, and resolves the current role before any
 subsequent setup; it does not repeat the observation in a reload retry loop.
+When the host refuses Retest because the saved Home or Machine differs,
+Channels records the host code in the connection's existing readiness diagnostic.
+The Connections views show the placement issue and recommend Transfer.
+A successful Retest or Transfer clears the evidence.
 The generic Action executor enforces `expectedExecutionRouting` before provider
 handlers through Protocol's shared routing projection/equality. Origin, routing
 and caller currentness are decided once at admission: an executed handler's

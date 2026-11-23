@@ -7,6 +7,7 @@ import {
   type ConversationConnectionListInputV1Schema,
   type ConversationConnectionPollRetryInputV1,
   type ConversationConnectionRetestInputV1,
+  type ConversationConnectionTransferInputV1,
   type ConversationConnectionUpdateInputV1,
   type ConversationDeliveryAttentionInputV1Schema,
   type ConversationDeliveryReadInputV1Schema,
@@ -18,6 +19,7 @@ import {
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { PluginActionInputById } from '@happier-dev/plugin-sdk/actions';
+import { CONVERSATION_CONNECTION_ORIGIN_MISMATCH, hasConversationConnectionOriginMismatch } from './connectionLifecycle.js';
 import type { ConversationConnectionManagementRow, ConversationBindingManagementRow, ConversationIngressAttentionRow } from './accountLocalBindingPolicy.js';
 
 /** Recommendations consume native evidence; they never grant mutation authority. */
@@ -33,6 +35,11 @@ export function recommendConversationConnectionRecovery(row: ConversationConnect
   if (row.deletionState !== 'none') return recommendConversationRecovery(actions.connectionDelete,
     { connectionId: row.connectionId, expectedRevision: row.revision } satisfies ConversationConnectionDeleteInputV1, 'connectionDeleting',
     row.deletionState === 'finalizingDelete' ? 'cleanupInProgress' : undefined);
+  if (hasConversationConnectionOriginMismatch(row.attention.providerReadiness)) {
+    return recommendConversationRecovery(actions.connectionTransfer,
+      { connectionId: row.connectionId, expectedRevision: row.revision } satisfies Pick<ConversationConnectionTransferInputV1, 'connectionId' | 'expectedRevision'>,
+      CONVERSATION_CONNECTION_ORIGIN_MISMATCH);
+  }
   if (row.attention.providerReadiness?.code === 'providerCredentialInvalid') {
     const account = QualifiedConnectedAccountRefSchema.safeParse(credentialRef);
     if (account.success) {

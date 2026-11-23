@@ -121,6 +121,14 @@ export type ConversationConnectionProviderReadinessV1 = Readonly<{
   diagnostic?: ConversationProviderDiagnosticV1;
 }> | null;
 
+export const CONVERSATION_CONNECTION_ORIGIN_MISMATCH = 'plugin_action_execution_origin_mismatch';
+
+/** The retained configuration-attention diagnostic carries the exact host refusal code. */
+export function hasConversationConnectionOriginMismatch(readiness: ConversationConnectionProviderReadinessV1): boolean {
+  return readiness?.code === 'providerConfigurationInvalid'
+    && readiness.diagnostic === CONVERSATION_CONNECTION_ORIGIN_MISMATCH;
+}
+
 /**
  * The sole durable receive-supervisor disposition. It records only provider
  * facts or the reduced cross-boundary Action error that survives execution;

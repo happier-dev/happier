@@ -2,6 +2,7 @@ import type {
   ConversationBindingManagementRow,
   ConversationConnectionManagementRow,
 } from './accountLocalBindingPolicy.js';
+import { hasConversationConnectionOriginMismatch } from './connectionLifecycle.js';
 
 /**
  * Why one Session-bound conversation currently needs its owner.
@@ -80,7 +81,9 @@ export function projectConversationSessionBindingAttention(input: Readonly<{
   });
   if (connection === undefined) return attention('connectionUnavailable');
   const readiness = connection.attention.providerReadiness;
-  if (readiness !== null) return attention(readiness.code);
+  if (readiness !== null) {
+    return attention(hasConversationConnectionOriginMismatch(readiness) ? 'connectionUnavailable' : readiness.code);
+  }
   if (connection.deletionState !== 'none') return attention('connectionDeleting');
   if (!connection.enabled) return attention('connectionDisabled');
   if (!binding.enabled) return attention('bindingDisabled');

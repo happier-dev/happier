@@ -121,6 +121,7 @@ import {
   getConversationConnectionExecutionRouting,
   getSelfStampedPluginCallerExecutionOrigin,
   areConversationConnectionTransportOriginsEqual,
+  CONVERSATION_CONNECTION_ORIGIN_MISMATCH,
   recordConversationConnectionHistoryGap,
   recordConversationConnectionProviderReadiness,
   startConversationConnectionDelete,
@@ -2587,11 +2588,10 @@ export async function retryConversationConnectionPollForInvocation(
  *
  * It is a re-observation, not a second health system: the request is composed
  * entirely from retained facts and pinned to the frozen transport origin, a
- * still-failing probe is reported with the shared provider-failure vocabulary
- * and writes nothing, and a ready probe settles the one canonical
- * `providerReadiness` field through the same lifecycle owner the provider
- * transport reports through. A successful probe re-observes provider-declared
- * capabilities through the existing safe setup owner at that same origin.
+ * still-failing provider probe returns its shared failure vocabulary. A host
+ * origin refusal and a ready probe settle evidence through the connection
+ * lifecycle owner. A successful probe re-observes provider-declared capabilities
+ * through the existing safe setup owner at that same origin.
  */
 export async function retestConversationConnectionForInvocation(
   input: JsonValue,
@@ -2651,11 +2651,45 @@ export async function retestConversationConnectionForInvocation(
       message: 'Connection retest could not read the retained provider connection details.',
     }, { cause });
   }
+  async function retainOriginRefusal(
+    cause: unknown,
+    snapshot: Readonly<{ row: StateRow; current: ConversationConnectionUpdateRow }>,
+  ): Promise<never> {
+    if (isPluginError(cause) && cause.code === CONVERSATION_CONNECTION_ORIGIN_MISMATCH && !context.signal.aborted) {
+      const transition = recordConversationConnectionProviderReadiness({
+        current: snapshot.current.lifecycle,
+        reportedAuthorityEpoch: request.authorityEpoch,
+        fact: {
+          kind: 'providerReadiness',
+          status: 'attention',
+          code: 'providerConfigurationInvalid',
+          diagnostic: cause.code,
+        },
+      });
+      if (transition.kind === 'recorded') {
+        try {
+          await persistConversationConnectionLifecycle({
+            collection,
+            ...snapshot,
+            lifecycle: transition.connection,
+            operation: 'channels_connection_retest',
+          }, context);
+        } catch (error) {
+          context.services.logger.warn('[Channels] Could not retain the Retest origin refusal', {
+            connectionId: request.connectionId,
+            ...(isPluginError(error) ? { code: error.code } : {}),
+          });
+        }
+      }
+    }
+    throw cause;
+  }
+
   const execution = await context.services.actions.executeAdmittedTargetedOperationWithExecutionOrigin(
     connectionTest,
     testRequest,
     { signal: context.signal, expectedExecutionRouting: getConversationConnectionExecutionRouting(current.transportOrigin, current.providerPluginId) },
-  );
+  ).catch(cause => retainOriginRefusal(cause, { row, current }));
   assertNotAborted(context.signal);
   let testResult: ReturnType<typeof ConversationConnectionTestResultV1Schema.parse>;
   try {
@@ -2708,7 +2742,7 @@ export async function retestConversationConnectionForInvocation(
     providerSetupInput: current.providerSetupInput,
     credentialRef: testRequest.credentialRef,
     expectedExecutionRouting: getConversationConnectionExecutionRouting(current.transportOrigin, current.providerPluginId),
-  });
+  }).catch(cause => retainOriginRefusal(cause, { row: beforeSetup.row, current: beforeSetup.current }));
   if (prepared.kind === 'requiresRemediation') {
     throw pluginError('channels_connection_setup_requires_remediation', 'Provider setup requires remediation before connection retest.');
   }

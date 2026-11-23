@@ -25,6 +25,7 @@ import { channelsTargetedContributionServices } from './testkit/operationOnlyTar
 import { CONNECTIONS_RESOURCE_RUNTIME } from './connectionsResource.js';
 import { resourceText } from './testkit/resourceContract.js';
 import { renderSurface } from './ui/renderSurface.js';
+import { connectionStatus, parseConnection } from './ui/conversationRows.js';
 
 const pluginId = TELEGRAM_MANIFEST.id;
 const credentialRef = { service: { pluginId, localId: 'telegram-bot' }, accountId: 'journey-account' };
@@ -39,9 +40,10 @@ async function journey(kind: 'source' | 'bundled' | 'materialization', omitCreat
   let pollStatus: 401 | 503 | null = null;
   let generation = 'a';
   let coreMachineId = 'journey-machine';
+  let providerMachineId = 'journey-machine';
   let pollGate: Readonly<{ entered(): void; released: Promise<void> }> | undefined;
   let nextUpdates: JsonValue[] = [];
-  const materializationRef = () => ({ pluginId, machineId: 'journey-machine', materializationId: `telegram-${generation}` });
+  const materializationRef = () => ({ pluginId, machineId: providerMachineId, materializationId: `telegram-${generation}` });
   const currentOrigin = (): PluginMachineExecutionOriginV1 => kind !== 'materialization'
     ? { serverIdentityId: 'srv_plugin_testkit', sourceRef: { pluginId, machineId: 'journey-machine',
       sourceCustody: kind === 'source'
@@ -280,6 +282,7 @@ async function journey(kind: 'source' | 'bundled' | 'materialization', omitCreat
   const create = () => invoke('journey/create', setupInput);
   return { state, deliveries, effects, providerActions, create, currentOrigin, invoke,
     placeCoreOn(machineId: string) { coreMachineId = machineId; },
+    placeProviderOn(machineId: string) { providerMachineId = machineId; },
     seedPollCheckpoint() {
       // An irrelevant Bot API update advances the real provider/core cursor
       // without requiring a binding or Session admission in this journey.
@@ -321,6 +324,56 @@ async function journey(kind: 'source' | 'bundled' | 'materialization', omitCreat
 }
 
 describe('Channels connection creation to registered provider journey', () => {
+  it.each(['Transfer', 'Retest'] as const)(
+    'shows a wrong-Machine Retest refusal and clears it after successful %s', async recovery => {
+      const fixture = await journey('materialization');
+      try {
+        const created = await fixture.create();
+        if (created === null || typeof created !== 'object' || !('connectionId' in created)
+          || typeof created.connectionId !== 'string') throw new Error('Expected a created connection.');
+        fixture.setConnectionId(created.connectionId);
+        const readConnection = async () => {
+          const row = ConversationConnectionListResultV1Schema.parse(
+            JSON.parse(await fixture.connectionsResource()),
+          ).connections[0];
+          const parsed = parseConnection(row);
+          if (!parsed) throw new Error('Expected a renderable connection.');
+          return parsed;
+        };
+
+        await expect(fixture.invoke('journey/retest', {})).resolves.toMatchObject({ kind: 'ready' });
+        expect((await readConnection()).attention.providerReadiness).toBeNull();
+        const effectsBeforeRefusal = fixture.effects.length;
+        fixture.placeProviderOn('replacement-machine');
+        await expect(fixture.invoke('journey/retest', {})).rejects.toMatchObject({
+          code: 'plugin_action_execution_origin_mismatch',
+        });
+        expect(fixture.effects).toHaveLength(effectsBeforeRefusal);
+        const refused = await readConnection();
+        expect(refused.recommendedRecovery).toMatchObject({
+          action: { localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionTransfer },
+          input: { connectionId: created.connectionId, expectedRevision: refused.revision },
+          reason: 'plugin_action_execution_origin_mismatch',
+        });
+        expect(connectionStatus(refused, (_key, fallback) => fallback)).toMatchObject({
+          tone: 'attention', label: expect.stringMatching(/another Home or Machine/i),
+        });
+        expect(isValidPluginJsonSchemaValue(compiledState, (await fixture.state.get(created.connectionId))?.value))
+          .toBe(true);
+
+        if (recovery === 'Transfer') {
+          await expect(fixture.transfer()).resolves.toMatchObject({ kind: 'transferred', authorityEpoch: 2 });
+        } else {
+          fixture.placeProviderOn('journey-machine');
+          await expect(fixture.invoke('journey/retest', {})).resolves.toMatchObject({ kind: 'ready' });
+        }
+        const recovered = await readConnection();
+        expect(recovered.attention.providerReadiness).toBeNull();
+        expect(recovered.recommendedRecovery?.reason).not.toBe('plugin_action_execution_origin_mismatch');
+      } finally { await fixture.dispose(); }
+    },
+  );
+
   it('preserves a valid provider cursor across a compatible transfer with a retained history notice', async () => {
     const fixture = await journey('materialization');
     try {
