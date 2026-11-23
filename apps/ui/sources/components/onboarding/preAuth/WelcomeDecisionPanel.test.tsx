@@ -49,6 +49,37 @@ it('uses only the clearance below the shell header for a Welcome notice', async 
     expect(screen.findAllByTestId('welcome-notice-slot')).toHaveLength(1);
 });
 
+it('keeps the door reservation when the Welcome discovery notice clears in a short window', async () => {
+    const setOverflow = vi.fn<(height: number) => void>();
+    const model: WelcomeEntryViewModel = {
+        heading: { title: 'Welcome', subtitle: 'Continue here' },
+        doors: [],
+        quietWays: [],
+        notices: [{ slot: 'home', testID: 'loading-home', kind: 'loading', title: 'Checking Home' }],
+    };
+    const view = (notices: WelcomeEntryViewModel['notices']) => (
+        <ShellWelcomeOverflowContext.Provider value={setOverflow}>
+            <ShellHeaderClearanceContext.Provider value={0}>
+                <WelcomeEntryView compact model={{ ...model, notices }} />
+            </ShellHeaderClearanceContext.Provider>
+        </ShellWelcomeOverflowContext.Provider>
+    );
+    const screen = await renderScreen(view(model.notices));
+    const measure = async (height: number) => {
+        await act(async () => {
+            screen.findByTestId('welcome-notice-slot')?.props.onLayout({
+                nativeEvent: { layout: { x: 0, y: 0, width: 358, height } },
+            });
+        });
+    };
+    await measure(60);
+    expect(setOverflow).toHaveBeenLastCalledWith(60);
+    await screen.update(view([]));
+    await measure(0);
+    expect(screen.findByTestId('loading-home')).toBeNull();
+    expect(setOverflow).toHaveBeenLastCalledWith(60);
+});
+
 it('renders the same display model live and in an inert opening replica', async () => {
     const publish = vi.fn<(model: WelcomeEntryViewModel) => void>();
     const screen = await renderScreen(
