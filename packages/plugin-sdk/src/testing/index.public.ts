@@ -21,6 +21,7 @@ export type {
 export { createTestResourceInvocationContext } from './resourceInvocation.js';
 export { createPluginHttpFixture } from './http.js';
 export { createPluginActionHandlerUnavailableFixture } from './actionFailure.js';
+export { matchesTestCollectionNumericRange, parseTestCollectionQueryLimit } from './collectionQuery.js';
 export { createPluginClientTestkit } from './client.js';
 export type {
     PluginClientTestkit,

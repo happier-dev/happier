@@ -1,6 +1,7 @@
 import { CHANNEL_STATE_COLLECTION, CHANNEL_DELIVERIES_COLLECTION, CHANNEL_STATE_INDEX_ID, CHANNEL_DELIVERIES_INDEX_ID, CHANNEL_STATE_RECORD_KIND } from '../collections.js';
 import { assertChannelsTestCollectionQueryLimit } from './collectionQueryBound.js';
 import type { PluginCollectionQuery } from '@happier-dev/plugin-sdk/collections';
+import { matchesTestCollectionNumericRange, parseTestCollectionQueryLimit } from '@happier-dev/plugin-sdk/testing';
 
 export type StoredRow<TValue extends Record<string, unknown> = Record<string, unknown>> = Readonly<{
   rowId: string;
@@ -13,13 +14,6 @@ type WatchQuery = Readonly<{ kind: 'collection' }> | Readonly<{ kind: 'row'; row
 
 function compareCanonicalText(left: string, right: string): number {
   return left === right ? 0 : left < right ? -1 : 1;
-}
-
-function matchesNumericRange(value: unknown, range: PluginCollectionQuery['range']): boolean {
-  if (range === undefined) return true;
-  if (typeof value !== 'number' || !Number.isFinite(value)) return false;
-  return (range.lower === undefined || (typeof range.lower === 'number' && value >= range.lower))
-    && (range.upper === undefined || (typeof range.upper === 'number' && value <= range.upper));
 }
 
 /**
@@ -255,7 +249,7 @@ export class MemoryCollection<TValue extends Record<string, unknown> = Record<st
 
   async query(input: Partial<PluginCollectionQuery>) {
     assertChannelsTestCollectionQueryLimit(input.limit);
-    const limit = input.limit ?? 50;
+    const limit = parseTestCollectionQueryLimit(input.limit);
     assertDeclaredCollectionIndex(input.index);
     const prefix = input.prefix?.[0];
     const bindingPrefix = input.prefix?.[1];
@@ -297,7 +291,7 @@ export class MemoryCollection<TValue extends Record<string, unknown> = Record<st
         if (input.index === CHANNEL_STATE_INDEX_ID.byIngressDue) {
           const dueAt = row.value['due-at'];
           return row.value['record-kind'] === prefix
-            && matchesNumericRange(dueAt, input.range);
+            && matchesTestCollectionNumericRange(dueAt, input.range);
         }
         if (input.index === CHANNEL_STATE_INDEX_ID.byConnectionKindV1) {
           return row.value['connection-id'] === prefix
@@ -327,7 +321,7 @@ export class MemoryCollection<TValue extends Record<string, unknown> = Record<st
         if (input.index === CHANNEL_DELIVERIES_INDEX_ID.byTerminalUpdatedAt) {
           const updatedAt = row.value['updated-at'];
           return row.value.terminal === prefix
-            && matchesNumericRange(updatedAt, input.range);
+            && matchesTestCollectionNumericRange(updatedAt, input.range);
         }
         if (prefix === CHANNEL_STATE_RECORD_KIND.binding) {
           return row.value['record-kind'] === CHANNEL_STATE_RECORD_KIND.binding;
