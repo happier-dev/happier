@@ -2049,6 +2049,23 @@ export class ApiMachineClient {
                     ?? { execute: async () => ({ ok: false as const, errorCode: 'service_admission_unavailable', error: 'service_admission_unavailable' }) },
                 readHostResourceAccountId: () => this.hostResourceRoutes?.accountId ?? null,
                 resolveAccountPluginExecutionSelection: this.resolveAccountPluginExecutionSelection,
+                resolveActionAutomationContext: async ({ machineAdmission, signal }) => {
+                    if (!machineAdmission || machineAdmission.machineId !== this.machine.id
+                        || machineAdmission.installationId !== this.machineRuntimeInstallationId) return undefined;
+                    const runtime = await this.resolveInstalledAccountRuntime(signal, machineAdmission.actorAccountId);
+                    if (!runtime) return undefined;
+                    const origin = await resolveCurrentMachineExecutionOriginContext(signal);
+                    if (!origin) return undefined;
+                    const { createCliActionDeps } = await import('@/session/actions/createCliActionDeps');
+                    const { actionAutomations } = createCliActionDeps({
+                        credentials: runtime.credentials, token: runtime.credentials.token,
+                        serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl,
+                        serverIdentityId: origin.serverIdentityId, isCredentialCurrent: runtime.isCurrent,
+                        sessionId: '', mode: 'plain', ctx: null,
+                    });
+                    return { actionAutomationPort: actionAutomations, serverId: runtime.serverId,
+                        serverIdentityId: origin.serverIdentityId, externalActionTarget: { kind: 'machine', machineId: runtime.machineId } };
+                },
                 requestCurrentIntent: async request => {
                     const reportUnavailable: NonNullable<typeof request.reportUnavailable> = reason => {
                         logger.debug('[RPC] Target Action current intent unavailable', {

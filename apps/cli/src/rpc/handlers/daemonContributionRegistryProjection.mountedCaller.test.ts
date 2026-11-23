@@ -26,8 +26,62 @@ import { createDeferred } from '@/testkit/async/deferred';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { invokeAccountMachineSourceAction } from '@/plugins/runtime/invocation/actions/accountMachineActionTransport';
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
+import type { ActionSettlementV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
 
 describe('mounted caller admission through the real contributed Action RPC', () => {
+    it('publishes the qualified Action settlement once after a mounted page invokes it', async () => {
+        const pluginId = 'acme.tickets';
+        const actionId = `${pluginId}/actions/close-ticket`;
+        const machineId = 'ticket-machine';
+        const serverIdentityId = 'srv_ticket-home';
+        const fixture = await createAuthoredAdmittedPluginRuntimeFixture({
+            plugins: [{
+                manifest: createPluginManifestV2Fixture({ id: pluginId, contributes: {
+                    ui: { renderers: [{ id: 'panel', kind: 'declarative', root: { kind: 'text', text: 'Tickets' } }],
+                        views: [{ id: 'tickets', container: 'appPage', target: { kind: 'app' }, renderer: 'panel' }] },
+                    actions: [{ id: 'close-ticket', title: 'Close ticket', scopes: ['global'], surfaces: ['ui', 'cli'],
+                        dangerLevel: 'safe', readOnly: false, placementBindings: [], execution: { target: 'daemon' } }],
+                } }),
+                files: { 'daemon.mjs': `export function activate(api) {
+                    api.actions.register('close-ticket', ({ ticket }) => ({ ...ticket, state: 'closed' }));
+                }` },
+            }],
+            runtimeOptions: { resolveCurrentMachineId: () => machineId },
+        });
+        const settled: ActionSettlementV1[] = [];
+        const port = createActionAutomationPortV1({ accountId: 'actor',
+            // Authenticated Home index and occurrence publication are the network boundaries.
+            seed: async () => ({ v: 1, rows: [{ ownerAccountId: 'actor', automationId: 'ticket-automation',
+                triggerId: 'ticket-trigger', triggerRevision: 1, workflowId: 'ticket-workflow', workflowRevision: 1,
+                actionIds: [actionId], phase: 'after' }] }),
+            settle: async ({ event }) => { settled.push(event); },
+        });
+        try {
+            const handlers = new Map<string, RpcHandler>();
+            const options = {
+                resolveRuntimeRegistry: async () => fixture.registry,
+                resolveInstalledPackages: async () => [],
+                resolvePluginProjectionExecutionOriginContext: () => ({ serverIdentityId, machineId }),
+                resolveActionAutomationContext: async () => ({ actionAutomationPort: port, serverIdentityId,
+                    serverId: 'ticket-home', externalActionTarget: { kind: 'machine' as const, machineId } }),
+            };
+            registerDaemonContributionRegistryProjectionHandler({ registerHandler(method, handler) { handlers.set(method, handler); } }, options);
+            const execute = handlers.get(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE);
+            const occurrenceId = fixture.registry.readPluginOccurrenceId?.(pluginId);
+            const sourceCustody = fixture.registry.readPluginSourceCustody?.(pluginId);
+            const materializationRef = fixture.registry.resolveCurrentPluginMaterializationRef?.(pluginId);
+            if (!execute || !occurrenceId || !sourceCustody || !materializationRef) throw new Error('Expected installed Tickets page');
+            expect(await execute({ machineId, qualifiedActionId: `${pluginId}/close-ticket`, expectedContributorOccurrenceId: occurrenceId,
+                executionSurface: 'ui', input: { ticket: { ticketId: 'ticket-1' } },
+                invocation: { kind: 'mountedPluginSurface', mountedBinding: {
+                    pluginId, contributionLocalId: 'tickets', occurrenceId, sourceCustody, materializationRef,
+                } },
+            }, { signal: new AbortController().signal })).toEqual({ ok: true, result: { ticketId: 'ticket-1', state: 'closed' } });
+            expect(settled).toMatchObject([{ actionId, machineId, status: 'succeeded', phase: 'after' }]);
+        } finally { port.dispose(); await fixture.dispose(); }
+    });
+
     it('refuses unbound raw Machine Actions and correlates composer requests without replacing execution identity', async () => {
         const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{
             manifest: createPluginManifestV2Fixture({ id: 'acme.composer', contributes: { actions: [

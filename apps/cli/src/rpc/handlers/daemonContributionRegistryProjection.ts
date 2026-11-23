@@ -158,6 +158,9 @@ export type DaemonContributionRegistryProjectionRegistrationOptions = Readonly<{
     resolveAccountPluginExecutionSelection?: MountedAccountPluginExecutionSelectionResolver;
     /** The connected machine binds approval requests to its current Account custody. */
     requestCurrentIntent?: (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult>;
+    /** Installed Account custody for Actions entering directly through the Machine RPC. */
+    resolveActionAutomationContext?: (context: RpcHandlerContext) => Promise<Pick<ActionExecutorContext,
+        'actionAutomationPort' | 'serverId' | 'serverIdentityId' | 'externalActionTarget'> | undefined>;
     resolveCaptureRegistry?: () => MachineLiveStreamCaptureRegistry | null;
     resolveRegistry?: () => Promise<ResolvedContributionRegistry>;
     resolveRuntimeRegistry?: () => Promise<ResolvedExecutablePluginRuntimeRegistry>;
@@ -3198,7 +3201,14 @@ export function registerDaemonContributionRegistryProjectionHandler(
             const relayedUiPress = accountClientAction && invocationSurface === 'ui';
             const rpcApprovalContext = buildActionExecutorContextForRpc({ ...context, actionId: 'action.invoke',
                 ...(defaultSessionId ? { defaultSessionId } : {}) });
+            // Native action.invoke supplies this port through the Action executor. This ingress joins
+            // the same contributed Action owner with the installed Account's matching and Run ports.
+            const automationContext = !rpcApprovalContext.actionAutomationPort && !readObservation
+                && !request.data.requiredReadOnly && resolvedAction && resolvedAction.definition.readOnly !== true && context
+                ? await opts?.resolveActionAutomationContext?.(context)
+                : undefined;
             const approvalContext: ActionExecutorContext = {
+                ...automationContext,
                 ...context?.localActionContext,
                 ...rpcApprovalContext,
                 ...(relayedUiPress && rpcApprovalContext.surface === 'rpc' ? { surface: 'ui' as const } : {}),
