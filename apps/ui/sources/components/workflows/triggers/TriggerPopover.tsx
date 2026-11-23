@@ -83,7 +83,6 @@ import { useNotifyMeChannelOptions, useTriggerWorkflowDefinition } from './useTr
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { SessionTriggerPullRequestPicker } from './SessionTriggerPullRequestPicker';
 import { WorkflowExamplesSection } from '../library/WorkflowExamplesSection';
-import { resolveWorkflowBuiltinInputPresentation } from '../presentation/workflowBuiltinInputPresentation';
 import type { WorkflowReferenceOption } from '../presentation/workflowReferenceOptions';
 import { TriggerPluginEventRows } from './TriggerPluginEventRows';
 import { WorkflowRequesterDisclosure } from '../presentation/WorkflowRequesterDisclosure';
@@ -433,7 +432,6 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
         deferOriginSessionDefault: props.creatingSession === true,
         manual: props.manual,
     }), [when, inlineDefinition, workflow.definition, then, rawInputText, props.sessionId, props.creatingSession, props.manual, originServerId]);
-    const inputPresentation = resolveWorkflowBuiltinInputPresentation(then.kind === 'runWorkflow' ? then.ref : null);
     const changeThen = (next: TriggerThenValue) => {
         if (next.kind !== then.kind || (next.kind === 'runWorkflow' && then.kind === 'runWorkflow' && next.ref !== then.ref)) {
             setRawInputText({});
@@ -733,7 +731,6 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                         serverId={props.serverId ?? null}
                                         directory={props.directory ?? null}
                                         workflowFields={inputFields}
-                                        inputPresentation={inputPresentation}
                                         rawInputText={rawInputText}
                                         onChangeInputText={(name, text) => setRawInputText((current) => ({ ...current, [name]: text }))}
                                         onChangeInputValue={(name, value) => {
@@ -913,7 +910,6 @@ function ThenRows(props: Readonly<{
     serverId: string | null;
     directory: string | null;
     workflowFields: readonly WorkflowRunInputFieldState[];
-    inputPresentation: React.ComponentProps<typeof WorkflowRunInputs>['presentation'];
     rawInputText: Readonly<Record<string, string>>;
     onChangeInputText: (name: string, text: string) => void;
     onChangeInputValue: (name: string, value: JsonValue | undefined) => void;
@@ -1008,7 +1004,6 @@ function ThenRows(props: Readonly<{
                         optionsConsumer={then.ref === null ? undefined : { kind: 'workflow', workflow: then.ref }}
                         onChangeText={props.onChangeInputText} onChangeValue={props.onChangeInputValue}
                         pending={props.pending} machineId={props.machineId} serverId={props.serverId}
-                        presentation={props.inputPresentation}
                         prefix={`${props.testID}-input`} />
                 </>
             );

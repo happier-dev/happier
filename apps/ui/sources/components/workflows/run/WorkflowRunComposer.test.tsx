@@ -1,3 +1,4 @@
+import { resolveBuiltinWorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
 import * as React from 'react';
 import { View } from 'react-native';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -356,12 +357,10 @@ describe('workflow composer admission', () => {
         expect(screen.findAllByTestId('workflow-run-inputs-synthesis:yes')).toHaveLength(0);
     });
     it('reads a built-in\'s inputs in its own words wherever the form opens, without each caller passing them', async () => {
-        const screen = await renderScreen(<WorkflowRunComposer inputs={[{ name: 'focus', valueType: 'string', required: false, default: 'Review it' },
-            { name: 'maxRounds', valueType: 'number', required: false, default: 3 }]}
-            optionsConsumer={{ kind: 'workflow', workflow: 'builtin:review-and-converge' }}
+        const screen = await renderScreen(<WorkflowRunComposer inputs={resolveBuiltinWorkflowDefinitionV1('plan-with-a-panel')!.definition.inputs}
             values={{}} onChangeValues={() => {}} onRun={() => {}} onCancel={() => {}} />);
         await screen.pressByTestIdAsync('workflow-run-inputs-inputs-chip');
-        expect(screen.getTextContent()).toContain(t('workflows.builtins.reviewAndConverge.rounds'));
+        expect(screen.getTextContent()).toContain('Planners');
     });
     it('renders and opens a custom Where control in the wrapped composer', async () => {
         const where = { ...createExecutionRunStartContentChip({ key: 'review-where', controlId: 'machine', pending: true, icon: 'folder',

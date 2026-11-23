@@ -5,7 +5,6 @@ import type {
   WorkflowDefinitionCaptureRequestV1,
   WorkflowDefinitionCaptureResultV1,
 } from '@happier-dev/protocol/workflows/actionsV1';
-import { workflowInputTitle } from '@happier-dev/protocol/workflows/workflowV1';
 
 import { useExecutableParticipantLabel } from '@/components/sessions/authoring/useExecutableParticipantLabel';
 import { ExecutableParticipantPickerBody } from '@/components/sessions/authoring/ExecutableParticipantPickerBody';
@@ -39,7 +38,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { resolveWorkflowProblemPresentation } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { projectWorkflowFlow } from '@/components/workflows/flow/workflowFlowProjection';
-import { listWorkflowPersonInputs, resolveWorkflowBuiltinInputPresentation } from '@/components/workflows/presentation/workflowBuiltinInputPresentation';
+import { listWorkflowPersonInputs, resolveWorkflowInputTitle } from '@/components/workflows/presentation/workflowBuiltinInputPresentation';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
@@ -324,7 +323,6 @@ function Review(
   // The ordinary Flow owner reads the exact draft that editor intake and Save consume.
   // Message roles below exist only to repair an unresolved source selection.
   const flow = React.useMemo(() => definition ? projectWorkflowFlow(definition) : null, [definition, language]);
-  const inputPresentation = resolveWorkflowBuiltinInputPresentation(draft?.provenance.workflow?.source.ref);
   const inputs = definition ? listWorkflowPersonInputs(definition.inputs) : [];
   const numbers = React.useMemo(() => {
     const map = new Map<string, number>();
@@ -473,8 +471,8 @@ function Review(
           />
           <View testID="discussion-pattern-capture-asked" style={styles.chips}>
             {definition ? inputs.map((input) => {
-              const title = workflowInputTitle(input, inputPresentation?.[input.name]
-                ?? (input.name === 'participants' ? { title: t('workflows.builtins.patternInputs.participants') } : undefined));
+              const title = input.presentation?.title === undefined && input.name === 'participants'
+                ? t('workflows.builtins.patternInputs.participants') : resolveWorkflowInputTitle(input);
               const chip = { name: input.name, title, perRun: input.required,
                 onToggle: !draft.provenance.workflow && state.status === 'review'
                   ? () => void props.capture.setInputPerRun(input.name, !input.required) : undefined };

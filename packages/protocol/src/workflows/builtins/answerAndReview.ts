@@ -3,9 +3,9 @@ import { document, input, literal, result } from './definitionParts.js';
 
 export const ANSWER_AND_REVIEW_WORKFLOW_V1: WorkflowDefinitionV1 = {
   version: 1, defaults: {}, inputs: [
-    { name: 'question', valueType: 'string', required: true },
-    { name: 'answerer', valueType: 'json', required: true, inputType: { hostType: 'agentParticipant' } },
-    { name: 'reviewer', valueType: 'json', required: true, inputType: { hostType: 'agentParticipant' } },
+    { name: 'question', presentation: { title: { key: 'workflows.builtins.patternInputs.question', fallback: 'Question' } }, valueType: 'string', required: true },
+    { name: 'answerer', presentation: { title: { key: 'workflows.builtins.patternInputs.answerer', fallback: 'Who answers' } }, valueType: 'json', required: true, inputType: { hostType: 'agentParticipant' } },
+    { name: 'reviewer', presentation: { title: { key: 'workflows.builtins.patternInputs.reviewer', fallback: 'Who reviews' } }, valueType: 'json', required: true, inputType: { hostType: 'agentParticipant' } },
   ], blocks: [
     { kind: 'step', id: 'answer', name: 'Answer the question', document: document('Answer the supplied question.'),
       execution: { participant: { kind: 'input', name: 'answerer' } }, input: [input('question')], result: { kind: 'text' } },

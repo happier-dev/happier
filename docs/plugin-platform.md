@@ -7719,6 +7719,12 @@ typed Actions service; capture returns a reviewable draft and ordinary
 definition create/edit owns persistence. There is no plugin-only start path,
 participant resolver, pattern registry or result publisher.
 
+Workflow input copy belongs on each input’s optional `presentation` object.
+`title` names the field, `placeholder` prompts for a text value and
+`optionLabels` maps declared string enum values to display labels. Built-in
+and contributed forms use the same declarations. The original input names
+and enum values remain the keys for bindings and Run inputs.
+
 `WorkflowRunFoldHeader` on plugin-ui's existing public components surface binds
 the same presentation renderer as core's Session fold and Discussion Run row.
 It accepts already-projected words, disclosure state, slots and callbacks;

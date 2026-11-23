@@ -1186,6 +1186,11 @@ optional `description`, and a `definition`. The host projects these values into
 the cold manifest's `contributes.workflows` array with the local `id` included.
 Check your SDK artifact's generated capability matrix before using this family.
 
+In `definition.inputs`, give an input an optional `presentation` with a
+`title`, a text `placeholder`, or `optionLabels` keyed by its string enum
+values. For example, `presentation: { optionLabels: { preview: 'Preview only' } }`
+displays “Preview only” while the submitted value remains `preview`.
+
 Within a contributed definition, a local Action reference such as `post` resolves
 to that plugin's qualified Action id. Explicit host and qualified Action ids stay
 unchanged. Happier rejects invalid Workflow graphs before catalog publication;

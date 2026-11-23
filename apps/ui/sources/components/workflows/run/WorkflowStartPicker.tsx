@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { BUILTIN_WORKFLOW_CATALOG_V1 } from '@happier-dev/protocol/workflows/builtins/catalog';
-import { workflowInputTitle, type WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
+import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import { SelectionList, type SelectionListDynamicSectionResolveResult, type SelectionListStep } from '@/components/ui/selectionList';
 import { SelectionListSectionFailure } from '@/components/ui/selectionList/selectionListSectionFailure';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -15,7 +15,7 @@ import { getWorkflowDefinition } from '@/sync/domains/workflows/workflowDefiniti
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useWorkflowDefinitionLibrary, type WorkflowLibraryDefinition } from '../library/workflowLibraryReads';
 import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle, resolveWorkflowProblemPresentation } from '../presentation/workflowProblemPresentation';
-import { listWorkflowPersonInputs, resolveWorkflowBuiltinInputPresentation } from '../presentation/workflowBuiltinInputPresentation';
+import { listWorkflowPersonInputs, resolveWorkflowInputTitle } from '../presentation/workflowBuiltinInputPresentation';
 import { WorkflowBuiltinMark } from '../presentation/WorkflowBuiltinMark';
 import { formatTriggerSetSummary } from '../triggers/formatTriggerSummary';
 import { useWorkflowAccountLifetime } from '../workflowAccountScope';
@@ -55,9 +55,8 @@ const styles = StyleSheet.create((theme) => ({
 /** The highlighted pattern itself: what it does, the steps it takes, and what it asks for. */
 function WorkflowStartPreview(props: Readonly<{ selection: WorkflowStartSelection }>) {
     const { definition } = props.selection;
-    const presentation = resolveWorkflowBuiltinInputPresentation(props.selection.id);
     const inputs = listWorkflowPersonInputs(definition.inputs)
-        .map((input) => presentation?.[input.name]?.title ?? workflowInputTitle(input));
+        .map(resolveWorkflowInputTitle);
     return <ScrollView testID={`workflow-start-preview:${props.selection.id}`} contentContainerStyle={styles.preview}>
         <View style={styles.previewHead}>
             <Text style={styles.previewTitle}>{props.selection.name}</Text>
@@ -181,12 +180,11 @@ export function WorkflowStartPicker(props: WorkflowStartPickerProps): React.Reac
         id: entry.workflow, name: entry.title, description: entry.description ?? '', definition: entry.definition,
         source: { kind: 'catalog', workflow: entry.workflow, pluginVersion: entry.version },
     })), [library.pluginWorkflows]);
-    const asks = React.useCallback((definition: WorkflowDefinitionV1, workflowRef?: string) => {
-        const presentation = resolveWorkflowBuiltinInputPresentation(workflowRef);
+    const asks = React.useCallback((definition: WorkflowDefinitionV1) => {
         const asked = listWorkflowPersonInputs(definition.inputs);
         return asked.length === 0 ? t('workflows.start.noInputs')
             : t('workflows.start.asksFor', { names: asked
-                .map(input => presentation?.[input.name]?.title ?? workflowInputTitle(input)).join(', ') });
+                .map(resolveWorkflowInputTitle).join(', ') });
     }, []);
     const rootStep = React.useMemo<SelectionListStep>(() => ({
         id: 'workflow-start-picker', inputPlaceholder: t('workflows.start.search'),
@@ -200,7 +198,7 @@ export function WorkflowStartPicker(props: WorkflowStartPickerProps): React.Reac
                 // An unavailable pattern says why in place of what it does; the reason is the line that matters here.
                 id: entry.id, label: entry.name,
                 icon: builtin ? <WorkflowBuiltinMark icon={builtin.icon} size={ICON_SIZE.md} color={theme.colors.text.secondary} /> : undefined,
-                subtitle: needsSession ? t('workflows.start.needsSession') : entry.description || asks(entry.definition, entry.id),
+                subtitle: needsSession ? t('workflows.start.needsSession') : entry.description || asks(entry.definition),
                 testID: `workflow-choice:${entry.id}`,
                 detailContent: () => <WorkflowStartPreview selection={entry} />,
                 disabled: needsSession,
@@ -248,7 +246,7 @@ export function WorkflowStartPicker(props: WorkflowStartPickerProps): React.Reac
                 },
             },
             { kind: 'static', id: 'plugins', title: t('workflows.plugins.fromPlugins'), options: pluginSelections.map((entry) => ({
-                id: entry.id, label: entry.name, subtitle: entry.description || asks(entry.definition, entry.id), testID: `workflow-choice:${entry.id}`,
+                id: entry.id, label: entry.name, subtitle: entry.description || asks(entry.definition), testID: `workflow-choice:${entry.id}`,
                 icon: <Icon name="tree-structure" size={ICON_SIZE.md} color={theme.colors.text.secondary} />,
                 detailContent: () => <WorkflowStartPreview selection={entry} />,
             })) },

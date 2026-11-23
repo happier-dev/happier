@@ -144,11 +144,11 @@ function startReview(withSteps: boolean): WorkflowActionLeafV1 {
 export const REVIEW_AND_CONVERGE_WORKFLOW_V1: WorkflowDefinitionV1 = {
   version: 1, defaults: {},
   inputs: [
-    { name: 'reviewSession', valueType: 'json', required: true, inputType: { hostType: 'session' }, defaultFrom: 'origin_session' },
+    { name: 'reviewSession', presentation: { title: { key: 'workflows.builtins.reviewAndConverge.inputs.reviewSession', fallback: 'Session to review' } }, valueType: 'json', required: true, inputType: { hostType: 'session' }, defaultFrom: 'origin_session' },
     { name: 'reviewers', valueType: 'json', required: true },
     { name: 'steps', valueType: 'json', required: false },
     { name: 'then', valueType: 'string', required: false, default: 'report', enum: ['report', 'fix'] },
-    { name: 'focus', valueType: 'string', required: false, default: 'Review the changes made in this session.' },
+    { name: 'focus', presentation: { title: { key: 'workflows.builtins.reviewAndConverge.inputs.focus', fallback: 'What to focus on' } }, valueType: 'string', required: false, default: 'Review the changes made in this session.' },
   ],
   blocks: [{ kind: 'if', id: 'review-composition', name: 'Run the selected Review steps',
     when: { kind: 'exists', value: input('steps') }, then: [startReview(true)], otherwise: [startReview(false)] }],

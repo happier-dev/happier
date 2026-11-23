@@ -27,7 +27,6 @@ import { AccountTriggersReadContent } from '../triggers/AccountTriggersSection';
 import { formatTriggerSetSentence } from '../triggers/formatTriggerSummary';
 import { useWorkflowRunComposerModal } from '../run/useWorkflowRunComposerModal';
 import { useWorkflowRunNowController } from '../run/useWorkflowRunNowController';
-import { resolveWorkflowBuiltinInputPresentation } from '../presentation/workflowBuiltinInputPresentation';
 import { resolveContextualWorkflowProjectTarget } from './resolveContextualWorkflowTarget';
 import { WorkflowMissingDefinitionState } from './WorkflowMissingDefinitionState';
 import { WorkflowBuiltinSessionButton } from '../library/WorkflowBuiltinsSection';
@@ -135,7 +134,6 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
             router.push(createWorkflowRunRoute(accepted.run.id, lifetime?.scope.serverId) as never);
         }
     };
-    const inputPresentation = resolveWorkflowBuiltinInputPresentation(builtin?.id);
     // While a start is unsettled, the review shows the Where it already sent, without a setter.
     const retained = runNow.retainedRequest;
     const shownTarget = retained?.project ?? target;
@@ -143,7 +141,6 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
     const runComposer = useWorkflowRunComposerModal({ open, anchorRef: runAnchorRef, props: {
         inputs: plugin.definition.inputs, definition: plugin.definition, workflowName: plugin.title,
         optionsConsumer: { kind: 'workflow', workflow: catalogSource.workflow },
-        ...(inputPresentation === undefined ? {} : { inputPresentation }),
         preview: plugin.description ?? '', values, onChangeValues: setValues, rawTextValues, onChangeRawTextValues: setRawTextValues,
         machineId: shownTarget?.machineId ?? null, directory: shownTarget && isWorkflowProjectTarget(shownTarget) ? shownTarget.directory : null, serverId: props.serverId,
         retainedRequest: retained,

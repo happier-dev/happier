@@ -29,6 +29,11 @@ import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
 import { WorkflowRoleV1Schema, type WorkflowRoleV1 } from '../prompts/roles/rolesV1.js';
 import { WorkflowDefinitionRefV1StringSchema } from './workflowDefinitionRefV1.js';
 import type { InputFieldHint } from '../inputs/inputFields.js';
+import {
+  PluginLocalizedStringV2Schema,
+  resolvePluginLocalizedStringV2Text,
+  type PluginLocalizedStringV2,
+} from '../plugins/contributions/publicTypes.js';
 import { InputTypeReferenceV1Schema } from '../inputs/inputTypes.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 import { isWorkflowActionLiteralFieldV1 } from './stepActionsV1.js';
@@ -65,6 +70,11 @@ export const WorkflowInputDefinitionSchema = lazyZodSchema(() => z.strictObject(
   /** Bind the real source Session at admission; never a fabricated origin. */
   defaultFrom: z.optional(z.literal('origin_session')),
   description: z.optional(z.string()),
+  presentation: z.optional(z.strictObject({
+    title: z.optional(PluginLocalizedStringV2Schema),
+    placeholder: z.optional(PluginLocalizedStringV2Schema),
+    optionLabels: z.optional(z.record(z.string(), PluginLocalizedStringV2Schema)),
+  })),
   optionsSourceId: z.optional(z.string().check(z.minLength(1))),
   inputType: zMini.optional(InputTypeReferenceV1Schema),
 }).check(z.superRefine((value, ctx) => {
@@ -101,10 +111,10 @@ export type WorkflowInputDefinition = z.infer<typeof WorkflowInputDefinitionSche
  * words ("qa_note" → "Qa note"). Every field, chip and review row names an input through this one rule.
  */
 export function workflowInputTitle(
-  definition: Pick<WorkflowInputDefinition, 'name'>,
-  presentation?: Readonly<{ title?: string }>,
+  definition: Pick<WorkflowInputDefinition, 'name' | 'presentation'>,
+  resolveText: (text: PluginLocalizedStringV2) => string = resolvePluginLocalizedStringV2Text,
 ): string {
-  if (presentation?.title) return presentation.title;
+  if (definition.presentation?.title !== undefined) return resolveText(definition.presentation.title);
   const words = definition.name
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
     .replace(/[_\-.]+/g, ' ')
@@ -116,12 +126,13 @@ export function workflowInputTitle(
 /** Presentation adapter only: Workflow admission, defaults and references stay Workflow-owned. */
 export function workflowInputToFieldHint(
   definition: WorkflowInputDefinition,
-  presentation?: Readonly<{ title?: string; optionLabels?: Readonly<Record<string, string>> }>,
+  resolveText: (text: PluginLocalizedStringV2) => string = resolvePluginLocalizedStringV2Text,
 ): InputFieldHint {
   const hasChoices = definition.enum !== undefined || definition.optionsSourceId !== undefined || definition.inputType !== undefined;
   return {
     path: definition.name,
-    title: workflowInputTitle(definition, presentation),
+    title: workflowInputTitle(definition, resolveText),
+    ...(definition.presentation?.placeholder === undefined ? {} : { placeholder: resolveText(definition.presentation.placeholder) }),
     ...(definition.description === undefined ? {} : { description: definition.description }),
     widget: hasChoices ? definition.multiple || definition.valueType === 'json' && !definition.inputType ? 'multiselect' : 'select'
       : definition.valueType === 'string' ? 'text' : definition.valueType,
@@ -129,7 +140,11 @@ export function workflowInputToFieldHint(
     ...(definition.inputType ? { inputType: definition.inputType } : {}),
     ...(hasChoices ? { requireExplicitSelection: true } : {}),
     ...(definition.enum === undefined ? {} : {
-      options: definition.enum.map((value) => ({ value, label: presentation?.optionLabels?.[value] ?? value })),
+      options: definition.enum.map((value) => {
+        const labels = definition.presentation?.optionLabels;
+        const label = labels && Object.hasOwn(labels, value) ? labels[value] : undefined;
+        return { value, label: label === undefined ? value : resolveText(label) };
+      }),
     }),
     ...(definition.optionsSourceId === undefined ? {} : { optionsSourceId: definition.optionsSourceId }),
   };

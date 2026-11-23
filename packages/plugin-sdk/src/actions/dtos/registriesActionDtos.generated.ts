@@ -525,6 +525,23 @@ export type RegistriesActionResultById = {
                                 default?: JsonValue | undefined;
                                 defaultFrom?: 'origin_session' | undefined;
                                 description?: string | undefined;
+                                presentation?: undefined | {
+                                    title?: string | undefined | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                    placeholder?: string | undefined | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                    optionLabels?: Record<string, string | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    }> | undefined;
+                                };
                                 optionsSourceId?: string | undefined;
                                 inputType?: undefined | {
                                     hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
@@ -1149,6 +1166,23 @@ export type RegistriesActionResultById = {
                                 default?: JsonValue | undefined;
                                 defaultFrom?: 'origin_session' | undefined;
                                 description?: string | undefined;
+                                presentation?: undefined | {
+                                    title?: string | undefined | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                    placeholder?: string | undefined | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                    optionLabels?: Record<string, string | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    }> | undefined;
+                                };
                                 optionsSourceId?: string | undefined;
                                 inputType?: undefined | {
                                     hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';

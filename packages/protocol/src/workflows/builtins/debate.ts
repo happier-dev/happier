@@ -9,11 +9,11 @@ const digest: WorkflowStep = { kind: 'step', id: 'default-digest', name: 'Summar
 
 export const DEBATE_WORKFLOW_V1: WorkflowDefinitionV1 = {
   version: 1, defaults: {}, inputs: [
-    { name: 'question', valueType: 'string', required: true },
-    { name: 'participants', valueType: 'json', multiple: true, uniqueItems: true, inputType: { hostType: 'agentParticipant' }, required: true },
-    { name: 'rounds', valueType: 'number', required: true },
-    { name: 'digestAuthor', valueType: 'json', required: false, inputType: { hostType: 'agentParticipant' } },
-    { name: 'previousRoundContext', valueType: 'json', required: false, default: null },
+    { name: 'question', presentation: { title: { key: 'workflows.builtins.patternInputs.question', fallback: 'Question' } }, valueType: 'string', required: true },
+    { name: 'participants', presentation: { title: { key: 'workflows.builtins.patternInputs.participants', fallback: 'Participants' } }, valueType: 'json', multiple: true, uniqueItems: true, inputType: { hostType: 'agentParticipant' }, required: true },
+    { name: 'rounds', presentation: { title: { key: 'workflows.builtins.patternInputs.rounds', fallback: 'Rounds' } }, valueType: 'number', required: true },
+    { name: 'digestAuthor', presentation: { title: { key: 'workflows.builtins.patternInputs.digestAuthor', fallback: 'Who summarizes each round' } }, valueType: 'json', required: false, inputType: { hostType: 'agentParticipant' } },
+    { name: 'previousRoundContext', presentation: { title: { key: 'workflows.builtins.patternInputs.previousRoundContext', fallback: 'Previous round' } }, valueType: 'json', required: false, default: null },
   ], blocks: [{ kind: 'loop', id: 'rounds', name: 'Debate the question',
     repetition: { kind: 'until', maxIterations: { kind: 'input', name: 'rounds' }, stopWhen: { kind: 'any', conditions: [
       { kind: 'compare', operator: 'eq', left: result('outcomes', ['allPassed']), right: literal(true) },

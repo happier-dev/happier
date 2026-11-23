@@ -462,6 +462,13 @@ plugin SDK and event consumers reload together; an older closed reader rejects
 the additional field. No membership lookup, legacy authority inference or
 compatibility epoch is introduced.
 
+## Workflow input presentation (unreleased 0.3)
+
+Workflow input definitions in plugin manifests, saved Workflows and Run snapshots
+accept optional `presentation` copy. Definitions without it still parse. Update
+development Protocol, plugin SDK and UI readers together because earlier strict
+readers reject the field. The copy has no effect on input values or admission.
+
 ## Workflow authoring discovery (unreleased 0.3)
 
 The existing Action discovery read accepts optional `purpose: 'workflow_step' |

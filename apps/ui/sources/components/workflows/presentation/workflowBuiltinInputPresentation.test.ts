@@ -2,34 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import { resolveBuiltinWorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
 
-import { listWorkflowPersonInputs, resolveWorkflowBuiltinInputPresentation } from './workflowBuiltinInputPresentation';
+import { listWorkflowPersonInputs, resolveWorkflowInputTitle } from './workflowBuiltinInputPresentation';
 
 describe('built-in workflow input presentation', () => {
-    it('gives collaboration inputs human-readable labels through the shared presentation owner', () => {
-        const inputsByWorkflow = {
-            'builtin:parallel-implementations': ['request', 'first', 'second', 'third'],
-            'builtin:fresh-opinions': ['question', 'participants', 'synthesis', 'synthesizer', 'previousRoundContext'],
-            'builtin:answer-and-review': ['question', 'answerer', 'reviewer'],
-            'builtin:debate': ['question', 'participants', 'rounds', 'digestAuthor', 'previousRoundContext'],
-            'builtin:plan-with-a-panel': ['request', 'engines', 'participants', 'previousRoundContext'],
-            'builtin:review-and-converge': ['engines', 'maxRounds', 'apply', 'reviewSession', 'useJudge', 'focus'],
-        };
-
-        for (const [workflow, inputs] of Object.entries(inputsByWorkflow)) {
-            const presentation = resolveWorkflowBuiltinInputPresentation(workflow);
-            expect(presentation, workflow).toBeDefined();
-            for (const input of inputs) {
-                expect(presentation?.[input]?.title, `${workflow}.${input}`).toEqual(expect.any(String));
-                expect(presentation?.[input]?.title.trim(), `${workflow}.${input}`).not.toBe('');
-                expect(presentation?.[input]?.title, `${workflow}.${input}`).not.toBe(input);
-                expect(presentation?.[input]?.title, `${workflow}.${input}`).not.toContain('workflows.builtins.');
-            }
-        }
-    });
-
-    it('keeps authored workflows outside built-in localization', () => {
-        expect(resolveWorkflowBuiltinInputPresentation('plugin:example/custom')).toBeUndefined();
-        expect(resolveWorkflowBuiltinInputPresentation(null)).toBeUndefined();
+    it('renders the collaboration copy from the built-in input declarations', () => {
+        const panel = resolveBuiltinWorkflowDefinitionV1('plan-with-a-panel')!.definition;
+        const opinions = resolveBuiltinWorkflowDefinitionV1('fresh-opinions')!.definition;
+        expect(resolveWorkflowInputTitle(panel.inputs.find(input => input.name === 'engines')!)).toBe('Planners');
+        expect(resolveWorkflowInputTitle(opinions.inputs.find(input => input.name === 'synthesis')!)).toBe('Summarize the answers');
     });
 
     it('shows an authored text input even when its name matches the JSON replay binding', () => {

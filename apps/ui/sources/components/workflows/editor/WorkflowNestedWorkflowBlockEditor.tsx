@@ -3,7 +3,7 @@ import { View } from 'react-native';
 
 import type { WorkflowNestedLeafV1 } from '@happier-dev/protocol/workflows/workflowLeafV1';
 import type { WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
-import type { WorkflowInputDefinition } from '@happier-dev/protocol/workflows/workflowV1';
+import { workflowInputToFieldHint, type WorkflowInputDefinition } from '@happier-dev/protocol/workflows/workflowV1';
 import { projectWorkflowRunInputFields } from '@/sync/domains/workflows/workflowAuthoring';
 import { useWorkflowReferenceDefinition } from '@/components/workflows/presentation/useWorkflowReferenceDefinition';
 import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
@@ -19,7 +19,7 @@ import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { WorkflowBlockHeading, type WorkflowBlockNameEditor } from './WorkflowBlockHeading';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { resolveWorkflowBuiltinInputPresentation } from '@/components/workflows/presentation/workflowBuiltinInputPresentation';
+import { resolveWorkflowInputCopy } from '@/components/workflows/presentation/workflowBuiltinInputPresentation';
 import { WORKFLOW_BLOCK_KIND_GLYPH } from '@/components/workflows/presentation/workflowBlockKindGlyph';
 import { createWorkflowDefinitionRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import type { WorkflowDocumentStepSlots } from './workflowDocumentPresentation';
@@ -58,10 +58,13 @@ function WorkflowNestedOpenAction(props: Readonly<{ workflowRef: string; workflo
 function formatChildInputDefault(
     draft: WorkflowEditorDraft,
     input: WorkflowInputDefinition | undefined,
-    optionLabels: Readonly<Record<string, string>> | undefined,
+    optionLabel: (value: string) => string | undefined,
 ): string | undefined {
     if (input?.default === undefined) return undefined;
-    if (typeof input.default === 'string' && optionLabels?.[input.default] !== undefined) return optionLabels[input.default];
+    if (typeof input.default === 'string') {
+        const label = optionLabel(input.default);
+        if (label !== undefined) return label;
+    }
     return formatWorkflowBindingLiteral(draft, { kind: 'literal', value: input.default });
 }
 
@@ -115,8 +118,6 @@ export function WorkflowNestedWorkflowBlockEditor(props: Readonly<{
         for (const name of Object.keys(block.input)) if (!names.includes(name)) names.push(name);
         return names;
     }, [block.input, declared]);
-    // A built-in names its inputs for people; an authored child names its own.
-    const presentation = resolveWorkflowBuiltinInputPresentation(block.workflowRef);
     const rowPrefix = `${testIDPrefix}-workflow-${block.id}`;
     // Unnamed, the heading carries the card's identity (mark, title, Built-in, Open ›); the card shows its rows.
     const headingCarriesCard = resolveWorkflowUnnamedHeading(block) === 'card';
@@ -177,14 +178,17 @@ export function WorkflowNestedWorkflowBlockEditor(props: Readonly<{
                 {inputNames.map((name) => {
                     const binding = block.input[name];
                     const declaration = declared?.find((input) => input.name === name);
-                    const shown = presentation?.[name];
+                    const hint = declaration && workflowInputToFieldHint(declaration, resolveWorkflowInputCopy);
+                    const optionLabel = (value: string) => declaration?.presentation?.optionLabels
+                        && Object.hasOwn(declaration.presentation.optionLabels, value)
+                        ? hint?.options?.find(option => option.value === value)?.label : undefined;
                     const fieldId = `${rowPrefix}-input-${name}`;
-                    const defaultLabel = formatChildInputDefault(props.draft, declaration, shown?.optionLabels);
+                    const defaultLabel = formatChildInputDefault(props.draft, declaration, optionLabel);
                     return (
                         <WorkflowBindingRow
                             key={name}
                             testID={fieldId}
-                            label={shown?.title ?? formatWorkflowFieldLabel(name)}
+                            label={declaration?.presentation?.title === undefined ? formatWorkflowFieldLabel(name) : hint!.title}
                             required={declaration?.required === true}
                             binding={binding}
                             {...(defaultLabel === undefined ? {} : { defaultLabel })}
@@ -193,8 +197,8 @@ export function WorkflowNestedWorkflowBlockEditor(props: Readonly<{
                             editing={props.selected === true}
                             onEdit={props.onSelect}
                             {...(props.fieldIssues?.[name] === undefined ? {} : { issue: props.fieldIssues[name] })}
-                            {...(shown?.optionLabels === undefined ? {} : { formatLiteral: (value: unknown) =>
-                                typeof value === 'string' ? shown.optionLabels?.[value] ?? null : null })}
+                            {...(declaration?.presentation?.optionLabels === undefined ? {} : { formatLiteral: (value: unknown) =>
+                                typeof value === 'string' ? optionLabel(value) ?? null : null })}
                             onSet={() => { setBinding(name, { kind: 'literal', value: declaration?.default ?? '' }); props.onSelect(); }}
                             renderEditor={() => binding === undefined ? null : (
                                 <WorkflowValueReferenceEditor

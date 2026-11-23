@@ -1,7 +1,11 @@
 import * as React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { standardCleanup } from '@/dev/testkit';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { normalizePluginWorkflowContributionV1 } from '@happier-dev/protocol/workflows';
+import { resolveBuiltinWorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
+import { createWorkflowDefinitionFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { WorkflowRunComposer, type WorkflowRunComposerProps } from './WorkflowRunComposer';
 
 vi.mock('react-native', async () => {
@@ -23,7 +27,38 @@ function mount(values: WorkflowRunComposerProps['values'] = {}) {
 }
 
 describe('workflow composer accessibility', () => {
-    afterEach(standardCleanup);
+    let restorePopoverGlobals: () => void;
+    beforeEach(() => {
+        restorePopoverGlobals = withPopoverWebGlobals();
+    });
+    afterEach(async () => {
+        await standardCleanup();
+        restorePopoverGlobals();
+    });
+    it('renders a contributed Workflow’s declared input title, placeholder and choice label', async () => {
+        const { definition } = normalizePluginWorkflowContributionV1({
+            id: 'publish',
+            title: 'Publish',
+            definition: {
+                ...createWorkflowDefinitionFixture({
+                    defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
+                }),
+                inputs: [
+                    { name: 'message', valueType: 'string', required: true,
+                        presentation: { title: 'Release message', placeholder: 'Describe this release' } },
+                    { name: 'mode', valueType: 'string', required: true, enum: ['dry-run', 'publish'],
+                        presentation: { optionLabels: { 'dry-run': 'Preview only' } } },
+                ],
+            },
+        }, 'com.example.releases');
+        const screen = await renderScreen(<WorkflowRunComposer inputs={definition.inputs}
+            values={{ mode: 'dry-run' }} onChangeValues={() => {}} onRun={() => {}} onCancel={() => {}} />);
+        const input = screen.findByTestId('new-session-composer-input');
+        expect(input?.props.accessibilityLabel).toBe('Release message');
+        expect(input?.props.placeholder).toBe('Describe this release');
+        await screen.pressByTestIdAsync('workflow-run-inputs-inputs-chip');
+        expect(screen.getTextContent()).toContain('Preview only');
+    });
     it.each([false, true])('focuses a defaulted caller input once when ready (initially blocked: %s)', async (initiallyBlocked) => {
         const focus = vi.fn();
         const props: WorkflowRunComposerProps = {
@@ -71,12 +106,12 @@ describe('workflow composer accessibility', () => {
         expect(screen.findByTestId('new-session-composer-input')?.props.accessibilityHint).toBeTruthy();
     });
     it('names a built-in input by its presentation, never by its raw key', async () => {
-        const screen = await renderScreen(<WorkflowRunComposer inputs={[{ name: 'request', valueType: 'string', required: true }]}
-            inputPresentation={{ request: { title: 'What should the panel plan?' } }}
+        const { definition } = resolveBuiltinWorkflowDefinitionV1('plan-with-a-panel')!;
+        const screen = await renderScreen(<WorkflowRunComposer inputs={definition.inputs}
             values={{}} onChangeValues={() => {}} onRun={() => {}} onCancel={() => {}} />);
         const input = screen.findByTestId('new-session-composer-input');
         expect(input?.props.placeholder).toBe('What should the panel plan?');
-        expect(input?.props.accessibilityLabel).toBe('What should the panel plan?');
+        expect(input?.props.accessibilityLabel).toBe('Request');
     });
     it('closes through its presenter rather than a separate Cancel row', async () => {
         const screen = await mount();

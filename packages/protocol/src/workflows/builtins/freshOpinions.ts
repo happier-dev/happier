@@ -1,17 +1,21 @@
 import type { WorkflowDefinitionV1 } from '../workflowV1.js';
 import { document, input, literal, result } from './definitionParts.js';
 
-const implementationParticipants = ['first', 'second', 'third'];
+const implementationParticipants = [
+  { name: 'first', title: { key: 'workflows.builtins.parallelImplementations.inputs.first', fallback: 'First model' } },
+  { name: 'second', title: { key: 'workflows.builtins.parallelImplementations.inputs.second', fallback: 'Second model' } },
+  { name: 'third', title: { key: 'workflows.builtins.parallelImplementations.inputs.third', fallback: 'Third model' } },
+];
 
 /** Three editable branches; add or remove a branch and its participant input to change the count. */
 export const PARALLEL_IMPLEMENTATIONS_WORKFLOW_V1: WorkflowDefinitionV1 = {
   version: 1, defaults: {}, inputs: [
-    { name: 'request', valueType: 'string', required: true },
-    ...implementationParticipants.map(name => ({ name, valueType: 'json' as const, required: true,
+    { name: 'request', presentation: { title: { key: 'workflows.builtins.planWithAPanel.inputs.request', fallback: 'Request' } }, valueType: 'string', required: true },
+    ...implementationParticipants.map(({ name, title }) => ({ name, presentation: { title }, valueType: 'json' as const, required: true,
       description: 'Choose a model to start in a new worktree.', inputType: { hostType: 'agentParticipant' as const } })),
   ], blocks: [
     { kind: 'parallel', id: 'implementations', name: 'Implement independently', failurePolicy: 'collect_outcomes',
-      branches: implementationParticipants.map(name => ({ id: name, name, blocks: [
+      branches: implementationParticipants.map(({ name }) => ({ id: name, name, blocks: [
         { kind: 'step' as const, id: `implement-${name}`, name: 'Implement the task',
           document: document('Implement the supplied task independently in your assigned worktree and run relevant checks. Preserve unrelated work. Return your exact working directory, a summary of your changes and checks, and any failures. Do not merge, apply another candidate or remove any worktree.'),
           execution: { participant: { kind: 'input' as const, name },
@@ -28,11 +32,11 @@ export const PARALLEL_IMPLEMENTATIONS_WORKFLOW_V1: WorkflowDefinitionV1 = {
 
 export const FRESH_OPINIONS_WORKFLOW_V1: WorkflowDefinitionV1 = {
   version: 1, defaults: {}, inputs: [
-    { name: 'question', valueType: 'string', required: true },
-    { name: 'participants', valueType: 'json', multiple: true, minItems: 2, uniqueItems: true, inputType: { hostType: 'agentParticipant' }, required: true },
-    { name: 'synthesis', valueType: 'boolean', required: false, default: false },
-    { name: 'synthesizer', valueType: 'json', inputType: { hostType: 'agentParticipant' }, required: false },
-    { name: 'previousRoundContext', valueType: 'json', required: false, default: null },
+    { name: 'question', presentation: { title: { key: 'workflows.builtins.patternInputs.question', fallback: 'Question' } }, valueType: 'string', required: true },
+    { name: 'participants', presentation: { title: { key: 'workflows.builtins.patternInputs.participants', fallback: 'Participants' } }, valueType: 'json', multiple: true, minItems: 2, uniqueItems: true, inputType: { hostType: 'agentParticipant' }, required: true },
+    { name: 'synthesis', presentation: { title: { key: 'workflows.builtins.patternInputs.synthesis', fallback: 'Summarize the answers' } }, valueType: 'boolean', required: false, default: false },
+    { name: 'synthesizer', presentation: { title: { key: 'workflows.builtins.patternInputs.synthesizer', fallback: 'Who summarizes' } }, valueType: 'json', inputType: { hostType: 'agentParticipant' }, required: false },
+    { name: 'previousRoundContext', presentation: { title: { key: 'workflows.builtins.patternInputs.previousRoundContext', fallback: 'Previous round' } }, valueType: 'json', required: false, default: null },
   ], blocks: [
     { kind: 'loop', id: 'opinions', name: 'Everyone answers on their own', repetition: { kind: 'items', items: input('participants'),
       execution: 'parallel', failurePolicy: 'collect_outcomes' }, body: [

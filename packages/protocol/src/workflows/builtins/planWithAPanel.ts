@@ -6,10 +6,11 @@ const plannerPrompt = 'Draft a read-only plan for the supplied request. Explain 
 export const PLAN_WITH_A_PANEL_WORKFLOW_V1: WorkflowDefinitionV1 = {
   version: 1, defaults: {},
   inputs: [
-    { name: 'request', valueType: 'string', required: true },
-    { name: 'engines', valueType: 'json', required: false, optionsSourceId: 'execution.backends.enabled' },
-    { name: 'participants', valueType: 'json', required: false, multiple: true, inputType: { hostType: 'agentParticipant' }, conflictsWith: ['engines'] },
-    { name: 'previousRoundContext', valueType: 'json', required: false, default: null },
+    { name: 'request', presentation: { title: { key: 'workflows.builtins.planWithAPanel.inputs.request', fallback: 'Request' },
+      placeholder: { key: 'workflows.builtins.planWithAPanel.inputs.requestPlaceholder', fallback: 'What should the panel plan?' } }, valueType: 'string', required: true },
+    { name: 'engines', presentation: { title: { key: 'workflows.builtins.planWithAPanel.inputs.engines', fallback: 'Planners' } }, valueType: 'json', required: false, optionsSourceId: 'execution.backends.enabled' },
+    { name: 'participants', presentation: { title: { key: 'workflows.builtins.patternInputs.participants', fallback: 'Participants' } }, valueType: 'json', required: false, multiple: true, inputType: { hostType: 'agentParticipant' }, conflictsWith: ['engines'] },
+    { name: 'previousRoundContext', presentation: { title: { key: 'workflows.builtins.patternInputs.previousRoundContext', fallback: 'Previous round' } }, valueType: 'json', required: false, default: null },
   ],
   blocks: [
     {

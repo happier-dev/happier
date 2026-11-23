@@ -444,7 +444,7 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
             </SectionContentRow> : null}
             {editing && !noValueNeeded ? decisionEditor ?? (fields && fieldForm ? projected.map((field) => {
                 const schema = fields[field.definition.name]!;
-                const label = workflowInputTitle(field.definition, schema);
+                const label = schema.title || workflowInputTitle(field.definition);
                 const id = `${prefix}-field-${field.definition.name}`;
                 const fieldError = fieldErrorOf(field);
                 if (field.definition.valueType === 'boolean') return <SegmentedChoiceItem key={field.definition.name}

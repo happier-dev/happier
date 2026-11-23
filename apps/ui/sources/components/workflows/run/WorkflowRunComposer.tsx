@@ -15,7 +15,6 @@ import type {
   WorkflowMaterializedLeafV1,
 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import {
-  workflowInputTitle,
   workflowInputToFieldHint,
   type WorkflowInputDefinition,
 } from '@happier-dev/protocol/workflows/workflowV1';
@@ -76,7 +75,8 @@ import {
   findWorkflowMainInput,
   isWorkflowChoiceInput,
   isWorkflowHostBoundInput,
-  resolveWorkflowBuiltinInputPresentation,
+  resolveWorkflowInputCopy,
+  resolveWorkflowInputTitle,
 } from '../presentation/workflowBuiltinInputPresentation';
 import { formatWorkflowInputValue } from '@/sync/domains/workflows/workflowInputText';
 import {
@@ -286,7 +286,6 @@ export type WorkflowRunComposerProps = Readonly<{
     | 'pathPopover'
   >;
   /** Catalog-facing input copy (built-ins); authored workflows name their inputs themselves. */
-  inputPresentation?: WorkflowRunInputPresentation;
   /** The host's own Agent and model picker for this draft, shown on the review's Agent row in place of its summary. */
   agentControl?: React.ReactNode;
   /** Demand-mounted choice from the shared executable participant picker. */
@@ -294,18 +293,6 @@ export type WorkflowRunComposerProps = Readonly<{
     typeof InputTypePickerHostProvider
   >['pickAgentParticipant'];
 }>;
-
-export type WorkflowRunInputPresentation = Readonly<
-  Record<
-    string,
-    Readonly<{
-      title: string;
-      /** The composer's empty-field prompt when the input has no authored description. */
-      placeholder?: string;
-      optionLabels?: Readonly<Record<string, string>>;
-    }>
-  >
->;
 
 function WorkflowRunAgentSummary(props: Readonly<{
   definition: WorkflowDefinitionV1; testID: string; serverId?: string | null;
@@ -487,15 +474,6 @@ export function WorkflowRunComposer(
   );
   const missing = missingFields.length;
   const inputsMissingFields = missingFields.filter((field) => !isParticipantInput(field.definition));
-  // A built-in reads in its own words wherever its form opens; the source it reads options for names it.
-  const inputPresentation = React.useMemo(
-    () =>
-      props.inputPresentation ??
-      resolveWorkflowBuiltinInputPresentation(props.optionsConsumer?.workflow),
-    [props.inputPresentation, props.optionsConsumer?.workflow],
-  );
-  const inputTitle = (definition: WorkflowInputDefinition) =>
-    workflowInputTitle(definition, inputPresentation?.[definition.name]);
   const blocked = fields.find((field) => field.blocking) ?? null;
   // A retained request was reviewed when it was first sent; the canonical admission owner re-checks it.
   const disabled =
@@ -559,7 +537,7 @@ export function WorkflowRunComposer(
             : (agentReadinessCause ?? props.startProblem?.message ?? null)
         : blocked.errorCode === 'missing_required_input'
           ? t('workflows.start.addToStart', {
-              name: inputTitle(blocked.definition),
+              name: resolveWorkflowInputTitle(blocked.definition),
             })
           : t('workflows.issue.invalid_input');
   // Hosted in a composer whose chip names the workflow (New, docked or full page): the chips already say the
@@ -699,7 +677,7 @@ export function WorkflowRunComposer(
           ]),
       ...participantFields.map((field, index) => {
         const definition = field.definition;
-        const title = inputTitle(definition);
+        const title = resolveWorkflowInputTitle(definition);
         return createExecutionRunStartContentChip({
           key: `workflow-start-input:${definition.name}`,
           icon: 'users',
@@ -728,9 +706,6 @@ export function WorkflowRunComposer(
               prefix={prefix}
               optionsConsumer={props.optionsConsumer}
               pickAgentParticipant={props.pickAgentParticipant}
-              {...(inputPresentation === undefined
-                ? {}
-                : { presentation: inputPresentation })}
             />
           ),
         });
@@ -747,7 +722,7 @@ export function WorkflowRunComposer(
               label:
                 inputsMissingFields.length === 1
                   ? t('workflows.start.neededNamed', {
-                      name: inputTitle(inputsMissingFields[0]!.definition),
+                      name: resolveWorkflowInputTitle(inputsMissingFields[0]!.definition),
                     })
                   : inputsMissingFields.length > 1
                     ? t('workflows.start.needed', { count: inputsMissingFields.length })
@@ -759,7 +734,7 @@ export function WorkflowRunComposer(
                 <View>
                   {main?.errorCode === 'missing_required_input' ? (
                     <View style={styles.mainReadiness}>
-                      <FieldItem label={inputTitle(main.definition)}>
+                      <FieldItem label={resolveWorkflowInputTitle(main.definition)}>
                         {/* The footer says it once in the readiness tone; here it is the field's state, as for its siblings. */}
                         <Text style={styles.secondary}>
                           {t('workflows.start.required')}
@@ -779,9 +754,6 @@ export function WorkflowRunComposer(
                     prefix={prefix}
                     optionsConsumer={props.optionsConsumer}
                     pickAgentParticipant={props.pickAgentParticipant}
-                    {...(inputPresentation === undefined
-                      ? {}
-                      : { presentation: inputPresentation })}
                   />
                 </View>
               ),
@@ -945,7 +917,6 @@ export function WorkflowRunComposer(
       inputsMissingFields,
       participantFields,
       participantLabels,
-      inputPresentation,
       prefix,
       props.extraActionChips,
       props.machineId,
@@ -1013,7 +984,7 @@ export function WorkflowRunComposer(
               source={workflowSource === 'artifact' ? t('workflows.start.library')
                 : workflowSource === 'builtin' ? t('workflows.start.builtin')
                   : workflowSource === 'plugin' ? t('workflows.plugins.fromPlugins') : undefined}
-              inputs={personFields.map(field => inputTitle(field.definition))}>
+              inputs={personFields.map(field => resolveWorkflowInputTitle(field.definition))}>
               {props.leadContent}
             </WorkflowStartDetailsLead> : null}
             {/* Hosted, the composer's own chips already say where and with what this starts. */}
@@ -1041,7 +1012,7 @@ export function WorkflowRunComposer(
               </Text>
             )) : composerHosted ? null : (
               <Text testID={`${prefix}-main-label`} style={styles.mainLabel}>
-                {inputTitle(main.definition)}
+                {resolveWorkflowInputTitle(main.definition)}
               </Text>
             )}
           </View>
@@ -1071,14 +1042,14 @@ export function WorkflowRunComposer(
             placeholder={
               main === null
                 ? t('workflows.start.preview')
-                : (main.definition.description ??
-                  inputPresentation?.[main.definition.name]?.placeholder ??
-                  inputTitle(main.definition))
+                : (main.definition.presentation?.placeholder === undefined
+                  ? main.definition.description ?? resolveWorkflowInputTitle(main.definition)
+                  : resolveWorkflowInputCopy(main.definition.presentation.placeholder))
             }
             inputAccessibilityLabel={
               main === null
                 ? t('workflows.start.preview')
-                : inputTitle(main.definition)
+                : resolveWorkflowInputTitle(main.definition)
             }
             inputAccessibilityHint={
               main?.blocking ? (reason ?? undefined) : undefined
@@ -1305,7 +1276,6 @@ export function WorkflowRunInputs(
     optionsConsumer?: WorkflowRunComposerProps['optionsConsumer'];
     pickAgentParticipant?: WorkflowRunComposerProps['pickAgentParticipant'];
     /** Catalog-facing copy; input names and option values remain the authored contract. */
-    presentation?: WorkflowRunInputPresentation;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -1321,10 +1291,7 @@ export function WorkflowRunInputs(
     [props.fields],
   );
   const requests = fields.map(({ definition }) => ({
-    field: workflowInputToFieldHint(
-      definition,
-      props.presentation?.[definition.name],
-    ),
+    field: workflowInputToFieldHint(definition, resolveWorkflowInputCopy),
     draftInput: props.values,
     ...(props.optionsConsumer ? { consumer: props.optionsConsumer } : {}),
   }));
@@ -1365,10 +1332,10 @@ export function WorkflowRunInputs(
           <View style={[styles.inputFields, participantPicker.body ? styles.hiddenFields : undefined]}
             accessibilityElementsHidden={participantPicker.body !== null}
             importantForAccessibility={participantPicker.body ? 'no-hide-descendants' : 'auto'}>
-          {fields.map((field) => {
+          {fields.map((field, index) => {
             const definition = field.definition;
-            const presentation = props.presentation?.[definition.name];
-            const title = workflowInputTitle(definition, presentation);
+            const hint = requests[index]!.field;
+            const title = hint.title;
             const id = `${props.prefix}-${definition.name}`;
             const repair =
               field.errorCode === 'missing_required_input'
@@ -1388,14 +1355,12 @@ export function WorkflowRunInputs(
                           ? // A yes/no default reads in the words of its own choice, never as `true`/`false`.
                             t(definition.default ? 'common.yes' : 'common.no')
                           : typeof definition.default === 'string'
-                            ? (presentation?.optionLabels?.[
-                                definition.default
-                              ] ?? formatWorkflowInputValue(definition.default))
+                            ? (hint.options?.find(option => option.value === definition.default)?.label
+                                ?? formatWorkflowInputValue(definition.default))
                             : formatWorkflowInputValue(definition.default),
                     })
                 : definition.description;
             if (isWorkflowChoiceInput(definition)) {
-              const hint = workflowInputToFieldHint(definition, presentation);
               const options = resolveOptions(hint);
               const optionState = optionsState(hint);
               const selected = Array.isArray(field.value)
@@ -1519,6 +1484,7 @@ export function WorkflowRunInputs(
                   testID={id}
                   value={value}
                   accessibilityLabel={title}
+                  placeholder={hint.placeholder}
                   error={missingRequired ? null : repair}
                   multiline={definition.valueType !== 'number'}
                   monospace={definition.valueType === 'json'}

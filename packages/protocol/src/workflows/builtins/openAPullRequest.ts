@@ -4,10 +4,10 @@ import { agent, document, input, literal, result, SECOND_OPINION_RESULT_V1 } fro
 export const OPEN_A_PULL_REQUEST_WORKFLOW_V1: WorkflowDefinitionV1 = {
   version: 1, defaults: {},
   inputs: [
-    { name: 'base', valueType: 'string', required: true },
-    { name: 'title', valueType: 'string', required: true },
-    { name: 'body', valueType: 'string', required: false, default: '' },
-    { name: 'question', valueType: 'string', required: false,
+    { name: 'base', presentation: { title: { key: 'workflows.builtins.openAPullRequest.inputs.base', fallback: 'Base branch' } }, valueType: 'string', required: true },
+    { name: 'title', presentation: { title: { key: 'workflows.builtins.openAPullRequest.inputs.title', fallback: 'Pull request title' } }, valueType: 'string', required: true },
+    { name: 'body', presentation: { title: { key: 'workflows.builtins.openAPullRequest.inputs.body', fallback: 'Description' } }, valueType: 'string', required: false, default: '' },
+    { name: 'question', presentation: { title: { key: 'workflows.builtins.openAPullRequest.inputs.question', fallback: 'Question for the second opinion' } }, valueType: 'string', required: false,
       default: 'Is this change ready for a pull request? Check correctness, tests and risk.' },
   ],
   blocks: [

@@ -85,7 +85,7 @@ describe('workflow input option sources', () => {
         optionsSourceId: 'notifications.channels.available',
       });
     expect(workflowInputToFieldHint({ name: 'mode', valueType: 'string', required: false,
-      default: 'safe', enum: ['safe', 'fast'] }, { title: 'Mode', optionLabels: { safe: 'Safe mode' } }))
+      default: 'safe', enum: ['safe', 'fast'], presentation: { title: 'Mode', optionLabels: { safe: 'Safe mode' } } }))
       .toEqual({ path: 'mode', title: 'Mode', widget: 'select', required: false, requireExplicitSelection: true,
         options: [{ value: 'safe', label: 'Safe mode' }, { value: 'fast', label: 'fast' }] });
     expect(WorkflowInputDefinitionSchema.safeParse({ name: 'channel', valueType: 'string', required: true,
@@ -95,7 +95,7 @@ describe('workflow input option sources', () => {
     const input = { name: 'qa_note', valueType: 'string', required: false } as const;
     expect(workflowInputTitle(input)).toBe('Qa note');
     expect(workflowInputTitle({ ...input, name: 'repoName' })).toBe('Repo name');
-    expect(workflowInputTitle(input, { title: 'Note for QA' })).toBe('Note for QA');
+    expect(workflowInputTitle({ ...input, presentation: { title: 'Note for QA' } })).toBe('Note for QA');
     expect(workflowInputToFieldHint(input).title).toBe('Qa note');
   });
   it('preserves a declared string enum and rejects incompatible types and defaults', () => {
