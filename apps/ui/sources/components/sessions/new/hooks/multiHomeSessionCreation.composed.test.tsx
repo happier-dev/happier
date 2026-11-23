@@ -55,6 +55,15 @@ const modalBoundary = vi.hoisted(() => ({
     confirm: vi.fn(async (..._args: unknown[]) => false),
     show: vi.fn((_params: unknown) => 'composed-modal'),
 }));
+async function readDraftDeletionReview() {
+    await vi.waitFor(() => expect(modalBoundary.show).toHaveBeenCalledTimes(1));
+    const review = modalBoundary.show.mock.calls[0]![0] as import('@/modal/types').CustomModalConfig;
+    const props = review.props as { irreversible: boolean; onAnswer(confirmed: boolean): void };
+    expect(props.irreversible).toBe(true);
+    expect(props.onAnswer).toBeTypeOf('function');
+    return props;
+}
+
 const observabilityBoundary = vi.hoisted(() => ({ capture: vi.fn() }));
 // Native screen focus (React Navigation) is a platform boundary; tests that cover a Home screen move it.
 const screenFocusBoundary = vi.hoisted(() => ({ focused: true }));
@@ -1244,7 +1253,7 @@ describe('multi-Home Session creation composition', () => {
             </InjectedAuthProvider>;
         };
         const screen = await renderScreen(element(false));
-        modalBoundary.confirm.mockResolvedValue(true);
+        modalBoundary.show.mockClear();
         try {
             expect(screen.findByTestId('hub-composer.open')?.props.accessibilityValue?.text).toBeTruthy();
             await act(async () => { screen.findByTestId('hub-composer.open')!.props.onFocus(); });
@@ -1265,7 +1274,12 @@ describe('multi-Home Session creation composition', () => {
             expect(screen.root.findByType(AgentInput).props.attachmentRowItems).toMatchObject([{ attachmentId: expect.any(String), status: 'pending' }]);
             expect(screen.root.findByType(MultiTextInput).props.references).toMatchObject([{ readableMarker: '[Image #1]', state: 'ready' }]);
             expect(getSessionDraftSnapshot(scope, address)?.conflict).toBeNull();
-            await act(async () => { await screen.findByType(NewSessionDraftComposerActions).props.onDelete(); });
+            let deletion!: Promise<void>;
+            await act(async () => { deletion = screen.findByType(NewSessionDraftComposerActions).props.onDelete(); });
+            const review = await readDraftDeletionReview();
+            expect(records.get(draftId)?.content).not.toBeNull();
+            // Present-user confirmation now goes through the Action review host.
+            await act(async () => { review.onAnswer(true); await deletion; });
             expect(getSessionDraftSnapshot(scope, address)).toBeNull();
             expect(records.get(draftId)?.content).toBeNull();
             await screen.update(element(false));
