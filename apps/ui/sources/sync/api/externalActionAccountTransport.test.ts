@@ -35,6 +35,10 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { requesterMachineNoticesState } from '@/sync/domains/state/disclosureUiState';
+import { keepHyphenatedNameTogether } from '@/utils/sessions/machineDisplayNames';
+import { readPresentationNotice, retirePresentationNotice, subscribePresentationNotices } from '@/components/sessions/presentation/presentationNotices';
+import { t } from '@/text';
 
 const disclosureConsent = vi.hoisted(() => vi.fn<() => Promise<boolean>>());
 vi.mock('@/modal', async () => {
@@ -319,7 +323,7 @@ describe('captured Account Action response decoding', () => {
         expect(homes.requestsFor('/v1/actions/session.spawn_new/execution-authorization')).toEqual([]);
         expect(homes.requestsFor('/v1/actions/session.spawn_new')).toEqual([]);
     });
-    it.each(['preset', 'shared', 'owned-spawn', 'delegated-accepted', 'delegated-declined', 'delegated-automation'] as const)('dispatches Home-admitted finite custody without controller inventory (%s)', async recipient => {
+    it.each(['preset', 'shared', 'owned-spawn', 'delegated-accepted', 'delegated-automation'] as const)('dispatches Home-admitted finite custody without controller inventory or a consent step (%s)', async recipient => {
         if (!account) throw new Error('Expected captured Account');
         const guestKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
         const controllerKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(29));
@@ -327,7 +331,11 @@ describe('captured Account Action response decoding', () => {
             installationId: 'installation-1', installationPublicKey: encodeBase64(guestKeys.publicKey),
             ...(recipient === 'owned-spawn' ? { managedMachineRef: { homeId: binding.serverIdentityId, managedId: 'managed-guest' } } : {}),
             access: { custodian: { accountId: recipient === 'shared' ? 'custodian' : 'owner', displayName: 'Custodian' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } };
-        disclosureConsent.mockResolvedValue(recipient !== 'delegated-declined');
+        // Each case is a first use on this device.
+        for (const key of Object.keys(requesterMachineNoticesState.readAll())) requesterMachineNoticesState.remove(key);
+        retirePresentationNotice();
+        const notices: string[] = [];
+        const stopNotices = subscribePresentationNotices(() => { const notice = readPresentationNotice(); if (notice) notices.push(notice.key); });
         let controllerReads = 0;
         homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
             body: await createMachineReadBatchResponseFixture(body, id => {
@@ -380,7 +388,7 @@ describe('captured Account Action response decoding', () => {
             return { body: { v: 1, actionId, requestId: binding.requestId,
                 execution: { ok: true, result: { type: 'success', sessionId: 'created-session' } } } };
         } });
-        const result = await executeOriginalAccountMachineAction({ account, actionId, requestId: binding.requestId,
+        const run = () => executeOriginalAccountMachineAction({ account: account!, actionId, requestId: binding.requestId,
             ...(recipient === 'preset' ? { invocation: { caller: { kind: 'host' as const }, surface: 'ui' as const, authority: 'present_user' as const,
                 sessionCreationDefaults: { context: buildManagedSessionDefaultsContext({}), authoredChoices: {},
                     managedPresetAcquisition: { selection: { kind: 'preset' as const, homeId: binding.serverIdentityId, id: 'selected-preset', revision: 1 },
@@ -396,14 +404,31 @@ describe('captured Account Action response decoding', () => {
                 directory: { kind: 'path', path: '/tmp' }, permissionMode: 'default',
                 agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             })) });
-        expect(homes.requestsFor(`${actionPath}/execution-authorization`), JSON.stringify(result)).toHaveLength(1);
-        expect(controllerReads).toBe(0);
-        expect(disclosureConsent, JSON.stringify(result)).toHaveBeenCalledTimes(recipient === 'shared' || recipient === 'delegated-automation' ? 0 : 1);
-        if (recipient === 'delegated-declined' || recipient === 'delegated-automation') {
-            expect(homes.requestsFor(actionPath)).toHaveLength(0);
-            expect(result).toMatchObject({ ok: false, errorCode: recipient === 'delegated-automation'
-                ? 'requester_account_material_unavailable' : 'requester_credential_disclosure_declined' });
-        } else expect(result).toMatchObject({ ok: true, result: { sessionId: 'created-session' } });
+        try {
+            const result = await run();
+            expect(homes.requestsFor(`${actionPath}/execution-authorization`), JSON.stringify(result)).toHaveLength(1);
+            expect(controllerReads).toBe(0);
+            // Owner ruling 2026-11-23 "tell once, never block": no consent step on any path.
+            expect(disclosureConsent).not.toHaveBeenCalled();
+            if (recipient === 'delegated-automation') {
+                expect(homes.requestsFor(actionPath)).toHaveLength(0);
+                expect(result).toMatchObject({ ok: false, errorCode: 'requester_account_material_unavailable' });
+                expect(notices).toEqual([]);
+                return;
+            }
+            expect(result).toMatchObject({ ok: true, result: { sessionId: 'created-session' } });
+            // The person is told once, naming the other person's Machine that received the sign-in.
+            const told = recipient === 'shared' ? row.id : 'private-controller';
+            expect(notices).toEqual([`machine-requester-use:${binding.serverIdentityId}:${told}`]);
+            expect(readPresentationNotice()).toMatchObject({ severity: 'info', sticky: true,
+                message: expect.stringContaining(t('machineRequester.osVisibility', { owner: 'Custodian', machine: keepHyphenatedNameTogether(told) })) });
+            retirePresentationNotice();
+            // A second use of the same Machine on this device proceeds and says nothing.
+            expect(await run()).toMatchObject({ ok: true, result: { sessionId: 'created-session' } });
+            expect(homes.requestsFor(actionPath)).toHaveLength(2);
+            expect(notices).toHaveLength(1);
+            expect(readPresentationNotice()).toBeNull();
+        } finally { stopNotices(); }
     });
     it.each(['matching', 'mismatched'] as const)('preserves the Machine availability cause and remedy with %s request correlation', async correlation => {
         const diagnostic = { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' };

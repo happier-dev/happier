@@ -7,7 +7,16 @@ import { completeLegacyDisclosureImportBeforeRemoval } from './settingsPersisten
 // Each interaction writes one record and never publishes a Settings snapshot.
 export const collapsedGroupsState = createPersistentUiState('collapsed-groups-v1', value => z.boolean().parse(value));
 export const sessionInfoDisclosuresState = createPersistentUiState('session-info-disclosures-v1', value => z.boolean().parse(value));
+/** Machines whose "your sign-in is used there" notice this device has already shown, keyed `<Home identity>:<Machine id>`. */
+export const requesterMachineNoticesState = createPersistentUiState('requester-machine-notices-v1', value => z.boolean().parse(value));
 const DisclosureRecordSchema = z.record(z.string(), z.boolean());
+
+/** True only the first time on this device; records the showing in the same step. */
+export function claimRequesterMachineNotice(key: string): boolean {
+    if (requesterMachineNoticesState.read(key)) return false;
+    requesterMachineNoticesState.set(key, true);
+    return true;
+}
 
 export function useCollapsedGroupKeys(selection: string | readonly string[]): Readonly<Record<string, boolean>> {
     const selectionIdentity = JSON.stringify(selection);

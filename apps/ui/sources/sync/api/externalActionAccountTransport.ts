@@ -40,8 +40,7 @@ import { resolveFreshMachineAdministrationExecutionTarget } from '@/sync/domains
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { storage } from '@/sync/domains/state/storageStore';
 import { serializeRequesterAccountCredentials } from '@/sync/ops/actions/requesterSessionSpawnPreparation';
-import { Modal } from '@/modal';
-import { t } from '@/text';
+import { tellRequesterMachineUseOnce } from '@/components/machines/managed/requesterDisclosureNotice';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ServerFetchWriteTimeoutError } from '@/sync/http/client';
@@ -326,19 +325,10 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
         }
         const wakeDisclosure = wake?.requesterCredentialDisclosure;
         const workflowDisclosure = params.workflowPlacement && foreignGuest ? custody?.custodian : undefined;
-        const disclosure = wakeDisclosure ?? workflowDisclosure;
-        if (disclosure) {
-            if (params.authority === 'account_automation' || workflowDisclosure && params.invocation?.authority === 'account_automation') {
-                return failure('requester_account_material_unavailable');
-            }
-            const machine = wakeDisclosure && wake?.target.controller ? wake.target.controller.machineId : binding.target.machineId;
-            const confirmed = await Modal.confirm(t('approvals.untitled'), [
-                t('machineRequester.fullSignIn', { machine }),
-                t('machineRequester.osVisibility', { owner: disclosure.displayName || disclosure.accountId, machine }),
-            ].join('\n\n'), { ...(params.signal ? { signal: params.signal } : {}) });
-            if (params.signal?.aborted) return failure('cancelled');
-            account.assertCurrent();
-            if (!confirmed) return failure('requester_credential_disclosure_declined');
+        // Account automation has no person's sign-in to carry to another person's Machine.
+        if ((wakeDisclosure || workflowDisclosure) && (params.authority === 'account_automation'
+            || workflowDisclosure && params.invocation?.authority === 'account_automation')) {
+            return failure('requester_account_material_unavailable');
         }
         const managedControllerCodec = root.telemetryCollectorCodec === true || foreignGuest && isManagedControllerCodecActionV1(root);
         if (managedControllerCodec !== Boolean(codecMaterial)) return failure('admission_unavailable');
@@ -383,6 +373,12 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
                 const refused = parseActionExecuteFailure(error);
                 if (refused) return refused;
                 throw error;
+            }
+            // Told once per device and Machine (owner ruling 2026-11-23); the Action never waits on it.
+            const tell = { serverId: account.serverId, serverIdentityId: binding.serverIdentityId };
+            if (foreignGuest) tellRequesterMachineUseOnce({ ...tell, machineId: binding.target.machineId, owner: custody.custodian });
+            if (wakeDisclosure && controllerPublicKey && wake?.target.controller) {
+                tellRequesterMachineUseOnce({ ...tell, machineId: wake.target.controller.machineId, owner: wakeDisclosure });
             }
         }
         request = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: binding.target.machineId,
