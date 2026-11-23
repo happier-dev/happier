@@ -304,7 +304,15 @@ it('keeps the selected live Event available when the sole list host hands off to
         expect(selectedKey).toBeDefined();
         expect(hosts.getCurrent().list.getRow(selectedKey!)).toMatchObject({ kind: 'session', sessionId: 'selected-event-session' });
 
-        await hosts.rerender({ detail: true });
+        const listeningSince = hosts.getCurrent().list.listeningSince;
+        expect(listeningSince).not.toBeNull();
+        const newerClock = vi.spyOn(Date, 'now').mockReturnValue(listeningSince! + 60_000);
+        try {
+            await hosts.rerender({ detail: true });
+            expect(hosts.getCurrent().detail.listeningSince).toBe(listeningSince);
+        } finally {
+            newerClock.mockRestore();
+        }
 
         expect(hosts.getCurrent().detail.getRow(selectedKey!)).toMatchObject({ kind: 'session', sessionId: 'selected-event-session' });
         await hosts.unmount();

@@ -11,7 +11,7 @@ import type {
     AutomationTriggerListItem,
 } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
 import { hasTranslation, t, tLoose, type TranslationKey } from '@/text';
-import { formatTriggerSummary, readActionTriggerSummaryFacts } from '@/components/workflows/triggers/formatTriggerSummary';
+import { formatActionTriggerClause, formatTriggerSummary } from '@/components/workflows/triggers/formatTriggerSummary';
 import { formatOnceScheduleStateLabel, readOnceScheduleState } from '@/components/workflows/triggers/triggerSchedule';
 import type { AutomationV3RunListItem } from '@happier-dev/protocol/automations/automationApiV3';
 import { describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
@@ -154,12 +154,8 @@ export function formatAutomationRunCauseLabel(cause: AutomationRunCause): string
                     ].join(' · ');
                 case 'runLifecycle':
                     return formatTriggerSummary({ kind: 'runLifecycle', condition: cause.evidence.condition });
-                case 'action': {
-                    // Immutable provenance names the phase and Action, never an authored wait policy.
-                    const facts = readActionTriggerSummaryFacts({ phase: cause.evidence.phase, actionIds: [cause.evidence.actionId] });
-                    return t(facts.phase === 'before' ? 'workflows.triggers.link.beforeAction' : 'workflows.triggers.link.afterAction',
-                        { action: facts.actions[0]!.title });
-                }
+                case 'action':
+                    return formatActionTriggerClause({ phase: cause.evidence.phase, actionIds: [cause.evidence.actionId] });
             }
     }
 }

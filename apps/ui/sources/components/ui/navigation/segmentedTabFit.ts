@@ -29,6 +29,8 @@ export type SegmentedTabFitInput = Readonly<{
   labelsOnly: readonly number[];
   /** Each tab's measured width as its name alone, without its count; defaults to `labelsOnly`. */
   labelsWithoutCounts?: readonly number[];
+  /** Use More before dropping quiet counts when counts are part of this view's filter. */
+  preserveCounts?: boolean;
   /** The space between two tabs. */
   gap: number;
   /** The More trigger's measured width. */
@@ -68,8 +70,9 @@ export function resolveSegmentedTabFit(
     input.available + tolerance
   )
     return { icons: false, counts: true, visibleCount: count };
-  const names = input.labelsWithoutCounts ?? input.labelsOnly;
-  if (rowWidth(names, count, input.gap) + reserved <= input.available + tolerance)
+  const counts = input.preserveCounts === true;
+  const names = counts ? input.labelsOnly : input.labelsWithoutCounts ?? input.labelsOnly;
+  if (!counts && rowWidth(names, count, input.gap) + reserved <= input.available + tolerance)
     return { icons: false, counts: false, visibleCount: count };
   let visible = count - 1;
   while (
@@ -81,7 +84,7 @@ export function resolveSegmentedTabFit(
   }
   const keep = input.keep ?? null;
   if (keep === null || keep < visible || keep >= count)
-    return { icons: false, counts: false, visibleCount: visible };
+    return { icons: false, counts, visibleCount: visible };
   // The selected tab sits past the names that fit: the leading tabs give way until it fits after them.
   const keptRoom = (names[keep] ?? 0) + input.gap;
   while (
@@ -91,5 +94,5 @@ export function resolveSegmentedTabFit(
   ) {
     visible -= 1;
   }
-  return { icons: false, counts: false, visibleCount: visible };
+  return { icons: false, counts, visibleCount: visible };
 }

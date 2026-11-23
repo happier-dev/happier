@@ -65,6 +65,18 @@ describe('formatTriggerSummary', () => {
         expect(formatTriggerSummary({ ...trigger, mode: 'notify' }, { actionTitle }))
             .toBe('workflows.triggers.card.actionSentence.beforeNotify(action=Commit)');
     });
+    it('uses the same Before Action clause in the Library and immutable Run origin', async () => {
+        const { formatAutomationRunCauseLabel } = await import('@/components/automations/list/automationListFormatting');
+        const actionId = DEPLOYMENT_DEPLOY_ACTION_ID_V1;
+        const trigger = { kind: 'action', phase: 'before', actionIds: [actionId], mode: 'wait' } as const;
+        const library = formatTriggerSetSummary([trigger]);
+        const cause = formatAutomationRunCauseLabel({ kind: 'trigger', triggerKind: 'action',
+            triggerId: 'before-command', occurrenceKey: 'command-occurrence',
+            evidence: { phase: 'before', actionId, requestId: 'invocation' },
+        });
+        expect(library).toBe(cause);
+        expect(library).toContain('workflows.triggers.link.beforeAction');
+    });
     it('keeps turn-start activity distinct from turn completion in summaries and grouping', () => {
         const trigger = { kind: 'sessionLifecycle' as const, events: ['parentTurnStarted' as const] };
         expect(readSessionLifecycleKind(trigger.events)).toBe('turnStarts');

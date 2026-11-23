@@ -8,6 +8,12 @@ const labelsOnly = [80, 54, 82, 60, 72, 68];
 const base = { withIcons, labelsOnly, gap: 2, more: 60 } as const;
 
 describe('resolveSegmentedTabFit', () => {
+  it('keeps event counts on whole visible chips and moves the other chips into More', () => {
+    expect(resolveSegmentedTabFit({
+      available: 240, withIcons: [38, 80, 85, 86], labelsOnly: [38, 80, 85, 86],
+      labelsWithoutCounts: [38, 61, 66, 65], gap: 0, more: 47, preserveCounts: true,
+    })).toEqual({ icons: false, counts: true, visibleCount: 2 });
+  });
   it('reserves More for explicit overflow before testing glyph, count and name fit', () => {
     const explicit = {
       withIcons: [100, 100],

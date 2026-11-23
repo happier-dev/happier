@@ -263,6 +263,16 @@ export function readDeployOutcomeSelection(trigger: Pick<AutomationActionTrigger
     return outcome.success ? outcome.data : 'custom';
 }
 
+export function formatActionTriggerClause(
+    trigger: Pick<AutomationActionTrigger, 'phase' | 'actionIds'>,
+    context?: TriggerSummaryContext,
+): string {
+    const facts = readActionTriggerSummaryFacts(trigger, context);
+    if (facts.actions.length === 0) return t(facts.phase === 'before' ? 'workflows.triggers.card.actionBefore' : 'workflows.triggers.card.actionAfter');
+    return t(facts.phase === 'before' ? 'workflows.triggers.link.beforeAction' : 'workflows.triggers.link.afterAction',
+        { action: joinList(facts.actions.map(entry => entry.title)) });
+}
+
 export function formatTriggerSummary(trigger: TriggerSummarySource, context?: TriggerSummaryContext): string {
     switch (trigger.kind) {
         case 'action': {
@@ -280,8 +290,7 @@ export function formatTriggerSummary(trigger: TriggerSummarySource, context?: Tr
             const facts = readActionTriggerSummaryFacts(trigger, context);
             if (facts.actions.length === 0) return t(facts.phase === 'before' ? 'workflows.triggers.card.actionBefore' : 'workflows.triggers.card.actionAfter');
             const action = joinList(facts.actions.map(entry => entry.title));
-            if (context?.form === 'clause') return t(facts.phase === 'before'
-                ? 'workflows.triggers.link.beforeAction' : 'workflows.triggers.link.afterAction', { action });
+            if (context?.form === 'clause') return formatActionTriggerClause(trigger, context);
             if (facts.phase === 'after') return t('workflows.triggers.card.actionSentence.after', { action });
             return t(facts.mode === 'notify' ? 'workflows.triggers.card.actionSentence.beforeNotify' : 'workflows.triggers.card.actionSentence.beforeWait', { action });
         }
@@ -358,7 +367,8 @@ export function formatTriggerSetSummary(
     const when = first.kind === 'schedule' && first.schedule?.kind === 'cron'
         && formatCronSentence(first.schedule.scheduleExpr ?? '') === null
         ? t('workflows.triggers.summary.schedule')
-        : formatTriggerSummary(first, options);
+        : formatTriggerSummary(first, first.kind === 'action' && 'phase' in first && first.phase === 'before'
+            ? { ...options, form: 'clause' } : options);
     const once = readOnceScheduleState(first, lastRunState);
     const state = formatOnceScheduleStateLabel(once)
         ?? (first.enabled === false && options?.offSaidElsewhere !== true ? t('workflows.triggers.row.off') : null);

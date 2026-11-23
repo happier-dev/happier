@@ -99,7 +99,10 @@ function createFeed(lifetime: ServerAccountScopeLifetime, source: WorkflowActivi
             }
             return () => {
                 if (!demands.delete(demand)) return;
-                if (demands.size === 0) releaseDemand();
+                if (demands.size === 0) {
+                    // Layout swaps release one presentation before acquiring the next in the same commit.
+                    queueMicrotask(() => { if (demands.size === 0 && close !== null) releaseDemand(); });
+                }
             };
         },
         retry: async () => { if (close !== null) await source.retry(); },

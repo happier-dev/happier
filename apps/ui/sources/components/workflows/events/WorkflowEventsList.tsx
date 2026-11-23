@@ -144,6 +144,7 @@ export const WorkflowEventsFilters = React.memo(function WorkflowEventsFilters(
         activeTabId={props.value}
         onSelectTab={props.onChange}
         overflow={{
+          preserveCounts: true,
           label: t('workflows.events.more'),
           testID: `${props.testID}:more`,
         }}

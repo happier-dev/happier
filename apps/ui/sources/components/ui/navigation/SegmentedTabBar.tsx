@@ -183,6 +183,8 @@ export type SegmentedTabBarProps<T extends string = string> = Readonly<{
         items?: readonly SegmentedTab<T>[];
         /** The placement owner's resolved full catalog order for the combined More menu. */
         orderedIds?: readonly T[];
+        /** Keep each admitted chip's count visible and move whole chips to More. */
+        preserveCounts?: boolean;
         /**
          * Surface operations under the pages, past a hairline (Customize tabs…): menu rows of their own, never a fake
          * destination among the tabs.
@@ -673,6 +675,7 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
     const iconOnly = !plain && props.iconPlacement !== 'leading' && props.tabs.length > 0 && props.tabs.every((tab) => tab.icon != null);
     const overflow = props.overflow;
     const hasOverflow = overflow !== undefined;
+    const preserveCounts = overflow?.preserveCounts;
     const overflowItems = overflow?.items;
     const overflowOrderedIds = overflow?.orderedIds;
     // The selected tab is never parked behind More: an explicit-overflow tab the route opened joins the
@@ -717,9 +720,10 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
             gap: plain ? HAPPIER_SEGMENTED_METRICS.plain.gapPx : 0,
             more: measured.more ?? 0,
             reserveMore,
+            preserveCounts,
             keep: keep >= 0 ? keep : null,
         });
-    }, [availableForSegments, equalRow, hasOverflow, keep, labelSized, measured, plain, reserveMore, rowTabs, rowWidth]);
+    }, [availableForSegments, equalRow, hasOverflow, keep, labelSized, measured, plain, preserveCounts, reserveMore, rowTabs, rowWidth]);
     // A tab set that changes (a count arriving) is measured again; until then the last resolved fit stands,
     // never a row that paints every tab squeezed. Before the first fit the row is laid out but not painted.
     const lastFit = React.useRef<SegmentedTabFit | null>(null);
