@@ -779,7 +779,9 @@ function describeHomeSettingsApprovalEntries(values: Record<string, unknown>): r
   const entries: ApprovalStructuredValueEntry[] = [];
   for (const [key, setting] of Object.entries(values)) {
     const declaration = Object.hasOwn(SERVER_CONFIG_REGISTRY_BASE, key) ? SERVER_CONFIG_REGISTRY_BASE[key] : undefined;
-    const homeSetting = declaration?.editable === 'home' && declaration.sensitivity === 'plain'
+    // For a supplied plain value, preserve the server's runtime registry key
+    // so the reviewing Account can supply its label.
+    const homeSetting = (setting !== null && !declaration) || (declaration?.editable === 'home' && declaration.sensitivity === 'plain')
       ? { key, cleared: setting === null } : undefined;
     if (homeSetting?.cleared) {
       entries.push({ label: key, value: 'null', depth: 0, homeSetting });

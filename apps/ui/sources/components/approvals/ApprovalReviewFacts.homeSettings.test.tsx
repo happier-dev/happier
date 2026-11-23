@@ -12,11 +12,16 @@ const { ApprovalReviewFacts } = await import('./ApprovalReviewFacts');
 
 afterEach(() => { standardCleanup(); setPreferredLanguageFromSettings('en'); });
 
-it.each([null, 'null', undefined])('shows the Home name change for a value of %s', async value => {
+it.each([
+    [SERVER_CONFIG.HAPPIER_HOME_DISPLAY_NAME.key, null],
+    [SERVER_CONFIG.HAPPIER_HOME_DISPLAY_NAME.key, 'null'],
+    [SERVER_CONFIG.HAPPIER_HOME_DISPLAY_NAME.key, undefined],
+    ['HAPPIER_SESSION_DISCUSSIONS_RATE_LIMIT_MAX', 300],
+    ['HAPPIER_SESSION_DISCUSSIONS_RATE_LIMIT_MAX', undefined],
+])('shows the registry label for %s with value %s', async (key, value) => {
     await preloadTranslations('fr');
     setPreferredLanguageFromSettings('fr');
     const actionId = 'home.settings.set';
-    const key = SERVER_CONFIG.HAPPIER_HOME_DISPLAY_NAME.key;
     const actionArgs = getActionSpec(actionId).inputSchema.parse({ expectedRevision: 1,
         values: value === undefined ? {} : { [key]: value } });
     const screen = await renderScreen(<ApprovalReviewFacts actionId={actionId} actionArgs={actionArgs}
