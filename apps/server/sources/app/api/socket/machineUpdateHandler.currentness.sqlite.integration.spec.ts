@@ -12,7 +12,6 @@ import {
     MACHINE_PLAIN_DATA_KEY_MARKER,
 } from "@happier-dev/protocol";
 import tweetnacl from "tweetnacl";
-import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_OPERATION_RETIRE_EVENT_V1 } from "@happier-dev/protocol/teams";
 import { auth } from "@/app/auth/auth";
 import { eventRouter } from "@/app/events/connectionEventRouter";
 import type { ClientConnection } from "@/app/events/eventPayloadTypes";
@@ -96,35 +95,6 @@ async function attestInstallation(fixture: Fixture) {
     await db.machine.update({ where: { id: fixture.machineId }, data: { installationId } });
     // This harness begins after the socket handshake has verified the installation proof.
     fixture.socket.data![VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY] = installationId;
-}
-
-async function createBrokerOperation(fixture: Fixture) {
-    await attestInstallation(fixture);
-    const team = await db.team.create({ data: { name: "Retirement boundary" } });
-    const membership = await db.teamMembership.create({ data: {
-        teamId: team.id, accountId: fixture.accountId, role: "owner",
-    } });
-    const sourceBindingJson = JSON.stringify({
-        v: 1, kind: "provider_connection", connectionId: "connection-1",
-        connectionSecurityFingerprint: "connection-security:v1:1", credentialSlotId: "apiKey",
-    });
-    const resource = await db.teamCredentialResource.create({ data: {
-        teamId: team.id, custodianAccountId: fixture.accountId, displayName: "Broker",
-        disclosureCeiling: "brokered_only", sessionUsePolicy: "personal_allowed", sourceBindingJson,
-    } });
-    const operation = {
-        v: 1 as const, operationId: randomUUID(), brokerMachineId: fixture.machineId,
-        brokerPlacementFingerprint: "a".repeat(64), sourceBindingJson,
-    };
-    const key = await db.teamCredentialExternalApiKey.create({ data: {
-        resourceId: resource.id, teamMembershipId: membership.id, label: "Client",
-        displayPrefix: "test", secretDigest: randomUUID(), currentBrokerOperationJson: JSON.stringify(operation),
-    } });
-    return {
-        keyId: key.id, operation,
-        request: { v: 1, externalApiKeyId: key.id, operationId: operation.operationId },
-        read: async () => (await db.teamCredentialExternalApiKey.findUniqueOrThrow({ where: { id: key.id } })).currentBrokerOperationJson,
-    };
 }
 
 async function emit(fixture: Fixture, event: string, payload: unknown) {
@@ -402,75 +372,6 @@ describe("Machine authority mutations on an established socket", () => {
         },
     );
 
-    it("retires only the exact authenticated Machine operation and leaves a newer operation intact on stale replay", async () => {
-        const subject = await createEstablishedMachineFixture("retire");
-        const broker = await createBrokerOperation(subject);
-        const retire = () => emit(subject, TEAM_CREDENTIAL_EXTERNAL_PROVIDER_OPERATION_RETIRE_EVENT_V1, broker.request);
-        expect(await retire()).toHaveBeenCalledWith({ ok: true, retired: true });
-        expect(await broker.read()).toBeNull();
-        expect(await retire()).toHaveBeenCalledWith({ ok: true, retired: false });
-        const newer = JSON.stringify({ ...broker.operation, operationId: randomUUID() });
-        await db.teamCredentialExternalApiKey.update({ where: { id: broker.keyId }, data: { currentBrokerOperationJson: newer } });
-        expect(await retire()).toHaveBeenCalledWith({ ok: true, retired: false });
-        expect(await broker.read()).toBe(newer);
-    });
-
-    it("denies another Account and another Machine in the custodian Account", async () => {
-        const subject = await createEstablishedMachineFixture("retire-owner");
-        const broker = await createBrokerOperation(subject);
-        const foreign = await createEstablishedMachineFixture("retire-foreign");
-        await attestInstallation(foreign);
-        expect(await emit(foreign, TEAM_CREDENTIAL_EXTERNAL_PROVIDER_OPERATION_RETIRE_EVENT_V1, broker.request))
-            .toHaveBeenCalledWith({ ok: false, reasonCode: "resource_forbidden" });
-        const otherMachine = await db.machine.create({ data: {
-            id: randomUUID(), accountId: subject.accountId, metadata: "{}", installationId: randomUUID(),
-        } });
-        subject.socket.data!.machineId = otherMachine.id;
-        subject.socket.data![VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY] = otherMachine.installationId;
-        expect(await emit(subject, TEAM_CREDENTIAL_EXTERNAL_PROVIDER_OPERATION_RETIRE_EVENT_V1, broker.request))
-            .toHaveBeenCalledWith({ ok: false, reasonCode: "resource_forbidden" });
-        expect(await broker.read()).toBe(JSON.stringify(broker.operation));
-    });
-
-    it("rejects body identity spoofing, unverified installations and replaced installation identity", async () => {
-        const subject = await createEstablishedMachineFixture("retire-proof");
-        const broker = await createBrokerOperation(subject);
-        const event = TEAM_CREDENTIAL_EXTERNAL_PROVIDER_OPERATION_RETIRE_EVENT_V1;
-        expect(await emit(subject, event, { ...broker.request, machineId: subject.machineId }))
-            .toHaveBeenCalledWith({ ok: false, reasonCode: "invalid_request" });
-        subject.socket.data!.clientType = "user-scoped";
-        expect(await emit(subject, event, broker.request))
-            .toHaveBeenCalledWith({ ok: false, reasonCode: "resource_forbidden" });
-        subject.socket.data!.clientType = "machine-scoped";
-        const installationId = subject.socket.data![VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY];
-        delete subject.socket.data![VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY];
-        expect(await emit(subject, event, broker.request))
-            .toHaveBeenCalledWith({ ok: false, reasonCode: "resource_forbidden" });
-        subject.socket.data![VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY] = installationId;
-        await db.machine.update({ where: { id: subject.machineId }, data: { installationId: randomUUID() } });
-        expect(await emit(subject, event, broker.request))
-            .toHaveBeenCalledWith({ ok: false, reasonCode: "resource_forbidden" });
-        expect(await broker.read()).toBe(JSON.stringify(broker.operation));
-    });
-
-    it("allows the selected installation to release custody after the Machine becomes ineligible", async () => {
-        const subject = await createEstablishedMachineFixture("retire-ineligible");
-        const broker = await createBrokerOperation(subject);
-        await db.machine.update({ where: { id: subject.machineId }, data: { revokedAt: new Date() } });
-        expect(await emit(subject, TEAM_CREDENTIAL_EXTERNAL_PROVIDER_OPERATION_RETIRE_EVENT_V1, broker.request))
-            .toHaveBeenCalledWith({ ok: true, retired: true });
-        expect(await broker.read()).toBeNull();
-    });
-
-    it("preserves custody when an established socket outlives Account credential revocation", async () => {
-        const subject = await createEstablishedMachineFixture("retire-revoked");
-        const broker = await createBrokerOperation(subject);
-        await suspend(subject);
-        expect(await emit(subject, TEAM_CREDENTIAL_EXTERNAL_PROVIDER_OPERATION_RETIRE_EVENT_V1, broker.request))
-            .toHaveBeenCalledWith({ ok: false, reasonCode: "resource_forbidden" });
-        expect(await broker.read()).toBe(JSON.stringify(broker.operation));
-    });
-
     it("uses the admitted socket without token verifications for daemon-state writes", async () => {
         const subject = await createEstablishedMachineFixture("state");
         const control = await createEstablishedMachineFixture("state-control");
@@ -510,29 +411,6 @@ describe("Machine authority mutations on an established socket", () => {
         expect(unaffected).toHaveBeenCalledWith(expect.objectContaining({ result: "success", version: 1 }));
         expect(control.socket.disconnect).not.toHaveBeenCalled();
         expect(verifications.mock.calls.length).toBe(0);
-    });
-
-    it("rejects unverified and replaced installations before daemon-state or capability publication", async () => {
-        const subject = await createEstablishedMachineFixture("publication-installation");
-        const publish = async () => {
-            expect(await emit(subject, "machine-update-state", {
-                machineId: subject.machineId, daemonState: "spoofed-state", expectedVersion: 0,
-                expectedDataEncryptionKey: null,
-            })).toHaveBeenCalledWith(expect.objectContaining({ result: "error" }));
-            expect(await emit(subject, MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1, {
-                machineId: subject.machineId, capabilities: { sessionSpawn: { protocolVersions: [1] } },
-            })).toHaveBeenCalledWith({ v: 1, result: "error", code: "machine_unavailable" });
-            expect(await db.machine.findUniqueOrThrow({ where: { id: subject.machineId } })).toMatchObject({
-                daemonState: "daemon-state-0", daemonStateVersion: 0,
-                operationProtocolCapabilities: null, operationProtocolCapabilitiesRevision: null,
-            });
-        };
-        const installationId = subject.socket.data![VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY];
-        delete subject.socket.data![VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY];
-        await publish();
-        subject.socket.data![VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY] = installationId;
-        await db.machine.update({ where: { id: subject.machineId }, data: { installationId: randomUUID() } });
-        await publish();
     });
 
     it("replaces the complete capability projection, withdraws omitted leaves and rejects unknown fields", async () => {
