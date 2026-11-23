@@ -38,7 +38,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     const common = { execution: { target: 'daemon' }, scopes: ['global'], surfaces: ['ui', 'cli', 'plugin', 'agent'] } as const;
     const readSurfaces = ['ui', 'cli', 'plugin', 'agent', 'mcp'] as const;
     const exportMetadata = databaseActionMetadata[database.DATABASE_ROWS_EXPORT_ACTION_ID_V1];
-    actions[database.databaseActionLocalIdV1(database.DATABASE_ROWS_EXPORT_ACTION_ID_V1)] = {
+    actions[databaseActionLocalIdV1(database.DATABASE_ROWS_EXPORT_ACTION_ID_V1)] = {
         ...common, ...exportMetadata, surfaces: readSurfaces,
         inputSchema: database.DatabaseSelectedRowsExportInputV1ProtocolSchema,
         resultSchema: database.DatabaseSelectedRowsExportResultV1ProtocolSchema,
@@ -63,7 +63,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     const listTargets = producers.listTargets;
     if (listTargets) {
         const metadata = databaseActionMetadata[database.DATABASE_TARGETS_LIST_ACTION_ID_V1];
-        actions[database.databaseActionLocalIdV1(database.DATABASE_TARGETS_LIST_ACTION_ID_V1)] = {
+        actions[databaseActionLocalIdV1(database.DATABASE_TARGETS_LIST_ACTION_ID_V1)] = {
             ...common, ...metadata, surfaces: readSurfaces,
             inputSchema: databaseAbi.DatabaseTargetsListInputV1Schema,
             resultSchema: databaseAbi.DatabaseTargetsListResultV1Schema,
@@ -77,7 +77,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     const connectTarget = producers.connectTarget;
     if (connectTarget) {
         const metadata = databaseActionMetadata[database.DATABASE_TARGETS_CONNECT_ACTION_ID_V1];
-        actions[database.databaseActionLocalIdV1(database.DATABASE_TARGETS_CONNECT_ACTION_ID_V1)] = {
+        actions[databaseActionLocalIdV1(database.DATABASE_TARGETS_CONNECT_ACTION_ID_V1)] = {
             ...common, ...metadata,
             inputSchema: database.DatabaseTargetsConnectInputV1ProtocolSchema,
             resultSchema: databaseAbi.DatabaseDescriptorV1Schema,
@@ -89,7 +89,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     const forgetTarget = producers.forgetTarget;
     if (forgetTarget) {
         const metadata = databaseActionMetadata[database.DATABASE_TARGETS_FORGET_ACTION_ID_V1];
-        actions[database.databaseActionLocalIdV1(database.DATABASE_TARGETS_FORGET_ACTION_ID_V1)] = {
+        actions[databaseActionLocalIdV1(database.DATABASE_TARGETS_FORGET_ACTION_ID_V1)] = {
             ...common, ...metadata,
             inputSchema: database.DatabaseTargetsForgetInputV1ProtocolSchema,
             resultSchema: database.DatabaseTargetsForgetResultV1ProtocolSchema,
@@ -103,7 +103,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     const executeOperation = producers.executeOperation;
     if (executeOperation) for (const { id: actionId, inputSchema } of Object.values(databaseOperationActions)) {
         const metadata = databaseActionMetadata[actionId];
-        actions[database.databaseActionLocalIdV1(actionId)] = {
+        actions[databaseActionLocalIdV1(actionId)] = {
             ...common, ...metadata, inputSchema,
             // Agents reach writes too: the access decider and the D13 level decide admission and Ask.
             surfaces: readSurfaces,
@@ -120,7 +120,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     if (listFindings) {
         const actionId = database.DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1;
         const metadata = databaseActionMetadata[actionId];
-        actions[database.databaseActionLocalIdV1(actionId)] = {
+        actions[databaseActionLocalIdV1(actionId)] = {
             ...common, ...metadata,
             inputSchema: databaseAbi.DatabaseFindingsListInputV1ProtocolSchema,
             resultSchema: databaseAbi.DatabaseFindingsListResultV1ProtocolSchema,
@@ -132,7 +132,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     if (readFinding) {
         const actionId = database.DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1;
         const metadata = databaseActionMetadata[actionId];
-        actions[database.databaseActionLocalIdV1(actionId)] = {
+        actions[databaseActionLocalIdV1(actionId)] = {
             ...common, ...metadata,
             inputSchema: databaseAbi.DatabaseFindingReadInputV1ProtocolSchema,
             resultSchema: databaseAbi.DatabaseFindingReadResultV1ProtocolSchema,
@@ -144,7 +144,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     if (buildInsightBrief) {
         const actionId = database.DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1;
         const metadata = databaseActionMetadata[actionId];
-        actions[database.databaseActionLocalIdV1(actionId)] = {
+        actions[databaseActionLocalIdV1(actionId)] = {
             ...common, ...metadata,
             inputSchema: databaseAbi.DatabaseInsightBriefBuildInputV1ProtocolSchema,
             resultSchema: databaseAbi.DatabaseFindingBriefBuildResultV1ProtocolSchema,
@@ -155,7 +155,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     const readAccess = producers.readAccess;
     if (readAccess) {
         const metadata = databaseActionMetadata[database.DATABASE_ACCESS_READ_ACTION_ID_V1];
-        actions[database.databaseActionLocalIdV1(database.DATABASE_ACCESS_READ_ACTION_ID_V1)] = {
+        actions[databaseActionLocalIdV1(database.DATABASE_ACCESS_READ_ACTION_ID_V1)] = {
             ...common, ...metadata, surfaces: readSurfaces,
             inputSchema: database.DatabaseAccessReadInputV1ProtocolSchema,
             resultSchema: database.DatabaseAccessReadResultV1ProtocolSchema,
@@ -166,7 +166,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     const setAccess = producers.setAccess;
     if (setAccess) {
         const metadata = databaseActionMetadata[database.DATABASE_ACCESS_SET_ACTION_ID_V1];
-        actions[database.databaseActionLocalIdV1(database.DATABASE_ACCESS_SET_ACTION_ID_V1)] = {
+        actions[databaseActionLocalIdV1(database.DATABASE_ACCESS_SET_ACTION_ID_V1)] = {
             ...common, ...metadata,
             inputSchema: database.DatabaseAccessSetInputV1ProtocolSchema,
             resultSchema: database.DatabaseAccessSetResultV1ProtocolSchema,

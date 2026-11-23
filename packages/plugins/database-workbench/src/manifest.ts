@@ -11,6 +11,7 @@ import { createDatabaseWorkbenchPlacements } from './ui/placements.js';
 import { openWorkbenchActions } from './ui/surface/openWorkbench.js';
 import { DATABASE_FINDING_EVENT_REF, DATABASE_FINDING_SETUP_LOCAL_ID, databaseFindingEvent,
     databaseFindingEventSetupAction } from './insights/events.js';
+import { DATABASE_INSIGHT_SOURCES_POINT_REF_V1, databaseInsightSourcesPointV1 } from './insights/sources.js';
 import {
     WORKBENCH_PAGE_ARTIFACT_ID, WORKBENCH_PAGE_RENDERER_ID, WORKBENCH_PAGE_VIEW_ID,
     WORKBENCH_PANEL_ARTIFACT_ID, WORKBENCH_PANEL_RENDERER_ID, WORKBENCH_PANEL_VIEW_ID,
@@ -67,6 +68,9 @@ export const plugin = definePlugin({
     displayName: 'Database',
     entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
     activation: { events: [] },
+    contributionPoints: {
+        [DATABASE_INSIGHT_SOURCES_POINT_REF_V1.pointId]: databaseInsightSourcesPointV1,
+    },
     serviceLaunchEnvironments: { 'database-discovery': {
         declaration: { environmentNames: [] }, runtime: worktreeTargets.launch,
     } },
