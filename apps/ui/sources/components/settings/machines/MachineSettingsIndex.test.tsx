@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createDeferred, findAllHostTestInstances, flushHookEffects, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -434,6 +434,18 @@ it.each(['index', 'rail'] as const)('retains mounted %s rows across presentation
   await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [
     machine('a', 'Alpha', 'alpha.local'), machine('b', 'Beta', 'beta.local'),
   ] }]);
+  const previousScope = storage.getState().profileScope;
+  const previousApplied = getAppliedActiveServerSnapshot();
+  const previousAvailable = isAppliedActiveServerRuntimeAvailable();
+  onTestFinished(() => {
+    publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
+    storage.setState({ profileScope: previousScope });
+  });
+  // The presented screen belongs to a connected Account. Its managed reader
+  // retains the admitted answer in that Account's lifetime when the screen hides.
+  const activeSnapshot = getActiveServerSnapshot();
+  publishAppliedActiveServerSnapshot(activeSnapshot);
+  storage.setState({ profileScope: { serverId: activeSnapshot.serverId, accountId: 'account-a' } });
   await primeFeatures();
   const { MachinesColumn } = await import('@/components/machines/collection/MachinesColumn');
   const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
@@ -459,7 +471,9 @@ it.each(['index', 'rail'] as const)('retains mounted %s rows across presentation
   await flushHookEffects();
   // Presentation changes release and restore subscriptions (9cf24cafcc), while
   // retained row instances preserve focus and local state.
-  for (const [index, row] of rows().entries()) expect(row).toBe(retainedRows[index]);
+  for (const [index, row] of rows().entries()) {
+    expect(row === retainedRows[index], `${surface} row ${index} stayed mounted`).toBe(true);
+  }
   await screen.update(surfaceAt(false));
   await flushHookEffects();
   const hiddenCommits = commits;
@@ -1379,7 +1393,7 @@ describe('Presets in the Machines collection', () => {
       await act(async () => storage.getState().applyMachineActivityUpdates(
         fleet.map(machine => ({ id: machine.id, active: true, activeAt: Date.now() })), { sourceServerId: 'srv_a' }));
       await flushHookEffects();
-      expect(row()).toBe(admitted);
+      expect(row() === admitted, 'admitted machine row stayed mounted').toBe(true);
       expect(listRequests()).toHaveLength(1);
       await act(async () => pressTestInstanceAsync(row()!));
       expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/machines/studio-0?serverId=srv_a');
@@ -1424,7 +1438,9 @@ describe('Presets in the Machines collection', () => {
     await act(async () => storage.getState().applyMachines([arriving], false, { sourceServerId: 'srv_a' }));
     await flushHookEffects();
     // No admitted row is unmounted to show collection skeletons.
-    for (const [index, id] of ids.entries()) expect(read(id)).toBe(admitted[index]);
+    for (const [index, id] of ids.entries()) {
+      expect(read(id) === admitted[index], `${id} stayed mounted while a name was pending`).toBe(true);
+    }
     expect(read(ids[0]!)?.props.selected).toBe(true);
     // Presets are one row that opens their table, counting the active presets (lab ideas-1118-platform scene 7).
     expect(read('settings.machines.presets')?.props.detail).toBe('1');
@@ -1436,7 +1452,7 @@ describe('Presets in the Machines collection', () => {
       { ...machine('machine-b', 'Builder', 'builder.local'), metadataVersion: arriving.metadataVersion + 1 },
     ], false, { sourceServerId: 'srv_a' }));
     await waitForHomeGovernance(() => expect(read('settings.machines.row.srv_a.machine-b')?.props.title).toBe('Builder'));
-    expect(read(ids[0]!)).toBe(admitted[0]);
+    expect(read(ids[0]!) === admitted[0], 'selected machine row stayed mounted after hydration').toBe(true);
     expect(read(ids[0]!)?.props.selected).toBe(true);
     await screen.unmount();
   });
