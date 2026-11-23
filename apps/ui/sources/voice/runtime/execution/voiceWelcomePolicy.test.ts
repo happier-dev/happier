@@ -166,6 +166,40 @@ describe('Voice welcome through retained initialization, execution cache and Hom
         }
     });
 
+    it('cancels a superseded user turn and its replacement when Voice ends during the greeting', async () => {
+        const greetingEntered = createDeferred<void>();
+        const finishGreeting = createDeferred<void>();
+        beforeWelcomeReply = async () => {
+            greetingEntered.resolve();
+            await finishGreeting.promise;
+        };
+        let dispatchedTurns = 0;
+        acceptUserTurn = () => {
+            dispatchedTurns++;
+            return ExecutionRunTurnStreamStartResponseSchema.parse({ streamId: 'answer' });
+        };
+        const greeting = execution.ensureRunningAndMaybeWelcome(fixture.sessionId);
+        await greetingEntered.promise;
+
+        // Speech, typed Send and Brief all abort the previous caller signal
+        // before submitting its replacement through the local Voice engine.
+        const spoken = new AbortController();
+        const first = execution.sendTurn(fixture.sessionId, 'Spoken question', { signal: spoken.signal });
+        const firstCancelled = expect(first).rejects.toMatchObject({ name: 'AbortError' });
+        spoken.abort();
+        const second = execution.sendTurn(fixture.sessionId, 'Typed replacement', { signal: new AbortController().signal });
+        const secondCancelled = expect(second).rejects.toMatchObject({ name: 'AbortError' });
+        try {
+            await execution.stop(fixture.sessionId);
+            await Promise.all([firstCancelled, secondCancelled]);
+            expect(dispatchedTurns).toBe(0);
+            expect(execution.isActive(fixture.sessionId)).toBe(false);
+        } finally {
+            finishGreeting.resolve();
+            await Promise.allSettled([greeting, first, second]);
+        }
+    });
+
     it('retries immediate welcome when welcomedEpoch was not persisted', async () => {
         fixture.sessionHttp.rejectNextPatch(fixture.sessionId);
         await expect(execution.ensureRunningAndMaybeWelcome(fixture.sessionId)).resolves.toBe('Welcome!');
