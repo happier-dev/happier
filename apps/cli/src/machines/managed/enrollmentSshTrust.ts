@@ -1,4 +1,5 @@
 import { resolveDefaultKnownHostsPath, type RemoteHostWorkspaceBindingV1 } from '@happier-dev/cli-common/ssh';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -39,9 +40,18 @@ export async function establishRemoteHostWorkspaceSshTrust(input: TrustTask
     // same store at connection time, so a changed key requires Remote Hosts trust.
     if (!input.attaching) return knownHostsPath;
     const { resolveLiveRemoteHostTrust } = await import('@/capabilities/systemTasks/ssh/liveRemoteSshBootstrap');
-    await runSshTrustTask(input, signal => resolveLiveRemoteHostTrust({
-        ssh: { target: input.target, port: input.port, auth: 'agent', knownHostsPath }, knownHostsMode: 'app', signal,
-    }));
+    try {
+        await runSshTrustTask(input, signal => resolveLiveRemoteHostTrust({
+            ssh: { target: input.target, port: input.port, auth: 'agent', knownHostsPath }, knownHostsMode: 'app', signal,
+        }));
+    } catch (error) {
+        // This decision crosses the provider's credential lease during its
+        // platform probe. Carry the public refusal without the private cause.
+        if (error instanceof SystemTaskExecutionError && error.code === 'host_trust_declined') {
+            throw new PluginError({ code: error.code });
+        }
+        throw error;
+    }
     return knownHostsPath;
 }
 

@@ -1,10 +1,19 @@
 import { isMachineProvisionerWorkspaceAttachmentV1, projectMachineProvisionerSelectionV1,
     type MachineProvisionerContributionV1, type MachineProvisionerOptionsResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/publicTypes';
-import { unwrapManagedMachineReadV1, type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAcceptedV1Schema, unwrapManagedMachineReadV1, type ManagedAcceptedV1, type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
+import { readActionOperationTaskQuestionV1 } from '@happier-dev/protocol/actions/operations/taskQuestionV1';
+import { ActionOperationGetV1ResponseSchema, readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { awaitActionApprovalResult, type ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
+import { submitActionOperationTaskAnswer } from '@/components/inbox/actionOperations/useActionOperationTaskQuestion';
+import { confirmSshHostKey } from '@/components/ssh/SshHostKeyTrustSheet';
+import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
+import { scopedHomeActionExecutor } from '@/sync/ops/actions/scopedHomeActionExecutor';
+import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import type { ManagedMachineCreationProgress } from './managedMachineCreation';
 import { createManagedProvisionerClient, projectManagedProvisionerFailure } from './managedProvisionerClient';
 
@@ -70,20 +79,19 @@ export async function attachRemoteWorkspace(input: AttachRemoteWorkspaceChoice &
         || !isMachineProvisionerWorkspaceAttachmentV1(request.descriptor, projection.launch)) {
         return { kind: 'failed', code: 'invalid_parameters', message: null };
     }
-    const failed = (code: string, message?: string): AttachRemoteWorkspaceOutcome =>
+    const failed = (code: string, message?: string): Exclude<AttachRemoteWorkspaceOutcome, { kind: 'attached' }> =>
         code === 'session_holder_unavailable' ? { kind: 'unsupported_platform' }
             : { kind: 'failed', code, message: message ?? null };
     const client = createManagedProvisionerClient(request.scope, request.homeId);
-    const succeed = (value: { managedId: string }): AttachRemoteWorkspaceOutcome =>
-        ({ kind: 'attached', managedId: value.managedId, controller: request.controller });
-    const outcome = await awaitActionApprovalResult<{ managedId: string }, AttachRemoteWorkspaceOutcome>({
+    const succeed = (value: ManagedAcceptedV1) => ({ kind: 'accepted' as const, value });
+    const accepted = await awaitActionApprovalResult<ManagedAcceptedV1, ReturnType<typeof succeed> | ReturnType<typeof failed>>({
         signal: input.signal,
         aborted: () => failed('aborted'),
         succeeded: succeed,
         failed: (code, failure) => failed(code, projectManagedProvisionerFailure(code, failure?.details).message),
         execute: async callbacks => {
             input.onProgress?.({ kind: 'acquiring' });
-            const result = await client.execute('machines.managed.acquire', {
+            const result = await client.execute(MANAGED_ACQUIRE_ACTION_ID_V1, {
                 selection: {
                     kind: 'one-off', homeId: request.homeId, controller: request.controller,
                     launch: {
@@ -105,11 +113,62 @@ export async function attachRemoteWorkspace(input: AttachRemoteWorkspaceChoice &
             return result.kind === 'succeeded' ? succeed(result.value) : failed(result.code, result.message);
         },
     });
-    if (outcome.kind === 'failed' && outcome.code !== 'aborted') input.onProgress?.({ kind: 'failed', code: outcome.code });
-    if (outcome.kind !== 'attached') return outcome;
+    const finishFailure = (failure: ReturnType<typeof failed>) => {
+        if (failure.kind === 'failed' && failure.code !== 'aborted') input.onProgress?.({ kind: 'failed', code: failure.code });
+        return failure;
+    };
+    if (accepted.kind !== 'accepted') return finishFailure(accepted);
+    const { managedId } = accepted.value;
+    if (accepted.value.operation) {
+        const { serverId, accountId } = request.scope;
+        const { machineId } = request.controller;
+        const { operationId } = accepted.value.operation;
+        const execute = scopedHomeActionExecutor(request.scope);
+        let includePrompt = true;
+        for (;;) {
+            const result = await execute(ACTION_OPERATION_GET_ACTION_ID_V1, {
+                serverId, machineId, operationId, waitForTerminal: true, ...(includePrompt ? { includeManagedPrompt: true } : {}),
+            }, { surface: 'ui', authority: 'present_user', serverId, expectedAccountId: accountId, signal: input.signal })
+                .catch(() => null);
+            if (input.signal.aborted) return failed('aborted');
+            if (!result) return finishFailure(failed('action_operation_unavailable'));
+            const observed = classifyHomeActionOutcome(result);
+            if (observed.kind !== 'completed') return finishFailure(failed(observed.kind === 'failed'
+                ? homeDomainFailureCode(observed.failure) : 'approval_required'));
+            const read = ActionOperationGetV1ResponseSchema.safeParse(observed.result);
+            if (!read.success) return finishFailure(failed('invalid_action_output'));
+            if (read.data.kind !== 'found') return finishFailure(failed('operation_not_found'));
+            const snapshot = read.data.operation;
+            if (snapshot.operationId !== operationId || snapshot.scope.accountId !== accountId
+                || snapshot.scope.machineId !== machineId || snapshot.actionId !== MANAGED_ACQUIRE_ACTION_ID_V1) {
+                return finishFailure(failed('operation_scope_mismatch'));
+            }
+            const terminal = readActionOperationTerminalResultV1(snapshot);
+            if (terminal) {
+                if (!terminal.ok) {
+                    const code = terminal.errorCode ?? 'action_operation_failed';
+                    return finishFailure(failed(code, projectManagedProvisionerFailure(code, terminal.details).message));
+                }
+                const settled = ManagedAcceptedV1Schema.safeParse(terminal.result);
+                if (!settled.success || settled.data.managedId !== managedId) return finishFailure(failed('invalid_action_output'));
+                break;
+            }
+            const prompt = readActionOperationTaskQuestionV1(snapshot)?.prompt;
+            if (!includePrompt || (prompt?.kind !== 'ssh.trustHost' && prompt?.kind !== 'ssh.replaceHostKey')) {
+                return finishFailure(failed('invalid_action_output'));
+            }
+            input.onProgress?.({ kind: 'acquiring', operation: snapshot });
+            const trusted = await confirmSshHostKey(prompt, { signal: input.signal });
+            if (input.signal.aborted) return failed('aborted');
+            const answer = await submitActionOperationTaskAnswer({ serverId, snapshot }, { trusted }, input.signal);
+            if (input.signal.aborted) return failed('aborted');
+            if (!answer.ok) return finishFailure(failed(answer.errorCode));
+            includePrompt = false;
+        }
+    }
     // The attached record carries the guest platform probe; its home is where the person picks a folder.
-    const read = await client.execute('machines.managed.get', { homeId: request.homeId, managedId: outcome.managedId },
+    const read = await client.execute('machines.managed.get', { homeId: request.homeId, managedId },
         { signal: input.signal }).catch(() => null);
     const home = read?.kind === 'succeeded' ? unwrapManagedMachineReadV1(read.value).workspaceAttachment?.home : undefined;
-    return home ? { ...outcome, home } : outcome;
+    return { kind: 'attached', managedId, controller: request.controller, ...(home ? { home } : {}) };
 }

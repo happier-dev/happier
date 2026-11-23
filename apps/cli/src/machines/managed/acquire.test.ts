@@ -23,7 +23,7 @@ import * as filesystem from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
+import { REMOTE_HOST_SSH_PROVISIONER, safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import tweetnacl from 'tweetnacl';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
@@ -103,6 +103,7 @@ import { createDaemonConnectedAccountPurposeBindingRuntime } from '@/daemon/conn
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { CRABBOX_PLUGIN } from '../../../../../packages/plugins/machine-crabbox/src/manifest';
 import { LUME_PLUGIN } from '../../../../../packages/plugins/machine-lume/src/manifest';
+import { PLUGIN as SSH_PLUGIN } from '../../../../../packages/plugins/machine-ssh/src/manifest';
 import { PLUGIN as HETZNER_PLUGIN } from '../../../../../packages/plugins/machine-hetzner/src/manifest';
 import { createDigitalOceanNativeClient } from '../../../../../packages/plugins/machine-digitalocean/src/machine/nativeClient';
 import { machineProvisionerAuthorFixture } from '../../../../../packages/plugin-sdk/fixtures/authoring-inference/machineProvisioners';
@@ -1178,6 +1179,114 @@ function originAuthorization(homeId: string, requestId = 'original-request') {
 function materializeNativeBootstrapCredential(services: PluginServices, kind: 'bytes' | 'file') {
     return services.machineProvisioners.materializeBootstrapCredential({ kind });
 }
+
+it('exposes the remote workspace acquire receipt and SSH trust question before admitting a managed row', async () => {
+    const homeId = 'srv_ssh_workspace_trust';
+    const requestId = 'attach-remote-host';
+    const operationId = 'attachment-operation';
+    const provider = REMOTE_HOST_SSH_PROVISIONER;
+    const launch = { provider, name: 'Existing host', schemaVersion: 1, choices: { remoteHostId: 'saved-host' } };
+    const acquisition = { ...input, selection: { ...input.selection, homeId, launch, attachWorkspace: true } };
+    const originalActionEnvelope = { v: 1 as const, requestId,
+        target: { kind: 'machine' as const, machineId: controller.machineId }, input: acquisition };
+    const wire = originAuthorization(homeId, requestId);
+    const { sessionActionOrigin: _origin, sessionActionSource: _source, ...binding } = wire.binding;
+    const keys = tweetnacl.sign.keyPair();
+    const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: { ...wire,
+        binding: { ...binding, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(originalActionEnvelope) } },
+        serverId: 'daemon-local', serverIdentityId: homeId, serverHttpBaseUrl: 'https://home.example',
+        target: wire.binding.target, installationId: controller.installationId, privateKey: keys.secretKey,
+        rootAdmitted: true, isCurrent: async () => true });
+    if (!authorization) throw new Error('Expected signed acquire authorization');
+    const manifest = normalizePluginManifestV2(SSH_PLUGIN.manifest);
+    const activated = await activateContributionModule({ pluginId: provider.pluginId, manifest,
+        occurrenceId: createPluginRuntimeOccurrenceId(provider.pluginId),
+        moduleNamespace: { activate: SSH_PLUGIN.activate }, isOccurrenceCurrent: () => true });
+    const actionHandlers = new Map(activated.registrations.flatMap((registration): [string, TargetActionInvocationRegistration['handler']][] =>
+        registration.family === 'actions' ? [[registration.localId,
+            (value, context) => Reflect.apply(registration.value, undefined, [value, context])]] : []));
+    const native = nativeFixture({ fixtureManifest: manifest, actionHandlers, credentialPurposes: [], nativeCredentialService: true });
+    const root = await filesystem.mkdtemp(join(tmpdir(), 'managed-ssh-attachment-'));
+    const { reloadConfiguration } = await import('@/configuration');
+    vi.stubEnv('HAPPIER_HOME_DIR', root);
+    reloadConfiguration();
+    onTestFinished(async () => { vi.unstubAllEnvs(); reloadConfiguration(); await filesystem.rm(root, { recursive: true, force: true }); });
+    vi.mocked(childProcesses.spawnSync).mockReturnValueOnce({ pid: 1, status: 0, signal: null,
+        stdout: 'fixture.example.test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB\n',
+        stderr: '', output: [] });
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith('/account/profile')) return { status: 200, data: { id: 'owner' } };
+        if (path.endsWith('/encryption/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
+            settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+        if (path === REMOTE_HOST_ROWS_ROUTE_V1) return { status: 200, data: { status: 'present', revision: 1,
+            content: { t: 'plain', v: { v: 1, hosts: [{ id: 'saved-host', name: launch.name,
+                createdAt: 1, updatedAt: 1, lastUsedAt: null, ssh: { target: 'user@fixture.example.test',
+                    authMode: 'password', passwordSecretRef: formatSharedSavedSecretRefV1('synthetic-password') } }] } } } };
+        throw new Error(`Unexpected read: ${path}`);
+    });
+    const post = vi.spyOn(axios, 'post').mockRejectedValue(new Error('Home must not admit before trust'));
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const credentials = { token, encryption: null };
+    const { runWithServerHttpBaseUrl } = await import('@/api/client/serverHttpBaseUrl');
+    const { resolveAccountSettingsScopeKey } = await import('@/settings/accountSettings/accountSettingsScopeKey');
+    runWithServerHttpBaseUrl('https://home.example', () => setActiveAccountSettingsSnapshot({
+        source: 'network', settings: AccountSettingsSchema.parse({}), rawSettings: {}, settingsVersion: 1,
+        loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials),
+    }));
+    onTestFinished(resetActiveAccountSettingsSnapshotForTests);
+    const homeTarget = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
+        canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] },
+        authority: 'current_connection' });
+    const driver = createManagedMachineAcquisitionDriver({ ...accountInputs, token, serverUrl: 'https://home.example',
+        homeId, homeTarget, controller, credentials, runtimeRegistry: native.runtimeRegistry,
+        externalActionMachineRequestPrivateKey: keys.secretKey });
+    const operations = createHostActionOperationRuntime({ machineId: controller.machineId,
+        resolveAccountId: async () => 'owner', generateOperationId: () => operationId });
+    const scope = { accountId: 'owner', machineId: controller.machineId };
+    const response = operations.observeExecution({
+        actionId: 'machines.managed.acquire', input: acquisition, actionRequestId: requestId, execute: async context => {
+            try {
+                return { ok: true, result: await driver.execute('machines.managed.acquire', acquisition, { requestId,
+                    signal: context.signal, context: { ...context, originalActionEnvelope,
+                        externalActionExecutionAuthorization: authorization, externalActionTarget: wire.binding.target } }) };
+            } catch (error) {
+                const errorCode = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+                    ? error.code : 'unexpected_failure';
+                return { ok: false, errorCode, error: errorCode };
+            }
+        },
+    });
+    try {
+        const { readActionOperationTaskQuestionV1 } = await import('@happier-dev/protocol/actions/operations/taskQuestionV1');
+        const question = await vi.waitFor(() => {
+            const snapshot = operations.store.get(scope, operationId);
+            const question = snapshot && readActionOperationTaskQuestionV1(snapshot);
+            expect(question, JSON.stringify(snapshot)).toMatchObject({ prompt: { kind: 'ssh.trustHost', host: 'fixture.example.test' } });
+            return question!;
+        });
+        await expect(response).resolves.toMatchObject({ ok: true, result: { operation: { operationId } } });
+        await expect(operations.handlers.getV2({ operationId, waitForTerminal: true, includeManagedPrompt: true }))
+            .resolves.toMatchObject({ kind: 'found', operation: { domainRef: { kind: 'systemTask', id: question.id,
+                prompt: { kind: 'ssh.trustHost' } } } });
+        expect(post).not.toHaveBeenCalled();
+        const { getLiveSystemTasksRunnerAdapter } = await import('@/capabilities/systemTasks/liveSystemTasksRunner');
+        await getLiveSystemTasksRunnerAdapter().respond({ taskId: question.id, expectedPromptKind: 'ssh.trustHost', answer: { trusted: false } });
+        await expect(operations.runner.waitForCompletion(scope, operationId)).resolves.toMatchObject({ state: 'failed',
+            error: { errorCode: 'host_trust_declined' } });
+        expect(post).not.toHaveBeenCalled();
+    } finally {
+        const snapshot = operations.store.get(scope, operationId);
+        const taskId = snapshot?.domainRef?.kind === 'managedMachine' ? snapshot.domainRef.bootstrapTask?.id
+            : snapshot?.domainRef?.kind === 'systemTask' ? snapshot.domainRef.id : undefined;
+        if (taskId) {
+            const { getLiveSystemTasksRunnerAdapter } = await import('@/capabilities/systemTasks/liveSystemTasksRunner');
+            await getLiveSystemTasksRunnerAdapter().cancel({ taskId });
+        }
+        await response;
+    }
+});
+
 it('reads a managed Machine using portable Home authority rather than the HTTP projection local profile label', async () => {
     const homeId = 'srv_managed_read';
     const wire = originAuthorization(homeId);

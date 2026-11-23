@@ -69,6 +69,7 @@ export type ManagedMachineReconciliationInput = Readonly<{
     rebuild?: DevcontainerRebuildIntentV1;
     hydrator?: ManagedPresetHydrator;
     credentialConfigurations?: ManagedMachinePresetPreparationBindingV1['credentialConfigurations'];
+    onWorkspaceTrustQuestion?(): void;
 }>;
 
 /**
@@ -463,7 +464,7 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
                             return runWithServerHttpBaseUrl(params.input.serverUrl, () => createCliRemoteHostStore({
                                 credentials: params.input.credentials, signal,
                             }).readWorkspaceSshBinding(remoteHostId, connection => establishRemoteHostWorkspaceSshTrust({
-                                ...connection, signal, attaching: params.action === 'machines.managed.acquire' && !machine.resource,
+                                ...connection, signal, attaching: params.onWorkspaceTrustQuestion !== undefined,
                                 correlation: { homeId: machine.homeId, managedId: machine.id, controller: params.input.controller,
                                     requestId: params.options.requestId, expectedIntentRevision: machine.intentRevision },
                                 operationId: params.options.context?.operationAcceptance?.operationId,
@@ -786,15 +787,23 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
     return params.action === 'machines.managed.inspect' ? projectNativeJsonValueForTransport({ machine }) : null;
 }
 
-function createManagedBootstrapProgress(params: Pick<ManagedMachineReconciliationInput, 'options'>, machine: ManagedMachineFullV1,
+function createManagedBootstrapProgress(params: Pick<ManagedMachineReconciliationInput, 'options' | 'onWorkspaceTrustQuestion'>, machine: ManagedMachineFullV1,
     onEnrollmentWait?: () => void): Pick<Parameters<typeof import('./enrollmentTask').createManagedBootstrapTaskRunner>[0], 'onTask' | 'onPrompt' | 'onEvent'> {
     const domainRef = { kind: 'managedMachine' as const, id: machine.id, controller: machine.controller, resource: machine.resource };
     let bootstrapTask: Readonly<{ id: string; taskKind: 'remote.ssh.bootstrapMachine.v1' }> | undefined;
     let bootstrapPrompt: ManagedMachineBootstrapPromptV1 | null = null;
     const publishBootstrapTask = () => {
         if (!bootstrapTask) return;
-        params.options.context?.operationOwnerUpdate?.update({ domainRef: { ...domainRef,
-            bootstrapTask: { ...bootstrapTask, ...(bootstrapPrompt ? { prompt: bootstrapPrompt } : {}) } } });
+        const task = { ...bootstrapTask, ...(bootstrapPrompt ? { prompt: bootstrapPrompt } : {}) };
+        const update = params.options.context?.operationOwnerUpdate;
+        if (params.onWorkspaceTrustQuestion) {
+            // The platform probe precedes the managed row. The operation owns
+            // this standalone question, using the existing task response port.
+            update?.update({ domainRef: { kind: 'systemTask', ...task } });
+            if (bootstrapPrompt) params.onWorkspaceTrustQuestion();
+        } else {
+            update?.update({ domainRef: { ...domainRef, bootstrapTask: task } });
+        }
     };
     return {
             onTask: ({ taskId, kind }) => {

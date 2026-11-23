@@ -18,6 +18,15 @@ import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { readMachineProvisionerSessionPlacementV1, MachineProvisionersListResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 
+type MachineRpc = typeof import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc')['machineRpcWithServerScope'];
+const controllerRpc = vi.hoisted(() => ({ respond: null as ((request: Parameters<MachineRpc>[0]) => Promise<unknown>) | null }));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async importActual => {
+  const actual = await importActual<typeof import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc')>();
+  const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+  return { ...actual, ...createServerScopedMachineRpcBoundaryMock(request =>
+    controllerRpc.respond ? controllerRpc.respond(request) : actual.machineRpcWithServerScope(request)) };
+});
+
 // The JS host the app runs in is a platform boundary. The shared runtime-fetch owner is loaded by the global
 // test setup against the node stub, so a test that is a browser says so here; every other test keeps the real answer.
 const runtimeHost = vi.hoisted(() => ({ current: null as 'browser' | 'native' | null, reads: vi.fn() }));
@@ -212,11 +221,11 @@ describe('provisioner picker demand', () => {
     } finally { await screen.unmount(); }
   }));
 
-  it('offers a saved Remote Host alongside a connected Account in Add Project and acquires only the chosen host', () => withPopoverWebGlobals(async () => {
+  it.each(['linux', 'windows'] as const)('answers Add Project SSH trust before settling the %s platform probe', platform => withPopoverWebGlobals(async () => {
     runtimeHost.current = 'browser';
     onTestFinished(() => { runtimeHost.current = null; });
-    const homeId = 'srv_add_project_hosts';
-    const serverId = await harness.addHome({ name: 'Project hosts', serverUrl: 'https://project-hosts.example.test',
+    const homeId = `srv_add_project_hosts_${platform}`;
+    const serverId = await harness.addHome({ name: 'Project hosts', serverUrl: `https://project-hosts-${platform}.example.test`,
       serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
     const { REMOTE_HOST_ROWS_ROUTE_V1, RemoteHostRecordV1Schema } = await import('@happier-dev/protocol/remoteHosts/remoteHostRecordV1');
     const host = RemoteHostRecordV1Schema.parse({ id: 'host-a', name: 'Build host', createdAt: 1, updatedAt: 1, lastUsedAt: null,
@@ -248,14 +257,50 @@ describe('provisioner picker demand', () => {
         return ssh.options({ remoteHostId: host.id });
       },
     });
+    const { ACTION_OPERATION_RPC_METHODS_V2, ActionOperationSnapshotV1Schema } = await import('@happier-dev/protocol/actions/operations/v1');
+    const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+    const { Modal } = await import('@/modal');
+    const accepted = { managedId: 'attached-host', operation: { operationId: 'attach-operation' } };
+    const prompt = { kind: 'ssh.trustHost', message: 'Trust this SSH host?', host: 'example.test',
+      keyType: 'ssh-ed25519', fingerprint: 'SHA256:fixture', existingFingerprint: null } as const;
+    const scope = { accountId: 'owner', machineId: controller.machineId };
+    const running = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: accepted.operation.operationId,
+      revision: 1, actionId: 'machines.managed.acquire', state: 'running', scope, title: 'Attach workspace',
+      createdAt: 1, startedAt: 2, cancellation: 'supported',
+      domainRef: { kind: 'systemTask', id: 'trust-task', taskKind: 'remote.ssh.bootstrapMachine.v1', prompt } });
+    const { domainRef: _question, ...operation } = running;
+    const settled = ActionOperationSnapshotV1Schema.parse({ ...operation, revision: 2, settledAt: 3,
+      ...(platform === 'linux' ? { state: 'succeeded', result: accepted }
+        : { state: 'failed', error: { errorCode: 'session_holder_unavailable', error: 'session_holder_unavailable' } }) });
+    let answered = false;
     await answerExternalActionAccountForHome(harness, serverId, {
       ...controller, actionId: 'machines.managed.acquire', tokenEpoch: 0, requesterInvocation: 'optional', execute: input => {
         expect(input).toMatchObject({ selection: { kind: 'one-off', homeId, controller, attachWorkspace: true,
           launch: { provider: REMOTE_HOST_SSH_PROVISIONER, choices: { remoteHostId: host.id } } } });
         expect(input).not.toHaveProperty('selection.launch.credentials');
-        return { managedId: 'attached-host' };
+        return accepted;
       },
     });
+    await answerExternalActionAccountForHome(harness, serverId, {
+      ...controller, actionId: 'action.operations.get', tokenEpoch: 0, requesterInvocation: 'none', execute: input => {
+        expect(input).toMatchObject({ operationId: accepted.operation.operationId, machineId: controller.machineId,
+          waitForTerminal: true, ...(answered ? {} : { includeManagedPrompt: true }) });
+        return { kind: 'found', operation: answered ? settled : running };
+      },
+    });
+    controllerRpc.respond = async request => {
+      expect(request.machineId).toBe(controller.machineId);
+      if (request.method === ACTION_OPERATION_RPC_METHODS_V2.get) {
+        expect(request.payload).toEqual({ operationId: accepted.operation.operationId });
+        return { kind: 'found', operation: running };
+      }
+      expect(request.method).toBe(RPC_METHODS.CAPABILITIES_INVOKE);
+      expect(request.payload).toEqual({ id: 'tool.systemTasks', method: 'respond',
+        params: { taskId: 'trust-task', expectedPromptKind: 'ssh.trustHost', answer: { trusted: true } } });
+      answered = true;
+      return { ok: true, result: null };
+    };
+    onTestFinished(() => { controllerRpc.respond = null; });
     harness.answer(serverId, '/v1/machines', { body: [machine] });
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' },
       [createControllerMachineFixture({ id: controller.machineId, installationId: controller.installationId, activeAt: Date.now() })]);
@@ -272,6 +317,7 @@ describe('provisioner picker demand', () => {
       }),
     });
     try {
+      vi.mocked(Modal.show).mockClear();
       expect(harness.requestsFor(REMOTE_HOST_ROWS_ROUTE_V1)).toHaveLength(0);
       await screen.pressByTestIdAsync('add-project');
       await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('A folder on a server'));
@@ -287,7 +333,21 @@ describe('provisioner picker demand', () => {
       const hostOption = screen.find(node => typeof node.type === 'string' && node.props.testID?.startsWith('add-project:remote:workspace:')
         && typeof node.props.onPress === 'function');
       await screen.pressByTestIdAsync(hostOption.props.testID);
-      await waitForHomeGovernance(() => expect(attached).toHaveBeenCalledWith({ kind: 'attached', managedId: 'attached-host', controller }));
+      await waitForHomeGovernance(() => expect(Modal.show, JSON.stringify(attached.mock.calls)).toHaveBeenCalledWith(expect.objectContaining({
+        chrome: expect.objectContaining({ testID: 'ssh-host-key-modal' }),
+        props: expect.objectContaining({ request: expect.objectContaining({ fingerprint: prompt.fingerprint }) }),
+      })));
+      expect(attached).not.toHaveBeenCalled();
+      const trustModal = vi.mocked(Modal.show).mock.calls.find(([config]) =>
+        config.chrome?.testID === 'ssh-host-key-modal')?.[0];
+      await act(async () => {
+        const resolve = trustModal?.props?.onResolve;
+        if (typeof resolve !== 'function') throw new Error('Expected an SSH trust decision');
+        resolve(true);
+      });
+      await waitForHomeGovernance(() => expect(attached).toHaveBeenCalledWith(platform === 'linux'
+        ? { kind: 'attached', managedId: 'attached-host', controller } : { kind: 'unsupported_platform' }));
+      expect(answered).toBe(true);
       expect(onAdd).toHaveBeenCalledWith(expect.objectContaining({ name: host.name, controllerMachineId: controller.machineId }));
       expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(1);
       expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(1);

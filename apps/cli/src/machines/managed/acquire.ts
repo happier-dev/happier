@@ -1453,7 +1453,15 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                         allocation: 'unsubmitted', creationState: 'active', desired: 'start', desiredWhen: 'now',
                         intentRevision: 0, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
                     });
-                    const native = createManagedNativeInvocation({ input, options, client, machine, action }, () => machine);
+                    const operationReceipt = { operationId: operation.operationId };
+                    let acceptedForTrust = false;
+                    const native = createManagedNativeInvocation({ input, options, client, machine, action,
+                        onWorkspaceTrustQuestion: () => {
+                            if (acceptedForTrust) return;
+                            acceptedForTrust = true;
+                            operation.accept({ managedId: machine.id, operation: operationReceipt } satisfies ManagedAcceptedV1);
+                        },
+                    }, () => machine);
                     if (!isMachineProvisionerWorkspaceAttachmentV1(native.contribution.definition, machine.launch.choices)) {
                         throw new ManagedMachineControllerError('invalid_request');
                     }
@@ -1464,9 +1472,9 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                         originalActionEnvelope: context.originalActionEnvelope, preparedAttachment,
                     }), ManagedAdmissionOutputV1Schema);
                     client.assertConnection(admitted.machine);
-                    const accepted: ManagedAcceptedV1 = { managedId: admitted.machine.id, operation: { operationId: operation.operationId } };
+                    const accepted: ManagedAcceptedV1 = { managedId: admitted.machine.id, operation: operationReceipt };
                     context.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: admitted.machine.id } });
-                    operation.accept(accepted);
+                    if (!acceptedForTrust) operation.accept(accepted);
                     return accepted;
                 }
                 if (options.acquisitionMode === 'resource-bound' && !isManagedPresetAcquireInputV1(acquisition)) {

@@ -29,7 +29,9 @@ import {
 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isDeploymentChildRootActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { computeExternalActionRequestEnvelopeDigestV1, decodeExternalActionResolvedTargetV1, signExternalActionApprovalInputV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { openExternalActionRequesterAccountContextV1, type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { openExternalActionRequesterAccountContextV1, openManagedControllerActionCodecV1,
+    type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { isRequesterOperationActionIdV1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -223,7 +225,10 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
             const wrapped = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
             const request = wrapped.success ? wrapped.data : null;
             const envelope = request?.envelope ?? ExternalActionRequestEnvelopeSchema.parse(body);
-            if ((envelope.v === 2) !== Boolean(params.encryption)) throw new Error('Unexpected external Action fixture Account mode');
+            const requesterOperationRead = envelope.v === 2 && envelope.requesterOperationRead
+                && isRequesterOperationActionIdV1(params.actionId);
+            // Requester operations seal to the installation on both Account modes.
+            if ((envelope.v === 2) !== Boolean(params.encryption || requesterOperationRead)) throw new Error('Unexpected external Action fixture Account mode');
             const target = envelope.target;
             if ((request && request.machineId !== machine.id) || target?.kind !== 'machine'
                 || target.machineId !== machine.id) throw new Error('Unexpected external Action fixture target');
@@ -263,12 +268,15 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
                     ? createDeploymentCandidatePublicationV1({ ...params, requestId: envelope.requestId!, requestEnvelopeDigest,
                         environmentId: native.environmentId, source: params.deploymentSource }) : undefined;
                 const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({
-                    v: 1, token: `test-external-action-authorization:${envelope.requestId}`, binding: {
+                    v: 1, token: `test-external-action-authorization:${envelope.requestId}`,
+                    ...(requesterOperationRead ? { requesterOperationReadInstallationPublicKey: encodeBase64(installation.publicKey, 'base64url') } : {}),
+                    binding: {
                         accountId: params.accountId, authentication: { kind: 'account', tokenEpoch: params.tokenEpoch },
                         serverIdentityId: params.serverIdentityId, machineId: machine.id,
                         custodianAccountId: params.custodian?.accountId ?? params.accountId, installationId: machine.installationId,
                         accountEncryptionMode: params.encryption ? 'e2ee' : 'plain', actionId: params.actionId,
                         requestId: envelope.requestId, target,
+                        ...(requesterOperationRead ? { requesterOperationRead: true } : {}),
                         ...(machineRuntimeDemand ? { machineRuntimeDemand } : {}),
                         ...(workspaceSyncAdmission ? { workspaceSyncAdmission } : {}),
                         ...(environmentId !== undefined ? { environmentId } : {}),
@@ -289,7 +297,11 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
             const binding = { serverIdentityId: params.serverIdentityId, accountId: params.accountId,
                 authentication: { kind: 'account' as const, tokenEpoch: params.tokenEpoch },
                 actionId: params.actionId, target };
-            const material = params.encryption ? { type: 'dataKey' as const, machineKey: params.encryption.getContentPrivateKey() } : null;
+            const material = requesterOperationRead
+                ? openManagedControllerActionCodecV1({ authorization: request?.executionAuthorization,
+                    machineId: machine.id, installationId: machine.installationId!, serverIdentityId: params.serverIdentityId,
+                    installationPrivateKey: installation.privateKey })
+                : params.encryption ? { type: 'dataKey' as const, machineKey: params.encryption.getContentPrivateKey() } : null;
             const input = envelope.v === 1 ? envelope.input
                 : material ? openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding: { ...binding, requestId: envelope.requestId }, material })?.input : undefined;
             if (input === undefined) throw new Error('Invalid encrypted external Action fixture request');
@@ -298,7 +310,9 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
             if (params.requesterInvocation === 'optional' && !request?.executionAuthorization) {
                 result = await params.execute(input, { target, envelope, requestId: envelope.requestId, signal: init?.signal, requestHeaders });
             } else if (params.requesterInvocation === 'none') {
-                if (request?.executionAuthorization?.requesterAccountContext) throw new Error('Unexpected private requester Account carrier');
+                if (!requesterOperationRead && request?.executionAuthorization?.requesterAccountContext) {
+                    throw new Error('Unexpected private requester Account carrier');
+                }
                 result = await params.execute(input, { target, requestId: envelope.requestId, signal: init?.signal, requestHeaders });
             } else {
                 if (!request?.executionAuthorization) throw new Error('Expected an authorized private requester Account carrier');
