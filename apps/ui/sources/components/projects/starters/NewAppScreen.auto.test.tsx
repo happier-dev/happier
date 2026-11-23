@@ -53,7 +53,7 @@ vi.mock(
 );
 
 const { createActionExecutor } = await import('@happier-dev/protocol/actions');
-const { createRegistryHostV1 } = await import('@happier-dev/protocol/registries');
+const { createRegistryHostV1, HAPPIER_PICKS_SOURCE_ID } = await import('@happier-dev/protocol/registries');
 const { createActionExecutorBoundaryFixture } =
   await import('@/dev/testkit/fixtures/actionExecutorBoundary');
 const { createPlainPromptLibraryCatalogHomeFixture } =
@@ -477,16 +477,52 @@ it.each(['ready', 'needs_review'] as const)('opens a Dokploy suggestion without 
   }
 });
 
-it('a catalog app picked by hand stays in this dialog and Configure uses its catalog address declaration', async () => {
+it('offers one Umami catalog choice during a source outage while keeping unrelated same-name templates', async () => {
+  const coolify = 'builtin:compose-catalog';
+  const dokploy = 'builtin:dokploy-templates';
+  suggestionBoundary({
+    registryActionExecute: async ({ input }) => {
+      if ((input as { kind: string }).kind !== 'app') return { pages: [] };
+      return { pages: [
+        { sourceId: HAPPIER_PICKS_SOURCE_ID, status: { state: 'unreachable' }, nextCursor: null, items: [] },
+        { sourceId: coolify, status: { state: 'ok', fetchedAt: 1 }, nextCursor: null, items: [
+          { kind: 'app', sourceId: coolify, itemId: 'umami', title: 'Umami', description: 'Umami from Coolify.',
+            links: { website: 'https://umami.is?utm_source=coolify.io' } },
+          { kind: 'app', sourceId: coolify, itemId: 'umami-alternate', title: 'Umami',
+            links: { website: 'https://umami.is' } },
+        ] },
+        { sourceId: dokploy, status: { state: 'ok', fetchedAt: 1 }, nextCursor: null, items: [
+          { kind: 'app', sourceId: dokploy, itemId: 'umami', title: 'Umami', description: 'Umami from Dokploy.',
+            links: { website: 'https://umami.is/docs' } },
+        ] },
+      ] };
+    },
+  });
+  const { fixture, screen } = await openDescribe('catalog-duplicate-umami');
+  try {
+    await act(async () => screen.changeTextByTestId('newApp.code.address', 'umami'));
+    await waitForHomeGovernance(() => {
+      expect(screen.findHostByTestId(`newApp.appCatalogFailure:${HAPPIER_PICKS_SOURCE_ID}`)).not.toBeNull();
+      expect(screen.findHostByTestId('newApp.catalog.umami-alternate')).not.toBeNull();
+    });
+    expect(screen.findAllHostsByTestId('newApp.catalog.umami')).toHaveLength(1);
+    await screen.unmount();
+  } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
+
+it('shows why a picked catalog app cannot run on repository platforms and uses its catalog address declaration', async () => {
   const digest = `sha256:${'b'.repeat(64)}`;
-  const summary = { sourceId: 'app', kind: 'app', itemId: 'activepieces', title: 'Activepieces', version: digest };
+  const summary = { sourceId: 'app', kind: 'app', itemId: 'umami', title: 'Umami', version: digest };
   const reads: unknown[] = [];
   suggestionBoundary({
     registryActionExecute: async ({ actionId, input }) => {
       if (actionId === 'registries.items.read') {
         reads.push(input);
         return { item: { summary, fetchedAt: 1, payload: { kind: 'app', state: 'ready', ref: { kind: 'content', digest },
-          app: { schemaVersion: 1, title: 'Activepieces', compose: { document: 'services:\n  web:\n    image: activepieces/activepieces\n', profiles: [], services: ['web'] },
+          app: { schemaVersion: 1, title: 'Umami', compose: { document: 'services:\n  web:\n    image: ghcr.io/umami-software/umami\n', profiles: [], services: ['web'] },
             variables: [], generatedSecrets: [],
             domains: [{ key: 'public', service: 'web', containerPort: 80, protocol: 'http', required: true }], volumes: [] } } } };
       }
@@ -495,19 +531,32 @@ it('a catalog app picked by hand stays in this dialog and Configure uses its cat
     },
   });
   const { fixture, screen, onClose } = await openDescribe('manual-catalog-where');
+  let disposePlatforms: (() => Promise<void>) | undefined;
   try {
     const { storage } = await import('@/sync/domains/state/storageStore');
     const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
     const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
     const scope = storage.getState().settingsScope;
     if (!scope) throw new Error('Expected admitted Home Account');
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+    const { manifest, activateAccount } = await import('../../../../../../packages/plugins/deploy-cloudflare/src/index');
+    const account = await captureLazyActionAccountContext(scope.serverId);
+    const { accountLifetime } = account;
+    disposePlatforms = async () => account.dispose();
+    const installed = await installPortableAccountPluginReleaseForTest({ manifest, activate: activateAccount, accountLifetime,
+      publishProjection: true });
+    disposePlatforms = async () => {
+      await installed.dispose();
+      account.dispose();
+    };
     await publishMachineInventoryForTest(scope, [createMachineFixture({ id: 'devbox', installationId: 'devbox-installation', activeAt: Date.now() })]);
     routerMock.spies.push.mockClear();
-    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.catalog.activepieces')).toBeTruthy());
-    await screen.pressByTestIdAsync('newApp.catalog.activepieces');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.catalog.umami')).toBeTruthy());
+    await screen.pressByTestIdAsync('newApp.catalog.umami');
     await screen.pressByTestIdAsync('newApp.continue');
     await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.draft')).toBeTruthy());
-    expect(reads).toContainEqual(expect.objectContaining({ kind: 'app', sourceId: 'app', itemId: 'activepieces' }));
+    expect(reads).toContainEqual(expect.objectContaining({ kind: 'app', sourceId: 'app', itemId: 'umami' }));
     expect(onClose, 'the dialog stays: Where runs inside it').not.toHaveBeenCalled();
     expect(routerMock.spies.push, 'no detour through the Store listing').not.toHaveBeenCalled();
     // Read the Source row itself so the catalog name must be visible in the summary (DESIGN-ACCEPT W1).
@@ -520,6 +569,13 @@ it('a catalog app picked by hand stays in this dialog and Configure uses its cat
       expect(sourceText).toContain(summary.title);
       expect(sourceText).toContain(t('newApp.deploy.catalogSourceNote'));
     });
+    await waitForHomeGovernance(() => expect(screen.findHostByTestId('project-deployments.draft.cantRun')).not.toBeNull());
+    const refusal = screen.findHostByTestId('project-deployments.draft.cantRun');
+    const refusalText = refusal?.findAll(node => typeof node.type === 'string')
+      .flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
+    expect(refusalText).toContain('Cloudflare Pages');
+    expect(refusalText).toMatch(/require a repository.*choose an online Machine to run this catalog template/i);
+    expect(refusalText).toContain(t('newApp.deploy.cantRun', { name: 'Umami' }));
     await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.draft.continue')?.props.disabled).toBe(false));
     const readCount = reads.length;
     await screen.pressByTestIdAsync('project-deployments.draft.continue');
@@ -536,6 +592,7 @@ it('a catalog app picked by hand stays in this dialog and Configure uses its cat
     expect(reads).toHaveLength(readCount);
     await screen.unmount();
   } finally {
+    await disposePlatforms?.();
     await standardCleanup();
     await fixture.dispose();
   }

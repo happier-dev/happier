@@ -542,8 +542,8 @@ export const DeploymentEnvironmentDraft = React.memo(
     // A platform the definition can't use leaves the grid for one muted list with the one shared reason (whereM).
     const repositoryOnlyPlatforms = platformTargets.filter(target =>
       recommendation.corrections.some(correction => correction.targetId === target.key && correction.kind === 'prepare_repository'));
-    const repositoryOnlyReason = repositoryOnlyPlatforms.length === 0 ? undefined : definitionKind === 'folder'
-      ? t('newApp.deploy.cantRunStored') : deploymentActionRefusalRemedy(DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION);
+    const repositoryOnlyReason = repositoryOnlyPlatforms.length === 0 ? undefined
+      : deploymentActionRefusalRemedy(DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION, definition);
     const chooseTarget = (next: string | null) => {
       if (next === null || next === LOADING_TILE) return;
       if (next === RETRY_TILE) { platforms.retry(); return; }
@@ -718,7 +718,7 @@ export const DeploymentEnvironmentDraft = React.memo(
               title={t('projects.deployments.createFailedTitle')}
               description={refusedVariableKey
                 ? t('session.actionsDraft.validation.requiredField', { field: refusedVariableKey })
-                : readDeploymentRefusalRecovery(refusal.code)?.remedy ?? deploymentActionRefusalRemedy(refusal.code)}
+                : readDeploymentRefusalRecovery(refusal.code)?.remedy ?? deploymentActionRefusalRemedy(refusal.code, definition)}
               details={[refusal.code]}
             />
           ) : null;
