@@ -603,7 +603,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 requestKey: operationId, deploymentId: executionDeploymentId, contentArtifactId: generation.deployment.contentArtifactId,
                 contentHeaderVersion: generation.deployment.contentHeaderVersion, contentBodyVersion: generation.deployment.contentBodyVersion },
             materialization: { kind: 'restoration', deploymentId: executionDeploymentId, sourceDeploymentId: executionDeploymentId } };
-        const execute = (backupDelivery?: Awaited<ReturnType<typeof readEnvironmentAlertDeliveryForHost>>) => withNativeRestoreRuntime({ request: runtimeRequest, backupDelivery, snapshot: { ...snapshot, content: generation.content,
+        const execute = () => withNativeRestoreRuntime({ request: runtimeRequest, snapshot: { ...snapshot, content: generation.content,
             deployment: generation.deployment }, generation, installationId: input.installationId, operationKind: request.actionId, operationId },
         async ({ runtime, createBackupInput, createInput }) => {
             if (capture) return executeOwnServerBackupForHost(admitted, await createInput(capture),
@@ -619,16 +619,18 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             : request.actionId === DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1 ? 'prune' : null;
         if (!check) return execute();
         const delivery = await readEnvironmentAlertDeliveryForHost(host, snapshot.environment.environment.id, snapshot.signal);
-        if (check === 'run') return execute(delivery);
         const settlement = { environment: snapshot.environment, targetLinkId: snapshot.link.id,
-            check: check satisfies 'verify' | 'prune', operationId, configRevision: configuration.configRevision, delivery };
+            check, operationId, configRevision: configuration.configRevision, delivery,
+            ...(check === 'run' ? { retryTarget: { serverId: host.serverId, environmentId: input.environmentId,
+                targetLinkId: snapshot.link.id, deploymentId: executionDeploymentId, machineId: host.machineId,
+                installationId: input.installationId } } : {}) };
         try {
-            const result = await execute(delivery);
+            const result = await execute();
             await publishBackupSettlementNotice({ ...settlement, outcome: 'succeeded' });
             return result;
         } catch (error) {
             await publishBackupSettlementNotice({ ...settlement,
-                outcome: backupFailureOutcome(error) });
+                outcome: backupFailureOutcome(error, failureCode(error, snapshot.signal.aborted)) });
             throw error;
         }
     }

@@ -21,7 +21,9 @@ import { AutomationDefinitionDetailSchema } from '@happier-dev/protocol/automati
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 import { HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
 import { createHealthCheckSourceInstanceIdV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
-import type { OwnServerDeploymentRequest, OwnServerDeploymentTargetHostInput } from './targets/ownServer/ownServerDeploymentTarget';
+import { createOwnServerDeploymentTargetForHost, type OwnServerDeploymentRequest,
+  type OwnServerDeploymentTargetHostInput } from './targets/ownServer/ownServerDeploymentTarget';
+import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { NotificationChannelRecordV1Schema } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { PushNotificationClient } from '@/api/pushNotifications';
@@ -170,13 +172,16 @@ describe('settlement notice admission and arrival cost', () => {
       return { status: row ? 200 : 404, data: row ?? {} };
     });
     vi.spyOn(axios, 'post').mockImplementation(async (url: string, input: unknown) => {
-      if (new URL(url).pathname === '/v1/machines/read-batch') {
+      const path = new URL(url).pathname;
+      if (path === '/v3/automations/query') return { status: 200, data: { automations: [], nextCursor: null } };
+      if (path === '/v1/machines/read-batch') {
         const { machineIds } = MachineReadBatchRequestV1Schema.parse(input);
         return { status: 200, data: MachineReadBatchResponseV1Schema.parse({ results: machineIds.map(machineId =>
           machineId === 'machine-a' ? { machineId, status: 'found', machine: machineRow() }
             : { machineId, status: 'not_found' }) }) };
       }
-      if (new URL(url).pathname === '/v1/artifacts/read') return artifactReadResponse(input, id => rows.get(id) ?? null);
+      if (path === '/v1/artifacts/read') return artifactReadResponse(input, id => rows.get(id) ?? null);
+      expect(path).toMatch(/^\/v1\/artifacts(?:\/|$)/);
       const mutation = readCarrierMutation(input);
       const id = typeof mutation.id === 'string' ? mutation.id : new URL(url).pathname.split('/').at(-1)!;
       const prior = rows.get(id);
@@ -323,6 +328,49 @@ describe('settlement notice admission and arrival cost', () => {
         ] });
         else expect(notice).not.toHaveProperty('recoveryChoices');
       }
+    }
+
+    environment.content.backup = {
+      configRevision: 1, destinationRef: { pluginId: 'example.storage', localId: 's3' },
+      occurrenceId: 'storage', config: { bucket: 'recovery' },
+      credentialBindings: [{ purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword' }],
+      sources: [{ kind: 'dump', sourceId: 'main', service: 'db', consistency: 'logical' }],
+      ownership: { environmentId: environment.environment.id, prefix: environment.environment.id },
+      retention: { kind: 'keepEverything' },
+    };
+    receipt.deployment.state = 'succeeded';
+    link.activeDeploymentId = receipt.deployment.id;
+    for (const terminal of ['native_route_unavailable', 'outcome_unknown', 'cancelled', 'target_mismatch'] as const) {
+      rows.clear();
+      let acquisitions = 0;
+      const target = createOwnServerDeploymentTargetForHost({ ...host, runtime: {
+        async acquire() {
+          acquisitions++;
+          throw Object.assign(new Error(terminal), { code: terminal });
+        },
+      } });
+      await expect(target.backup({ actionId: DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1,
+        input: { ...retryTarget, expectedRevision: environment.environment.revision, configRevision: 1,
+          ...(terminal === 'target_mismatch' ? { installationId: 'foreign-installation' } : {}) },
+        context: { operationAcceptance: { operationId: `admitted-backup-${terminal}`, accept() {} } },
+      })).rejects.toMatchObject({ code: terminal });
+      expect(acquisitions).toBe(terminal === 'target_mismatch' ? 0 : 1);
+      if (terminal === 'cancelled' || terminal === 'target_mismatch') {
+        expect(rows.size).toBe(0);
+        continue;
+      }
+      expect.soft(rows.size, 'an admitted run settles even before its native worker starts').toBe(1);
+      if (!rows.size) continue;
+      const artifact = await runWithServerHttpBaseUrl(baseUrl,
+        () => store.read([...rows.keys()][0]!, { includeSharedAudience: false }));
+      const notice = artifact && readOwnedNoticeArtifactV1(artifact, 'account-owner');
+      expect(notice).toMatchObject({ healthPhase: 'open', source: { kind: 'host', topic: 'service_health',
+        subject: { kind: 'backup', environmentId: environment.environment.id, check: 'run' } } });
+      if (terminal === 'outcome_unknown') expect(notice).not.toHaveProperty('recoveryChoices');
+      else expect(notice).toMatchObject({ recoveryChoices: [{
+        actionId: DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1,
+        input: { ...retryTarget, expectedRevision: environment.environment.revision, configRevision: 1 },
+      }] });
     }
 
     rows.clear();

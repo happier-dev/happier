@@ -20,7 +20,7 @@ export async function executeOwnServerBackupForHost(request: OwnServerBackupRequ
             case DEPLOYMENT_BACKUP_TEST_ACTION_ID_V1: return testDeploymentBackupDestinationV1({ ...common, operationId });
             case 'deployments.backups.run': {
                 const result = await runDeploymentBackupV1({ ...common, ...('data' in operands
-                    ? { data: operands.data, restoreTargets } : {}), onSettled: input.onBackupSettled });
+                    ? { data: operands.data, restoreTargets } : {}) });
                 return { kind: 'verified', operationId, manifests: [...result.manifests],
                     ...(result.restoreCaptures ? { restoreCaptures: [...result.restoreCaptures] } : {}) };
             }
