@@ -40,7 +40,7 @@ import {
 } from '@happier-dev/protocol/usage/coach/evaluateUsageCoach';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
-import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { UsageAnalyticsQueryResponseSchema, type UsageAnalyticsTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { UsageProjectLedgerWidget } from './UsageProjectLedgerWidget';
 import { UsageWorkProviderMark } from './UsageWorkProviderMark';
@@ -1178,7 +1178,7 @@ describe('Work and Coach widget bodies', () => {
         total: fromParts[index] ? null : amount },
     }));
     const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] }));
-    const total = fromParts.some(Boolean)
+    const total: UsageAnalyticsTokens = fromParts.some(Boolean)
       ? { input: 15, output: 2, reasoning: null, cacheRead: null, cacheWrite: null, total: null, measured: { total: 17, fromParts: true } }
       : { input: 15, output: 2, reasoning: null, cacheRead: null, cacheWrite: null, total: 17 };
     const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery}

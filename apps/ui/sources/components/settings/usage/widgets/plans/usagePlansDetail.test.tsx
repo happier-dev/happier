@@ -517,7 +517,7 @@ it('reads the compact Plan fit value once before its account caption', async () 
   const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
   const props = bodyProps([read]);
   const slice = { ...props.slice, planInsights: {
-    recordedWeek: { status: 'available', recordedActiveDays: 1, recordedEvents: 1, coverage: 'complete_recorded_history' },
+    recordedWeek: { status: 'insufficient_basis', reason: 'recorded_activity_unavailable' },
     accounts: [{ source: read.source, weather: [], pricePerReset: [], modelHeadroom: [],
       value: { status: 'available', kind: 'api_equivalent', amountUsd: 55.3, currency: 'USD', period: {},
         coverage: 'complete', pricedContributionCount: 1, unpricedContributionCount: 0, unknownAccountContributionCount: 0,

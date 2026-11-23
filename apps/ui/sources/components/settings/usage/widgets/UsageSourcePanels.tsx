@@ -80,7 +80,7 @@ function groupCoverageRows(sources: readonly UsageAnalyticsCoverage['sources'][n
   for (const source of sources) {
     const agentId = usageSourceAgentId(source.source);
     const status = sourceCoverageStatus(source);
-    let group = agentId === null ? unattributed
+    let group: CoverageGroup | null | undefined = agentId === null ? unattributed
       : groups.find(row => row.agentId !== null && areSameAgentRoutingIdentity(row.agentId, agentId));
     if (!group) {
       group = { agentId, title: agentId === null ? t('usage.board.page.agentNotReported') : sentence(usageSourceTitle(source.source, undefined, 'coverage')),
