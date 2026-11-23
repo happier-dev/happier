@@ -128,7 +128,7 @@ import { MachineSetupPlanInputV1Schema, ManagedEnrollmentInstallationV1Schema, r
 import { projectManagedMachineSetupCreationSourcesV1 } from '@happier-dev/cli-common/machines/managed';
 import { readRequesterAccountActionContext, readRequesterAccountActionTransportContext, rebindRequesterAccountActionContext, requesterAccountEncryptionMode, type RequesterAccountAuthorizationHeaders } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { refuseExternalActionPhase, traceExternalActionInnerStage, runTracedExternalActionInnerStage, readSessionInputAdmissionDiagnostic } from '@/daemon/externalActions/externalActionPhase';
-import { projectExternalActionRunNowIdempotencyKeyV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectExternalActionHandoffAdmissionV1, projectExternalActionRunNowIdempotencyKeyV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { recordRequesterCurrentnessRefusal, rethrowRequesterHomeReadFailure,
   type RequesterCurrentnessRefusalBranch } from "@/daemon/sessionEncryption/requesterCurrentness";
 import { createHttpStatusError } from '@/api/client/httpStatusError';
@@ -1360,6 +1360,11 @@ async function prepareOriginalAccountAction(
           ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
           ...(workflowPreparation ? { workflowPreparation } : {}),
           ...(sessionPresetAcquisition ? { sessionSpawnAdmission } : {}) });
+    // Home requires the signed requester's Handoff operands outside the sealed
+    // input, exactly as the app sends them; it re-reads both Machines itself.
+    const handoffAdmission = !workflow && input.target.kind === 'machine' ? projectExternalActionHandoffAdmissionV1({
+      actionId: input.actionId, input: input.input, sourceMachineId: input.target.machineId }) : undefined;
+    if (handoffAdmission) originalEnvelope = { ...originalEnvelope, handoffAdmission };
   }
   const envelope = telemetryRead && originalEnvelope.v === 2
     ? { ...originalEnvelope, telemetryCollectorCodec: true as const } : originalEnvelope;

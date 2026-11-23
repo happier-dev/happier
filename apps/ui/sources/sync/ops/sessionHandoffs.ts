@@ -4,6 +4,7 @@ import type { SessionHandoffStatus } from '@happier-dev/protocol/sessions/contro
 import type { SessionHandoffStorageMode } from '@happier-dev/protocol/sessions/control/handoff/handoffTypes';
 import type { HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffTargetReplacementApprovalV1';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import { projectExternalActionHandoffAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { v4 as uuidv4 } from 'uuid';
@@ -111,8 +112,8 @@ async function requestCoordinator(options: StartSessionHandoffOptions): Promise<
         try {
             const requesterResult = await executeOriginalAccountMachineAction({ account,
                 actionId: 'session.handoff', machineId, requestId,
-                input: payload, handoffAdmission: { sessionId: options.sessionId,
-                    sourceMachineId: machineId, targetMachineId: normalizeId(options.targetMachineId) },
+                input: payload, handoffAdmission: projectExternalActionHandoffAdmissionV1({
+                    actionId: 'session.handoff', input: payload, sourceMachineId: machineId }),
                 foreignTargetOnly: true, ...(options.signal ? { signal: options.signal } : {}),
             });
             if (requesterResult) return requesterResult;

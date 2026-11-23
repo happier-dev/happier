@@ -864,6 +864,23 @@ export const ExternalActionHandoffAdmissionV1Schema = lazyZodSchema(() => z.stri
   targetMachineId: ExternalActionTargetIdV1Schema,
 }));
 export type ExternalActionHandoffAdmissionV1 = z.infer<typeof ExternalActionHandoffAdmissionV1Schema>;
+/**
+ * The one requester projection of a Handoff's admission operands. The signed
+ * request targets the Session's own Machine, so that Machine is the source;
+ * Home re-reads both Machines and the Session binding before admitting it.
+ */
+export function projectExternalActionHandoffAdmissionV1(params: Readonly<{
+  actionId: string;
+  input: unknown;
+  sourceMachineId: string;
+}>): ExternalActionHandoffAdmissionV1 | undefined {
+  if (params.actionId !== 'session.handoff' || !params.input || typeof params.input !== 'object') return undefined;
+  const input = params.input as Readonly<{ sessionId?: unknown; targetMachineId?: unknown }>;
+  const trim = (value: unknown) => typeof value === 'string' ? value.trim() : value;
+  const admission = ExternalActionHandoffAdmissionV1Schema.safeParse({ sessionId: trim(input.sessionId),
+    sourceMachineId: trim(params.sourceMachineId), targetMachineId: trim(input.targetMachineId) });
+  return admission.success ? admission.data : undefined;
+}
 /** Both installations are issuer-observed, not inferred from a caller's Machine id. */
 export const ExternalActionHandoffBindingV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ExternalActionHandoffAdmissionV1Schema, {
   sourceInstallationId: ExternalActionTargetIdV1Schema,

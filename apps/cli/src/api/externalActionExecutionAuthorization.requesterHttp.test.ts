@@ -439,6 +439,32 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     expect(JSON.stringify(envelope)).not.toContain('private CLI setup');
   });
 
+  it('carries the Handoff admission Home requires on a signed CLI Session Handoff', async () => {
+    const machineKey = new Uint8Array(32).fill(58);
+    const machine = { id: target.machineId, managedMachineRef: null, kind: 'persistent', active: true,
+      installationId: 'installation', revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
+      installationPublicKey: Buffer.from(keys.publicKey).toString('base64'),
+      access: { custodian: { accountId: 'bob', displayName: 'Bob' }, role: 'manage', resourceMode: 'e2ee', accessState: 'ready' } };
+    vi.spyOn(axios, 'get').mockImplementation(async url => String(url).endsWith('/v1/account/encryption')
+      ? { status: 200, data: { mode: 'e2ee', updatedAt: 1 } }
+      : String(url).endsWith('/v1/machines') ? { status: 200, data: [machine] } : { status: 200, data: { machine } });
+    let received: unknown;
+    vi.spyOn(axios, 'post').mockImplementation(async (_url, body) => {
+      received = body; return { status: 403, data: { error: 'permission_denied' } };
+    });
+    const result = await executionAuthorizationOwner.dispatchOriginalAccountAction({ actionId: 'session.handoff',
+      input: { sessionId: 'bob-session', targetMachineId: 'bob-target', targetPath: '/work/target' },
+      requestId: 'cli-handoff', target, credentials: { token: accountToken,
+        encryption: { type: 'dataKey', machineKey, publicKey: nacl.box.keyPair.fromSecretKey(machineKey).publicKey } },
+      serverHttpBaseUrl: 'https://home.test', serverIdentityId: 'srv_bob_home' });
+    expect(received, JSON.stringify(result)).toBeDefined();
+    const envelope = ExternalActionRequestEnvelopeV2Schema.parse(received && typeof received === 'object'
+      && 'envelope' in received ? received.envelope : received);
+    // The Session's Machine is the signed target, so it is the Handoff source.
+    expect(envelope.handoffAdmission).toEqual({ sessionId: 'bob-session', sourceMachineId: target.machineId,
+      targetMachineId: 'bob-target' });
+  });
+
   it('projects encrypted Session-authored setup presence before Home spawn admission', async () => {
     const sessionActionOrigin = SessionActionRpcOriginV1Schema.parse({ v: 1,
       caller: { kind: 'session', sessionId: 'lead', starterDepth: 1, turnDepth: 2 },
