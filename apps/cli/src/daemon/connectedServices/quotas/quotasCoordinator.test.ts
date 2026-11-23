@@ -2662,7 +2662,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     expect(loadQuota).not.toHaveBeenCalled();
   });
 
-  it.each(['settlement_init_unconfigured', 'settlement_init_unconfigured_e2ee', 'inventory_init_unconfigured', 'deadline_idle', 'deadline_notice', 'deadline_unknown', 'deadline_active', 'persistence_timeout', 'persistence_unchanged_plain', 'persistence_unchanged_e2ee', 'deadline_no_quota', 'deadline_no_quota_needs_reauth', 'deadline_no_quota_recovery', 'deadline_fresh', 'deadline_reset', 'usage_notice_requester', 'completion_observation_plain', 'completion_observation_no_quota', 'completion_observation_e2ee', 'completion_observation_publication_failed', 'completion_observation_settlement_failed', 'settlement_init_plain', 'settlement_init_e2ee', 'settlement_init_existing', 'settlement_init_no_quota', 'settlement_init_stale', 'settlement_init_failed', 'quota_error', 'quota_error_deferred_request', 'quota_error_deferred_request_e2ee', 'quota_error_cold', 'quota_family', 'unusable_spare', 'enumerated', 'enumerated_no_expiry', 'aggregate', 'aggregate_timeout', 'aggregate_network', 'read_failure', 'not_available', 'nothing_to_reset', 'already_consumed', 'manual_selected', 'manual_next', 'manual_not_available', 'manual_missing', 'manual_codex_alias', 'manual_claude_alias', 'manual_stale_basis', 'manual_persistence_failed', 'discovery_inventory', 'discovery_inventory_e2ee', 'discovery_malformed', 'discovery_unavailable', 'discovery_no_facet', 'automatic_target_then_manual', 'automatic_without_context_then_manual', 'automatic_pending_then_manual', 'automatic_pending_then_target', 'manual_distinct', 'manual_same_selector', 'manual_aggregate_selected', 'manual_known_no_effect_error', 'manual_unknown_error', 'manual_predecessor_error', 'manual_reconcile_redeemed', 'manual_reconcile_absent', 'manual_reconcile_refresh_absent', 'manual_reconcile_refresh_available', 'manual_reconcile_refresh_expired', 'manual_configured_late_acknowledgement', 'manual_configured_checked_late_acknowledgement', 'manual_configured_terminal_read_acknowledgement', 'automatic_configured_late_after_inventory', 'manual_late_acknowledgement', 'manual_lost_loopback_acknowledgement', 'manual_reset_after_quota_error', 'manual_reset_after_provider_backoff', 'quota_future', 'quota_refresh_marker', 'quota_all_unavailable', 'quota_profile_separator', 'quota_data_key', 'quota_no_provider_identity', 'quota_timeout_configured', 'quota_timeout_absent', 'quota_stale_basis', 'quota_error_network', 'quota_error_native', 'quota_error_refresh_marker', 'quota_inventory_retry'] as const)('schedules a qualified account through the plugin quota leaf and canonical V4 usage writer (%s recovery)', async (recoveryMode) => {
+  it.each(['settlement_init_unconfigured', 'settlement_init_unconfigured_e2ee', 'inventory_init_unconfigured', 'deadline_idle', 'deadline_notice', 'deadline_unknown', 'deadline_active', 'persistence_timeout', 'persistence_unchanged_plain', 'persistence_unchanged_e2ee', 'deadline_no_quota', 'deadline_no_quota_needs_reauth', 'deadline_no_quota_recovery', 'deadline_fresh', 'deadline_reset', 'usage_notice_requester', 'completion_observation_plain', 'completion_observation_no_quota', 'completion_observation_e2ee', 'completion_observation_publication_failed', 'completion_observation_settlement_failed', 'settlement_init_plain', 'settlement_init_e2ee', 'settlement_init_existing', 'settlement_init_no_quota', 'settlement_init_stale', 'settlement_init_failed', 'quota_error', 'quota_error_deferred_request', 'quota_error_deferred_request_e2ee', 'quota_error_cold', 'quota_family', 'unusable_spare', 'enumerated', 'enumerated_no_expiry', 'aggregate', 'aggregate_timeout', 'aggregate_network', 'read_failure', 'not_available', 'nothing_to_reset', 'already_consumed', 'manual_selected', 'manual_next', 'manual_not_available', 'manual_missing', 'manual_codex_alias', 'manual_claude_alias', 'manual_stale_basis', 'manual_persistence_failed', 'discovery_inventory', 'discovery_inventory_e2ee', 'discovery_malformed', 'discovery_unavailable', 'discovery_no_facet', 'automatic_target_then_manual', 'automatic_without_context_then_manual', 'automatic_pending_then_manual', 'automatic_pending_then_target', 'manual_distinct', 'manual_same_selector', 'manual_aggregate_selected', 'manual_known_no_effect_error', 'manual_unknown_error', 'manual_predecessor_error', 'manual_timeout_reconciliation', 'manual_reconcile_redeemed', 'manual_reconcile_absent', 'manual_reconcile_refresh_absent', 'manual_reconcile_refresh_available', 'manual_reconcile_refresh_expired', 'manual_configured_late_acknowledgement', 'manual_configured_checked_late_acknowledgement', 'manual_configured_terminal_read_acknowledgement', 'automatic_configured_late_after_inventory', 'manual_late_acknowledgement', 'manual_lost_loopback_acknowledgement', 'manual_reset_after_quota_error', 'manual_reset_after_provider_backoff', 'quota_future', 'quota_refresh_marker', 'quota_all_unavailable', 'quota_profile_separator', 'quota_data_key', 'quota_no_provider_identity', 'quota_timeout_configured', 'quota_timeout_absent', 'quota_stale_basis', 'quota_error_network', 'quota_error_native', 'quota_error_refresh_marker', 'quota_inventory_retry'] as const)('schedules a qualified account through the plugin quota leaf and canonical V4 usage writer (%s recovery)', async (recoveryMode) => {
     let now = 1_000_000;
     const service = recoveryMode === 'manual_codex_alias'
       ? { pluginId: 'happier.agent.codex', localId: 'openai-codex' }
@@ -2681,6 +2681,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     const accountMode = recoveryMode === 'settlement_init_unconfigured_e2ee' || recoveryMode === 'enumerated' || recoveryMode === 'completion_observation_e2ee' || recoveryMode === 'settlement_init_e2ee' || recoveryMode === 'discovery_inventory_e2ee' || recoveryMode === 'persistence_unchanged_e2ee' || recoveryMode === 'quota_data_key' || recoveryMode === 'quota_error_deferred_request_e2ee' ? 'e2ee' as const : 'plain' as const;
     const manual = recoveryMode.startsWith('manual_');
     const reconciliationMode = recoveryMode.startsWith('manual_reconcile_');
+    const heldReconciliation = recoveryMode === 'manual_timeout_reconciliation';
     const loopbackMode = recoveryMode.endsWith('_acknowledgement');
     const automaticLateAcknowledgement = recoveryMode === 'automatic_configured_late_after_inventory';
     const terminalErrorDuringCheck = recoveryMode === 'manual_configured_terminal_read_acknowledgement';
@@ -2835,7 +2836,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
             }` : ''}
             debitStarted = true;
             ${recoveryMode === 'not_available' || recoveryMode === 'nothing_to_reset' ? `await (await import('node:fs/promises')).writeFile(${JSON.stringify(recoveryConsumeMarker)}, String(++consumeAttemptCount));` : ''}
-            ${reconciliationMode || loopbackMode || automaticLateAcknowledgement ? `await (await import('node:fs/promises')).appendFile(${JSON.stringify(recoveryConsumeMarker)}, 'debit\\n');` : ''}
+            ${reconciliationMode || loopbackMode || automaticLateAcknowledgement || heldReconciliation ? `await (await import('node:fs/promises')).appendFile(${JSON.stringify(recoveryConsumeMarker)}, 'debit\\n');` : ''}
             ${recoveryMode === 'manual_known_no_effect_error' ? "if (++consumeAttemptCount === 1) throw Object.assign(new Error('No debit attempted'), { recoveryCreditConsumeOutcomeUnknown: false });" : ''}
             ${recoveryMode.startsWith('automatic_pending_') ? `if (request.providerLimitIds?.length === 0) {
               automaticRefusalPending = true;
@@ -2851,7 +2852,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
             ${recoveryMode.startsWith('automatic_') ? "if (request.providerLimitIds !== undefined && request.providerLimitIds.length === 0) return { status: 'nothing_to_reset' };" : ''}
             ${recoveryMode === 'not_available' || recoveryMode === 'nothing_to_reset' || recoveryMode === 'manual_not_available' || recoveryMode === 'manual_reconcile_refresh_available' || recoveryMode === 'manual_reconcile_refresh_expired' || lateAcknowledgementAfterCheck || automaticLateAcknowledgement ? '' : `consumed = true;
             consumedCreditIds.add(request.providerCreditId);`}
-            ${loopbackMode || automaticLateAcknowledgement ? `const fs = await import('node:fs/promises');
+            ${loopbackMode || automaticLateAcknowledgement || heldReconciliation ? `const fs = await import('node:fs/promises');
             while (await fs.readFile(${JSON.stringify(acknowledgementRelease)}, 'utf8').catch(() => '') !== 'release') {
               await new Promise(resolve => setTimeout(resolve, 10));
             }` : ''}
@@ -2878,6 +2879,14 @@ describe('ConnectedServiceQuotasCoordinator', () => {
             await new Promise(resolve => setTimeout(resolve, 5));
           }
           options?.signal?.throwIfAborted();` : ''}
+          ${heldReconciliation ? `if (debitStarted) {
+            const fs = await import('node:fs/promises');
+            await fs.writeFile(${JSON.stringify(quotaInvocationMarker)}, 'reconciling');
+            while (!options.signal.aborted && await fs.readFile(${JSON.stringify(automaticRefusalRelease)}, 'utf8').catch(() => '') !== 'release') {
+              await new Promise(resolve => setTimeout(resolve, 5));
+            }
+            options.signal.throwIfAborted();
+          }` : ''}
           ${recoveryMode === 'quota_error_native' ? "throw Object.assign(new Error('private native failure'), { quotaFetchErrorCode: 'network', providerCode: '-32082' });" : ''}
           ${recoveryMode === 'quota_error_network' ? "throw Object.assign(new Error('Provider unavailable'), { quotaFetchErrorCode: 'network' });" : ''}
           ${recoveryMode.startsWith('quota_error_deferred_request') ? `await (await import('node:fs/promises')).appendFile(${JSON.stringify(quotaInvocationMarker)}, 'invoked\\n');` : ''}
@@ -3145,7 +3154,9 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     let quotaPollingAdmitted = !inventoryRegistration;
     let observeOriginalEnd: () => void = () => {};
     const originalProviderEnded = new Promise<void>(resolve => { observeOriginalEnd = resolve; });
+    let lateDisposition: ((status: never) => void) | undefined;
     const observeRuntimeInvocation: typeof establishedRuntimeOwner.invokeWithReceipt = input => {
+      if (input.operation.kind === 'recoveryCredits.consume') lateDisposition = input.operation.onLateResult;
       const actual = establishedRuntimeOwner.invokeWithReceipt(input);
       // Observe the real provider invocation rather than the coordinator wait which can end earlier.
       if (input.operation.kind === 'recoveryCredits.consume') void actual.then(observeOriginalEnd, observeOriginalEnd);
@@ -3153,7 +3164,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     };
     const qualifiedConnectedAccountRuntime = {
       resolvePeerClass: () => 'advertised_v4' as const,
-      establishedRuntimeOwner: terminalErrorDuringCheck
+      establishedRuntimeOwner: terminalErrorDuringCheck || heldReconciliation || reconcileActivePool
         ? { ...establishedRuntimeOwner, invokeWithReceipt: observeRuntimeInvocation } : establishedRuntimeOwner,
       listScheduledAccounts,
       ...(inventoryRegistration ? { resolveOperationTransport: (input: { operation: string }) => {
@@ -3204,7 +3215,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       onAccountUsageSnapshotAccepted: async event => { acceptedSnapshots.push(event.snapshot); },
       recordDiagnostic: (event) => { quotaDiagnostics.push(event); },
       quotaPersistenceMinFreshnessMs: 60_000,
-      fetchTimeoutMs: recoveryMode === 'quota_timeout_configured' || configuredLateAcknowledgement || automaticLateAcknowledgement ? 1_000
+      fetchTimeoutMs: recoveryMode === 'quota_timeout_configured' || configuredLateAcknowledgement || automaticLateAcknowledgement || heldReconciliation ? 1_000
         : recoveryMode === 'quota_timeout_absent' || loopbackMode ? undefined : 5_000,
       onAutomaticQuotaResetConsumed: async (event) => {
         notifications.push(event);
@@ -4089,6 +4100,33 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         }
         return;
       }
+      if (heldReconciliation) {
+        const debit = { serviceId: serviceKey, profileId: request.profileId,
+          providerCreditId: 'earliest', idempotencyKey: 'held-reconciliation' };
+        const pending = coordinator.consumeRecoveryCreditForProfile(debit);
+        let overlapping: typeof pending | undefined;
+        try {
+          await vi.waitFor(async () => expect(await readFile(quotaInvocationMarker, 'utf8')).toBe('reconciling'), { timeout: 3_000 });
+          overlapping = coordinator.consumeRecoveryCreditForProfile(debit);
+          await writeFile(acknowledgementRelease, 'release');
+          await originalProviderEnded;
+          await vi.waitFor(() => expect(quotaDiagnostics).toContainEqual(expect.objectContaining({
+            reason: 'quota_fetch_timeout',
+          })), { timeout: 3_000 });
+          expect(usageWrites().at(-1)?.snapshot?.state).toBe('error_last_known_good');
+          const confirmed = { ok: true, receipt: { status: 'consumed', providerCreditId: 'earliest', idempotencyKey: debit.idempotencyKey } };
+          await expect(pending).resolves.toMatchObject(confirmed);
+          await expect(overlapping).resolves.toMatchObject(confirmed);
+          await expect(coordinator.consumeRecoveryCreditForProfile({ ...debit, providerCreditId: 'missing', idempotencyKey: 'new-request' }))
+            .resolves.toMatchObject({ ok: false, receipt: { status: 'not_available', idempotencyKey: 'new-request' } });
+          expect(await readFile(recoveryConsumeMarker, 'utf8')).toBe('debit\n');
+        } finally {
+          await writeFile(acknowledgementRelease, 'release');
+          await writeFile(automaticRefusalRelease, 'release');
+          await Promise.allSettled([pending, overlapping]);
+        }
+        return;
+      }
       if (reconciliationMode) {
         const before = (await readFile(recoveryInventoryReadMarker, 'utf8').catch(() => '')).length;
         const first = await consume();
@@ -4097,6 +4135,17 @@ describe('ConnectedServiceQuotasCoordinator', () => {
           : { ok: false, errorCode: 'outcome_unknown', receipt: { status: 'unknown_after_timeout', providerCreditId: 'earliest' } });
         expect((await readFile(recoveryInventoryReadMarker, 'utf8')).slice(before)).toBe('read\nread\n');
         expect(await consume()).toEqual(first);
+        if (reconcileActivePool) {
+          expect(accountUsageStore.resolveBySource({ serviceId: serviceKey, profileId: request.profileId,
+            bindingKind: 'group_member', groupId: 'group-1', groupGeneration: 4 })).toMatchObject({
+            meters: [expect.objectContaining({ used: 0 })],
+          });
+          if (!lateDisposition) throw new Error('Missing the real consume recipient');
+          // An out-of-contract JavaScript callback tests whether the coordinator
+          // can downgrade a receipt once inventory has settled it.
+          Reflect.apply(lateDisposition, undefined, ['unknown_after_timeout']);
+          expect(await consume()).toEqual(first);
+        }
         if (reconciliationRefresh) {
           now += recoveryMode === 'manual_reconcile_refresh_expired' ? 1_500 : 500;
           await writeFile(acknowledgementRelease, 'refresh');

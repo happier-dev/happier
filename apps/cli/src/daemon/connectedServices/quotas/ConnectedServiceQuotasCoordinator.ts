@@ -1680,14 +1680,15 @@ export class ConnectedServiceQuotasCoordinator {
         accountMode: 'plain' | 'e2ee',
         expectedCredentialRevision: string,
         receipt: ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1,
-        signal: AbortSignal,
+        quota: Readonly<{ signal: AbortSignal; fetchTimeoutMs?: number | null }>,
       ): Promise<ConnectedServiceQuotaRecoveryCreditConsumeResult> => {
+        const { signal } = quota;
         const providerRequestEndedBeforeRead = attempt.providerRequestEnded;
         const refreshed = await this.invokeQualifiedAccountQuota({
           profile, accountMode,
           expectedCredentialRevision,
           afterConfirmedReset: receipt.status === 'consumed' || receipt.status === 'already_consumed',
-          signal,
+          ...quota,
         });
         signal.throwIfAborted();
         if (!refreshed?.result || !refreshed.basis.isCurrent()) return { ...unavailable('refresh_unavailable'), receipt };
@@ -1775,7 +1776,7 @@ export class ConnectedServiceQuotasCoordinator {
           }
           if (!consumed.basis.isCurrent()) return { ...unavailable('stale_basis'), receipt };
           if (receipt.status === 'unknown_after_timeout') return { ...outcomeUnknown, receipt };
-          return await refreshAfterAttempt(accountMode, consumed.basis.credentialRevision, receipt, controller.signal);
+          return await refreshAfterAttempt(accountMode, consumed.basis.credentialRevision, receipt, { signal: controller.signal });
         } catch (error) {
           // Older plugins omit the marker, so retain their conservative uncertainty.
           // Only the provider's explicit pre-effect failure can release the hold.
@@ -1803,7 +1804,8 @@ export class ConnectedServiceQuotasCoordinator {
           // A lost acknowledgement gets one qualified read under the existing quota
           // acquisition budget, including after the consume's signal has expired.
           const refreshed = await refreshAfterAttempt(
-            attemptAccountMode, observed.basis.credentialRevision, receipt, new AbortController().signal,
+            attemptAccountMode, observed.basis.credentialRevision, receipt,
+            { signal: new AbortController().signal, fetchTimeoutMs: this.fetchTimeoutMs },
           );
           if (inventorySettlement?.ok === false) return inventorySettlement;
           return refreshed.receipt?.status === 'unknown_after_timeout' ? unknown : refreshed;
@@ -1813,6 +1815,15 @@ export class ConnectedServiceQuotasCoordinator {
             ? { ...unavailable('refresh_unavailable'), receipt: pendingReceipt }
             : unknown;
         }
+      }).then(observedResult => {
+        const result = lateResult ?? observedResult;
+        if (result.receipt && (input.consumeRequest || !isDefinitiveRecoveryCreditRefusal(result))) {
+          this.recoveryCreditConsumeResultsByKey.set(ledgerKey, { result,
+            ...(result.receipt.status === 'unknown_after_timeout' ? { pendingAttempt: attempt } : {}) });
+        }
+        return result;
+      }).finally(() => {
+        this.recoveryCreditConsumeInFlightByKey.delete(ledgerKey);
       });
       admittedSettlement = promise;
       this.recoveryCreditConsumeInFlightByKey.set(ledgerKey, {
@@ -1820,17 +1831,7 @@ export class ConnectedServiceQuotasCoordinator {
         automaticProviderLimitIds: !input.consumeRequest
           ? [...(input.automaticResetContext?.providerLimitIds ?? [])] : undefined,
       });
-      try {
-        const observedResult = await promise;
-        const result = lateResult ?? observedResult;
-        if (result.receipt && (input.consumeRequest || !isDefinitiveRecoveryCreditRefusal(result))) {
-          this.recoveryCreditConsumeResultsByKey.set(ledgerKey, { result,
-            ...(result.receipt.status === 'unknown_after_timeout' ? { pendingAttempt: attempt } : {}) });
-        }
-        return result;
-      } finally {
-        this.recoveryCreditConsumeInFlightByKey.delete(ledgerKey);
-      }
+      return await promise;
     };
     try {
       const result = await Promise.race([operation(), timeout]);
