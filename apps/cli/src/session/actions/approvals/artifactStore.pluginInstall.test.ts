@@ -161,6 +161,87 @@ describe('plugin install approval Artifact rejoin', () => {
   });
 
 
+  it('decides a Machine plugin install without adding an index subject to the matched header', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-plugin-approval-decide-'));
+    const happyHomeDir = join(root, 'home');
+    const pluginRoot = join(root, 'source');
+    const pluginId = 'acme.approval-decide';
+    const origin = { machineId: 'machine-1', serverIdentityId: 'home-identity' };
+    const serverId = 'home-1';
+    const serverApiUrl = 'http://plugin-approval.invalid';
+    const store = createStore();
+    const reloadController = createPluginReloadController({ happyHomeDir });
+    const owner = createDaemonPluginRuntimeOwner({
+      happyHomeDir, reloadController, approvalStore: store, staleCandidateCleanup: 'disabled',
+      connectedAccounts: createPackedTestConnectedAccountsRuntime({ happyHomeDir, pluginId }).owner,
+      managedResourcePreflight: { credentials: credentials(), serverUrl: serverApiUrl,
+        homeId: origin.serverIdentityId, controller: { machineId: origin.machineId, installationId: 'installation-1' } },
+      resolveCurrentMachineExecutionOriginContext: async () => origin,
+    });
+    try {
+      const manifestDir = join(pluginRoot, '.happier-plugin');
+      await mkdir(manifestDir, { recursive: true });
+      await writeFile(join(manifestDir, 'plugin.json'), JSON.stringify(createPluginManifestV2Fixture({
+        id: pluginId, entrypoints: undefined, engines: undefined,
+      })));
+      const candidate = await owner.changeService.requestPluginChange(
+        { kind: 'installPath', locator: pluginRoot }, { retainReview: true });
+      if (candidate.kind !== 'reviewRequired') throw new Error(JSON.stringify(candidate));
+      const created = await store.approvalsCreate({ serverId, request: ApprovalRequestV2Schema.parse({
+        ...installRequest(), actionArgs: { kind: 'path', path: pluginRoot },
+        preview: { pluginInstall: { pendingReview: candidate } },
+      }) });
+      expect(await store.approvalsGet(created)).toMatchObject({ status: 'open' });
+
+      const daemonExecutor = createActionExecutor({
+        ...createCliActionDeps({ token, credentials: credentials(), sessionId: 'cli-global', mode: 'plain', ctx: null,
+          serverId, serverHttpBaseUrl: serverApiUrl, happyHomeDir, pluginChangeService: owner.changeService }),
+        ...createStore(),
+        isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentness({
+          accountId: 'account-1', ...origin, serverId,
+          resolveCurrentMachineExecutionOriginContext: async () => origin,
+          resolveTarget: createDaemonExternalActionTargetResolver({ credentials: credentials() }),
+          isAccountCurrent: async () => true, listAccountApiTokens: async () => ({ tokens: [] }),
+        }),
+      });
+      const { RpcHandlerManager } = await import('@/api/rpc/RpcHandlerManager');
+      const { registerApprovalRpcHandlers } = await import('@/rpc/handlers/approvals');
+      const rpc = new RpcHandlerManager({ scopePrefix: origin.machineId, encryptionMode: 'plain', logger: () => {} });
+      registerApprovalRpcHandlers({ rpcHandlerManager: rpc, actionExecutor: daemonExecutor });
+      let approvedHeader: Readonly<Record<string, unknown>> | undefined;
+      const artifacts = createAccountArtifactStore({ credentials: credentials(), getAccountEncryptionMode: async () => 'plain' });
+      const replay = vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async ({ machineId, method, request }) => {
+        expect(machineId).toBe(origin.machineId);
+        expect(method).toBe(RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED);
+        expect(request).toEqual({ artifactId: created.artifactId });
+        // The receiving daemon can predate Plugin Machine indexing. Its strict
+        // subject binding expects this field to be absent on built-in installs.
+        approvedHeader = (await artifacts.read(created.artifactId, { prepareRecipients: false }))?.header;
+        return rpc.handleRequest({ method: `${origin.machineId}:${method}`, params: request, callerAuthority: 'present_user' });
+      });
+      try {
+        const executor = createCliActionExecutorFromCredentials({ credentials: { ...credentials(),
+          token: `header.${Buffer.from(JSON.stringify({ sub: 'account-1', tokenEpoch: 1,
+            provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`,
+          credentialProvenance: 'stored_session' }, serverId, serverApiUrl, serverIdentityId: origin.serverIdentityId });
+        const result = await executor.execute('approval.request.decide', { artifactId: created.artifactId, decision: 'approve' },
+          { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+            serverId, serverIdentityId: origin.serverIdentityId, runtimeAccountId: 'account-1', actionRequestId: 'decide-plugin-install' });
+        expect(approvedHeader).toMatchObject({ approvalStatus: 'approved' });
+        expect(approvedHeader).not.toHaveProperty('approvalSubjectKey');
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'executed' } });
+      } finally {
+        replay.mockRestore();
+      }
+      expect(await store.approvalsGet(created)).toMatchObject({ status: 'executed' });
+      expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins[pluginId]?.install.manifestVersion).toBe('1.0.0');
+    } finally {
+      await owner.changeService.shutdown();
+      await reloadController.shutdown();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('replays a retained plugin install at its daemon without requiring a second admission', async () => {
     const store = createStore();
     const created = await store.approvalsCreate({ request: installRequest(), serverId: 'home-1' });
