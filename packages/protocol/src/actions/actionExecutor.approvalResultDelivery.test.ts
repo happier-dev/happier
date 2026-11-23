@@ -7,6 +7,7 @@ import {
 import { createActionExecutor } from './actionExecutor.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { materializeActionRequestAttributionV1 } from './actionRequestAttributionV1.js';
+import { createActionExecuteFailureError } from './actionExecutionResult.js';
 import type { ActionExecutorDeps } from './executor/types.js';
 
 type Delivery = NonNullable<ActionExecutorDeps['sessionSendMessage']>;
@@ -30,6 +31,7 @@ async function askAndDecide(
     decision?: 'approve' | 'reject' | 'cancel';
     effectFails?: boolean;
     checkFailsWith?: 'refuse' | 'ask';
+    checkObservationUnavailable?: boolean;
   }>,
 ) {
   let stored: ApprovalRequest | null = null;
@@ -43,7 +45,12 @@ async function askAndDecide(
         phase: 'before' as const, mode: 'wait' as const, onFailure: options.checkFailsWith!,
       }] }),
       start: async () => ({ runs: [{ automationId: 'review', triggerId: 'before', runId: 'failed-check' }], notices: [] }),
-      wait: async () => ({ state: 'failed' as const, errorCode: 'command_failed' }),
+      wait: async () => {
+        if (options.checkObservationUnavailable) {
+          throw createActionExecuteFailureError({ ok: false, errorCode: 'storage_unavailable', error: 'storage_unavailable' });
+        }
+        return { state: 'failed' as const, errorCode: 'command_failed' };
+      },
       settle: async () => {},
     } } : {}),
     approvalsCreate: async ({ request }) => {
@@ -307,5 +314,18 @@ describe('approval result delivery is a receipt beside the run record', () => {
           details: { message: 'command_failed' },
         },
       });
+  });
+
+  it('retains the Run observation refusal in the approval and requester result', async () => {
+    const flow = await askAndDecide({ checkFailsWith: 'ask', checkObservationUnavailable: true,
+      deliver: async input => ({ status: 'accepted', localId: input.localId }) });
+    expect(await flow.decide()).toMatchObject({ ok: true, result: { status: 'failed', delivery: { status: 'accepted' } } });
+    expect(flow.effects).toEqual([]);
+    expect(flow.read()).toMatchObject({ automaticChecks: { phase: 'refused', results: [
+      { runId: 'failed-check', outcome: 'unavailable', reason: 'storage_unavailable' },
+    ] } });
+    expect(JSON.parse(flow.deliveries[0]!.message)).toMatchObject({ execution: {
+      errorCode: 'action_interception_rejected', effectAttempted: false, details: { message: 'storage_unavailable' },
+    } });
   });
 });

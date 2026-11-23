@@ -13,6 +13,7 @@ import { createActionAutomationInvocationV1 } from './actionSettlement.js';
 import { deriveActionActorV1 } from '../actionRequestAttributionV1.js';
 import { resolveHostStampedAuthority } from '../invocationAuthority.js';
 import { findActionSpec } from '../actionSpecs.js';
+import { normalizeActionExecutorThrownError } from './resultProjection.js';
 
 /** Host-local subject matching stays with selected triggers, outside the structural actor-row reference. */
 function projectActorConsentReferenceV1(reference: ActionAutomationTriggerReferenceV1) {
@@ -202,7 +203,8 @@ export function createApprovalAutomaticContinuationV1<Read extends AutomaticAppr
     const results = wait ? await Promise.all(runs.map(async (run): Promise<ActionAutomationResultV1> => {
       const observed = await wait({ run, context }).catch((error: unknown) => {
         if (context.signal?.aborted) throw error;
-        return { state: 'interrupted' as const, errorCode: 'target_unavailable', finalResult: undefined, resultId: undefined };
+        const { errorCode } = normalizeActionExecutorThrownError(error, 'approval.check.wait');
+        return { state: 'interrupted' as const, errorCode, finalResult: undefined, resultId: undefined };
       });
       const finalResult = WorkflowFinalResultV1Schema.safeParse(observed.finalResult);
       const reason = finalResult.success ? projectWorkflowFinalResultDeliverableTextV1(finalResult.data) : null;

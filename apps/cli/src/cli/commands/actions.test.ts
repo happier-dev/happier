@@ -1286,6 +1286,25 @@ describe('actions root command', () => {
     expect(process.exitCode).toBe(1);
   });
 
+  it('reports an absent saved Home as an invalid Deploy selector', async () => {
+    let output = '';
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
+      output += String(chunk);
+      const callback = args.find(argument => typeof argument === 'function');
+      if (typeof callback === 'function') callback();
+      return true;
+    });
+    const readCredentialsForServerIdFn = vi.fn();
+    await handleActionsCommand(['invoke', 'deployments.deploy', '--server-id', 'absent-deploy-home',
+      '--input-json', JSON.stringify({ serverId: 'home', environmentId: 'staging', expectedRevision: 1,
+        targetLinkId: 'target', expectedTargetLinkRevision: 1, contentArtifactId: 'content',
+        contentHeaderVersion: 1, contentBodyVersion: 1, requestKey: 'deploy-missing-home' }), '--json'],
+      { readCredentialsForServerIdFn });
+    expect(JSON.parse(output)).toMatchObject({ ok: false, error: { code: 'invalid_arguments' } });
+    expect(process.exitCode).toBe(1);
+    expect(readCredentialsForServerIdFn).not.toHaveBeenCalled();
+  });
+
   it('rejects unknown options before reading credentials', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     vi.spyOn(console, 'log').mockImplementation(() => undefined);

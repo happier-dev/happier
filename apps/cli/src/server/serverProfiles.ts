@@ -422,7 +422,7 @@ export async function getServerProfile(identifierRaw: string): Promise<ServerPro
   const servers = settings?.servers && typeof settings.servers === 'object' ? settings.servers : {};
   const resolvedId = findProfileIdByIdentifier(servers as any, identifier);
   if (!resolvedId) {
-    throw new Error(`Server profile not found: ${identifier}`);
+    throw Object.assign(new Error(`Server profile not found: ${identifier}`), { code: 'invalid_arguments' });
   }
   const profile = coerceProfile((servers as any)[resolvedId]);
   if (!profile) {
