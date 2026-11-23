@@ -8,6 +8,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployments/contracts/v1';
 import type {
   DeploymentEnvironmentDestinationV1,
@@ -132,6 +133,7 @@ export function DeploymentDatabasePage(
     demand: DeploymentReadDemandV1;
     phone: boolean;
     lifetime: ServerAccountScopeLifetime | null;
+    sourceAudience?: readonly PrincipalRefV1[];
     review: DeploymentReviewHandle;
     restore: DeploymentRestoreSheetInput['restore'] | null;
     /** Adds the reference binding on the chosen app's Environment (Connect to an app). */
@@ -636,7 +638,7 @@ export function DeploymentDatabasePage(
 
           {automationSubject?.ok ? (
             <SubjectTriggersSection subject={automationSubject.subject} subjectName={title}
-              accountLifetime={lifetime} contextSubjects={backupContext} />
+              accountLifetime={lifetime} contextSubjects={backupContext} sourceAudience={props.sourceAudience} />
           ) : database.kind === 'selfHosted' ? (
             <SubjectTriggersSectionReadState subjectKind="database"
               status={dataItem?.databaseSubjectFailure || dataRead.status === 'unavailable' || dataRead.status === 'ready' ? 'failed' : 'loading'}

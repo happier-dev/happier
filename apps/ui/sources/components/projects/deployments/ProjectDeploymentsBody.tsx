@@ -574,6 +574,7 @@ const ProjectDeploymentsPage = React.memo(
           demand={props.demand}
           phone={phone}
           lifetime={props.lifetime}
+          sourceAudience={sourceRead.audience}
           review={review}
           restore={props.actions?.restore ?? null}
           setBindings={props.actions?.setBindings ?? null}

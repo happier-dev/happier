@@ -102,6 +102,7 @@ const { DeploymentDatabasePage } = await import('./DeploymentDatabasePage');
 const { actionOperationStore } =
   await import('@/sync/domains/actionOperations/actionOperationStore');
 const { ModalProvider } = await import('@/modal');
+const { withPopoverWebGlobals } = await import('@/dev/testkit/harness/popoverHarness');
 
 afterEach(async () => {
   const { Modal } = await import('@/modal');
@@ -155,6 +156,8 @@ async function renderDatabase(
     workbenchDiscoveryRefused?: boolean | (() => boolean);
     /** Exercise the Database subject read through the real selected-Environment transport. */
     readDatabaseAutomations?: boolean;
+    /** Open from the Project Source route with a saved Workflow to link. */
+    linkWorkflow?: string;
     databaseSizeActionRefused?: boolean;
     database?: string;
     sizeReadUnavailable?: boolean;
@@ -657,9 +660,29 @@ async function renderDatabase(
   });
   const navigate = vi.fn();
   const back = vi.fn();
+  const ProjectDeploymentsView = input.linkWorkflow ? (await import('./ProjectDeploymentsBody')).ProjectDeploymentsView : null;
+  const reviewedWorkflowAudiences: unknown[] = [];
+  if (input.linkWorkflow) {
+    const { ProjectSourcesReadOutputV1Schema } = await import('@happier-dev/protocol/projects/sources/projectSourceV1');
+    const sourceId = detail.environment.projectSourceId;
+    homes.answer(serverId, `GET /v1/projects/sources/${sourceId}`, { body: ProjectSourcesReadOutputV1Schema.parse({ ok: true,
+      canManage: true, source: { id: sourceId, name: 'Shop', revision: 1, createdByAccountId: account.accountId,
+        owner: { kind: 'account', accountId: account.accountId }, audience: [] } }) });
+    await account.createArtifactDocument({ artifactId: input.linkWorkflow, header: { kind: 'workflow-definition.v1',
+      definitionId: input.linkWorkflow, revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Restore review' } },
+      body: JSON.stringify({ kind: 'workflow-definition.v1', definition: createNightlyBackupsWorkflowV1() }) });
+    homes.answer(serverId, `GET /v1/artifacts/${input.linkWorkflow}/access/grants`, { select: (_body, request) => {
+      const requested = new URL(request.url).searchParams.get('requestedAudience');
+      reviewedWorkflowAudiences.push(requested === null ? null : JSON.parse(requested));
+      return { body: { artifactId: input.linkWorkflow, ownerAccountId: account.accountId,
+        access: 'owner', grants: [], missingAudience: [] } };
+    } });
+    routerMock.module.router.setParams({ deploymentEnvironment: environmentId, deploymentService: 'postgres' });
+  }
   const screen = await renderScreen(
     <ModalProvider><PluginSurfaceDestinationNavigationBindingProvider binding={navigation}>
-      <DeploymentDatabasePage
+      {ProjectDeploymentsView ? <ProjectDeploymentsView controller={controller} sourceId={detail.environment.projectSourceId}
+        demand={shown} lifetime={account.accountLifetime} serverId={serverId} accountId={account.accountId} /> : <DeploymentDatabasePage
         controller={controller}
         environmentId={environmentId}
         database={input.database ?? (input.managed ? 'managed-database' : 'postgres')}
@@ -671,7 +694,7 @@ async function renderDatabase(
         setBindings={setBindings}
         onBack={back}
         onNavigate={navigate}
-      />
+      />}
     </PluginSurfaceDestinationNavigationBindingProvider></ModalProvider>,
   );
   const settle = async (testID: string) => {
@@ -697,6 +720,8 @@ async function renderDatabase(
     machineId,
     movePickerQueries,
     requests: () => homes.requests,
+    reviewedWorkflowAudiences,
+    accountId: account.accountId,
     moveDestination: moved,
     readScheduleSets: async () => {
       const { createDeploymentActions } = await import('./deploymentActions');
@@ -711,6 +736,7 @@ async function renderDatabase(
       unregisterActionPort();
       withdrawProjection();
       account.dispose();
+      if (input.linkWorkflow) routerMock.resetParams();
     },
   };
 }
@@ -782,6 +808,29 @@ function expectOpenedDatabaseConsole(view: Awaited<ReturnType<typeof renderDatab
 }
 
 describe('Environment → Database → Workbench', () => {
+  it('reviews a saved Workflow link for the selected Database using the Project Source audience', () => withPopoverWebGlobals(async () => {
+    const workflowId = '7ebe2403-2fdc-4c60-acc5-ae43cd15da20';
+    const view = await renderDatabase({ readDatabaseAutomations: true, linkWorkflow: workflowId });
+    const { ValueFieldSelect } = await import('@/components/ui/forms/ValueFieldSelect');
+    const { SelectionList } = await import('@/components/ui/selectionList');
+    const { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionIdsV1');
+    try {
+      expect(await view.settle('subject-triggers-link')).not.toBeNull();
+      await view.screen.pressByTestIdAsync('subject-triggers-link');
+      const picker = () => view.screen.findAllByType(SelectionList).find(list => list.props.testID === 'resource-link-pick');
+      await waitForHomeGovernance(() => expect(picker()?.props.rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : []))
+        .toEqual(expect.arrayContaining([expect.objectContaining({ id: workflowId })])));
+      await act(async () => picker()!.props.onSelect(workflowId));
+      const when = () => view.screen.findAllByType(ValueFieldSelect).find(select => select.props.testID === 'resource-link-when');
+      const choice = `action:after:${DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1}`;
+      await waitForHomeGovernance(() => expect(when()?.props.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: choice })])));
+      await act(async () => when()!.props.onSelect(choice));
+      await waitForHomeGovernance(() => expect(view.reviewedWorkflowAudiences)
+        .toContainEqual([{ kind: 'account', accountId: view.accountId }]));
+      await waitForHomeGovernance(() => expect(view.screen.findByTestId('resource-link-submit')?.props.disabled).toBe(false));
+    } finally { await view.dispose(); }
+  }));
+
   it('reads only the selected database when the Environment declares two', async () => {
     const view = await renderDatabase({ readDatabaseAutomations: true });
     try {
