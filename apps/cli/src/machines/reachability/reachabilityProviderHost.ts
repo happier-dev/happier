@@ -1,11 +1,13 @@
-import { getRelayAccessProvider, type RelayAccessExecutionContext, type BuiltinAccessProviderRoleResult } from '@happier-dev/cli-common/relayAccess';
+import { getRelayAccessProvider, normalizeRelayAccessCanonicalPublicServerUrl, type RelayAccessExecutionContext,
+  type RelayAccessStatus, type BuiltinAccessProviderRoleResult } from '@happier-dev/cli-common/relayAccess';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { HostReviewedChildrenPlanV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { MachineReachabilityConfigureInputV1Schema, MachineReachabilityInspectInputV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
-import { AccessProviderRoleResultV1Schema, accessProviderRefsEqualV1, type AccessProviderRoleV1,
+import { AccessProviderRoleResultV1Schema, accessProviderRefsEqualV1, type AccessProviderMembershipIntentV1, type AccessProviderRoleV1, type AccessProviderRouteV1,
   type AccessProviderSelectionV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { actionInputValidationFailure, actionInputIssueFailure,
   projectActionInputJsonSchemaIssues } from '@happier-dev/protocol/actions/executor/actionInputValidation';
@@ -18,7 +20,10 @@ type Capture = Readonly<{
   context: ActionExecutorContext;
 }>;
 type PrepareHook = NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>;
-type RoleOptions = Readonly<{ setupCredentialFile?: string; target?: 'machine' | 'domainRoute' }>;
+type RoleOptions = Readonly<{ setupCredentialFile?: string; target?: 'machine' | 'domainRoute' | 'homeRelay';
+  route?: AccessProviderRouteV1; membershipIntent?: AccessProviderMembershipIntentV1 }>;
+export type HomeRelayRoleTarget = Readonly<{ route: AccessProviderRouteV1; currentSelection: AccessProviderSelectionV1 | null;
+  currentRoute?: AccessProviderRouteV1 }>;
 const unavailable = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
 
 /** One selected descriptor and declared input contract serve preparation and invocation. */
@@ -31,10 +36,12 @@ function prepareRole(capture: Capture, machineId: string, selection: AccessProvi
   if (selected.kind === 'builtin') {
     const action = selected.definition.actions[role];
     if (!action) return unavailable('access_provider_target_unsupported');
-    return { ...selected, input: normalizeStrictJsonValue({ machineId, config: selected.selection.config,
-      credentialRefs: selected.selection.credentialRefs,
-      ...(role === 'join' && options.setupCredentialFile ? { setupCredentialFile: options.setupCredentialFile } : {}) }) };
   }
+  const input = { machineId, config: selected.selection.config,
+    credentialRefs: selected.selection.credentialRefs, ...(options.route ? { route: options.route } : {}),
+    ...(role === 'inspect' && options.membershipIntent ? { membershipIntent: options.membershipIntent } : {}),
+    ...(role === 'join' && options.setupCredentialFile ? { setupCredentialFile: options.setupCredentialFile } : {}) };
+  if (selected.kind === 'builtin') return { ...selected, input };
   const localId = selected.definition.actions[role];
   const actionIdentity = localId ? { pluginId: selected.contribution.pluginId, localId } : undefined;
   const action = actionIdentity ? capture.runtimeRegistry.contributes.actionsById?.get(
@@ -44,10 +51,6 @@ function prepareRole(capture: Capture, machineId: string, selection: AccessProvi
   const disabled = checkContributedActionSettingsAvailability({ action, surface: 'plugin',
     actionsSettings: capture.context.actionsSettings ?? undefined });
   if (disabled) return disabled;
-  const input = normalizeStrictJsonValue({ machineId, config: selected.selection.config,
-    credentialRefs: selected.selection.credentialRefs,
-    ...(role === 'join' && options.setupCredentialFile ? { setupCredentialFile: options.setupCredentialFile } : {}) });
-  if (!input || typeof input !== 'object' || Array.isArray(input)) return actionInputIssueFailure();
   const schema = action.definition.inputSchema;
   if (schema) {
     const validate = compilePluginJsonSchema(schema);
@@ -61,7 +64,7 @@ function prepareRole(capture: Capture, machineId: string, selection: AccessProvi
 /** Pure demanded-role preparation at the receiving host's captured catalog/state. */
 export async function prepareReachabilityReviewedChildrenForHost(
   request: Parameters<PrepareHook>[0] & Pick<Capture, 'runtimeRegistry'>
-    & Readonly<{ selections: readonly AccessProviderSelectionV1[]; currentIngress?: AccessProviderSelectionV1 }>,
+    & Readonly<{ selections: readonly AccessProviderSelectionV1[]; currentIngress?: AccessProviderSelectionV1; homeRelay?: HomeRelayRoleTarget }>,
 ): ReturnType<PrepareHook> {
   if (request.actionId !== 'machines.reachability.inspect' && request.actionId !== 'machines.reachability.configure') return null;
   const configured = request.actionId === 'machines.reachability.configure'
@@ -73,6 +76,19 @@ export async function prepareReachabilityReviewedChildrenForHost(
   const input = configured?.success ? configured.data : inspected?.success ? inspected.data : undefined;
   if (!input) return actionInputIssueFailure();
   const change = input.change;
+  if (change?.kind === 'homeRelay' || inspected?.success && inspected.data.homeRelay) {
+    const target = request.homeRelay;
+    if (!target) return unavailable('target_unavailable');
+    const selection = configured?.success && change?.kind === 'homeRelay' ? change.selection : target.currentSelection;
+    const effect = configured?.success;
+    const role = effect ? selection ? 'configure' : 'disable' : 'inspect';
+    const demanded = selection ?? (effect ? target.currentSelection : null);
+    if (!demanded) return null;
+    const prepared = prepareRole(request, input.machineId, demanded, role, { target: 'homeRelay',
+      route: role === 'configure' ? target.route : target.currentRoute ?? target.route });
+    if (!prepared.ok) return prepared;
+    return prepared.kind === 'plugin' ? { children: [prepared.child] } : null;
+  }
   const selections: AccessProviderSelectionV1[] = [];
   const replacingBuiltin = change?.kind === 'privateNetwork' && change.intent === 'join'
     && 'kind' in change.selection.provider ? change.selection : undefined;
@@ -86,9 +102,17 @@ export async function prepareReachabilityReviewedChildrenForHost(
   }
   const children: HostReviewedChildrenPlanV1['children'][number][] = [];
   for (const selection of selections) {
-    const prepared = prepareRole(request, input.machineId, selection, 'inspect');
+    const membershipIntent = change?.kind === 'privateNetwork' && sameStrictJsonValue(change.selection, selection)
+      ? change.intent : undefined;
+    const prepared = prepareRole(request, input.machineId, selection, 'inspect',
+      membershipIntent ? { membershipIntent } : {});
     if (!prepared.ok) return prepared;
     if (prepared.kind === 'plugin') children.push(prepared.child);
+    if (membershipIntent && configured?.success) {
+      const settled = prepareRole(request, input.machineId, selection, 'inspect');
+      if (!settled.ok) return settled;
+      if (settled.kind === 'plugin') children.push(settled.child);
+    }
   }
   const proposedIngress = change?.kind === 'posture' && change.posture.defaultServiceIngress.kind === 'provider'
     ? change.posture.defaultServiceIngress.selection : undefined;
@@ -117,18 +141,13 @@ export function createReachabilityProviderHost(input: Capture & Readonly<{
   native: RelayAccessExecutionContext;
 }>) {
   return {
-    resolve: (selection: AccessProviderSelectionV1, target: 'machine' | 'domainRoute' = 'machine') =>
+    resolve: (selection: AccessProviderSelectionV1, target: NonNullable<RoleOptions['target']> = 'machine') =>
       resolveAccessProviderSelectionForHost({ registry: input.runtimeRegistry.contributes, selection, target }),
     async prepareRole(selection: AccessProviderSelectionV1, role: AccessProviderRoleV1, options: RoleOptions = {}) {
       return prepareRole(input, input.target.machineId, selection, role, options);
     },
-    async prepareMembership(selection: AccessProviderSelectionV1, role: 'join' | 'leave',
-      observed: Parameters<NonNullable<ReturnType<typeof getRelayAccessProvider>['prepareMembership']>>[0]['observed'], options: RoleOptions = {}) {
-      const codec = getRelayAccessProvider(selection.provider);
-      if (!codec.prepareMembership) return unavailable('access_provider_target_unsupported');
-      return codec.prepareMembership({ role, observed, ...options, ctx: input.native, signal: input.context.signal });
-    },
-    async invoke(selection: AccessProviderSelectionV1, role: AccessProviderRoleV1, options: RoleOptions = {}) {
+    async invoke(selection: AccessProviderSelectionV1, role: AccessProviderRoleV1, options: RoleOptions = {}):
+      Promise<ActionExecuteFailure | Readonly<{ ok: true; result: BuiltinAccessProviderRoleResult }>> {
       const selected = prepareRole(input, input.target.machineId, selection, role, options);
       if (!selected.ok) return selected;
       if (selected.kind === 'builtin') {
@@ -136,9 +155,21 @@ export function createReachabilityProviderHost(input: Capture & Readonly<{
         // Action. Never recursively invoke that same Action as its own child.
         // All builtin effects remain the reviewed P20 program, not this reader.
         const codec = getRelayAccessProvider(selected.selection.provider);
+        if (options.target === 'homeRelay') {
+          const ctx = { ...input.native, upstreamUrl: options.route?.upstream ?? null, ...(options.route ? { route: options.route } : {}) };
+          const params = { config: selected.selection, ctx, signal: input.context.signal };
+          if (role === 'disable') {
+            await codec.disable?.(params);
+            return { ok: true, result: { kind: 'confirmed', facts: { state: 'stopped' } } };
+          }
+          if (role === 'configure' || role === 'inspect') {
+            const status = await (role === 'configure' && codec.configure ? codec.configure(params) : codec.status(params));
+            return { ok: true, result: projectBuiltinHomeRole(status) };
+          }
+        }
         if (role !== 'inspect' || !codec.inspect) return unavailable('access_provider_target_unsupported');
         return { ok: true as const, result: await codec.inspect({
-          config: selected.selection, ctx: input.native, signal: input.context.signal }) };
+          config: selected.selection, ctx: input.native, signal: input.context.signal, membershipIntent: options.membershipIntent }) };
       }
       const port = input.context.hostReviewedChild;
       if (!port) return unavailable('admission_unavailable');
@@ -150,4 +181,18 @@ export function createReachabilityProviderHost(input: Capture & Readonly<{
       return { ok: true as const, result: facts };
     },
   };
+}
+
+function projectBuiltinHomeRole(status: RelayAccessStatus): BuiltinAccessProviderRoleResult {
+  const publicUrl = normalizeRelayAccessCanonicalPublicServerUrl(status.shareUrl);
+  const details = status.details !== null && typeof status.details === 'object' ? status.details : {};
+  const diagnosticCode = 'code' in details ? details.code : 'reason' in details ? details.reason : null;
+  if (status.state === 'error' || status.state === 'unknown') {
+    return { kind: 'unknown', code: typeof diagnosticCode === 'string' ? diagnosticCode : 'provider_command_failed' };
+  }
+  const authorizationUrl = status.state === 'needs_auth' && 'approvalUrl' in details && typeof details.approvalUrl === 'string'
+    ? details.approvalUrl : null;
+  const state = status.state === 'enabled' ? 'ready' : status.state === 'disabled' ? 'stopped'
+    : status.state === 'needs_auth' ? 'needsAuth' : 'unknown';
+  return { kind: 'confirmed', facts: { state, ...(publicUrl ? { publicUrl } : {}), ...(authorizationUrl ? { authorizationUrl } : {}) } };
 }

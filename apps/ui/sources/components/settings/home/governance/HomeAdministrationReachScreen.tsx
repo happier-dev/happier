@@ -14,7 +14,6 @@ import type {
 
 import type { SettingRef } from '@/components/settings/catalog/settingDeclarations';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
-import { LocalRelayAccessControlSection } from '@/components/settings/server/localControl/LocalRelayAccessControlSection';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -39,10 +38,9 @@ import {
     setHomeIrohMode,
     setHomeSettings,
 } from '@/sync/ops/home/homeGovernanceOperations';
-import { findPersonalHomeBootstrapCompletedProfile, listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 
-import { useHomeRuntimeExecutor, type HomeRuntimeExecutor } from '../runtime/homeRuntimeExecutor';
+import { HomeRelayManageSection } from './HomeRelayManageSection';
 import { HomeDeploymentFixedNote } from './HomeDeploymentFixedNote';
 import { HomeSettingFieldRow, type HomeSettingStage } from './HomeSettingFieldRow';
 import { buildHomeSettingWrite, type HomeSettingDraftValue } from './homeSettingDraft';
@@ -123,20 +121,6 @@ function irohStateCaption(reach: HomeReachabilityV1): string {
         case 'unavailable':
         case 'failed':
             return t('homeGovernance.reach.irohFailed');
-    }
-}
-
-function hostingMachineLabel(executor: HomeRuntimeExecutor): string {
-    switch (executor.kind) {
-        case 'hosting_desktop':
-            return t('homeGovernance.reach.thisComputer');
-        case 'remote_host':
-        case 'connected_machine':
-            return executor.hostName;
-        case 'elsewhere':
-            return executor.hostName ?? t('homeGovernance.reach.homeServer');
-        case 'deployment':
-            return t('homeGovernance.reach.homeServer');
     }
 }
 
@@ -338,10 +322,7 @@ const ReachPage = React.memo(function ReachPage(props: Readonly<{ context: HomeA
     const isOwner = capabilities.manageHomeSettings;
     const reads = useHomeSettingsWithCompanion(context.scope, canView, readReachability);
     const features = useServerFeaturesSnapshotForServerId(context.scope.serverId, { enabled: canView });
-    const executor = useHomeRuntimeExecutor(
-        context.scope.serverId,
-        features.status === 'ready' ? features.features.capabilities.serverRelease?.flavor ?? null : null,
-    );
+    const deploymentManaged = features.status === 'ready' && features.features.capabilities.serverRelease?.flavor === 'full';
     const [irohBusy, setIrohBusy] = React.useState(false);
     const [publicLinksBusy, setPublicLinksBusy] = React.useState(false);
     const [publicLinksFailure, setPublicLinksFailure] = React.useState<string | null>(null);
@@ -496,7 +477,6 @@ const ReachPage = React.memo(function ReachPage(props: Readonly<{ context: HomeA
     const relayCustomCount = Array.isArray(relayUrlsEntry?.value) ? relayUrlsEntry.value.length : 0;
     const relayPolicy = relayEntry?.value === 'disabled' ? 'disabled' : 'automatic';
     const relayPending = relayEntry?.applied?.pending === true;
-    const locallyHosted = executor.kind === 'hosting_desktop' ? findPersonalHomeBootstrapCompletedProfile(listServerProfiles()) : null;
     const readFailure = reads.failure ?? reads.companionFailure;
     const relayRow = {
         testID: 'home-reach-relay',
@@ -523,7 +503,7 @@ const ReachPage = React.memo(function ReachPage(props: Readonly<{ context: HomeA
             <ReachPathDiagram
                 reach={reach}
                 homeName={context.homeName}
-                machineLabel={hostingMachineLabel(executor)}
+                machineLabel={t('homeGovernance.reach.homeServer')}
                 addressCaption={diagramAddressCaption(reach)}
             />
 
@@ -556,13 +536,11 @@ const ReachPage = React.memo(function ReachPage(props: Readonly<{ context: HomeA
                     <Item
                         testID="home-reach-access-method"
                         title={t('homeGovernance.reach.accessMethod')}
-                        subtitle={accessMethodCaption(executor)}
+                        subtitle={deploymentManaged ? t('homeGovernance.reach.accessMethodDeployment') : undefined}
                         subtitleLines={0}
                         detail={reach.hostAccess ? hostAccessMethodLabel(reach.hostAccess.method) : undefined}
-                        showChevron={executor.kind === 'remote_host'}
-                        {...(executor.kind === 'remote_host'
-                            ? { onPress: () => router.push(`/settings/remote-hosts/${encodeURIComponent(executor.host.id)}`) }
-                            : { mode: 'info' as const })}
+                        showChevron={false}
+                        mode="info"
                     />
                 </SettingAnchor>
             </ItemGroup>
@@ -586,8 +564,8 @@ const ReachPage = React.memo(function ReachPage(props: Readonly<{ context: HomeA
                 </ItemGroup>
             ) : null}
 
-            {executor.kind === 'hosting_desktop' && isOwner ? (
-                <LocalRelayAccessControlSection upstreamUrl={locallyHosted?.serverUrl ?? null} actionScope={context.scope} />
+            {!deploymentManaged && isOwner ? (
+                <HomeRelayManageSection key={JSON.stringify(context.scope)} serverId={context.scope.serverId} disabled={disabled} />
             ) : null}
 
             <ItemGroup title={t('homeGovernance.reach.directConnections')} description={t('homeGovernance.reach.directConnectionsDescription')}>
@@ -659,22 +637,6 @@ const ReachPage = React.memo(function ReachPage(props: Readonly<{ context: HomeA
         </>
     );
 });
-
-function accessMethodCaption(executor: HomeRuntimeExecutor): string {
-    switch (executor.kind) {
-        case 'hosting_desktop':
-            return t('homeGovernance.reach.accessMethodHere');
-        case 'remote_host':
-            return t('homeGovernance.reach.accessMethodRemoteHost', { host: executor.hostName });
-        case 'connected_machine':
-        case 'elsewhere':
-            return executor.hostName
-                ? t('homeGovernance.reach.accessMethodElsewhereNamed', { host: executor.hostName })
-                : t('homeGovernance.reach.accessMethodElsewhere');
-        case 'deployment':
-            return t('homeGovernance.reach.accessMethodDeployment');
-    }
-}
 
 /**
  * How this Home is reached (plan §3.2, decision B, lab `hcReach-B`): the path a new device takes,

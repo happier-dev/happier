@@ -1,14 +1,8 @@
 import type { MachineRecipeTargetFactKeyV1, MachineRecipeV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import { defineAccessProviderSchemas } from '@happier-dev/protocol/plugins/contributions/accessProviders';
+import { defineProtocolObject } from '@happier-dev/protocol/plugins/actions/protocolComposableSchema';
 
-const inputSchema = {
-    type: 'object', additionalProperties: false,
-    properties: {
-        setupCredentialFile: { type: 'string', minLength: 1 },
-        switchNetwork: { type: 'boolean' },
-        setOperator: { type: 'boolean' },
-    },
-    required: ['switchNetwork', 'setOperator'],
-} satisfies NonNullable<MachineRecipeV1['inputSchema']>;
+const roles = defineAccessProviderSchemas({ config: defineProtocolObject({}, { policy: 'closed' }) });
 
 const connected = { op: 'and' as const, all: [
     { op: 'eq' as const, path: 'BackendState', value: 'Running' },
@@ -31,11 +25,14 @@ export function createTailscaleJoinSteps(binding: Readonly<{
     credentialFile: string | Readonly<{ kind: 'input'; path: string }> | Readonly<{ kind: 'targetFact'; fact: MachineRecipeTargetFactKeyV1 }>;
     credentialInputPath: string;
     switchNetworkInputPath?: string;
+    membershipFlagsPath?: string;
 }> = { credentialFile: { kind: 'input', path: 'setupCredentialFile' }, credentialInputPath: 'setupCredentialFile' }): MachineRecipeV1['steps'] {
     return [
             { id: 'tailscale-switch', kind: 'command', executable: 'tailscale', args: ['down'],
                 review: { title: 'Switch Tailscale network', description: 'Disconnect the observed profile before authenticating with the selected key. A failed authentication leaves that profile stopped; its saved login is retained.' },
-                when: [{ input: { op: 'truthy', path: binding.switchNetworkInputPath ?? 'switchNetwork' } }],
+                when: [{ input: binding.membershipFlagsPath
+                    ? { op: 'includes', path: binding.membershipFlagsPath, value: 'switch-network' }
+                    : { op: 'truthy', path: binding.switchNetworkInputPath ?? 'switchNetwork' } }],
                 check: disconnected },
             { id: 'tailscale-join', kind: 'command', executable: 'tailscale',
                 args: ['up', '--force-reauth', { kind: 'template', value: '--auth-key=file:{file}',
@@ -51,7 +48,9 @@ export function createTailscaleJoinSteps(binding: Readonly<{
                 args: ['set', { kind: 'template', value: '--operator={daemon}',
                     variables: { daemon: { kind: 'targetFact', fact: 'daemon.username' } } }],
                 // Only an explicit `false` opts out; the Tailscale server recipe leaves it unset by default.
-                when: [{ input: { op: 'not', predicate: { op: 'eq', path: 'setOperator', value: false } } }],
+                when: [{ input: binding.membershipFlagsPath
+                    ? { op: 'includes', path: binding.membershipFlagsPath, value: 'set-operator' }
+                    : { op: 'not', predicate: { op: 'eq', path: 'setOperator', value: false } } }],
                 check: { executable: 'tailscale', args: ['debug', 'prefs'], unsatisfiedExitCodes: [],
                     stdoutJson: { op: 'eq', path: 'OperatorUser', value: { kind: 'targetFact', fact: 'daemon.username' } } } },
     ];
@@ -59,11 +58,15 @@ export function createTailscaleJoinSteps(binding: Readonly<{
 
 export const tailscaleMembershipPrograms: Readonly<{ join: MachineRecipeV1; leave: MachineRecipeV1 }> = {
     join: {
-        id: 'tailscale-join', revision: '1', title: 'Join Tailscale', inputSchema,
-        steps: createTailscaleJoinSteps(),
+        id: 'tailscale-join', revision: '1', title: 'Join Tailscale', inputSchema: roles.joinInput.jsonSchema,
+        steps: createTailscaleJoinSteps({
+            credentialFile: { kind: 'input', path: 'setupCredentialFile' },
+            credentialInputPath: 'setupCredentialFile',
+            membershipFlagsPath: 'membership.flags',
+        }),
     },
     leave: {
-        id: 'tailscale-leave', revision: '1', title: 'Leave Tailscale', inputSchema,
+        id: 'tailscale-leave', revision: '1', title: 'Leave Tailscale', inputSchema: roles.leaveInput.jsonSchema,
         steps: [{ id: 'tailscale-leave', kind: 'command', executable: 'tailscale', args: ['down'],
             review: { title: 'Disconnect Tailscale', description: 'Stop this Machine’s current Tailscale connection without deleting its saved login.' },
             check: disconnected }],

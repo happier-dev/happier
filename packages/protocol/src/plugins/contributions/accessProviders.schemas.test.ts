@@ -71,7 +71,8 @@ describe('access provider contribution admission', () => {
       })]) });
     expect(PluginContributesV2Schema.safeParse({ accessProviders: [descriptor], actions: actions.map(action =>
       action.id === 'inspect' ? { ...action, dangerLevel: 'writesLocal' } : action) }).success).toBe(false);
-    expect(PluginContributesV2Schema.safeParse({ accessProviders: [{ ...descriptor, targets: ['homeRelay'] }], actions }).success).toBe(false);
+    expect(PluginContributesV2Schema.safeParse({ accessProviders: [{ ...descriptor, targets: ['homeRelay'] }], actions }).success).toBe(true);
+    expect(PluginContributesV2Schema.safeParse({ accessProviders: [{ ...descriptor, targets: ['homeRelay'], homeAccessMethod: 'tailscale_serve' }], actions }).success).toBe(false);
     expect(roles.joinInput.safeParse({ machineId: 'machine', config: { managementUrl: 'https://example.test', rawKey: 'secret' }, credentialRefs: [] }).success).toBe(false);
     expect(roles.result.safeParse({ kind: 'confirmed', facts: { state: 'ready', arbitrary: true } }).success).toBe(false);
   });
@@ -99,6 +100,17 @@ describe('access provider contribution admission', () => {
       ...descriptor.membership, join: { ...descriptor.membership.join, inputSchema: config.jsonSchema },
     } }], actions }).success).toBe(false);
     expect(AccessProviderContributionV1Schema.safeParse({ ...descriptor, capabilities: ['management'] }).success).toBe(false);
+  });
+  it('admits a provider profile observation and selected flags for a reviewed membership transition', () => {
+    const config = defineProtocolObject({}, { policy: 'closed' });
+    const roles = defineAccessProviderSchemas({ config });
+    const requested = { machineId: 'hosting-machine', config: {}, credentialRefs: [], membershipIntent: 'join' };
+    const membership = { profileId: 'selected-profile', flags: ['reconnect-first'] };
+    expect(roles.inspectInput.safeParse(requested).success).toBe(true);
+    expect(roles.result.safeParse({ kind: 'confirmed', facts: { state: 'ready', membership } }).success).toBe(true);
+    const { membershipIntent: _intent, ...selection } = requested;
+    expect(roles.joinInput.safeParse({ ...selection, membership }).success).toBe(true);
+    expect(roles.joinInput.safeParse({ ...selection, membership: { ...membership, flags: [{ token: 'value' }] } }).success).toBe(false);
   });
   it('retains purpose-bound revisioned references but refuses inline secrets and ambiguous purpose bindings', () => {
     const selection = { provider: { pluginId: 'example.network', localId: 'network' }, config: {}, credentialRefs: [

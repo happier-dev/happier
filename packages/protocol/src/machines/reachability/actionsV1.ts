@@ -1,6 +1,7 @@
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { AccessProviderSelectionV1Schema } from '../../plugins/contributions/accessProviders.js';
+import { AccessProviderRefV1Schema, AccessProviderRouteV1Schema, AccessProviderSelectionV1Schema } from '../../plugins/contributions/accessProviders.js';
+import { RelayAccessTaskSnapshotV1Schema } from '../../system/tasks/relayAccessConfigV1.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
 import { MachineSetupRecipePlanV1Schema } from '../managed/actionsV1.js';
@@ -15,14 +16,21 @@ const text = () => z.string().check(z.trim(), z.minLength(1));
 const revision = () => z.number().check(z.int(), z.nonnegative());
 const digest = () => z.string().check(z.regex(/^[a-f0-9]{64}$/u));
 const target = () => ({ serverId: z.optional(text()), machineId: text() });
+export const MachineHomeRelayTargetV1Schema = lazyZodSchema(() => z.strictObject({
+  channel: z.enum(['stable', 'preview', 'dev']), mode: z.enum(['user', 'system']),
+}));
+export type MachineHomeRelayTargetV1 = z.infer<typeof MachineHomeRelayTargetV1Schema>;
 export const MachineReachabilityChangeV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('posture'), posture: MachineReachabilityPostureV1Schema }),
   z.strictObject({ kind: z.literal('privateNetwork'), intent: z.enum(['join', 'leave']), selection: AccessProviderSelectionV1Schema }),
+  z.strictObject({ kind: z.literal('homeRelay'), relay: MachineHomeRelayTargetV1Schema,
+    selection: z.nullable(AccessProviderSelectionV1Schema), hostname: z.optional(text()) }),
 ]));
 export type MachineReachabilityChangeV1 = z.infer<typeof MachineReachabilityChangeV1Schema>;
 export const MachineReachabilityInspectInputV1Schema = lazyZodSchema(() => z.strictObject({
-  ...target(), change: z.optional(MachineReachabilityChangeV1Schema),
-}));
+  ...target(), change: z.optional(MachineReachabilityChangeV1Schema), homeRelay: z.optional(MachineHomeRelayTargetV1Schema),
+}).check(z.refine(input => !input.homeRelay || !input.change,
+  { message: 'Select either the Relay status read or a reviewed reachability change.' })));
 export type MachineReachabilityInspectInputV1 = z.infer<typeof MachineReachabilityInspectInputV1Schema>;
 export const MachineReachabilityConfigureInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...target(), change: MachineReachabilityChangeV1Schema,
@@ -37,12 +45,14 @@ export const MachineReachabilityPlanBasisV1Schema = lazyZodSchema(() => z.strict
   change: MachineReachabilityChangeV1Schema,
   occurrences: z.array(z.strictObject({ provider: asProtocolZod(PluginContributionIdentityV1Schema), occurrenceId: text() })),
   recipePlans: z.array(MachineSetupRecipePlanV1Schema),
+  homeRelay: z.optional(z.strictObject({ route: AccessProviderRouteV1Schema,
+    currentSelection: z.nullable(AccessProviderSelectionV1Schema), currentRoute: z.optional(AccessProviderRouteV1Schema) })),
   nativeFirewall: z.optional(MachineFirewallTransitionFactsV1Schema),
   firewallTransition: z.optional(z.strictObject({
     intent: MachineFirewallTransitionIntentV1Schema, setupRevision: revision(), dockerEngineIds: z.array(text()),
   })),
   nativeProfiles: z.optional(z.array(z.strictObject({
-    provider: z.strictObject({ kind: z.literal('builtin'), id: text() }),
+    provider: AccessProviderRefV1Schema,
     profileId: z.nullable(text()), networkIdentity: z.nullable(text()),
   }))),
   credentialFileReview: z.optional(z.strictObject({ purpose: z.literal('network.join'), path: text(), owner: text(),
@@ -57,6 +67,7 @@ export const MachineReachabilityInspectResultV1Schema = lazyZodSchema(() => z.st
   machineId: text(), metadataVersion: revision(), posture: z.nullable(MachineReachabilityPostureV1Schema),
   selections: z.array(AccessProviderSelectionV1Schema), observation: MachineReachabilityObservationV1Schema,
   plan: z.optional(MachineReachabilityPlanV1Schema),
+  relayAccess: z.optional(RelayAccessTaskSnapshotV1Schema),
 }));
 export type MachineReachabilityInspectResultV1 = z.infer<typeof MachineReachabilityInspectResultV1Schema>;
 export const MachineReachabilityConfigureResultV1Schema = lazyZodSchema(() => z.strictObject({
@@ -64,6 +75,7 @@ export const MachineReachabilityConfigureResultV1Schema = lazyZodSchema(() => z.
   posture: z.nullable(MachineReachabilityPostureV1Schema), selections: z.array(AccessProviderSelectionV1Schema),
   observation: MachineReachabilityObservationV1Schema, errorCode: z.optional(text()),
   recovery: z.optional(MachineFirewallRecoveryV1Schema),
+  relayAccess: z.optional(RelayAccessTaskSnapshotV1Schema),
   nextStep: z.optional(z.literal('apply_firewall_recipe')),
 }).check(
   z.refine(result => result.errorCode === undefined || result.status === 'outcome_unknown',

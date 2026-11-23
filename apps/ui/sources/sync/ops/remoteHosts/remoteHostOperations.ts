@@ -7,6 +7,7 @@ import type { RemoteHostRecordV1 } from '@happier-dev/protocol/remoteHosts/remot
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { getDefaultSystemTaskRunner } from '@/components/systemTasks';
 import { REMOTE_HOSTS_NEW_ROUTE, remoteHostHref } from '@/components/settings/remoteHosts/collection/remoteHostsRoutes';
+import { homeAdministrationReachPath } from '@/components/settings/home/governance/homeAdministrationRoutes';
 import { startRemoteHostMaintenanceTask, startRemoteHostSetupTask, connectRemoteHostFromDevice,
     startAdmittedRemoteHostSystemTask, resolveRemoteHostRelayAccess, type RemoteHostMaintenanceTaskAction } from '@/components/settings/remoteHosts/remoteHostTaskOperations';
 import { buildRelayAccessStatusSystemTaskSpec, buildRelayAccessDisableSystemTaskSpec, buildRelayAccessExecutionSystemTaskSpec } from '@/components/systemTasks/specs/relayAccess/buildRelayAccessSystemTaskSpec';
@@ -226,8 +227,8 @@ export function createUiRemoteHostActionExecuteV1(account: LazyActionAccountCont
                 }, context.signal)) };
             }
             if (request.actionId === 'remote_hosts.edit' || request.actionId === 'remote_hosts.relay.use') {
-                const route = remoteHostHref(host.id) + (request.actionId === 'remote_hosts.edit' ? ''
-                    : `?remoteHostIntent=relay&expectedRevision=${encodeURIComponent(String(request.input.expectedRevision))}`);
+                const route = request.actionId === 'remote_hosts.edit'
+                    ? remoteHostHref(host.id) : homeAdministrationReachPath(account.serverId);
                 await openEditorRoute(route);
                 return { ok: true, result: { status: 'opened', route, hostId: host.id } };
             }

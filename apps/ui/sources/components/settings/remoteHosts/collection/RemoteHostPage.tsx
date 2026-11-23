@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { useLocalSearchParams, useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { useAddProjectFromRemoteWorkspace } from '@/components/projects/useAddProjectFromRemoteWorkspace';
@@ -14,7 +14,6 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
-import { RelayAccessControlSection } from '@/components/settings/server/relayAccess/RelayAccessControlSection';
 import { Modal } from '@/modal';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
@@ -28,7 +27,7 @@ import { RemoteHostInterruptedSetups, RemoteHostTunnelRows } from './RemoteHosts
 import { REMOTE_HOSTS_ROOT, remoteHostHref } from './remoteHostsRoutes';
 
 /** What a host can be used for from this device; the rest of its operations maintain Happier there. */
-const USE_ACTION_IDS = new Set(['setupAsMachine', 'useFoldersHere', 'connectFromThisDevice', 'useAsRelayHost', 'configureAccess']);
+const USE_ACTION_IDS = new Set(['setupAsMachine', 'useFoldersHere', 'connectFromThisDevice', 'configureAccess']);
 const DESTRUCTIVE_ACTION_IDS = new Set(['personalHome.erase']);
 
 /**
@@ -62,7 +61,6 @@ const RemoteHostEditorPage = React.memo(function RemoteHostEditorPage(props: Rea
     const navigation = useNavigation();
     const collection = useRemoteHostsCollection();
     const host = props.host;
-    const params = useLocalSearchParams<{ remoteHostIntent?: string; expectedRevision?: string }>();
     const isNew = host === null;
     const localOverrides = React.useMemo(() => (host ? getRemoteHostLocalOverrides(host.id) : null), [host]);
     const editor = useRemoteHostEditor({
@@ -141,13 +139,6 @@ const RemoteHostEditorPage = React.memo(function RemoteHostEditorPage(props: Rea
     const useActions = actions.filter((action) => USE_ACTION_IDS.has(action.id));
     const maintenanceActions = actions.filter((action) => !USE_ACTION_IDS.has(action.id) && !DESTRUCTIVE_ACTION_IDS.has(action.id));
     const eraseAction = actions.find((action) => action.id === 'personalHome.erase');
-    const relayAccessSelection = collection.remoteHostOutcomeActions.relayAccessSelection;
-    React.useEffect(() => {
-        if (host && params.remoteHostIntent === 'relay' && collection.catalogComplete
-            && String(collection.catalogRevision ?? '') === params.expectedRevision) {
-            collection.remoteHostOutcomeActions.selectRelayAccess(host);
-        }
-    }, [host, params.remoteHostIntent, params.expectedRevision, collection.catalogComplete, collection.catalogRevision, collection.remoteHostOutcomeActions.selectRelayAccess]);
     const hostTunnels = host ? collection.activeRemoteHostSshTunnels.filter((tunnel) => tunnel.remoteHostId === host.id) : [];
 
     return (
@@ -190,31 +181,6 @@ const RemoteHostEditorPage = React.memo(function RemoteHostEditorPage(props: Rea
                     onSetUpAsMachine={setupAsMachine?.onPress ? () => setupAsMachine.onPress?.() : undefined}
                     onSettled={settleFolders}
                 />
-            ) : null}
-
-            {host && relayAccessSelection?.host.id === host.id ? (
-                <>
-                    <ItemGroup title={t('settings.remoteHostsRelayAccessGroupTitle')}>
-                        <Item
-                            testID={`settings.remoteHosts.relayAccess.${host.id}`}
-                            title={t('settings.remoteHostsRelayAccessActiveTitle', { host: host.name })}
-                            subtitle={t('settings.remoteHostsRelayAccessActiveSubtitle')}
-                            subtitleLines={0}
-                            mode="info"
-                            showChevron={false}
-                        />
-                    </ItemGroup>
-                    <RelayAccessControlSection
-                        remoteHost={{ scope: relayAccessSelection.scope, hostId: relayAccessSelection.host.id,
-                            expectedRevision: relayAccessSelection.revision }}
-                        target={relayAccessSelection.target}
-                        upstreamUrl={relayAccessSelection.upstreamUrl}
-                        runner={collection.runner}
-                        accessChannels={collection.accessChannels}
-                        accessEndpointRemediationActions={collection.accessEndpointProjection.remediationActions}
-                        onAccessEndpointRemediationActionPress={collection.handleAccessEndpointRemediationActionPress}
-                    />
-                </>
             ) : null}
 
             {host && hostTunnels.length > 0 ? (

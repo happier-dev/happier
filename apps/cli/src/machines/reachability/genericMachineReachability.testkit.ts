@@ -2188,12 +2188,14 @@ function inspectFixtureDiagnostic(site: string, error: unknown) {
 }
 
 export function createDockerNetworkAuthoredProvider(enabled = false, nativeJoin = false, installClient = false,
-  options: Readonly<{ installDockerService?: boolean; keyless?: boolean; serviceIngress?: boolean }> = {}): AuthoredProvider {
+  options: Readonly<{ installDockerService?: boolean; keyless?: boolean; serviceIngress?: boolean | 'homeRelay';
+    observedMembership?: boolean }> = {}): AuthoredProvider {
   const pluginId = 'com.example.docker-network';
   const membership = (role: 'join' | 'leave'): MachineRecipeV1 => ({
     id: `network-${role}`, revision: '1', title: role, inputSchema: ROLE_SCHEMAS[`${role}Input`].jsonSchema,
     steps: [{ id: `network-${role}`, kind: 'command', executable: '/usr/bin/network-client',
       args: role === 'join' && !options.keyless ? ['join', { kind: 'input', path: 'setupCredentialFile' }] : [role],
+      ...(options.observedMembership ? { when: [{ input: { op: 'includes', path: 'membership.flags', value: 'profile-available' } }] } : {}),
       check: { executable: '/usr/bin/network-client', args: ['status'], unsatisfiedExitCodes: [127],
         stdoutJson: { op: 'eq', path: 'joined', value: role === 'join' } } }],
   });
@@ -2212,7 +2214,7 @@ export function createDockerNetworkAuthoredProvider(enabled = false, nativeJoin 
             content: { kind: 'literal', value: 'fixture native executable' } }] } },
     accessProviders: { 'docker-network': { ...GENERIC_ACCESS_PROVIDER, title: 'Docker-backed network fixture',
       ...(options.keyless ? { credentialPurposes: [{ purpose: 'network.join', required: false }] } : {}),
-      ...(options.serviceIngress ? { targets: ['machine', 'domainRoute'] as const,
+      ...(options.serviceIngress ? { targets: options.serviceIngress === 'homeRelay' ? ['homeRelay'] as const : ['machine', 'domainRoute'] as const,
         capabilities: ['management', 'privateNetwork', 'ingress'] as const,
         https: { hostname: 'providerAssigned' as const, ports: [443], paths: true },
         actions: { ...GENERIC_ACCESS_PROVIDER.actions, configure: 'configure', disable: 'disable' } } : {}),
@@ -2280,7 +2282,8 @@ export function activate(api) {
     if (observed.profileName !== input.config.profileName) return {kind:'refused',code:'profile_conflict'};
     const joined = observed.joined === true;
     const state = joined ? 'ready' : 'stopped';
-    return {kind:'confirmed',facts:{state,privateNetwork:{provider:{pluginId:${JSON.stringify(pluginId)},localId:'docker-network'},
+    return {kind:'confirmed',facts:{state,${options.observedMembership ? `...(input.membershipIntent ? {membership:{
+      profileId:observed.profileName,flags:['profile-available']}} : {}),` : ''}privateNetwork:{provider:{pluginId:${JSON.stringify(pluginId)},localId:'docker-network'},
       networkIdentity:'fixture-network',displayName:'Fixture network',dnsName:null,addresses:joined?['100.91.0.7']:[],
       state,interfaceName:joined?'fixture-network':null,sourceRanges:joined?['100.91.0.0/16']:[],magicDnsEnabled:false}}};`
     : "return {kind:'unknown',code:'fixture_not_joined'};"}

@@ -2971,7 +2971,8 @@ export async function startDaemon(
       ...connectedAccountPurposeBindingRuntime, materializeSessionProcessEnvironment,
     });
     machineRpcRouteAttachments.attachMachineReachabilityRoutes(createDaemonMachineReachabilityRoutes({
-      getMachineClient: () => apiMachine, target: machineResourceTarget, agentIsolation, adminAccess: machineAdminAccessRoutes, ownerRemainder,
+      getMachineClient: () => apiMachine, target: machineResourceTarget,
+      homeIdentity: resolveBoundHomeServerIdentityId, agentIsolation, adminAccess: machineAdminAccessRoutes, ownerRemainder,
     }));
     hasPendingRunnerRestarts = readPendingRunnerRestarts;
     processLeftBehindPass = sessionControlLeftBehindPass;

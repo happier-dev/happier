@@ -1,6 +1,6 @@
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { AccessProviderSelectionV1Schema, type AccessProviderSelectionV1 } from '../../plugins/contributions/accessProviders.js';
+import { AccessProviderSelectionV1Schema, type AccessProviderSelectionV1 } from '../../plugins/contributions/accessProviderSelection.js';
 import { isExactBaseCredentialKey } from '../../common/sensitiveKeys.js';
 import { stripBrowserDiagnosticUrlValues } from '../../browser/diagnostics/egress/url.js';
 import { SystemTaskJsonValueSchema, type SystemTaskJsonValue } from './spec.js';
@@ -10,7 +10,7 @@ export const RelayAccessConfigV1Schema = AccessProviderSelectionV1Schema;
 export type RelayAccessConfigV1 = Readonly<AccessProviderSelectionV1>;
 /** Observed native/display identity, not configuration admission authority. */
 export type RelayAccessProviderIdV1 = string;
-export type { AccessProviderRefV1, AccessProviderSelectionV1, AccessCredentialPurposeRefV1 } from '../../plugins/contributions/accessProviders.js';
+export type { AccessProviderRefV1, AccessProviderSelectionV1, AccessCredentialPurposeRefV1 } from '../../plugins/contributions/accessProviderSelection.js';
 
 export const RelayAccessTaskSnapshotV1Schema = lazyZodSchema(() => z.strictObject({
   configured: z.boolean(), providerId: z.nullable(z.string()), selection: z.nullable(RelayAccessConfigV1Schema),

@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 import type { RemoteHostActionIdV1 } from '@happier-dev/protocol/remoteHosts/remoteHostActionIdsV1';
 
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
@@ -16,25 +15,12 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
-import { getRemoteHostLocalOverrides } from '@/sync/domains/remoteHosts/remoteHostLocalOverrides';
-import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { resolveRemoteHostActionRefusal } from './resolveRemoteHostActionRefusal';
-import {
-    buildRelayAccessSshTargetFromRemoteHostConfig,
-} from './remoteHostOutcomeActions';
 import {
     setNativeSshTunnelAuthPromptResolver,
     setNativeSshTunnelHostKeyPromptResolver,
 } from '@/sync/runtime/nativeSshTunnels/runtime';
 import { startNativeLoopbackTunnelRuntimeAppStateLifecycle } from '@/sync/runtime/nativeLoopbackTunnels/runtime';
-
-type RelayAccessSelection = Readonly<{
-    host: RemoteHost;
-    target: RelayAccessTaskTarget;
-    upstreamUrl: string | null;
-    scope: ServerAccountScope;
-    revision: number;
-}>;
 
 export function useRemoteHostOutcomeActions(options: Readonly<{
     runner: SystemTaskRunner;
@@ -44,12 +30,10 @@ export function useRemoteHostOutcomeActions(options: Readonly<{
     secretMaterialAllowed: boolean;
     onSshTunnelEnsured?: () => void;
 }>) {
-    const activeServerSnapshot = useActiveServerSnapshot();
     const actionExecutor = React.useRef<Promise<ReturnType<typeof createDefaultActionExecutor>> | null>(null);
     const [activeTaskId, setActiveTaskId] = React.useState<string | null>(null);
     const [activeTaskTitle, setActiveTaskTitle] = React.useState<string | null>(null);
     const [activeTaskKind, setActiveTaskKind] = React.useState<'setupAsMachine' | 'connectFromThisDevice' | null>(null);
-    const [relayAccessSelection, setRelayAccessSelection] = React.useState<RelayAccessSelection | null>(null);
     const nativeLoopbackTunnelAvailable = options.runner.mode === 'native'
         && options.runner.capabilities?.nativeSsh?.available === true
         && options.runner.capabilities.nativeSsh.supportsLoopbackTunnel === true;
@@ -169,25 +153,6 @@ export function useRemoteHostOutcomeActions(options: Readonly<{
         }
     }, [executeHostAction]);
 
-    /** Relay navigation carries an address only; each actual task opens current material. */
-    const selectRelayAccess = React.useCallback((remoteHost: RemoteHost) => {
-        if (!options.scope || typeof options.catalogRevision !== 'number') return;
-        const overrides = getRemoteHostLocalOverrides(remoteHost.id);
-        const target = buildRelayAccessSshTargetFromRemoteHostConfig({ sshTarget: remoteHost.ssh.target,
-            sshPort: remoteHost.ssh.port ?? null, sshAuth: remoteHost.ssh.authMode,
-            identityFilePath: overrides?.identityFilePath ?? '', sshConfigFilePath: overrides?.sshConfigFilePath ?? '',
-            identityPrivateKey: '', password: '' });
-        if (!target) {
-            Modal.alert(t('common.error'), t('settings.remoteHostsRelayAccessIdentityFileRequired'));
-            return;
-        }
-        setRelayAccessSelection({ host: remoteHost, target,
-            upstreamUrl: String(activeServerSnapshot.serverUrl ?? '').trim() || null,
-            scope: options.scope, revision: options.catalogRevision });
-    }, [activeServerSnapshot.serverUrl, options.catalogRevision, options.scope]);
-    const openRelayAccess = React.useCallback(async (remoteHost: RemoteHost) => {
-        await executeHostAction('remote_hosts.relay.use', remoteHost);
-    }, [executeHostAction]);
     const configureRelayAccess = React.useCallback(async (remoteHost: RemoteHost) => {
         await executeHostAction('remote_hosts.relay.use', remoteHost);
     }, [executeHostAction]);
@@ -240,10 +205,7 @@ export function useRemoteHostOutcomeActions(options: Readonly<{
         activeTaskSnapshot,
         activeTaskTitle,
         connectFromThisDevice,
-        relayAccessSelection,
         setupAsMachine,
-        openRelayAccess,
         configureRelayAccess,
-        selectRelayAccess,
     };
 }

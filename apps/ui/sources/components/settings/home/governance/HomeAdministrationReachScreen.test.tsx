@@ -106,6 +106,15 @@ afterEach(() => {
 });
 
 describe('HomeAdministrationReachScreen', () => {
+    it('requires an explicit enrolled hosting Machine before showing Relay operations', async () => {
+        const home = await addHome();
+        harness.answer(home, SETTINGS_GET, { body: reachSettings() });
+        harness.answer(home, REACH_GET, { body: homeReachabilityFixture() });
+        const screen = await renderReach(home);
+        expect(screen.findByTestId('home-relay-hosting-machine')).not.toBeNull();
+        expect(screen.findByTestId('home-relay-selected-controls')).toBeNull();
+    });
+
     it.each(['owner', 'admin'] as const)('offers public-link configuration only to the Home %s', async (role) => {
         const projection = homeGovernanceProjectionFixture();
         const home = await addHome({

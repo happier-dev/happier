@@ -1,12 +1,11 @@
 import { normalizeRelayAccessCanonicalPublicServerUrl } from './normalizePublicServerUrl.js';
 export { normalizeRelayAccessCanonicalPublicServerUrl } from './normalizePublicServerUrl.js';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 
 import { resolveHappyHomeDirFromEnvironment } from '../agents/resolveHappyHomeDir.js';
 
 import { getRelayAccessProvider, getRelayAccessProviderDescriptor } from './registry.js';
 import { parseRelayAccessConfig, relayAccessProviderDescriptors } from './catalog.js';
+import { readLocalRelayAccessConfig } from './localConfig.js';
 import type { RelayAccessConfig, RelayAccessProviderExposure, RelayAccessStatus } from './types.js';
 
 type RelayAccessConfigEnv = Readonly<Record<string, string | undefined>>;
@@ -40,18 +39,8 @@ async function readPersistedRelayAccessConfigFromEnv(
     env: RelayAccessConfigEnv,
 ): Promise<RelayAccessConfig | null> {
     const happyHomeDir = resolveHappyHomeDirFromEnvironment(env as NodeJS.ProcessEnv);
-    const path = join(happyHomeDir, 'relay', 'access', 'local.json');
-    const raw = await readFile(path, 'utf8').catch(() => '');
-    if (!raw.trim()) return null;
-
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(raw);
-    } catch {
-        return null;
-    }
-
-    return parseRelayAccessConfig(parsed, relayAccessProviderDescriptors.filter(descriptor =>
+    const record = await readLocalRelayAccessConfig(happyHomeDir);
+    return parseRelayAccessConfig(record?.selection, relayAccessProviderDescriptors.filter(descriptor =>
         descriptor.definition.targets.includes('homeRelay')));
 }
 

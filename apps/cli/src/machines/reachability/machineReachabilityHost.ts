@@ -13,12 +13,10 @@ import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/ca
 import { computeCanonicalDomainSeparatedHexDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
-import { accessProviderRefsEqualV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { MachineRecipeSelectionV1Schema, type MachineRecipeSelectionV1, type MachineRecipeStepV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
-import type { MachinePresetItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
-import type { PluginProjectedMachineRecipeEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import { MachineReachabilityPlanV1Schema, type MachineReachabilityChangeV1, type MachineReachabilityInspectInputV1, type MachineReachabilityConfigureInputV1, type MachineReachabilityConfigureResultV1, type MachineReachabilityPlanBasisV1 } from '@happier-dev/protocol/machines/reachability/actionsV1';
+import { accessProviderRefsEqualV1, type AccessProviderMembershipFactsV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
+import { MachineRecipeSelectionV1Schema, type MachineRecipeStepV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import { machineSetupRecipeInputsAcceptedV1 } from '@happier-dev/protocol/machines/setup/machineSetupPreparationV1';
+import { MachineReachabilityPlanV1Schema, type MachineReachabilityChangeV1, type MachineReachabilityInspectInputV1, type MachineReachabilityConfigureInputV1, type MachineReachabilityConfigureResultV1, type MachineReachabilityPlanBasisV1, type MachineReachabilityPlanV1 } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import type { MachineReachabilityObservationV1 } from '@happier-dev/protocol/machines/reachability/machineReachabilityPostureV1';
 import { checkMachineSetupEffectPlan, createMachineSetupEffectPlan, createMachineSetupNativeBackend, findMachineSetupBlockingObservationV1,
   type MachineSetupNativeCommand, type MachineSetupNativeCommandResult } from '@happier-dev/cli-common/machineSetup';
@@ -30,11 +28,13 @@ import { readNativeDockerEffectEngines } from '@/daemon/local/services/launch/na
 import { buildPluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import { machineRecipesProjectionFamily } from '@/plugins/projection/registry/machineRecipes';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import { prepareMachineSetupPlanV1 } from '@/machines/setup/prepareMachineSetupPlan';
+import { createReviewedMachineSetupBackend, prepareMachineSetupPlanV1 } from '@/machines/setup/prepareMachineSetupPlan';
 import { resolveMachineSetupNativeEffects, type MachineSetupNativeEffectsInput } from '@/machines/setup/machineSetupNativeEffects';
 import { checkElevatedMachineSetupPlan, runElevatedEffect,
   type MachineElevationDependencies } from '@/machines/adminAccess/runElevatedEffect';
-import { createReachabilityProviderHost } from './reachabilityProviderHost';
+import { createReachabilityProviderHost, type HomeRelayRoleTarget } from './reachabilityProviderHost';
+import { applyMachineHomeRelayAccess, canReviewMachineHomeRelaySelection, readMachineHomeRelayAccess,
+  readMachineHomeRelayDemand } from './machineHomeRelayAccess';
 import { inspectMachineReachabilityNativeFirewall } from './inspectMachineReachabilityNativeFirewall';
 import { withReachabilityJoinCredential } from './prepareReachabilityJoinCredential';
 import { machineConnectorCredentialDirectory as credentialDirectory,
@@ -47,6 +47,8 @@ export type MachineReachabilityHostDependencies = Readonly<{
   port: MachineMetadataFieldPortV1;
   runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry;
   context: ActionExecutorContext;
+  homeRelay?: HomeRelayRoleTarget;
+  readPublishedReachability?(): MachineReachabilityObservationV1 | undefined;
   isCurrent(): Promise<boolean>;
   agentIsolation: HostAgentIsolationLaunchContext;
   happyHomeDir: string;
@@ -139,7 +141,6 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
   const occurrences: MachineReachabilityPlanBasisV1['occurrences'] = [];
   const recipePlans: MachineReachabilityPlanBasisV1['recipePlans'] = [];
   let credentialFileReview: MachineReachabilityPlanBasisV1['credentialFileReview'];
-  let membershipSelection: MachineRecipeSelectionV1 | undefined;
   let membershipEntry: MachineReachabilityPlanBasisV1['recipePlans'][number] | undefined;
   const nativeProfiles: NonNullable<MachineReachabilityPlanBasisV1['nativeProfiles']> = [];
   if (change?.kind === 'posture') {
@@ -161,9 +162,11 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
     if (!selected.definition.capabilities.includes('privateNetwork')) return refuse('access_provider_target_unsupported');
     if (selected.kind === 'plugin' && state.selections.some(selection => accessProviderRefsEqualV1(selection.provider, selected.selection.provider)
       && !sameStrictJsonValue(selection, selected.selection))) return refuse('provider_conflict');
+    let membershipFacts: AccessProviderMembershipFactsV1 | undefined;
     try {
       observation = await observeMachineReachability({ state, providers,
-        additionalSelection: selected.selection, isCurrent: deps.isCurrent });
+        additionalSelection: selected.selection, isCurrent: deps.isCurrent,
+        membership: { intent: change.intent, observe: facts => { membershipFacts = facts; } } });
     } catch (error) {
       if (!(error instanceof SelectedProfileRefusal)) throw error;
       return { ok: false as const, errorCode: error.code, error: error.code, effectAttempted: false };
@@ -185,78 +188,59 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
         credentialFileReview = credentialPreparation.review;
       }
     }
-    const observed = observation.privateNetworks.find(network => accessProviderRefsEqualV1(network.provider, selected.selection.provider));
-    const builtinProgram = selected.kind === 'builtin' && observed
-      ? await providers.prepareMembership(selected.selection, change.intent, observed,
-        credentialFileReview ? { setupCredentialFile: credentialFileReview.path } : {}) : undefined;
-    if (selected.kind === 'builtin' && !builtinProgram) return refuse('invalid_action_output');
-    if (builtinProgram && !builtinProgram.ok) return { ...builtinProgram, effectAttempted: false };
-    const membership = builtinProgram?.ok ? builtinProgram.recipe : selected.definition.membership?.[change.intent];
-    if (builtinProgram?.ok && 'kind' in selected.selection.provider) nativeProfiles.push({
-      provider: selected.selection.provider, ...builtinProgram.profile });
+    const membership = selected.definition.membership?.[change.intent];
+    if (membershipFacts) nativeProfiles.push({ provider: selected.selection.provider, profileId: membershipFacts.profileId,
+      networkIdentity: observation.privateNetworks.find(network =>
+        accessProviderRefsEqualV1(network.provider, selected.selection.provider))?.networkIdentity ?? null });
     const install = change.intent === 'join' ? selected.definition.install : undefined;
     if (install || membership || credentialPreparation) {
       const desired = await getMachineSetupDesiredV1(deps.port);
       if (desired.status !== 'ready') return refuse(`machine_setup_content_${desired.status}`);
-      const items: MachinePresetItemV1[] = [];
+      const credentialObservation = credentialPreparation?.observation;
+      let capturedIdentity = credentialObservation;
+      const requestId = deps.context.actionRequestId;
+      const planner = { signal: deps.context.signal, ...(deps.runNative ? { runNative: deps.runNative } : {}),
+        ...(requestId ? { firewallObservation: { requestId, elevation: () => ({ ...deps.elevation, verifyCurrent: deps.isCurrent }) } } : {}) };
+      let itemIndex = 0;
+      const recipeRef = install?.kind === 'recipe' ? install.ref : undefined;
       if (install) {
-        if (install.kind !== 'recipe') return refuse('access_provider_target_unsupported');
-        const recipeRef = install.ref;
+        if (!recipeRef) return refuse('access_provider_target_unsupported');
         const recipeOccurrenceId = deps.runtimeRegistry.contributes.occurrenceIdsByPluginId?.[recipeRef.pluginId];
         if (!recipeOccurrenceId || deps.runtimeRegistry.readPluginOccurrenceId(recipeRef.pluginId) !== recipeOccurrenceId) return refuse('admission_unavailable');
         occurrences.push({ provider: { pluginId: recipeRef.pluginId, localId: recipeRef.recipeId }, occurrenceId: recipeOccurrenceId });
-        items.push({ kind: 'setupRecipe' as const, selection: { ref: recipeRef, inputs: {} } });
-      }
-      const membershipIndex = membership ? items.length : undefined;
-      let inlineEntry: PluginProjectedMachineRecipeEntryV1 | undefined;
-      if (membership && selected.kind === 'plugin') {
-        const pluginId = selected.contribution.pluginId, pluginVersion = selected.contribution.pluginVersion;
-        if (!pluginVersion) return refuse('admission_unavailable');
-        const ref = { pluginId, recipeId: membership.id, revision: membership.revision };
-        if (install?.kind === 'recipe' && sameStrictJsonValue(install.ref, ref)) return refuse('provider_conflict');
-        const selection = MachineRecipeSelectionV1Schema.parse({ ref, inputs: selected.input });
-        membershipSelection = selection;
-        items.push({ kind: 'setupRecipe', selection });
-        inlineEntry = { id: buildQualifiedPluginContributionKey({ pluginId, localId: membership.id }),
-          pluginId, pluginVersion, definition: membership };
-      }
-      if (items.length) {
-        const credentialObservation = credentialPreparation?.observation;
-        const requestId = deps.context.actionRequestId;
-        const planned = await prepareMachineSetupPlanV1({ input: { homeId: deps.target.serverId, machineId: deps.target.machineId,
+        const planned = await prepareMachineSetupPlanV1({ ...planner, input: { homeId: deps.target.serverId, machineId: deps.target.machineId,
           mode: 'effects', sources: [{ kind: 'direct',
-            setup: { items } }] },
-          current: desired, signal: deps.context.signal, ...(deps.runNative ? { runNative: deps.runNative } : {}),
-          ...(requestId ? { firewallObservation: { requestId, elevation: () => ({ ...deps.elevation, verifyCurrent: deps.isCurrent }) } } : {}),
-          ...(credentialObservation ? { readAdminAccessObservation: async () => credentialObservation } : {}),
-          readRecipes: async () => [...(inlineEntry ? [inlineEntry] : []), ...Object.values(buildPluginProjectionFamilyV2({ registry: deps.runtimeRegistry.contributes,
-            generation: deps.runtimeRegistry.generation }, machineRecipesProjectionFamily).entriesById)],
+            setup: { items: [{ kind: 'setupRecipe', selection: { ref: recipeRef, inputs: {} } }] } }] },
+          current: desired, ...(credentialObservation ? { readAdminAccessObservation: async () => credentialObservation } : {}),
+          readRecipes: async () => Object.values(buildPluginProjectionFamilyV2({ registry: deps.runtimeRegistry.contributes,
+            generation: deps.runtimeRegistry.generation }, machineRecipesProjectionFamily).entriesById),
         });
         if ('ok' in planned && !planned.ok) throw createActionExecuteFailureError(planned);
         if (!('recipePlans' in planned) || !planned.recipePlans?.length) return refuse('machine_recipe_unavailable');
-        // A cold client is truthfully unavailable here. Retain its concrete
-        // reviewed program for full native admission, then recheck it after
-        // installing prerequisites; it cannot authorize APPLY in this state.
-        if (planned.support.some(fact => fact.itemIndex !== membershipIndex
-          && (fact.status === 'unsupported' || fact.status === 'unavailable'))) return refuse('machine_recipe_native_unavailable');
+        if (planned.support.some(fact => fact.status === 'unsupported' || fact.status === 'unavailable')) return refuse('machine_recipe_native_unavailable');
         recipePlans.push(...planned.recipePlans);
+        itemIndex = planned.recipePlans.length;
       }
-      if (membership && builtinProgram?.ok) {
-        let capturedIdentity = credentialPreparation?.observation;
+      if (membership) {
+        const inputs = { ...selected.input, ...(membershipFacts ? { membership: membershipFacts } : {}) };
+        if (!machineSetupRecipeInputsAcceptedV1(membership, inputs)) return refuse('invalid_machine_recipe_inputs');
+        const ref = selected.kind === 'plugin'
+          ? { pluginId: selected.contribution.pluginId, recipeId: membership.id, revision: membership.revision }
+          : undefined;
+        if (ref && recipeRef && sameStrictJsonValue(ref, recipeRef)) return refuse('provider_conflict');
         const plan = await prepareMachineRecipeProgramV1({ machineId: deps.target.machineId,
-          desiredRevision: desired.policy.revision, recipe: membership, program: 'steps', inputs: builtinProgram.inputs,
-          backend: createMachineSetupNativeBackend({ signal: deps.context.signal,
-            ...(deps.runNative ? { run: deps.runNative } : {}) }), signal: deps.context.signal,
+          desiredRevision: desired.policy.revision, recipe: membership, program: 'steps',
+          ...(ref ? { selection: MachineRecipeSelectionV1Schema.parse({ ref, inputs }) } : { inputs }),
+          backend: createReviewedMachineSetupBackend({ ...planner, machineId: deps.target.machineId,
+            desiredRevision: desired.policy.revision }), signal: deps.context.signal,
           readTargetFacts: async () => {
             capturedIdentity ??= await deps.elevation.observe();
             return { 'daemon.username': capturedIdentity.daemonUsername, 'daemon.primaryGroup': capturedIdentity.daemonPrimaryGroup };
           } });
         if (!plan) return refuse('machine_recipe_unavailable');
-        membershipEntry = { sourceIndex: 0, itemIndex: items.length, plan };
+        membershipEntry = { sourceIndex: 0, itemIndex: itemIndex++, plan };
         recipePlans.push(membershipEntry);
       }
-      membershipEntry ??= membershipSelection ? recipePlans.find(entry => entry.plan.basis.kind === 'setup'
-        && sameStrictJsonValue(entry.plan.basis.selection, membershipSelection)) : undefined;
       if (credentialPreparation) {
         const plan = await checkMachineSetupEffectPlan({ basis: { kind: 'setup', machineId: deps.target.machineId,
           desiredRevision: desired.policy.revision }, steps: [credentialDirectory],
@@ -265,7 +249,7 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
         if (plan.nativeFacts.some(fact => fact.status === 'unsupported' || fact.status === 'unavailable')) return refuse('machine_recipe_native_unavailable');
         const membershipPosition = membershipEntry ? recipePlans.indexOf(membershipEntry) : -1;
         recipePlans.splice(membershipPosition < 0 ? recipePlans.length : membershipPosition, 0,
-          { sourceIndex: 0, itemIndex: items.length + (builtinProgram?.ok ? 1 : 0), plan });
+          { sourceIndex: 0, itemIndex, plan });
       }
     }
   }
@@ -332,7 +316,52 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
   return { state, providers, observation, plan, membershipEntry: reviewedMembership };
 }
 
+async function prepareHomeRelay(input: MachineReachabilityInspectInputV1, deps: MachineReachabilityHostDependencies,
+  actionId: 'machines.reachability.inspect' | 'machines.reachability.configure') {
+  const target = deps.homeRelay ?? refuse('target_unavailable');
+  if (input.machineId !== deps.target.machineId) return refuse('target_mismatch');
+  if (!await deps.isCurrent()) return refuse('approval_stale');
+  const providers = providerHost(deps, actionId);
+  const state = await readMachineReachabilityMetadata(deps.port);
+  const observation: MachineReachabilityObservationV1 = deps.readPublishedReachability?.()
+    ?? { revision: 0, management: { daemon: 'ready', publicSsh: 'unknown', providers: [] }, ingress: [], privateNetworks: [] };
+  const change = input.change?.kind === 'homeRelay' ? input.change : undefined;
+  let plan: MachineReachabilityPlanV1 | undefined;
+  if (change) {
+    if (!canReviewMachineHomeRelaySelection(target.currentSelection) || !canReviewMachineHomeRelaySelection(change.selection)) {
+      return refuse('invalid_access_provider_selection');
+    }
+    if (change.selection && target.currentSelection && (!accessProviderRefsEqualV1(change.selection.provider, target.currentSelection.provider)
+      || target.currentRoute && !sameStrictJsonValue(target.route, target.currentRoute))) {
+      return refuse('provider_conflict', undefined, false);
+    }
+    const occurrences: MachineReachabilityPlanBasisV1['occurrences'] = [];
+    const selection = change.selection ?? target.currentSelection;
+    if (selection) {
+      const selected = await providers.prepareRole(selection, change.selection ? 'configure' : 'disable', {
+        target: 'homeRelay', route: change.selection ? target.route : target.currentRoute ?? target.route,
+      });
+      if (!selected.ok) throw createActionExecuteFailureError(selected);
+      if (selected.kind === 'plugin') {
+        const occurrenceId = deps.runtimeRegistry.contributes.occurrenceIdsByPluginId?.[selected.contribution.pluginId];
+        if (!occurrenceId || deps.runtimeRegistry.readPluginOccurrenceId(selected.contribution.pluginId) !== occurrenceId) return refuse('admission_unavailable');
+        occurrences.push({ provider: selected.contribution.identity, occurrenceId });
+      }
+    }
+    const basis = { machineId: deps.target.machineId, installationId: deps.target.installationId,
+      currentPostureRevision: state.posture?.revision ?? null, currentSelections: state.selections,
+      change, occurrences, recipePlans: [], homeRelay: target } satisfies MachineReachabilityPlanBasisV1;
+    plan = MachineReachabilityPlanV1Schema.parse({ basis, reviewedPlanDigest: reviewedPlanDigest(basis) });
+  }
+  return { state, observation, providers, target, plan };
+}
+
 export async function inspectMachineReachability(input: MachineReachabilityInspectInputV1, deps: MachineReachabilityHostDependencies) {
+  if (readMachineHomeRelayDemand(input)) {
+    const { state, observation, providers, target, plan } = await prepareHomeRelay(input, deps, 'machines.reachability.inspect');
+    const relayAccess = await readMachineHomeRelayAccess(target, providers);
+    return { machineId: deps.target.machineId, ...state, observation, relayAccess, ...(plan ? { plan } : {}) };
+  }
   const prepared = await prepare(input, deps, 'machines.reachability.inspect');
   if ('ok' in prepared) return prepared;
   const observation = await deps.publish(prepared.observation);
@@ -341,6 +370,28 @@ export async function inspectMachineReachability(input: MachineReachabilityInspe
 }
 
 export async function executeMachineReachabilityTransition(input: MachineReachabilityConfigureInputV1, deps: MachineReachabilityHostDependencies) {
+  if (input.change.kind === 'homeRelay') {
+    const { state, observation, providers, target, plan } = await prepareHomeRelay(input, deps, 'machines.reachability.configure');
+    if (!plan || reviewedPlanDigest(input.reviewedPlanBasis) !== input.reviewedPlanDigest
+      || plan.reviewedPlanDigest !== input.reviewedPlanDigest) return refuse('plan_changed', undefined, false);
+    const operationId = deps.context.operationAcceptance?.operationId;
+    if (!operationId || deps.context.operationAcceptance?.actionId !== 'machines.reachability.configure') return refuse('operation_unavailable');
+    const selection = input.change.selection;
+    return await machineNativeEffectAdmission.run({
+      operation: { operationId, kind: 'machines.reachability.configure', signal: deps.context.signal },
+      keys: [{ kind: 'machineSetup' }], ...(deps.settleNative ? { settleNative: deps.settleNative } : {}),
+    }, async native => {
+      const result = await machineNativeEffectAdmission.runStage(native,
+        () => applyMachineHomeRelayAccess({ target, selection, providers, homeDir: deps.happyHomeDir }));
+      if (!result.ok) {
+        if (result.errorCode === 'plugin_exec_termination_incomplete') machineNativeEffectAdmission.markUnsettled(native);
+        return result;
+      }
+      return { machineId: deps.target.machineId, ...state, observation, status: result.status, relayAccess: result.relayAccess,
+        ...('errorCode' in result ? { errorCode: result.errorCode } : {}) };
+    });
+  }
+  const machineChange = input.change;
   const prepared = await prepare(input, deps, 'machines.reachability.configure');
   if ('ok' in prepared) return prepared;
   const plan = prepared.plan;
@@ -364,7 +415,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
     const providers = providerHost(deps, 'machines.reachability.configure', current);
     let selectionRecordWritten = false;
     let metadataOutcomeUnknown = false;
-    const write = async (change: MachineReachabilityChangeV1, joining = false) => {
+    const write = async (change: Exclude<MachineReachabilityChangeV1, { kind: 'homeRelay' }>, joining = false) => {
       if (!await current()) return refuse('plan_changed');
       if (change.kind === 'posture') {
         const result = await mutateMachineMetadataFieldV1({ expectedMetadataVersion: currentState.metadataVersion,
@@ -419,7 +470,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
     };
     try {
       if (!await current()) return refuse('plan_changed');
-      if (input.change.kind === 'posture') {
+      if (machineChange.kind === 'posture') {
         const transition = plan.basis.firewallTransition;
         if (transition) {
           if (!deps.readDaemonProof) return refuse('machine_unavailable');
@@ -431,7 +482,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
           });
           const transitioned = await executeRetainedSshTransition({ machineId: deps.target.machineId,
             installationId: deps.target.installationId, operationId, native, port: deps.port, field: reachabilityPostureField,
-            expectedMetadataVersion: currentState.metadataVersion, current: currentState.posture, desired: input.change.posture,
+            expectedMetadataVersion: currentState.metadataVersion, current: currentState.posture, desired: machineChange.posture,
             basis: { kind: 'setup', machineId: deps.target.machineId, desiredRevision: transition.setupRevision },
             firewallIntent: transition.intent, elevation: deps.elevation, readDaemonProof: deps.readDaemonProof,
             signal: deps.context.signal });
@@ -452,13 +503,13 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
           status = transitioned.status;
           if (transition.intent.publicSsh.kind === 'closed') verifiedPublicSsh = 'closed';
         } else {
-          const firstOpenPosture = currentState.posture === null && input.change.posture.management.publicSsh.kind === 'open';
-          const written = await write(input.change);
+          const firstOpenPosture = currentState.posture === null && machineChange.posture.management.publicSsh.kind === 'open';
+          const written = await write(machineChange);
           if (firstOpenPosture) status = 'saved_not_enforced';
           else status = written === 'applied' ? 'applied' : 'unchanged';
         }
       } else {
-        const change = input.change;
+        const change = machineChange;
         const membershipEntry = prepared.membershipEntry;
         // A daemon-user role cannot consume a root-only connector file. Native
         // membership must be the descriptor-owned P20 program, never a second

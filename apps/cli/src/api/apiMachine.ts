@@ -5779,6 +5779,10 @@ export class ApiMachineClient {
         return readOpenedMachineMetadataSnapshot(this.machine, this.machineContentReady);
     }
 
+    getMachineReachabilitySnapshot(): import('@happier-dev/protocol').MachineReachabilityObservationV1 | undefined {
+        return this.machine.daemonState?.reachability;
+    }
+
     getMachineSetupObservationSnapshot(): import('@happier-dev/protocol').MachineSetupObservationV1 | undefined {
         return this.machine.daemonState?.setup;
     }

@@ -36,6 +36,30 @@ const MachineSetupLocalPlanResultV1Schema = extendLocalSources(MachineSetupPlanR
 export type MachineSetupLocalPlanInputV1 = z.infer<typeof MachineSetupLocalPlanInputV1Schema>;
 export type MachineSetupLocalPlanResultV1 = z.infer<typeof MachineSetupLocalPlanResultV1Schema>;
 
+export function createReviewedMachineSetupBackend(params: Readonly<{
+  machineId: string;
+  desiredRevision: number;
+  firewallObservation?: Readonly<{ requestId: string; elevation: () => MachineElevationDependencies }>;
+  signal?: AbortSignal;
+  runNative?: (command: MachineSetupNativeCommand) => Promise<MachineSetupNativeCommandResult>;
+}>) {
+  const native = createMachineSetupNativeBackend({ ...(params.signal ? { signal: params.signal } : {}),
+    ...(params.runNative ? { run: params.runNative } : {}) });
+  const firewall = params.firewallObservation;
+  return { ...native, async observe(step: Parameters<typeof native.observe>[0]): ReturnType<typeof native.observe> {
+    if (step.kind !== 'firewall') return native.observe(step);
+    if (!firewall) return { stepId: step.id, status: 'unavailable', reason: 'needs_admin_to_check', facts: {} };
+    const result = await readProtectedMachineFirewall({ machineId: params.machineId, requestId: firewall.requestId,
+      signal: params.signal, basis: { kind: 'setup', machineId: params.machineId, desiredRevision: params.desiredRevision },
+      step, allowPrompt: false }, firewall.elevation());
+    params.signal?.throwIfAborted();
+    if (result.outcome === 'checked' && result.plan.nativeFacts[0]?.stepId === step.id) return result.plan.nativeFacts[0];
+    const needsAdministrator = result.outcome === 'not_applied'
+      && (result.reasonCode === 'not_preauthorized' || result.reasonCode === 'mode_none');
+    return { stepId: step.id, status: 'unavailable', reason: needsAdministrator ? 'needs_admin_to_check' : 'required_fact_unavailable', facts: {} };
+  } };
+}
+
 /** Saved-copy reads stay inert; newly selected declarations use the native observer. */
 export async function prepareMachineSetupPlanV1(params: Readonly<{
   input: MachineSetupLocalPlanInputV1;
@@ -117,21 +141,7 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
     return { 'daemon.primaryGroup': observation?.daemonPrimaryGroup ?? null,
       'daemon.username': observation?.daemonUsername ?? null };
   })();
-  const nativeBackend = createMachineSetupNativeBackend({ ...(params.signal ? { signal: params.signal } : {}),
-    ...(params.runNative ? { run: params.runNative } : {}) });
-  const firewall = params.firewallObservation;
-  const backend: typeof nativeBackend = { ...nativeBackend, async observe(step) {
-    if (step.kind !== 'firewall') return nativeBackend.observe(step);
-    if (!firewall) return { stepId: step.id, status: 'unavailable', reason: 'needs_admin_to_check', facts: {} };
-    const result = await readProtectedMachineFirewall({ machineId: input.machineId, requestId: firewall.requestId,
-      signal: params.signal, basis: { kind: 'setup', machineId: input.machineId, desiredRevision: current.policy.revision },
-      step, allowPrompt: false }, firewall.elevation());
-    params.signal?.throwIfAborted();
-    if (result.outcome === 'checked' && result.plan.nativeFacts[0]?.stepId === step.id) return result.plan.nativeFacts[0];
-    const needsAdministrator = result.outcome === 'not_applied'
-      && (result.reasonCode === 'not_preauthorized' || result.reasonCode === 'mode_none');
-    return { stepId: step.id, status: 'unavailable', reason: needsAdministrator ? 'needs_admin_to_check' : 'required_fact_unavailable', facts: {} };
-  } };
+  const backend = createReviewedMachineSetupBackend({ ...params, machineId: input.machineId, desiredRevision: current.policy.revision });
   let recipes: readonly PluginProjectedMachineRecipeEntryV1[] | undefined;
   if (selected.length || change?.detached.some(entry => canInspectMachineSetupRemovalRecipeV1(entry, exclusions))) {
     try { recipes = await params.readRecipes?.(); }

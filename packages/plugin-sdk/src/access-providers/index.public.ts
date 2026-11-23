@@ -1,6 +1,7 @@
 export type {
   AccessProviderRefV1, AccessCredentialPurposeRefV1, AccessProviderSelectionV1, AccessProviderRoleV1,
   AccessProviderRouteV1, MachinePrivateNetworkObservationV1, AccessProviderRoleResultV1,
+  AccessProviderMembershipIntentV1, AccessProviderMembershipFactsV1,
   AccessProviderContributionV1, AccessProviderAuthorDefinitionV1, AccessProviderRoleInputV1,
 } from '../accessProviders.js';
 export {

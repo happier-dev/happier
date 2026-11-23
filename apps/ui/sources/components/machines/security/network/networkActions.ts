@@ -1,4 +1,5 @@
 import type { MachineReachabilityChangeV1, MachineReachabilityPlanV1 } from '@happier-dev/protocol';
+import type { MachineHomeRelayTargetV1 } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { buildNetworkConfigureInput, buildNetworkInspectInput } from './networkSurface';
@@ -10,6 +11,16 @@ type Target = Readonly<{ serverId: string; machineId: string }>;
 /** Preserve the public envelope, including pending approval, typed refusal and unknown outcomes. */
 export function inspectMachineNetwork(target: Target, change?: MachineReachabilityChangeV1, context?: Context): Promise<ActionExecuteResult> {
   return execute('machines.reachability.inspect', buildNetworkInspectInput(target, change), {
+    ...context, surface: 'ui', serverId: target.serverId,
+  });
+}
+
+export function buildHomeRelayInspectInput(target: Target, homeRelay: MachineHomeRelayTargetV1) {
+  return { ...buildNetworkInspectInput(target), homeRelay };
+}
+
+export function inspectMachineHomeRelay(target: Target, homeRelay: MachineHomeRelayTargetV1, context?: Context): Promise<ActionExecuteResult> {
+  return execute('machines.reachability.inspect', buildHomeRelayInspectInput(target, homeRelay), {
     ...context, surface: 'ui', serverId: target.serverId,
   });
 }

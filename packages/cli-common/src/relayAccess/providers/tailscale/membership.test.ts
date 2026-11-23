@@ -27,7 +27,7 @@ function machine(initialOnline = true, initialState = 'Running', initialWantRunn
 }
 
 async function plan(backend: ReturnType<typeof createMachineSetupNativeBackend>, key: boolean) {
-    const inputs = { switchNetwork: key, setOperator: false,
+    const inputs = { membership: { profileId: 'existing-profile', flags: key ? ['switch-network'] : [] },
         ...(key ? { setupCredentialFile: '/run/happier-machine-credentials/install.setup-key' } : {}) };
     const declaration: MachineRecipeV1 = tailscaleMembershipPrograms.join;
     const steps = declaration.steps.filter(step =>
@@ -67,26 +67,30 @@ describe('reviewed builtin Tailscale membership through the native interpreter',
         expect(f.nativeEffects).toEqual([['up']]);
     });
     it('does not change an adopted Running profile’s operator without a selected key', async () => {
-        const prepared = await tailscaleRelayAccessProvider.prepareMembership?.({ role: 'join',
-            observed: { state: 'ready', networkIdentity: 'existing-tailnet' }, ctx: {
+        const prepared = await tailscaleRelayAccessProvider.inspect?.({ membershipIntent: 'join', config: null, ctx: {
                 env: { HAPPIER_TAILSCALE_BIN: '/fixture/tailscale' }, upstreamUrl: null, platform: 'linux',
                 runCommand: async request => ({ command: request.command, args: request.args, exitCode: 0,
-                    stdout: '[{"id":"existing-profile","selected":true}]', stderr: '' }),
+                    stdout: request.args[0] === 'status' ? '{"BackendState":"Running","HaveNodeKey":true}'
+                        : '[{"id":"existing-profile","selected":true}]', stderr: '' }),
             } });
-        expect(prepared).toMatchObject({ ok: true, inputs: { switchNetwork: false, setOperator: false },
-            profile: { profileId: 'existing-profile', networkIdentity: 'existing-tailnet' } });
+        expect(prepared).toMatchObject({ kind: 'confirmed', facts: { membership: {
+            profileId: 'existing-profile', flags: [],
+        } } });
     });
 
     it.each(['needsAuth', 'stopped'] as const)('does not launch interactive up without a selected key and usable native login (%s)', async state => {
         const commands: string[][] = [];
-        const result = await tailscaleRelayAccessProvider.prepareMembership?.({ role: 'join',
-            observed: { state, networkIdentity: null }, ctx: { env: { HAPPIER_TAILSCALE_BIN: '/fixture/tailscale' }, upstreamUrl: null,
+        const result = await tailscaleRelayAccessProvider.inspect?.({ membershipIntent: 'join', config: null,
+            ctx: { env: { HAPPIER_TAILSCALE_BIN: '/fixture/tailscale' }, upstreamUrl: null,
                 runCommand: async request => {
                     commands.push([...request.args]);
-                    return { command: request.command, args: request.args, exitCode: 0, stdout: '[]', stderr: '' };
+                    return { command: request.command, args: request.args, exitCode: 0,
+                        stdout: request.args[0] === 'status'
+                            ? JSON.stringify({ BackendState: state === 'needsAuth' ? 'NeedsLogin' : 'Stopped', HaveNodeKey: state !== 'needsAuth' })
+                            : '[]', stderr: '' };
                 } } });
-        expect(result).toMatchObject({ ok: false, errorCode: state === 'needsAuth' ? 'needsAuth' : 'invalid_provider_output' });
-        expect(commands).toEqual(state === 'needsAuth' ? [] : [['switch', '--list', '--json']]);
+        expect(result).toEqual({ kind: 'refused', code: state === 'needsAuth' ? 'needsAuth' : 'invalid_provider_output' });
+        expect(commands).toEqual([['status', '--json'], ...(state === 'needsAuth' ? [] : [['switch', '--list', '--json']])]);
     });
 
     it('adopts the observed Running profile with no selected key and no native mutation', async () => {

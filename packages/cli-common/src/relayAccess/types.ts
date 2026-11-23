@@ -1,6 +1,5 @@
 import type { AccessProviderContributionV1, AccessProviderRefV1, AccessProviderSelectionV1 } from '@happier-dev/protocol/plugins/contributions/catalog';
-import type { AccessProviderRoleResultV1, MachinePrivateNetworkObservationV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
-import type { MachineRecipeV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import type { AccessProviderMembershipIntentV1, AccessProviderRoleResultV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import type { runTailscaleStatusJson } from '../tailscale/commandRunner.js';
 
 /** Builtins name existing host Actions; these are never same-plugin local ids. */
@@ -165,13 +164,8 @@ export type RelayAccessConfig = AccessProviderSelectionV1;
 
 export type RelayAccessProvider = Readonly<{
     descriptor: RelayAccessProviderDescriptor;
-    inspect?: (params: Readonly<{ config: RelayAccessConfig | null; ctx: RelayAccessExecutionContext } & RelayAccessProviderStatusOptions>) => Promise<BuiltinAccessProviderRoleResult>;
-    prepareMembership?: (params: Readonly<{ role: 'join' | 'leave'; setupCredentialFile?: string;
-        observed: Pick<MachinePrivateNetworkObservationV1, 'state' | 'networkIdentity'>; ctx: RelayAccessExecutionContext }
-        & RelayAccessProviderStatusOptions>) => Promise<Readonly<{
-            ok: true; recipe: MachineRecipeV1; inputs: AccessProviderSelectionV1['config'];
-            profile: Readonly<{ profileId: string | null; networkIdentity: string | null }>;
-        }> | Readonly<{ ok: false; errorCode: string; error: string }>>;
+    inspect?: (params: Readonly<{ config: RelayAccessConfig | null; ctx: RelayAccessExecutionContext;
+        membershipIntent?: AccessProviderMembershipIntentV1 } & RelayAccessProviderStatusOptions>) => Promise<BuiltinAccessProviderRoleResult>;
     status: (params: Readonly<{ config: RelayAccessConfig | null; ctx: RelayAccessExecutionContext } & RelayAccessProviderStatusOptions>) => Promise<RelayAccessStatus> | RelayAccessStatus;
     configure?: (params: Readonly<{ config: RelayAccessConfig; ctx: RelayAccessExecutionContext } & RelayAccessProviderStatusOptions>) => Promise<RelayAccessStatus> | RelayAccessStatus;
     disable?: (params: Readonly<{ config: RelayAccessConfig; ctx: RelayAccessExecutionContext } & RelayAccessProviderStatusOptions>) => Promise<void> | void;

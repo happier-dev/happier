@@ -2,6 +2,7 @@ import { z } from 'zod/mini';
 import { MachineReachabilityPostureV1Schema, MachineReachabilityObservationV1Schema,
   type MachineReachabilityPostureV1, type MachineReachabilityObservationV1 } from '@happier-dev/protocol/machines/reachability/machineReachabilityPostureV1';
 import { AccessProviderSelectionV1Schema, accessProviderRefsEqualV1,
+  type AccessProviderMembershipFactsV1, type AccessProviderMembershipIntentV1,
   type AccessProviderSelectionV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import { readMachineMetadataFieldV1, readMachineMetadataSnapshotV1, type MachineMetadataFieldDefinitionV1,
   type MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
@@ -84,6 +85,7 @@ export async function observeMachineReachability(input: Readonly<{
   state: Awaited<ReturnType<typeof readMachineReachabilityMetadata>>;
   providers: ReturnType<typeof createReachabilityProviderHost>;
   additionalSelection?: AccessProviderSelectionV1;
+  membership?: Readonly<{ intent: AccessProviderMembershipIntentV1; observe(facts: AccessProviderMembershipFactsV1): void }>;
   isCurrent(): Promise<boolean>;
 }>): Promise<MachineReachabilityObservationV1> {
   if (!await input.isCurrent()) return refuse('approval_stale');
@@ -101,7 +103,8 @@ export async function observeMachineReachability(input: Readonly<{
       || !!input.additionalSelection && sameStrictJsonValue(input.additionalSelection, selection)
       || selected.ok && selected.definition.capabilities.includes('privateNetwork');
     if (!selected.ok) return { selection, networkRequired, state: 'unavailable' as const, code: selected.errorCode };
-    const outcome = await input.providers.invoke(selected.selection, 'inspect');
+    const membership = additional && sameStrictJsonValue(additional, selection) ? input.membership : undefined;
+    const outcome = await input.providers.invoke(selected.selection, 'inspect', membership ? { membershipIntent: membership.intent } : {});
     if (!outcome.ok) {
       if (outcome.errorCode === 'plugin_exec_termination_incomplete') throw new PluginError({
         code: outcome.errorCode, message: 'Native process termination is incomplete', retryable: false,
@@ -117,6 +120,7 @@ export async function observeMachineReachability(input: Readonly<{
     if (network && !accessProviderRefsEqualV1(network.provider, selected.selection.provider)) {
       return { selection, networkRequired, state: 'unknown' as const, code: 'invalid_action_output' };
     }
+    if (membership && outcome.result.facts.membership) membership.observe(outcome.result.facts.membership);
     return { selection, networkRequired, state: outcome.result.facts.state, ...(network ? { network } : {}) };
   }));
   if (!await input.isCurrent()) return refuse('approval_stale');

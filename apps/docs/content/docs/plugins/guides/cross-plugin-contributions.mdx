@@ -41,11 +41,21 @@ schema builder for the ordinary plugin Actions named by that descriptor.
 Machine Inspect and Configure use the host's installed descriptor selection and
 reviewed parent Action. A plugin does not create its own child authorization.
 
+For signed-in Home Relay access, declare the `homeRelay` target and the
+`inspect`, `configure` and `disable` roles. The person selects the enrolled
+hosting Machine in Home Reach. The host supplies the reviewed route to the
+roles. Return `needsAuth` and an HTTPS `authorizationUrl` if the person needs
+to approve access with the provider. The initial Relay install uses the built-in
+bootstrap catalog before an Account and daemon occurrence exist.
+
 Native membership belongs in the descriptor's finite `membership.join` and
 `membership.leave` Machine recipes. Configure runs those programs through the
 reviewed root setup interpreter, rather than running a join command as the
 daemon user. The join recipe receives a protected root-only credential-file
 path; do not put the key in configuration, Action results or review text.
+If Inspect receives `membershipIntent`, it can return the selected native
+profile ID and non-secret flags in `facts.membership`. Join and leave recipes
+can branch on those flags with an `includes` condition on `membership.flags`.
 
 This is an unreleased development contract, not a statement that every built-in
 network adapter or the Home setup UI uses it. The maintained

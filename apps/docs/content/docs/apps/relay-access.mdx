@@ -82,6 +82,12 @@ Machine-only Tailscale membership and Caddy are not Home relay methods.
 Published share URLs omit userinfo, query and fragment while keeping port and
 path; private execution configuration is not rewritten.
 
+Relay installation uses a built-in method to resolve the first reachable URL before
+Account sign-in. After signing in, open **Home → Reach → Relay access** and select
+the enrolled Machine running the Relay. That Machine supplies the available providers
+and runs status checks and reviewed changes. To switch providers, disable the current
+one first. Plugins can supply Home Relay providers on the selected Machine.
+
 When a local provider returns a share URL, Happier reconciles that route through the canonical descriptor owner and retains the local upstream for connections from this computer. The route does not replace the Home's stable identity or independently choose its authentication audience. Disabling access uses the selected method's teardown; Cloudflare requires its admitted controller and does not remove a connector through this configuration leaf. Configuring access with `--ssh` changes the remote host only; it does not switch the Home profile on the computer running the command.
 
 Disable relay access (remove the persisted configuration):

@@ -263,7 +263,6 @@ export const RemoteHostsAccessPage = React.memo(function RemoteHostsAccessPage()
         activeRemoteHostSshTunnels,
         hostNameById,
         sshTunnelControl,
-        remoteHostOutcomeActions,
         accessChannels,
         accessEndpointProjection,
         handleAccessEndpointRemediationActionPress,
@@ -297,7 +296,7 @@ export const RemoteHostsAccessPage = React.memo(function RemoteHostsAccessPage()
                     })}
                 </ItemGroup>
             ) : null}
-            {!remoteHostOutcomeActions.relayAccessSelection && accessChannels.length > 0 ? (
+            {accessChannels.length > 0 ? (
                 <AccessEndpointSettingsSection
                     channels={accessChannels}
                     remediationActions={accessEndpointProjection.remediationActions}

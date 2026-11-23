@@ -1585,6 +1585,13 @@ Home subset; native Machine Tailscale membership and Caddy are not Home methods.
 Relay install resolves a reachable URL for Home setup before Account sign-in.
 That bootstrap step uses the built-in access catalog. Third-party contributions
 require a signed-in Account and an installed daemon occurrence on the target Machine.
+In signed-in Home → Reach → Relay access, the person selects the enrolled Machine
+that runs the Relay. Inspect, Configure and Disable use that Machine's admitted
+reachability Actions. The receiving Machine resolves the installed Relay's upstream
+and verifies its Home identity. A `homeRelay` contribution receives the reviewed
+route through its ordinary access roles. `homeAccessMethod` is reserved for the
+bootstrap chooser. A provider that needs external authorization can return
+`authorizationUrl` with `needsAuth`.
 Configuration is validated against the selected descriptor, and credentials are
 purpose-bound Saved Secret or Connected Account references, not raw values.
 Cloudflare's Home selection carries the hostname and a `tunnel.manage`
@@ -1607,6 +1614,12 @@ owner into a root-owned 0600 file beneath protected root-owned ancestors;
 the recipe receives its path, never the secret in Action input or review data.
 Providers can declare `network.join` optional. A keyless join uses the reviewed
 recipe without acquiring or materializing a Saved Secret.
+On a join or leave review, the selected provider's Inspect role receives
+`membershipIntent`. It may return the selected native profile ID and a list of
+non-secret flags in `facts.membership`. The same facts are available as
+`membership` in both built-in and plugin recipe inputs. Recipes can use
+`includes` conditions on `membership.flags`. Ordinary reachability reads omit
+the membership intent.
 Provider observation Actions use the executor's exact active-parent reviewed
 child port. They do not issue their own admission or borrow the daemon's
 Account policy. The selected Machine default ingress also uses its declared
@@ -4444,6 +4457,18 @@ Contribution-family membership and normalization are Protocol-owned. In developm
 
 The development-only `machineProvisioners` family declares native launch and resource schemas and same-plugin Account or daemon Action roles through its [Protocol owner](../packages/protocol/src/plugins/contributions/machineProvisioners.ts). Discovery reads descriptors without importing provisioner leaves; selected or retained contribution demand activates only the needed leaf through the existing `activate(api)` Action ABI. Roles receive raw declared launch choices or resource values, and options receive the provider-declared query value. The host retains qualified resource references, controller and occurrence identity, current-row custody and captured credentials separately. Effectful roles require that private admission; ordinary contributed Action calls cannot supply it. Retained reads may use the same row custody, while initial checks and options can pin a private captured-account lease without inventing a managed row. Native enrollment accepts buffered argv/private-stdin execution through the same ordinary enrollment recipe; live output is optional. Buffered pairing uses the existing auth request, controller approval and auth wait producers, not another installer or enrollment authority. Only the selected guest process receives any invocation-private output observer and inherited task budget; captured preflight processes do not. A provisioner may also declare the optional `bootstrapTransport.stream` role (input `{resource, argv}`, result `{termination}` only): a long-lived non-PTY duplex byte channel for one guest argv, used to reach the per-Session holder in a guest that runs no Happier daemon. The Action spawns the provider's native carrier with `ExecService.spawn(…, {outputDelivery:'invocation'})`; the host feeds that process's stdin from its private invocation channel and observes its stdout, with no timeout, captured output or new lifetime owner (the channel lives as long as the invocation; destroying it aborts the invocation). The returned termination describes the local carrier only: a channel that ends never proves the guest process exited. Devcontainer (`docker exec --interactive` / `devcontainer exec`), Lima (`limactl shell`) and Coder (`coder ssh`) implement it; omitting it means the provider has no channel.
 
+Provider authors can import `createMachineProvisionerConformanceFixture` from
+`@happier-dev/plugin-sdk/testing` to describe their native HTTP or process
+boundaries for shared provisioner tests. Use `isSuccessfulProcessResult` from
+`@happier-dev/plugin-sdk/exec` to identify a zero exit without a requested
+termination.
+
+Read-only workspace attachment providers can declare
+`workspaceAttachment.bootstrapCredential` with `kind: 'remote-host-ssh'` and a
+`remoteHostIdPath` in the launch schema. The daemon resolves that selector in
+the admitted Account and exposes the credential to native exec, file delivery
+and stream roles through the private bootstrap service.
+
 In 0.3 development, a prepared Machine preset carries the provider's preparation
 reference. When a person approves Acquire, the receiving daemon opens requester
 Account custody for that dispatch through its existing Home admission. At the
@@ -5063,6 +5088,10 @@ managed Docker dependency directly, with Podman as a runtime choice; the Dev
 Containers CLI is used for advanced file or inline configuration. Remote Docker
 hosts and contexts are outside this flow. Presets, Team presets, pools and retention
 remain on the existing managed Machine owners.
+
+When Podman is missing on a Linux controller that uses APT or DNF, Devcontainer
+offers Install Podman through the ordinary Machine Setup plan and apply Actions.
+On macOS and Windows, the prerequisite links to the upstream Podman VM setup.
 
 Devcontainer presets save only the author operands accepted by the options
 Action: image and setup script, runtime, workspace and file or inline build

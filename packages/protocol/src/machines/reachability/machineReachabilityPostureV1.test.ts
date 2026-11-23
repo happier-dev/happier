@@ -29,8 +29,8 @@ describe('Machine ingress and demanded private-network contracts', () => {
     });
   });
 
-  it('retains the observed builtin native profile as closed nonsecret parent-review evidence', () => {
-    const provider = { kind: 'builtin', id: 'tailscale' };
+  it.each([{ kind: 'builtin', id: 'tailscale' }, { pluginId: 'example.network', localId: 'network' }])(
+    'retains the observed native profile as closed parent-review evidence for %j', provider => {
     const selection = { provider, config: {}, credentialRefs: [] };
     const basis: unknown = { machineId: 'machine', installationId: 'installation', currentPostureRevision: null,
       currentSelections: [], change: { kind: 'privateNetwork', intent: 'join', selection }, occurrences: [], recipePlans: [],
@@ -42,7 +42,7 @@ describe('Machine ingress and demanded private-network contracts', () => {
     const nativeProfile = { provider, profileId: 'actual-selected-profile', networkIdentity: 'example.ts.net' };
     for (const invalid of [
       { ...nativeProfile, token: 'must-not-enter-review' },
-      { ...nativeProfile, provider: { pluginId: 'not-a-builtin', localId: 'profile' } },
+      { ...nativeProfile, provider: { pluginId: 'example.network' } },
     ]) {
       expect(MachineReachabilityPlanBasisV1Schema.safeParse({ ...parsed.data, nativeProfiles: [invalid] }).success).toBe(false);
     }

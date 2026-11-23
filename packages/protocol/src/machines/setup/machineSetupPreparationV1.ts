@@ -11,13 +11,17 @@ export function isMachineRecipePreparationSuitableV1(recipe: MachineRecipeV1): b
         && ![...(recipe.checks ?? []), ...recipe.steps, ...(recipe.removeSteps ?? [])].some(machineRecipeStepRequiresMachineContextV1);
 }
 
+export function machineSetupRecipeInputsAcceptedV1(recipe: MachineRecipeV1, inputs: unknown): boolean {
+    return isValidPluginJsonSchemaValue(compilePluginJsonSchema(recipe.inputSchema), inputs)
+        && machineRecipeInputConstraintsSatisfiedV1(recipe, inputs);
+}
+
 export const MachineSetupRecipeProgramV1Schema = z.object({
     recipe: MachineRecipeV1Schema,
     selection: MachineRecipeSelectionV1Schema,
 }).strict().superRefine(({ recipe, selection }, context) => {
     if (recipe.id !== selection.ref.recipeId || recipe.revision !== selection.ref.revision
-        || !isValidPluginJsonSchemaValue(compilePluginJsonSchema(recipe.inputSchema), selection.inputs)
-        || !machineRecipeInputConstraintsSatisfiedV1(recipe, selection.inputs)) context.addIssue({ code: 'custom', path: ['selection'],
+        || !machineSetupRecipeInputsAcceptedV1(recipe, selection.inputs)) context.addIssue({ code: 'custom', path: ['selection'],
         message: 'Setup requires the exact validated recipe selection' });
 });
 export type MachineSetupRecipeProgramV1 = z.infer<typeof MachineSetupRecipeProgramV1Schema>;

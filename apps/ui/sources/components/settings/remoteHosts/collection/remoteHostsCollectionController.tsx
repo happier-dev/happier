@@ -204,7 +204,6 @@ export function useRemoteHostsCollectionController(gates: RemoteHostsGates): Rea
     deleteHost: (remoteHostId: string) => Promise<boolean>;
     startManageHostAction: (remoteHost: RemoteHost, action: keyof typeof REMOTE_HOST_MAINTENANCE_ACTION_IDS, title: string) => Promise<void>;
     canRunRemoteHostMaintenanceTasks: boolean;
-    remoteHostOutcomeActions: ReturnType<typeof useRemoteHostOutcomeActions>;
     sshTunnelControl: ReturnType<typeof useRemoteHostSshTunnelControl>;
     activeRemoteHostSshTunnels: ReturnType<typeof useRemoteHostSshTunnelControl>['tunnels'][number][];
     accessChannels: ReturnType<typeof buildAccessChannelProjection>;
@@ -503,18 +502,9 @@ export function useRemoteHostsCollectionController(gates: RemoteHostsGates): Rea
                 },
             }] satisfies ItemAction[] : []),
             {
-                id: 'useAsRelayHost',
-                title: t('settings.remoteHostsUseAsRelayHostTitle'),
-                subtitle: t('settings.remoteHostsUseAsRelayHostSubtitle'),
-                icon: 'radio',
-                onPress: () => {
-                    void remoteHostOutcomeActions.openRelayAccess(host);
-                },
-            },
-            {
                 id: 'configureAccess',
-                title: t('settings.remoteHostsConfigureAccessTitle'),
-                subtitle: t('settings.remoteHostsConfigureAccessSubtitle'),
+                title: t('homeGovernance.reach.relayManage'),
+                subtitle: t('homeGovernance.reach.relayHostingMachineHelp'),
                 icon: 'graph',
                 onPress: () => {
                     void remoteHostOutcomeActions.configureRelayAccess(host);
@@ -639,7 +629,6 @@ export function useRemoteHostsCollectionController(gates: RemoteHostsGates): Rea
         deleteHost,
         startManageHostAction,
         canRunRemoteHostMaintenanceTasks,
-        remoteHostOutcomeActions,
         sshTunnelControl,
         activeRemoteHostSshTunnels,
         accessChannels,

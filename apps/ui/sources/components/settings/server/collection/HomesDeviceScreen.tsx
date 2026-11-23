@@ -7,7 +7,6 @@ import { ConnectionStatusControl } from '@/components/navigation/ConnectionStatu
 import { settingRendersOnHost } from '@/components/settings/catalog/settingDeclarations';
 import { homeAdministrationRuntimePath } from '@/components/settings/home/governance/homeAdministrationRoutes';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
-import { LocalRelayAccessControlSection } from '@/components/settings/server/localControl/LocalRelayAccessControlSection';
 import { LocalRelayRuntimeControlSection } from '@/components/settings/server/localControl/LocalRelayRuntimeControlSection';
 import {
     PersonalHomeRuntimeControlSection,
@@ -27,7 +26,6 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { findPersonalHomeBootstrapCompletedProfile, resolveServerProfileScopeId } from '@/sync/domains/server/serverProfiles';
-import { resolveKnownLocalRelayUrl } from '@/sync/domains/server/url/resolveKnownLocalRelayUrl';
 import { useSettingActionWriter } from '@/components/settings/catalog/useSettingActionWriter';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -81,21 +79,12 @@ export const HomesDeviceScreen = React.memo(function HomesDeviceScreen() {
     const homeApplicationCarrierEligibility = useLocalSetting('homeApplicationCarrierEligibility');
     const writeSetting = useSettingActionWriter();
     const [connectionDetailsExpanded, setConnectionDetailsExpanded] = React.useState(false);
-    const [localRelayUrl, setLocalRelayUrl] = React.useState<string | null>(null);
-    const knownLocalRelayUrl = React.useMemo(() => resolveKnownLocalRelayUrl({
-        activeServerUrl: controller.activeServerUrl,
-        activeLocalRelayUrl: controller.activeLocalRelayUrl,
-    }), [controller.activeLocalRelayUrl, controller.activeServerUrl]);
     // The managed Personal Home this desktop runs is administered from its Home console (Runtime).
     const personalHomeProfile = React.useMemo(
         () => findPersonalHomeBootstrapCompletedProfile(controller.servers),
         [controller.servers],
     );
     const { operations: deviceRuntimeOperations, searchApproval: runtimeApproval, approvalServerId } = usePersonalHomeRuntimeOperations({ profiles: controller.servers });
-    const handleLocalRelayStatusChange = React.useCallback((status: Readonly<{ relayUrl: string }> | null | undefined) => {
-        const next = typeof status?.relayUrl === 'string' && status.relayUrl.trim().length > 0 ? status.relayUrl.trim() : null;
-        setLocalRelayUrl((current) => (current === next ? current : next));
-    }, []);
 
     return (
         <ItemList>
@@ -153,15 +142,11 @@ export const HomesDeviceScreen = React.memo(function HomesDeviceScreen() {
                     // Without a Personal Home receipt, controls stay on this device's page.
                     // Signed-in admission still belongs to its active Account.
                     <>
-                        <ServerLocalRuntimeControlSection
-                            onStatusChange={handleLocalRelayStatusChange}
-                            operations={deviceRuntimeOperations}
-                        />
+                        <ServerLocalRuntimeControlSection operations={deviceRuntimeOperations} />
                         {runtimeApproval.approvalPending && runtimeApproval.approvalId && approvalServerId ? <ItemGroup>
                             <ActionApprovalPendingNotice testID="device-runtime-files-approval" message={t('secrets.catalog.approvalPending')}
                                 onOpenApproval={() => router.pushRetainingCurrent(`/inbox/approvals/${encodeURIComponent(runtimeApproval.approvalId!)}?serverId=${encodeURIComponent(approvalServerId)}`)} />
                         </ItemGroup> : null}
-                        <LocalRelayAccessControlSection upstreamUrl={localRelayUrl ?? knownLocalRelayUrl} />
                     </>
                 )
             ) : Platform.OS === 'web' ? null : (

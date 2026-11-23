@@ -796,7 +796,7 @@ await import('./collection/remoteHostsCollectionController');
         const screen = await renderScreen(React.createElement(RemoteHostsScreen));
 
         // What this device can do with the host leads its page; maintaining Happier there follows.
-        const useIds = ['setupAsMachine', 'useAsRelayHost', 'configureAccess'];
+        const useIds = ['setupAsMachine', 'configureAccess'];
         const maintenanceIds = ['testConnection', 'installOrUpdateCli'];
         for (const id of [...useIds, ...maintenanceIds]) {
             expect(screen.findByTestId(`settings.remoteHosts.hostAction.${id}`)).toBeTruthy();
@@ -1231,69 +1231,6 @@ await import('./collection/remoteHostsCollectionController');
         expect(rowActionsProps?.actions?.map((action) => action.id)).not.toContain('connectFromThisDevice');
     });
 
-    it('opens relay access for the saved SSH target without starting a tunnel or relay-runtime maintenance task', async () => {
-        setTauriDesktop(true);
-        featureGateState.managementEnabled = true;
-        remoteHostsState.value = [
-            {
-                id: 'host-a',
-                name: 'Dev box',
-                ssh: {
-                    target: 'dev@10.0.0.1',
-                    port: 2222,
-                    authMode: 'agent',
-                },
-                linkedMachineId: null,
-                linkedRelayProfileId: null,
-                createdAt: 1,
-                updatedAt: 1,
-                lastUsedAt: null,
-            },
-        ];
-
-        const { RemoteHostsScreen } = await loadRemoteHostsScreen();
-        const screen = await renderScreen(React.createElement(RemoteHostsScreen));
-
-        const rowActionsProps = itemRowActionsSpy.props as { actions?: Array<{ id: string; onPress: () => void }> } | null;
-        const useAsRelayHost = rowActionsProps?.actions?.find((action) => action.id === 'useAsRelayHost');
-        expect(useAsRelayHost).toBeTruthy();
-
-        useAsRelayHost!.onPress();
-        await flushHookEffects({ cycles: 2, turns: 6 });
-        await vi.waitFor(() => { expect(routerSpies.push).toHaveBeenCalledWith('/settings/remote-hosts/host-a?remoteHostIntent=relay&expectedRevision=4'); });
-        routerState.params = { remoteHostIntent: 'relay', expectedRevision: '4' };
-        await screen.update(React.createElement(RemoteHostsScreen));
-        await vi.waitFor(() => { expect(screen.findByTestId('settings.remoteHosts.relayAccess.host-a')).toBeTruthy(); });
-
-        expect(screen.findByTestId('settings.remoteHosts.relayAccess.host-a')).toBeTruthy();
-        expect(startMock.mock.calls.map(([spec]) => spec)).toContainEqual(expect.objectContaining({
-            kind: 'relay.access.status.v1',
-            params: {
-                target: {
-                    kind: 'ssh',
-                    ssh: {
-                        target: 'dev@10.0.0.1',
-                        port: 2222,
-                        auth: 'agent',
-                    },
-                },
-            },
-        }));
-        const startedSpecs = startMock.mock.calls.map((call) => call[0]);
-        expect(startedSpecs).not.toEqual(expect.arrayContaining([
-            expect.objectContaining({
-                kind: 'daemon.sshTunnel.ensure.v1',
-            }),
-            expect.objectContaining({
-                kind: 'remote.ssh.manageHost.v1',
-                params: expect.objectContaining({
-                    action: expect.stringContaining('relayRuntime'),
-                }),
-            }),
-        ]));
-        expect(JSON.stringify(startedSpecs)).not.toContain('sshTunnelProvider');
-    });
-
     it.each(['current', 'stale'] as const)('presents Configure Access for a %s saved SSH target', async revision => {
         setTauriDesktop(true);
         featureGateState.managementEnabled = true;
@@ -1321,8 +1258,9 @@ await import('./collection/remoteHostsCollectionController');
         const configureAccess = rowActionsProps?.actions?.find((action) => action.id === 'configureAccess');
         expect(configureAccess).toBeTruthy();
 
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { homeAdministrationReachPath } = await import('@/components/settings/home/governance/homeAdministrationRoutes');
         if (revision === 'stale') {
-            const { storage } = await import('@/sync/domains/state/storage');
             home.answer(storage.getState().settingsScope!.serverId, '/v1/account/entity-rows/remote-hosts', { body: {
                 status: 'present', revision: 5, content: { t: 'plain', v: { v: 1, hosts: remoteHostsState.value } },
             } });
@@ -1335,20 +1273,10 @@ await import('./collection/remoteHostsCollectionController');
             expect(startMock.mock.calls.some(([spec]) => spec.kind === 'relay.access.status.v1')).toBe(false);
             return;
         }
-        await vi.waitFor(() => { expect(routerSpies.push).toHaveBeenCalledWith('/settings/remote-hosts/host-a?remoteHostIntent=relay&expectedRevision=4'); });
-        routerState.params = { remoteHostIntent: 'relay', expectedRevision: '4' };
-        await screen.update(React.createElement(RemoteHostsScreen));
-        await vi.waitFor(() => { expect(screen.findByTestId('settings.remoteHosts.relayAccess.host-a')).toBeTruthy(); });
-
-        expect(screen.findByTestId('settings.remoteHosts.relayAccess.host-a')).toBeTruthy();
-        expect(startMock.mock.calls.map(([spec]) => spec)).toContainEqual(expect.objectContaining({
-            kind: 'relay.access.status.v1',
-            params: expect.objectContaining({
-                target: expect.objectContaining({
-                    kind: 'ssh',
-                }),
-            }),
-        }));
+        await vi.waitFor(() => expect(routerSpies.push).toHaveBeenCalledWith(
+            homeAdministrationReachPath(storage.getState().settingsScope!.serverId),
+        ));
+        expect(startMock.mock.calls.some(([spec]) => spec.kind === 'relay.access.status.v1')).toBe(false);
     });
 
     it('hides unsupported native access and maintenance actions when the native SSH engine is unavailable', async () => {

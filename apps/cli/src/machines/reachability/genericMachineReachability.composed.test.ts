@@ -33,8 +33,8 @@ afterEach(() => { vi.mocked(homedir).mockReset(); });
 // Generic physical plugin authoring drives the same production factory,
 // custody, parent Action, native admission and retained approval owners.
 describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('public generic Machine reachability journey', () => {
-it('reviews keyless plugin membership without preparing a Saved Secret', async () => {
-  const authoredProvider = createDockerNetworkAuthoredProvider(false, true, false, { keyless: true });
+it('reviews keyless plugin membership using its inspected profile without preparing a Saved Secret', async () => {
+  const authoredProvider = createDockerNetworkAuthoredProvider(false, true, false, { keyless: true, observedMembership: true });
   const selected: AccessProviderSelectionV1 = { ...selection, credentialRefs: [] };
   const fixture = await journey('external', [], { providerSelection: selected, authoredProvider, keylessNetworkClient: true });
   const api = await createGenericDefaultFactoryJourney(fixture);
@@ -44,8 +44,12 @@ it('reviews keyless plugin membership without preparing a Saved Secret', async (
     }));
     expect(review.plan?.basis).toMatchObject({ change: { selection: selected },
       recipePlans: [expect.objectContaining({ plan: expect.objectContaining({ basis: expect.objectContaining({
-        selection: expect.objectContaining({ inputs: { machineId, config: selected.config, credentialRefs: [] } }),
+        selection: expect.objectContaining({ inputs: expect.objectContaining({ machineId, config: selected.config,
+          credentialRefs: [], membership: { profileId: selection.config.profileName, flags: ['profile-available'] } }) }),
       }) }) })] });
+    expect(review.plan?.basis.nativeProfiles).toEqual([{ provider: selected.provider,
+      profileId: selection.config.profileName, networkIdentity: 'fixture-network' }]);
+    expect(review.plan?.basis.recipePlans[0]?.plan.steps.map(step => step.id)).toEqual(['network-join']);
     expect(review.plan?.basis.credentialFileReview).toBeUndefined();
     expect(fixture.elevation.launches).toHaveLength(0);
     const { result } = await executeReviewedReachabilityConfigure(fixture, api, review);
@@ -65,6 +69,27 @@ it('admits the exact inspect role for the selected contributed default ingress',
     context: fixture.context(), runtimeRegistry: fixture.runtime.registry, selections: [], currentIngress: selected,
   })).toEqual({ children: [{ action: { pluginId: authoredProvider.pluginId, localId: 'inspect' }, role: 'inspect',
     input: { machineId, config: selected.config, credentialRefs: [] } }] });
+});
+
+it('reviews the contributed Home Relay route on the explicitly addressed Machine', async () => {
+  const authoredProvider = createDockerNetworkAuthoredProvider(false, true, false, { serviceIngress: 'homeRelay' });
+  const selected: AccessProviderSelectionV1 = { ...selection, credentialRefs: [] };
+  const fixture = await journey('external', [], { providerSelection: selected, authoredProvider });
+  const route = { ownerId: 'generic-home', hostname: 'relay.example.test', httpsPort: 443,
+    path: '/', upstream: 'http://127.0.0.1:8123' };
+  const input = { serverId: 'generic-home', machineId,
+    change: { kind: 'homeRelay', selection: selected, relay: { channel: 'stable', mode: 'user' } } } as const;
+  const homeRelay = { route, currentSelection: null };
+  const context = fixture.context();
+  const reviewed = await inspectMachineReachability(input, { ...fixture.dependencies(context), homeRelay });
+  if (!('plan' in reviewed) || !reviewed.plan) throw new Error('Home Relay route did not reach review');
+  const result = await prepareReachabilityReviewedChildrenForHost({ actionId: 'machines.reachability.configure',
+    input: { ...input, reviewedPlanDigest: reviewed.plan.reviewedPlanDigest, reviewedPlanBasis: reviewed.plan.basis },
+    context, runtimeRegistry: fixture.runtime.registry, selections: [], homeRelay });
+  expect(result).toEqual({ children: [
+    { action: { pluginId: authoredProvider.pluginId, localId: 'configure' }, role: 'configure',
+      input: { machineId, route, config: selected.config, credentialRefs: [] } },
+  ] });
 });
 
 it('publishes live facts for the selected contributed default ingress', async () => {

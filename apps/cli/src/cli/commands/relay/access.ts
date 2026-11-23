@@ -1,8 +1,6 @@
 import { readAvailableRelayAccessDescriptors, showRelayAccessHelp } from './accessHelp';
 export { showRelayAccessHelp } from './accessHelp';
 import { spawnSync } from 'node:child_process';
-import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 
 import { wantsJson, printJsonEnvelope } from "@/cli/output/jsonEnvelope";
 import { safeBashSingleQuote, type SshAuth } from '@/capabilities/systemTasks/ssh/sshTransport';
@@ -17,7 +15,9 @@ import {
     parseRelayAccessConfig,
     relayAccessProviderDescriptors,
     normalizeRelayAccessCanonicalPublicServerUrl,
+    readLocalRelayAccessConfig,
     resolveRelayAccessConfiguredCanonicalPublicServerUrl,
+    writeLocalRelayAccessConfig,
 } from "@happier-dev/cli-common/relayAccess";
 import type { RelayAccessConfig, RelayAccessExecutionContext, RelayAccessProviderId } from "@happier-dev/cli-common/relayAccess";
 import {
@@ -107,12 +107,6 @@ function takeFlagValue(args: string[], flag: string): Readonly<{ value: string |
     return { value, rest };
 }
 
-function resolveConfigPath(): Readonly<{ dir: string; path: string }> {
-    const home = resolveHappyHomeDirFromEnvironment(process.env);
-    const dir = join(home, "relay", "access");
-    return { dir, path: join(dir, "local.json") };
-}
-
 function normalizeProviderId(value: string | null): RelayAccessProviderId {
     const raw = String(value ?? '').trim();
     if (!raw) throw new Error('Missing required flag: --provider');
@@ -198,10 +192,9 @@ function parsePersistedConfigFromJson(raw: string): RelayAccessConfig | null {
 }
 
 async function readPersistedConfig(): Promise<RelayAccessConfig | null> {
-    const { path } = resolveConfigPath();
-    const raw = await readFile(path, "utf8").catch(() => "");
-    if (!raw.trim()) return null;
-    return parsePersistedConfigFromJson(raw);
+    const record = await readLocalRelayAccessConfig(resolveHappyHomeDirFromEnvironment(process.env));
+    return parseRelayAccessConfig(record?.selection, relayAccessProviderDescriptors.filter(descriptor =>
+        descriptor.definition.targets.includes('homeRelay')));
 }
 
 function normalizeRelayAccessSshAuthValue(value: string | null, identityFile: string | null): systemTasks.SystemTaskSshConnectionConfig['auth'] {
@@ -537,14 +530,8 @@ async function writeRelayAccessConfig(params: Readonly<{ target: systemTasks.Rel
         return;
     }
 
-    const { dir, path } = resolveConfigPath();
-    if (!params.config) {
-        await rm(path, { force: true });
-        return;
-    }
-    await mkdir(dir, { recursive: true, mode: 0o700 });
-    await writeFile(path, `${JSON.stringify(params.config, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-    await chmod(path, 0o600).catch(() => undefined);
+    await writeLocalRelayAccessConfig(resolveHappyHomeDirFromEnvironment(process.env),
+        params.config ? { selection: params.config } : null);
 }
 
 function createRelayAccessExecutionContext(params: Readonly<{ target: systemTasks.RelayAccessTaskTarget; upstreamUrl: string | null; runner?: RelayAccessSshRunner }>): RelayAccessExecutionContext {

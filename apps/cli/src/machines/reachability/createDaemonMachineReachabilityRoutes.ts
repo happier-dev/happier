@@ -15,7 +15,8 @@ import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtim
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { getMachineAdminAccessV1, type MachineAdminAccessV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import { MACHINE_REACHABILITY_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
-import { MACHINE_REACHABILITY_ACTION_INPUT_SCHEMAS_V1, MACHINE_REACHABILITY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/machines/reachability/actionsV1';
+import { MACHINE_REACHABILITY_ACTION_INPUT_SCHEMAS_V1, MACHINE_REACHABILITY_ACTION_OUTPUT_SCHEMAS_V1,
+  type MachineReachabilityInspectInputV1 } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -26,6 +27,7 @@ import type { DaemonMachineAdminAccessRoutes } from '@/rpc/handlers/daemonMachin
 import { inspectMachineReachability, executeMachineReachabilityTransition } from './machineReachabilityHost';
 import { projectMachineReachabilityObservation, readMachineReachabilityMetadata } from './readMachineReachability';
 import { prepareReachabilityReviewedChildrenForHost } from './reachabilityProviderHost';
+import { readMachineHomeRelayDemand, readMachineHomeRelayTarget } from './machineHomeRelayAccess';
 import { logger } from '@/ui/logger';
 import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
 import { createProjectNativeInvocationCustody } from '@/workspaces/projectSetup/projectSetupExecution';
@@ -35,11 +37,12 @@ import type { OwnerRemainderPort } from '@/daemon/processes/endOwnerRemainder';
 type Target = Readonly<{ serverId: string; machineId: string; installationId: string; custodianAccountId: string }>;
 export type DaemonMachineReachabilityRoutes = Readonly<{
   target(): Target | null;
+  homeIdentity?(): string | null;
   agentIsolation: HostAgentIsolationLaunchContext;
   adminAccess: Pick<DaemonMachineAdminAccessRoutes, 'observer'>;
   ownerRemainder?: OwnerRemainderPort;
   getMachineClient(): Pick<ApiMachineClient, 'updateDaemonState' | 'resolveMachineSetupRuntime'
-    | 'callConnectedClientRpc' | 'isMachineControlRegistrationReady'> | null;
+    | 'callConnectedClientRpc' | 'isMachineControlRegistrationReady'> & Partial<Pick<ApiMachineClient, 'getMachineReachabilitySnapshot'>> | null;
 }>;
 
 /** The current daemon's existing authorities are captured on each admitted call. */
@@ -66,6 +69,13 @@ type ReachabilityInvocation = Readonly<{
   input: unknown;
 }>;
 
+async function captureHomeRelay(options: MetadataRoutes, input: MachineReachabilityInspectInputV1, signal?: AbortSignal) {
+  const demand = readMachineHomeRelayDemand(input);
+  if (!demand) return undefined;
+  return await readMachineHomeRelayTarget({ demand, homeDir: configuration.happyHomeDir,
+    homeIdentity: options.homeIdentity?.() ?? null, signal });
+}
+
 /** The same received Machine binding serves review preparation and native execution. */
 function captureMachineReachabilityTarget(options: MetadataRoutes, invocation: ReachabilityInvocation, ingress: RpcHandlerContext) {
   const { actionId, input: request } = invocation;
@@ -91,6 +101,9 @@ export async function prepareDaemonMachineReachabilityReviewedChildren(options: 
     const { matches } = captureMachineReachabilityTarget(options,
       { actionId: invocation.actionId, input: invocation.input }, ingress);
     if (!matches()) throw new RpcError('Current Machine admission is required', RPC_ERROR_CODES.FORBIDDEN);
+    const request = MACHINE_REACHABILITY_ACTION_INPUT_SCHEMAS_V1[invocation.actionId].safeParse(invocation.input);
+    const homeRelay = request.success ? await captureHomeRelay(options, request.data, ingress.signal) : undefined;
+    if (homeRelay === null) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
     const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
     try {
       const state = await readMachineReachabilityMetadata(options.captureMetadataPort());
@@ -98,6 +111,7 @@ export async function prepareDaemonMachineReachabilityReviewedChildren(options: 
       return await prepareReachabilityReviewedChildrenForHost({ ...invocation,
         runtimeRegistry: lease.registry,
         selections: [...state.selections, ...(state.posture?.management.providers ?? [])],
+        ...(homeRelay ? { homeRelay } : {}),
         ...(ingress?.kind === 'provider' ? { currentIngress: ingress.selection } : {}) });
     } finally { await lease.release(); }
   } catch (error) { throwMachineReachabilityRpcError(error); }
@@ -110,6 +124,8 @@ export async function executeDaemonMachineReachabilityAction(options: MetadataRo
     const request = MACHINE_REACHABILITY_ACTION_INPUT_SCHEMAS_V1[actionId].parse(raw);
     const { target, matches } = captureMachineReachabilityTarget(options, { actionId, input: request }, ingress);
     if (!matches()) throw new RpcError('Current Machine admission is required', RPC_ERROR_CODES.FORBIDDEN);
+    const homeRelay = await captureHomeRelay(options, request, ingress.signal);
+    if (homeRelay === null) throw new RpcError('Relay is unavailable on the selected hosting Machine', 'target_unavailable');
     const port = options.captureMetadataPort();
     const client = options.getMachineClient();
     const identity = readInstallationIdentityIfExistsSync();
@@ -120,7 +136,7 @@ export async function executeDaemonMachineReachabilityAction(options: MetadataRo
       actionRequestId: invocation.context.actionRequestId ?? projected.actionRequestId ?? ingress.transportRequestId };
     if (!context.actionRequestId) throw new RpcError('Current Action correlation is required', RPC_ERROR_CODES.FORBIDDEN);
     const execute = async (context: RpcActionExecutorContext, taskContext: InteractiveSystemTaskContext): Promise<unknown> => {
-      const runtime = actionId === 'machines.reachability.configure' ? await client.resolveMachineSetupRuntime(ingress) : null;
+      const runtime = actionId === 'machines.reachability.configure' && !homeRelay ? await client.resolveMachineSetupRuntime(ingress) : null;
       const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
       const signal = context.signal ?? ingress.signal;
       const isCurrent = async () => matches() && (!runtime || !!runtime.isCurrent && await runtime.isCurrent());
@@ -131,6 +147,8 @@ export async function executeDaemonMachineReachabilityAction(options: MetadataRo
       const custody = createProjectNativeInvocationCustody({ signal });
       try {
       const deps = { target, port, context, runtimeRegistry: lease.registry, isCurrent,
+        ...(homeRelay ? { homeRelay } : {}),
+        readPublishedReachability: () => client.getMachineReachabilitySnapshot?.(),
         readDaemonProof: () => observeOwnDaemonReachability({ client, custodianAccountId: target.custodianAccountId, signal }),
         happyHomeDir: configuration.happyHomeDir, agentIsolation: options.agentIsolation,
         nativeEffects: {

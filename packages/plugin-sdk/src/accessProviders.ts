@@ -12,6 +12,10 @@ export type AccessCredentialPurposeRefV1 = Readonly<{ purpose: string; credentia
   | Readonly<{ kind: 'connectedAccount'; account: Readonly<{ service: PluginContributionRef; accountId: string }> }> }>;
 export type AccessProviderSelectionV1 = Readonly<{ provider: AccessProviderRefV1; config: ProtocolJsonValue; credentialRefs: readonly AccessCredentialPurposeRefV1[] }>;
 export type AccessProviderRoleV1 = 'inspect' | 'configure' | 'disable' | 'join' | 'leave';
+export type AccessProviderMembershipIntentV1 = Extract<AccessProviderRoleV1, 'join' | 'leave'>;
+export type AccessProviderMembershipFactsV1 = Readonly<{
+  profileId: string | null; flags: readonly string[];
+}>;
 export type AccessProviderRouteV1 = Readonly<{ ownerId: string; hostname: string; httpsPort: number; path: string; upstream: string }>;
 export type MachinePrivateNetworkObservationV1 = Readonly<{
   provider: AccessProviderRefV1; networkIdentity: string | null; displayName: string | null; dnsName: string | null;
@@ -19,7 +23,9 @@ export type MachinePrivateNetworkObservationV1 = Readonly<{
   interfaceName: string | null; sourceRanges: readonly string[]; magicDnsEnabled: boolean | null;
 }>;
 export type AccessProviderRoleResultV1 =
-  | Readonly<{ kind: 'confirmed'; facts: Readonly<{ state: MachinePrivateNetworkObservationV1['state']; privateNetwork?: MachinePrivateNetworkObservationV1; publicUrl?: string }> }>
+  | Readonly<{ kind: 'confirmed'; facts: Readonly<{ state: MachinePrivateNetworkObservationV1['state'];
+    privateNetwork?: MachinePrivateNetworkObservationV1; publicUrl?: string; authorizationUrl?: string;
+    membership?: AccessProviderMembershipFactsV1 }> }>
   | Readonly<{ kind: 'refused' | 'unknown'; code: string }>;
 export type AccessProviderContributionV1 = Readonly<{
   id: string; title: PluginLocalizedStringV2; icon: string; description?: PluginLocalizedStringV2; schemaVersion: 1;
@@ -39,16 +45,19 @@ export type AccessProviderAuthorDefinitionV1 = Omit<AccessProviderContributionV1
 export type AccessProviderRoleInputV1<TConfig = ProtocolJsonValue> = Readonly<{
   machineId: string; config: TConfig; credentialRefs: readonly AccessCredentialPurposeRefV1[]; route?: AccessProviderRouteV1;
 }>;
+type AccessProviderInspectInputV1<T> = AccessProviderRoleInputV1<T> & Readonly<{ membershipIntent?: AccessProviderMembershipIntentV1 }>;
+type AccessProviderMembershipInputV1<T> = AccessProviderRoleInputV1<T> & Readonly<{ membership?: AccessProviderMembershipFactsV1 }>;
 export const AccessProviderRefV1Schema: ProtocolComposableSchema<AccessProviderRefV1> = /* @__PURE__ */ projectProtocolValue(canonical.AccessProviderRefProtocolV1Schema);
 export const AccessProviderSelectionV1Schema: ProtocolComposableSchema<AccessProviderSelectionV1> = /* @__PURE__ */ projectProtocolValue(canonical.AccessProviderSelectionProtocolV1Schema);
 export const SharedSavedSecretReferenceSelectionV1Schema: ProtocolComposableSchema<Readonly<{ ref: string; resourceRevision: number }>> = /* @__PURE__ */ projectProtocolValue(canonical.SharedSavedSecretReferenceSelectionProtocolV1Schema);
 export const AccessProviderRoleResultV1Schema: ProtocolComposableSchema<AccessProviderRoleResultV1> = /* @__PURE__ */ projectProtocolValue(canonical.AccessProviderRoleResultV1Schema);
 export const accessProviderRefsEqualV1: (left: AccessProviderRefV1, right: AccessProviderRefV1) => boolean = /* @__PURE__ */ projectProtocolValue(canonical.accessProviderRefsEqualV1);
 export const defineAccessProviderSchemas: <CI, CO>(schemas: Readonly<{ config: ProtocolComposableSchema<CI, CO> }>) => Readonly<{
-  inspectInput: ProtocolComposableSchema<AccessProviderRoleInputV1<CI>, AccessProviderRoleInputV1<CO>>;
+  inspectInput: ProtocolComposableSchema<AccessProviderInspectInputV1<CI>, AccessProviderInspectInputV1<CO>>;
   configureInput: ProtocolComposableSchema<AccessProviderRoleInputV1<CI> & Readonly<{ route: AccessProviderRouteV1 }>, AccessProviderRoleInputV1<CO> & Readonly<{ route: AccessProviderRouteV1 }>>;
   disableInput: ProtocolComposableSchema<AccessProviderRoleInputV1<CI> & Readonly<{ route: AccessProviderRouteV1 }>, AccessProviderRoleInputV1<CO> & Readonly<{ route: AccessProviderRouteV1 }>>;
-  joinInput: ProtocolComposableSchema<AccessProviderRoleInputV1<CI> & Readonly<{ setupCredentialFile?: string }>, AccessProviderRoleInputV1<CO> & Readonly<{ setupCredentialFile?: string }>>;
-  leaveInput: ProtocolComposableSchema<AccessProviderRoleInputV1<CI>, AccessProviderRoleInputV1<CO>>;
+  joinInput: ProtocolComposableSchema<AccessProviderMembershipInputV1<CI> & Readonly<{ setupCredentialFile?: string }>,
+    AccessProviderMembershipInputV1<CO> & Readonly<{ setupCredentialFile?: string }>>;
+  leaveInput: ProtocolComposableSchema<AccessProviderMembershipInputV1<CI>, AccessProviderMembershipInputV1<CO>>;
   result: ProtocolComposableSchema<AccessProviderRoleResultV1>;
 }> = /* @__PURE__ */ projectProtocolValue(canonical.defineAccessProviderSchemas);

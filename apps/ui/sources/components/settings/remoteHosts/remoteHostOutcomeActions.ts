@@ -17,7 +17,6 @@ import {
 export type RemoteHostOutcomeActionId =
     | 'setupAsMachine'
     | 'connectFromThisDevice'
-    | 'useAsRelayHost'
     | 'configureAccess'
     | 'openDetails';
 
@@ -39,7 +38,6 @@ export type RemoteHostMaintenanceActionId =
 export const pinnedRemoteHostOutcomeActionIds = [
     'setupAsMachine',
     'connectFromThisDevice',
-    'useAsRelayHost',
     'configureAccess',
 ] satisfies RemoteHostOutcomeActionId[];
 

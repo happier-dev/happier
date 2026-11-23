@@ -103,9 +103,18 @@ export const AccessProviderContributionV1Schema: z.ZodMiniType<AccessProviderCon
   }
 })));
 
+const membershipIntent = lazyZodSchema(() => z.enum(['join', 'leave']));
+export type AccessProviderMembershipIntentV1 = z.infer<typeof membershipIntent>;
+const membershipFacts = lazyZodSchema(() => z.strictObject({
+  profileId: z.nullable(text()), flags: z.array(local()).check(z.refine(values => new Set(values).size === values.length)),
+}));
+export type AccessProviderMembershipFactsV1 = z.infer<typeof membershipFacts>;
+
 const roleFacts = lazyZodSchema(() => z.strictObject({
   state: z.enum(['ready', 'stopped', 'needsAuth', 'unavailable', 'unknown']),
   privateNetwork: z.optional(MachinePrivateNetworkObservationV1Schema), publicUrl: z.optional(text()),
+  authorizationUrl: z.optional(text()),
+  membership: z.optional(membershipFacts),
 }));
 const roleResult = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('confirmed'), facts: roleFacts }),
@@ -122,15 +131,20 @@ export function defineAccessProviderSchemas<CI, CO>(schemas: Readonly<{ config: 
     credentialRefs: projectZodProtocolSchema(z.array(AccessCredentialPurposeRefV1Schema)),
   };
   const route = projectZodProtocolSchema(AccessProviderRouteV1Schema);
-  const inspectInput = defineProtocolObject({ ...common, route: route.optional() }, { policy: 'closed' });
+  const inspectInput = defineProtocolObject({ ...common, route: route.optional(),
+    membershipIntent: projectZodProtocolSchema(membershipIntent).optional(),
+  }, { policy: 'closed' });
   const routeInput = defineProtocolObject({ ...common, route }, { policy: 'closed' });
+  const membershipInput = { ...common, route: route.optional(),
+    membership: projectZodProtocolSchema(membershipFacts).optional(),
+  };
   return {
     inspectInput, configureInput: routeInput, disableInput: routeInput,
-    joinInput: defineProtocolObject({ ...common, route: route.optional(),
+    joinInput: defineProtocolObject({ ...membershipInput,
       // Host custody binds this materialized path into the exact admitted input.
       setupCredentialFile: defineProtocolString({ minLength: 1 }).optional(),
     }, { policy: 'closed' }),
-    leaveInput: inspectInput, result: AccessProviderRoleResultV1Schema,
+    leaveInput: defineProtocolObject(membershipInput, { policy: 'closed' }), result: AccessProviderRoleResultV1Schema,
   };
 }
 export function readAccessProviderActionRolesV1(descriptor: AccessProviderContributionV1): readonly Readonly<{ role: AccessProviderRoleV1; action: string }>[] {
@@ -160,8 +174,8 @@ export function validateAccessProviderContributionsV1(
     const base = ['accessProviders', index];
     if (seen.has(descriptor.id)) context.addIssue({ code: 'custom', path: [...base, 'id'], message: 'Duplicate access provider id.' });
     seen.add(descriptor.id);
-    if (descriptor.homeAccessMethod !== undefined || descriptor.targets.includes('homeRelay')) {
-      context.addIssue({ code: 'custom', path: [...base, 'targets'], message: 'Home access is currently available only to built-in descriptors.' });
+    if (descriptor.homeAccessMethod !== undefined) {
+      context.addIssue({ code: 'custom', path: [...base, 'homeAccessMethod'], message: 'The bootstrap Home method field belongs to built-in descriptors.' });
     }
     for (const role of ['join', 'leave'] as const) {
       const program = descriptor.membership?.[role];
