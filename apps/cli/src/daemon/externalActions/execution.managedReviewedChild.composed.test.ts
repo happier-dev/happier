@@ -28,9 +28,11 @@ import { executeExternalAction } from './executeExternalAction';
 // Preset acquisitions (app Create one, CLI preset) omit the controller; Home's continuation names it (#160 op dbe4cd8c).
 // A sealed preset's policy children are opened only by its keyholder controller; the public declaration omits them (F14, #161).
 it.each([['requester', true, 'one-off', 'ui'], ['team', true, 'one-off', 'ui'], ['team', false, 'one-off', 'ui'],
-  ['team', false, 'preset', 'ui'], ['team', true, 'preset', 'ui'], ['requester', true, 'one-off', 'agent']] as const)(
-  'restores admitted Create review on the guest when controller custody is %s (input names controller: %s, selection: %s, surface: %s)',
-  async (controllerAccountId, inputNamesController, selectionKind, surface) => {
+  ['team', false, 'preset', 'ui'], ['team', true, 'preset', 'ui'], ['requester', true, 'one-off', 'agent'],
+  // A controller signed in through terminal pairing carries terminal authentication (L12 r197-r202).
+  ['requester', true, 'one-off', 'agent', 'terminal']] as const)(
+  'restores admitted Create review on the guest when controller custody is %s (input names controller: %s, selection: %s, surface: %s, authentication: %s)',
+  async (controllerAccountId, inputNamesController, selectionKind, surface, authenticationKind: 'account' | 'terminal' = 'account') => {
   const currentness = await createRequesterCurrentnessSocketHarness();
   onTestFinished(async () => { vi.restoreAllMocks(); await currentness.close(); });
   const homeId = 'srv_reviewed_creation', serverUrl = 'https://reviewed-creation.test';
@@ -38,9 +40,9 @@ it.each([['requester', true, 'one-off', 'ui'], ['team', true, 'one-off', 'ui'], 
   const guest = { machineId: 'guest', installationId: 'guest-installation' };
   const controllerKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(18));
   const guestKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(19));
-  const authentication = { kind: 'account' as const, tokenEpoch: 1 };
+  const authentication = { kind: authenticationKind, tokenEpoch: 1 };
   const tokenFor = (accountId: string) => `fixture.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 1,
-    provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+    provenance: { v: 1, kind: authenticationKind, authority: 'present_user' } })).toString('base64url')}.signature`;
   const token = tokenFor('requester');
   const secret = new Uint8Array(32).fill(20);
   const mode = surface === 'agent' ? 'e2ee' : 'plain';
@@ -77,7 +79,7 @@ it.each([['requester', true, 'one-off', 'ui'], ['team', true, 'one-off', 'ui'], 
   const nativeEffects: unknown[] = [], asks: unknown[] = [];
   let differentInstalledAccountResult: Awaited<ReturnType<typeof executeExternalAction>> | undefined;
   let storedChildRoot: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse> | undefined;
-  const executor = createCliActionExecutorHarness({ token, credentials, mode, ctx: null,
+  const harness = createCliActionExecutorHarness({ token, credentials, mode, ctx: null,
     sessionId: '', serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: serverUrl,
     externalActionMachineInstallationId: guest.installationId, externalActionMachineRequestPrivateKey: guestKeys.secretKey,
     actionsSettingsProvider: createActionSettingsProvider({ allowEnvironmentOverride: false,
@@ -88,7 +90,8 @@ it.each([['requester', true, 'one-off', 'ui'], ['team', true, 'one-off', 'ui'], 
       expect(method).toBe('machines.setup.adminAccess.set'); nativeEffects.push(value);
       return { status: 'applied', policy: { version: 1, mode: 'none' }, metadataVersion: 1 };
     } },
-  }, { approvalsCreate: async ({ request }) => { asks.push(request); return { artifactId: 'unexpected-guest-ask' }; } }).executor;
+  }, { approvalsCreate: async ({ request }) => { asks.push(request); return { artifactId: 'unexpected-guest-ask' }; } });
+  const executor = harness.executor;
   // The original approval may precede a daemon reload. Model the source
   // observer's installed credential read as unavailable after the child replies.
   const controllerObserver = createCliActionExecutorFromCredentials({ credentials, serverId: homeId, serverApiUrl: serverUrl,
@@ -202,14 +205,6 @@ it.each([['requester', true, 'one-off', 'ui'], ['team', true, 'one-off', 'ui'], 
   const result = selectionKind === 'preset' ? await dispatchAdmin({ ...context, hostReviewedChild: reviewed })
     : await reviewed.invoke({ action: 'machines.setup.adminAccess.set', role: 'machines.setup.adminAccess.set',
       input: normalizeStrictJsonValue(adminInput) });
-  expect(result, JSON.stringify({ result, asks: asks.length })).toMatchObject({ ok: true, result: { status: 'applied', policy: { mode: 'none' } } });
-  if (surface === 'agent') {
-    expect(differentInstalledAccountResult).toMatchObject({
-      kind: 'invalid_request', errorCode: 'invalid_encrypted_envelope', requestId: authorization.binding.requestId,
-    });
-  }
-  expect(nativeEffects).toEqual([adminInput]);
-  expect(asks).toEqual([]);
   // A guest Ask on this child stores the root without private ports (L12 r197).
   // Its approved replay reopens the same own-guest-Account custody as ingress.
   const stored = ExternalActionExecutionAuthorizationV1Schema.parse(JSON.parse(JSON.stringify(storedChildRoot)));
@@ -223,5 +218,22 @@ it.each([['requester', true, 'one-off', 'ui'], ['team', true, 'one-off', 'ui'], 
   const prepared = await prepare({ authorization: stored });
   onTestFinished(async () => { await prepared?.dispose?.(); });
   expect(prepared?.authorization.token).toBe(stored.token);
+  // The approved replay passes the child's own Project admission on that prepared root (L12 r202:
+  // `signed_root_projection` after the replay preparer ran). Only admission is asserted here;
+  // the guest Machine RPC behind it is outside this fixture.
+  const replayed: unknown = await harness.deps.machineAdminAccessAction!({ actionId: 'machines.setup.adminAccess.set', input: adminInput,
+    context: { surface, authority, actionCaller: sessionActionOrigin?.caller ?? { kind: 'host' }, runtimeAccountId: 'requester',
+      serverId: homeId, serverIdentityId: homeId, actionRequestId: stored.binding.requestId,
+      externalActionExecutionAuthorization: prepared!.authorization, externalActionTarget: stored.binding.target },
+    signal: new AbortController().signal }).catch((error: unknown) => error);
+  expect(replayed, JSON.stringify(replayed)).not.toMatchObject({ errorCode: 'project_requester_authority_unavailable' });
   expect(readRequesterAccountActionContext(prepared?.authorization)?.credentials.token).toBe(token);
+  expect(result, JSON.stringify({ result, asks: asks.length })).toMatchObject({ ok: true, result: { status: 'applied', policy: { mode: 'none' } } });
+  if (surface === 'agent') {
+    expect(differentInstalledAccountResult).toMatchObject({
+      kind: 'invalid_request', errorCode: 'invalid_encrypted_envelope', requestId: authorization.binding.requestId,
+    });
+  }
+  expect(nativeEffects).toEqual([adminInput]);
+  expect(asks).toEqual([]);
 }, 120_000);

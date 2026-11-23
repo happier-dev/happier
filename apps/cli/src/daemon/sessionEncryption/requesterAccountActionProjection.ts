@@ -639,9 +639,10 @@ export function isOriginalOwnAccountActionCustody(binding: ExternalActionExecuti
   return isOriginalAccountActionCustody(binding) && binding.accountId === binding.custodianAccountId;
 }
 
-/** An admitted Session-origin enrollment child consumes the enrolled guest's own Account custody. */
+/** An admitted Session-origin enrollment child consumes the enrolled guest's own Account custody.
+ * A terminal-paired controller signs it with the same Account, as original custody accepts. */
 export function isManagedEnrollmentPolicyChildAccountCustody(binding: ExternalActionExecutionAuthorizationBindingV1): boolean {
-  return 'authentication' in binding && binding.authentication.kind === 'account'
+  return 'authentication' in binding && (binding.authentication.kind === 'account' || binding.authentication.kind === 'terminal')
     && binding.sessionActionOrigin !== undefined && binding.managedContinuation?.controller !== undefined
     && binding.accountId === binding.custodianAccountId && isManagedEnrollmentPolicyChildActionIdV1(binding.actionId);
 }
