@@ -17,6 +17,7 @@ import type { UseQualifiedConnectedAccountGroupsResult } from '@/hooks/server/co
 import type { QualifiedConnectedAccountUiGroup } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
 import { connectedEntitySubjectKeyV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
+import { storage } from '@/sync/domains/state/storageStore';
 
 const boundary = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), confirm: vi.fn(async () => true) }));
 
@@ -134,6 +135,25 @@ describe('ConnectedAccountServiceContent focused ownership', () => {
         expect(named.findHostByTestId('qualified-account-detail:rename:input')?.props.value).toBe('provider-account-42');
         expect(onRenameAccount).not.toHaveBeenCalled();
     });
+
+    it.each([{ kind: 'account', accountId: 'work' }, { kind: 'newPool' }] as const)(
+        'hides the provider name in the qualified credential surface $kind', async (focus) => {
+            const previous = storage.getState().localSettings.hideConnectedAccountIdentities;
+            storage.getState().applyLocalSettings({ hideConnectedAccountIdentities: true }, { source: 'ui' });
+            try {
+                const screen = await renderContent(<ConnectedAccountServiceContent
+                    isControllerCurrent={captureActiveServerAccountScopeCurrentness().isCurrent}
+                    title="Acme" service={service} focus={focus} modes={modes}
+                    accounts={[{ ...account, displayName: 'Provider Person' }]} busy={false}
+                    groups={makeGroups()} />);
+                expect(screen.getTextContent()).toContain('connectedServicesCollection.accountLabel(service=Acme)');
+                expect(screen.getTextContent()).not.toContain('Provider Person');
+                await screen.unmount();
+            } finally {
+                storage.getState().applyLocalSettings({ hideConnectedAccountIdentities: previous }, { source: 'ui' });
+            }
+        },
+    );
 
     it('keeps declared account and service configuration reachable from the Collection account detail', async () => {
         const onConfigureAccount = vi.fn();

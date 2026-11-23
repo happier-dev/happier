@@ -128,7 +128,7 @@ function RoutingHintBody(
     targets,
     selections,
   });
-  // Names only from what this launch already read: opening the picker never starts a quota read.
+  // Catalog identity can name a candidate before usage is read. Plan labels come from the cached quota only.
   const summaries = useConnectedServiceQuotaSummaries({
     fetchPolicy: 'cache_only',
   });
@@ -136,7 +136,7 @@ function RoutingHintBody(
   const names = React.useMemo(
     () =>
       presentConnectedAccountNames(
-        summaries.summaries.map((summary) => ({
+        summaries.accountIdentities.map((summary) => ({
           key: `${summary.service.pluginId}/${summary.service.localId}:${summary.profileId}`,
           serviceTitle: summary.serviceLabel,
           userLabel: summary.profileLabel,
@@ -146,10 +146,10 @@ function RoutingHintBody(
           presentIdentity: present,
         })),
       ),
-    [present, summaries.summaries],
+    [present, summaries.accountIdentities],
   );
   const serviceLabelOf = (pool: SessionModelRoutingHintPool) =>
-    summaries.summaries.find(
+    summaries.accountIdentities.find(
       (summary) =>
         summary.service.pluginId === pool.group.service.pluginId &&
         summary.service.localId === pool.group.service.localId,

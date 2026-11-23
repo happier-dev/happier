@@ -74,7 +74,7 @@ export function buildConnectedServiceAccountSwitchMessage(params: Readonly<{
             userLabel: accountId ? resolveConnectedServiceProfileLabel({ labelsByKey, serviceId: serviceKey ?? params.event.serviceId, profileId: accountId })
                 ?? resolveConnectedServiceProfileLabel({ labelsByKey, serviceId: params.event.serviceId, profileId: accountId })
                 : t('connectedServices.authModal.nativeAuthTitle'),
-            displayName: account?.displayName ?? readDisplayLabel(profileLabel),
+            providerDisplayName: account?.displayName ?? readDisplayLabel(profileLabel),
             email: account?.providerIdentity?.email,
             providerAccountId: account?.providerIdentity?.accountId,
             presentIdentity: params.presentIdentity,

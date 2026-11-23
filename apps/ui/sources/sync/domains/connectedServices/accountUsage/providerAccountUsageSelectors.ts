@@ -13,6 +13,8 @@ import {
     type ConnectedServiceQuotaGaugeWindowMode,
 } from '../connectedServiceQuotaGauge';
 
+import type { ConnectedAccountIdentityPresenter } from '../maskAccountEmail';
+
 export type ProviderAccountUsageSnapshotsByRecordId = Readonly<Record<string, ProviderAccountUsageSnapshotV1 | null>>;
 
 export type ProviderUsageDisplaySnapshotSource =
@@ -178,6 +180,7 @@ export function computeProviderAccountUsageGaugeViewModel(params: Readonly<{
     formatter: ConnectedServiceQuotaGaugeLabelFormatter;
     providerDisplayName?: string | null;
     activeAccountDisplayLabel?: string | null;
+    presentIdentity?: ConnectedAccountIdentityPresenter;
 }>): ConnectedServiceQuotaGaugeViewModel | null {
     if (!params.snapshot) return null;
     if (params.state === 'not_loaded' || params.state === 'loaded_empty') return null;
@@ -190,6 +193,7 @@ export function computeProviderAccountUsageGaugeViewModel(params: Readonly<{
         formatter: params.formatter,
         providerDisplayName: params.providerDisplayName,
         activeAccountDisplayLabel: params.activeAccountDisplayLabel,
+        presentIdentity: params.presentIdentity,
     });
     if (!viewModel) return null;
     // `error_last_known_good` means the retained snapshot is the newest good one and

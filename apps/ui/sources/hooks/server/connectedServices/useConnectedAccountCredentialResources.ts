@@ -6,6 +6,7 @@ import { formatSavedSecretCatalogReferenceV1, type SavedSecretCatalogEntryV1 } f
 import { listSavedSecretReferenceCatalogRefsV1, type AccountSettingsSavedSecretReference } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 
 import { useSavedSecretCatalogEntries } from '@/components/secrets/useSavedSecretCatalog';
+import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { useActiveServerAccountScope, useProfile } from '@/sync/store/hooks';
 import { projectConnectedAccountCredentialReferenceSources } from '@/sync/domains/connectedServices/connectedAccountCredentialReferenceSources';
 import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from './useConnectedMetadataCatalog';
@@ -31,6 +32,7 @@ export function useConnectedAccountCredentialResources(account: QualifiedConnect
     profile: QualifiedConnectedAccountProfileV4 | null;
     resources: readonly ConnectedAccountCredentialResource[];
 }> {
+    const { present } = useConnectedAccountIdentityPrivacy();
     const profiles = useProfile(profile => profile.connectedAccountsV4, ['connectedAccountsV4']);
     const scope = useActiveServerAccountScope();
     const labelsByKey = useConnectedMetadataCatalog(scope, selectConnectedMetadataLabels);
@@ -40,7 +42,7 @@ export function useConnectedAccountCredentialResources(account: QualifiedConnect
     const entries = useSavedSecretCatalogEntries({ scope: refs.length > 0 ? scope : null, refs });
     const usesByRef = React.useMemo(() => {
         const uses = new Map<string, ConnectedAccountCredentialResourceUse[]>();
-        for (const credential of projectConnectedAccountCredentialReferenceSources(profiles, labelsByKey)) {
+        for (const credential of projectConnectedAccountCredentialReferenceSources(profiles, labelsByKey, present)) {
             for (const reference of listSavedSecretReferenceCatalogRefsV1({ profileRecords: [],
                 connectedAccountCredentials: [credential],
             })) {
@@ -51,7 +53,7 @@ export function useConnectedAccountCredentialResources(account: QualifiedConnect
             }
         }
         return uses;
-    }, [profiles, labelsByKey]);
+    }, [profiles, labelsByKey, present]);
     const resources = React.useMemo((): readonly ConnectedAccountCredentialResource[] => {
         const byRef = new Map(entries.map(entry => [entry.ref, entry]));
         return (profile?.savedSecretResourceIds ?? []).map((resourceId, index) => ({

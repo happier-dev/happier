@@ -16,6 +16,7 @@ import { clampQuotaPct, deriveQuotaMeterValues, deriveQuotaUtilizationPct, selec
 import {
     resolveQuotaTone,
 } from './resolveQuotaTone';
+import type { ConnectedAccountIdentityPresenter } from './maskAccountEmail';
 import { formatResetCountdown } from './formatResetCountdown';
 import { isConnectedServiceQuotaMeterVisible } from './connectedServiceQuotaMeterVisibility';
 import { presentConnectedServiceQuotaReportedAmount, type ConnectedServiceQuotaReportedAmount } from './accountUsage/presentProviderConnectionUsage';
@@ -359,6 +360,7 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
     formatter: ConnectedServiceQuotaGaugeLabelFormatter;
     providerDisplayName?: string | null;
     activeAccountDisplayLabel?: string | null;
+    presentIdentity?: ConnectedAccountIdentityPresenter;
 }>): ConnectedServiceQuotaGaugeViewModel | null {
     if (_params.quotaLimitSelection === null) return null;
     const selectedSnapshot = projectConnectedServiceQuotaSnapshotForLimitSelection(_params.snapshot, _params.quotaLimitSelection);
@@ -432,7 +434,9 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
     return {
         serviceId: params.snapshot.serviceId ?? null,
         providerDisplayName: params.providerDisplayName ?? null,
-        activeAccountDisplayLabel: params.activeAccountDisplayLabel ?? params.snapshot.accountLabel ?? null,
+        activeAccountDisplayLabel: params.activeAccountDisplayLabel ?? (params.presentIdentity
+            ? params.presentIdentity({ label: params.snapshot.accountLabel, labelKind: 'providerName' }).label
+            : params.snapshot.accountLabel ?? null),
         remainingPct: effectiveRemainingPct,
         usedPct: selectedRow.usedPct,
         primaryValueSemantics: 'remaining',

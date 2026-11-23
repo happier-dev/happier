@@ -26,6 +26,7 @@ import {
     type QualifiedConnectedAccountTargetPresentation,
 } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import { QualifiedPoolDetail } from '../pools/QualifiedPoolDetail';
+import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { QualifiedPoolDraft } from '../pools/QualifiedPoolDraftView';
 import type { QualifiedPoolDetailMutations } from '../pools/QualifiedPoolDetailView';
 import type {
@@ -149,6 +150,7 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
     const locale = getPreferredLanguage();
     const router = useRouter();
     const groups = props.groups ?? EMPTY_GROUPS;
+    const { present } = useConnectedAccountIdentityPrivacy();
     const accountLabels = props.accountLabels ?? EMPTY_ACCOUNT_LABELS;
     const labelsByKey = props.labelsByKey ?? EMPTY_ACCOUNT_LABELS;
     const service = props.service;
@@ -297,6 +299,7 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
         labelsByKey,
         accountLabelsByAccountId: accountLabels,
         serviceTitle: props.title,
+        presentIdentity: present,
     });
 
     /**
@@ -444,8 +447,7 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
                 legacyServiceId={props.legacyServiceId ?? null}
                 presentation={resolveAccountIdentity(account)}
                 labelsByKey={labelsByKey}
-                providerEmail={account.providerIdentity?.email ?? null}
-                providerAccountId={account.providerIdentity?.accountId ?? null}
+                identity={present({ email: account.providerIdentity?.email, accountId: account.providerIdentity?.accountId })}
                 // RAW status: the view owns the recognized-status gate.
                 status={account.status}
                 statusReason={account.statusReason}

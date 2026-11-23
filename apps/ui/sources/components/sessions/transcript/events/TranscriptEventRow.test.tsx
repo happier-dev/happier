@@ -482,7 +482,8 @@ describe('TranscriptEventRow', () => {
             expect(row.getTextContent()).toContain('from Same name · work@example.com to Happier');
             expect(row.getTextContent()).not.toContain('routing-id');
             await act(async () => storage.getState().applyLocalSettings({ hideConnectedAccountIdentities: true }));
-            expect(row.getTextContent()).toContain('from Same name · wo•••@e•••.com to Happier');
+            expect(row.getTextContent()).toContain('from wo•••@e•••.com to ba•••@e•••.com');
+            expect(row.getTextContent()).not.toMatch(/Same name|Happier/);
             expect(row.getTextContent()).not.toContain('@example.com');
             expect(reads.filter(path => path === '/v1/account/profile' || path.includes('/machines/') || path.includes('/rpc'))).toHaveLength(0);
         } finally {

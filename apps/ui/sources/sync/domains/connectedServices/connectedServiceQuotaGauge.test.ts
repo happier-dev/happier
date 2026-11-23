@@ -17,6 +17,8 @@ import {
     QUOTA_REMAINING_CRITICAL_THRESHOLD_PCT,
     QUOTA_REMAINING_WARNING_THRESHOLD_PCT,
 } from './resolveQuotaTone';
+import { presentConnectedAccountIdentity, type ConnectedAccountIdentityPresenter } from './maskAccountEmail';
+import { buildSessionNearLimitPresentation } from '@/components/sessions/usageLimitRecovery/sessionNearLimitPresentation';
 
 function meter(
     patch: Partial<ConnectedServiceQuotaMeterV1> & Pick<ConnectedServiceQuotaMeterV1, 'meterId' | 'label'>,
@@ -59,6 +61,23 @@ const formatter: ConnectedServiceQuotaGaugeLabelFormatter = {
 };
 
 describe('gauge tone boundaries derive from the canonical resolveQuotaTone owner', () => {
+    it('omits the provider name in a near-limit warning while keeping the meter and reset', () => {
+        const quota = { ...snapshot([meter({ meterId: 'weekly', label: 'Weekly', used: 95, limit: 100, resetsAt: 20_000 })]),
+            accountLabel: 'Provider Person' };
+        const presentIdentity: ConnectedAccountIdentityPresenter = input => presentConnectedAccountIdentity({
+            hidden: true, label: input.label ?? null, labelKind: input.labelKind,
+            email: input.email ?? null, accountId: input.accountId ?? null,
+        });
+        const input = { snapshot: quota, windowMode: 'weekly', nowMs: 2_000, formatter } as const;
+        const gauge = computeConnectedServiceQuotaGaugeViewModel({ ...input, presentIdentity });
+        expect(buildSessionNearLimitPresentation({
+            accountKey: 'work', accountLabel: gauge?.activeAccountDisplayLabel ?? null,
+            remainingPct: gauge?.remainingPct ?? null, meter: gauge?.effectiveMeter ?? null,
+            resetAvailable: true, limitReached: false, dismissedKeys: new Set(),
+        })).toMatchObject({ accountLabel: null, remainingPct: 5, resetsAt: 20_000 });
+        expect(computeConnectedServiceQuotaGaugeViewModel(input)?.activeAccountDisplayLabel).toBe('Provider Person');
+    });
+
     it('retains uncapped currency amounts in the detail windows beside a comparable ring', () => {
         const view = computeConnectedServiceQuotaGaugeViewModel({
             snapshot: snapshot([

@@ -1,5 +1,6 @@
 import { listAccountSettingsSavedSecretReferences, type AccountSettingsSavedSecretReference,
     type SavedSecretReferenceCatalogsV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { presentConnectedAccountIdentity } from '@/sync/domains/connectedServices/maskAccountEmail';
 import { projectConnectedAccountCredentialReferenceSources } from '@/sync/domains/connectedServices/connectedAccountCredentialReferenceSources';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { getStorage } from '@/sync/domains/state/storageStore';
@@ -44,6 +45,7 @@ export function readSavedSecretUsedBySources(scope: ServerAccountScope | null, r
         settingsScope: state.settingsScope, settings: state.savedSecretReferenceSettings,
         profileAccountId: state.profile.id, connectedAccounts: state.profile.connectedAccountsV4,
         connectedAccountLabels: getConnectedMetadataCatalog(scope).labelsByKey,
+        hideConnectedAccountIdentities: state.localSettings.hideConnectedAccountIdentities,
         profiles: getProfileCatalogSnapshot(scope), providers: getProviderCatalogSnapshot(scope),
         mcp: getMcpServerCatalogSnapshot(scope), acp: getAcpCatalogSnapshot(scope),
         configurations: getConnectedAccountCatalogValue(scope, 'configurations'),
@@ -77,7 +79,11 @@ export function projectSavedSecretUsedBy(scope: ServerAccountScope | null, ref: 
         connectedConfigurations: configurations.value, connectedPurposes: purposes.value,
         notificationChannels: { v: 1, channels: [...notifications.channels] },
         registrySources: registry.value, remoteHostRecords: remoteHosts.data,
-        connectedAccountCredentials: projectConnectedAccountCredentialReferenceSources(source.connectedAccounts, source.connectedAccountLabels),
+        connectedAccountCredentials: projectConnectedAccountCredentialReferenceSources(source.connectedAccounts, source.connectedAccountLabels,
+            ({ label, labelKind, email, accountId }) => presentConnectedAccountIdentity({
+                hidden: source.hideConnectedAccountIdentities === true,
+                label: label ?? null, labelKind, email: email ?? null, accountId: accountId ?? null,
+            })),
     };
     try {
         const references = projectSavedSecretUsedByV1({ ref, deploymentReferenceState: source.deploymentReferenceState,
@@ -91,7 +97,7 @@ export function readSavedSecretUsedBy(scope: ServerAccountScope, ref: string): r
 }
 
 export function subscribeSavedSecretUsedBySources(listener: () => void, scope?: ServerAccountScope | null, ref?: string | null): () => void {
-    const subscriptions = [getStorage().subscribe(listener, { savedSecretReferenceSettings: true, settingsScope: true, profile: ['id', 'connectedAccountsV4'] }), subscribeProfileCatalogSnapshots(listener),
+    const subscriptions = [getStorage().subscribe(listener, { savedSecretReferenceSettings: true, settingsScope: true, profile: ['id', 'connectedAccountsV4'], localSettings: ['hideConnectedAccountIdentities'] }), subscribeProfileCatalogSnapshots(listener),
         subscribeProviderCatalogSnapshots(listener), subscribeMcpServerCatalogSnapshots(listener), subscribeAcpCatalogSnapshots(listener),
         subscribeConnectedAccountCatalogSnapshots(listener), subscribeNotificationChannelCatalogSnapshots(listener),
         subscribePromptLibraryCatalogSnapshots(listener), subscribeRemoteHostCatalogSnapshots(listener), subscribeConnectedMetadataCatalog(listener),

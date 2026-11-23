@@ -33,9 +33,28 @@ const group = Object.freeze({
 });
 
 describe('presentQualifiedConnectedAccountTarget', () => {
+  it('hides the provider name in an account and its active pool summary while retaining a nickname', () => {
+    const input = {
+      accounts: [account],
+      groups: [{ ...group, members: [{ enabled: true }], activeConnectedAccountId: account.ref.accountId }],
+      labelsByKey: {},
+      serviceTitle: 'External Gateway',
+      presentIdentity: (identity: ConnectedAccountIdentityInput) => presentConnectedAccountIdentity({
+        ...identity, label: identity.label ?? null, email: identity.email ?? null, accountId: identity.accountId ?? null, hidden: true,
+      }),
+    };
+    const target = { kind: 'account', account: account.ref } as const;
+    expect(presentQualifiedConnectedAccountTarget({ ...input, target }).primaryLabel).toBe('wo•••@e•••.com');
+    expect(presentQualifiedConnectedAccountTarget({ ...input, target: { kind: 'group', ...group.ref } }).summaryLabel)
+      .toBe('1 account · using wo•••@e•••.com');
+    expect(presentQualifiedConnectedAccountTarget({
+      ...input, target, accountLabelsByAccountId: { [account.ref.accountId]: 'My nickname' },
+    }).primaryLabel).toBe('My nickname');
+  });
+
   it('names the recorded vendor-native Team route without claiming direct disclosure', async () => {
     const { presentConnectedAccountPurposeTeamResource } = await import('./qualifiedConnectedAccountTargetPresentation');
-    const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'shared', teamId: 'team', displayName: 'Company Gateway', resourceRevision: 1,
+    const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'shared', teamId: 'team', displayName: null, resourceRevision: 1,
       readiness: { kind: 'available' }, recoveryAction: null, mayBroker: false, mayReceiveDirect: false,
       allowedRoutes: ['vendor-native'], directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', providerModels: [],
       sourcePresentation: { kind: 'connected_service', service },
@@ -246,7 +265,7 @@ describe('presentConnectedAccountNames', () => {
   it('keeps matching display names in titles and distinguishes them by their secondary identities', async () => {
     const { presentConnectedAccountNames } = await import('./qualifiedConnectedAccountTargetPresentation');
     const entries = ['personal', 'work'].map(key => ({
-      key, serviceTitle: 'ChatGPT', displayName: 'Leeroy Brun', email: `${key}@example.com`,
+      key, serviceTitle: 'ChatGPT', providerDisplayName: 'Leeroy Brun', email: `${key}@example.com`,
     }));
     const names = presentConnectedAccountNames(entries);
     expect(names.get('personal')).toMatchObject({ primaryLabel: 'Leeroy Brun', identityLabel: 'personal@example.com' });
@@ -259,7 +278,7 @@ describe('presentConnectedAccountNames', () => {
 
   it('numbers indistinguishable names in stable key order after applying identity privacy', async () => {
     const { presentConnectedAccountNames } = await import('./qualifiedConnectedAccountTargetPresentation');
-    const entries = ['b', 'a'].map(key => ({ key, serviceTitle: 'ChatGPT', displayName: 'Leeroy Brun',
+    const entries = ['b', 'a'].map(key => ({ key, serviceTitle: 'ChatGPT', userLabel: 'Personal label',
       email: `leeroy+${key}@example.com`,
       presentIdentity: (identity: ConnectedAccountIdentityInput) => presentConnectedAccountIdentity({
         ...identity, label: identity.label ?? null, email: identity.email ?? null, accountId: identity.accountId ?? null, hidden: true,
@@ -267,8 +286,8 @@ describe('presentConnectedAccountNames', () => {
     }));
     for (const order of [entries, [...entries].reverse()]) {
       const names = presentConnectedAccountNames(order);
-      expect(names.get('a')?.primaryLabel).toBe('Leeroy Brun 1');
-      expect(names.get('b')?.primaryLabel).toBe('Leeroy Brun 2');
+      expect(names.get('a')?.primaryLabel).toBe('Personal label 1');
+      expect(names.get('b')?.primaryLabel).toBe('Personal label 2');
       expect([...names.values()].map(name => name.primaryLabel).join(' ')).not.toContain('@example.com');
     }
   });

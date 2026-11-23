@@ -720,6 +720,26 @@ describe('QualifiedPoolDetailView', () => {
         expect(screen.getTextContent()).not.toContain('provider-account-42');
     });
 
+    it('hides provider names on member rows, in the picker and in Now', async () => {
+        const { screen } = await renderPoolDetail({}, {
+            accounts: [
+                { ref: accountRef('work'), displayName: 'Provider Person' },
+                { ref: accountRef('backup'), displayName: 'Another Provider Person' },
+            ],
+            accountLabels: { backup: 'My backup' },
+            presentIdentity: (input) => presentConnectedAccountIdentity({
+                ...input, hidden: true, label: input.label ?? null,
+                email: input.email ?? null, accountId: input.accountId ?? null,
+            }),
+        });
+        const fallback = t('connectedServicesCollection.accountLabel', { service: 'Codex' });
+        expect(memberRow(screen, 'work').title).toBe(fallback);
+        expect(memberRow(screen, 'backup').title).toBe('My backup');
+        expect(membersDropdown(screen).props.items[0]).toMatchObject({ title: fallback });
+        expect(screen.getTextContent()).toContain(t('connectedServicesPool.using', { name: fallback }));
+        expect(screen.getTextContent()).not.toContain('Provider Person');
+    });
+
     it('averages what is left across the members that are on, with who has room and who is not reported', async () => {
         const { screen } = await renderPoolDetail({
             members: [

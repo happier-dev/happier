@@ -4,7 +4,6 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { CollectionDraftRow } from '@/components/ui/lists/collection/CollectionList';
 import { CollectionDraftTitleScope, useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
-import { presentConnectedAccountIdentity } from '@/sync/domains/connectedServices/maskAccountEmail';
 import { QualifiedPoolDraftView } from './QualifiedPoolDraftView';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -20,8 +19,6 @@ it('names the real collection draft as the pool is typed, clears on leaving and 
     }
     const element = (shown: boolean) => <CollectionDraftTitleScope><DraftRow />{shown ? <QualifiedPoolDraftView
         serviceLabel="Work service" accounts={[]} creating={false} onCreate={create} onDiscard={() => {}}
-        presentIdentity={input => presentConnectedAccountIdentity({ ...input, hidden: false,
-            label: input.label ?? null, email: input.email ?? null, accountId: input.accountId ?? null })}
     /> : null}</CollectionDraftTitleScope>;
     const screen = await renderScreen(element(true));
     const field = screen.tree.root.findAll(node => node.props.testID === 'connected-services-pool-draft:name'

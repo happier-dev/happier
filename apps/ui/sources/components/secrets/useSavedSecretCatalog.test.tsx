@@ -214,6 +214,15 @@ describe('useSavedSecretCatalog resource authority', () => {
                     referrer: { kind: 'connectedAccountCredential',
                         id: connectedEntitySubjectKeyV1({ kind: 'account', account: { service, accountId: 'backup' } }), displayName: 'Credential backup' } } }],
         });
+        const previousPrivacy = storage.getState().localSettings.hideConnectedAccountIdentities;
+        await act(async () => storage.getState().applyLocalSettings({ hideConnectedAccountIdentities: true }, { source: 'ui' }));
+        try {
+            const uses = hook.getCurrent().resources[0]?.usedBy ?? [];
+            expect(uses.map(use => use.account.accountId)).toEqual(['work', 'backup']);
+            expect(uses.map(use => use.reference.referrer?.displayName)).toEqual(['Anthropic account', 'Anthropic account']);
+        } finally {
+            await act(async () => storage.getState().applyLocalSettings({ hideConnectedAccountIdentities: previousPrivacy }, { source: 'ui' }));
+        }
         expect(home.request.mock.calls.filter(([url]) =>
             new URL(String(url)).pathname === '/v1/account/saved-secrets/resources/materials')).toHaveLength(0);
     });

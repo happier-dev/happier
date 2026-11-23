@@ -151,7 +151,6 @@ export function formatConnectedAccountNameInline(name: Pick<ConnectedAccountName
 export function presentConnectedAccountName(input: Readonly<{
   serviceTitle: string;
   userLabel?: string | null;
-  displayName?: string | null;
   providerDisplayName?: string | null;
   email?: string | null;
   providerAccountId?: string | null;
@@ -162,7 +161,7 @@ export function presentConnectedAccountName(input: Readonly<{
   const email = nonEmptyText(input.email);
   const providerAccountId = nonEmptyText(input.providerAccountId);
   const name = resolveConnectedAccountPrimaryNameV1({
-    ...input, displayName: input.providerDisplayName ?? input.displayName,
+    ...input, displayName: input.providerDisplayName,
   });
   const isProviderName = nonEmptyText(input.providerDisplayName) !== null
     && !nonEmptyText(input.userLabel) && !!name.name && !name.labelKind;
@@ -306,7 +305,7 @@ export function presentQualifiedConnectedAccountTarget(input: Readonly<{
             service: candidate.ref.service,
             accountId: candidate.ref.accountId,
           }),
-        displayName: candidate.displayName ?? null,
+        providerDisplayName: candidate.displayName ?? null,
         email: candidate.providerIdentity?.email ?? null,
         providerAccountId: candidate.providerIdentity?.accountId ?? null,
         accountId: candidate.ref.accountId,

@@ -6,7 +6,6 @@ import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-d
 import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 import { useQualifiedConnectedAccountQuota } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountQuota';
-import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { useMachine, useMachineDisplayById } from '@/sync/store/hooks';
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import { getSettledMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
@@ -42,7 +41,8 @@ function useAuthenticationMachineName(provenance: QualifiedAccountDetailViewProp
  * usage, subscription, resets, used-by and works-on sections read by their own leaves.
  */
 export const QualifiedAccountDetail = React.memo(function QualifiedAccountDetail(
-    props: Omit<QualifiedAccountDetailViewProps, 'planLabel' | 'agentDefaults' | 'usageSection' | 'renderUsedBy' | 'worksOnSection' | 'testConnection'> & Readonly<{
+    props: Omit<QualifiedAccountDetailViewProps, 'planLabel' | 'agentDefaults' | 'usageSection' | 'renderUsedBy' | 'worksOnSection' | 'testConnection' | 'providerEmail' | 'providerAccountId'> & Readonly<{
+        identity: Readonly<{ email: string | null; accountId: string | null }>;
         legacyServiceId: ConnectedServiceId | null;
         serverId?: string;
         testConnectionMachineId?: string;
@@ -51,7 +51,6 @@ export const QualifiedAccountDetail = React.memo(function QualifiedAccountDetail
     }>,
 ) {
     const connectionTest = useConnectedAccountTestConnection({ serverId: props.serverId, account: props.account, machineId: props.testConnectionMachineId });
-    const { present, hidden } = useConnectedAccountIdentityPrivacy();
     const quota = useQualifiedConnectedAccountQuota(props.account, { refreshMachineId: props.machineId });
     const subscription = useConnectedAccountSubscription(quota.usageRecordId);
     const accessMode = props.accessMode ?? resolveConnectedAccountAccessMode(null, subscription);
@@ -63,20 +62,6 @@ export const QualifiedAccountDetail = React.memo(function QualifiedAccountDetail
         [props.account],
     );
     const agentDefaults = useAgentDefaultChoices(target);
-    const shown = present({
-        label: props.presentation.primaryLabel,
-        labelKind: props.presentation.primaryLabelKind,
-        email: props.providerEmail ?? null,
-        accountId: props.providerAccountId ?? null,
-    });
-    const presentation = hidden ? {
-        ...props.presentation,
-        primaryLabel: shown.label ?? props.presentation.primaryLabel,
-        secondaryLabel: Array.from(new Set([props.serviceLabel, shown.email, shown.accountId]))
-            .filter((part) => part && part !== shown.label).join(' · ') || undefined,
-        // What a confirmation or a screen reader says follows the same privacy as what is shown.
-        accessibilityLabel: Array.from(new Set([props.serviceLabel, shown.label, shown.email, shown.accountId])).filter(Boolean).join(' · '),
-    } : props.presentation;
     const signedOut = isConnectedAccountSignedOut(parseDisplayableCredentialHealthStatus(props.status));
     const authenticationMachineName = useAuthenticationMachineName(props.authenticationProvenance);
     return (
@@ -86,9 +71,8 @@ export const QualifiedAccountDetail = React.memo(function QualifiedAccountDetail
         <QualifiedAccountDetailView
             {...props}
             testConnection={connectionTest.control}
-            presentation={presentation}
-            providerEmail={shown.email}
-            providerAccountId={shown.accountId}
+            providerEmail={props.identity.email}
+            providerAccountId={props.identity.accountId}
             authenticationMachineName={authenticationMachineName}
             accessMode={accessMode}
             planLabel={subscriptionFacts.planLabel}

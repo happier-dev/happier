@@ -9,14 +9,10 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
-import {
-    useConnectedAccountIdentityPrivacy,
-    type ConnectedAccountIdentityPresenter,
-} from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
+import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import {
     presentQualifiedConnectedAccountTarget,
     type QualifiedConnectedAccountPresentationAccount,
-    type QualifiedConnectedAccountTargetPresentation,
 } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import { t } from '@/text';
 
@@ -26,8 +22,7 @@ const TEST_ID = 'connected-services-pool-draft';
 export type QualifiedPoolDraftAccount = Readonly<{
     accountId: string;
     name: string;
-    nameKind?: QualifiedConnectedAccountTargetPresentation['primaryLabelKind'];
-    email: string | null;
+    identity: string | null;
 }>;
 
 /**
@@ -38,7 +33,6 @@ export type QualifiedPoolDraftAccount = Readonly<{
 export const QualifiedPoolDraftView = React.memo(function QualifiedPoolDraftView(props: Readonly<{
     serviceLabel: string;
     accounts: readonly QualifiedPoolDraftAccount[];
-    presentIdentity: ConnectedAccountIdentityPresenter;
     creating: boolean;
     onCreate: (input: Readonly<{ displayName: string; accountIds: readonly string[] }>) => void;
     onDiscard: () => void;
@@ -105,13 +99,12 @@ export const QualifiedPoolDraftView = React.memo(function QualifiedPoolDraftView
             >
                 {props.accounts.map((account) => {
                     const checked = selected.has(account.accountId);
-                    const shown = props.presentIdentity({ label: account.name, labelKind: account.nameKind, email: account.email });
                     return (
                         <Item
                             key={account.accountId}
                             testID={`${TEST_ID}:member:${account.accountId}`}
-                            title={shown.label ?? account.name}
-                            subtitle={shown.email ?? undefined}
+                            title={account.name}
+                            subtitle={account.identity ?? undefined}
                             leftElement={(
                                 <Icon
                                     name={checked ? 'check-square' : 'square'}
@@ -154,16 +147,14 @@ export const QualifiedPoolDraft = React.memo(function QualifiedPoolDraft(props: 
             labelsByKey: {},
             accountLabelsByAccountId: accountLabels,
             serviceTitle: serviceLabel,
+            presentIdentity: present,
         });
-        const name = presentation.primaryLabel;
-        const email = account.providerIdentity?.email?.trim() || null;
-        return { accountId: account.ref.accountId, name, nameKind: presentation.primaryLabelKind, email: email && email !== name ? email : null };
-    }), [accountLabels, accounts, serviceLabel]);
+        return { accountId: account.ref.accountId, name: presentation.primaryLabel, identity: presentation.identityLabel ?? null };
+    }), [accountLabels, accounts, present, serviceLabel]);
     return (
         <QualifiedPoolDraftView
             serviceLabel={serviceLabel}
             accounts={draftAccounts}
-            presentIdentity={present}
             creating={props.creating}
             onCreate={props.onCreate}
             onDiscard={props.onDiscard}

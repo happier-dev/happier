@@ -405,7 +405,7 @@ function SessionConnectedServicesSwitchSelection({
             // The daemon admits Session routes. Account rows only supply presentation metadata.
             const row = presentation[serviceId]?.get(profileId);
             const label = row?.label ?? presentIdentity({
-                label: option.label, labelKind: option.label === profileId ? 'accountId' : undefined,
+                label: option.label, labelKind: option.label === profileId ? 'accountId' : 'providerName',
             }).label;
             (profiles[serviceId] ??= []).push({ profileId, label, providerEmail: row?.providerEmail, status: 'connected' });
         }

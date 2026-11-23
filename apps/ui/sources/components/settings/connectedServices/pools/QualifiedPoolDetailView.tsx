@@ -348,7 +348,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
         serviceTitle: props.serviceLabel,
     }).primaryLabel, [accounts, group, labelsByKey, props.serviceLabel]);
 
-    /** One identity per account: the canonical presenter's name, then the privacy presenter over name and email. */
+    /** One identity per account, shared by member rows, choices and the active summary. */
     const identityOf = React.useCallback((accountId: string) => {
         const presentation = presentQualifiedConnectedAccountTarget({
             target: { kind: 'account', account: { service: group.ref.service, accountId } },
@@ -357,14 +357,11 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
             labelsByKey,
             accountLabelsByAccountId: accountLabels,
             serviceTitle: props.serviceLabel,
+            presentIdentity: present,
         });
         const account = accounts.find((candidate) => candidate.ref.accountId === accountId);
-        const rawEmail = account?.providerIdentity?.email?.trim() || null;
-        // The whole page is one service, so the identity line is the email alone, and only when the
-        // name is not already the email (an account nobody named is called by its email).
-        const email = rawEmail && rawEmail !== presentation.primaryLabel ? rawEmail : null;
-        const shown = present({ label: presentation.primaryLabel, labelKind: presentation.primaryLabelKind, email });
-        return { name: shown.label ?? presentation.primaryLabel, email: shown.email, accessMode: account?.accessMode };
+        const { email } = present({ email: account?.providerIdentity?.email?.trim() || null });
+        return { name: presentation.primaryLabel, email: email === presentation.primaryLabel ? null : email, accessMode: account?.accessMode };
     }, [accountLabels, accounts, group, labelsByKey, present, props.serviceLabel]);
 
     const sortedMembers = React.useMemo(() => sortMembersByPriority(group.members), [group.members]);

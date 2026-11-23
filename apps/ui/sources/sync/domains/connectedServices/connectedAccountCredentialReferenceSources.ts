@@ -3,6 +3,7 @@ import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/c
 
 import { t } from '@/text';
 import { humanizeConnectedServiceIdentity } from './connectedServiceIdentityLabel';
+import type { ConnectedAccountIdentityPresenter } from './maskAccountEmail';
 import { presentConnectedAccountName } from './qualifiedConnectedAccountTargetPresentation';
 import { resolveQualifiedConnectedAccountLabel } from './connectedServiceProfilePreferences';
 
@@ -10,13 +11,16 @@ import { resolveQualifiedConnectedAccountLabel } from './connectedServiceProfile
 export function projectConnectedAccountCredentialReferenceSources(
     accounts: readonly QualifiedConnectedAccountProfileV4[],
     labelsByKey: Readonly<Record<string, string | undefined>>,
+    presentIdentity?: ConnectedAccountIdentityPresenter,
 ): NonNullable<SavedSecretReferenceCatalogsV1['connectedAccountCredentials']> {
     return accounts.flatMap(account => account.savedSecretResourceIds?.length ? [{
         account: account.ref,
         displayName: presentConnectedAccountName({
             userLabel: resolveQualifiedConnectedAccountLabel({ labelsByKey, service: account.ref.service, accountId: account.ref.accountId }),
             serviceTitle: humanizeConnectedServiceIdentity(account.ref.service.localId) || t('connectedServices.fallbackName'),
-            displayName: account.displayName,
+            providerDisplayName: account.displayName,
+            email: account.providerIdentity?.email,
+            presentIdentity,
             accountId: account.ref.accountId,
             providerAccountId: account.providerIdentity?.accountId,
         }).primaryLabel,

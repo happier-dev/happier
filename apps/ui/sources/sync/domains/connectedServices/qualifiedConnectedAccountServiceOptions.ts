@@ -53,7 +53,7 @@ export function buildQualifiedConnectedAccountProfileOptionsByServiceId(params: 
             serviceTitle: params.resolveServiceTitle?.(serviceKey) ?? humanizeConnectedServiceIdentity(account.ref.service.localId),
             userLabel: resolveQualifiedConnectedAccountLabel({ labelsByKey: params.labelsByKey,
                 service: account.ref.service, accountId: account.ref.accountId }),
-            displayName: account.displayName,
+            providerDisplayName: account.displayName,
             email: account.providerIdentity?.email,
             providerAccountId: account.providerIdentity?.accountId,
             accountId: account.ref.accountId,

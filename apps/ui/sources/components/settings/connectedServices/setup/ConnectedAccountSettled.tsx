@@ -54,28 +54,20 @@ export function ConnectedAccountSettled(props: Readonly<{
     const profiles = sheet?.accounts.flatMap((candidate) => candidate.kind === 'qualified' ? [candidate.profile] : []) ?? [];
     const profile = profiles.find((candidate) => candidate.ref.accountId === account.accountId) ?? null;
 
-    const labelFor = (accountId: string): string | null => {
+    const nameFor = (accountId: string) => {
         const match = profiles.find((candidate) => candidate.ref.accountId === accountId);
         if (!match || !sheet) return null;
-        const presented = presentQualifiedConnectedAccountTarget({
+        return presentQualifiedConnectedAccountTarget({
             target: { kind: 'account', account: match.ref },
             accounts: [match],
             groups: [],
             labelsByKey,
             serviceTitle: sheet.label,
+            presentIdentity: present,
         });
-        return present({ label: presented.primaryLabel, labelKind: presented.primaryLabelKind }).label;
     };
-    const identity = profile
-        ? (() => {
-            const shown = present({
-                label: profile.displayName ?? null,
-                email: profile.providerIdentity?.email ?? null,
-                accountId: profile.providerIdentity?.accountId ?? null,
-            });
-            return shown.email ?? shown.label ?? shown.accountId;
-        })()
-        : null;
+    const name = profile ? nameFor(account.accountId) : null;
+    const identity = name?.identityLabel ?? name?.primaryLabel ?? null;
 
     const agentDefault = purposeCatalog.status === 'ready' && !purposeCatalog.stale && purposeCatalog.value ? suggestAgentDefaultForNewAccount({
         agents: props.agents,
@@ -87,7 +79,7 @@ export function ConnectedAccountSettled(props: Readonly<{
         account,
         pools: sheet?.pools ?? [],
         agentDefault,
-        labelFor,
+        labelFor: accountId => nameFor(accountId)?.primaryLabel ?? null,
     });
 
     const primaryAction = offer?.kind === 'pool' ? (

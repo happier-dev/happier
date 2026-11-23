@@ -11,6 +11,7 @@ import { resolveConnectedServiceQuotaProfileRefForSession } from '@/components/s
 import { readSessionUsageLimitRecoveryFromMetadata } from '@/components/sessions/usageLimitRecovery/sessionUsageLimitRecoveryPresentation';
 import { useConnectedServiceQuotaSnapshots } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshots';
 import { useProviderAccountUsageSnapshots } from '@/hooks/server/connectedServices/useProviderAccountUsageSnapshots';
+import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import {
   computeProviderAccountUsageGaugeViewModel,
@@ -118,6 +119,7 @@ export function useSessionProviderUsage(input: SessionProviderUsageInput) {
   const connectedAccountTransport = resolveConnectedAccountUiNegotiation(
     useServerFeaturesSnapshotForServerId(serverId),
   );
+  const { present } = useConnectedAccountIdentityPrivacy();
   const gaugeMode = useSetting('sessionProviderUsageGaugeMode');
   const windowMode = readGaugeWindowMode(
     useSetting('sessionProviderUsageGaugeWindowMode'),
@@ -325,6 +327,7 @@ export function useSessionProviderUsage(input: SessionProviderUsageInput) {
           windowModes,
           nowMs: Date.now(),
           formatter: connectedServiceQuotaGaugeFormatter,
+          presentIdentity: present,
         });
       }
       const connectedServiceGauge = computeConnectedServiceQuotaGaugeViewModel({
@@ -335,6 +338,7 @@ export function useSessionProviderUsage(input: SessionProviderUsageInput) {
         windowModes,
         nowMs: Date.now(),
         formatter: connectedServiceQuotaGaugeFormatter,
+        presentIdentity: present,
       });
       if (connectedServiceGauge) return connectedServiceGauge;
       return computeProviderAccountUsageGaugeViewModel({
@@ -350,6 +354,7 @@ export function useSessionProviderUsage(input: SessionProviderUsageInput) {
         windowModes,
         nowMs: Date.now(),
         formatter: connectedServiceQuotaGaugeFormatter,
+        presentIdentity: present,
       });
     }, [
       activeModelId,
@@ -357,6 +362,7 @@ export function useSessionProviderUsage(input: SessionProviderUsageInput) {
       quotasEnabled,
       quotaLimitSelection,
       pinnedMeterIdsByKey,
+      present,
       windowModes,
       displaySource?.kind,
       gaugeQuotaSnapshot,

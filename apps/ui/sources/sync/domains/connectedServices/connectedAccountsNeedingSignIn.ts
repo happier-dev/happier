@@ -96,7 +96,7 @@ export function describeConnectedAccountsNeedingSignIn(params: Readonly<{
                 key: account.ref.accountId,
                 serviceTitle,
                 userLabel: resolveQualifiedConnectedAccountLabel({ labelsByKey: params.labelsByKey, service: account.ref.service, accountId: account.ref.accountId }),
-                displayName: account.displayName ?? null,
+                providerDisplayName: account.displayName ?? null,
                 email: account.providerIdentity?.email ?? null,
                 providerAccountId: account.providerIdentity?.accountId ?? null,
                 accountId: account.ref.accountId,

@@ -20,7 +20,7 @@ export function useSavedSecretUsedBy(scope: ServerAccountScope | null, ref: stri
     // The census scans referrer slots, once per selected secret or actual source change, never per render.
     const current = React.useMemo(() => source ? projectSavedSecretUsedBy(captured, ref, source) : null, [captured, ref, source]);
     // A catalog revalidating drops coverage for a moment; the same secret keeps its last settled census.
-    const key = `${serverId}\n${accountId}\n${ref}`;
+    const key = `${serverId}\n${accountId}\n${ref}\n${source?.hideConnectedAccountIdentities === true}`;
     const settled = React.useRef<Readonly<{ key: string; value: readonly AccountSettingsSavedSecretReference[] }> | null>(null);
     if (current?.status === 'ready') settled.current = { key, value: current.references };
     else if (current?.status === 'unavailable') settled.current = null;

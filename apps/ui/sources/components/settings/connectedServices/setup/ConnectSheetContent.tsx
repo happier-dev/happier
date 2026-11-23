@@ -15,7 +15,7 @@ import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccou
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { presentConnectedAccountNames } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
+import { formatConnectedAccountNameInline, presentConnectedAccountName, presentConnectedAccountNames } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import { t } from '@/text';
 
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
@@ -181,18 +181,22 @@ function ConnectAccountSheetLeaf(
       : [];
   const purposeReconnectRows = purposeRequest
     ? purposeSetup.reconnectAccounts.map((account) => {
-        const identity = present({
-          label: account.displayName,
-          email: account.providerIdentity?.email,
-          accountId: account.ref.accountId,
-        });
         const serviceKey = buildQualifiedPluginContributionKey(account.ref.service);
+        const name = presentConnectedAccountName({
+          serviceTitle: model.catalog.find(entry => entry.serviceKey === serviceKey)?.label
+            ?? t('connectedServices.fallbackName'),
+          providerDisplayName: account.displayName,
+          email: account.providerIdentity?.email,
+          providerAccountId: account.providerIdentity?.accountId,
+          accountId: account.ref.accountId,
+          presentIdentity: present,
+        });
         return (
           <Item
             key={`${serviceKey}:${account.ref.accountId}`}
             testID={`connected-account-purpose-reconnect:${serviceKey}:${account.ref.accountId}`}
             title={t('connectedServices.detail.actions.reconnect')}
-            subtitle={identity.label ?? identity.email ?? identity.accountId ?? undefined}
+            subtitle={formatConnectedAccountNameInline(name)}
             onPress={() => model.setTarget({ kind: 'reconnect', serviceKey, accountId: account.ref.accountId })}
           />
         );
@@ -221,13 +225,14 @@ function ConnectAccountSheetLeaf(
         model.savedAccounts.map((profile) => ({
           key: profile.ref.accountId,
           serviceTitle,
-          displayName: profile.displayName ?? null,
+          providerDisplayName: profile.displayName ?? null,
+          presentIdentity: present,
           email: profile.providerIdentity?.email ?? null,
           providerAccountId: profile.providerIdentity?.accountId ?? null,
           accountId: profile.ref.accountId,
         })),
       ),
-    [model.savedAccounts, serviceTitle],
+    [model.savedAccounts, present, serviceTitle],
   );
   const chosen =
     model.savedAccounts.find(
