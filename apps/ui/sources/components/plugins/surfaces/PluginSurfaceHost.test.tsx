@@ -1066,15 +1066,16 @@ function externalTargetDeclarativePlacement(root: unknown, occurrenceId: string)
                 },
             },
         });
-        const previousTargetRead = targetedContributionsReadMock.getMockImplementation();
-        if (!previousTargetRead) throw new Error('Expected the targeted transport boundary fixture');
-        targetedContributionsReadMock.mockResolvedValue({ supported: true,
-            targetedContributions: exact.targetFixture.targetedContributions,
-            targetedSurfaceMounts: [changedChild] });
+        const previousDescribe = contributionProjectionDescribeMock.getMockImplementation();
+        if (!previousDescribe) throw new Error('Expected the Machine projection transport fixture');
+        contributionProjectionDescribeMock.mockResolvedValue({
+            ...exact.response,
+            targetedSurfaceMounts: [changedChild],
+        });
         try {
             const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjection');
             await act(async () => {
-                publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine_1', serverId: 'server_1' }, 'authority');
+                publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine_1', serverId: 'server_1' }, 'refresh');
             });
             await vi.waitFor(() => expect(screen.getTextContent(),
                 surfaceFixtureDiagnostics(screen, targetPluginId)).toContain('Updated admitted child detail'));
@@ -1084,7 +1085,7 @@ function externalTargetDeclarativePlacement(root: unknown, occurrenceId: string)
             expect(beforeChildUpdate.signal.aborted).toBe(false);
             expect(authorLifetime).toEqual(beforeAuthorLifetime);
         } finally {
-            targetedContributionsReadMock.mockImplementation(previousTargetRead);
+            contributionProjectionDescribeMock.mockImplementation(previousDescribe);
         }
 
         const wrong = createTargetedFixture({

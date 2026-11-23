@@ -1210,17 +1210,10 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
     const isBrandTargetPresentationCurrent = React.useCallback(() => (
         brandTargetPresentationCurrentRef.current?.() === true
     ), []);
-    // Targeted mount resolution is refreshed from the daemon projection. Keep
-    // the private host's bridge stable and delegate through the latest exact
-    // resolver, just as the Host API adapter pushes current context through its
-    // existing physical mount rather than treating a response object as a new
-    // author lifetime.
-    const renderTargetedSurfaceRef = React.useRef(props.renderTargetedSurface);
-    renderTargetedSurfaceRef.current = props.renderTargetedSurface;
-    const renderTargetedSurface = React.useCallback((
-        input: PluginUiPrivateTargetedSurfacePresentation,
-    ): React.ReactNode => renderTargetedSurfaceRef.current?.(input), []);
-    const hasRenderTargetedSurface = props.renderTargetedSurface !== undefined;
+    // The exact child projection can change while its parent's public context
+    // stays equal. Publish the resolver to the presentation consumer so the
+    // mounted child receives the new projection without retiring the parent.
+    const renderTargetedSurface = props.renderTargetedSurface;
     const renderWidgetAreaRef = React.useRef(props.renderWidgetArea);
     renderWidgetAreaRef.current = props.renderWidgetArea;
     const hasRenderWidgetArea = props.renderWidgetArea !== undefined;
@@ -1327,9 +1320,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
                         },
                     }
                     : {}),
-                ...(hasRenderTargetedSurface === false
-                    ? {}
-                    : { renderTargetedSurface }),
+                ...(renderTargetedSurface ? { renderTargetedSurface } : {}),
                 ...(props.targetedSurfaceUnavailableReason === undefined
                     ? {}
                     : { targetedSurfaceUnavailableReason: props.targetedSurfaceUnavailableReason }),
@@ -1387,7 +1378,6 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
             brandTargetPresentation?.serverId,
             canonicalTargetAuthorityKey,
             environment.direction,
-            hasRenderTargetedSurface,
             isFocusEligible,
             isBrandTargetPresentationCurrent,
             renderTargetedSurface,
