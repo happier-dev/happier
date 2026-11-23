@@ -1,5 +1,11 @@
 import { shallow } from 'zustand/shallow';
 import type { PluginUiProjectionUnion } from '@/sync/domains/plugins/ui/projectionUnion';
+import type { AppShellPluginUiProjectionValue } from './AppShellPluginUiProjection';
+
+/** Settled declarations can coexist with other contributors still establishing. */
+export function isAppShellPluginCatalogPending(projection: Pick<AppShellPluginUiProjectionValue, 'phase' | 'hasEstablishingMembers'>): boolean {
+    return projection.phase === 'establishing' || projection.hasEstablishingMembers === true;
+}
 
 /** Explain failed discovery through the existing unavailable surface, retaining declarations. */
 export function settleAppShellProjectionAvailability(

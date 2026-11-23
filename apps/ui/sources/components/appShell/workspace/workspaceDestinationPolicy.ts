@@ -1,5 +1,5 @@
 import type { CompactAppDestination, DestinationRef } from '../destinations/compactAppDestinationCatalog';
-import { hrefForDestinationRef } from '../destinations/compactAppDestinationCatalog';
+import { hrefForDestinationRef, readWorkspacePluginAppPageAddress } from '../destinations/compactAppDestinationCatalog';
 import { matchWorkspaceDestinationRoute, workspaceMachinePageRouteKey } from './workspaceRoutes';
 import { pruneWorkspaceTabPairs, type SharedWorkspaceTabs } from './workspaceSyncedTabs';
 import { createWorkspaceEmptyTab, reduceWorkspaceState, type WorkspaceState } from './workspaceState';
@@ -16,7 +16,7 @@ export function isWorkflowDraftDestination(target: DestinationRef): boolean {
 }
 
 export function isWorkspaceSingletonDestination(catalog: readonly CompactAppDestination[], target: DestinationRef): boolean {
-    return !isWorkflowDraftDestination(target) && workspaceSingletonDestinationIds(catalog).includes(target.kind);
+    return destinationAdmissionKey(target, new Set(workspaceSingletonDestinationIds(catalog))) !== null;
 }
 
 /** Keep the door in the URL, while the catalog's Machine policy owns its resource identity. */
@@ -60,11 +60,12 @@ export function workspaceDestinationAdmissionIdentity(target: DestinationRef, ca
 
 function destinationAdmissionKey(target: DestinationRef, singletonKinds: ReadonlySet<string>): string | null {
     if (isWorkflowDraftDestination(target)) return null;
-    if (singletonKinds.has(target.kind)) return workspaceDestinationAdmissionIdentity(target);
+    // An app page's subpaths share one mount even before its declaration arrives.
+    if (readWorkspacePluginAppPageAddress(target) || singletonKinds.has(target.kind)) return workspaceDestinationAdmissionIdentity(target);
     return null;
 }
 
-/** Navigation admission and portable CAS rebase share one catalog-owned singleton policy. */
+/** Navigation admission and portable CAS rebase share one singleton policy. */
 export function normalizeWorkspaceSingletonTabs(record: SharedWorkspaceTabs, catalog: readonly CompactAppDestination[]): SharedWorkspaceTabs {
     const firstByDestination = new Map<string, string>();
     const singletonKinds = new Set(workspaceSingletonDestinationIds(catalog));

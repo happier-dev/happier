@@ -23,8 +23,10 @@ import type {
 } from '@happier-dev/protocol/plugins/ui';
 
 import {
+    useAppShellPluginUiProjection,
     type AppShellPluginUiDeclarationSources,
 } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { isAppShellPluginCatalogPending } from '@/components/appShell/plugins/projectionAvailability';
 import { createPluginLocalizedTextResolver, type PluginUiTranslationRuntime } from '@/sync/domains/plugins/ui/i18n';
 import { readCurrentAppShellPluginUiTranslationRuntime, subscribeCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { getPreferredLanguage } from '@/text/preferredLanguage';
@@ -1044,6 +1046,13 @@ export function resolveDestinationRefFromHref(
     return { kind: destination.id, params: { ...query } };
 }
 
+/** A registered app-page address exists before its declaration is published. */
+export function readWorkspacePluginAppPageAddress(ref: DestinationRef) {
+    const { pluginId, localId, subPath } = ref.params;
+    return pluginId && localId && ref.kind === buildPluginSurfaceDestinationId(pluginId, localId)
+        ? { pluginId, localId, subPath } : null;
+}
+
 /** The inverse URL projection for the focused tab's destination. */
 export function hrefForDestinationRef(
     catalog: readonly CompactAppDestination[],
@@ -1095,9 +1104,9 @@ export function hrefForDestinationRef(
         return appendQuery(path, params, ['pageId', ...Object.keys(matchWorkspaceDestinationRoute(path)?.params ?? {})]);
     }
     if (ref.kind === 'newTab') return '/';
-    const { pluginId, localId, subPath } = params;
-    if (pluginId && localId && ref.kind === buildPluginSurfaceDestinationId(pluginId, localId)) {
-        const path = buildPluginAppPageRoutePath({ pluginId, localId, subPath });
+    const appPage = readWorkspacePluginAppPageAddress(ref);
+    if (appPage) {
+        const path = buildPluginAppPageRoutePath(appPage);
         return appendQuery(path, params, ['pluginId', 'localId', 'subPath']);
     }
     const destination = catalog.find((item) => item.id === ref.kind && item.activation === 'navigate');
@@ -1239,6 +1248,7 @@ function resolvePublishedOrStaticInstanceTitle(
     options?: DestinationInstanceTitleOptions,
     storedTitle?: string | null,
     route = resolveWorkspaceDestinationInstanceRoute(catalog, ref),
+    catalogPending = false,
 ): string | null {
     const { href, destination } = route;
     const pathname = href?.split(/[?#]/, 1)[0];
@@ -1265,8 +1275,8 @@ function resolvePublishedOrStaticInstanceTitle(
         ? options.publishedTitle.title
         : staticTitle ?? storedTitle ?? resolveSavedInstanceTitle(catalog, ref, options?.fallbackTitle);
     if (title) return title;
-    // Restored/background tabs need not mount their pages. A missing publication
-    // is an unnamed destination, not evidence that a title fetch is still running.
+    if (catalogPending && !destination) return t('common.loading');
+    // Restored/background tabs need not mount their pages to publish a title.
     if (!href) return null;
     if (isSessionTitleRef(ref)) return t('session.untitled');
     if (ref.kind === 'settings') {
@@ -1507,11 +1517,13 @@ function createDestinationInstanceTitleProjection(catalog: readonly CompactAppDe
             }
             return settingsTitle;
         },
-        title(value: ReturnType<typeof project>, settings: string | null, discussion: string | null | undefined, published: WorkspaceDestinationTitle | undefined) {
-            const nextInputs = [value, settings, discussion, published];
+        title(value: ReturnType<typeof project>, settings: string | null, discussion: string | null | undefined,
+            published: WorkspaceDestinationTitle | undefined, catalogPending: boolean) {
+            const nextInputs = [value, settings, discussion, published, catalogPending];
             if (!titleInputs || !shallow(titleInputs, nextInputs)) {
                 titleInputs = nextInputs;
-                const fallback = resolvePublishedOrStaticInstanceTitle(catalog, ref, { publishedTitle: published, fallbackTitle }, settings ?? value.stored, route);
+                const fallback = resolvePublishedOrStaticInstanceTitle(catalog, ref, { publishedTitle: published, fallbackTitle },
+                    settings ?? value.stored, route, catalogPending);
                 title = value.missing ?? (discussion || null) ?? (value.session || null) ?? value.project ?? fallback;
             }
             return title;
@@ -1571,6 +1583,7 @@ export function useDestinationInstanceTitleSources(
     contentDemandKeys?: ReadonlySet<string> | null,
 ): ReadonlyMap<string, DestinationInstanceTitleSource> {
     const destinationTitles = useWorkspaceDestinationTitles();
+    const catalogPending = useAppShellPluginUiProjection(isAppShellPluginCatalogPending);
     const accountLifetime = useActiveServerAccountScopeLifetime();
     const previous = React.useRef(new Map<string, ReturnType<typeof createDestinationInstanceTitleProjection>>());
     const projections = React.useMemo(() => {
@@ -1645,6 +1658,7 @@ export function useDestinationInstanceTitleSources(
         projection: ReturnType<typeof createDestinationInstanceTitleProjection>;
         published: WorkspaceDestinationTitle | undefined;
         discussion: string | null | undefined;
+        pending: boolean;
         source: DestinationInstanceTitleSource;
     }>;
     const previousSources = React.useRef(new Map<string, TitleSourceEntry>());
@@ -1658,13 +1672,16 @@ export function useDestinationInstanceTitleSources(
             const published = destinationTitles?.[entry.instanceKey ?? entry.key];
             const discussion = discussionsByKey.get(entry.key);
             const old = previousSources.current.get(entry.key);
-            const source: DestinationInstanceTitleSource = old?.projection === projection && old.published === published && old.discussion === discussion ? old.source : {
+            const pending = catalogPending && !projection.route.destination
+                && (entry.ref.kind === 'plugins' || readWorkspacePluginAppPageAddress(entry.ref) !== null);
+            const source: DestinationInstanceTitleSource = old?.projection === projection && old.published === published
+                && old.discussion === discussion && old.pending === pending ? old.source : {
                 href: projection.route.href,
                 icon: projection.route.presentation?.icon,
                 getSnapshot: () => {
                     if (address && !readSessionRecordingVisibility()(address)) return t('session.untitled');
                     const state = readRegisteredStorageState();
-                    return projection.title(projection.read(state), projection.readSettings(state), discussion, published);
+                    return projection.title(projection.read(state), projection.readSettings(state), discussion, published, pending);
                 },
                 subscribe: (listener: () => void) => {
                     const stopStore = getStorage().subscribe(listener, {
@@ -1678,10 +1695,10 @@ export function useDestinationInstanceTitleSources(
                     return () => { stopStore(); stopSettings?.(); stopPrivacy?.(); };
                 },
             };
-            next.set(entry.key, { projection, published, discussion, source });
+            next.set(entry.key, { projection, published, discussion, pending, source });
             sources.set(entry.key, source);
         }
         previousSources.current = next;
         return sources;
-    }, [projections, discussionEntries, discussionTitles, destinationTitles]);
+    }, [catalogPending, projections, discussionEntries, discussionTitles, destinationTitles]);
 }

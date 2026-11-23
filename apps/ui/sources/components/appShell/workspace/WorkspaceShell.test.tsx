@@ -6,7 +6,7 @@ import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/P
 import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createRenderCommitCounter, createSessionListRenderableSessionFixture, flattenTestStyle, installBrowserStorageLockBoundary, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { HorizontalSafeArea } from '@/components/navigation/safeArea/horizontalSafeAreaGeometry';
-import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createServedHomeAccountToken, serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestHelpers';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -48,6 +48,8 @@ vi.mock('react', async importOriginal => {
 });
 
 installPanelCommonModuleMocks();
+vi.mock('@/utils/web/reactDomCjs', async () =>
+    (await import('@/dev/testkit/mocks/reactDomCjs')).createReactDomCjsRendererMock());
 const { HorizontalSafeAreaProvider, ScreenSafeAreaFrame, useHorizontalSafeArea, useScreenSafeAreaBackdrop, useScreenSafeAreaBleed } =
     await import('@/components/navigation/safeArea/HorizontalSafeArea');
 vi.mock('expo-router', async () => {
@@ -743,6 +745,114 @@ describe('WorkspaceShell', () => {
         expect(closeKey.defaultPrevented).toBe(true);
         await settle(() => { expect(stateOf(screen).tabs[openedTab]).toBeUndefined(); });
         expect(stateOf(screen).groups['group:1'].tabIds).toEqual(['a', 'b']);
+    });
+
+    it('keeps a signed-in cold detail frame and pending tab titles through an empty first catalog', async () => {
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+        const { Dimensions } = await import('react-native');
+        const { buildTriageEntryRouteSegmentV1 } = await import('@happier-dev/triage-protocol/v1');
+        const { buildPluginAppPageRoutePath } = await import('@/components/plugins/pages/pluginPageRoute');
+        const { createPluginPagePlacementFixture } = await import('@/dev/testkit/fixtures/pluginPageProjectionFixture');
+        const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { AppShellPluginUiProjectionValueProvider } = await import('../plugins/AppShellPluginUiProjection');
+        const { AppPaneProvider } = await import('../panes/AppPaneProvider');
+        const { WorkspaceAppShellProvider } = await import('./WorkspaceAppShellProvider');
+        const { useOptionalWorkspaceNavigation } = await import('./WorkspaceNavigationContext');
+        const { workspaceLayoutsState } = await import('@/sync/domains/state/filePaneUiState');
+        const [, { WorkspaceShell }, , , { serializeWorkspaceLayout, workspaceLayoutScopeKey }, { KeyboardShortcutProvider }] = production;
+        const { storage } = production[7];
+        vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1440, height: 900, scale: 1, fontScale: 1 });
+
+        const pluginId = 'happier.triage';
+        const localId = 'triage';
+        const page = createPluginPagePlacementFixture({ pluginId, localId, title: 'PRs & Issues', targetKind: 'app' });
+        const detail = buildPluginAppPageRoutePath({ pluginId, localId, subPath: 'sv,assigned/' + buildTriageEntryRouteSegmentV1({
+            source: { pluginId: 'happier.scm.forge.github', localId: 'pull-requests' },
+            kindId: 'pull-request', collisionScope: 'repository', entryId: '4',
+        }) });
+        const savedPluginTarget = resolveDestinationRefFromHref([], buildPluginAppPageRoutePath({ pluginId, localId }))!;
+        const restored = reduceWorkspaceState(createWorkspaceState({
+            id: 'restored-prs', target: savedPluginTarget, pinned: false, preview: false,
+        }), { type: 'openTab', groupId: 'group:1', tab: { id: 'restored-store', target: { kind: 'plugins', params: {} }, pinned: false, preview: false } });
+
+        function Shell() {
+            const navigation = useOptionalWorkspaceNavigation();
+            if (!navigation?.active) return null;
+            return <><WorkspaceShell catalog={navigation.catalog} />
+                {React.createElement('ActiveWorkspace', { state: navigation.state })}</>;
+        }
+        const noop = () => {};
+        const credentials = { token: createServedHomeAccountToken('plugin-sign-in', true) };
+        function app(stage: 'signed-out' | 'pending' | 'empty' | 'filled') {
+            const accountLifetime = captureActiveServerAccountScopeLifetime();
+            return <InjectedAuthProvider credentials={stage === 'signed-out' ? null : credentials}>
+                <KeyboardShortcutProvider handlers={{}}><AppPaneProvider>
+                    <AppShellPluginUiProjectionValueProvider declarationReady={stage !== 'pending'} value={{
+                        pluginUiProjection: stage === 'filled'
+                            ? { ...EMPTY_PLUGIN_UI_PROJECTION, surfacePlacementsById: { [page.id]: page } }
+                            : stage === 'empty' ? EMPTY_PLUGIN_UI_PROJECTION : null,
+                        pluginBrowserProjection: null, accountLifetime, phase: 'establishing', interactionEnabled: false,
+                        machineId: null, serverId: accountLifetime?.scope.serverId ?? null, platform: 'web',
+                        clientExecutableActivation: { status: 'establishing' },
+                        reloadConnectedAccountProjection: noop, reloadClientExecutables: noop,
+                    }}><WorkspaceAppShellProvider><Shell /></WorkspaceAppShellProvider></AppShellPluginUiProjectionValueProvider>
+                </AppPaneProvider></KeyboardShortcutProvider>
+            </InjectedAuthProvider>;
+        }
+
+        const screen = await renderScreen(app('signed-out'));
+        try {
+            expect(screen.root.findAllByType('ActiveWorkspace')).toHaveLength(0);
+            restoreLocks = installBrowserStorageLockBoundary();
+            installDisconnectedServerSocketBoundary();
+            fixture = await serveActionHomes({ homes: [{ key: 'home', serverUrl: 'https://cold-plugin-sign-in.test',
+                accountId: 'plugin-sign-in', credentials, currentAccount: true, settings: { workspaceTabsSyncEnabled: false } }], route: () => undefined });
+            disconnect = await fixture.restoreActiveConnection();
+            const scope = storage.getState().profileScope!;
+            workspaceLayoutsState.set(workspaceLayoutScopeKey({ ...scope, windowId: WINDOW_ID }), serializeWorkspaceLayout(restored));
+            storage.setState({ isDataReady: true });
+            window.history.replaceState(null, '', detail);
+            route.pathname = detail;
+
+            const state = () => screen.root.findByType('ActiveWorkspace').props.state as WorkspaceState;
+            const frame = () => screen.root.findAllByProps({ role: 'tabpanel' })
+                .find(node => node.props.testID?.startsWith('workspace-retained-'));
+            const hasTabTitle = (title: string) => screen.root.findAll(node => node.props.accessibilityRole === 'tab')
+                .some(node => node.findAllByProps({ children: title }).length > 0);
+            const inspect = () => ({
+                hasUnavailableTab: hasTabTitle('common.unavailable'),
+                splitVisible: !!screen.findByTestId('plugin-app-page-loading-detail-skeleton'),
+            });
+
+            await screen.update(app('pending'));
+            await settle(() => expect(state()).toBeDefined());
+            await act(async () => {
+                screen.findByTestId('split-canvas-content-slot-group:1')?.props.onLayout({ nativeEvent: {
+                    layout: { x: 0, y: 32, width: 1440, height: 820 },
+                } });
+            });
+            await settle(() => expect(frame()).toBeDefined());
+            await settle(() => expect(inspect().splitVisible).toBe(true));
+            const pendingFrame = frame();
+            const pending = inspect();
+            await screen.update(app('empty'));
+            const empty = inspect();
+            const stayedMountedWhileEmpty = frame() === pendingFrame;
+            await screen.update(app('filled'));
+            await settle(() => expect(hasTabTitle('PRs & Issues')).toBe(true));
+
+            expect({
+                pending, empty, stayedMountedWhileEmpty, stayedMountedWhenFilled: frame() === pendingFrame,
+                addressedTab: state().groups[state().focusedGroupId].activeTabId,
+            }).toEqual({
+                pending: { hasUnavailableTab: false, splitVisible: true },
+                empty: { hasUnavailableTab: false, splitVisible: true },
+                stayedMountedWhileEmpty: true, stayedMountedWhenFilled: true, addressedTab: 'restored-prs',
+            });
+        } finally {
+            await screen.unmount();
+        }
     });
 
     it('moves a singleton plugin tab into a split and leaves a new-tab target in its empty source', () => {

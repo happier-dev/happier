@@ -35,6 +35,7 @@ import { usePluginDetailNavigation } from './pluginDetailNavigation';
 import { PluginPageNavigationContext } from './pluginPageNavigationContext';
 
 import type { AppShellPluginUiProjectionValue } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { isAppShellPluginCatalogPending } from '@/components/appShell/plugins/projectionAvailability';
 import { resolvePluginPageView, type PluginPage } from './pluginPages';
 import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
 import {
@@ -428,7 +429,7 @@ export function PluginPageContent(props: Readonly<{
         demandProjection={props.subPath !== null && (page ? !page.disabledReason && isPluginSurfaceMachineBound({
             pluginId: props.pluginId, surface: page.placement, projection: projection.pluginUiProjection,
             contextualTarget: props.contextualExecutionTarget,
-        }) : projection.phase === 'establishing' || projection.hasEstablishingMembers)}
+        }) : isAppShellPluginCatalogPending(projection))}
         actions={routeActions}>{body}</PluginPagePresentation>;
 
     const renderHostedContent = (body: React.ReactElement) => (
@@ -443,7 +444,7 @@ export function PluginPageContent(props: Readonly<{
 
     // A declared page keeps its physical host while execution revalidates.
     // The host owns its notice and retention; only a missing declaration waits here.
-    if (props.subPath !== null && !page && (projection.phase === 'establishing' || projection.hasEstablishingMembers
+    if (props.subPath !== null && !page && (isAppShellPluginCatalogPending(projection)
         || (accountLifetime === null && props.accountScopeRestoring))) {
         const loading = (
             <View testID="plugin-app-page-establishing" style={{ flex: 1 }}>
