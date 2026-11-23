@@ -18,13 +18,13 @@ type Capture = Readonly<{
   context: ActionExecutorContext;
 }>;
 type PrepareHook = NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>;
-type RoleOptions = Readonly<{ setupCredentialFile?: string }>;
+type RoleOptions = Readonly<{ setupCredentialFile?: string; target?: 'machine' | 'domainRoute' }>;
 const unavailable = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
 
 /** One selected descriptor and declared input contract serve preparation and invocation. */
 function prepareRole(capture: Capture, machineId: string, selection: AccessProviderSelectionV1,
   role: AccessProviderRoleV1, options: RoleOptions = {}) {
-  const selected = resolveAccessProviderSelectionForHost({ registry: capture.runtimeRegistry.contributes, selection, target: 'machine' });
+  const selected = resolveAccessProviderSelectionForHost({ registry: capture.runtimeRegistry.contributes, selection, target: options.target ?? 'machine' });
   if (!selected.ok) return selected;
   // Built-ins use the host inspect/configure Actions and their nested P20 plan,
   // not synthetic contributed child Actions for join/leave.
@@ -61,7 +61,7 @@ function prepareRole(capture: Capture, machineId: string, selection: AccessProvi
 /** Pure demanded-role preparation at the receiving host's captured catalog/state. */
 export async function prepareReachabilityReviewedChildrenForHost(
   request: Parameters<PrepareHook>[0] & Pick<Capture, 'runtimeRegistry'>
-    & Readonly<{ selections: readonly AccessProviderSelectionV1[] }>,
+    & Readonly<{ selections: readonly AccessProviderSelectionV1[]; currentIngress?: AccessProviderSelectionV1 }>,
 ): ReturnType<PrepareHook> {
   if (request.actionId !== 'machines.reachability.inspect' && request.actionId !== 'machines.reachability.configure') return null;
   const configured = request.actionId === 'machines.reachability.configure'
@@ -89,6 +89,14 @@ export async function prepareReachabilityReviewedChildrenForHost(
     const prepared = prepareRole(request, input.machineId, selection, 'inspect');
     if (!prepared.ok) return prepared;
     if (prepared.kind === 'plugin') children.push(prepared.child);
+  }
+  const proposedIngress = change?.kind === 'posture' && change.posture.defaultServiceIngress.kind === 'provider'
+    ? change.posture.defaultServiceIngress.selection : undefined;
+  for (const ingress of [request.currentIngress, proposedIngress]) {
+    if (!ingress || 'kind' in ingress.provider) continue;
+    const prepared = prepareRole(request, input.machineId, ingress, 'inspect', { target: 'domainRoute' });
+    if (prepared.ok && prepared.kind === 'plugin'
+      && !children.some(child => sameStrictJsonValue(child, prepared.child))) children.push(prepared.child);
   }
   // Inspect prepares observations only; proposing membership remains a safe read.
   if (configured?.success && change?.kind === 'privateNetwork') {

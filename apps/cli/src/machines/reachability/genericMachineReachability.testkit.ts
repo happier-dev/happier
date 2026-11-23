@@ -2167,12 +2167,12 @@ function inspectFixtureDiagnostic(site: string, error: unknown) {
 }
 
 export function createDockerNetworkAuthoredProvider(enabled = false, nativeJoin = false, installClient = false,
-  options: Readonly<{ installDockerService?: boolean }> = {}): AuthoredProvider {
+  options: Readonly<{ installDockerService?: boolean; keyless?: boolean; serviceIngress?: boolean }> = {}): AuthoredProvider {
   const pluginId = 'com.example.docker-network';
   const membership = (role: 'join' | 'leave'): MachineRecipeV1 => ({
     id: `network-${role}`, revision: '1', title: role, inputSchema: ROLE_SCHEMAS[`${role}Input`].jsonSchema,
     steps: [{ id: `network-${role}`, kind: 'command', executable: '/usr/bin/network-client',
-      args: role === 'join' ? ['join', { kind: 'input', path: 'setupCredentialFile' }] : ['leave'],
+      args: role === 'join' && !options.keyless ? ['join', { kind: 'input', path: 'setupCredentialFile' }] : [role],
       check: { executable: '/usr/bin/network-client', args: ['status'], unsatisfiedExitCodes: [127],
         stdoutJson: { op: 'eq', path: 'joined', value: role === 'join' } } }],
   });
@@ -2190,6 +2190,11 @@ export function createDockerNetworkAuthoredProvider(enabled = false, nativeJoin 
           { id: 'client-executable', kind: 'file', path: '/usr/bin/network-client', owner: 'root', group: 'root', mode: 0o755,
             content: { kind: 'literal', value: 'fixture native executable' } }] } },
     accessProviders: { 'docker-network': { ...GENERIC_ACCESS_PROVIDER, title: 'Docker-backed network fixture',
+      ...(options.keyless ? { credentialPurposes: [{ purpose: 'network.join', required: false }] } : {}),
+      ...(options.serviceIngress ? { targets: ['machine', 'domainRoute'] as const,
+        capabilities: ['management', 'privateNetwork', 'ingress'] as const,
+        https: { hostname: 'providerAssigned' as const, ports: [443], paths: true },
+        actions: { ...GENERIC_ACCESS_PROVIDER.actions, configure: 'configure', disable: 'disable' } } : {}),
       ...(nativeJoin && !installClient && !options.installDockerService ? {}
         : { install: { kind: 'recipe' as const, ref: { pluginId, recipeId: installClient ? 'network-client' : 'docker-service', revision: '1' } } }),
       membership: { join: membership('join'), leave: membership('leave') },
@@ -2209,6 +2214,16 @@ export function createDockerNetworkAuthoredProvider(enabled = false, nativeJoin 
         execution: { target: 'daemon' }, dangerLevel: 'externalSideEffect',
         confirmation: { title: 'Leave network fixture?', body: 'Disconnect this fixture network.' }, inputSchema: ROLE_SCHEMAS.leaveInput,
         resultSchema: ROLE_SCHEMAS.result, run: async () => ({ kind: 'unknown' as const, code: 'unexpected_leave' }) },
+      ...(options.serviceIngress ? {
+        configure: { title: 'Configure network ingress', scopes: ['machine'], surfaces: ['plugin'],
+          execution: { target: 'daemon' }, dangerLevel: 'externalSideEffect', inputSchema: ROLE_SCHEMAS.configureInput,
+          confirmation: { title: 'Configure ingress?', body: 'Apply the selected ingress route.' },
+          resultSchema: ROLE_SCHEMAS.result, run: async () => ({ kind: 'refused' as const, code: 'unexpected_configure' }) },
+        disable: { title: 'Disable network ingress', scopes: ['machine'], surfaces: ['plugin'],
+          execution: { target: 'daemon' }, dangerLevel: 'externalSideEffect', inputSchema: ROLE_SCHEMAS.disableInput,
+          confirmation: { title: 'Disable ingress?', body: 'Remove the selected ingress route.' },
+          resultSchema: ROLE_SCHEMAS.result, run: async () => ({ kind: 'refused' as const, code: 'unexpected_disable' }) },
+      } as const : {}),
     },
   });
   // Physical public activate ABI, not instantiateCommittedModule or a host
@@ -2248,6 +2263,8 @@ export function activate(api) {
     return {kind:'refused',code:'unexpected_daemon_membership_action'};
   });
   api.actions.register('leave', async () => { mutations++; return {kind:'unknown',code:'unexpected_leave'}; });
+  ${options.serviceIngress ? `api.actions.register('configure', async () => ({kind:'refused',code:'unexpected_configure'}));
+  api.actions.register('disable', async () => ({kind:'refused',code:'unexpected_disable'}));` : ''}
 }`;
   return { pluginId, plugin: { manifest: authored.manifest, files: { 'daemon.mjs': module } } };
 }

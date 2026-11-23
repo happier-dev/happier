@@ -176,7 +176,9 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
     let credentialPreparation: Awaited<ReturnType<typeof readCredentialPreparation>> | undefined;
     if (change.intent === 'join') {
       const credential = selected.selection.credentialRefs.find(reference => reference.purpose === 'network.join');
-      if (!credential && selected.kind === 'plugin') return refuse('needsAuth');
+      if (!credential && selected.definition.credentialPurposes.some(({ purpose, required }) => purpose === 'network.join' && required)) {
+        return refuse('needsAuth');
+      }
       if (credential) {
         if (credential.credentialRef.kind !== 'savedSecret') return refuse('credential_unavailable');
         credentialPreparation = await readCredentialPreparation(deps);
@@ -527,9 +529,8 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
           if (membershipAlreadySatisfied) {
             await write(change, true);
           } else if (!plan.basis.credentialFileReview) {
-            // An already-authenticated builtin can resume its observed profile
-            // without launching an interactive login or requiring a setup key.
-            // It uses the same admitted P20 program; no daemon role mutates it.
+            // A provider that supports keyless membership runs its admitted
+            // P20 program without acquiring a connector secret.
             await write(change, true);
             const previouslyAttempted = anyNativeEffectPossible;
             let membershipEffectsApplied = false;

@@ -8,6 +8,7 @@ import { readMachineMetadataFieldV1, readMachineMetadataSnapshotV1, type Machine
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import type { createReachabilityProviderHost } from './reachabilityProviderHost';
 
 /** Typed observation refusal; the host phase owns whether effects preceded it. */
@@ -123,16 +124,19 @@ export async function observeMachineReachability(input: Readonly<{
   const ingressSelection = input.state.posture?.defaultServiceIngress;
   if (ingressSelection?.kind === 'provider') {
     const selected = input.providers.resolve(ingressSelection.selection, 'domainRoute');
-    // Native Machine availability is demanded only for the selected default.
-    // Plugin Domain roles retain their existing parent/occurrence owner.
-    const native = selected.ok && selected.kind === 'builtin' ? await input.providers.invoke(selected.selection, 'inspect') : undefined;
+    const native = selected.ok ? await input.providers.invoke(selected.selection, 'inspect', { target: 'domainRoute' }) : undefined;
+    if (native && !native.ok && native.errorCode === 'plugin_exec_termination_incomplete') throw new PluginError({
+      code: native.errorCode, message: 'Native process termination is incomplete', retryable: false,
+      failureCause: readActionFailureEnvelope(native)?.failureCause,
+    });
     const outcome = native?.ok ? native.result : undefined;
     const code = native && !native.ok ? native.errorCode : outcome && outcome.kind !== 'confirmed' ? outcome.code : undefined;
     const state: MachineReachabilityObservationV1['ingress'][number]['state'] = !native ? 'unknown'
       : !native.ok ? 'unavailable' : outcome?.kind === 'confirmed'
         ? outcome.facts.state === 'stopped' ? 'needsSetup' : outcome.facts.state
         : code === 'needs_setup' ? 'needsSetup' : code === 'foreign_effect_conflict' ? 'conflict' : 'unavailable';
-    const https = native ? outcome?.kind === 'confirmed' ? outcome.facts.ingress?.https : undefined : selected.ok ? selected.definition.https : undefined;
+    const https = selected.ok && selected.kind === 'plugin' ? selected.definition.https
+      : outcome?.kind === 'confirmed' ? outcome.facts.ingress?.https : undefined;
     if (selected.ok) ingress.push({ revision: 0,
       provider: selected.selection.provider, exposure: selected.definition.exposure,
       inboundPorts: selected.definition.inboundPorts,

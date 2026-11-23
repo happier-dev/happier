@@ -1582,6 +1582,9 @@ Home relay configuration now consumes the same portable selection:
 Protocol schema; a task snapshot keeps the safe selection separately from its
 observed/display `providerId`. The descriptor's `homeRelay` target selects the
 Home subset; native Machine Tailscale membership and Caddy are not Home methods.
+Relay install resolves a reachable URL for Home setup before Account sign-in.
+That bootstrap step uses the built-in access catalog. Third-party contributions
+require a signed-in Account and an installed daemon occurrence on the target Machine.
 Configuration is validated against the selected descriptor, and credentials are
 purpose-bound Saved Secret or Connected Account references, not raw values.
 Cloudflare's Home selection carries the hostname and a `tunnel.manage`
@@ -1602,9 +1605,13 @@ programs through the reviewed root P20 interpreter, not a daemon-user join
 Action. A join credential is materialized by the canonical connector-grant
 owner into a root-owned 0600 file beneath protected root-owned ancestors;
 the recipe receives its path, never the secret in Action input or review data.
+Providers can declare `network.join` optional. A keyless join uses the reviewed
+recipe without acquiring or materializing a Saved Secret.
 Provider observation Actions use the executor's exact active-parent reviewed
 child port. They do not issue their own admission or borrow the daemon's
-Account policy. The built-in Tailscale descriptor now supplies finite join and
+Account policy. The selected Machine default ingress also uses its declared
+inspect role for availability. This read does not configure a route or establish
+an endpoint's health. The built-in Tailscale descriptor now supplies finite join and
 leave programs through that same reviewed interpreter; no-key adoption of an
 already-ready profile must not change native state. A selected new key on a
 ready profile reviews Switch (down, then up with forced authentication), even when the observed

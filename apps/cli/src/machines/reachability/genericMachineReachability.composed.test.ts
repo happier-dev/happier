@@ -21,10 +21,66 @@ import { reachabilityConnectorSubject } from '@/machines/reachability/prepareRea
 import * as terminalInput from '@/terminal/prompts/promptInput';
 import * as cliActionExecution from '@/cli/actions/executeCommand';
 import { inspectMachineReachability } from './machineReachabilityHost';
+import { prepareReachabilityReviewedChildrenForHost } from './reachabilityProviderHost';
 
 // Generic physical plugin authoring drives the same production factory,
 // custody, parent Action, native admission and retained approval owners.
 describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('public generic Machine reachability journey', () => {
+it('reviews keyless plugin membership without preparing a Saved Secret', async () => {
+  const authoredProvider = createDockerNetworkAuthoredProvider(false, true, false, { keyless: true });
+  const selected: AccessProviderSelectionV1 = { ...selection, credentialRefs: [] };
+  const fixture = await journey('external', [], { providerSelection: selected, authoredProvider });
+  const api = await createGenericDefaultFactoryJourney(fixture);
+  try {
+    const review = parseReachabilityInspectResult(await api.invoke('machines.reachability.inspect', {
+      serverId: 'generic-home', machineId, change: { kind: 'privateNetwork', intent: 'join', selection: selected },
+    }));
+    expect(review.plan?.basis).toMatchObject({ change: { selection: selected },
+      recipePlans: [expect.objectContaining({ plan: expect.objectContaining({ basis: expect.objectContaining({
+        selection: expect.objectContaining({ inputs: { machineId, config: selected.config, credentialRefs: [] } }),
+      }) }) })] });
+    expect(review.plan?.basis.credentialFileReview).toBeUndefined();
+    expect(fixture.elevation.launches).toHaveLength(0);
+  } finally { await api.dispose(); }
+}, 120_000);
+
+it('admits the exact inspect role for the selected contributed default ingress', async () => {
+  const authoredProvider = createDockerNetworkAuthoredProvider(false, true, false, { serviceIngress: true });
+  const selected: AccessProviderSelectionV1 = { ...selection, credentialRefs: [] };
+  const fixture = await journey('external', [], { providerSelection: selected, authoredProvider });
+  expect(await prepareReachabilityReviewedChildrenForHost({
+    actionId: 'machines.reachability.inspect', input: { serverId: 'generic-home', machineId },
+    context: fixture.context(), runtimeRegistry: fixture.runtime.registry, selections: [], currentIngress: selected,
+  })).toEqual({ children: [{ action: { pluginId: authoredProvider.pluginId, localId: 'inspect' }, role: 'inspect',
+    input: { machineId, config: selected.config, credentialRefs: [] } }] });
+});
+
+it('publishes live facts for the selected contributed default ingress', async () => {
+  const authoredProvider = createDockerNetworkAuthoredProvider(false, true, false, { serviceIngress: true });
+  const selected: AccessProviderSelectionV1 = { ...selection, credentialRefs: [] };
+  const fixture = await journey('external', [], { providerSelection: selected, authoredProvider });
+  const api = await createGenericDefaultFactoryJourney(fixture);
+  try {
+    const snapshot = api.client.getMachineMetadataSnapshot();
+    if (snapshot.status !== 'ready') throw new Error('The public Machine metadata is unavailable');
+    expect(await api.client.compareAndSwapMachineMetadata({
+      expectedMetadataVersion: snapshot.metadataVersion,
+      metadata: { ...snapshot.metadata, reachabilityPosture: {
+        revision: 1,
+        management: { providers: [], publicSsh: { kind: 'open', port: 22, sourceCidrs: ['0.0.0.0/0'] },
+          independentRecovery: { kind: 'providerConsole', evidence: 'verified' } },
+        defaultServiceIngress: { kind: 'provider', selection: selected },
+      } },
+    })).toMatchObject({ status: 'applied' });
+    const inspected = parseReachabilityInspectResult(await api.invoke('machines.reachability.inspect', {
+      serverId: 'generic-home', machineId,
+    }));
+    expect(inspected.observation.ingress).toEqual([
+      expect.objectContaining({ provider: selected.provider, state: 'needsSetup', remedies: ['configure'] }),
+    ]);
+  } finally { await api.dispose(); }
+}, 120_000);
+
 describe('publication failure diagnostics', () => {
   let fixture: Awaited<ReturnType<typeof journey>>;
   let api: Awaited<ReturnType<typeof createGenericDefaultFactoryJourney>>;

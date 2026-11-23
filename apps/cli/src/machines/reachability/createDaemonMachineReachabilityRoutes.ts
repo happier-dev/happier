@@ -94,9 +94,11 @@ export async function prepareDaemonMachineReachabilityReviewedChildren(options: 
     const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
     try {
       const state = await readMachineReachabilityMetadata(options.captureMetadataPort());
+      const ingress = state.posture?.defaultServiceIngress;
       return await prepareReachabilityReviewedChildrenForHost({ ...invocation,
         runtimeRegistry: lease.registry,
-        selections: [...state.selections, ...(state.posture?.management.providers ?? [])] });
+        selections: [...state.selections, ...(state.posture?.management.providers ?? [])],
+        ...(ingress?.kind === 'provider' ? { currentIngress: ingress.selection } : {}) });
     } finally { await lease.release(); }
   } catch (error) { throwMachineReachabilityRpcError(error); }
 }
