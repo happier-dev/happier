@@ -21,7 +21,7 @@ import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflo
 import { WorkflowFlowView } from '@/components/workflows/flow/WorkflowFlowView';
 import { WorkflowBuiltinMark } from '@/components/workflows/presentation/WorkflowBuiltinMark';
 import { useWorkflowInlineRunControls } from '@/components/workflows/run/useWorkflowInlineRunControls';
-import { WorkflowRunReview } from '@/components/workflows/run/WorkflowRunReview';
+import { useWorkflowRunProducedReview, WorkflowRunReview } from '@/components/workflows/run/WorkflowRunReview';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
@@ -187,6 +187,7 @@ export const WorkflowRunFold = React.memo(function WorkflowRunFold(
           <ReviewRoundCard
             runId={props.run.runId}
             serverId={props.serverId ?? null}
+            scope={scope}
             summary={summary}
             inputs={inputs ?? null}
             presentation={presentation}
@@ -249,12 +250,14 @@ export const WorkflowRunFold = React.memo(function WorkflowRunFold(
 
 /**
  * A running Review & converge in the session it reviews (07 S15, lab cards-T3): the Work update card
- * with the round it is on, its live map, what started it, and Stop reviewing / Open run. The map
- * reads the run once while the card is mounted, through the same owner the Work rows use.
+ * with the round it is on, its live map, the Findings its linked Review already holds (the same summary
+ * the settled fold shows), what started it, and Stop reviewing / Open run. The map reads the run once
+ * while the card is mounted, through the same owner the Work rows use.
  */
 const ReviewRoundCard = React.memo(function ReviewRoundCard(props: Readonly<{
   runId: string;
   serverId: string | null;
+  scope: ServerAccountScope | null;
   summary: WorkflowRunSummaryV1;
   inputs: Readonly<Record<string, unknown>> | null;
   presentation: WorkflowTriggerRunFoldPresentation;
@@ -265,6 +268,9 @@ const ReviewRoundCard = React.memo(function ReviewRoundCard(props: Readonly<{
   const workTheme = useWorkTheme();
   const accountLifetime = useActiveServerAccountScopeLifetime();
   const flow = useSessionManagedWorkflowRunFlow(props.runId, props.serverId);
+  // The linked Review's Findings so far, through the one list key the settled fold and Run page read.
+  const reviewReadable = props.scope !== null;
+  const producedReview = useWorkflowRunProducedReview(props.runId, props.scope, reviewReadable);
   // Every round records its first step (skipped on round one) and its panel.
   const roundsStarted = Math.max(flow?.runStates.get('verify')?.length ?? 0, flow?.runStates.get('panel')?.length ?? 0);
   const round = describeReviewAndConvergeRound(props.inputs, roundsStarted);
@@ -300,15 +306,22 @@ const ReviewRoundCard = React.memo(function ReviewRoundCard(props: Readonly<{
         </>
       )}
     >
-      {flow === null ? null : (
-        <WorkflowFlowView
-          projection={flow.projection}
-          runStates={flow.runStates}
-          selectedNodeId={null}
-          onSelectNode={props.onOpen ?? undefined}
-          density="compact"
-          testIDPrefix={`${testID}-map`}
-        />
+      {flow === null && producedReview === null ? null : (
+        <>
+          {flow === null ? null : (
+            <WorkflowFlowView
+              projection={flow.projection}
+              runStates={flow.runStates}
+              selectedNodeId={null}
+              onSelectNode={props.onOpen ?? undefined}
+              density="compact"
+              testIDPrefix={`${testID}-map`}
+            />
+          )}
+          {producedReview === null ? null : (
+            <WorkflowRunReview runId={props.runId} scope={props.scope} enabled={reviewReadable} testID={`${testID}-review`} />
+          )}
+        </>
       )}
     </HappierWorkUpdateCard>
   );

@@ -18,6 +18,9 @@ import { t } from '@/text';
 import { WorkflowRunReview, useWorkflowRunResultReview } from './WorkflowRunReview';
 import { WorkflowRunFold } from '@/components/sessions/transcript/turns/WorkflowRunFold';
 import { createTestSessionTranscriptSource, renderWithSessionTranscriptSource } from '@/dev/testkit/sessionTranscriptSource';
+import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { publishOpenedWorkflowRunDetail } from '@/sync/engine/workflows/refreshWorkflowRun';
+import { WorkflowRunGetResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 
 const effects = vi.hoisted(() => ({ push: vi.fn() }));
 // Navigation and authenticated HTTP are the boundaries; the Review list, comments, history and summary owners stay real.
@@ -271,5 +274,44 @@ it('keeps a read-only transcript fold from looking up a private Review through t
     expect(screen.getTextContent()).toContain(t('workflows.run.open'));
     expect(screen.findHostByTestId('review-summary:open')).toBeNull();
     expect(listRequests).toEqual([]);
+  } finally { await screen.unmount(); }
+});
+
+function publishRunningReviewAndConverge(runId: string): void {
+  const definition = createWorkflowDefinitionFixture();
+  publishOpenedWorkflowRunDetail(WorkflowRunGetResultV1Schema.parse({
+    run: createWorkflowRunSummaryFixture({ id: runId, state: 'running', origin: { kind: 'direct' } }),
+    definition, authoredDefinition: definition, callerAccess: { canEdit: true }, checkpoint: null,
+    acceptedContext: {
+      startedBy: 'user', source: { kind: 'catalog', ref: 'builtin:review-and-converge', version: 1 }, inputs: {},
+      machineId: 'machine-1', executionTarget: { kind: 'session' }, materializedLeaves: [], frozenChildren: {},
+      workspaceTarget: { project: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' } },
+      origin: { kind: 'direct' },
+    },
+  }), { serverId, accountId: 'alice' });
+}
+
+it('shows the Findings its linked Review already holds on a still-running Review & converge card', async () => {
+  publishRunningReviewAndConverge('hunt-run');
+  const source = { ...createTestSessionTranscriptSource({ serverId, navigate: vi.fn() }), kind: 'app' as const };
+  let commits = 0;
+  const fold = (
+    <React.Profiler id="fold" onRender={() => { commits += 1; }}>
+      <WorkflowRunFold turnId="review-turn" run={{ runId: 'hunt-run', turnCount: 0 }} serverId={serverId}>
+        {null}
+      </WorkflowRunFold>
+    </React.Profiler>
+  );
+  const screen = await renderWithSessionTranscriptSource(fold, source);
+  try {
+    expect(screen.findHostByTestId('workflow-review-round:hunt-run')).not.toBeNull();
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Session token written to the daemon log'));
+    await waitForHomeGovernance(() =>
+      expect(screen.getTextContent()).toContain(t('reviewWalkthrough.detail.historyEarlierRuns', { count: 2 })));
+    // Another Run's update does not reach this card: it reads only its own Run and its own linked Review.
+    const settled = commits;
+    publishRunningReviewAndConverge('unrelated-run');
+    await screen.update(fold);
+    expect(commits).toBe(settled);
   } finally { await screen.unmount(); }
 });
