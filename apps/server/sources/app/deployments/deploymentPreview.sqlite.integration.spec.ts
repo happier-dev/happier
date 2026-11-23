@@ -155,7 +155,13 @@ describe('preview Environment relation admission', () => {
             const denied = await app.inject({ method: 'POST', url: '/v1/deployments/environments',
                 headers: { 'x-test-user-id': owner.id }, payload: input });
             expect(denied.statusCode, denied.body).toBe(409);
-            expect(denied.json()).toEqual({ ok: false, error: 'deployment_conflict' });
+            expect(denied.json()).toEqual({ ok: false, error: 'deployment_preview_not_enrolled' });
+            expect(await db.deploymentEnvironment.count({ where: { previewTemplateEnvironmentId: parent.environmentId } })).toBe(0);
+            const stale = await app.inject({ method: 'POST', url: '/v1/deployments/environments',
+                headers: { 'x-test-user-id': owner.id }, payload: { ...input, requestKey: crypto.randomUUID(),
+                    preview: { ...input.preview, expectedTemplateRevision: dataLink.revision + 1 } } });
+            expect(stale.statusCode, stale.body).toBe(409);
+            expect(stale.json()).toEqual({ ok: false, error: 'deployment_conflict' });
         });
         await withAuthenticatedTestApp(registerAutomationV3Routes, async app => {
             const response = await app.inject({ method: 'POST', url: '/v3/automations',

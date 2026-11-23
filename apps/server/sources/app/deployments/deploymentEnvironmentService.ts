@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentTelemetryNativeAdmissionV1,
     type ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { DeploymentEnvironmentHeaderV1Schema, DeploymentEnvironmentPrincipalsV1Schema, DeploymentPreviewDataTargetsV1Schema,
-    type DeploymentEnvironmentCreateStorageInputV1 } from '@happier-dev/protocol';
+    type DeploymentEnvironmentCreateResultV1, type DeploymentEnvironmentCreateStorageInputV1 } from '@happier-dev/protocol';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { resolveDeploymentTelemetryCapabilitiesV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import { readDeploymentDatabaseReadAccessSetupV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
@@ -28,7 +28,7 @@ import type { Tx } from '@/storage/inTx';
 import type { Prisma } from '@prisma/client';
 import { resolveDeploymentEnvironmentAdmissionInTx, admitDeploymentMachineInTx, admitDeploymentMachinesInTx, deploymentFailure, canDeployDeploymentEnvironment, canEditDeploymentEnvironmentData,
     admitDeploymentDefinitionMachinesInTx, readDeploymentDefinitionMachinesInTx,
-    type DeploymentAuthentication, type DeploymentSourceAdmission, type DeploymentFailure } from './deploymentAdmission';
+    type DeploymentAuthentication, type DeploymentSourceAdmission } from './deploymentAdmission';
 import { deploymentContentReference, readPlainDeploymentEnvironmentContentInTx, readPlainDeploymentTargetLinkContentInTx, admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
 import { publishDeploymentChangesInTx, publishDeploymentTelemetryMachinesInTx } from './deploymentPublication';
 import { syncEnvironmentSecretGrantsInTx, readEnvironmentMachineSecretGrantsInTx } from './environmentSecretGrantRepository';
@@ -48,7 +48,7 @@ export type AdmittedDeploymentEnvironment = Extract<Awaited<ReturnType<typeof lo
 
 /** A refused first link must unwind the enclosing Environment transaction. */
 export class DeploymentEnvironmentCreationError extends Error {
-    constructor(readonly failure: DeploymentFailure) {
+    constructor(readonly failure: Extract<DeploymentEnvironmentCreateResultV1, { ok: false }>) {
         super(failure.error);
         this.name = 'DeploymentEnvironmentCreationError';
     }

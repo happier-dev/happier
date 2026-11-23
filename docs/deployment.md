@@ -2697,9 +2697,11 @@ In development source, the private Environment body accepts a strict
 inputs, variable blueprints and exact template or managed-data references. The
 public Environment header carries none of these private choices. This content
 field is saved through `deployments.environments.update`. Its host enrolls the
-declared Forge lifecycle source through the existing Workflow trigger owner;
-enrollment failure is reported alongside the successful save and can be retried.
-Saving a template creates no database or child Environment.
+declared Forge lifecycle source through the existing Workflow trigger owner.
+A child request with the current template revision and no enabled enrollment
+reports the missing enrollment. A stale template revision still reports a
+conflict. Enrollment failure is reported alongside the successful save and can
+be retried. Saving a template creates no database or child Environment.
 The host preview-admission owner opens the private parent template before a fork
 can create a child or acquire deployment runtime, provider or registry resources.
 Forks with `forkPreviews: off` are refused. For `approveEachCommit`, the existing

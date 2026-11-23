@@ -57,7 +57,7 @@ function responses<T extends z.ZodMiniType>(schema: T) {
 function status(result: { ok: boolean; error?: string }) {
     return result.ok ? 200 : result.error === 'deployment_unavailable' ? 404
         : result.error === 'deployment_access_denied' ? 403
-        : result.error === 'deployment_conflict' || result.error === 'deployment_in_progress'
+        : result.error === 'deployment_conflict' || result.error === 'deployment_in_progress' || result.error === 'deployment_preview_not_enrolled'
             || result.error === 'deployment_content_unavailable' || result.error === 'deployment_teardown_required' ? 409
         : result.error === 'machine_unavailable' ? 503 : result.error === 'quota_exceeded' ? 413 : 400;
 }

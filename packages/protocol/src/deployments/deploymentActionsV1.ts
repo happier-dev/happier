@@ -493,7 +493,9 @@ export const DeploymentEnvironmentCreateResultV1Schema = lazyZodSchema(() => z.u
     previewNativeData: z.optional(z.array(z.strictObject({ service: DeploymentIdentifierV1Schema,
       database: DeploymentIdentifierV1Schema }))),
   }), DeploymentActionFailureV1Schema,
+  z.strictObject({ ok: z.literal(false), error: z.literal('deployment_preview_not_enrolled') }),
 ]));
+export type DeploymentEnvironmentCreateResultV1 = z.infer<typeof DeploymentEnvironmentCreateResultV1Schema>;
 export const DeploymentPreviewEnrollmentV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ status: z.literal('enrolled') }),
   z.strictObject({ status: z.literal('disabled') }),

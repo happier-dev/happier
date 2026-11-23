@@ -104,6 +104,8 @@ const recoveries = {
     port_in_use: recovery('Another service is using the address port. Stop that service or choose a tunnel for this address, then review it again.', 'domains', 'Change address route'),
     native_effect_failed: recovery('The machine could not apply the address change. Check the current route before trying the change again.', 'domains', 'Check address change'),
     private_scope_unenforceable: recovery('The selected route cannot keep this address private. Choose a route that supports private access.', 'domains', 'Choose private route'),
+    deployment_preview_not_enrolled: recovery('This Environment has no active Preview enrollment. Open its Preview settings to complete enrollment.',
+        'settings', 'Review Previews'),
     deployment_conflict: recovery('The Environment changed since this review. Open a fresh review to include the latest changes.', 'review', 'Review latest changes'),
     deployment_access_denied: recovery('You do not have permission to change this Environment. Ask its owner for deployment access.', 'permissions', 'View permissions'),
     machine_unavailable: recovery('A required machine is unavailable. Reconnect it or choose another machine for this Environment.', 'machines', 'Check machines'),

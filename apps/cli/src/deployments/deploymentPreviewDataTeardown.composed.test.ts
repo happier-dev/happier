@@ -4,11 +4,13 @@ import nacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as undici from 'undici';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations';
 import { WorkflowActionInputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { encodeBase64, DeploymentTransitionInputV1Schema } from '@happier-dev/protocol';
+import { encodeBase64, DeploymentTransitionInputV1Schema, SessionAgentSpawnPolicyV1Schema } from '@happier-dev/protocol';
 import { encodePlainArtifactStoredContent, decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { DeploymentDataTeardownContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
@@ -16,6 +18,9 @@ import { createDeploymentEnvironmentHeaderV1,
     createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import axios from 'axios';
+import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver }
+    from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { registerAuthoredAccountActionRelease } from '@/plugins/runtime/accountPluginActions.testkit';
 import { createPurposeTargetResolver } from '@/daemon/connectedServices/purposeBindings/resolveTarget';
 import * as installationStore from '@/daemon/identity/store';
@@ -44,10 +49,11 @@ afterEach(() => { vi.restoreAllMocks(); vi.mocked(undici.fetch).mockReset(); vi.
 /** Home HTTP/artifact persistence and vendor HTTP are replaced; Account activation,
  * reviewed child dispatch, role admission and Workflow getters stay real. */
 describe('ordinary preview data teardown composition', () => {
-    it.each(['project delete', 'project delete agent', 'project delete linked', 'project delete refusal', 'project delete denied', 'project delete recovery', 'retained A', 'encrypted retained A', 'provider refusal', 'provider refusal after retained resume', 'native volume operand', 'wrong invocation', 'wrong result', 'another person', 'unknown creation'] as const)(
+    it.each(['project delete', 'project delete agent', 'project delete linked', 'project delete refusal', 'project delete denied', 'project delete recovery', 'branch review denied', 'branch review approved', 'retained A', 'encrypted retained A', 'provider refusal', 'provider refusal after retained resume', 'native volume operand', 'wrong invocation', 'wrong result', 'another person', 'unknown creation'] as const)(
         'tears down only the accepted resource and principal after the live link moves to B: %s', async scenario => {
             const providerRefusal = scenario === 'provider refusal' || scenario === 'provider refusal after retained resume';
             const projectDeletion = scenario.startsWith('project delete');
+            const branchReview = scenario === 'branch review denied' || scenario === 'branch review approved';
             const accountId = 'account-A', origin = 'https://preview-home.test';
             const app = fastify();
             const homeRequests: string[] = [];
@@ -263,12 +269,36 @@ describe('ordinary preview data teardown composition', () => {
                     if (!lease) throw new Error('Fixture registry unavailable');
                     return lease;
                 }, requestCurrentIntent: async ({ fingerprint }) => ({ status: 'approved', fingerprint }) });
+                const operations = branchReview ? createHostActionOperationRuntime({
+                    serverId: 'home', machineId: 'host', resolveAccountId: async () => accountId,
+                    generateOperationId: () => 'close-operation',
+                }) : undefined;
                 const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
+                    ...(operations ? { runActionOperation: operations.runActionOperation } : {}),
                     approvalsCreate: async ({ request }) => {
                         const parsed = ApprovalRequestV2Schema.parse(request);
                         approvals.set('project-removal-approval', structuredClone(parsed));
                         return { artifactId: 'project-removal-approval', request: parsed };
                     },
+                    approvalsGet: async ({ artifactId }) => structuredClone(approvals.get(artifactId) ?? null),
+                    approvalsUpdate: async ({ artifactId, request, expectedStatus }) => {
+                        const previous = approvals.get(artifactId);
+                        if (!previous) throw new Error('Expected the captured approval');
+                        const next = ApprovalRequestV2Schema.parse(request);
+                        const transition = decideApprovalRequestTransition(previous, next, { expectedStatus });
+                        if (transition.ok) approvals.set(artifactId, structuredClone(next));
+                        return transition;
+                    },
+                    isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentness({
+                        accountId, machineId: 'host', serverId: 'home',
+                        resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'home', machineId: 'host' }),
+                        resolveTarget: createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: origin }),
+                        resolveCurrentSessionAgentSpawnPolicyV1: async () => SessionAgentSpawnPolicyV1Schema.parse({}),
+                        isAccountCurrent: async () => (await axios.get(`${origin}/v1/account/encryption`, {
+                            headers: { Authorization: `Bearer ${token}` },
+                        })).status === 200,
+                        listAccountApiTokens: async () => { throw new Error('A present person has no API-token origin'); },
+                    }),
                     workflowAction: request => created.readWorkflowInvocation(
                         WorkflowActionInputSchemasV1['workflow.run.invocations.get'].parse(request.input), request.context),
                     listContributedActionDefinitions: list,
@@ -286,7 +316,7 @@ describe('ordinary preview data teardown composition', () => {
                     ...(projectDeletion ? scenario === 'project delete linked' ? { providerRemoval: 'delete' } : {} : { dataCreation: { ...created.reference,
                         invocationId: scenario === 'wrong invocation' ? 'unrelated-invocation'
                             : scenario === 'wrong result' ? 'preview-environment-create' : created.reference.invocationId } }) };
-                const context = { surface: scenario === 'project delete agent' ? 'agent' as const : 'cli' as const,
+                const context = { surface: scenario === 'project delete agent' || branchReview ? 'agent' as const : 'cli' as const,
                     authority: 'present_user' as const, runtimeAccountId: accountId, actionRequestId: 'project-removal',
                     actionCaller: { kind: 'host' }, serverId: 'home', serverIdentityId: 'home',
                     externalActionTarget: { kind: 'machine', machineId: 'host' },
@@ -298,6 +328,39 @@ describe('ordinary preview data teardown composition', () => {
                     operationAcceptance: { operationId: 'close-operation', accept() {} } } satisfies import('@happier-dev/protocol').ActionExecutorContext;
                 const execute = () => executor.execute('deployments.teardown', teardownInput, context);
                 const result = await execute();
+                if (branchReview) {
+                    expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+                    expect(approvals.get('project-removal-approval')).toMatchObject({ status: 'open',
+                        actionId: 'deployments.teardown', actionArgs: { targetLinkId: link.id },
+                        preview: { hostReviewedChildren: { children: [
+                            { role: 'branches.delete', input: { providerIdentity: { providerResourceId: 'parent-project-A',
+                                providerEnvironment: 'child-project-A' }, credentialRef: created.input.credentialRef } },
+                        ] } } });
+                    expect(providerRequests).toEqual([]);
+                    expect(materializations).toEqual([]);
+                    expect(transitions).toEqual([]);
+                    const approve = scenario === 'branch review approved';
+                    const decision = await executor.execute('approval.request.decide', { artifactId: 'project-removal-approval',
+                        decision: approve ? 'approve' : 'reject' }, { ...context, surface: 'ui' });
+                    const settled = approvals.get('project-removal-approval');
+                    const approvalDiagnostic = JSON.stringify({ decision, status: settled?.status, execution: settled?.execution,
+                        transitions, providerMethodCount: providerRequests.length });
+                    expect(decision, approvalDiagnostic).toMatchObject({ ok: true });
+                    if (approve) {
+                        expect(settled, approvalDiagnostic).toMatchObject({ status: 'executed', execution: { ok: true } });
+                        expect(providerRequests).toEqual([
+                            { method: 'GET', pathname: '/v1/projects/parent-project-A/branches', authorization: 'Bearer original-A' },
+                            { method: 'DELETE', pathname: '/v1/branches/child-project-A', authorization: 'Bearer original-A' },
+                        ]);
+                        expect(materializations).toEqual([created.input.credentialRef]);
+                        expect(transitions).toEqual([expect.objectContaining({ state: 'succeeded' })]);
+                    } else {
+                        expect(providerRequests).toEqual([]);
+                        expect(materializations).toEqual([]);
+                        expect(transitions).toEqual([]);
+                    }
+                    return;
+                }
                 const diagnostic = JSON.stringify({ result, childResults, providerRequests, materializations });
                 if (projectDeletion) {
                     if (scenario === 'project delete agent') {

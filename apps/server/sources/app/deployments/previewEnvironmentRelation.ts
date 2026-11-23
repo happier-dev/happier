@@ -44,7 +44,7 @@ export async function admitPreviewEnvironmentRelationInTx(tx: Tx, actorAccountId
     if (!link) return deploymentFailure('deployment_conflict');
     const admission = await tx.automation.findFirst({ where: { deploymentEnvironmentId: template.row.id,
         deploymentPreviewRole: 'preview_admission', enabled: true, deletedAt: null }, select: { id: true } });
-    if (!admission) return deploymentFailure('deployment_conflict');
+    if (!admission) return { ok: false as const, error: 'deployment_preview_not_enrolled' as const };
     const relation = { previewTemplateEnvironmentId: template.row.id, previewRepositoryId: input.projectSourceId,
         previewPullRequestId: preview.pullRequestId, previewTargetLinkId: link.id };
     if (input.previewCompanionOfEnvironmentId) {
