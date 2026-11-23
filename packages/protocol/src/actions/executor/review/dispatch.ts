@@ -291,7 +291,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
 
         let reviewInput = data as ReviewStartInput;
         // Workflow reviewers execute detached, but the admitted Session still owns the reviewed changes.
-        const sourceSessionId = reviewInput.sessionId ?? sessionId ?? undefined;
+        const sourceSessionId = normalizeId(reviewInput.sessionId) || sessionId || undefined;
         // Plugin-mediated starts retain the creating Workflow in host context;
         // their immediate Action caller remains the plugin for authorization.
         const creatingWorkflowRunId = ctx.actionCaller?.kind === 'workflowRun'

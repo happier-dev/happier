@@ -252,7 +252,7 @@ describe('createActionExecutor (review.start)', () => {
         return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
       },
     } as ActionExecutorDeps);
-    await executor.execute('review.start', { ...(caller === 'detached workflow' ? { target: { kind: 'detached' } } : { sessionId: 's1' }),
+    await executor.execute('review.start', { ...(caller === 'detached workflow' ? { target: { kind: 'detached' } } : { sessionId: ' s1 ' }),
       scope: 'repository', instructions: 'Review.',
       reviewers: [{ kind: 'engine', engineId: 'codex' }, { kind: 'engine', engineId: 'claude' }] }, {
       surface: caller === 'plugin' ? 'plugin' : 'ui',
