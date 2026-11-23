@@ -98,6 +98,7 @@ import {
 } from './sessionComposerPresentationTargets';
 import { publishPresentationNotice, readPresentationNotice, retirePresentationNotice } from './presentationNotices';
 import { CurrentSessionPresentationRuntime } from './CurrentSessionPresentationRuntime';
+import { PresentationNoticeHost } from './PresentationNoticeHost';
 
 const persistentSessionScope: ServerAccountScope = {
     serverId: 'server-runtime',
@@ -1047,7 +1048,7 @@ describe('CurrentSessionPresentationRuntime', () => {
 
     it('offers a caller-owned local inverse on the one notice host and retires the notice it ran for', async () => {
         const run = vi.fn();
-        const screen = await renderScreen(React.createElement(CurrentSessionPresentationRuntime));
+        const screen = await renderScreen(<PresentationNoticeHost />);
         await flushHookEffects({ cycles: 2, turns: 2 });
 
         await act(async () => {
@@ -1076,7 +1077,7 @@ describe('CurrentSessionPresentationRuntime', () => {
     it('holds the existing notice lifetime open while the inverse control is in use', async () => {
         // Render on real timers first; only the notice lifetime is put on fake
         // timers, so render helpers never await a timer that will not fire.
-        const screen = await renderScreen(React.createElement(CurrentSessionPresentationRuntime));
+        const screen = await renderScreen(<PresentationNoticeHost />);
         await flushHookEffects({ cycles: 2, turns: 2 });
         vi.useFakeTimers();
         try {

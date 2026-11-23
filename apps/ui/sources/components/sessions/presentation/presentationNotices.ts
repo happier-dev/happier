@@ -45,24 +45,10 @@ export function shouldSchedulePresentationNoticeRetirement(notice: PresentationN
     return notice !== null && notice.sticky !== true && !controlEngaged;
 }
 
-/**
- * The app's presentation notice owner.
- *
- * `CurrentSessionPresentationRuntime` renders it and is mounted app-globally by
- * `AuthenticatedAppRuntimeMounts`. Until now the notice lived in that
- * component's local state, reachable only from the daemon's
- * `CurrentSessionPresentation` command stream. Mounted plugin UI needs the same
- * outcome for its `notify` host method (§3.4), and UI-T21 forbids a
- * plugin-only notification store — so the state moved out of the component into
- * this module. Committed personal recipient facts also publish here; none of
- * these producers creates a separate queue or notification history.
- *
- * It follows the presentation domain's existing module-store idiom
- * (`sessionComposerPresentationTargets.ts`): a single current value plus
- * listeners, no queue and no scheduler. A newer notice replaces an older one,
- * which is what the single notice host can show.
- */
-let current: PresentationNotice | null = null;
+// Only plain transient messages remain alongside newer publications. Controls and sticky
+// notices use the existing current-notice contract, including exact inverse ownership.
+const EMPTY_NOTICES: readonly PresentationNotice[] = [];
+let current: readonly PresentationNotice[] = EMPTY_NOTICES;
 const listeners = new Set<() => void>();
 
 function emit(): void {
@@ -70,7 +56,11 @@ function emit(): void {
 }
 
 export function publishPresentationNotice(notice: PresentationNotice): void {
-    current = notice;
+    current = [
+        ...current.filter((previous) => previous.key !== notice.key
+            && !previous.sticky && !previous.undo && !previous.action && !previous.approval),
+        notice,
+    ];
     emit();
 }
 
@@ -79,13 +69,18 @@ export function publishPresentationNotice(notice: PresentationNotice): void {
  * after a newer notice arrived does not clear the newer one.
  */
 export function retirePresentationNotice(key?: string): void {
-    if (current === null) return;
-    if (key !== undefined && current.key !== key) return;
-    current = null;
+    if (current.length === 0) return;
+    const remaining = key === undefined ? EMPTY_NOTICES : current.filter((notice) => notice.key !== key);
+    if (remaining.length === current.length) return;
+    current = remaining.length > 0 ? remaining : EMPTY_NOTICES;
     emit();
 }
 
 export function readPresentationNotice(): PresentationNotice | null {
+    return current.at(-1) ?? null;
+}
+
+export function readPresentationNotices(): readonly PresentationNotice[] {
     return current;
 }
 

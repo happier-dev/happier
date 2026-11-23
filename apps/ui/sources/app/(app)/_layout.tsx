@@ -21,6 +21,7 @@ import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShel
 import { MobileBottomChromeHost } from '@/components/navigation/mobile/chrome/MobileBottomChromeHost';
 import { tryRenderWebPortal } from '@/components/ui/popover/portal';
 import { AuthenticatedAppRuntimeMounts } from '@/components/appShell/runtime/AuthenticatedAppRuntimeMounts';
+import { PresentationNoticeHost } from '@/components/sessions/presentation/PresentationNoticeHost';
 import { DesktopMainWindowRuntimes } from '@/desktop/DesktopMainWindowRuntimes';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
@@ -75,24 +76,27 @@ const sessionRouteScreenOptions = ({ route }: { route: RouteProp<ParamListBase, 
  * the Stack subtree.
  */
 function AuthenticatedAppRuntimeMountsGate({
-    primaryRealm,
+    windowRole,
     isAuthenticated,
     isDesktopShell,
 }: Readonly<{
-    primaryRealm: boolean;
+    windowRole: ReturnType<typeof resolveDesktopWindowContext>['role'];
     isAuthenticated: boolean;
     isDesktopShell: boolean;
 }>): React.ReactElement | null {
     const pathname = useCurrentRoutePathname();
-    if (!primaryRealm || isTerminalConnectWebPathname(pathname)) {
+    if (windowRole === 'presenter' || isTerminalConnectWebPathname(pathname)) {
         return null;
     }
 
     return (
-        <AuthenticatedAppRuntimeMounts
-            isAuthenticated={isAuthenticated}
-            isDesktopShell={isDesktopShell}
-        />
+        <>
+            {windowRole === 'primary' ? <AuthenticatedAppRuntimeMounts
+                isAuthenticated={isAuthenticated}
+                isDesktopShell={isDesktopShell}
+            /> : null}
+            {isAuthenticated ? <PresentationNoticeHost /> : null}
+        </>
     );
 }
 
@@ -229,7 +233,7 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
             {/* The main window's tray and Quit handoff, outside the onboarding gate (R13C-F3). */}
             {isDesktopShell && windowContext.role === 'primary' ? <DesktopMainWindowRuntimes /> : null}
             <AuthenticatedAppRuntimeMountsGate
-                primaryRealm={windowContext.role === 'primary'}
+                windowRole={windowContext.role}
                 isAuthenticated={isAuthenticated}
                 isDesktopShell={isDesktopShell}
             />

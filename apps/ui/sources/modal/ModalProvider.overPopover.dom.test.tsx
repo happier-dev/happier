@@ -120,9 +120,9 @@ it('keeps a notice and its Undo above an open modal', async () => {
             publishPresentationNotice({ key: 'layer-test', message: 'Renamed', severity: 'info', undo: { label: 'Undo', run: () => {} } });
         });
         const undo = document.querySelector<HTMLElement>('[data-testid="current-session-presentation-notice-undo"]')!;
-        const notice = undo.closest<HTMLElement>('[data-testid="current-session-presentation-notice"]')!;
+        const noticeStack = undo.closest<HTMLElement>('[data-testid="presentation-notice-stack"]')!;
         const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
-        expect(Number(window.getComputedStyle(notice).zIndex)).toBeGreaterThan(Number(window.getComputedStyle(dialog).zIndex));
+        expect(Number(window.getComputedStyle(noticeStack).zIndex)).toBeGreaterThan(Number(window.getComputedStyle(dialog).zIndex));
         await act(async () => { retirePresentationNotice('layer-test'); });
     } finally {
         await act(async () => root.unmount());

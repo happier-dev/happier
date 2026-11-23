@@ -37,7 +37,7 @@ import { ProjectCockpitShell } from '@/components/workspaceCockpit/project/Proje
 import { WorkspaceDetailsPanel } from '@/components/projects/panes/WorkspaceDetailsPanel';
 import { useWorkspaceRefById } from './detail/useWorkspaceRefById';
 import { ProjectRightPanel, ProjectRightSidebarProvider, ProjectRightSidebarRail } from './detail/ProjectRightPanel';
-import { ProjectWorktreeRecoveryToast } from './detail/ProjectWorktreeRecoveryToast';
+import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { ProjectOpenResolutionPage } from './ProjectOpenResolution';
 import { ProjectShellHeaderHost } from './shell/ProjectShellHeaderHost';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
@@ -176,6 +176,22 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     const recoveryToastKey = props.recoveryToastKey ?? (!routeOwnsCheckout && didRecoverMissingWorktree
         ? `${workspaceRef?.id ?? props.workspaceRefId}:${requestedRootPath}`
         : null);
+    const recoveryNoticeKey = recoveryToastKey && `project-worktree-recovery:${scopeId}:${recoveryToastKey}`;
+    const shownRecoveryNotice = React.useRef<string | null>(null);
+    React.useEffect(() => {
+        if (!recoveryNoticeKey) {
+            shownRecoveryNotice.current = null;
+            return;
+        }
+        if (!projectPageFocused || props.isFocused === false || shownRecoveryNotice.current === recoveryNoticeKey) return;
+        shownRecoveryNotice.current = recoveryNoticeKey;
+        publishPresentationNotice({
+            key: recoveryNoticeKey,
+            severity: 'warning',
+            message: t('projects.detail.missingWorktreeRecovered'),
+            leading: <Icon name="warning" size={ICON_SIZE.sm} color={theme.colors.state.warning.foreground} />,
+        });
+    }, [projectPageFocused, props.isFocused, recoveryNoticeKey, theme.colors.state.warning.foreground]);
     const { navigateToSegment } = useProjectRouteActions({
         workspaceRef,
         activeRootPath: resolvedActiveRootPath,
@@ -419,7 +435,6 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
                     </ListPresentationProvider>
             </DetailsPaneSlotHost>
             </PageBottomBarSeatProvider>
-            <ProjectWorktreeRecoveryToast recoveryToastKey={recoveryToastKey} />
         </View>
         </ProjectAtmosphereFrame>
         </ProjectPageCatalogProvider>

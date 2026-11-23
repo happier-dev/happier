@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Animated, Platform, View } from 'react-native';
+import { Animated, Platform, View, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 
@@ -19,7 +19,11 @@ import { resolveThemeRaisedEdge } from '@/components/ui/surfaces/themeRaisedEdge
 import { SurfaceRim } from '@/components/ui/surfaces/SurfaceRim';
 import { surfaceUsesRim } from '@/components/ui/surfaces/surfaceEdgeTreatment';
 import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOverlayPointerEvents';
-import { useOptionalSafeAreaInsets } from '@/hooks/ui/useOptionalSafeAreaInsets';
+import { useAppShellContentPane } from '@/components/navigation/shell/appShellContentPane';
+import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
+import { useHeaderHeight } from '@/utils/platform/responsive';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { FLOATING_OVERLAY_METRICS } from '@/components/ui/overlays/floatingOverlayMetrics';
 import { tryRenderWebPortal } from '@/components/ui/popover/portal';
 import { NOTICE_Z_INDEX } from '@/components/ui/overlays/overlayLayers';
@@ -29,40 +33,25 @@ import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprov
 import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 
 import {
-    readPresentationNotice,
+    readPresentationNotices,
+    type PresentationNotice,
     retirePresentationNotice,
     shouldSchedulePresentationNoticeRetirement,
     subscribePresentationNotices,
 } from './presentationNotices';
 
-/**
- * The app's ONE presentation notice, drawn.
- *
- * Every producer — the daemon presentation stream, mounted plugin `notify`, and
- * Board/Companion feedback — publishes to `presentationNotices`; this is the only
- * place that reads it. It lives beside its runtime rather than inside it so the
- * chrome that matters to a person (does it clear the notch, can a thumb hit
- * Undo) can be exercised on its own, without standing up a daemon binding.
- *
- * It performs no domain mutation: `undo` is a caller-owned local inverse that the
- * publisher bound to its own exact target.
- */
-
-/** Distance from the top of the usable window; the notch is added on top of it. */
-const NOTICE_TOP_MARGIN_PX = 12;
-/** It hangs from the top of the window: it drops in from that edge and lifts back into it. */
-const NOTICE_MOTION = resolveOverlayMotionPreset({ kind: 'popover', direction: 'bottom' });
+// Keep entry and exit travel on the content side of the chrome boundary.
+const NOTICE_MOTION = resolveOverlayMotionPreset({ kind: 'popover', direction: 'top' });
 
 /** A notice is a floating surface (toast): the floating hairline and its rim, at the toast's radius. */
 // A floating surface: the `lg` step of the one radius base (the floating-overlay radius).
 const NOTICE_RADIUS_PX = FLOATING_OVERLAY_METRICS.radiusPx;
 
 const stylesheet = StyleSheet.create((theme) => ({
-    noticeHost: {
+    stack: {
         position: 'absolute',
-        left: 16,
-        right: 16,
         alignItems: 'center',
+        gap: theme.space.s8,
         zIndex: NOTICE_Z_INDEX,
     },
     notice: {
@@ -136,100 +125,159 @@ function NoticeApproval({ registration }: Readonly<{ registration: ActionApprova
         onOpenApproval={review.reopen} testID="presentation-notice-approval" />;
 }
 
-export const PresentationNoticeHost = React.memo(function PresentationNoticeHost() {
-    const styles = stylesheet;
-    const { theme } = useUnistyles();
-    const notice = React.useSyncExternalStore(
-        subscribePresentationNotices,
-        readPresentationNotice,
-        readPresentationNotice,
-    );
-    // A retired notice leaves the way it came, still saying what it said, and takes no presses while
-    // it goes; a newer notice replaces the words in place.
-    const lastShownRef = React.useRef(notice);
-    if (notice) lastShownRef.current = notice;
-    // The motion owner moves the card's frame on web by transform, never by opacity on an ancestor of its
-    // glass paint, so the frost keeps sampling whatever is beneath (an open dialog included).
-    const frameRef = React.useRef<React.ComponentRef<typeof Animated.View>>(null);
-    const motion = useOverlayMotionAnimation({ visible: notice !== null, preset: NOTICE_MOTION, elementRef: frameRef });
-    const { present } = useOverlayPresence(notice !== null, motion.exitMs);
-    // The notice floats over whatever the app is showing, so it consumes the
-    // window's own safe region. Without it the card sits under the notch, the
-    // status bar or a rounded corner on the exact devices that have one.
-    const safeAreaInsets = useOptionalSafeAreaInsets();
+type SheetBounds = Readonly<{ top: number; left: number; width: number }>;
 
+export const PresentationNoticeHost = React.memo(function PresentationNoticeHost() {
+    const notices = React.useSyncExternalStore(
+        subscribePresentationNotices,
+        readPresentationNotices,
+        readPresentationNotices,
+    );
+    const visible = notices.length > 0;
+    const lastShown = React.useRef(notices);
+    if (visible) lastShown.current = notices;
+
+    const reducedMotion = useReducedMotionPreference();
+    const { present } = useOverlayPresence(visible, reducedMotion ? NOTICE_MOTION.reducedMotionFadeMs : NOTICE_MOTION.exitMs);
+    return present ? <PositionedNoticeStack notices={lastShown.current} visible={visible} /> : null;
+});
+
+type StackProps = Readonly<{ notices: readonly PresentationNotice[]; visible: boolean }>;
+
+function PositionedNoticeStack(props: StackProps) {
+    const { theme } = useUnistyles();
+    const column = useAppShellColumn();
+    const pane = useAppShellContentPane();
+    const safeArea = useChromeSafeAreaInsets();
+    const headerHeight = useHeaderHeight();
+    const web = Platform.OS === 'web';
+    const desktopPane = web && column.present ? pane : null;
+    const [sheetBounds, setSheetBounds] = React.useState<SheetBounds | null>(null);
+
+    React.useLayoutEffect(() => {
+        if (!desktopPane) {
+            setSheetBounds(null);
+            return;
+        }
+        const measure = () => {
+            const element = desktopPane.ref.current;
+            if (!(element instanceof HTMLElement)) return;
+            const { top, left, width } = element.getBoundingClientRect();
+            if (width <= 0) return;
+            setSheetBounds((previous) => previous?.top === top && previous.left === left && previous.width === width
+                ? previous : { top, left, width });
+        };
+        measure();
+        return desktopPane.subscribeLayout(measure);
+    }, [desktopPane]);
+
+    if (desktopPane && !sheetBounds) return null;
+    const horizontalGutter = theme.space.s16;
+    const position: ViewStyle = sheetBounds && desktopPane
+        ? {
+            top: sheetBounds.top + theme.space.s12,
+            left: sheetBounds.left + horizontalGutter,
+            width: Math.max(0, sheetBounds.width - 2 * horizontalGutter),
+        }
+        : {
+            top: (column.present ? 0 : safeArea.top + headerHeight) + theme.space.s12,
+            left: safeArea.left + horizontalGutter,
+            right: safeArea.right + horizontalGutter,
+        };
+
+    const content = <NoticeStack {...props} position={position} web={web} />;
+    // Keep the shell's overlay reachable above dialogs and outside its hidden retained navigator.
+    return tryRenderWebPortal({
+        shouldPortalWeb: web,
+        portalTargetOnWeb: 'body',
+        modalPortalTarget: null,
+        getBoundaryDomElement: () => null,
+        content,
+    }) ?? content;
+}
+
+function NoticeStack({ notices, visible, position, web }: StackProps & Readonly<{ position: ViewStyle; web: boolean }>) {
+    const frameRef = React.useRef<React.ComponentRef<typeof Animated.View>>(null);
+    const motion = useOverlayMotionAnimation({ visible, preset: NOTICE_MOTION, elementRef: frameRef });
+    const pointer = resolveOverlayPointerEvents('box-none');
+    return (
+        <Animated.View
+            ref={frameRef}
+            style={[
+                stylesheet.stack,
+                web && { position: 'fixed' as ViewStyle['position'] },
+                position,
+                motion.style,
+                pointer.webStyle,
+            ]}
+            pointerEvents={pointer.nativePointerEvents}
+            testID="presentation-notice-stack"
+        >
+            {notices.map((notice) => <NoticeCard key={notice.key} notice={notice} leaving={!visible} />)}
+        </Animated.View>
+    );
+}
+
+function NoticeCard({ notice, leaving }: Readonly<{ notice: PresentationNotice; leaving: boolean }>) {
+    const styles = stylesheet;
     // Holding the existing lifetime open while the Undo control is focused or
     // hovered keeps it from disappearing mid-use. This is the same one host
     // lifecycle, not a second scheduler.
     const [controlEngaged, setControlEngaged] = React.useState(false);
-    const control = notice?.undo ?? notice?.action ?? null;
+    const control = notice.undo ?? notice.action ?? null;
     React.useEffect(() => {
         if (!control) setControlEngaged(false);
     }, [control]);
 
     React.useEffect(() => {
-        if (!notice || !shouldSchedulePresentationNoticeRetirement(notice, controlEngaged)) return;
+        if (leaving || !shouldSchedulePresentationNoticeRetirement(notice, controlEngaged)) return;
         const timeout = setTimeout(() => retirePresentationNotice(notice.key), 4_000);
         return () => clearTimeout(timeout);
-    }, [notice, controlEngaged]);
+    }, [notice, controlEngaged, leaving]);
 
     const onControlPress = React.useCallback(() => {
-        if (!notice || !control) return;
+        if (leaving || !control) return;
         control.run();
         retirePresentationNotice(notice.key);
-    }, [notice, control]);
+    }, [notice, control, leaving]);
 
-    // The empty space beside the card must keep passing touches through to the
-    // app underneath, while the card's own Undo stays hit-testable. React Native
-    // removes a `pointerEvents="none"` view AND its whole subtree from hit
-    // testing, so only `box-none` expresses that; the platform seam itself lives
-    // in the overlay owner every other host here already consumes.
     const hostPointerEvents = resolveOverlayPointerEvents('box-none');
-    const shown = notice ?? lastShownRef.current;
-    const leaving = notice === null;
-    const noticePointerEvents = resolveOverlayPointerEvents((control || notice?.sticky) && !leaving ? 'auto' : 'none');
+    const noticePointerEvents = resolveOverlayPointerEvents((control || notice.sticky) && !leaving ? 'auto' : 'none');
 
-    if (!present || !shown) return null;
-    const shownControl = leaving ? shown.undo ?? shown.action : control;
-    const content = (
+    return (
         <View
-            style={[
-                styles.noticeHost,
-                { top: NOTICE_TOP_MARGIN_PX + safeAreaInsets.top },
-                hostPointerEvents.webStyle,
-            ]}
+            style={hostPointerEvents.webStyle}
             pointerEvents={hostPointerEvents.nativePointerEvents}
             testID={leaving ? 'current-session-presentation-notice-leaving' : 'current-session-presentation-notice'}
             aria-hidden={leaving ? true : undefined}
             accessibilityElementsHidden={leaving}
             importantForAccessibility={leaving ? 'no-hide-descendants' : 'auto'}
         >
-            <Animated.View
-                ref={frameRef}
-                style={[styles.notice, motion.style, noticePointerEvents.webStyle]}
+            <View
+                style={[styles.notice, noticePointerEvents.webStyle]}
                 pointerEvents={noticePointerEvents.nativePointerEvents}
-                accessibilityRole={shown.severity === 'error' ? 'alert' : 'text'}
-                accessibilityLiveRegion={leaving ? 'none' : shown.severity === 'error' ? 'assertive' : 'polite'}
+                accessibilityRole={notice.severity === 'error' ? 'alert' : 'text'}
+                accessibilityLiveRegion={leaving ? 'none' : notice.severity === 'error' ? 'assertive' : 'polite'}
             >
                 <GlassSurface surfaceGroup="floating" style={[StyleSheet.absoluteFillObject, { borderRadius: NOTICE_RADIUS_PX }]}>{null}</GlassSurface>
-                {shown.leading ? <View style={styles.noticeLeading}>{shown.leading}</View> : null}
-                {shown.approval && !leaving ? <NoticeApproval key={shown.approval.artifactId} registration={shown.approval} />
-                    : <Text style={styles.noticeText}>{renderNoticeMessage(shown.message, shown.emphasis, styles.noticeEmphasis)}</Text>}
-                {shownControl ? (
+                {notice.leading ? <View style={styles.noticeLeading}>{notice.leading}</View> : null}
+                {notice.approval && !leaving ? <NoticeApproval key={notice.approval.artifactId} registration={notice.approval} />
+                    : <Text style={styles.noticeText}>{renderNoticeMessage(notice.message, notice.emphasis, styles.noticeEmphasis)}</Text>}
+                {control ? (
                     <HappierPressable
-                        testID={leaving ? undefined : shown.undo
+                        testID={leaving ? undefined : notice.undo
                             ? 'current-session-presentation-notice-undo' : 'current-session-presentation-notice-action'}
                         accessibilityRole="button"
-                        accessibilityLabel={shownControl.label}
+                        accessibilityLabel={control.label}
                         onPress={onControlPress}
                         onFocusChange={setControlEngaged}
                         onHoverChange={setControlEngaged}
                         style={({ pressed }) => [styles.undoControl, pressed && styles.undoControlActive]}
                     >
-                        <Text style={styles.undoLabel}>{shownControl.label}</Text>
+                        <Text style={styles.undoLabel}>{control.label}</Text>
                     </HappierPressable>
                 ) : null}
-                {shown.sticky ? (
+                {notice.sticky ? (
                     <View style={styles.dismissControl}>
                         <IconButton
                             testID={leaving ? undefined : 'current-session-presentation-notice-dismiss'}
@@ -237,21 +285,12 @@ export const PresentationNoticeHost = React.memo(function PresentationNoticeHost
                             iconSize={14}
                             variant="plain"
                             accessibilityLabel={t('common.close')}
-                            onPress={() => retirePresentationNotice(shown.key)}
+                            onPress={() => retirePresentationNotice(notice.key)}
                         />
                     </View>
                 ) : null}
                 <SurfaceRim role="floating" radius={NOTICE_RADIUS_PX} border="modal" />
-            </Animated.View>
+            </View>
         </View>
     );
-    // The authenticated navigator stays mounted but can be hidden by the desktop workspace.
-    // Every publisher shares this host, so escape that branch at the host's one render boundary.
-    return tryRenderWebPortal({
-        shouldPortalWeb: Platform.OS === 'web',
-        portalTargetOnWeb: 'body',
-        modalPortalTarget: null,
-        getBoundaryDomElement: () => null,
-        content,
-    }) ?? content;
-});
+}

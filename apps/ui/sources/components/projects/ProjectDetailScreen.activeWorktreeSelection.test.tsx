@@ -24,6 +24,8 @@ import { registerMountedWorkspaceAction } from '@/components/appShell/workspace/
 import { resolveCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import type { WorkspaceActionOutcome } from '@/components/appShell/workspace/workspaceActions';
+import { PresentationNoticeHost } from '@/components/sessions/presentation/PresentationNoticeHost';
+import { readPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -93,7 +95,11 @@ let workspaceRef: WorkspaceRefV1;
 let unregisterWorkspace: (() => void) | undefined;
 let initializeWorkspaceNavigation: (href: string) => void;
 const commitWorkspaceUrl = vi.fn<(href: string) => void>();
-afterEach(() => { unregisterWorkspace?.(); unregisterWorkspace = undefined; });
+afterEach(() => {
+    unregisterWorkspace?.();
+    unregisterWorkspace = undefined;
+    retirePresentationNotice();
+});
 beforeEach(async () => {
     viewport.width = 1440;
     viewport.height = 900;
@@ -436,7 +442,7 @@ describe('ProjectDetailScreen active worktree selection', () => {
         setPreferences('/repo/.worktrees/deleted-worktree', 'gitwt_deleted');
         const screen = await mount();
         expect(rootPath(screen)).toBe('/repo');
-        expect(screen.findByTestId('project-worktree-recovery-toast')).not.toBeNull();
+        expect(readPresentationNotice()).toMatchObject({ severity: 'warning', message: 'projects.detail.missingWorktreeRecovered' });
         expect(projectLastActiveRootPathState.readAll()).toEqual({
             wr_1: '/repo/.worktrees/deleted-worktree', [selectionKey()]: '/repo',
         });
@@ -453,7 +459,7 @@ describe('ProjectDetailScreen active worktree selection', () => {
             </DestinationInstanceHost>
         </runtime.Wrapper>);
         expect(screen.findByType(ProjectCockpitShell).props.activeRootPath).toBe('/repo');
-        expect(screen.findByTestId('project-worktree-recovery-toast')).not.toBeNull();
+        expect(readPresentationNotice()).toMatchObject({ severity: 'warning', message: 'projects.detail.missingWorktreeRecovered' });
         await vi.waitFor(() => {
             const href = commitWorkspaceUrl.mock.lastCall?.[0];
             expect(href).toBeDefined();
@@ -464,20 +470,22 @@ describe('ProjectDetailScreen active worktree selection', () => {
     });
 
     it('dismisses the worktree recovery notice after the controlled route switches to the repaired checkout', async () => {
-        const screen = await mount({ activeRootPath: '/repo' });
         const onSelectRootPath = vi.fn();
-        const updateCheckout = (activeRootPath: string) => screen.update(<runtime.Wrapper>
+        const projectWithShellNotice = (activeRootPath: string) => <runtime.Wrapper>
+            <PresentationNoticeHost />
             <ProjectDetailScreen workspaceRefId="wr_1" activeRootPath={activeRootPath} onSelectRootPath={onSelectRootPath} />
-        </runtime.Wrapper>);
+        </runtime.Wrapper>;
+        const screen = await renderScreen(projectWithShellNotice('/repo'));
+        const updateCheckout = (activeRootPath: string) => screen.update(projectWithShellNotice(activeRootPath));
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
         try {
             await updateCheckout('/repo/.worktrees/deleted-worktree');
             expect(onSelectRootPath).toHaveBeenCalledWith('/repo');
-            expect(screen.findByTestId('project-worktree-recovery-toast')).not.toBeNull();
+            expect(screen.findByTestId('current-session-presentation-notice')).not.toBeNull();
             await updateCheckout('/repo');
-            expect(screen.findByTestId('project-worktree-recovery-toast')).not.toBeNull();
+            expect(screen.findByTestId('current-session-presentation-notice')).not.toBeNull();
             await act(async () => { vi.runOnlyPendingTimers(); });
-            expect(screen.findByTestId('project-worktree-recovery-toast')).toBeNull();
+            expect(screen.findByTestId('current-session-presentation-notice')).toBeNull();
         } finally {
             vi.useRealTimers();
         }

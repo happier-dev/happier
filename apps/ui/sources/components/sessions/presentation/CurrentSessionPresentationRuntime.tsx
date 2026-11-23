@@ -25,7 +25,6 @@ import { normalizeSessionAddress, sessionAddressKey, type SessionAddress } from 
 import { sessionRpcWithPreferredSessionScope } from '@/sync/runtime/orchestration/serverScopedRpc/sessionRpcWithPreferredSessionScope';
 
 import { applyCurrentSessionPresentationCommand } from './applyCurrentSessionPresentationCommand';
-import { PresentationNoticeHost } from './PresentationNoticeHost';
 import { desktopHostKind } from '@/utils/platform/desktopHost';
 import { observeDesktopAppWindowSurfaces, publishDesktopAppWindowSurface } from '@/desktop/window/appWindowSurface';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -366,5 +365,5 @@ export const CurrentSessionPresentationRuntime = React.memo(function CurrentSess
     // the daemon command stream above, mounted plugin UI's `notify` host method
     // (§3.4) and Board/Companion feedback; this component only keeps it mounted
     // app-globally.
-    return <PresentationNoticeHost />;
+    return null;
 });

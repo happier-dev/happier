@@ -1,5 +1,5 @@
 import { type SessionMessageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
@@ -660,6 +660,22 @@ describe('encryption telemetry', () => {
             count: 1,
             fields: { items: 1 },
         });
+    });
+
+    it('keeps a handled metadata parse failure in diagnostics instead of emitting a developer error toast', async () => {
+        const encryptor = new AES256Encryption(new Uint8Array(32).fill(6));
+        const machine = new MachineEncryption('machine-invalid-metadata', encryptor, new EncryptionCache());
+        const [ciphertext] = await encryptor.encrypt([{ host: 42 }]);
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+        try {
+            expect(await machine.decryptMetadata(1, encodeBase64(ciphertext, 'base64'))).toBeNull();
+            expect(error).not.toHaveBeenCalled();
+            expect(info).toHaveBeenCalledWith('Failed to parse machine metadata:', expect.any(Error));
+        } finally {
+            error.mockRestore();
+            info.mockRestore();
+        }
     });
 
     it('records machine raw encryption attribution event names with numeric fields', async () => {

@@ -3,13 +3,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { flattenTestStyle, renderScreen, standardCleanup } from '@/dev/testkit';
 
-// The window's own measured safe region. A phone with a notch reports it; the
-// notice floats over everything and has to consume it like any other chrome.
-vi.mock('@/hooks/ui/useOptionalSafeAreaInsets', () => ({
-    ZERO_SAFE_AREA_INSETS: { top: 0, right: 0, bottom: 0, left: 0 },
-    useOptionalSafeAreaInsets: () => ({ top: 47, right: 0, bottom: 34, left: 0 }),
-}));
-
 import { publishPresentationNotice, readPresentationNotice, retirePresentationNotice } from './presentationNotices';
 import { PresentationNoticeHost } from './PresentationNoticeHost';
 
@@ -50,19 +43,28 @@ describe('PresentationNoticeHost', () => {
         } finally { vi.useRealTimers(); }
     });
 
-    it('clears the window safe region instead of resting under the notch', async () => {
-        publishPresentationNotice({
-            key: 'notice-safe-area',
-            message: 'Added to Companion',
-            severity: 'info',
-        });
-
+    it('shows independent transient messages together and expires them on their own lifetimes', async () => {
         const screen = await renderScreen(<PresentationNoticeHost />);
-        const style = flattenTestStyle(
-            screen.findByTestId('current-session-presentation-notice')?.props.style,
-        );
+        vi.useFakeTimers();
+        try {
+            await React.act(async () => {
+                publishPresentationNotice({ key: 'first', message: 'Saved the first change', severity: 'info' });
+            });
+            await React.act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+            await React.act(async () => {
+                publishPresentationNotice({ key: 'second', message: 'The second change failed', severity: 'error' });
+            });
+            expect(screen.findAllByTestId('current-session-presentation-notice')).toHaveLength(2);
 
-        expect(style.top).toBeGreaterThanOrEqual(47);
+            await React.act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+            expect(screen.findAllByTestId('current-session-presentation-notice')).toHaveLength(1);
+            expect(screen.getTextContent()).toContain('The second change failed');
+
+            await React.act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+            expect(screen.findAllByTestId('current-session-presentation-notice')).toHaveLength(0);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('stays out of the way of touches while its one control stays reachable', async () => {

@@ -137,7 +137,8 @@ export class MachineEncryption {
             
             const parsed = MachineMetadataSchema.safeParse(decrypted[0]);
             if (!parsed.success) {
-                console.error('Failed to parse machine metadata:', parsed.error);
+                // This row is skipped. Keep the diagnostic in logs without a blocking development toast.
+                console.info('Failed to parse machine metadata:', parsed.error);
                 return null;
             }
 
