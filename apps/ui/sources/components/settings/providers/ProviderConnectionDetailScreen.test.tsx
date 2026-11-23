@@ -635,8 +635,7 @@ describe('ProviderConnectionDetailScreen', () => {
             };
             expect(snapshot, JSON.stringify(snapshot)).toMatchObject({ header: expect.any(Array) });
         });
-        // A gateway's on/off is the header switch, as on every connection (lab s2svc:gateway), and only
-        // there: the ⋯ menu does not repeat it. What runs on one machine is the Runs on section's.
+        // The header changes the selected scope. Placement and the ⋯ menu have separate jobs.
         await waitForHomeGovernance(() => expect(screen.findByTestId('provider-connection-enabled')).not.toBeNull());
         expect(findMenuAction(screen, 'gatewayEnabled')).toBeUndefined();
         // The ⋯ menu speaks about a gateway: no Provider duplicate/custom-copy items, and removal names the gateway.
@@ -662,12 +661,14 @@ describe('ProviderConnectionDetailScreen', () => {
         vi.mocked(Modal.show).mockClear();
         await act(async () => { controls!.props.onConnectService('happier.agent.codex/openai-codex'); });
         expect(Modal.show).toHaveBeenLastCalledWith(expect.objectContaining({ props: expect.objectContaining({
-            request: { scope: { serverId: resolveServerProfileScopeIdForIdentifier(account.serverId), accountId: `account-gateway-${status}` },
+            request: { intent: 'link', scope: { serverId: resolveServerProfileScopeIdForIdentifier(account.serverId), accountId: `account-gateway-${status}` },
                 service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } },
         }) }));
         vi.mocked(Modal.show).mock.calls.at(-1)?.[0].onRequestClose?.();
         await flushHookEffects();
-        expect(screen.findByTestId('provider-connection-enabled')?.props.value).toBe(true);
+        expect(screen.findByTestId('provider-connection-enabled')?.props).toMatchObject({
+            value: false, accessibilityLabel: 'settingsProvidersCollection.onMachine(machine=Mac)',
+        });
         expect(providerHarness.state.requests.some(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE
             && request.machineId === 'machine-b')).toBe(true);
         await waitForHomeGovernance(() => {
@@ -751,7 +752,7 @@ describe('ProviderConnectionDetailScreen', () => {
         }
     });
 
-    it('says an off gateway once: the header switch is its one enable control and Test waits for it', async () => {
+    it.each(['account', 'machine'] as const)('restores only the %s gateway grant when all grants are off', async scope => {
         installBundledProviderDeclarationsRpcBoundary(providerHarness);
         const saved = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_gateway',
             source: { kind: 'contribution', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi' },
@@ -759,8 +760,8 @@ describe('ProviderConnectionDetailScreen', () => {
             deployment: { kind: 'managedLocal' }, gatewayPlacement: { kind: 'sessionMachine' },
             revision: 3, createdAt: 1, updatedAt: 1 });
         const catalog = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [saved] });
-        await account.restore({ accountId: 'account-gateway-off', catalog, machines,
-            waivedActions: ['providers.connections.update'] });
+        await account.restore({ accountId: `account-gateway-restore-${scope}`, catalog, machines,
+            waivedActions: ['providers.connections.enabled.set'] });
         await account.home.selectHomes([account.serverId]);
         await account.selectMachine(account.serverId, 'machine-a');
         state.connection = createProviderConnectionViewFixture({ connectionId: saved.id,
@@ -776,7 +777,7 @@ describe('ProviderConnectionDetailScreen', () => {
             runtime: { health: 'available', modelCount: 3, checkedAt: 1, endpoints: [],
                 gateway: { status: 'idle', reachability: 'not_checked' } },
         });
-        installDetailCatalog({ saved });
+        const stored = installDetailCatalog({ saved });
         const screen = await renderReadyProviderDetail(<DetailNavigationBoundary>
             <ProviderConnectionDetailScreen connectionId={saved.id} />
         </DetailNavigationBoundary>);
@@ -784,19 +785,40 @@ describe('ProviderConnectionDetailScreen', () => {
         // Off is said once, in the header, beside its one switch; idle needs the gateway on.
         const meta = findComposite(screen, 'provider-connection-header', 'meta')?.props.meta as Array<{ key: string; text: string }>;
         expect(meta.map(row => [row.key, row.text])).toEqual([['gateway-status', 'settingsProvidersCollection.gateway.statusOff']]);
-        // No second "not enabled" card with its own Enable, and no Use on all machines switch.
+        // No recovery banner for an intentionally absent grant. The individual grants are in Advanced.
         expect(screen.findAll(node => typeof node.props.enableOnMachine === 'function')).toHaveLength(0);
         expect(screen.findByTestId('provider-connection-account-access')).toBeNull();
         // Test is unavailable until the gateway is on.
         expect(screen.findByTestId('provider-connection-test')?.props.disabled).toBe(true);
+
+        expect(screen.findByTestId('provider-connection-advanced')).not.toBeNull();
+        await openAdvanced(screen);
+        const grantTitle = scope === 'account' ? 'settings.account' : 'Mac';
+        const grantSwitch = () => screen.findAllByType(Item)
+            .find(item => item.props.title === grantTitle)?.props.rightElement?.props;
+        await waitForHomeGovernance(() => expect(grantSwitch()).toMatchObject({ value: false, onValueChange: expect.any(Function) }));
+        await act(async () => { grantSwitch()?.onValueChange(true); });
+
+        if (scope === 'account') {
+            await waitForHomeGovernance(() => expect(stored.catalog.accountGrants).toEqual([expect.objectContaining({ connectionId: saved.id })]));
+            expect(stored.catalog.machineGrants).toEqual([]);
+            expect(run).not.toHaveBeenCalled();
+        } else {
+            await waitForHomeGovernance(() => expect(run.mock.calls).toEqual([[
+                expect.objectContaining({ action: 'setEnabled', scope: 'machine', machineId: 'machine-a', enabled: true }),
+                'machine:machine-a',
+            ]]));
+            expect(stored.catalog.accountGrants).toEqual([]);
+            expect(stored.writes).toBe(0);
+        }
     });
 
-    it('turns a gateway on where it runs with its one header switch, never a second "Enable on machine" card', async () => {
+    it('enables the selected Machine from the header without changing the gateway hub', async () => {
         installBundledProviderDeclarationsRpcBoundary(providerHarness);
         const saved = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_gateway',
             source: { kind: 'contribution', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi' },
             role: 'named', displayName: 'Subscriptions', displayNameMode: 'custom',
-            deployment: { kind: 'managedLocal' }, gatewayPlacement: { kind: 'sessionMachine' },
+            deployment: { kind: 'managedLocal' }, gatewayPlacement: { kind: 'machine', machineId: 'machine-b' },
             revision: 3, createdAt: 1, updatedAt: 1 });
         const catalog = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [saved] });
         await account.restore({ accountId: 'account-gateway-half-on', catalog, machines,
@@ -828,11 +850,74 @@ describe('ProviderConnectionDetailScreen', () => {
         expect(meta.map(row => [row.key, row.text])).toEqual([['gateway-status', 'settingsProvidersCollection.gateway.statusOff']]);
         expect(screen.findAll(node => typeof node.props.enableOnMachine === 'function')).toHaveLength(0);
         expect(screen.findByTestId('provider-connection-test')?.props.disabled).toBe(true);
-        // On enables it on the machine it runs on, the write the card's button made.
+        // The saved hub is machine-b. The header grants only the selected machine-a.
         await act(async () => { await screen.findByTestId('provider-connection-enabled')?.props.onValueChange(true); });
         await waitForHomeGovernance(() => expect(run).toHaveBeenCalledWith(
             expect.objectContaining({ action: 'setEnabled', scope: 'machine', machineId: 'machine-a', enabled: true }),
             'machine:machine-a'));
+    });
+
+    it.each(['machine-a', null] as const)('turns a gateway off with the displayed scope (%s)', async selectedMachineId => {
+        installBundledProviderDeclarationsRpcBoundary(providerHarness);
+        const connectionId = 'pc_gateway';
+        let catalog = ProviderConnectionsCatalogV1Schema.parse({
+            ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
+            connections: [{
+                v: 1, id: connectionId, source: { kind: 'contribution', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi' },
+                role: 'named', displayName: 'Subscriptions', displayNameMode: 'custom',
+                deployment: { kind: 'managedLocal' }, gatewayPlacement: { kind: 'machine', machineId: 'machine-b' },
+                revision: 3, createdAt: 1, updatedAt: 1,
+            }],
+            machineGrants: ['machine-a', 'machine-b'].map(machineId => ({
+                v: 1, connectionId, machineId, endpointSetFingerprint: 'gateway-endpoints',
+                connectionSecurityFingerprint: 'machine-security', confirmedAt: 1,
+            })),
+        });
+        const { readAccountProviderDeclarations } = await import('@/providers/catalog/accountProviderDeclarations');
+        const execute = createAccountProviderActionExecuteV1({
+            assertCurrent() {}, now: () => 10,
+            readCatalog: async () => ({ status: 'ready', revision: 1, catalog }),
+            readDefinitions: async () => readAccountProviderDeclarations({ kind: 'account' }),
+            writeCatalog: async (input) => { catalog = input.catalog; return { status: 'updated' }; },
+        });
+        expect(await execute(parseProviderActionRequestV1('providers.connections.enabled.set', {
+            action: 'setEnabled', connectionId, scope: 'account', enabled: true,
+        }), {})).toMatchObject({ ok: true });
+        await account.restore({ accountId: `account-gateway-off-${selectedMachineId}`, catalog,
+            machines: selectedMachineId ? machines : [], waivedActions: ['providers.connections.enabled.set'] });
+        await account.home.selectHomes([account.serverId]);
+        await account.selectMachine(account.serverId, selectedMachineId);
+        const stored = installProviderConnectionsCatalogHttpBoundary({ home: account.home, serverId: account.serverId, catalog });
+        const saved = catalog.connections[0]!;
+        state.connection = createProviderConnectionViewFixture({ connectionId, contributionKey: 'happier.provider.cliproxyapi/cliproxyapi',
+            revision: saved.revision, displayName: saved.displayName, displayNameMode: saved.displayNameMode, role: saved.role,
+            deployment: { kind: 'managedLocal', targetMachineId: 'machine-b', effects: null },
+            gatewayPlacement: saved.gatewayPlacement,
+            grants: { accountEnabled: true, enabledMachineIds: ['machine-a', 'machine-b'], accountState: 'valid',
+                machineState: 'valid', effectiveState: 'valid' },
+        });
+        const screen = await renderReadyProviderDetail(<ProviderConnectionDetailScreen connectionId={connectionId} />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('provider-connection-enabled')?.props.value).toBe(true));
+        expect(screen.findByTestId('provider-connection-enabled')?.props.accessibilityLabel).toBe(selectedMachineId
+            ? 'settingsProvidersCollection.onMachine(machine=Mac)' : 'settings.account');
+        const turnOff = async () => { await act(async () => { screen.findByTestId('provider-connection-enabled')?.props.onValueChange(false); }); };
+
+        if (selectedMachineId === null) {
+            confirm.mockResolvedValueOnce(false);
+            await turnOff();
+            expect(confirm).toHaveBeenCalledExactlyOnceWith('settingsProvidersCollection.turnOffAccountScope(count=2)', undefined,
+                expect.objectContaining({ destructive: true }));
+            expect(stored.writes).toBe(0);
+            confirm.mockClear();
+        }
+
+        await turnOff();
+
+        await waitForHomeGovernance(() => expect(stored.writes).toBe(1));
+        expect(stored.catalog.accountGrants).toEqual(selectedMachineId ? catalog.accountGrants : []);
+        expect(stored.catalog.machineGrants).toEqual(selectedMachineId
+            ? catalog.machineGrants.filter(grant => grant.machineId !== selectedMachineId) : []);
+        expect(confirm).toHaveBeenCalledTimes(selectedMachineId ? 0 : 1);
     });
 
     it.each(['none', 'offline'] as const)('edits gateway placement and helper pins through the Account writer with %s machine availability', async availability => {

@@ -13011,6 +13011,8 @@ const ja: ProviderCollectionCopy = {
         discard: '破棄',
         enabled: '有効',
         enabledDescription: 'エージェントのモデル選択にこのモデルを表示します',
+        turnOffAccountScope: ({ count }: { count: number }) => count === 0
+            ? 'アカウントで無効にしますか？' : `アカウントと${count}台のマシンで無効にしますか？`,
         saved: '保存済み',
         replace: '置き換え',
         addKey: 'キーを追加',

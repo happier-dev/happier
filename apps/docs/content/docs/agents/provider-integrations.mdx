@@ -254,6 +254,11 @@ chosen hub machine. Saving a hub does not prove it is online, and describes wher
 gateway requests run rather than where a model performs inference. Shared hub
 execution and the settings controls are still undergoing integration validation.
 
+With a machine selected, the gateway header switch changes only that machine’s
+grant. In the Account view, turning the gateway off asks for confirmation and
+shows how many machine grants will be removed along with your account grant.
+Open **Advanced** to restore individual grants while the gateway is off.
+
 Development gateway details read **Running** or **Idle** from the daemon that
 owns the saved placement. If that observation is unavailable, the process status
 is **Not checked**. Peer reachability is separately **Not checked**; an online hub

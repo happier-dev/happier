@@ -13087,6 +13087,8 @@ const ru: ProviderCollectionCopy = {
         discard: 'Отменить',
         enabled: 'Включён',
         enabledDescription: 'Показывать его модели в выборе моделей агентов',
+        turnOffAccountScope: ({ count }: { count: number }) => count === 0
+            ? 'Отключить для вашего аккаунта?' : `Отключить для вашего аккаунта и указанных машин (${count})?`,
         saved: 'Сохранён',
         replace: 'Заменить',
         addKey: 'Добавить ключ',

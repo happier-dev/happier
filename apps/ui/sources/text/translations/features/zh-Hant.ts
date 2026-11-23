@@ -12951,6 +12951,8 @@ const zhHant: ProviderCollectionCopy = {
         discard: '捨棄',
         enabled: '已啟用',
         enabledDescription: '在代理的模型選擇器中提供其模型',
+        turnOffAccountScope: ({ count }: { count: number }) => count === 0
+            ? '要為你的帳戶關閉嗎？' : `要為你的帳戶和 ${count} 台機器關閉嗎？`,
         saved: '已儲存',
         replace: '取代',
         addKey: '新增金鑰',

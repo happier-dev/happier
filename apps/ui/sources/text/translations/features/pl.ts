@@ -13087,6 +13087,8 @@ const pl: ProviderCollectionCopy = {
         discard: 'Odrzuć',
         enabled: 'Włączony',
         enabledDescription: 'Pokazuj jego modele w wyborze modeli agentów',
+        turnOffAccountScope: ({ count }: { count: number }) => count === 0
+            ? 'Wyłączyć na Twoim koncie?' : `Wyłączyć na Twoim koncie i na wskazanych maszynach (${count})?`,
         saved: 'Zapisany',
         replace: 'Zastąp',
         addKey: 'Dodaj klucz',

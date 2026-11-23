@@ -13053,6 +13053,8 @@ const pt: ProviderCollectionCopy = {
         discard: 'Descartar',
         enabled: 'Ativado',
         enabledDescription: 'Oferecer os seus modelos nos seletores de modelos dos agentes',
+        turnOffAccountScope: ({ count }: { count: number }) => count === 0
+            ? 'Desativar para a sua conta?' : `Desativar para a sua conta e ${count} ${count === 1 ? 'máquina' : 'máquinas'}?`,
         saved: 'Guardada',
         replace: 'Substituir',
         addKey: 'Adicionar chave',

@@ -2002,6 +2002,12 @@ gateway use clears its slot only while that exact pool still owns it; replacing
 a slot preserves other vendors. An empty saved configuration is allowed, but
 does not authorize an unbound runtime.
 
+In 0.3 development, the gateway detail header changes only the selected Machine's
+grant in a Machine view. In the Account view, turning it off confirms how many
+Machines are affected before removing the Account grant and all Machine grants.
+The individual grants remain editable under **Advanced** while the gateway is
+off. **Runs on** owns runtime placement separately.
+
 In 0.3 development, Machine descriptions and probe admission report an unbound
 gateway as `provider_connection_invalid` with the closed
 `reason: managed_purpose_bindings_missing`, non-retryable `review_connection`

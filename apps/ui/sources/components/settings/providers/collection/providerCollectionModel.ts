@@ -264,9 +264,8 @@ export function areProviderGatewayDeclarationsKnown(input: Readonly<{
 
 /** Saved identity and admitted bundled declarations suffice; no machine projection is required. */
 /**
- * The one "is this gateway on" fact: admitted for the Account and enabled on a machine to run on. The
- * gateway's header switch writes both, so the rail, the gateway page and a pool's "Use in other agents"
- * read the same answer.
+ * Gateway availability requires an Account grant and at least one Machine grant.
+ * This describes the gateway overall. A scoped grant switch reads its own grant.
  */
 export function isProviderGatewayOn(grants: Readonly<{ accountEnabled: boolean; enabledMachineCount: number }>): boolean {
     return grants.accountEnabled && grants.enabledMachineCount > 0;

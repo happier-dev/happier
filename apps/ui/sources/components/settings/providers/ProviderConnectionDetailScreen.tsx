@@ -240,13 +240,13 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     // Row presses reach the same Machine Administration selection owner the
     // shared selector writes, so no Provider route keeps a second preference.
     const targetSelection = providerTarget.selection;
+    const selectedMachineId = targetSelection.selectedTarget?.machineId ?? null;
     const selectTargetMachine = React.useCallback((target: MachineAdministrationTargetV1) => {
         targetSelection.selectTarget(target);
     }, [targetSelection]);
     const focused = useIsFocused();
     const query = useProviderConnections({ enabled: enabled && accountAddressAvailable, active: focused, machineId, serverId, connectionId: props.connectionId });
     const connection = query.data?.connections.find((item) => item.connectionId === props.connectionId) ?? null;
-    const machineSectionVisible = connection?.scope === 'machine' || (connection?.grants.enabledMachineIds.length ?? 0) > 0;
     const refreshConnectionQuery = React.useCallback(async (scope?: ProviderConnectionRefreshScope): Promise<void> => {
         await query.refresh(scope);
     }, [query.refresh]);
@@ -786,12 +786,13 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     [connectionContributionKey, query.declarationContext]);
     const gateway = storedConnection && gatewayDeclarations && gatewayDeclarations.length > 0
         ? { saved: storedConnection, declarations: gatewayFamilies ?? gatewayDeclarations } : null;
+    const machineSectionVisible = gateway !== null || connection?.scope === 'machine' || (connection?.grants.enabledMachineIds.length ?? 0) > 0;
     const gatewayFamilyFacts = React.useMemo(() => gatewayFamilies && connectionContributionKey
         ? presentProviderGatewayFamilyFacts({ contributionKey: connectionContributionKey, purposes: gatewayFamilies, localize: localizePluginText, catalogSnapshot: models.catalogSnapshot })
         : {}, [gatewayFamilies, connectionContributionKey, localizePluginText, models.catalogSnapshot]);
     const gatewayModelRoles = React.useMemo(() => gatewayDeclarations?.length
         ? readProviderGatewayModelRoles(query.declarationContext) : [], [gatewayDeclarations?.length, query.declarationContext]);
-    const availabilityVisible = connection !== null && (connection.scope === 'account' || connection.grants.accountState !== 'absent');
+    const availabilityVisible = connection !== null && (gateway !== null || connection.scope === 'account' || connection.grants.accountState !== 'absent');
     const teamsSharingAvailable = Boolean(teamCredentialResourcesEnabled && selectedTargetServerMatchesActiveAccount && serverId);
     // An intentionally absent grant reports Off, not a broken configuration. Stale grants and actual
     // authorization failures still need the repair controls without the person opening Advanced first.
@@ -806,11 +807,8 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     // A repair the presenter scopes to the Account (and the Account grant fact itself) is made by Use on all machines.
     const accountGrantStale = advancedRepairError === 'provider_account_grant_stale'
         || (advancedRepairError != null && presentProviderError(advancedRepairError).scope === 'account');
-    // A gateway runs where Runs on says and is reached through Happier: availability, grants and
-    // endpoints are a gateway user's concern only when one of them is broken and needs the repair.
-    const advancedAvailable = gateway
-        ? advancedNeedsAttention
-        : availabilityVisible || machineSectionVisible || teamsSharingAvailable || (connection?.endpoints.length ?? 0) > 0;
+    // Individual gateway grants remain editable in Advanced even when none are enabled.
+    const advancedAvailable = availabilityVisible || machineSectionVisible || teamsSharingAvailable || (connection?.endpoints.length ?? 0) > 0;
     // A stale Account grant needs only Availability, which then stands on its own with the cause under its switch;
     // the rest of Advanced (Machines, sharing, endpoints) stays behind its toggle.
     const availabilityRepair = accountGrantStale && availabilityVisible;
@@ -885,25 +883,30 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     }, [addressedScope]);
 
     const setConnectionEnabled = React.useCallback(async (next: boolean) => {
+        if (!next) {
+            if (!query.catalog) return;
+            const affectedMachines = new Set(query.catalog.machineGrants
+                .filter(grant => grant.connectionId === props.connectionId)
+                .map(grant => grant.machineId));
+            const confirmed = await Modal.confirm(
+                t('settingsProvidersCollection.turnOffAccountScope', { count: affectedMachines.size }),
+                undefined,
+                { confirmText: t('common.disable'), destructive: true },
+            );
+            if (!confirmed) return;
+        }
         invalidateProbe();
         await mutation.run(buildProviderConnectionEnableMutation({
             connectionId: props.connectionId, enabled: next, access: 'connection',
-        }), 'enable:connection');
-    }, [invalidateProbe, machineId, mutation, props.connectionId]);
+        }), 'enable:connection', next ? undefined : { confirmed: true });
+    }, [invalidateProbe, mutation, props.connectionId, query.catalog]);
 
-    // A gateway's one switch turns it on where it runs: the Account admits it, and the machine it runs
-    // on (its chosen machine, or this one for a per-session gateway) enables it. Off clears both.
-    const gatewayGrants = connection?.grants;
-    const setGatewayEnabled = React.useCallback(async (next: boolean) => {
-        if (!next || !gatewayGrants) {
-            await setConnectionEnabled(next);
-            return;
-        }
-        if (!gatewayGrants.accountEnabled) await setConnectionEnabled(true);
-        if (gatewayHubMachineId && !gatewayGrants.enabledMachineIds.includes(gatewayHubMachineId)) {
-            await setMachineEnabled(gatewayHubMachineId, true);
-        }
-    }, [gatewayGrants, gatewayHubMachineId, setConnectionEnabled, setMachineEnabled]);
+    const setAccountEnabled = React.useCallback(async (next: boolean) => {
+        invalidateProbe();
+        await mutation.run(buildProviderConnectionEnableMutation({
+            connectionId: props.connectionId, enabled: next, access: 'account',
+        }), 'enable:account');
+    }, [invalidateProbe, mutation, props.connectionId]);
 
     const openWebsite = React.useCallback(async (url: string) => {
         let opened = false;
@@ -980,10 +983,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     const accountGrantStaleShownAtControl = accountGrantStale && displayFailure !== null
         && displayFailure.error !== mutation.error && presentProviderError(displayFailure.error).scope === 'account'
         && (connection?.scope === 'account' || connection?.grants.accountState !== 'absent');
-    // An off gateway is said once, by its header line and switch (its one enable control), not by a
-    // second "not enabled here" card with its own Enable. On means running somewhere: the Account
-    // admits it and a machine runs it, the two grants its switch writes together.
-    const gatewayOff = Boolean(gateway) && connection != null && !isProviderGatewayOn({
+    const gatewayOff = gateway !== null && connection != null && !isProviderGatewayOn({
         accountEnabled: connection.grants.accountEnabled,
         enabledMachineCount: connection.grants.enabledMachineIds.length,
     });
@@ -1037,6 +1037,11 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         ? machineRows.find((row) => row.target.machineId === managedDeployment.targetMachineId)?.displayName ?? null
         : null;
     const connectionEnabled = gateway ? !gatewayOff : presentation.enabled;
+    const gatewayHeader = gateway !== null || gatewayArriving;
+    const headerMachineId = gatewayHeader || connection.scope === 'machine' ? selectedMachineId : null;
+    const headerEnabled = headerMachineId
+        ? connection.grants.enabledMachineIds.includes(headerMachineId)
+        : gatewayHeader ? accountGrantValid : connectionEnabled;
     // Enablement is configuration, never credential verification. An untested
     // connection keeps its health visible even before a Machine is connected.
     const statusQuiet = presentation.status === 'available' || presentation.status === 'disabled';
@@ -1126,8 +1131,8 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     const gatewayProbeDetail = gateway && connectionEnabled && connection.probeCapability !== 'none' && probeState !== 'probing'
         ? probeDetail : null;
     const apiKeyActionsDisabled = !selectedTargetServerMatchesActiveAccount;
-    const selectedMachineName = machineId
-        ? machineRows.find((row) => row.target.machineId === machineId)?.displayName ?? null
+    const selectedMachineName = selectedMachineId
+        ? machineRows.find((row) => row.target.machineId === selectedMachineId)?.displayName ?? null
         : null;
     // A request to an external endpoint leaves the session's computer for the provider's host.
     const endpointHosts = connection.deployment.kind === 'external'
@@ -1241,36 +1246,32 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     );
     // A failed write from a control inside Advanced (account access, a machine grant) keeps its status, with
     // its retry or fresh-read action, right under that control rather than far above it.
-    const accountAccessShown = connection.scope === 'account' || connection.grants.accountState !== 'absent';
     const mutationFailureKey = displayFailure?.error === mutation.error ? mutation.errorKey : null;
     const failureBesideKey = mutationFailureKey !== null
         && (mutationFailureKey === 'enable:account'
-            ? accountAccessShown && (advancedShown || availabilityRepair)
+            ? availabilityVisible && (advancedShown || availabilityRepair)
             : !advancedShown ? false
             : machineSectionVisible && readableMachineRows.some((row) => `machine:${row.target.machineId}` === mutationFailureKey))
         ? mutationFailureKey
         : null;
-    const availabilitySection = availabilityVisible && !gateway ? (
+    const accountAccessLabel = gateway ? t('settings.account') : t('settingsProviders.detail.accountAccess');
+    const availabilitySection = availabilityVisible ? (
         <ItemGroup
             title={t('settingsProvidersCollection.availabilityTitle')}
             description={t('settingsProvidersCollection.availabilityDescription')}
         >
             <Item
                 testID="provider-connection-account-access"
-                title={t('settingsProviders.detail.accountAccess')}
+                title={accountAccessLabel}
                 subtitle={accountGrantStale
                     ? t('settingsProviders.accountAccessStale')
-                    : t('settingsProviders.detail.accountAccessDescription')}
+                    : gateway ? undefined : t('settingsProviders.detail.accountAccessDescription')}
                 subtitleLines={0}
                 showChevron={false}
                 rightElement={mutation.isPending('enable:account')
                     ? <ActivitySpinner size="small" />
-                    : <Switch accessibilityLabel={t('settingsProviders.detail.accountAccess')} value={accountGrantValid} onValueChange={(next) => {
-                        invalidateProbe();
-                        void mutation.run(buildProviderConnectionEnableMutation({
-                            connectionId: props.connectionId, enabled: next, access: 'account',
-                        }), 'enable:account');
-                    }} />}
+                    : <Switch accessibilityLabel={accountAccessLabel} value={accountGrantValid}
+                        onValueChange={(next) => void setAccountEnabled(next)} />}
                 rightElementOutsidePressable
             />
             {failureBesideKey === 'enable:account' ? failureItems : null}
@@ -1382,15 +1383,17 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                         {/* Share is a header action, as on an account or a pool (lab crDetail). */}
                         {credentialShareSource && !headerActionsFold ? <CredentialShareButton testID="provider-connection-share" name={presentation.title}
                             source={credentialShareSource} /> : null}
-                        {/* On/off is the header switch on every connection, a gateway included (lab s2svc:gateway). */}
                         <PageHeaderStateSwitch
                             testID="provider-connection-enabled"
-                            label={t('settingsProvidersCollection.enabled')}
-                            accessibilityHint={t('settingsProvidersCollection.enabledDescription')}
-                            value={connectionEnabled}
-                            busy={mutation.isPending('enable:connection')
-                                || (gateway !== null && Boolean(gatewayHubMachineId) && mutation.isPending(`machine:${gatewayHubMachineId}`))}
-                            onValueChange={(next) => { void (gateway ? setGatewayEnabled(next) : setConnectionEnabled(next)); }}
+                            label={headerMachineId ? t('settingsProvidersCollection.onMachine', { machine: selectedMachineName ?? headerMachineId })
+                                : gatewayHeader ? t('settings.account') : t('settingsProvidersCollection.enabled')}
+                            accessibilityHint={gatewayHeader || headerMachineId ? undefined : t('settingsProvidersCollection.enabledDescription')}
+                            value={headerEnabled}
+                            busy={headerMachineId ? mutation.isPending(`machine:${headerMachineId}`)
+                                : mutation.isPending('enable:connection') || mutation.isPending('enable:account')}
+                            onValueChange={(next) => {
+                                void (headerMachineId ? setMachineEnabled(headerMachineId, next) : setConnectionEnabled(next));
+                            }}
                         />
                         <PageHeaderMenu testID="provider-connection-menu" actions={menuActions} />
                     </ProviderHeaderActions>
@@ -1749,7 +1752,8 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                         testID="provider-connection-advanced"
                         title={t('settingsProviders.detail.advancedTitle')}
                         subtitle={advancedRepairError && !availabilityRepair ? t(presentProviderError(advancedRepairError).descriptionKey)
-                            : advancedShown ? undefined : t('settingsProvidersCollection.advancedSummary')}
+                            : advancedShown ? undefined : gateway ? t('settingsProvidersCollection.availabilityDescription')
+                                : t('settingsProvidersCollection.advancedSummary')}
                         accessibilityExpanded={advancedShown}
                         onPress={advancedNeedsAttention && !availabilityRepair ? undefined : toggleAdvanced}
                     />
@@ -1815,20 +1819,20 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                         </ItemGroup>
                     ) : null}
 
-                    {teamsSharingAvailable && serverId ? (
+                    {teamsSharingAvailable && serverId && (!gateway || advancedNeedsAttention) ? (
                         <SharedWithTeamsForSource
                             serverId={serverId}
                             source={{ v: 1, kind: 'provider_connection', connectionId: connection.connectionId }}
                         />
                     ) : null}
 
-                    <ProviderEndpointOverridesSection
+                    {!gateway || advancedNeedsAttention ? <ProviderEndpointOverridesSection
                         endpoints={endpointConfiguration.endpoints}
                         machineSelected={machineId !== null}
                         onSetOverride={(input) => { void setEndpointOverride(input); }}
                         onSetHeaders={(input) => { void endpointConfiguration.patch(input); }}
                         localizeText={(value) => localizePluginText(contributionAuthorPluginId, value)}
-                    />
+                    /> : null}
                 </>
             ) : null}
         </>

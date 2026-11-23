@@ -192,6 +192,8 @@ export const en = {
         discard: 'Discard',
         enabled: 'Enabled',
         enabledDescription: 'Offer its models in agent model pickers',
+        turnOffAccountScope: ({ count }: { count: number }) => count === 0
+            ? 'Turn off for your Account?' : `Turn off for your Account and ${count} ${count === 1 ? 'Machine' : 'Machines'}?`,
         saved: 'Saved',
         replace: 'Replace',
         addKey: 'Add key',

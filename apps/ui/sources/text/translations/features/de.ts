@@ -13079,6 +13079,8 @@ const de: ProviderCollectionCopy = {
         discard: 'Verwerfen',
         enabled: 'Aktiviert',
         enabledDescription: 'Seine Modelle in der Modellauswahl der Agenten anbieten',
+        turnOffAccountScope: ({ count }: { count: number }) => count === 0
+            ? 'Für dein Konto ausschalten?' : `Für dein Konto und ${count} ${count === 1 ? 'Maschine' : 'Maschinen'} ausschalten?`,
         saved: 'Gespeichert',
         replace: 'Ersetzen',
         addKey: 'Schlüssel hinzufügen',

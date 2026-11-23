@@ -13059,6 +13059,8 @@ const ca: ProviderCollectionCopy = {
         discard: 'Descarta',
         enabled: 'Activat',
         enabledDescription: 'Ofereix els seus models als selectors de models dels agents',
+        turnOffAccountScope: ({ count }: { count: number }) => count === 0
+            ? 'Vols desactivar-ho per al teu compte?' : `Vols desactivar-ho per al teu compte i ${count} ${count === 1 ? 'màquina' : 'màquines'}?`,
         saved: 'Desada',
         replace: 'Substitueix',
         addKey: 'Afegeix una clau',
