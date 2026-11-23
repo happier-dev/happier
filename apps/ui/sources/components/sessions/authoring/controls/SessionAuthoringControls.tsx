@@ -485,6 +485,7 @@ export type SessionAuthoringControlsProps = Readonly<{
      * unset Approval names the default it inherits rather than its field. A subject with `resetOverride` inherits too.
      */
     inheritsUnsetValues?: boolean;
+    approvalProfileMode?: 'session' | 'draft';
     /** The host draws the engine chip beside these chips (a step card's header), so it alone says "Choose an agent". */
     engineChipBeside?: boolean;
     /** Which fields to render, in the caller's order. */
@@ -781,6 +782,7 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
             {props.fields.map((field) => {
                 if (field === 'approvalProfileId') return inRow(field, withReset(field, <SessionAuthoringApprovalProfileField key={field}
                     value={props.values.approvalProfileId} serverId={facts.agentPickerContext?.serverId}
+                    mode={props.approvalProfileMode}
                     machineId={facts.agentPickerContext?.machineId ?? null} presentation={presentation}
                     // A host whose unset values inherit (a workflow, or a step with a way back to its workflow's) names the
                     // inherited default (WF-ACCEPT-1118B item 5).
@@ -892,6 +894,7 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
 export function SessionAuthoringApprovalProfileField(props: Readonly<{
     value: string | null | undefined; serverId?: string | null; machineId?: string | null; testID: string; disabled?: boolean;
     presentation?: SessionAuthoringControlsPresentation; titleMeta?: React.ReactNode; onChange: (value: string | null | undefined) => void;
+    mode?: 'session' | 'draft';
     /** An unset value inherits its host's parent (a workflow step): the chip names the inherited Machine default. */
     inherited?: boolean;
     /** Set for this subject rather than inherited (the `chips` presentation borders it). */
@@ -903,7 +906,7 @@ export function SessionAuthoringApprovalProfileField(props: Readonly<{
     const source = useApprovalProfiles(props.value, props.serverId ?? undefined, { demand: false, machineId: props.machineId });
     const machineDefault = React.useMemo(() => resolveApprovalProfileMachineDefault(source, props.machineId),
         [source.displayProfiles, source.machineApprovalProfiles, props.machineId]); // eslint-disable-line react-hooks/exhaustive-deps
-    return <ApprovalProfileSelect mode="session" value={props.value} source={source} machineDefault={machineDefault}
+    return <ApprovalProfileSelect mode={props.mode ?? 'session'} value={props.value} source={source} machineDefault={machineDefault}
         testID={props.testID} disabled={props.disabled} titleMeta={props.titleMeta} presentation={props.presentation}
         {...(props.inherited === true ? { inherited: true } : {})} onChange={props.onChange}
         {...(props.icon === undefined ? {} : { icon: props.icon })}

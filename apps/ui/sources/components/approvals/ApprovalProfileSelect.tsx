@@ -34,6 +34,7 @@ export type ApprovalProfileMachineDefault = Readonly<{ profile: Pick<ApprovalPro
 
 type Choice =
     | Readonly<{ mode: 'session'; value: string | null | undefined; onChange: (value: string | null) => void }>
+    | Readonly<{ mode: 'draft'; value: string | null | undefined; onChange: (value: string | null | undefined) => void }>
     | Readonly<{ mode: 'machine'; value: string | null; onChange: (value: string | null) => void }>
     | Readonly<{ mode: 'default'; value: string | null | undefined; onChange: (value: string | null | undefined) => void;
         defaultChoices: ApprovalProfileDefaultChoices }>;
@@ -157,7 +158,7 @@ export function ApprovalProfileSelect(props: Choice & Readonly<{
         if (disabled || !props.source.ready) return;
         setOpen(false);
         const value = approvalProfileChoiceValue(id);
-        if (props.mode === 'default') props.onChange(value);
+        if (props.mode === 'default' || props.mode === 'draft') props.onChange(value);
         else if (value !== undefined) props.onChange(value);
     };
     const selectAnchorRef = React.useRef<React.ComponentRef<typeof View> | null>(null);

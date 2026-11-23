@@ -92,6 +92,7 @@ function ComposerChips(props: Readonly<{
                     <SessionAuthoringControls
                         presentation="chips"
                         fields={CHIP_FIELDS}
+                        approvalProfileMode="draft"
                         values={selection}
                         facts={facts}
                         onChangeFields={changeFields}
@@ -149,6 +150,7 @@ function ComposerFields(props: Readonly<{
                     <SessionAuthoringControls
                         presentation="fields"
                         fields={AGENT_FIELDS}
+                        approvalProfileMode="draft"
                         values={selection}
                         facts={facts}
                         onChangeFields={changeFields}

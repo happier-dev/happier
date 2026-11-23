@@ -65,6 +65,7 @@ const { SessionAuthoringControls } = await import('@/components/sessions/authori
 const { NewSessionPathSelectionContent } = await import('./components/NewSessionPathSelectionContent');
 const { SessionPlacementChips } = await import('./placement/SessionPlacementChips');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+const { APPROVAL_PROFILE_ACCOUNT_OPTION_ID, APPROVAL_PROFILE_INHERIT_OPTION_ID } = await import('@/components/approvals/ApprovalProfileSelect');
 const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
 const { Item } = await import('@/components/ui/lists/Item');
 const { Modal } = await import('@/modal');
@@ -530,8 +531,13 @@ describe('mounted Session server-start recipe composer', () => {
                 node.props.testID === 'server-start-draft-control-approvalProfileId')).toBe(true));
             const picker = mounted.screen.findAllByType(DropdownMenu).find(node =>
                 node.props.testID === 'server-start-draft-control-approvalProfileId')!;
-            expect(picker.props.selectedId).toBe(approvalProfileId === undefined ? 'inherit'
-                : approvalProfileId === null ? '__none__' : approvalProfileId);
+            expect(picker.props.selectedId).toBe(approvalProfileId === undefined ? APPROVAL_PROFILE_INHERIT_OPTION_ID
+                : approvalProfileId === null ? APPROVAL_PROFILE_ACCOUNT_OPTION_ID : approvalProfileId);
+            if (approvalProfileId === undefined || approvalProfileId === null) {
+                expect(picker.props.items?.find(item => item.id === picker.props.selectedId)?.title).toBe(
+                    approvalProfileId === undefined ? 'common.default' : 'workflows.triggers.guided.profile.accountSettings',
+                );
+            }
             if (approvalProfileId === 'custom:removed') {
                 await waitForHomeGovernance(() => expect(mounted.screen.tree.root.findAllByProps({
                     testID: 'server-start-draft-control-approvalProfileId-missing',
