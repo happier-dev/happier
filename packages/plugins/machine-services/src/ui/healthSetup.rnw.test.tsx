@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react';
-import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import {
   createPluginUiTestkit,
   createSurfaceContextFixture,
@@ -113,6 +113,26 @@ it('does not offer to turn alerts off while Add check waits for its read-only pr
   await expect(page.getByText('Off')).resolves.toBeDefined();
   expect(calls).toEqual([expect.objectContaining({ input: expect.objectContaining({ mode: 'preview' }) })]);
   expect(settled).toEqual([]);
+});
+
+it('explains why Environment alert defaults failed and retries without losing the check', async () => {
+  const environment = { kind: 'environment', environmentId: 'production' } as const;
+  let attempt = 0;
+  const { page, settled } = await mount({ initialInput: { v: 1, subject: environment } }, {}, async () => {
+    if (++attempt === 1) throw new PluginError({ code: 'account_settings_unavailable',
+      message: 'The Account settings could not be read.' });
+    return { mode: 'preview', destinationSelectionContext,
+      sourceConfig: { v: 1, subject: environment, alerts: { channels: [], phases: ['open', 'recovered'] } } };
+  });
+  await type('Endpoint', 'https://app.example.test');
+  await expect(page.getByText('The Account settings could not be read.')).resolves.toBeDefined();
+  expect((await addButton(page)).state?.disabled).toBe(true);
+  await act(async () => { await page.press(await page.getByRole('button', { name: 'Retry alert defaults' })); });
+  await act(async () => { await page.press(await addButton(page)); });
+  expect(attempt).toBe(2);
+  expect(settled).toEqual([expect.objectContaining({ kind: 'completed', input: expect.objectContaining({
+    subject: environment, checks: [expect.objectContaining({ config: { endpoint: 'https://app.example.test', expectStatus: 200 } })],
+  }) })]);
 });
 
 it('prefills first Configure alert defaults without losing the retained automatic investigation', async () => {

@@ -1331,6 +1331,7 @@ it.each(['submitted', 'cancelled', 'switched'] as const)('Add check writes once 
         return 'native-add-check';
     });
     let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    let nativeForm: PluginUiTestkit | undefined;
     try {
         await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
         await publishMachineInventoryForTest(lifetime.scope,
@@ -1365,7 +1366,59 @@ it.each(['submitted', 'cancelled', 'switched'] as const)('Add check writes once 
             }
             const chooseWatcher: unknown = Reflect.get(Object(props), 'chooseWatcher');
             if (typeof chooseWatcher !== 'function') throw new Error('Expected to switch the open native form');
-            const draft = { check: { kind: 'http', endpoint: 'https://production.example.test/health', expectStatus: '20' } };
+            const { PluginUiPresentationHostProviderInternal, useOptionalPluginUiPresentationHost } =
+                await import('../../../../../../packages/plugin-ui/src/presentationHost/context');
+            const { PluginModalCardFooterSlot, PluginModalCardFooterSlotContext, usePluginModalCardFooterSlot } =
+                await import('@/components/plugins/surfaces/pluginModalCardFooterSlot');
+            const previews: string[] = [];
+            const preview = HealthCheckSetupPreviewResultV1ProtocolSchema.parse({ mode: 'preview',
+                sourceConfig: { v: 1, subject, alerts: { channels: [], phases: ['open', 'recovered'] } },
+                destinationSelectionContext: { serverId: connection.serverId, machineId },
+            });
+            let captureDraft: (() => unknown) | undefined;
+            function FooterHost({ children }: { children: React.ReactNode }) {
+                const footer = usePluginModalCardFooterSlot();
+                const parentHost = useOptionalPluginUiPresentationHost();
+                if (!parentHost) throw new Error('Expected the semantic presentation host');
+                captureDraft = footer.captureDraft;
+                return <PluginModalCardFooterSlotContext.Provider value={footer.set}>
+                    <PluginUiPresentationHostProviderInternal host={{ ...parentHost,
+                        useModalCardFooterSlot: () => React.useContext(PluginModalCardFooterSlotContext),
+                    }}>{children}</PluginUiPresentationHostProviderInternal>
+                    <PluginModalCardFooterSlot store={footer} fallback={null} />
+                </PluginModalCardFooterSlotContext.Provider>;
+            }
+            async function mountNative(call: number, watcherId: string) {
+                const modalProps = modal.mock.calls[call]?.[0].props;
+                const launchInput = Reflect.get(Object(modalProps), 'launchInput');
+                const settle = Reflect.get(Object(modalProps), 'onSettle');
+                await act(async () => {
+                    nativeForm = await createPluginUiTestkit({ surface: context => <FooterHost>{renderSurface(context)}</FooterHost>,
+                        identity: { instanceId: 'native-add-check', mountNonce: `native-${call}` },
+                        authorPlugin: { id: pluginId, version: PLUGIN_MANIFEST.version }, surfaceContext: createSurfaceContextFixture(),
+                        adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }), launchInput,
+                        handlers: { executeAction: async () => {
+                            previews.push(watcherId);
+                            if (watcherId !== machineId) throw new Error('The alternate cannot load a second Environment preview');
+                            return preview;
+                        }, settleEphemeralInput: async ({ settlement }) => { settle(settlement); } },
+                    });
+                });
+                return nativeForm!;
+            }
+            async function typeField(label: string, value: string) {
+                const field = document.querySelector(`input[aria-label="${label}"]`);
+                const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+                if (!(field instanceof HTMLInputElement) || !setter) throw new Error(`Expected ${label} field`);
+                await act(async () => { setter.call(field, value); field.dispatchEvent(new Event('input', { bubbles: true })); });
+            }
+            const original = await mountNative(0, machineId);
+            await original.getByText('Off');
+            await typeField('Endpoint', 'https://production.example.test/health');
+            await typeField('Expect status', '20');
+            const draft = captureDraft?.();
+            expect(draft).toMatchObject({ check: { kind: 'http', endpoint: 'https://production.example.test/health', expectStatus: '20' } });
+            await original.dispose();
             await act(async () => { chooseWatcher(peer.machineId, draft); });
             await waitForHomeGovernance(() => expect(modal).toHaveBeenCalledTimes(2));
             expect(Reflect.get(Object(modal.mock.calls[1]?.[0].props), 'watcherSelection')?.getSnapshot())
@@ -1376,10 +1429,18 @@ it.each(['submitted', 'cancelled', 'switched'] as const)('Add check writes once 
             expect(rpc.hostActions).toEqual([]);
             expect(workflows.creates).toEqual([]);
             expect(onClose).not.toHaveBeenCalled();
+            const alternate = await mountNative(1, peer.machineId);
+            expect(document.querySelector<HTMLInputElement>('input[aria-label="Expect status"]')?.value).toBe('20');
+            await typeField('Expect status', '200');
+            const add = await alternate.getByRole('button', { name: 'Add check' });
+            expect(add.state?.disabled ?? false).toBe(false);
+            expect(previews).toEqual([machineId]);
+            await act(async () => { await alternate.press(add); });
+        } else {
+            const settle: unknown = Reflect.get(Object(modal.mock.calls.at(-1)?.[0].props), 'onSettle');
+            if (typeof settle !== 'function') throw new Error('Expected native setup settlement');
+            await act(async () => { settle(outcome === 'cancelled' ? { kind: 'cancelled' } : { kind: 'completed', input: setupInput }); });
         }
-        const settle: unknown = Reflect.get(Object(modal.mock.calls.at(-1)?.[0].props), 'onSettle');
-        if (typeof settle !== 'function') throw new Error('Expected native setup settlement');
-        await act(async () => { settle(outcome === 'cancelled' ? { kind: 'cancelled' } : { kind: 'completed', input: setupInput }); });
         await waitForHomeGovernance(() => expect(onClose).toHaveBeenCalledTimes(1));
         if (outcome === 'cancelled') {
             expect(rpc.hostActions).toEqual([]);
@@ -1396,6 +1457,7 @@ it.each(['submitted', 'cancelled', 'switched'] as const)('Add check writes once 
         }
     } finally {
         alternateProjection.resolve();
+        await nativeForm?.dispose();
         await screen?.unmount();
         modal.mockRestore();
         disposeProjection();

@@ -11,7 +11,7 @@ import { compilePluginJsonSchema, isValidPluginJsonSchemaValue, resolvePluginLoc
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
     Banner, Button, CodeBlock, Column, Columns, Field, ModalCardFooterActions, Row, Select, SelectionTiles, Stack, Text, TextField,
-    defineUiSurface, usePluginHostApi, usePluginTranslation, type IconName,
+    defineUiSurface, projectPluginActionRejectionV1, usePluginHostApi, usePluginTranslation, type IconName,
 } from '@happier-dev/plugin-ui';
 import { CapabilityEndpointAddressControls, SavedHeartbeatControls } from './HeartbeatSetupControls.js';
 import { HEALTH_KINDS_ACTION_ID } from '../healthCatalog.js';
@@ -67,11 +67,14 @@ type RendererDraft = Readonly<{
     check: Draft | null;
     alerts?: SourceOptions['alerts'];
     investigation?: InvestigationDraft;
+    preparedPreview?: HealthCheckSetupPreviewResultV1;
 }>;
 
-function readRendererDraft(value: unknown): RendererDraft | undefined {
+function readRendererDraft(value: unknown, subject: HealthCheckSubjectV1): RendererDraft | undefined {
     if (typeof value !== 'object' || value === null || Array.isArray(value)) return;
-    const { check, alerts, investigation } = value as Readonly<Record<string, unknown>>;
+    const { check, alerts, investigation, preparedPreview } = value as Readonly<Record<string, unknown>>;
+    const prepared = HealthCheckSetupPreviewResultV1ProtocolSchema.safeParse(preparedPreview);
+    const previewSubject = prepared.success ? prepared.data.sourceConfig.subject : undefined;
     let restored: Draft | null = null;
     if (typeof check === 'object' && check !== null && !Array.isArray(check)) {
         const record = check as Readonly<Record<string, unknown>>;
@@ -98,6 +101,9 @@ function readRendererDraft(value: unknown): RendererDraft | undefined {
         ? investigation.configuredActionId : undefined;
     return {
         check: restored,
+        ...(prepared.success && prepared.data.sourceConfig.alerts && subject.kind === 'environment'
+            && previewSubject?.kind === 'environment' && previewSubject.environmentId === subject.environmentId
+            ? { preparedPreview: prepared.data } : {}),
         ...(parsedAlerts.success && parsedAlerts.data.alerts ? { alerts: parsedAlerts.data.alerts } : {}),
         ...(mode === 'inbox' || mode === 'auto_start'
             ? { investigation: { mode, ...(typeof action === 'string' ? { configuredActionId: action } : {}) } } : {}),
@@ -170,7 +176,7 @@ function readLaunch(input: unknown): Readonly<{
     const observer = record.observerMachineId;
     return { draft: draft.data, ...(typeof observer === 'string' && observer.length > 0 ? { observerMachineId: observer } : {}),
         ...(selectedCheckId === undefined ? {} : { selectedCheckId }),
-        rendererDraft: readRendererDraft(rendererDraft) };
+        rendererDraft: readRendererDraft(rendererDraft, draft.data.subject) };
 }
 
 function configFor(draft: Draft, retainedMonitorConfig?: Check['config']): unknown {
@@ -281,7 +287,9 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
     observerMachineId?: string; selectedCheckId?: string; rendererDraft?: RendererDraft; signal: AbortSignal }>): ReactElement {
     const t = usePluginTranslation();
     const host = usePluginHostApi();
-    const [existing, setExisting] = useState(props.existing);
+    const resumedPreview = props.rendererDraft?.preparedPreview;
+    const [preparedPreview, setPreparedPreview] = useState(resumedPreview);
+    const existing = preparedPreview?.sourceConfig.checks ?? props.existing;
     const [selectedCheckId, setSelectedCheckId] = useState<string | null>(props.selectedCheckId ?? null);
     const [editedDraft, setEditedDraft] = useState<Draft | null>(props.rendererDraft?.check ?? null);
     const domain = props.sourceOptions.domain;
@@ -297,41 +305,46 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
         kind.pluginId === selectedCheck?.kind.pluginId && kind.id === selectedCheck.kind.localId);
     const restoredDraft = useMemo(() => readSavedCheckDraft(selectedCheck, selectedKind), [selectedCheck, selectedKind]);
     const draft = editedDraft ?? restoredDraft ?? EMPTY;
-    const [alertDraft, setAlertDraft] = useState<Readonly<{
-        alerts: SourceOptions['alerts']; testContext?: HealthCheckSetupPreviewResultV1['testContext'];
-        destinationSelectionContext?: HealthCheckSetupPreviewResultV1['destinationSelectionContext'];
-    }>>({ alerts: props.rendererDraft?.alerts ?? props.sourceOptions.alerts });
-    const { alerts, testContext: preparedSource, destinationSelectionContext } = alertDraft;
-    const [alertsEdited, setAlertsEdited] = useState(props.rendererDraft?.alerts !== undefined);
-    const setAlerts = (next: SourceOptions['alerts']) => {
-        setAlertDraft(current => ({ ...current, alerts: next }));
-        setAlertsEdited(true);
+    const [{ editedAlerts, preparedSource }, setAlertDraft] = useState({
+        editedAlerts: props.rendererDraft?.alerts,
+        preparedSource: props.rendererDraft?.alerts === undefined ? resumedPreview?.testContext : undefined,
+    });
+    const setAlerts = (next: NonNullable<SourceOptions['alerts']>) => {
+        setAlertDraft(current => ({ ...current, editedAlerts: next }));
     };
-    const [previewUnavailable, setPreviewUnavailable] = useState(false);
+    const alertsEdited = editedAlerts !== undefined;
+    const alerts = editedAlerts ?? props.sourceOptions.alerts ?? preparedPreview?.sourceConfig.alerts;
+    const destinationSelectionContext = preparedPreview?.destinationSelectionContext;
+    const [previewFailure, setPreviewFailure] = useState<{ error: unknown } | null>(null);
     const [previewAttempt, setPreviewAttempt] = useState(0);
     useEffect(() => {
+        // Switching watchers resumes the same Environment form. Project/Account defaults belong to the
+        // Environment and have already settled inside this form's lifetime.
+        if (resumedPreview) return;
+        setPreviewFailure(null);
         let retired = false;
         const { domain, ...sourceOptions } = props.sourceOptions;
         void host.executeAction({ pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, localId: 'health/setup' }, {
             v: 1, mode: 'preview', subject: props.subject, ...(props.existing.length ? { checks: props.existing } : {}), ...sourceOptions,
         }, { signal: props.signal }).then(value => {
-            const prepared = HealthCheckSetupPreviewResultV1ProtocolSchema.parse(value);
             if (retired || props.signal.aborted) return;
-            setAlertDraft(current => ({ alerts: current.alerts ?? prepared.sourceConfig.alerts,
-                destinationSelectionContext: prepared.destinationSelectionContext,
-                ...(current.alerts === props.sourceOptions.alerts ? { testContext: prepared.testContext } : {}) }));
-            setExisting(prepared.sourceConfig.checks ?? props.existing);
-            setInvestigation(current => current ?? prepared.sourceConfig.investigation);
-            setPreviewUnavailable(false);
-        }).catch(() => { if (!retired && !props.signal.aborted) setPreviewUnavailable(true); });
+            const prepared = HealthCheckSetupPreviewResultV1ProtocolSchema.safeParse(value);
+            if (!prepared.success) {
+                setPreviewFailure({ error: { code: 'invalid_action_output' } });
+                return;
+            }
+            setPreparedPreview(prepared.data);
+            setAlertDraft(current => ({ ...current,
+                preparedSource: current.editedAlerts === undefined ? prepared.data.testContext : undefined,
+            }));
+        }).catch(error => { if (!retired && !props.signal.aborted) setPreviewFailure({ error }); });
         return () => { retired = true; };
-    }, [host, props.signal, props.subject, props.existing, props.sourceOptions, previewAttempt]);
-    const [investigation, setInvestigation] = useState<InvestigationDraft | undefined>(
-        props.rendererDraft?.investigation ?? props.sourceOptions.investigation);
-    const [investigationEdited, setInvestigationEdited] = useState(props.rendererDraft?.investigation !== undefined);
+    }, [host, props.signal, props.subject, props.existing, props.sourceOptions, previewAttempt, resumedPreview]);
+    const previewRefusal = previewFailure && projectPluginActionRejectionV1(previewFailure.error, t);
+    const [editedInvestigation, setInvestigation] = useState<InvestigationDraft | undefined>(props.rendererDraft?.investigation);
+    const investigation = editedInvestigation ?? props.sourceOptions.investigation ?? preparedPreview?.sourceConfig.investigation;
     const changeInvestigation = (next: InvestigationDraft) => {
         setInvestigation(next);
-        setInvestigationEdited(true);
         setRefusedSave(false);
     };
     const investigationMode = investigation?.mode ?? 'inbox';
@@ -554,8 +567,12 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
             return [h(CapabilityEndpointAddressControls, { key: `${createHealthCheckSourceInstanceIdV1(props.subject)}:${check.checkId}:${parsed.data.webhookEndpointId}`,
                 webhookEndpointId: parsed.data.webhookEndpointId, signal: props.signal, title: `${monitorDefinitions[kind].title}: ${check.checkId}` })];
         }),
-        previewUnavailable ? h(Stack, {}, h(Text, { value: t(`${K}.previewUnavailable`, 'Alert defaults could not be loaded. Your entries are kept here.') }),
-            h(Button, { title: t(`${K}.previewRetry`, 'Retry alert defaults'), onPress: () => setPreviewAttempt(value => value + 1) })) : null,
+        previewRefusal && (previewRefusal.status === 'error' || previewRefusal.status === 'outcomeUnknown')
+            ? h(Stack, {}, h(Text, { value: t(`${K}.previewUnavailable`, 'Alert defaults could not be loaded. Your entries are kept here.') }),
+                h(Text, { value: previewRefusal.message }),
+                previewRefusal.requestId ? h(Text, { value: previewRefusal.requestId }) : null,
+                h(Button, { title: t(`${K}.previewRetry`, 'Retry alert defaults'),
+                    onPress: () => setPreviewAttempt(value => value + 1) })) : null,
         h(SavedHealthAlertControls, { alerts, onChange: setAlerts, testContext: preparedSource, destinationSelectionContext }),
         h(SelectionTiles<'inbox' | 'auto_start'>, { accessibilityLabel: t(`${K}.investigation`, 'When a check needs attention'),
             value: investigationMode, onChange: mode => changeInvestigation({ mode, configuredActionId }), maximumColumns: 2,
@@ -571,11 +588,12 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
                     'Choose an existing investigate Action from PRs & Issues. Its saved Machine, workspace and Agent choices are used.') }) : null,
         refusedSave ? h(Text, { tone: 'danger', value: t(`${K}.saveRefused`, 'This check can’t be added right now. Your entries are kept here.') }) : null,
         h(ModalCardFooterActions, {
-            // Carry renderer input as typed, including incomplete fields. Preview still runs with the original seed.
+            // Keep both incomplete edits and the already settled Environment preview with this one open form.
             captureDraft: addingNew ? () => saving ? undefined : JSON.parse(JSON.stringify({
                 check: editedDraft,
-                ...(alertsEdited ? { alerts } : {}),
-                ...(investigationEdited ? { investigation } : {}),
+                ...(editedAlerts ? { alerts: editedAlerts } : {}),
+                ...(editedInvestigation ? { investigation: editedInvestigation } : {}),
+                ...(preparedPreview && props.subject.kind === 'environment' ? { preparedPreview } : {}),
             })) : undefined,
             cancel: { testID: 'health-setup-cancel', disabled: saving,
             onPress: () => { void host.settleEphemeralInput({ kind: 'cancelled' }, { signal: props.signal }); } } },

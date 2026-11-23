@@ -22,7 +22,7 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 
 afterEach(() => vi.restoreAllMocks());
 
-it('serves Environment alert-defaults preview for a plugin caller while retaining native mutation refusal', async () => {
+it.each(['controller', 'alternate'] as const)('serves Environment alert-defaults preview on the %s watcher while retaining native mutation refusal', async watcher => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-plugin-deployment-defaults-',
         env: { HAPPIER_SERVER_URL: 'https://home.test', HAPPIER_WEBAPP_URL: 'https://home.test' } }, async () => {
         const profileId = configuration.activeServerId;
@@ -101,8 +101,8 @@ it('serves Environment alert-defaults preview for a plugin caller while retainin
         expect(updates).toHaveLength(0);
         expect(creates).toEqual([]);
 
-        const pluginId = HEALTH_CHECK_EVENT_REFS_V1.failed.pluginId;
-        const machineId = environment.controllerMachineId;
+        const pluginId = HEALTH_CHECK_EVENT_REFS_V1.status.pluginId;
+        const machineId = watcher === 'controller' ? environment.controllerMachineId : 'eadc2422-b42b-478d-97b1-af9b530d5f09';
         const origin = { serverIdentityId: 'srv_home', machineId };
         const runtime = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: [pluginId],
             externalActionHomeBinding: { serverId: profileId, serverIdentityId: 'srv_home' },
@@ -125,12 +125,16 @@ it('serves Environment alert-defaults preview for a plugin caller while retainin
                 expectedContributorOccurrenceId: occurrenceId, executionSurface: 'ui',
                 input: { v: 1, mode: 'preview', subject: { kind: 'environment', environmentId: environment.id } },
                 invocation: { kind: 'mountedPluginSurface', mountedBinding: { pluginId,
-                    contributionLocalId: HEALTH_CHECK_EVENT_REFS_V1.failed.localId, occurrenceId, sourceCustody, materializationRef } },
-            }, { signal: new AbortController().signal, callerAuthority: 'present_user' });
+                    contributionLocalId: HEALTH_CHECK_EVENT_REFS_V1.status.localId, occurrenceId, sourceCustody, materializationRef } },
+            }, { signal: new AbortController().signal, callerAuthority: 'present_user',
+                transportRequestId: '42aca621-e56b-4d68-be25-4b7a97feb6f3',
+                machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId,
+                    installationId: materializationRef.machineInstallationId, role: 'manage', encryptionMode: 'plain' },
+                verifyMachineAdmissionCurrent: async () => true });
             expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { mode: 'preview',
                 sourceConfig: { subject: { kind: 'environment', environmentId: environment.id },
                     alerts: { channels: [{ channelId: 'account-channel' }], phases: ['open', 'recovered'] } },
-                destinationSelectionContext: { serverId: profileId, machineId } } });
+                destinationSelectionContext: { serverId: profileId, machineId: environment.controllerMachineId } } });
             expect(updates).toHaveLength(0);
             expect(creates).toEqual([]);
         } finally { await runtime.dispose(); }
