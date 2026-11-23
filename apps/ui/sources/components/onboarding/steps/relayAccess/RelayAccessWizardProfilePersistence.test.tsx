@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installMachinesSettingsCommonModuleMocks } from '@/components/settings/machines/machinesSettingsTestHelpers';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { t } from '@/text';
 import { getActiveServerId, getServerProfileById, removeServerProfile, setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 
@@ -57,6 +59,11 @@ installMachinesSettingsCommonModuleMocks({
         });
     },
 });
+installDisconnectedServerSocketBoundary();
+
+// Resolve the real UI graph before the behavior checks start their test clock.
+await loadSyncSingletonForTests();
+const { RelayAccessConfigFieldsStep } = await import('./RelayAccessConfigFieldsStep');
 
 beforeEach(async () => {
     browser = await installBrowserRuntimeForTests({ url: 'https://app.example.test' });
@@ -116,7 +123,6 @@ function createRunnerHarness() {
 describe('relay access wizard detail steps', () => {
     it('prefills the existing LAN URL and advances without rerunning configure when relay access is already configured', async () => {
         const { SYSTEM_TASK_PROTOCOL_VERSION} = await import('@happier-dev/protocol/system/tasks/spec');
-        const { RelayAccessConfigFieldsStep } = await import('./RelayAccessConfigFieldsStep');
         const definition = (await import('./relayAccessConfigStepCatalog')).relayAccessConfigStepCatalog.lan;
         const harness = await createRunnerHarness();
         let primary: WizardPrimaryState = null;
@@ -168,7 +174,6 @@ describe('relay access wizard detail steps', () => {
 
     it('persists the LAN share URL onto the candidate relay profile', async () => {
         const { SYSTEM_TASK_PROTOCOL_VERSION} = await import('@happier-dev/protocol/system/tasks/spec');
-        const { RelayAccessConfigFieldsStep } = await import('./RelayAccessConfigFieldsStep');
         const definition = (await import('./relayAccessConfigStepCatalog')).relayAccessConfigStepCatalog.lan;
         const harness = await createRunnerHarness();
         let primary: WizardPrimaryState = null;
@@ -258,7 +263,6 @@ describe('relay access wizard detail steps', () => {
 
     it('advances after saving the LAN relay access URL', async () => {
         const { SYSTEM_TASK_PROTOCOL_VERSION} = await import('@happier-dev/protocol/system/tasks/spec');
-        const { RelayAccessConfigFieldsStep } = await import('./RelayAccessConfigFieldsStep');
         const definition = (await import('./relayAccessConfigStepCatalog')).relayAccessConfigStepCatalog.lan;
         const harness = await createRunnerHarness();
         let primary: WizardPrimaryState = null;
@@ -328,7 +332,6 @@ describe('relay access wizard detail steps', () => {
 
     it('prefills the existing Cloudflare hostname and advances without rerunning configure when relay access is already configured', async () => {
         const { SYSTEM_TASK_PROTOCOL_VERSION} = await import('@happier-dev/protocol/system/tasks/spec');
-        const { RelayAccessConfigFieldsStep } = await import('./RelayAccessConfigFieldsStep');
         const definition = (await import('./relayAccessConfigStepCatalog')).relayAccessConfigStepCatalog.cloudflareNamed;
         const harness = await createRunnerHarness();
         let primary: WizardPrimaryState = null;
@@ -385,7 +388,6 @@ describe('relay access wizard detail steps', () => {
 
     it('persists the Cloudflare share URL onto the candidate relay profile', async () => {
         const { SYSTEM_TASK_PROTOCOL_VERSION} = await import('@happier-dev/protocol/system/tasks/spec');
-        const { RelayAccessConfigFieldsStep } = await import('./RelayAccessConfigFieldsStep');
         const definition = (await import('./relayAccessConfigStepCatalog')).relayAccessConfigStepCatalog.cloudflareNamed;
         const harness = await createRunnerHarness();
         let primary: WizardPrimaryState = null;
