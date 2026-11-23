@@ -197,16 +197,12 @@ Important rules:
 
 This is useful when you started globally from voice home and later want the agent to inspect the current project more deeply.
 
-## Warm roots
+## Starting a conversation
 
-The local voice agent can either keep a single working-root runtime or keep multiple roots warm:
+In 0.3 development, **When you start Voice** controls which conversation opens.
 
-- **Single**: keep one root active
-- **Keep warm**: retain several recent roots for faster return/resume
-
-When using **Keep warm**, you can choose the maximum number of warm roots to retain.
-
-Use **Single** for the simplest behavior. Use **Keep warm** when you regularly bounce between a small number of projects and want faster reuse.
+- **Continue my last conversation** picks up where you left off.
+- **Start a new conversation each time** starts fresh and keeps earlier saved conversations in Voice history.
 
 ## Persistence and resumability
 
