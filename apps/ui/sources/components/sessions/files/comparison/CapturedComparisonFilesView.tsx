@@ -23,7 +23,6 @@ import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import { useReviewListHunkReview } from '@/components/workspaces/scm/review/hunkReview/useReviewListHunkReview';
 import type { ScmDiffSummaryHost } from '@/sync/ops/scmDiffSummary/results';
 import { useCapturedComparisonEvidence } from './useCapturedComparisonEvidence';
-import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
 type ReviewProps = React.ComponentProps<typeof ChangedFilesReview>;
@@ -56,7 +55,7 @@ export function CapturedComparisonFilesView(props: Readonly<{
     host?: ScmDiffSummaryHost;
     comparisonSessionId?: string;
     page?: Readonly<{ totalFiles: number; nextCursor: number | null }> | null;
-    onLoadMore?: () => void;
+    onLoadMore?: () => Promise<void>;
     loadingMore?: boolean;
     error?: string | null;
     reviewComments?: ReviewProps['reviewComments'];
@@ -74,11 +73,14 @@ export function CapturedComparisonFilesView(props: Readonly<{
     const previousProjection = React.useRef<ReturnType<typeof buildCapturedComparisonFiles> | undefined>(undefined);
     const projected = React.useMemo(() => {
         const next = buildCapturedComparisonFiles(comparison);
+        // Captured and working-copy lists share the Review's scroll/paging owner.
+        // The transport cursor is independent of the capture's evidence completeness.
+        if (props.page) next.snapshot.entriesPage = props.page;
         next.files = retainDeep(previousProjection.current?.files, next.files);
         next.snapshot = retainDeep(previousProjection.current?.snapshot, next.snapshot);
         previousProjection.current = next;
         return next;
-    }, [comparison]);
+    }, [comparison, props.page]);
     const initiallyCollapsed = React.useMemo(() => props.initialCollapsedPaths ?? props.comparison.inventory.files
         .filter((file) => file.generated || file.lockfile).map((file) => file.path), [props.initialCollapsedPaths, props.comparison]);
     const resolvingEvidence = evidence.resolution.kind === 'resolving'
@@ -119,6 +121,7 @@ export function CapturedComparisonFilesView(props: Readonly<{
             {...viewed}
             reviewScopeKey={JSON.stringify([props.reviewScopeKey ?? props.sessionId, evidenceKey])}
             snapshot={projected.snapshot} changedFilesViewMode="repository"
+            onLoadMore={props.onLoadMore} loadingMore={props.loadingMore}
             emptyState={emptyState}
             allRepositoryChangedFiles={projected.files} sessionAttributedFiles={NO_ATTRIBUTED_FILES} repositoryOnlyFiles={NO_FILES}
             maxFiles={props.maxFiles} maxChangedLines={props.maxChangedLines} onFilePress={doNotOpenWorkingFile}
@@ -143,11 +146,6 @@ export function CapturedComparisonFilesView(props: Readonly<{
             sessionId={props.sessionId} host={props.host} comparisonSessionId={props.comparisonSessionId}
             marks={props.marks} discard={props.discardEnabled === true}
             refresh={props.onRefresh ?? doNotOpenWorkingFile}>{renderReview}</CapturedReviewControls> : renderReview()}
-        {props.page?.nextCursor != null ? <View testID="captured-comparison-pagination">
-            <Text>{props.comparison.inventory.files.length} / {props.page.totalFiles}</Text>
-            <SectionActionButton testID="captured-comparison-load-more" title={t('common.more')} icon="caret-down"
-                loading={props.loadingMore} disabled={props.loadingMore} onPress={() => props.onLoadMore?.()} />
-        </View> : null}
     </View>;
 }
 

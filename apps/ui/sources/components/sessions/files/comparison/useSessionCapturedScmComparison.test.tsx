@@ -79,10 +79,11 @@ async function renderScreen(...args: Parameters<typeof renderUnmeasuredScreen>) 
     const measuredUpdate: typeof update = async (...updateArgs) => { await update(...updateArgs); await measure(); };
     return Object.assign(screen, { update: measuredUpdate });
 }
-// Saved-result discovery is legitimate alongside capture; it is not a checkout read.
+// Saved-result discovery and host contribution discovery are not checkout reads.
 function comparisonCalls() {
     return boundary.calls.filter(call => call.method !== RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_LIST
-        && call.method !== RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_READ);
+        && call.method !== RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_READ
+        && call.method !== RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE);
 }
 function PaneProbe({ scopeId }: { scopeId: string }) {
     return React.createElement('PaneProbe', { state: useAppPaneScope(scopeId).scopeState });
@@ -169,7 +170,10 @@ describe('Files reads the canonical captured comparison through authenticated RP
         expect(responses[0]!.length).toBeLessThan(JSON.stringify(comparison).length * expected / files.length * 2);
         await layout(720);
         expect(captures()).toHaveLength(1);
-        await screen.pressByTestIdAsync('captured-comparison-load-more');
+        // Paging belongs inside the virtualized Review, where both the rail and
+        // phone/stream scroll owners can reach it, rather than below its flex body.
+        expect(screen.findAll(node => node.props.testID === 'scm-review-load-more').length).toBeGreaterThan(0);
+        await screen.pressByTestIdAsync('scm-review-load-more');
         await vi.waitFor(() => expect(captures()).toHaveLength(2));
         expect(captures()[1]?.payload).toMatchObject({ comparisonId: comparison.id,
             projection: { kind: 'index', cursor: expected, limit: Math.ceil(720 / resolveScmChangeCompactRowHeight(false)) } });
@@ -259,9 +263,9 @@ describe('Files reads the canonical captured comparison through authenticated RP
                 scopeId={`session:${sessionId}`} target={{ comparison: source, view: 'files' }} /></AppPaneProvider>
         </SessionViewerDestinationScope></InjectedAuthProvider>;
         const screen = await renderScreen(destination('desktop'));
-        await vi.waitFor(() => expect(screen.findHostByTestId('captured-comparison-pagination')).toBeTruthy());
+        await vi.waitFor(() => expect(screen.findHostByTestId('scm-review-load-more')).toBeTruthy());
         boundary.response = new RpcError('RPC target disconnected after request submission', 'RPC_OUTCOME_UNKNOWN');
-        await screen.pressByTestIdAsync('captured-comparison-load-more');
+        await screen.pressByTestIdAsync('scm-review-load-more');
         await vi.waitFor(() => expect(screen.findByTestId('captured-comparison-refresh-error-action')).toBeTruthy());
         const readsBeforeResize = comparisonCalls().length;
         const { getScmDiffSummaryState } = await import('@/sync/ops/scmDiffSummary/generate');
@@ -280,8 +284,8 @@ describe('Files reads the canonical captured comparison through authenticated RP
             await vi.waitFor(() => expect(screen.findHostByTestId('captured-comparison-files')).toBeTruthy());
             expect(screen.findByTestId('captured-comparison-refresh-error-action')).toBeTruthy();
             expect(screen.getTextContent()).toContain('new');
-            expect(screen.findHostByTestId('captured-comparison-pagination')).toBeTruthy();
-            expect(comparisonCalls()).toHaveLength(readsBeforeResize);
+            expect(screen.findHostByTestId('scm-review-load-more')).toBeTruthy();
+            expect(comparisonCalls().slice(readsBeforeResize)).toEqual([]);
             expect(retainedError()).toEqual(failedRead);
         }
         boundary.response = { success: true, comparison, metadata: { sourceKey: comparison.id, source: comparison.source },
@@ -324,7 +328,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
         boundary.response = { success: true,
             comparison: { ...comparison, inventory: { ...comparison.inventory, files: [file('src/second.ts')] } },
             metadata: { sourceKey: comparison.id, source: comparison.source }, page: { totalFiles: 3, nextCursor: 2 } };
-        await screen.pressByTestIdAsync('captured-comparison-load-more');
+        await screen.pressByTestIdAsync('scm-review-load-more');
         await vi.waitFor(() => expect(screen.findByType(CapturedComparisonFilesView).props.comparison.inventory.files).toHaveLength(2));
         const reads = comparisonCalls().length;
         await screen.update(<React.Fragment />);
@@ -333,7 +337,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
         expect(screen.findByType(CapturedComparisonFilesView).props.comparison.inventory.files.map((file: { path: string }) => file.path))
             .toEqual(['src/changed.ts', 'src/second.ts']);
         expect(screen.findByType(CapturedComparisonFilesView).props.page).toEqual({ totalFiles: 3, nextCursor: 2 });
-        expect(comparisonCalls()).toHaveLength(reads);
+        expect(comparisonCalls().slice(reads)).toEqual([]);
         // An explicit destination remains authoritative over the retained default.
         await screen.update(destination({ comparison: { kind: 'turnCheckpoint', turnId: 'explicit-turn' }, view: 'files' }));
         expect(screen.findByType(ScmComparisonScopePicker).props.current).toMatchObject({ kind: 'turnCheckpoint', turnId: 'explicit-turn' });
