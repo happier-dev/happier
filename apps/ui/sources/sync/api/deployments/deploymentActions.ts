@@ -3,7 +3,8 @@ import { DEPLOYMENT_CANCEL_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { isActionOutcomeUnknownErrorCodeV1, ActionApprovalRequestCreatedResultSchema, type ActionExecuteFailure, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { DeploymentTemplateInstantiateResultV1Schema, DeploymentMoveToRepositoryResultV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1, type DeploymentTemplateInstantiateInputV1, type DeploymentMoveToRepositoryInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { isManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { admitDeploymentRepositoryCaptureWorkspaceV1, DeploymentTemplateInstantiateResultV1Schema, DeploymentMoveToRepositoryResultV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1, type DeploymentTemplateInstantiateInputV1, type DeploymentMoveToRepositoryInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readDeploymentTemplateInstantiationPartialV1, resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
@@ -40,14 +41,19 @@ export function isDeploymentActionFailure<TRead extends object = DeploymentActio
     return 'errorCode' in read;
 }
 
-export function createUiDeploymentWorkspaceMachineReader(account: LazyActionAccountContext, context: ActionExecutorContext) {
+export function createUiDeploymentWorkspaceMachineReader(account: LazyActionAccountContext, context: ActionExecutorContext,
+    actionId?: typeof DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1) {
     return async (workspace: ProjectAccountWorkspaceRefKeyV1) => {
         account.assertCurrent();
         const rows = await createUiProjectAccountRowsClient(account).read(context.signal);
         const selected = rows.status === 'ready' && rows.coverage === 'complete'
             ? resolveWorkspaceRefById(rows.workspaceRefs, workspace.id, workspace.serverId) : null;
-        return selected?.kind === 'resolved' ? { ok: true as const, machineId: selected.ref.machineId }
-            : { ok: false as const, errorCode: 'workspace_ref_not_ready', error: 'workspace_ref_not_ready' };
+        if (selected?.kind === 'resolved') {
+            if (actionId === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1)
+                return admitDeploymentRepositoryCaptureWorkspaceV1(selected.ref);
+            if (!isManagedWorkspaceRefV2(selected.ref)) return { ok: true as const, machineId: selected.ref.machineId };
+        }
+        return { ok: false as const, errorCode: 'workspace_ref_not_ready', error: 'workspace_ref_not_ready' };
     };
 }
 
@@ -183,7 +189,7 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
         account.assertCurrent();
         if (!areServerProfileIdentifiersEquivalent(input.serverId, account.serverId)) return failure('action_account_scope_changed');
         const selected = await resolveDeploymentMoveToRepositoryExecutionMachineIdV1(input,
-            createUiDeploymentWorkspaceMachineReader(account, context));
+            createUiDeploymentWorkspaceMachineReader(account, context, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1));
         if (!selected.ok) return selected;
         const result = await machine(DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, input, context, selected.machineId);
         if (!result.ok) return result;

@@ -192,6 +192,14 @@ before confirming. A code rollback keeps current data. If you select a
 pre-migration backup on your own server, the review tells you that confirming
 will replace the current data with that backup.
 
+## Move a stored definition to Git
+
+In the Environment's **Settings**, choose **Move to repository** and select a
+checkout on a connected Machine. For a Project open only in a managed
+workspace, open a checkout of the Project on a connected Machine first.
+Review the file changes before opening the pull request. The Environment
+keeps using its stored definition until you accept the merged version.
+
 ## Private service connections
 
 To share a database privately in unreleased 0.3, open the source Environment's

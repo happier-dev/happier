@@ -149,7 +149,7 @@ import { createPrepareEnvironmentContentForHost } from '@/deployments/prepareEnv
 import { readDeploymentHealthCurrentPlacementFailure } from '@/deployments/healthChecks/currentHealthPlacement';
 import { createPrepareDeploymentBindingsForHost } from '@/deployments/secrets/prepareDeploymentBindingsForHost';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, isDeploymentDataRoleBindingWriteV1, isDeploymentEnvironmentPlacementActionV1, resolveDeploymentEnvironmentExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_HEALTH_CURRENT_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, isDeploymentObservationReadActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_HEALTH_CURRENT_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, isDeploymentObservationReadActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentBackupActionResultSchemasV1, type DeploymentBackupActionResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { DeploymentBackupRestoreResultV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -168,7 +168,8 @@ import { randomUUID } from 'node:crypto';
 import type { SessionPullRequestBindingInputV1 } from '@happier-dev/channels-protocol/v1';
 import { DeploymentTemplateInstantiateResultV1Schema } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
-import { DeploymentMoveToRepositoryResultV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { isManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { admitDeploymentRepositoryCaptureWorkspaceV1, DeploymentMoveToRepositoryResultV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 
 
@@ -1036,8 +1037,11 @@ export function createCliActionDeps(params: CliActionDepsParams,
     const selected = await resolveAdmittedRepositoryWorkspace({ workspace, context,
       readWorkspaceRows: readAdmittedProjectRows, fallbackActionId: actionId });
     if (!('kind' in selected)) return selected;
-    return selected.kind === 'resolved' ? { ok: true, machineId: selected.workspace.machineId }
-      : executionRunActionFailure(selected.reason);
+    if (selected.kind !== 'resolved') return executionRunActionFailure(selected.reason);
+    if (actionId === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1)
+      return admitDeploymentRepositoryCaptureWorkspaceV1(selected.workspace);
+    return isManagedWorkspaceRefV2(selected.workspace) ? executionRunActionFailure('workspace_ref_unavailable')
+      : { ok: true, machineId: selected.workspace.machineId };
   };
   const dispatchOriginalDeploymentRoot = async (
     actionId: Parameters<typeof dispatchOriginalAccountAction>[0]['actionId'], input: unknown, context: ActionExecutorContext,

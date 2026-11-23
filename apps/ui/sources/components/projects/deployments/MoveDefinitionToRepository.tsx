@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
-import { DeploymentMoveToRepositoryCreateRepositoryV1Schema, type DeploymentMoveToRepositoryInputV1, type DeploymentMoveToRepositoryResultV1 } from '@happier-dev/protocol/deployments/deploymentMoveToRepositoryV1';
+import { admitDeploymentRepositoryCaptureWorkspaceV1, DeploymentMoveToRepositoryCreateRepositoryV1Schema, type DeploymentMoveToRepositoryInputV1, type DeploymentMoveToRepositoryResultV1 } from '@happier-dev/protocol/deployments/deploymentMoveToRepositoryV1';
 import type { ProjectAccountWorkspaceRefKeyV1 } from '@happier-dev/protocol/projects/workspaceRefKeyV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { readScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
@@ -69,7 +69,8 @@ function MoveRepositoryFields(props: Props & Readonly<{ lifetime: ServerAccountS
         setSourceRepository(selector); setCreateRepository(undefined);
     });
     const selection = useProjectSourceWorkspaceChoice({ lifetime: props.lifetime,
-        sourceId: props.detail.environment.projectSourceId, value: workspaceKey, destination: Boolean(createRepository), repository: repositoryChoice ?? undefined });
+        sourceId: props.detail.environment.projectSourceId, value: workspaceKey, destination: Boolean(createRepository),
+        repository: repositoryChoice ?? undefined, admitCheckout: admitDeploymentRepositoryCaptureWorkspaceV1 });
     const [path, setPath] = React.useState(() => `deploy/${props.detail.content.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'app'}/compose.yaml`);
     const { result, captured } = props.progress;
     const running = props.running;
@@ -188,6 +189,8 @@ function MoveRepositoryFields(props: Props & Readonly<{ lifetime: ServerAccountS
                             disabled={running} onPress={chooseCreateRepository} />} /> : null}
                     <ProjectSourceWorkspaceChoice model={selection} value={workspaceKey} onChange={setWorkspaceKey}
                         disabled={running} showBase={!createRepository} testID={`${ID}.workspace`} />
+                    {selection.hasUnavailableCheckouts ? <SurfaceStateCard testID={`${ID}.workspace.captureUnavailable`}
+                        size="line" kind="unavailable" title={t(`${COPY}.managedCheckoutUnavailable`)} /> : null}
                     {createRepository ? <Item title={t(`${COPY}.destination`)} showChevron={false}
                         rightElement={<SectionActionButton testID={`${ID}.chooseDestination`} title={t(`${COPY}.choose`)}
                             disabled={running || !destinationMachineId} onPress={() => { void chooseDestination(); }} />} /> : null}

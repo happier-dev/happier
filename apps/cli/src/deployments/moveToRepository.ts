@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
 import type { DeploymentMoveToRepositoryInputV1, DeploymentMoveToRepositoryResultV1,
   DeploymentMoveToRepositoryContinuationV1, DeploymentArtifactContentReferenceV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentEnvironmentUpdateResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { admitDeploymentRepositoryCaptureWorkspaceV1, DeploymentEnvironmentUpdateResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { ScmPullRequestGetResponseSchema } from '@happier-dev/protocol/scm/pullRequests';
 import { ScmFileAtRevisionResponseSchema } from '@happier-dev/protocol/scm/fileAtRevision';
 import { ScmRemoteResponseSchema, ScmStatusSnapshotResponseSchema } from '@happier-dev/protocol/scm';
@@ -15,7 +15,7 @@ import {
   DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { resolveAdmittedRepositoryWorkspace, validateAdmittedRepositoryWorkspace } from '@/workspaces/admittedRepositoryWorkspace';
 import type { CliAdmittedProjectRowsReader } from '@/session/actions/cliActionDeps/projectAdmission';
-import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { MachineWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { ScmHostingRepositoryIdentityV1 } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import type { ScmBackendRegistry } from '@/scm/registry';
@@ -35,7 +35,7 @@ type Host = Readonly<{
   readEnvironment(request: Readonly<{ environmentId: string; context: ActionExecutorContext }>): Promise<MoveEnvironment>;
   readSource: NonNullable<ActionExecutorDeps['projectSourcesRead']>;
   updateSource?: NonNullable<ActionExecutorDeps['projectSourcesUpdate']>;
-  acceptWorkspace?(workspace: WorkspaceRefV1, source: ProjectSourceV1, repository: ScmHostingRepositoryIdentityV1,
+  acceptWorkspace?(workspace: MachineWorkspaceRefV1, source: ProjectSourceV1, repository: ScmHostingRepositoryIdentityV1,
     context: ActionExecutorContext): Promise<void>;
   readWorkspaceRows: CliAdmittedProjectRowsReader;
   scmRegistry?: ScmBackendRegistry;
@@ -51,6 +51,18 @@ const sidecarPath = (composePath: string, path: string) => posix.join(posix.dirn
 
 /** Finite definition composition. Source, SCM and Environment update keep their existing writes. */
 export function createDeploymentMoveToRepositoryForHost(host: Host): NonNullable<ActionExecutorDeps['deploymentMoveToRepository']> {
+  const readCaptureWorkspace = async (
+    workspace: DeploymentMoveToRepositoryInputV1['workspace'], context: ActionExecutorContext,
+    expected?: Parameters<typeof resolveAdmittedRepositoryWorkspace>[0]['expected'],
+  ) => {
+    const selected = await resolveAdmittedRepositoryWorkspace({ workspace, context,
+      ...(expected ? { expected } : {}), readWorkspaceRows: host.readWorkspaceRows,
+      fallbackActionId: 'deployments.environments.moveToRepository' });
+    if (!('kind' in selected) || selected.kind !== 'resolved') return selected;
+    const capture = admitDeploymentRepositoryCaptureWorkspaceV1(selected.workspace);
+    return capture.ok ? { kind: 'resolved' as const, workspace: capture.workspace } : capture;
+  };
+
   return async (requested, context, executeCanonicalAction) => {
     let input = requested;
     try {
@@ -67,8 +79,7 @@ export function createDeploymentMoveToRepositoryForHost(host: Host): NonNullable
       const files = [{ path: input.path, content: definition.document }, ...(definition.publicFiles ?? [])
         .map(file => ({ path: sidecarPath(input.path, file.path), content: file.content }))];
       if (input.mode === 'preview' && input.createRepository) {
-        const placed = await resolveAdmittedRepositoryWorkspace({ workspace: input.workspace, context,
-          readWorkspaceRows: host.readWorkspaceRows, fallbackActionId: 'deployments.environments.moveToRepository' });
+        const placed = await readCaptureWorkspace(input.workspace, context);
         if (!('kind' in placed) || placed.kind !== 'resolved') return placed;
         if (placed.workspace.machineId !== host.machineId) return fail('target_mismatch');
         const filesHost = host.repositoryFiles(placed.workspace.rootPath, context);
@@ -89,10 +100,9 @@ export function createDeploymentMoveToRepositoryForHost(host: Host): NonNullable
       const loaded = await host.readSource({ serverId: input.serverId, sourceId: current.environment.projectSourceId }, context);
       if (!loaded.ok) return 'errorCode' in loaded ? loaded : fail(loaded.error);
       let created: Extract<Awaited<ReturnType<typeof provisionRepositoryForDefinition>>, { kind: 'provisioned' }> | undefined;
-      let createdWorkspace: WorkspaceRefV1 | undefined;
+      let createdWorkspace: MachineWorkspaceRefV1 | undefined;
       if (input.createRepository) {
-        const placed = await resolveAdmittedRepositoryWorkspace({ workspace: input.workspace, context,
-          readWorkspaceRows: host.readWorkspaceRows, fallbackActionId: 'deployments.environments.moveToRepository' });
+        const placed = await readCaptureWorkspace(input.workspace, context);
         if (!('kind' in placed) || placed.kind !== 'resolved') return placed;
         if (placed.workspace.machineId !== host.machineId) return fail('target_mismatch');
         const provisioned = await provisionRepositoryForDefinition({ checkout: placed.workspace,
@@ -110,9 +120,8 @@ export function createDeploymentMoveToRepositoryForHost(host: Host): NonNullable
       if (!source.repository || !sameScmHostingRepositoryIdentity(readScmHostingRepositoryIdentity({ ...source.repository.provider,
         nameWithOwner: source.repository.repository.nameWithOwner }), input.repository)) return { kind: 'conflict', reason: 'source_changed' };
       const placed = createdWorkspace ? { kind: 'resolved' as const, workspace: createdWorkspace }
-        : await resolveAdmittedRepositoryWorkspace({ workspace: input.workspace, context,
-        ...(!input.continuation && !coldContinuation ? { expected: { projectSourceId: source.id, sourceRevision: source.revision, repository: input.repository } } : {}),
-        readWorkspaceRows: host.readWorkspaceRows, fallbackActionId: 'deployments.environments.moveToRepository' });
+        : await readCaptureWorkspace(input.workspace, context, !input.continuation && !coldContinuation
+          ? { projectSourceId: source.id, sourceRevision: source.revision, repository: input.repository } : undefined);
       if (!('kind' in placed) || placed.kind !== 'resolved') return placed;
       const workspace = placed.workspace;
       if (workspace.machineId !== host.machineId || (!created && workspace.source?.sourceId !== source.id)) return fail('target_mismatch');

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { ProjectAccountWorkspaceRefKeyV1 } from '@happier-dev/protocol/projects/workspaceRefKeyV1';
 import { readScmHostingRepositoryIdentity, type ScmHostingRepositoryIdentityV1 } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import { matchesRepositoryWorkspaceIntentV1, resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
@@ -23,18 +24,24 @@ export function useProjectSourceWorkspaceChoice(input: Readonly<{
     destination?: boolean;
     /** A repository resolved by the Source address owner before it is attached to this Source. */
     repository?: ScmHostingRepositoryIdentityV1;
+    admitCheckout?: (workspace: WorkspaceRefV1) => Readonly<{ ok: boolean }>;
 }>) {
     const read = useProjectSource(input.lifetime, input.sourceId);
     const source = read.source?.source ?? null;
     const refs = useWorkspaceRefs();
     const repository = input.repository ?? (source?.repository ? readScmHostingRepositoryIdentity({ ...source.repository.provider,
         nameWithOwner: source.repository.repository.nameWithOwner }) : null);
-    const candidates = React.useMemo(() => input.destination ? refs : source && repository ? refs.filter(ref =>
-        resolveServerProfileScopeIdForIdentifier(ref.serverId) === resolveServerProfileScopeIdForIdentifier(input.lifetime.scope.serverId)
-        && matchesRepositoryWorkspaceIntentV1(ref, {
-            source: { sourceId: source.id, revision: source.revision }, repositoryIdentity: repository,
-        })) : [],
-    [refs, source, input.destination, input.lifetime.scope.serverId, repository?.kind, repository?.deployment, repository?.repository]);
+    const { candidates, hasUnavailableCheckouts } = React.useMemo(() => {
+        const matching = input.destination ? refs : source && repository ? refs.filter(ref =>
+            resolveServerProfileScopeIdForIdentifier(ref.serverId) === resolveServerProfileScopeIdForIdentifier(input.lifetime.scope.serverId)
+            && matchesRepositoryWorkspaceIntentV1(ref, {
+                source: { sourceId: source.id, revision: source.revision }, repositoryIdentity: repository,
+            })) : [];
+        const admit = input.admitCheckout;
+        const candidates = admit ? matching.filter(ref => admit(ref).ok) : matching;
+        return { candidates, hasUnavailableCheckouts: candidates.length !== matching.length };
+    }, [refs, source, input.destination, input.lifetime.scope.serverId, input.admitCheckout,
+        repository?.kind, repository?.deployment, repository?.repository]);
     const selectedKey = input.value;
     const selected = selectedKey ? resolveWorkspaceRefV1(candidates, selectedKey,
         { normalizeServerId: resolveServerProfileScopeIdForIdentifier }) : null;
@@ -51,7 +58,7 @@ export function useProjectSourceWorkspaceChoice(input: Readonly<{
         catch { setError('repository_read_failed'); }
         finally { setLoading(false); }
     };
-    return { source, status: read.status, issue: read.issue, repository, candidates, workspace,
+    return { source, status: read.status, issue: read.issue, repository, candidates, hasUnavailableCheckouts, workspace,
         baseCommit: snapshot?.branch.headOid ?? null, baseBranch: snapshot?.branch.head ?? null, refresh, loading, error };
 }
 
@@ -82,7 +89,7 @@ export function ProjectSourceWorkspaceChoice(props: Readonly<{
             subtitle={model.baseCommit ?? t(`${copy}.baseMissing`)} showChevron={false}
             rightElement={<SectionActionButton testID={`${testID}.refresh`} title={t(`${copy}.refresh`)} icon="arrows-clockwise"
                 disabled={props.disabled || model.loading} onPress={() => { void model.refresh(); }} />} />
-            : model.status === 'ready' && model.candidates.length === 0
+            : model.status === 'ready' && model.candidates.length === 0 && !model.hasUnavailableCheckouts
                 ? <SurfaceStateCard testID={`${testID}.empty`} size="line" kind="empty" title={t(`${copy}.workspaceMissing`)} /> : null}
         {model.error ? <SurfaceStateCard size="line" kind="error" title={t(`${copy}.sourceFailed`)} diagnosticCode={model.error} /> : null}
     </>;

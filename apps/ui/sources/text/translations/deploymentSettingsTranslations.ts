@@ -39,6 +39,7 @@ export const moveToRepositoryCopy = {
   workspace: 'Checkout',
   workspacePlaceholder: 'Choose a checkout',
   workspaceMissing: 'Open a checkout of this project to continue.',
+  managedCheckoutUnavailable: 'Moving a definition requires a checkout on a connected Machine. Open the project there to continue.',
   sourceLoading: 'Loading project repository…',
   sourceFailed: 'Could not read the project repository',
   refresh: 'Read checkout',

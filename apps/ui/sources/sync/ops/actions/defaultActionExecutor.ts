@@ -1195,7 +1195,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if (!input.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       const selected = await resolveDeploymentMoveToRepositoryExecutionMachineIdV1(input.data,
-        createUiDeploymentWorkspaceMachineReader(accountContext, args.context));
+        createUiDeploymentWorkspaceMachineReader(accountContext, args.context, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1));
       if (!selected.ok) return selected;
       requestedMachineId = selected.machineId;
     }

@@ -88,7 +88,12 @@ it.each(['existing', 'attach', 'create', 'create-new', 'resume'] as const)('revi
     const checkout = { id: workspace.id, serverId, machineId: 'checkout-machine', rootPath: '/project', createdAtMs: 1,
         ...(repositoryChoice === 'create-new' ? {} : { repositoryIdentity: repository, source: { sourceId: source.id, revision: source.revision } }) };
     const { source: _checkoutSource, ...unboundCheckout } = checkout;
-    const checkoutRefs = repositoryChoice === 'existing' ? [checkout,
+    const { machineId: _checkoutMachine, ...managedBase } = unboundCheckout;
+    const managedCheckout = { ...managedBase, id: 'managed-checkout', v: 2 as const, kind: 'managed' as const,
+        managedId: 'remote-managed-id', rootPath: '/workspace/app',
+        controller: { machineId: 'controller', installationId: 'controller-installation' },
+        source: { sourceId: source.id, revision: source.revision } };
+    const checkoutRefs = repositoryChoice === 'existing' ? [checkout, managedCheckout,
         { ...checkout, id: 'other-source', source: { sourceId: 'another-source', revision: source.revision } },
         { ...checkout, id: 'old-source-revision', source: { sourceId: source.id, revision: source.revision - 1 } },
         { ...unboundCheckout, id: 'repository-only' },
@@ -233,6 +238,19 @@ it.each(['existing', 'attach', 'create', 'create-new', 'resume'] as const)('revi
     if (repositoryChoice === 'existing') {
         await waitForHomeGovernance(() => expect(screen.root.findAllByType(ProjectSourceWorkspaceChoice)[0]?.props.model.status).toBe('ready'));
         expect(screen.root.findAllByType(ProjectSourceWorkspaceChoice)[0]!.props.model.candidates).toEqual([checkout]);
+        expect(screen.findByTestId(`${id}.workspace.captureUnavailable`)).not.toBeNull();
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const { createUiDeploymentActionDeps } = await import('@/sync/api/deployments/deploymentActions');
+        const account = await captureLazyActionAccountContext(serverId);
+        try {
+            const result = await createUiDeploymentActionDeps(account).deploymentMoveToRepository!({
+                mode: 'preview', serverId, environmentId: detail.environment.id, definition: pin, path, repository,
+                workspace: { ...workspace, id: managedCheckout.id }, baseCommit: 'a'.repeat(40), baseBranch: 'main',
+            }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId },
+            async () => ({ ok: false, errorCode: 'unexpected_child', error: 'unexpected_child' }));
+            expect(result).toMatchObject({ ok: false, errorCode: 'deployment_repository_capture_requires_machine_checkout' });
+            expect(inputs).toEqual([]);
+        } finally { account.dispose(); }
     }
     if (repositoryChoice === 'create-new') {
         expect(screen.findByTestId(`${id}.preview`)?.props.disabled).toBe(true);

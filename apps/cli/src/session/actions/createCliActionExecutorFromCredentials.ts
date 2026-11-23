@@ -20,10 +20,11 @@ import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { createCliDeploymentActionDeps } from '@/deployments/createCliDeploymentActionDeps';
 import { resolveRequesterDeploymentMachine } from '@/deployments/resolveRequesterDeploymentMachine';
+import { isManagedWorkspaceRefV2, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema, isDeploymentEnvironmentPlacementActionV1, resolveDeploymentEnvironmentExecutionMachineIdV1, resolveDeploymentPreviewExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readApiTokenDeploymentController } from '@/deployments/readApiTokenDeploymentController';
 import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, isDeploymentReadActionIdV1, isDeploymentReceiptObservationActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { DeploymentMoveToRepositoryInputV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { admitDeploymentRepositoryCaptureWorkspaceV1, DeploymentMoveToRepositoryInputV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiateInputV1Schema, resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { resolveCurrentAccountAdministrationMachine, resolveCurrentAccountMachineTarget } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import { resolveSessionSpawnConnectedServices } from '@/session/creation/prepareSessionSpawnInput';
@@ -387,10 +388,10 @@ function combineInvocationSignals(
   return AbortSignal.any([invocationSignal, requestSignal]);
 }
 
-export async function resolveAccountWorkspaceMachine(params: Readonly<{
+async function readAccountWorkspaceRef(params: Readonly<{
   credentials: StoredCredentials; workspace: Readonly<{ serverId: string; id: string }>; serverId: string; serverIdentityId?: string;
   serverApiUrl: string; signal?: AbortSignal;
-}>): Promise<CliActionMachineTarget> {
+}>): Promise<Readonly<{ ok: true; ref: WorkspaceRefV1 }> | Extract<CliActionMachineTarget, { ok: false }>> {
   const workspaceServerId = params.serverIdentityId
     ?? await resolveServerProfileHomeIdentityId(params.serverId)
     ?? params.serverId;
@@ -404,10 +405,17 @@ export async function resolveAccountWorkspaceMachine(params: Readonly<{
       selection: { key: { kind: 'workspace-ref', serverId: workspaceServerId, id: params.workspace.id } },
     }));
     const ref = resolveWorkspaceRefById(rows.workspaceRefs, params.workspace.id, workspaceServerId);
-    return ref ? { ok: true, machineId: ref.machineId } : { ok: false, code: 'workspace_ref_unavailable' };
+    return ref ? { ok: true, ref } : { ok: false, code: 'workspace_ref_unavailable' };
   } catch {
     return { ok: false, code: params.signal?.aborted ? 'cancelled' : 'workspace_ref_unavailable' };
   }
+}
+
+export async function resolveAccountWorkspaceMachine(params: Parameters<typeof readAccountWorkspaceRef>[0]): Promise<CliActionMachineTarget> {
+  const selected = await readAccountWorkspaceRef(params);
+  if (!selected.ok) return selected;
+  return isManagedWorkspaceRefV2(selected.ref) ? { ok: false, code: 'workspace_ref_unavailable' }
+    : { ok: true, machineId: selected.ref.machineId };
 }
 
 async function resolvePatActionTransportPlan(params: Readonly<{
@@ -1754,15 +1762,15 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
               target = { kind: 'machine', machineId: selected.machineId };
             }
           }
-          const readRepositoryWorkspaceMachine = async (workspace: Parameters<typeof resolveAccountWorkspaceMachine>[0]['workspace']) => {
-            const resolved = await resolveAccountWorkspaceMachine({ credentials, workspace, serverId: approvalServerId,
-              serverIdentityId, serverApiUrl: serverHttpBaseUrl, ...(context.signal ? { signal: context.signal } : {}) });
-            return resolved.ok ? resolved : actionFailure(resolved.code);
-          };
+          const repositoryWorkspaceParams = { credentials, serverId: approvalServerId, serverIdentityId, serverApiUrl: serverHttpBaseUrl,
+            ...(context.signal ? { signal: context.signal } : {}) };
           if (actionId === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1) {
             const parsed = DeploymentMoveToRepositoryInputV1Schema.safeParse(input);
             if (!parsed.success) return actionFailure('invalid_parameters');
-            const selected = await resolveDeploymentMoveToRepositoryExecutionMachineIdV1(parsed.data, readRepositoryWorkspaceMachine);
+            const selected = await resolveDeploymentMoveToRepositoryExecutionMachineIdV1(parsed.data, async workspace => {
+              const resolved = await readAccountWorkspaceRef({ ...repositoryWorkspaceParams, workspace });
+              return resolved.ok ? admitDeploymentRepositoryCaptureWorkspaceV1(resolved.ref) : actionFailure(resolved.code);
+            });
             if (!selected.ok) return selected;
             target = { kind: 'machine', machineId: selected.machineId };
           }
@@ -1779,7 +1787,10 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
               });
               const loaded = await deploymentAction!('deployments.environments.get', request, context);
               return 'errorCode' in loaded ? loaded : DeploymentEnvironmentGetResultV1Schema.parse(loaded);
-            }, request => readRepositoryWorkspaceMachine(request.workspace));
+            }, async ({ workspace }) => {
+              const resolved = await resolveAccountWorkspaceMachine({ ...repositoryWorkspaceParams, workspace });
+              return resolved.ok ? resolved : actionFailure(resolved.code);
+            });
             if (!selected.ok) return selected;
             target = { kind: 'machine', machineId: selected.machineId };
           }

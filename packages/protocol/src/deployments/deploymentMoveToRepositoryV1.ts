@@ -5,6 +5,7 @@ import { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema 
 import { ProjectAccountWorkspaceRefKeyV1Schema } from '../projects/workspaceRefKeyV1.js';
 import type { ProjectAccountWorkspaceRefKeyV1 } from '../projects/workspaceRefKeyV1.js';
 import type { ActionExecuteFailure } from '../actions/actionExecutionResult.js';
+import { isManagedWorkspaceRefV2, type MachineWorkspaceRefV1, type WorkspaceRefV1 } from '../workspaces/workspaceRefV1.js';
 import { ProjectSourceRepositorySelectorV1Schema } from '../projects/sources/projectSourceV1.js';
 import { ScmHostingRepositoryIdentityV1Schema } from '../scm/hostingRepositoryIdentity.js';
 import { ScmHostingRepositoryPublishRequestSchema } from '../scm/repositoryProvisioning.js';
@@ -58,6 +59,22 @@ export const DeploymentMoveToRepositoryInputV1Schema = lazyZodSchema(() => z.str
     context.addIssue({ code: 'custom', path: ['continuation'], message: 'Merged content acceptance retains the original pull request.' });
 })));
 export type DeploymentMoveToRepositoryInputV1 = z.infer<typeof DeploymentMoveToRepositoryInputV1Schema>;
+
+export const DEPLOYMENT_REPOSITORY_CAPTURE_REQUIRES_MACHINE_CHECKOUT = 'deployment_repository_capture_requires_machine_checkout';
+
+/** Repository capture and the reviewed writes use the selected Machine's checkout authority. */
+export function admitDeploymentRepositoryCaptureWorkspaceV1(
+  workspace: WorkspaceRefV1,
+): Readonly<{ ok: true; workspace: MachineWorkspaceRefV1; machineId: string }> | Readonly<{
+  ok: false;
+  errorCode: typeof DEPLOYMENT_REPOSITORY_CAPTURE_REQUIRES_MACHINE_CHECKOUT;
+  error: typeof DEPLOYMENT_REPOSITORY_CAPTURE_REQUIRES_MACHINE_CHECKOUT;
+}> {
+  return isManagedWorkspaceRefV2(workspace)
+    ? { ok: false, errorCode: DEPLOYMENT_REPOSITORY_CAPTURE_REQUIRES_MACHINE_CHECKOUT,
+      error: DEPLOYMENT_REPOSITORY_CAPTURE_REQUIRES_MACHINE_CHECKOUT }
+    : { ok: true, workspace, machineId: workspace.machineId };
+}
 
 /** The person's selected admitted WorkspaceRef owns repository execution placement. */
 export function resolveDeploymentMoveToRepositoryExecutionMachineIdV1(
