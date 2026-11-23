@@ -36,6 +36,28 @@ function describeRollbackReview(preview: unknown): string | undefined {
   ].join('\n');
 }
 
+async function describeApprovalPrompt(actionId: string, signal: AbortSignal, readPreview?: () => Promise<unknown>): Promise<string | undefined> {
+  if (actionId === DEPLOYMENT_ROLLBACK_ACTION_ID_V1) return describeRollbackReview(await readPreview?.());
+  const prompt = 'Approve this Action?';
+  if (!readPreview) return prompt;
+  const { resolvePartialMachineReferenceReviewReaderV1 } = await import('@happier-dev/protocol/machines/machineReferenceCensusV1');
+  const readReview = resolvePartialMachineReferenceReviewReaderV1(actionId);
+  if (!readReview) return prompt;
+  let preview: unknown;
+  try {
+    preview = await readPreview();
+  } catch (error) {
+    if (signal.aborted) throw error;
+    return prompt;
+  }
+  const review = readReview(preview);
+  if (!review) return prompt;
+  const cause = review.failureCause;
+  const detail = [cause?.errorCode, cause && 'nativeErrorReason' in cause ? cause.nativeErrorReason : undefined]
+    .filter(Boolean).join(' · ');
+  return ['Machine references could not be fully checked.', ...(detail ? [detail] : []), '', prompt].join('\n');
+}
+
 /** Both CLI entry points present Ask while the originating call retains custody. */
 export function createCliActionApprovalPresenter(options: Readonly<{
   actionId: string;
@@ -62,8 +84,7 @@ export function createCliActionApprovalPresenter(options: Readonly<{
       // prompt fails, the request stays open for another surface to decide.
       if (!isInteractiveTerminal()) return;
       try {
-        const prompt = options.actionId === DEPLOYMENT_ROLLBACK_ACTION_ID_V1
-          ? describeRollbackReview(await readPreview?.()) : 'Approve this Action?';
+        const prompt = await describeApprovalPrompt(options.actionId, signal, readPreview);
         if (!prompt) return;
         approve = await promptConfirmYesNo(prompt, { default: 'no', signal });
       } catch (error) {

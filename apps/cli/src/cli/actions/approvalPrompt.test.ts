@@ -86,6 +86,45 @@ describe('CLI Action approval presenter', () => {
     }
   });
 
+  it.each(['machines.managed.delete', 'machines.reboot'])('shows partial Machine references before asking for %s', async actionId => {
+    const input = Object.assign(new PassThrough(), { isTTY: true });
+    const output = Object.assign(new PassThrough(), { isTTY: true });
+    vi.spyOn(process, 'stdin', 'get').mockReturnValue(input as NodeJS.ReadStream);
+    vi.spyOn(process, 'stdout', 'get').mockReturnValue(output as NodeJS.WriteStream);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const controller = new AbortController();
+    const decide = vi.fn(async () => ({ ok: true as const, result: {} }));
+    const present = createCliActionApprovalPresenter({ actionId, json: false, envelopeKind: 'actions_invoke' });
+    const partial = { homeId: 'home', coverage: 'partial', references: [], failureCause: {
+      phase: 'project.requester_admission', errorClass: 'Error', errorCode: 'project_requester_authority_unavailable',
+      httpStatus: null, nativeErrorReason: 'signed_root_projection',
+    } };
+    const preview = actionId === 'machines.managed.delete'
+      ? { machineReferences: { ...partial, machineId: null, unavailable: ['requester_authority'] } }
+      : { machineRebootReview: { kind: 'machineReboot', deploymentReferences: { ...partial, machineId: 'machine', nextCursor: null } } };
+    let written = '';
+    try {
+      const prompted = new Promise<void>(resolve => output.on('data', (chunk: Buffer) => {
+        written += chunk.toString();
+        if (written.includes('[y/N]')) resolve();
+      }));
+      const pending = present('approval_references', controller.signal, decide, async () => preview);
+      await prompted;
+      const displayed = stripVTControlCharacters(written);
+      expect(decide).not.toHaveBeenCalled();
+      input.write('y\r');
+      await expect(pending).resolves.toMatchObject({ ok: true });
+      expect(displayed).toContain('Machine references could not be fully checked');
+      expect(displayed).toContain('project_requester_authority_unavailable');
+      expect(displayed).toContain('signed_root_projection');
+      expect(decide).toHaveBeenCalledWith('approve');
+    } finally {
+      controller.abort();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
   it('prints owned shared Environment losses before a CLI approval', async () => {
     const logs: string[] = [];
     vi.spyOn(console, 'error').mockImplementation(message => { logs.push(String(message)); });

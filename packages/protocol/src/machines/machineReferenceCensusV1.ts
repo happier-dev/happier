@@ -8,7 +8,10 @@ import { ActionFailureCauseV1Schema, projectActionFailureCauseV1, type ActionFai
 import { readActionFailureEnvelope } from '../actions/executor/actionFailureEnvelope.js';
 import type { AutomationDefinitionListResponse } from '../automations/automationApiV3.js';
 import type { MachinePoolViewV1 } from './pools/v1.js';
+import { readRecord } from '../inputs/inputRecords.js';
 import { MachineDeploymentDomainReferenceV1Schema } from './machineDeploymentDomainReferenceV1.js';
+import { MANAGED_DELETE_ACTION_ID_V1 } from './managed/actionIdsV1.js';
+import { MACHINE_REBOOT_ACTION_IDS } from './rebootActionIdsV1.js';
 export { MachineDeploymentDomainReferenceV1Schema, type MachineDeploymentDomainReferenceV1 } from './machineDeploymentDomainReferenceV1.js';
 export const MachineDeploymentReferenceRoleV1Schema = lazyZodSchema(() => z.enum([
   'runtime', 'data', 'retiring', 'detached', 'controller', 'build', 'edge', 'telemetry',
@@ -44,6 +47,22 @@ export const MachineReferenceCensusV1Schema = lazyZodSchema(() => z.readonly(z.s
 })));
 export type MachineReferenceV1 = z.infer<typeof MachineReferenceV1Schema>;
 export type MachineReferenceCensusV1 = z.infer<typeof MachineReferenceCensusV1Schema>;
+
+export function resolvePartialMachineReferenceReviewReaderV1(actionId: string):
+  ((preview: unknown) => MachineReferenceCensusV1 | MachineDeploymentReferencesResultV1 | undefined) | undefined {
+  const read = actionId === MANAGED_DELETE_ACTION_ID_V1
+    ? (preview: unknown) => MachineReferenceCensusV1Schema.safeParse(readRecord(preview).machineReferences).data
+    : MACHINE_REBOOT_ACTION_IDS.some(id => id === actionId)
+      ? (preview: unknown) => MachineDeploymentReferencesResultV1Schema.safeParse(
+        readRecord(readRecord(preview).machineRebootReview).deploymentReferences,
+      ).data
+      : undefined;
+  if (!read) return undefined;
+  return preview => {
+    const result = read(preview);
+    return result?.coverage === 'partial' ? result : undefined;
+  };
+}
 
 export function readMachineReferenceFailureCauseV1(error: unknown): ActionFailureCauseV1 | undefined {
   const failure = readActionFailureEnvelope(error);
