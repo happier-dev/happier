@@ -56,7 +56,7 @@ import {
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { resolveCliActionCallerWorkflowTarget } from './resolveCliActionCallerSession';
-import { requiresMachineAdmissionForSessionInput, resolveSessionInputTargetMachineId, resolveProtectedSessionInputActionTarget, supportsAccountPendingForCliSessionInput } from '@/session/services/sessionInputAdmissionIdentity';
+import { rejectMissingOrArchivedSessionInputV1, requiresMachineAdmissionForSessionInput, resolveSessionInputTargetMachineId, resolveProtectedSessionInputActionTarget, supportsAccountPendingForCliSessionInput } from '@/session/services/sessionInputAdmissionIdentity';
 export { resolveProtectedSessionInputActionTarget } from '@/session/services/sessionInputAdmissionIdentity';
 import { buildTrustedHostSessionInputAdmissionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
@@ -2077,6 +2077,12 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           serverFeaturesSnapshot: await resolveServerFeaturesSnapshotForCredentials(credentials),
           ...(signal ? { signal } : {}),
         });
+        if (actionId === 'session.message.send' && (transport.ok
+          ? transport.rawSession.archivedAt != null : transport.code === 'session_not_found')) {
+          return { context, invocation: createOneShotPatInvocation(async () => ({
+            ok: true, result: rejectMissingOrArchivedSessionInputV1(),
+          })) };
+        }
         if (!transport.ok) return { context,
           invocation: createOneShotPatInvocation(async () => actionResolutionFailure(transport)) };
         const request = buildTrustedHostSessionInputAdmissionV1(context.surface, context.actionRequestAttributionV1).request;

@@ -93,7 +93,7 @@ import {
 } from '@/session/shared/sessionTurnLifecycle';
 
 import { resolveSessionTransportContext } from './resolveSessionTransportContext';
-import { requiresMachineAdmissionForSessionInput, resolveSessionInputTargetMachineId, supportsAccountPendingForCliSessionInput } from './sessionInputAdmissionIdentity';
+import { rejectMissingOrArchivedSessionInputV1, requiresMachineAdmissionForSessionInput, resolveSessionInputTargetMachineId, supportsAccountPendingForCliSessionInput } from './sessionInputAdmissionIdentity';
 import { MachineAdmissionTransportUnavailableError } from '@/daemon/machineAdmissionTransport';
 import {
   resolveSessionMessageModel,
@@ -335,8 +335,8 @@ function rejectedProtectedInputBeforeAdmission(
   code: Extract<SendSessionMessageResult, Readonly<{ ok: false }>>['code'],
   phase = 'session.message.target_lookup',
 ): SessionInputEnqueueResultV1 {
-  if (code === 'session_archived') {
-    return { status: 'rejected', code: 'session_input_archived' };
+  if (code === 'session_archived' || code === 'session_not_found') {
+    return rejectMissingOrArchivedSessionInputV1();
   }
   if (code === 'unsupported') {
     return { status: 'rejected', code: 'session_input_target_update_required' };
@@ -2042,7 +2042,9 @@ export async function sendSessionMessage(
           ok: false,
           code: 'admission_rejected',
           message: 'Protected Session input was rejected before durable admission',
-          admissionResult: result,
+          admissionResult: result.code === 'session_input_archived' || result.code === 'session_input_target_unavailable'
+            && result.failureCause?.errorCode === 'session_not_found'
+            ? rejectMissingOrArchivedSessionInputV1() : result,
         };
       }
       if (result.status === 'outcomeUnknown') {
@@ -2208,12 +2210,15 @@ export async function sendSessionMessage(
         ok: false,
         code: 'admission_rejected',
         message: `Pending enqueue was rejected before admission (HTTP ${status})`,
-        admissionResult: admissionRejectionCode === 'session_input_target_unavailable'
-          ? rejectUnavailableSessionInputV1('session.message.pending_http_admission', {
-              failureCause: readHttpAdmissionFailureCause(error)
-                ?? projectActionFailureCauseV1(error, 'session.message.pending_http_admission'),
-            })
-          : { status: 'rejected', code: admissionRejectionCode },
+        admissionResult: admissionRejectionCode === 'session_input_archived'
+          || admissionRejectionCode === 'session_input_target_unavailable' && status === 404
+          ? rejectMissingOrArchivedSessionInputV1()
+          : admissionRejectionCode === 'session_input_target_unavailable'
+            ? rejectUnavailableSessionInputV1('session.message.pending_http_admission', {
+                failureCause: readHttpAdmissionFailureCause(error)
+                  ?? projectActionFailureCauseV1(error, 'session.message.pending_http_admission'),
+              })
+            : { status: 'rejected', code: admissionRejectionCode },
       };
     }
     const errorMessage = error instanceof Error ? error.message : String(error ?? '');

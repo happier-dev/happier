@@ -913,6 +913,10 @@ a phase, class, code and HTTP status. It carries no target identity or input
 content. Receipts that omit it remain valid. Earlier strict development
 readers require matching Protocol and host source. The 0.2 frontier
 `24731ff73c` has no Session input admission schema. Pending storage is unchanged.
+A direct CLI Session Send to a missing or archived Session returns the same
+`rejected` receipt with code `session_input_target_unavailable` and a
+`session.message.target_lookup` cause. The receipt does not identify which
+target state caused the refusal.
 Deferred approval-result delivery reports `session_input_target_unavailable`
 when Home reports that the exact originating Session is unavailable before
 Pending admission. The run record still reports the approved Action's outcome.

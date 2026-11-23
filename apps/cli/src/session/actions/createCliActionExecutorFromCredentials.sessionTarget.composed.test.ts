@@ -27,7 +27,7 @@ vi.mock('socket.io-client', async importOriginal => {
 
 describe('original CLI Session Action delivery', () => {
     afterEach(() => { network.observe = undefined; vi.restoreAllMocks(); vi.unstubAllGlobals(); });
-    it.each(['editor', 'inactive editor', 'viewer', 'outsider', 'owner',
+    it.each(['editor', 'inactive editor', 'viewer', 'outsider', 'archived editor', 'owner',
         'terminal owner after Machine use withdrawal', 'terminal owner legacy wait after Machine use withdrawal',
         'terminal owner reply-wait after Machine use withdrawal'] as const)(
         'sends to a live shared encrypted Session with the correct admission route for %s', async role => {
@@ -46,7 +46,8 @@ describe('original CLI Session Action delivery', () => {
                 encryption: { type: 'dataKey' as const, machineKey, publicKey } };
             const sessionId = 'cmwiqxdcs00r2mcnz01awx7f5';
             const sessionKey = new Uint8Array(32).fill(21);
-            const session = createSessionRecordFixture({ id: sessionId, active: role !== 'inactive editor', encryptionMode: 'e2ee',
+            const session = createSessionRecordFixture({ id: sessionId, active: role !== 'inactive editor' && role !== 'archived editor', encryptionMode: 'e2ee',
+                ...(role === 'archived editor' ? { archivedAt: 42 } : {}),
                 metadataLayoutVersion: 1,
                 metadata: encryptSessionPayload({ ctx: { encryptionKey: sessionKey, encryptionVariant: 'dataKey' }, payload: { v: 1 } }),
                 dataEncryptionKey: Buffer.from(sealEncryptedDataKeyEnvelopeV1({ dataKey: sessionKey, recipientPublicKey: publicKey,
@@ -163,8 +164,10 @@ describe('original CLI Session Action delivery', () => {
                 if (legacyWait) expect(reads.mock.calls.some(([url]) => url.endsWith(restoredInputPath))).toBe(true);
                 return;
             }
-            if (role === 'outsider') {
-                expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'session_not_found' });
+            if (role === 'outsider' || role === 'archived editor') {
+                expect(result).toEqual({ ok: true, result: { status: 'rejected', code: 'session_input_target_unavailable',
+                    failureCause: expect.objectContaining({ phase: 'session.message.target_lookup', errorCode: 'session_input_target_unavailable', httpStatus: null }),
+                } });
                 expect(delivered.mock.calls.filter(([url]) => !url.endsWith('/lookup-by-tags'))).toEqual([]);
                 return;
             }
