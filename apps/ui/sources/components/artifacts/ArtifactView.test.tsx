@@ -906,6 +906,30 @@ describe('Artifact composed view reads', () => {
         }
     });
 
+    it('titles the phone header with a known Review row while its body still loads, never the route\'s "Artifacts" (G3b)', async () => {
+        const reviewId = 'review-body-pending';
+        // The body read stays open: the row is known, its body is not.
+        const bodyPending = new Promise<Response>(() => {});
+        await setup('document', undefined, false, request => request.path === `/v1/artifacts/${reviewId}` ? bodyPending : undefined);
+        const scope = captureActiveServerAccountScopeLifetime()?.scope;
+        if (!scope) throw new Error('The test Home must be applied');
+        const row = { id: reviewId, sourceServerId: scope.serverId, title: 'Pending Review', isDecrypted: true,
+            header: { kind: 'review.v1', v: 1, reviewId, title: 'Pending Review' }, ownerAccountId: 'owner', access: 'owner',
+            storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } as unknown as DecryptedArtifact;
+        const { NavigationTitleChromeProvider } = await import('@/components/ui/layout/navigationTitleChrome');
+        const chromeTitles: (string | null | undefined)[] = [];
+        const publisher = { setTitle: (value: string | null | undefined) => { chromeTitles.push(value); } };
+        const screen = await renderScreen(<NavigationTitleChromeProvider showsTitle publisher={publisher}>
+            <ArtifactView artifactId={reviewId} artifact={row} presentation="page" />
+        </NavigationTitleChromeProvider>);
+        try {
+            await vi.waitFor(() => expect(screen.findByTestId('review-detail:loading')).not.toBeNull());
+            await vi.waitFor(() => expect(chromeTitles.at(-1)).toBe('Pending Review'));
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it.each([{ status: 404, edit: false }, { status: 403, edit: false }, { status: 404, edit: true }, { status: 403, edit: true }])('settles an inaccessible cold Doc as unavailable after one exact read (HTTP $status, edit=$edit)', async ({ status, edit }) => {
         const { served } = await setup('document', undefined, false,
             request => request.path === '/v1/artifacts/document'

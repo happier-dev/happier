@@ -49,6 +49,17 @@ export function useNavigationChromeShowsBack(): boolean {
 }
 
 /**
+ * A state that stands in for a page (loading, not found, couldn't open) names the navigation chrome as the page header
+ * would: `null` names nothing, a string names it. It withdraws its title when the state ends.
+ */
+export function NavigationChromeTitle(props: Readonly<{ title: string | null }>): null {
+    const setTitle = useNavigationTitleChromePublisher()?.setTitle;
+    React.useEffect(() => { setTitle?.(props.title); }, [props.title, setTitle]);
+    React.useEffect(() => () => setTitle?.(undefined), [setTitle]);
+    return null;
+}
+
+/**
  * The navigation chrome leaves the page's name to the page's own large title under it: a phone's top-level
  * collection page, as the Inbox tab (lab `phone-P4`). A mounted plugin page reads it as page chrome
  * (`HappierPageChromeInternal.largeTitle`), and its Collection leads with the name.

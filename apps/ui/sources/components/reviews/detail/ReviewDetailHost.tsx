@@ -86,6 +86,7 @@ import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useSetting } from '@/sync/store/settingsReadHooks';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { t } from '@/text';
+import { NavigationChromeTitle } from '@/components/ui/layout/navigationTitleChrome';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 import { formatMoment } from '@/utils/datetime/formatMoment';
 import { ReviewPagePluginContent } from '../plugins/ReviewPluginContent';
@@ -484,9 +485,14 @@ export function ReviewDetailHost(props: Readonly<{
     return { ok: false as const, message: resolveActionExecutionErrorMessage(result, t('common.error')) };
   }, [detail, setReviewers]);
 
-  if (props.bodyState === 'loading' && !record) return <ReviewDetailState kind="loading" />;
-  if (props.bodyState === 'failed' && !record) return <ReviewDetailState kind="failed" onRetry={props.onRetry} />;
-  if (!record) return <ReviewDetailState kind="missing" reason={t('reviewWalkthrough.detail.unreadable')} />;
+  if (!record) {
+    // The row is known, its body is not (yet): the chrome keeps the Artifact's own title through these states, never the
+    // route's "Artifacts" (G3b); the page header takes over once the record opens.
+    const state = props.bodyState === 'loading' ? <ReviewDetailState kind="loading" />
+      : props.bodyState === 'failed' ? <ReviewDetailState kind="failed" onRetry={props.onRetry} />
+      : <ReviewDetailState kind="missing" reason={t('reviewWalkthrough.detail.unreadable')} />;
+    return <><NavigationChromeTitle title={artifact.title || t('detailsSurface.review.title')} />{state}</>;
+  }
   // Until the Review owner's first read lands, the page stands on its record (title, scores, reviewers) and the glance
   // holds its line. People, the tabs and the findings depend on that read, so they arrive with it as one block and no
   // control moves under the reader; what waits on the reader isn't known yet, so nothing is offered (never New round).

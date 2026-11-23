@@ -9,7 +9,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader, type PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
 import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
-import { useNavigationTitleChromePublisher } from '@/components/ui/layout/navigationTitleChrome';
+import { NavigationChromeTitle } from '@/components/ui/layout/navigationTitleChrome';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
@@ -82,14 +82,6 @@ function ArtifactKindView(props: React.ComponentProps<typeof ArtifactView>): Rea
             focusThreadId={props.focusThreadId} pluginPageSelection={props.pluginPageSelection} onDeleted={props.onDeleted} />;
     }
     return <ArtifactDocumentView {...props} body={body} />;
-}
-
-/** Publishes a page state's title to the navigation chrome, as a page header does, and withdraws it when the state ends. */
-function ArtifactStateChromeTitle(props: Readonly<{ title: string | null }>): null {
-    const setTitle = useNavigationTitleChromePublisher()?.setTitle;
-    React.useEffect(() => { setTitle?.(props.title); }, [props.title, setTitle]);
-    React.useEffect(() => () => setTitle?.(undefined), [setTitle]);
-    return null;
 }
 
 function ArtifactDocumentView(props: React.ComponentProps<typeof ArtifactView> & Readonly<{
@@ -165,7 +157,7 @@ function ArtifactDocumentView(props: React.ComponentProps<typeof ArtifactView> &
     // A state standing in for the page names the phone header itself (its route title is only the parent's "Artifacts"):
     // nothing while the Artifact is unknown, the state's own title once it settles (G3b). A pane leaves its host's title.
     const titled = (title: string | null, node: React.ReactElement) => props.presentation === 'page'
-        ? <><ArtifactStateChromeTitle title={title} />{node}</> : node;
+        ? <><NavigationChromeTitle title={title} />{node}</> : node;
     if (artifact === null || body.state === 'missing') {
         if (body.state === 'loading') return titled(null, <View style={styles.bodyPlaceholder} testID="artifact:bodyLoading" />);
         if (failure) return titled(t('artifacts.error'), failure);
