@@ -103,6 +103,7 @@ import { snapshotEnv, restoreEnv } from '@/testkit/env';
 import { prepareManagedOpaquePresetAcquireV1, prepareManagedOpaquePresetReportV1 } from '@happier-dev/cli-common/machines/managed';
 import { submitManagedAcquire, reportManagedAcquire } from '@/app/machines/managed/managedMutations';
 import { admitManagedAcquire } from '@/app/machines/managed/managedAcquire';
+import { storeOpaquePresetLaunch } from '@/app/machines/managed/managedMachineProjection';
 import { createManagedMachineControllerClient, type ManagedMachineAcquisitionDriverInput } from '../../../../../../cli/src/machines/managed/acquire';
 import { ManagedMachineV1Schema, isManagedOpaquePresetMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { prepareRequesterAccountActionContext } from '../../../../../../cli/src/daemon/sessionEncryption/requesterAccountActionProjection';
@@ -779,7 +780,7 @@ describe('composed CLI managed Action origination', () => {
     it.each([['power', 'missing'], ['resize', 'missing'], ['power', 'signed'], ['resize', 'signed'],
         ['power', 'account'], ['resize', 'account'], ['power', 'explicit'], ['resize', 'explicit'],
         ['power', 'unreachable'], ['resize', 'unreachable'], ['deferred', 'missing']] as const)(
-        'roots terminal Account-native %s before effects (signer=%s)', async (control, signer) => {
+        'roots terminal Account-native %s and applies Home admission (signer=%s)', async (control, signer) => {
         const selected = await fixture(true, 'plain', false, true);
         if (!('manifest' in selected) || !selected.manifest) throw new Error('Expected native fixture');
         // Real author compilation, release projection and Home storage back the portable provider.
@@ -881,6 +882,7 @@ describe('composed CLI managed Action origination', () => {
         }, http => {
             registerAccountProfileRoute(http);
             registerAccountEncryptionRoutes(http);
+            registerAutomationActionIndexRoutes(http);
             registerPluginAvailabilityRoutes(http);
             artifactsRoutes(http);
             http.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: storedSettings }, version: 1 }));
@@ -943,15 +945,21 @@ describe('composed CLI managed Action origination', () => {
                     .toMatchObject({ intentRevision: 1, admittedInput: {} });
                 return;
             }
-            expect(result, JSON.stringify({ result, phases })).toMatchObject({ ok: true });
-            expect(native).toContain(control);
             if (signer === 'signed') {
                 expect(rootAuthentications).toEqual(['account']);
                 expect(rootAuthorities).toEqual(['account_automation']);
             }
             if (signer === 'explicit') expect(rootAuthentications).toEqual(['terminal']);
-            expect(phases.filter(phase => phase.phase.endsWith(`/report-${control === 'power' ? 'intent' : 'resize'}`)).map(phase => phase.status))
-                .toEqual(control === 'resize' ? [403, 200] : [200]);
+            if (control === 'power') {
+                expect(result, JSON.stringify({ result, phases })).toMatchObject({ ok: false, errorCode: 'controller_unavailable' });
+                expect(native).toEqual([]);
+                expect(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } }))
+                    .toMatchObject({ intentRevision: 1, admittedInput: {} });
+                return;
+            }
+            expect(result, JSON.stringify({ result, phases })).toMatchObject({ ok: true });
+            expect(native).toContain('resize');
+            expect(phases.filter(phase => phase.phase.endsWith('/report-resize')).map(phase => phase.status)).toEqual([403, 200]);
             if (signer === 'signed') {
                 const authorization = dispatchedRoot?.executionAuthorization;
                 if (!authorization || !dispatchedRoot) throw new Error('Expected actual Home-issued native root');
@@ -2633,9 +2641,14 @@ describe('composed CLI managed Action origination', () => {
             input: { input: selected.input, requestId: selected.requestId, continuationPresent: false } });
         if (actionId === 'machines.managed.setup.skip') {
             // Provider enrollment is outside this authorization composition.
+            const presetId = crypto.randomUUID();
+            const preset = sealManagedMachinePresetContentV1({ presetId, mode: 'plain',
+                content: { v: 1, name: 'Retained VM', launch: selected.input.selection.launch } });
             await db.managedMachine.update({ where: { id: admitted.machine.id }, data: {
-                allocation: 'bound', enrolledMachineId: selected.controller.machineId,
-                presetId: crypto.randomUUID(), presetRevision: 1, machineSetup: { setup: {}, state: 'pending' },
+                allocation: 'bound', creationState: 'active', enrolledMachineId: selected.controller.machineId,
+                presetId, presetRevision: 1,
+                launch: storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', ...preset }),
+                machineSetup: { state: 'pending' },
                 resource: { contributionRef: selected.input.selection.launch.provider, schemaVersion: 1, value: { id: 'retained-vm' } },
             } });
         }
@@ -2690,6 +2703,7 @@ describe('composed CLI managed Action origination', () => {
             return { ok: true, result: createExternalActionDaemonDispatchResponseV1(result.prepared) };
         }, http => {
             registerAccountProfileRoute(http); registerAccountEncryptionRoutes(http); artifactsRoutes(http);
+            registerAutomationActionIndexRoutes(http);
             http.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: storedSettings }, version: 1 }));
         }, []);
         const restoreHttp = installAxiosFastifyAdapter({ app: instance, origin: serverHttpBaseUrl });
