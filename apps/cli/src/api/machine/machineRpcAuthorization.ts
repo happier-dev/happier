@@ -519,6 +519,7 @@ export type PrivateWorkspaceSyncTargetExecutionResolution =
 
 export type MachineRpcAdmissionBoundary = Readonly<{
   machineId: string;
+  isDaemonShuttingDown?: () => boolean;
   resolveHomeServerIdentityId?: (
     signal?: AbortSignal,
   ) => Promise<string | null>;
@@ -1296,6 +1297,16 @@ export async function authorizeMachineRpcRequest(
   machine?: MachineRpcAdmissionBoundary,
   source?: 'authenticated_home_socket',
 ): Promise<RpcAuthorizationResult> {
+  // Fresh SCM calls share this ingress. A handler already past admission
+  // retains its execution and transport through the existing drain.
+  if (machine?.isDaemonShuttingDown?.() && request.method.startsWith(`${machine.machineId}:`)) {
+    const method = request.method.slice(machine.machineId.length + 1);
+    if (getScmRpcSideEffectClass(method) !== undefined || isScmLocalRepositoryReadRpcMethod(method)) {
+      const errorCode = 'daemon_shutting_down';
+      return { ok: false, errorCode, error: 'The daemon is shutting down.',
+        failureCause: projectActionFailureCauseV1({ code: errorCode }, 'rpc.admission', { allowUnknownErrorCode: true }) };
+    }
+  }
   if (request.method === MANAGED_PLUGIN_WEBHOOK_DAEMON_RPC_METHOD_V1
     || request.method.endsWith(`:${MANAGED_PLUGIN_WEBHOOK_DAEMON_RPC_METHOD_V1}`)) {
     if (source !== 'authenticated_home_socket' || !machine

@@ -64,6 +64,41 @@ function nativeReviewDigest(result: unknown): string {
 }
 
 describe('Machine filesystem approval continuity from UI and paired terminal', () => {
+  it.each([
+    { publication: 'hidden', code: 'access_denied' },
+    { publication: 'revoked', code: 'machine_unavailable' },
+    { publication: 'replaced', code: 'machine_unavailable' },
+    { publication: 'keyPending', code: 'recipient_key_pending' },
+    { publication: 'refused', code: 'content_unpublished' },
+    { publication: 'modeMismatch', code: 'encryption_material_unavailable' },
+  ] as const)('preserves the $publication Machine refusal through original Action dispatch', async ({ publication, code }) => {
+    const actionId = 'agents.models.list';
+    const h = await createHarness(actionId, 'allowed');
+    const input = { agentId: 'acme.discovery/assistant', machineId: 'machine' };
+    try {
+      expect(await h.runOriginalCli(input, actionId)).toMatchObject({ ok: true });
+      const get = vi.mocked(axios.get).getMockImplementation()!;
+      vi.mocked(axios.get).mockImplementation(async (url, config) => {
+        const response = await get(url, config);
+        if (new URL(String(url)).pathname !== '/v1/machines/machine') return response;
+        if (publication === 'hidden') return { ...response, status: 404, data: { error: 'machine_not_found' } };
+        const machine = response.data.machine;
+        const row = {
+          revoked: { revokedAt: 123 },
+          replaced: { replacedByMachineId: 'replacement' },
+          keyPending: { access: { ...machine.access, accessState: 'key_pending', reason: 'recipient_key_pending' } },
+          refused: { access: { ...machine.access, accessState: 'refused', reason: 'content_unpublished' } },
+          modeMismatch: { access: { ...machine.access, resourceMode: 'e2ee' } },
+        }[publication];
+        return { ...response, data: { machine: { ...machine, ...row } } };
+      });
+      expect(ActionExecuteFailureSchema.parse(await h.runOriginalCli(input, actionId))).toMatchObject({
+        ok: false, errorCode: code, effectAttempted: false,
+        failureCause: { phase: 'dispatch.machine_selection', errorCode: code },
+      });
+    } finally { await h.close(); }
+  });
+
   it.each(['daemon.filesystem.listDirectory', 'daemon.filesystem.readFile', 'daemon.filesystem.getDirectoryTree'] as const)
   ('preserves immediate owner CLI %s through authenticated root custody', async actionId => {
     const h = await createHarness(actionId, 'allowed');

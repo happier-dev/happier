@@ -2953,6 +2953,11 @@ An explicit clean socket disconnect persists Offline immediately and releases
 the publisher claim before pushing the transition. An unexpected
 transport loss retains the missed-heartbeat deadline.
 
+During graceful daemon shutdown, fresh SCM Machine RPC admissions return
+`daemon_shutting_down` before any effect. The existing drain keeps the socket
+available while admitted RPCs settle, then cleanly disconnects it so Home
+publishes Offline. The typed SCM refusal is part of unreleased 0.3.
+
 Live Machines have no client expiry timer. A failed request can say “Unreachable
 from this Home” without a ticking last-seen label. Offline labels use the retained
 last-active time. Opening a Machine page or popover pulls that timestamp once;
@@ -14667,6 +14672,12 @@ sign the list effect and Home also accepts the grant-set effect used by older
 development daemons for read-back. Machine access still decides the response
 for the original requester. The authorization token and response formats are
 unchanged.
+
+The original CLI Action target selector preserves the Machine access refusal
+from a non-ready row. A hidden or missing row returns `access_denied`, a
+retired or replaced row returns `machine_unavailable`, and an own-Account row
+with incompatible encryption mode returns `encryption_material_unavailable`.
+These are failures before any effect, carried in the existing Action result.
 
 ## Managed guest authority (unreleased 0.3)
 

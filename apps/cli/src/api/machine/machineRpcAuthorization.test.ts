@@ -47,8 +47,54 @@ import { ScmWorkEvidenceAdmissionSchema } from '@happier-dev/protocol/scm';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import { registerScmHandlers } from '@/rpc/handlers/scm';
 import { formatPluginWebhookEndpointIdV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
+import { createDeferred } from '@/testkit/async/deferred';
+import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
+import { createBeforeShutdownDrain } from '@/daemon/lifecycle/createBeforeShutdownDrain';
+import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 
 describe('authorizeMachineRpcRequest', () => {
+  it('drains a Machine RPC already reading while refusing a fresh SCM admission as shutdown', async () => {
+    const drain = createDaemonAdmissionDrain();
+    const machineAdmission = { actorAccountId: 'owner', custodianAccountId: 'owner',
+      machineId: 'machine', installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const };
+    const boundary = { machineId: 'machine', resolveInstallationId: () => 'installation',
+      resolveCustodianAccountId: async () => 'owner', resolveHomeServerIdentityId: async () => 'home',
+      verifyMachineAdmission: async () => true, isDaemonShuttingDown: drain.isFinalShutdown };
+    const rpc = new RpcHandlerManager({ scopePrefix: 'machine', localMachineId: 'machine', encryptionMode: 'plain',
+      logger: () => {}, authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, boundary, source) });
+    const reading = createDeferred<void>();
+    const release = createDeferred<void>();
+    let reads = 0;
+    rpc.registerHandler(RPC_METHODS.SCM_STATUS_SNAPSHOT, async () => {
+      if (++reads === 1) {
+        reading.resolve();
+        await release.promise;
+      }
+      return { success: true };
+    });
+    const beforeShutdown = createBeforeShutdownDrain({ admissionDrain: drain,
+      spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
+      shutdownSpawnDrainGraceMs: 10_000, shutdownSpawnDrainPollMs: 100,
+      getApiMachineForSessions: () => ({ awaitPendingRpcRequests: () => rpc.waitForIdle() }),
+      buildUnexpectedSpawnResult: errorMessage => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage }),
+    });
+    const request = { method: `machine:${RPC_METHODS.SCM_STATUS_SNAPSHOT}`, params: {},
+      machineAdmission, callerAuthority: 'present_user' as const };
+    const pending = rpc.handleRequest(request, undefined, 'authenticated_home_socket');
+    await Promise.race([reading.promise, pending.then(result => { throw new Error(JSON.stringify(result)); })]);
+    const shutdown = beforeShutdown();
+    try {
+      await expect(rpc.handleRequest(request, undefined, 'authenticated_home_socket')).resolves.toMatchObject({
+        errorCode: 'daemon_shutting_down', effectAttempted: false,
+        failureCause: { errorCode: 'daemon_shutting_down', phase: 'rpc.admission' },
+      });
+    } finally {
+      release.resolve();
+      await shutdown;
+      await expect(pending).resolves.toEqual({ success: true });
+    }
+  });
+
   it('binds checkout deletion to Home admission for the exact decrypted Session, including targeted input', async () => {
     const machineAdmission = { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
       installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const };

@@ -1757,6 +1757,7 @@ export class ApiMachineClient {
         });
         this.machineRpcAdmissionBoundary = {
             machineId: this.machine.id,
+            isDaemonShuttingDown: this.lifecycleDependencies.managedActivity?.admissionDrain.isFinalShutdown,
             readAgentIsolation: () => this.getAgentIsolationSnapshot(),
             resolvePrivateWorkspaceSyncTargetExecution: input => {
                 const adapter = this.lifecycleDependencies.workspaceSyncHandoffAdapter;
