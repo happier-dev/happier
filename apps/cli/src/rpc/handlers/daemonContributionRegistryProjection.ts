@@ -247,15 +247,17 @@ export function invalidateDaemonContributionRegistryProjectionCache(): void {
 }
 
 /**
- * Automated origins ask through the durable approval owner. Native hosts
- * carry their settled review through the exact reviewed-child port instead.
+ * Automated origins ask through the approval owner. Native hosts carry their
+ * confirmation and use the same owner for the Action's automatic continuation.
  */
 function createPresentUserCurrentIntent(
     requestCurrentIntent: DaemonContributionRegistryProjectionRegistrationOptions['requestCurrentIntent'],
 ): (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult> {
     return async request => {
         const surface = request.invocationSurface ?? request.surface;
-        if (surface === 'cli' || surface === 'agent' || surface === 'mcp') {
+        const automaticPresentInvocation = (surface === 'ui' || surface === 'voice')
+            && request.automaticChecks?.humanApprovalRequired === false;
+        if (surface === 'cli' || surface === 'agent' || surface === 'mcp' || automaticPresentInvocation) {
             request.signal?.throwIfAborted();
             if (!requestCurrentIntent) {
                 return { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' };

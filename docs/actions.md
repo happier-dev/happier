@@ -11116,15 +11116,17 @@ covers the manifest default and the Account's invoking-surface approval setting)
 the app-shell confirmation, and only then executes. A client-target Action runs through the shared
 present-user gate in the UI. A daemon-target Action is sent with `presentUserIntent: 'confirmed'`
 on `daemon.plugins.structuredMessages.actions.execute`. The daemon's gate admits that carried
-intent and creates no `plugin_target_action` approval artifact. A UI or Voice request without it fails closed
+intent. In 0.3 development, a matching Before Automation uses the existing `plugin_target_action`
+continuation to record its checks before executing the mounted Action. A UI or Voice request
+without required confirmation fails closed
 with `plugin_action_current_intent_unavailable`, so a settings skew between UI and daemon refuses
 rather than executes when approval is required. An explicit waiver is carried as `false`, not
 absence: it overrides the non-safe/declared-confirmation default without changing the Action's
 danger metadata. Explicit Ask-first remains required even for safe Actions; missing settings use
 the manifest default and a failed settings read cannot waive approval. Catalog policy delegates
 to that same requirement rule, with no trusted invocation surface inferred from a catalog read.
-Durable `plugin_target_action` artifacts remain only for requesters that are
-not present in the app: agent, MCP, CLI, the public API and automation ingresses.
+Agent, MCP, CLI, public API and automation ingresses use durable `plugin_target_action`
+artifacts for their approval requests.
 
 In current 0.3 development, confirmation metadata is independent of effect
 classification. A sensitive read can retain `dangerLevel: 'safe'` and declare

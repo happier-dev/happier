@@ -21,6 +21,7 @@ import { readCurrentAccountPluginExecutionSelection } from '@/plugins/runtime/ac
 import { createTargetActionCurrentIntentAdapter } from '@/session/actions/approvals/targetActionCurrentIntent';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
+import { admitTargetActionApprovalTransition } from '@happier-dev/protocol/approvals/targetActionApprovalRequestTransition';
 import { registerDaemonContributionRegistryProjectionHandler } from './daemonContributionRegistryProjection';
 import { createDeferred } from '@/testkit/async/deferred';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
@@ -30,7 +31,7 @@ import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/exec
 import type { ActionSettlementV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
 
 describe('mounted caller admission through the real contributed Action RPC', () => {
-    it('publishes the qualified Action settlement once after a mounted page invokes it', async () => {
+    it('runs the qualified Before check and publishes one After settlement for a mounted page Action', async () => {
         const pluginId = 'acme.tickets';
         const actionId = `${pluginId}/actions/close-ticket`;
         const machineId = 'ticket-machine';
@@ -50,20 +51,38 @@ describe('mounted caller admission through the real contributed Action RPC', () 
             runtimeOptions: { resolveCurrentMachineId: () => machineId },
         });
         const settled: ActionSettlementV1[] = [];
+        let approval: TargetActionApprovalRequestV1 | null = null;
+        const requestCurrentIntent = createTargetActionCurrentIntentAdapter({
+            create: async request => { approval = request; return { artifactId: 'ticket-approval' }; },
+            read: async () => approval,
+            update: async ({ request }) => {
+                if (!approval) throw new Error('Missing mounted Action approval');
+                const transition = admitTargetActionApprovalTransition(approval, request);
+                if (transition.ok) approval = request;
+                return transition;
+            },
+        });
         const port = createActionAutomationPortV1({ accountId: 'actor',
             // Authenticated Home index and occurrence publication are the network boundaries.
-            seed: async () => ({ v: 1, rows: [{ ownerAccountId: 'actor', automationId: 'ticket-automation',
-                triggerId: 'ticket-trigger', triggerRevision: 1, workflowId: 'ticket-workflow', workflowRevision: 1,
-                actionIds: [actionId], phase: 'after' }] }),
+            seed: async () => ({ v: 1, rows: [
+                { ownerAccountId: 'actor', automationId: 'ticket-before', triggerId: 'before-trigger', triggerRevision: 1,
+                    workflowId: 'ticket-workflow', workflowRevision: 1, actionIds: [actionId], phase: 'before', mode: 'wait', onFailure: 'refuse' },
+                { ownerAccountId: 'actor', automationId: 'ticket-after', triggerId: 'after-trigger', triggerRevision: 1,
+                    workflowId: 'ticket-workflow', workflowRevision: 1, actionIds: [actionId], phase: 'after' },
+            ] }),
+            start: async ({ selected }) => ({ runs: selected.map(row => ({ automationId: row.automationId,
+                triggerId: row.triggerId, runId: 'ticket-check' })), notices: [] }),
             settle: async ({ event }) => { settled.push(event); },
         });
+        const actionAutomations = { ...port, wait: async () => ({ state: 'succeeded' as const }) };
         try {
             const handlers = new Map<string, RpcHandler>();
             const options = {
                 resolveRuntimeRegistry: async () => fixture.registry,
                 resolveInstalledPackages: async () => [],
+                requestCurrentIntent,
                 resolvePluginProjectionExecutionOriginContext: () => ({ serverIdentityId, machineId }),
-                resolveActionAutomationContext: async () => ({ actionAutomationPort: port, serverIdentityId,
+                resolveActionAutomationContext: async () => ({ actionAutomationPort: actionAutomations, serverIdentityId,
                     serverId: 'ticket-home', externalActionTarget: { kind: 'machine' as const, machineId } }),
             };
             registerDaemonContributionRegistryProjectionHandler({ registerHandler(method, handler) { handlers.set(method, handler); } }, options);
@@ -77,7 +96,10 @@ describe('mounted caller admission through the real contributed Action RPC', () 
                 invocation: { kind: 'mountedPluginSurface', mountedBinding: {
                     pluginId, contributionLocalId: 'tickets', occurrenceId, sourceCustody, materializationRef,
                 } },
-            }, { signal: new AbortController().signal })).toEqual({ ok: true, result: { ticketId: 'ticket-1', state: 'closed' } });
+            }, { signal: new AbortController().signal, callerAuthority: 'present_user' }))
+                .toEqual({ ok: true, result: { ticketId: 'ticket-1', state: 'closed' } });
+            expect(approval).toMatchObject({ status: 'executed', automaticChecks: { humanApprovalRequired: false,
+                phase: 'passed', runs: [{ triggerId: 'before-trigger', runId: 'ticket-check' }] } });
             expect(settled).toMatchObject([{ actionId, machineId, status: 'succeeded', phase: 'after' }]);
         } finally { port.dispose(); await fixture.dispose(); }
     });
