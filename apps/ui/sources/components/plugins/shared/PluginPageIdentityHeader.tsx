@@ -30,7 +30,7 @@ export function PluginAppPageLoadingFrame(props: Readonly<{ testID: string; entr
     const beside = useDetailsPaneAvailable();
     const frame = <View style={pluginPageContentFrameStyle}>
         <PluginSurfacePageHeaderContext.Provider value={{
-            header: <View testID={`${props.testID}-toolbar`} style={[stylesheet.toolbar, props.entryDetail && stylesheet.entryToolbar]} />,
+            header: <PluginPageIdentityToolbarRow testID={`${props.testID}-toolbar`} entryDetail={props.entryDetail} />,
             loadingFrame: props.entryDetail ? 'collection-detail' : 'collection',
         }}>
             <PluginSurfaceFallback testID={props.testID} state="loading" />
@@ -72,7 +72,7 @@ export function PluginPageIdentityHeaderProvider(props: Readonly<{
         if (props.identityOwner === 'host') return null;
         const entryLoading = props.entryDetail ? {
             loadingFrame: 'collection-detail' as const,
-            loadingHeader: <PluginPageIdentityToolbarRow pluginId={props.pluginId} title={props.title} entryDetail />,
+            loadingHeader: <PluginPageIdentityToolbarRow testID={`plugin-page-identity-toolbar:${props.pluginId}`} title={props.title} entryDetail />,
         } : {};
         if (props.largeTitle === true) {
             return {
@@ -82,7 +82,7 @@ export function PluginPageIdentityHeaderProvider(props: Readonly<{
             };
         }
         if (props.headerStyle === 'toolbar' && !chromeShowsTitle) {
-            return { header: <PluginPageIdentityToolbarRow pluginId={props.pluginId} title={props.title} />,
+            return { header: <PluginPageIdentityToolbarRow testID={`plugin-page-identity-toolbar:${props.pluginId}`} title={props.title} />,
                 loadingFrame: 'collection', ...entryLoading };
         }
         return {
@@ -110,12 +110,14 @@ export function PluginPageIdentityHeaderProvider(props: Readonly<{
  * position when the surface arrives, and its loading frame is the Collection's own (the full content area, not the
  * page column).
  */
-function PluginPageIdentityToolbarRow(props: Readonly<{ pluginId: string; title: string; entryDetail?: boolean }>): React.ReactElement {
-    // The stack-header controls its route placed (Run on) come here, as in the page header, where no stack header is drawn.
+function PluginPageIdentityToolbarRow(props: Readonly<{ testID: string; title?: string; entryDetail?: boolean }>): React.ReactElement {
+    // The toolbar owns the route's header slot even while the catalog has neither a title nor controls.
     const routeActions = useClaimedStackHeaderActions();
     return (
-        <View testID={`plugin-page-identity-toolbar:${props.pluginId}`} style={[stylesheet.toolbar, props.entryDetail && stylesheet.entryToolbar]}>
-            <Text variant="heading" accessibilityRole="header" numberOfLines={1} style={stylesheet.title}>{props.title}</Text>
+        <View testID={props.testID} style={[stylesheet.toolbar, props.entryDetail && stylesheet.entryToolbar]}>
+            {props.title === undefined ? null : (
+                <Text variant="heading" accessibilityRole="header" numberOfLines={1} style={stylesheet.title}>{props.title}</Text>
+            )}
             {routeActions}
         </View>
     );

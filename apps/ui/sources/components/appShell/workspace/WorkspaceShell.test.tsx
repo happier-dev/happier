@@ -766,7 +766,11 @@ describe('WorkspaceShell', () => {
 
         const pluginId = 'happier.triage';
         const localId = 'triage';
-        const page = createPluginPagePlacementFixture({ pluginId, localId, title: 'PRs & Issues', targetKind: 'app' });
+        const placement = createPluginPagePlacementFixture({
+            pluginId, localId, title: 'PRs & Issues', targetKind: 'app',
+            availability: { state: 'resolving', reason: 'plugin_execution_origin_pending', diagnostics: [] },
+        });
+        const page = { ...placement, display: { ...placement.display, headerStyle: 'toolbar' as const } };
         const detail = buildPluginAppPageRoutePath({ pluginId, localId, subPath: 'sv,assigned/' + buildTriageEntryRouteSegmentV1({
             source: { pluginId: 'happier.scm.forge.github', localId: 'pull-requests' },
             kindId: 'pull-request', collisionScope: 'repository', entryId: '4',
@@ -825,6 +829,16 @@ describe('WorkspaceShell', () => {
                 splitVisible: !!screen.findByTestId('plugin-app-page-loading-detail-skeleton'),
             });
 
+            // The renderer has no layout engine. Read the painted split's top offset from the
+            // retained slot and the in-flow header band ahead of it, relative to the shell sheet.
+            const splitTop = () => {
+                expect(screen.findHostByTestId('multi-pane-details-docked')).not.toBeNull();
+                const layer = screen.findHostByTestId('split-canvas-retained-content-restored-prs');
+                const bar = screen.findHostByTestId('app-stack-header-actions');
+                return Number(flattenTestStyle(layer?.props.style).top)
+                    + Number(flattenTestStyle(bar?.props.style).paddingTop ?? 0);
+            };
+
             await screen.update(app('pending'));
             await settle(() => expect(state()).toBeDefined());
             await act(async () => {
@@ -836,12 +850,17 @@ describe('WorkspaceShell', () => {
             await settle(() => expect(inspect().splitVisible).toBe(true));
             const pendingFrame = frame();
             const pending = inspect();
+            const pendingTop = splitTop();
             await screen.update(app('empty'));
             const empty = inspect();
+            const emptyTop = splitTop();
             const stayedMountedWhileEmpty = frame() === pendingFrame;
             await screen.update(app('filled'));
             await settle(() => expect(hasTabTitle('PRs & Issues')).toBe(true));
+            await settle(() => expect(screen.findHostByTestId('plugin-page-identity-toolbar:happier.triage')).not.toBeNull());
 
+            const mountedTop = splitTop();
+            expect([pendingTop, emptyTop]).toEqual([mountedTop, mountedTop]);
             expect({
                 pending, empty, stayedMountedWhileEmpty, stayedMountedWhenFilled: frame() === pendingFrame,
                 addressedTab: state().groups[state().focusedGroupId].activeTabId,
