@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { StyleSheet, useWindowDimensions } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import type { GlyphRect } from '@happier-dev/brand/glyph-scene';
+import type { WelcomePlanetState } from '@happier-dev/brand/planet-placement';
 
 import { GlyphSurface, type GlyphSurfaceReadiness } from '@/components/atmosphere/glyph/GlyphSurface';
 import type { GlyphSurfaceWarmup } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
@@ -23,6 +24,7 @@ export function FirstOpenScene(props: Readonly<{
     holding?: boolean;
     warmup?: GlyphSurfaceWarmup;
     placement?: FirstOpenPlacement;
+    destinationPose?: WelcomePlanetState;
     onReady: (status: GlyphSurfaceReadiness) => void;
 }>) {
     const viewport = useWindowDimensions();
@@ -35,7 +37,8 @@ export function FirstOpenScene(props: Readonly<{
         cursor: props.placement?.cursor ? { x: props.placement.cursor[0], y: props.placement.cursor[1] } : undefined,
         // In-app, the Welcome draws the planet beneath its own text (`createOpeningPlanet`).
         planet: props.placement !== undefined,
-    }), [width, height, appearance, props.placement]);
+        destinationPose: props.destinationPose,
+    }), [width, height, appearance, props.placement, props.destinationPose]);
     const build = useOpeningBuildGlyphs();
     const { epoch, holding } = props;
     const buildStartS = build && epoch !== null ? (build.animation.epoch - epoch) / 1000 : 0;

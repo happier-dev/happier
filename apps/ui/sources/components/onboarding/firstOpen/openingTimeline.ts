@@ -2,7 +2,7 @@ import {
     fieldDotLayer, glyphFrame, glyphPlanetDigitFirstTile, markGlyphLayer, markGlyphTone, planetGlyphLayer, travellerGlyphLayer,
     type GlyphLayer, type GlyphPoint, type GlyphRect,
 } from '@happier-dev/brand/glyph-scene';
-import { welcomePlanetPose } from '@happier-dev/brand/planet-placement';
+import { welcomePlanetPose, type WelcomePlanetState } from '@happier-dev/brand/planet-placement';
 
 import { unauthShellLayoutFor } from '@/components/onboarding/unauthShell/useUnauthShellLayout';
 
@@ -21,6 +21,7 @@ type OpeningFrame = Readonly<{ width: number; height: number; windowRect?: Glyph
 type OpeningGeometry = OpeningFrame & Readonly<{
     theme: 'dark' | 'light';
     cursor?: GlyphPoint;
+    destinationPose?: WelcomePlanetState;
     /** In-app, the Welcome's own surface draws the planet under its text (`createOpeningPlanet`). */
     planet?: boolean;
 }>;
@@ -62,14 +63,14 @@ type Travel = Readonly<{
 }>;
 
 /** Where the mark stands and how the planet falls to the pose and look the Welcome draws in this window. */
-function openingPlacement({ width, height, windowRect }: OpeningFrame) {
+function openingPlacement({ width, height, windowRect }: OpeningFrame, destinationPose: WelcomePlanetState) {
     const target = windowRect ?? { x: 0, y: 0, width, height };
     // The in-app compact window is a phone.
     const compact = unauthShellLayoutFor(target.width) === 'compact';
     const phone = compact && !windowRect;
     const centre = { x: width / 2, y: height * (phone ? 0.42 : 0.46) };
     const radius = phone ? width * 0.26 : Math.min(width, height) * 0.2;
-    const rest = welcomePlanetPose('welcome', target, { phone: compact });
+    const rest = welcomePlanetPose(destinationPose, target, { phone: compact });
     const end = { x: rest.cx + target.x, y: rest.cy + target.y };
     const fallAt = (time: number) => {
         const k = cubicOut(progress(time, fallStart, fallEnd) ** 1.5);
@@ -90,14 +91,14 @@ function openingPlacement({ width, height, windowRect }: OpeningFrame) {
 }
 
 /** The opening's planet alone, on the scene's clock, for the surface that draws it beneath the Welcome's text. */
-export function createOpeningPlanet(frame: OpeningFrame): (seconds: number) => GlyphLayer | null {
-    return openingPlacement(frame).planetAt;
+export function createOpeningPlanet(frame: OpeningFrame, destinationPose: WelcomePlanetState = 'welcome'): (seconds: number) => GlyphLayer | null {
+    return openingPlacement(frame, destinationPose).planetAt;
 }
 
 /** Builds the start tables once. Every sample uses the same clock for the mark, travellers and planet. */
-export function createOpeningTimeline({ width, height, theme, windowRect, cursor, planet = true }: OpeningGeometry):
+export function createOpeningTimeline({ width, height, theme, windowRect, cursor, planet = true, destinationPose = 'welcome' }: OpeningGeometry):
     (seconds: number) => readonly GlyphLayer[] {
-    const { phone, centre, radius, end, fallAt, planetAt } = openingPlacement({ width, height, windowRect });
+    const { phone, centre, radius, end, fallAt, planetAt } = openingPlacement({ width, height, windowRect }, destinationPose);
     const mark = markGlyphLayer({ centre, size: 2 * radius / 1.05, ink: 'sunrise', retypeS: 1.2 });
     // Source cells come from the real brand sampler so the opening never traces a second mark.
     const raster = glyphFrame({ view: { w: width, h: height }, cell, dpr: 1, theme, layers: [mark] });

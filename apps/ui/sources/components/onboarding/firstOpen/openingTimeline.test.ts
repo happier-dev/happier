@@ -63,6 +63,21 @@ describe('first-open scene timing', () => {
         }
     });
 
+    it.each([[1440, 900], [390, 844]])('lands the link shell opening in its resting pose at %ipx', (width, height) => {
+        const pane = { width, height };
+        const rest = welcomePlanetPose('deep', pane, { phone: width === 390 });
+        const viewPlanet = createOpeningPlanet(pane, 'deep')(openingSceneSeconds);
+        const scenePlanet = createOpeningTimeline({ ...pane, theme: 'dark', destinationPose: 'deep' })(openingSceneSeconds)
+            .find(layer => layer.kind === 'planet');
+        for (const planet of [viewPlanet, scenePlanet]) {
+            expect(planet?.kind).toBe('planet');
+            if (planet?.kind !== 'planet') throw new Error('The opening has no planet at handoff');
+            expect(planet.geometry.cx).toBeCloseTo(rest.cx, 6);
+            expect(planet.geometry.cy).toBeCloseTo(rest.cy, 6);
+            expect(planet.geometry.R).toBeCloseTo(rest.R, 6);
+        }
+    });
+
     it('turns the same mark cells it assembled and removes them progressively', () => {
         const view = { w: 1440, h: 900 };
         const sample = createOpeningTimeline({ width: view.w, height: view.h, theme: 'dark' });

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { ScrollView, View, type LayoutChangeEvent, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { WelcomePlanetState } from '@happier-dev/brand/planet-placement';
 
 import { useFirstOpenContentLayout } from '@/components/onboarding/firstOpen/FirstOpenWelcomeModelContext';
 import { useOptionalScreenIsFocused } from '@/utils/navigation/useOptionalScreenIsFocused';
@@ -77,6 +78,7 @@ export type WorkflowPanelProps = Readonly<{
     variant: 'desktop' | 'mobile';
     children: React.ReactNode;
     isWelcomeStep: boolean;
+    planetState?: WelcomePlanetState;
     /** Shows the compact mobile product mark on focused public entry flows. */
     showMobileWordmark?: boolean;
     onBack?: () => void;
@@ -198,8 +200,8 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
     const onOpeningLayout = useFirstOpenContentLayout('workflow');
     const onStepLayout = React.useCallback((event: LayoutChangeEvent) => {
         onColumnLayout?.(event);
-        onOpeningLayout?.(event);
-    }, [onColumnLayout, onOpeningLayout]);
+        onOpeningLayout?.(event, props.planetState);
+    }, [onColumnLayout, onOpeningLayout, props.planetState]);
     const onWelcomeColumnLayout = React.useCallback((event: LayoutChangeEvent) => {
         setHeaderClearance(Math.max(0, Math.floor(event.nativeEvent.layout.y - headerBottom)));
         onStepLayout(event);

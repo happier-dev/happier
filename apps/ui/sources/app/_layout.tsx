@@ -23,7 +23,7 @@ import { HorizontalSafeAreaRoot } from '@/components/navigation/safeArea/Horizon
 import { StepMotionStage } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { WindowFoldMetricsProvider } from '@/utils/platform/useWindowFoldMetrics';
 import sodium from '@/encryption/libsodium.lib';
-import { View, Platform, type LayoutChangeEvent } from 'react-native';
+import { View, Platform } from 'react-native';
 import { AppPaneModalProvider } from '@/components/appShell/providers/AppPaneModalProvider';
 import { ModalProvider } from '@/modal/ModalProvider';
 import { CurrentUiContextProvider } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
@@ -99,7 +99,7 @@ import { readBrowserAppWindowRecord, resolveDesktopAppWindowBootCredentials, run
 import { ThemePreferenceTransitionHost } from '@/components/settings/appearance/ThemePreferenceTransitionHost';
 import { DesktopMainContentDragSurface } from '@/components/navigation/desktopWindowChrome/DesktopMainContentDragSurface';
 import { useDesktopMainWindowContentReady } from '@/desktop/window/useDesktopMainWindowContentReady';
-import { FirstOpenContentLayout, useFirstOpenContentLayout } from '@/components/onboarding/firstOpen/FirstOpenWelcomeModelContext';
+import { useFirstOpenContentLayout } from '@/components/onboarding/firstOpen/FirstOpenWelcomeModelContext';
 import { resolveFirstOpen } from '@/components/onboarding/firstOpen/resolveFirstOpen';
 import { useFirstOpenBoot } from '@/components/onboarding/firstOpen/useFirstOpenBoot';
 import { readWebRuntimeFirstOpenCandidate } from '@/sync/runtime/webRuntimeConfig';
@@ -758,20 +758,13 @@ function AppBoot() {
     const firstOpenSegments = React.useRef(segments);
     firstOpenSegments.current = segments;
     const { opening, Host: OpeningHost, admitOpening } = useFirstOpenBoot();
-    const recordStillLayout = React.useCallback((event: LayoutChangeEvent) => {
-        // This destination is already usable. A late host must not remount it.
-        if (opening?.recordLayout(event)) opening.release();
-        return undefined;
-    }, [opening]);
-    const stillLayout = React.useMemo(() => opening
-        ? { target: opening.layoutTarget, onLayout: recordStillLayout } : null, [opening, recordStillLayout]);
     const renderFirstOpen = (content: React.ReactNode, launch?: React.ReactNode) => (
         <>
             {launch}
-            {opening && OpeningHost ? (
+            {/* The host must wrap the first navigator mount. Inserting it after boot
+                discards Expo's hydrated child state, including the initial link. */}
+            {opening ? (
                 <OpeningHost opening={opening} bootPending={launch !== undefined}>{content}</OpeningHost>
-            ) : opening ? (
-                <FirstOpenContentLayout.Provider value={stillLayout}>{content}</FirstOpenContentLayout.Provider>
             ) : content}
         </>
     );

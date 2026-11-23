@@ -2,6 +2,7 @@ import { createContext, useContext, useLayoutEffect, useRef } from 'react';
 import type { LayoutChangeEvent } from 'react-native';
 
 import type { GlyphLayer } from '@happier-dev/brand/glyph-scene';
+import type { WelcomePlanetState } from '@happier-dev/brand/planet-placement';
 
 import type { GlyphSurfaceReadiness } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
 
@@ -9,7 +10,7 @@ import type { WelcomeEntryViewModel } from '@/components/onboarding/preAuth/Welc
 
 /** Kept with the other channels so the ordinary shell does not import the opening host. */
 export type FirstOpenLayoutTarget = 'shell' | 'workflow';
-type OnFirstOpenLayout = (event: LayoutChangeEvent) => WelcomeEntryViewModel | undefined;
+type OnFirstOpenLayout = (event: LayoutChangeEvent, destinationPose?: WelcomePlanetState) => WelcomeEntryViewModel | undefined;
 export const FirstOpenContentLayout = createContext<Readonly<{
     target: FirstOpenLayoutTarget;
     onLayout: OnFirstOpenLayout;
@@ -34,7 +35,7 @@ export const FirstOpenWelcomeEpoch = createContext<number | null>(null);
 export type FirstOpenWelcomePaint = Readonly<{
     onPainted?: (status: GlyphSurfaceReadiness) => void;
     planet?: Readonly<{
-        create: (frame: Readonly<{ width: number; height: number }>) => (seconds: number) => GlyphLayer | null;
+        create: (frame: Readonly<{ width: number; height: number }>, destinationPose: WelcomePlanetState) => (seconds: number) => GlyphLayer | null;
         durationS: number;
     }>;
 }>;

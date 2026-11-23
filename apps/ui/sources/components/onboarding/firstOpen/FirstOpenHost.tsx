@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Animated, AppState, Platform, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
+import type { WelcomePlanetState } from '@happier-dev/brand/planet-placement';
 
 import type { GlyphSurfaceReadiness } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
 import type { WelcomeEntryViewModel } from '@/components/onboarding/preAuth/WelcomeEntryView';
@@ -11,7 +12,7 @@ import { FirstOpenContentLayout, FirstOpenOwnsWelcomePaint, FirstOpenWelcomeEpoc
 import { resolveInAppFirstFrame } from './inAppFirstFrame';
 import type { FirstOpenAdmission } from './useFirstOpenBoot';
 
-type Phase = 'preparing' | 'still' | 'settled' | { epoch: number };
+type Phase = 'preparing' | 'still' | 'settled' | { epoch: number; destinationPose: WelcomePlanetState };
 type OverlayHost =
     | { kind: 'overlay'; epoch: number }
     | { kind: 'settled'; outcome: 'completed' | 'fallback' | 'interrupted' };
@@ -117,7 +118,7 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
         };
     }, [fadeToRest, publishWelcome, settle, waitingForReplica]);
 
-    const onFirstLayout = useCallback((event: LayoutChangeEvent) => {
+    const onFirstLayout = useCallback((event: LayoutChangeEvent, destinationPose: WelcomePlanetState = 'welcome') => {
         if (!recordLayout(event)) return;
         if (decision === 'overlay-eligible') {
             transmitted.current = welcome.current;
@@ -129,7 +130,7 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
             && resolveInAppFirstFrame(decision, readiness.current, stage?.isBuildReady() ?? false) === 'play') {
             const epoch = performance.now();
             activePlay.current = true;
-            setPhase({ epoch });
+            setPhase({ epoch, destinationPose });
             void scene.buildFirstOpenDestination(epoch, { interactive: true }).then(outcome => {
                 if (!activePlay.current) return;
                 if (outcome !== 'settled') fadeToRest();
@@ -187,7 +188,9 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
                 </FirstOpenContentLayout.Provider>
             </Animated.View>
             {Scene && decision === 'in-app' && (phase === 'preparing' || typeof phase === 'object')
-                ? <Scene epoch={typeof phase === 'object' ? phase.epoch : null} onReady={updateReady} warmup={opening.warmup} />
+                ? <Scene epoch={typeof phase === 'object' ? phase.epoch : null}
+                    destinationPose={typeof phase === 'object' ? phase.destinationPose : undefined}
+                    onReady={updateReady} warmup={opening.warmup} />
                 : null}
         </View>
     );

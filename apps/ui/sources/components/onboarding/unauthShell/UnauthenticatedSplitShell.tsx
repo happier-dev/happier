@@ -85,10 +85,11 @@ export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSpli
     }, []);
     const presentation = props.workflowPresentation ?? 'padded';
     const measureColumn = presentation !== 'fullBleed';
+    const planetState = props.isWelcomeStep ? 'welcome' : 'deep';
     return (
         <View ref={fieldHost} collapsable={false} testID={props.testID ?? 'unauth-shell'} style={styles.root} onTouchEnd={onTouchEnd}>
             <WelcomeAtmosphere
-                state={props.isWelcomeStep ? 'welcome' : 'deep'}
+                state={planetState}
                 stepId={props.stepId}
                 phone={compact}
                 host={fieldHost}
@@ -100,6 +101,7 @@ export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSpli
             <WorkflowPanel
                 variant={compact ? 'mobile' : 'desktop'}
                 isWelcomeStep={props.isWelcomeStep}
+                planetState={planetState}
                 showMobileWordmark={props.showMobileWordmark}
                 onBack={props.onBack}
                 transitionKey={props.stepId}

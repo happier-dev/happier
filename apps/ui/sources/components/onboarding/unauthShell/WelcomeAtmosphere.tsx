@@ -120,8 +120,8 @@ export const WelcomeAtmosphere = React.memo(function WelcomeAtmosphere(
   }, [settle]);
   // In-app, the opening's planet falls here, beneath the Welcome's text, while the scene above draws its digits.
   const openingPlanet = React.useMemo(
-    () => (pane && openingPaint?.planet ? openingPaint.planet.create(pane) : null),
-    [openingPaint, pane],
+    () => (pane && openingPaint?.planet ? openingPaint.planet.create(pane, props.state) : null),
+    [openingPaint, pane, props.state],
   );
   const scene = React.useMemo(() => {
     if (openingPlanet) {

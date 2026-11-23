@@ -7,9 +7,9 @@ import { recordOpeningSeen } from '@/sync/domains/state/onboardingUiState';
 
 import type { FirstOpenLayoutTarget } from './FirstOpenWelcomeModelContext';
 import type { FirstOpenDecision } from './resolveFirstOpen';
+import { FirstOpenHost } from './FirstOpenHost';
 
 type SceneModule = typeof import('./FirstOpenScene');
-type Host = typeof import('./FirstOpenHost')['FirstOpenHost'];
 export type FirstOpenAdmission =
     ({ decision: 'in-app'; scene: SceneModule | null; warmup?: GlyphSurfaceWarmup }
     | { decision: Exclude<FirstOpenDecision, 'in-app' | 'none'> }) & {
@@ -32,7 +32,6 @@ export function createFirstOpenLayoutRecorder() {
 export function useFirstOpenBoot() {
     const stage = useStepMotionStage();
     const [opening, setOpening] = useState<FirstOpenAdmission | null>(null);
-    const [Host, setHost] = useState<Host | null>(null);
     const admitOpening = useCallback((decision: FirstOpenDecision) => {
         if (decision === 'none') return;
 
@@ -49,10 +48,6 @@ export function useFirstOpenBoot() {
                 ? { ...current, scene: null, warmup: undefined }
                 : current);
         };
-        void import('./FirstOpenHost').then(module => {
-            if (!active) return;
-            setHost(() => module.FirstOpenHost);
-        }, () => {});
         if (decision === 'in-app') {
             setOpening({ decision, scene: null, layoutTarget, release, recordLayout });
             const scene = import('./FirstOpenScene');
@@ -65,5 +60,5 @@ export function useFirstOpenBoot() {
         }
         return release;
     }, [stage]);
-    return { opening, Host, admitOpening };
+    return { opening, Host: FirstOpenHost, admitOpening };
 }
