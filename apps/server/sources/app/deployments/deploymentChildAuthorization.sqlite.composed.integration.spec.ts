@@ -216,8 +216,12 @@ describe('deployment children retain their controller Action authority', () => {
         else harness = await createLightSqliteHarness(options);
     }, 180_000);
     afterAll(async () => { await (postgresHarness ?? harness)?.close(); });
+    it.each(postgresMembershipContract ? ['plain'] as const : ['plain', 'e2ee'] as const)(
+        'settles an interrupted receipt only for its requester and captured controller installation (%s)',
+        checkInterruptedReceiptSettlement,
+    );
     if (postgresMembershipContract) {
-        // The disposable provider contract selects the backend-independent membership cases.
+        // The disposable provider contract selects the backend-independent cases.
         registerPlainDeployCandidateCases();
         registerRetainedMembershipDomainCases();
         return;
@@ -3759,7 +3763,7 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
-    it.each(['plain', 'e2ee'] as const)('settles an interrupted running receipt under the next rollback root (%s)', async contentMode => {
+    async function checkInterruptedReceiptSettlement(contentMode: 'plain' | 'e2ee') {
         const f = await fixture('account', 'account', { contentMode });
         const retained = await db.deployment.create({ data: { ...f.receipt, id: crypto.randomUUID(),
             requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), state: 'succeeded' } });
@@ -3775,6 +3779,7 @@ describe('deployment children retain their controller Action authority', () => {
             actionId, machineId: f.controller.id, target, requestId: envelope.requestId,
             deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId, compactInput),
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input: compactInput });
+        expect(authorization.binding.requestEnvelopeDigest).not.toBe(f.receipt.acceptedRequestEnvelopeDigest);
         const body = { serverId, environmentId: f.environment.id, deploymentId: f.receipt.id,
             actionOperationId: f.receipt.actionOperationId, expectedRevision: 2, machineId: f.controller.id,
             installationId: f.controller.installationId, kind: 'settle' as const, state: 'outcome_unknown' as const };
@@ -3809,11 +3814,15 @@ describe('deployment children retain their controller Action authority', () => {
             const opened = await app.inject({ method: 'GET', url: artifactPath, headers: headers(artifactPath, undefined, 'GET') });
             expect(opened.statusCode, opened.body).toBe(200);
             const otherAccount = await db.account.create({ data: { encryptionMode: 'plain' } });
-            for (const substituted of [{ requestedByAccountId: otherAccount.id },
-                { acceptedControllerInstallationId: crypto.randomUUID() }]) {
-                await db.deployment.update({ where: { id: f.receipt.id }, data: substituted });
+            // Keep the new root and its proof valid. Vary only who or which
+            // installation owns the interrupted slot.
+            for (const { boundary, custody } of [
+                { boundary: 'another Account', custody: { requestedByAccountId: otherAccount.id } },
+                { boundary: 'another installation', custody: { acceptedControllerInstallationId: crypto.randomUUID() } },
+            ]) {
+                await db.deployment.update({ where: { id: f.receipt.id }, data: custody });
                 const refused = await app.inject({ method: 'POST', url: path, payload: wire, headers: headers(path, wire) });
-                expect(refused.statusCode, refused.body).toBe(401);
+                expect(refused.statusCode, `${boundary}: ${refused.body}`).toBe(401);
                 await db.deployment.update({ where: { id: f.receipt.id }, data: {
                     requestedByAccountId: f.account.id, acceptedControllerInstallationId: f.controller.installationId } });
             }
@@ -3851,7 +3860,7 @@ describe('deployment children retain their controller Action authority', () => {
             expect(await db.deployment.findUnique({ where: { id: fresh.json().deploymentId } }))
                 .toMatchObject({ actionOperationId: admission.actionOperationId, requestKey: input.requestKey });
         }, { authentication: 'real' });
-    });
+    }
 
     it('admits the compact UI Account rollback through the accepted child read owner', async () => {
         const f = await fixture();
