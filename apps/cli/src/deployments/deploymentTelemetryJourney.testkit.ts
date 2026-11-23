@@ -17,6 +17,7 @@ import { inspectBuiltinTailscaleAccessProvider } from '../../../../packages/cli-
 import { projectMachineReachabilityObservation } from '@/machines/reachability/readMachineReachability';
 import type { ActionExecuteResult } from '@happier-dev/protocol';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { ManagedNativeFailureDetailsV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { DoctorSnapshotDaemonStatusSchema } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 import { createHappierJsonExecutorFromTextRunner } from '../../../../packages/cli-common/src/systemTasks/executors/happierJsonExecutorFromTextRunner';
 import { bindPresentUserActionConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
@@ -282,10 +283,20 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                         if (result.exitCode === 0 && argv.at(-2) === 'restart' && /^[a-f0-9]{64}$/.test(argv.at(-1) ?? '')) {
                             console.info('F14 enrollment native restart', { encryptionMode, observedAt: new Date().toISOString(), containerId: argv.at(-1) });
                         }
-                        if (result.exitCode === 0 && !result.stdoutTruncated && argv.at(-6) === 'exec'
-                            && argv.at(-1)?.includes("'daemon' 'status' '--json'")) {
-                            const cli = createHappierJsonExecutorFromTextRunner(async () => ({ status: 0, stdout: result.stdout, stderr: '' }));
-                            const snapshot = DoctorSnapshotDaemonStatusSchema.safeParse(await cli.runHappierJson(['daemon', 'status', '--json']).catch(() => null));
+                        if (argv.at(-6) === 'exec' && argv.at(-1)?.includes("'daemon' 'status' '--json'")) {
+                            const cli = createHappierJsonExecutorFromTextRunner(async () => ({
+                                status: result.exitCode, stdout: result.stdout, stderr: result.stderr ?? '',
+                            }));
+                            const status = await cli.runHappierJson(['daemon', 'status', '--json']).catch((error: unknown) => {
+                                // The approval receipt may omit native details. Observe them before settlement.
+                                const details = ManagedNativeFailureDetailsV1Schema.safeParse(
+                                    error instanceof Error && 'details' in error ? error.details : undefined);
+                                if (details.success) console.info('F14 guest readiness command failed', {
+                                    encryptionMode, observedAt: new Date().toISOString(), service: argv.at(-4), ...details.data,
+                                });
+                                return null;
+                            });
+                            const snapshot = DoctorSnapshotDaemonStatusSchema.safeParse(result.stdoutTruncated ? null : status);
                             if (snapshot.success) {
                                 const { daemon, auth } = snapshot.data;
                                 if (daemon.running && daemon.healthy === true && !auth.needsAuth && auth.machineId && !observedReadyMachines.has(auth.machineId)) {
