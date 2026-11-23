@@ -3185,17 +3185,18 @@ async function serveDeclarativeDaemonSettings(input: Readonly<{
         // A daemon lacking parked-watch support is a valid transport capability.
         return { error: 'Method not found' };
     };
-    const machineRow = createPlainMachineRowFixture({ id: input.machineId, accountId: 'account-a' });
+    const machine = createHydratedPlainMachineFixture({ id: input.machineId, accountId: 'account-a', machine: { activeAt: Date.now() } });
+    const machineRow = createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a', machine });
     await pluginSurfaceAccountLifetime.setScope({ serverId: input.serverId, accountId: 'account-a' },
         (path, init) => {
+            if (path === '/v1/machines') return Response.json([machineRow]);
             if (path === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
                 id => id === machineRow.id ? machineRow : null);
             if (path === `/v1/machines/${encodeURIComponent(machineRow.id)}`) return Response.json({ machine: machineRow });
             return undefined;
         }, { serverIdentityId: input.serverIdentityId, currentAccount: true });
     const { storage } = await import('@/sync/domains/state/storage');
-    storage.getState().applyMachines([createMachineFixture({ id: input.machineId, activeAt: Date.now(),
-        storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER })], true, { sourceServerId: input.serverId });
+    storage.getState().applyMachines([machine], true, { sourceServerId: input.serverId });
     const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
     const restoreLoader = await installRealActionExecutorModuleLoader();
     onTestFinished(restoreLoader);
@@ -4314,9 +4315,7 @@ describe('PluginSurfacePlacementHost', () => {
                 { id: 'enabled', title: 'Enabled', schema: { type: 'boolean' } },
                 { id: 'token', title: 'Token', schema: { type: 'string' }, secret: { custody: 'daemon' } },
             ] });
-        const { Modal } = await import('@/modal');
-        const confirmation = vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
-        onTestFinished(() => confirmation.mockRestore());
+        const { ModalProvider } = await import('@/modal/ModalProvider');
         declarativeActionExecuteMock.mockResolvedValue({ supported: true, result: { ok: true, result: null } });
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const placement = {
@@ -4369,7 +4368,9 @@ describe('PluginSurfacePlacementHost', () => {
             displayName: 'Forms',
             version: '1.0.0',
         });
-        const screen = await renderScreen(<PluginSurfacePlacementHost placement={placement} machineId="machine-1" serverId="server-a" pluginUiProjection={projectedUi} platform="web" />);
+        const screen = await renderScreen(<ModalProvider>
+            <PluginSurfacePlacementHost placement={placement} machineId="machine-1" serverId="server-a" pluginUiProjection={projectedUi} platform="web" />
+        </ModalProvider>);
         await act(async () => {});
         await vi.waitFor(() => expect(daemon.reads, screen.getTextContent()).toContainEqual(expect.objectContaining({
             machineId: 'machine-1',
@@ -4391,12 +4392,15 @@ describe('PluginSurfacePlacementHost', () => {
             mutation: { kind: 'set', value: 'After' },
             expectedRevision: '0',
         })));
-        expect(screen.findByTestId('plugin-declarative-action:acme.forms/save')?.props.disabled).toBe(false);
+        expect(screen.findHostByTestId('plugin-declarative-action:acme.forms/save')?.props.accessibilityState)
+            .toMatchObject({ disabled: false });
         await act(async () => { screen.pressByTestId('plugin-declarative-action:acme.forms/save'); });
         const omittedSaveInput = declarativeActionExecuteMock.mock.calls.at(-1)?.[1] as Readonly<Record<string, unknown>> | undefined;
         expect(omittedSaveInput).toEqual({
             accountLifetime: expect.objectContaining({ scope: pluginSurfaceAccountLifetime.value!.scope }),
             isCurrent: expect.any(Function),
+            onApprovalPending: expect.any(Function),
+            requestId: expect.any(String),
             signal: expect.any(AbortSignal),
             serverId: 'server-a',
             expectedContributorOccurrenceId: 'acme.forms-test-occurrence',
@@ -4417,12 +4421,14 @@ describe('PluginSurfacePlacementHost', () => {
             },
         });
         expect(Object.prototype.hasOwnProperty.call(omittedSaveInput, 'input')).toBe(false);
-        expect(screen.findByTestId('plugin-declarative-action:acme.forms/delete')?.props.disabled).toBe(true);
+        expect(screen.findHostByTestId('plugin-declarative-action:acme.forms/delete')?.props.accessibilityState)
+            .toMatchObject({ disabled: true });
+        const { StyleSheet } = await import('react-native');
         const deleteActionStyle = screen.findByTestId('plugin-declarative-action:acme.forms/delete')?.props.style;
         // The shared pressable owns the disabled activation guard; the
         // declarative renderer still preserves focus/semantic identity.
         expect(typeof deleteActionStyle).toBe('function');
-        expect(deleteActionStyle?.({ focused: false, pressed: false, disabled: true }))
+        expect(StyleSheet.flatten(deleteActionStyle?.({ focused: false, pressed: false, disabled: true })))
             .toMatchObject({ minHeight: 32, opacity: 0.5 });
         expect(screen.findByTestId('plugin-declarative-status')?.props.accessibilityLiveRegion).toBe('polite');
         expect(screen.findByTestId('plugin-declarative-stack')).toBeTruthy();
@@ -4430,12 +4436,11 @@ describe('PluginSurfacePlacementHost', () => {
         expect(screen.getTextContent()).toContain('Plain text');
         expect(screen.findByTestId('plugin-declarative-field:root.children[8]')?.props.secureTextEntry).toBe(true);
         expect(screen.findByTestId('plugin-declarative-field:root.children[8]')?.props.value).toBe('');
-        const { StyleSheet } = await import('react-native');
         // The field draws its own chrome; a finger's 48 is the shared hit area, never a drawn minimum.
         expect(StyleSheet.flatten(screen.findByTestId('plugin-declarative-field:root.children[8]')?.props.style)?.minHeight ?? 0).toBeLessThan(44);
         const fieldSaveStyle = screen.findByTestId('plugin-declarative-field-save:root.children[8]')?.props.style;
         expect(typeof fieldSaveStyle).toBe('function');
-        expect(fieldSaveStyle?.({ pressed: false })).toMatchObject({ minHeight: 32 });
+        expect(StyleSheet.flatten(fieldSaveStyle?.({ pressed: false }))).toMatchObject({ minHeight: 32 });
         // The redacted blank is untouched until the user edits it. Empty Save
         // remains data, and Delete is a separate daemon-secret mutation.
         expect(screen.findByTestId('plugin-declarative-field-save:root.children[8]')?.props.disabled).toBe(true);
@@ -4448,13 +4453,18 @@ describe('PluginSurfacePlacementHost', () => {
             expectedRevision: 'secret-0',
         })));
         expect(daemon.writes.some(request => request.fieldId === 'token')).toBe(false);
+        await vi.waitFor(() => expect(screen.findByTestId('plugin-declarative-field-delete:root.children[8]')
+            ?.props.disabled).toBe(false));
         await act(async () => { screen.pressByTestId('plugin-declarative-field-delete:root.children[8]'); });
+        const confirmDelete = 'actions.confirmation-review.decision-approve';
+        await vi.waitFor(() => expect(screen.findAll(node => node.props.testID === confirmDelete).length).toBeGreaterThan(0));
+        expect(daemon.secretWrites).toHaveLength(1);
+        await screen.pressByTestIdAsync(confirmDelete);
         await vi.waitFor(() => expect(daemon.secretWrites).toContainEqual(expect.objectContaining({
             machineId: 'machine-1',
             secretId: 'token',
             expectedRevision: 'secret-1',
         })));
-        expect(confirmation).toHaveBeenCalledTimes(1);
         await act(async () => { screen.changeTextByTestId('plugin-declarative-field:root.children[5]', '42'); });
         await act(async () => { screen.pressByTestId('plugin-declarative-field-save:root.children[5]'); });
         await vi.waitFor(() => expect(daemon.writes).toContainEqual(expect.objectContaining({
@@ -4470,6 +4480,8 @@ describe('PluginSurfacePlacementHost', () => {
         expect(declarativeActionExecuteMock).toHaveBeenCalledWith('machine-1', {
             accountLifetime: expect.objectContaining({ scope: pluginSurfaceAccountLifetime.value!.scope }),
             isCurrent: expect.any(Function),
+            onApprovalPending: expect.any(Function),
+            requestId: expect.any(String),
             signal: expect.any(AbortSignal),
             serverId: 'server-a',
             expectedContributorOccurrenceId: 'acme.shared-test-occurrence',
