@@ -2074,8 +2074,10 @@ describe('callMachineRpc', () => {
         embeddingsModelId: null, embeddingsRuntimeState: 'unavailable', embeddingsUsingFallback: false,
         tier1DbPath: null, deepDbPath: '/memory/deep.sqlite', tier1DbBytes: null, deepDbBytes: 1,
       }) : { ok: true };
+    const { promise: acknowledgementScheduled, resolve: markAcknowledgementScheduled } = Promise.withResolvers<void>();
     socket.emit.mockImplementationOnce((_event, _payload, ack) => {
       setTimeout(() => ack({ ok: true, result: receipt }), 28_120);
+      markAcknowledgementScheduled();
     });
     const deps = createCliActionDeps({ credentials, token: credentials.token, sessionId: '', mode: 'plain', ctx: null });
     const pending = (operation === 'replay'
@@ -2091,8 +2093,8 @@ describe('callMachineRpc', () => {
           : deps.daemonMemoryEnsureUpToDate({ machineId: 'machine-plain', sessionId: 'stopped-session' })
     ).then(value => ({ ok: true, value }), error => ({ ok: false, error }));
     try {
-      // Action families load on first use; settle that real module boundary before the fake clock owns time.
-      await vi.dynamicImportSettled();
+      // Start the fake clock after the real Home read and the socket send have scheduled the receipt.
+      await Promise.race([acknowledgementScheduled, pending]);
       await vi.advanceTimersByTimeAsync(28_120);
       expect(await pending).toEqual({ ok: true, value: receipt });
       const calls = socket.emit.mock.calls.filter(([event]) => event === SOCKET_RPC_EVENTS.CALL);
