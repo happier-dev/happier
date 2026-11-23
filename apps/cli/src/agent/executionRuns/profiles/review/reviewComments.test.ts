@@ -39,6 +39,7 @@ import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/creat
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
 import { createExecutionRunRpcActionDeps } from '@/rpc/handlers/executionRuns/dispatchExecutionRunRpcAction';
+import { registerTranscriptSecret } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { captureScmComparison, readCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
 import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
 import { createReviewRecordPortV1, type ReviewArtifactTransportV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
@@ -337,6 +338,70 @@ describe('canonical review Run comments', () => {
   });
 
 
+
+  it('stores no Project secret the review Agent echoed once its launch registration is released', async () => {
+    return runWithScmAccountScope('account', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-secret-' });
+    repositories.push(fixture.rootPath);
+    await writeFile(join(fixture.rootPath, fixture.trackedPath), 'reviewed input();\n');
+    const captured = await captureScmComparison({ cwd: fixture.rootPath, sessionId: 'session-1', source: { kind: 'workingTree' } });
+    const requests: unknown[] = [];
+    vi.mocked(axios.post).mockImplementation(async (_url, body) => {
+      requests.push(body);
+      return { status: 200, data: { comment: commentForCreate(body), replayed: false } };
+    });
+    const secret = 'synthetic-review-project-value';
+    const initial = { ...run(), runClass: 'long_lived' as const, retentionPolicy: 'resumable' as const,
+      launch: { cwd: fixture.rootPath },
+      intentInput: { cwd: fixture.rootPath, comparisonId: captured.comparison.id, comparison: captured.comparison } };
+    const manager = new ExecutionRunHostBridge({ cwd: root, parentProvider: 'claude', sendAcp: async () => {} });
+    const host = manager as unknown as { runs: Map<string, ExecutionRunState>; controllers: Map<string, ExecutionRunBackendController> };
+    // Provider output is the native boundary; profile, findings, comment transport and Run reads are real.
+    const controller = { kind: 'backend', cancelled: false, backend: { readPendingPermissionRequestIds: () => [] } } as unknown as ExecutionRunBackendController;
+    host.runs.set(initial.runId, initial);
+    host.controllers.set(initial.runId, controller);
+    // The runner registers the launch's Project secret while the Agent process lives.
+    const releaseLaunch = registerTranscriptSecret(secret);
+    await publishExecutionRunTurn({ runId: initial.runId, turnId: 'secret-review', controller,
+      controllers: host.controllers, runs: host.runs,
+      rawText: JSON.stringify({ summary: `Saw ${secret} control-summary`,
+        findings: [{ ...findings[0], filePath: fixture.trackedPath, summary: `Token ${secret} control-finding` }] }),
+      finishedAtMs: 2, parentProvider: 'claude', reviewComments: service(), sendAcp: async () => {} });
+    releaseLaunch();
+    // The Workflow step captures its result through this same execution.run.get read.
+    const rpc = createExecutionRunRpcActionDeps({ manager, context: { sessionId: 'session-1', cwd: root }, isExecutionRunsEnabled: () => true,
+      policy: { boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null,
+        allowIoModes: new Set(['streaming', 'request_response']) } });
+    const read = JSON.stringify(await rpc.executionRunGet!('session-1', { runId: initial.runId, includeStructured: true }));
+    expect(read).not.toContain(secret);
+    expect(read).toContain('control-summary');
+    expect(JSON.stringify(requests)).not.toContain(secret);
+    expect(JSON.stringify(requests)).toContain('control-finding');
+    });
+  });
+
+  it('stores no Project secret in a terminal Run result once its launch registration is released', async () => {
+    const secret = 'synthetic-terminal-project-value';
+    const initial = run();
+    const manager = new ExecutionRunHostBridge({ cwd: root, parentProvider: 'claude', sendAcp: async () => {} });
+    const host = manager as unknown as { runs: Map<string, ExecutionRunState> };
+    host.runs.set(initial.runId, initial);
+    const releaseLaunch = registerTranscriptSecret(secret);
+    await finishExecutionRun({ runId: initial.runId,
+      next: { status: 'failed', finishedAtMs: 2, summary: `Summary ${secret} control-summary`,
+        error: { code: 'execution_run_failed', message: `Provider said ${secret} control-error` } },
+      toolResult: { output: { answer: `Answer ${secret} control-answer` } },
+      runs: host.runs, controllers: new Map(), budgetRegistry: null, parentProvider: 'claude', sendAcp: async () => {},
+      enqueueMarkerWrite: async (_runId, write) => { await write(); }, terminalMarkerWritePromises: terminalWrites });
+    releaseLaunch();
+    const rpc = createExecutionRunRpcActionDeps({ manager, context: { sessionId: 'session-1', cwd: root }, isExecutionRunsEnabled: () => true,
+      policy: { boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null,
+        allowIoModes: new Set(['streaming', 'request_response']) } });
+    const read = JSON.stringify(await rpc.executionRunGet!('session-1', { runId: initial.runId, includeStructured: true }));
+    expect(read).not.toContain(secret);
+    expect(read).toContain('control-answer');
+    expect(read).toContain('control-error');
+  });
 
   it('uses the prepared comparison for a Session finding after the live file is deleted', async () => {
     return runWithScmAccountScope('account', async () => {

@@ -33,6 +33,7 @@ import { materializeReviewFindings } from './materializeReviewFindings';
 import { projectExecutionRunPublicState } from './publicState';
 import { projectExecutionRunError } from './errors';
 import { createExecutionRunOccurrenceWitnessRegistry, projectExecutionRunInputTurns } from './runOccurrenceWitness';
+import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 // The same running state claims terminalization without exposing a terminal fact
 // before its required ReviewComment writes. This replaces the old early status claim.
@@ -98,6 +99,10 @@ export async function finishExecutionRun(args: Readonly<{
 }>): Promise<boolean> {
   const existing = args.runs.get(args.runId);
   if (!existing) return false;
+  // The terminal result is stored, published and materialized from here. Redact registered
+  // secrets now, while the launch that registered them may still be live.
+  const next = redactTranscriptSecrets(args.next);
+  const inputStructuredMeta = redactTranscriptSecrets(args.structuredMeta);
   if (existing.status !== 'running') return false;
   const claimed = terminalTransitionsInFlight.get(args.runs) ?? new Set<string>();
   if (claimed.has(args.runId)) return false;
@@ -106,8 +111,8 @@ export async function finishExecutionRun(args: Readonly<{
   try {
   const terminalEventId = randomUUID();
 
-  let toolResult = args.toolResult;
-  let structuredMeta = args.structuredMeta;
+  let toolResult = redactTranscriptSecrets(args.toolResult);
+  let structuredMeta = inputStructuredMeta;
   let terminalizationError: unknown = null;
   let shouldPublishTranscriptMarker = false;
   try {
@@ -117,10 +122,10 @@ export async function finishExecutionRun(args: Readonly<{
     shouldPublishTranscriptMarker = shouldPublishExecutionRunTranscriptMarker(profile, {
       sessionId: existing.sessionId, launchOrigin: existing.launch?.launchOrigin,
     });
-    if (args.next.status === 'failed' || args.next.status === 'cancelled') {
-      const settled = await profile.onTerminal?.({ start: existing, status: args.next.status, finishedAtMs: args.next.finishedAtMs,
+    if (next.status === 'failed' || next.status === 'cancelled') {
+      const settled = await profile.onTerminal?.({ start: existing, status: next.status, finishedAtMs: next.finishedAtMs,
         structuredMeta: structuredMeta ?? existing.structuredMeta,
-        ...(args.next.error ? { diagnostic: args.next.error } : {}) });
+        ...(next.error ? { diagnostic: next.error } : {}) });
       if (settled) {
         structuredMeta = settled.structuredMeta;
         toolResult = { ...toolResult, output: settled.toolResultOutput,
@@ -139,13 +144,13 @@ export async function finishExecutionRun(args: Readonly<{
     ? controller.workflowRunId ?? controller.workflowObservation?.workflowRunId : undefined;
   // Closing a retained runtime can settle the exact output already published by
   // its last turn. Reusing that host-owned object must not repeat comment writes.
-  const reusesPublishedResult = args.next.status === 'succeeded' && toolResult.output !== undefined
+  const reusesPublishedResult = next.status === 'succeeded' && toolResult.output !== undefined
     && toolResult.output === existing.latestToolResult && structuredMeta === existing.structuredMeta;
   const projected: Awaited<ReturnType<typeof materializeReviewFindings>> = reusesPublishedResult
     ? { toolResult, structuredMeta }
     : await materializeReviewFindings({ run: existing, toolResult, structuredMeta,
-    expectFindings: args.next.status === 'succeeded' || (args.next.status === 'failed'
-      && (args.structuredMeta?.kind === 'review_findings.v2' || args.structuredMeta?.kind === 'review_findings.v1')),
+    expectFindings: next.status === 'succeeded' || (next.status === 'failed'
+      && (inputStructuredMeta?.kind === 'review_findings.v2' || inputStructuredMeta?.kind === 'review_findings.v1')),
     reviewComments: args.reviewComments, workflowRunId,
     workflowScope: controller?.kind === 'backend' ? controller.workflowScope : undefined });
   const materialization = projected.materialization;
@@ -165,10 +170,10 @@ export async function finishExecutionRun(args: Readonly<{
     ...existing,
     terminalOccurrenceId: terminalEventId,
     ...(inputTurns ? { inputTurns } : {}),
-    status: materialization && materialization.status !== 'materialized' ? 'failed' : args.next.status,
-    summary: args.next.summary ?? existing.summary,
-    finishedAtMs: args.next.finishedAtMs,
-    error: args.next.error,
+    status: materialization && materialization.status !== 'materialized' ? 'failed' : next.status,
+    summary: next.summary ?? existing.summary,
+    finishedAtMs: next.finishedAtMs,
+    error: next.error,
     ...(materialization && materialization.status !== 'materialized'
       ? { error: { code: 'review_comment_materialization_failed', message: 'Review findings could not all be persisted' } }
       : {}),
@@ -225,8 +230,8 @@ export async function finishExecutionRun(args: Readonly<{
       updated = {
         ...updated,
         status: 'failed',
-        summary: args.next.status === 'failed' ? updated.summary : message,
-        error: args.next.status === 'failed' && updated.error
+        summary: next.status === 'failed' ? updated.summary : message,
+        error: next.status === 'failed' && updated.error
           ? updated.error
           : projectExecutionRunError(terminalizationError, { runId: args.runId }),
       };
@@ -262,8 +267,8 @@ export async function finishExecutionRun(args: Readonly<{
     status: updated.status,
     ...(updated.notifyParentOnCompletion === true ? { notifyParentOnCompletion: true } : {}),
     startedAtMs: updated.startedAtMs,
-    updatedAtMs: args.next.finishedAtMs,
-    finishedAtMs: args.next.finishedAtMs,
+    updatedAtMs: next.finishedAtMs,
+    finishedAtMs: next.finishedAtMs,
     ...(updated.error?.code ? { errorCode: updated.error.code } : {}),
     ...(resultSizeBytes === undefined ? {} : { resultSizeBytes }),
     ...(cleanupReceipt

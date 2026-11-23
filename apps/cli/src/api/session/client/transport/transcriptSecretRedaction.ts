@@ -3,10 +3,10 @@
  * once at each Session writer of Agent-authored content, before encryption or plain storage: the
  * message writer (`buildOutboundSessionMessagePayload`) and the Agent-state commit
  * (`ApiSessionClient.updateAgentState`, which carries permission request arguments). Execution Run
- * output leaves its hosting process only through the Run read projection in
- * `dispatchExecutionRunRpcAction.ts`, which applies it there for every reader, including Workflow
- * storage that Team members can read. Retired secrets no longer authenticate, so read-time
- * redaction of live registrations is sufficient.
+ * output is redacted where it is stored: `publishExecutionRunTurn` and `finishExecutionRun`, so
+ * Run state, Review findings and comments, and Workflow step results never hold a value whose
+ * registration later ends (Project secrets outlive their launch). The Run read projection in
+ * `dispatchExecutionRunRpcAction.ts` still applies it for live host-minted bearers.
  *
  * Covers Session MCP registration bearers, plugin-hosted loopback MCP servers, the session hook
  * server, and the secret values the daemon materialized into a runner-spawned launch (Project

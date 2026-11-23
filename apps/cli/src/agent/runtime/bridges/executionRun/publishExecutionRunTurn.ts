@@ -16,6 +16,7 @@ import { ScmDiffSummaryResultErrorCodeSchema, ScmDiffSummaryPublicationReceiptSc
 import { readReviewNarration } from '@/agent/executionRuns/profiles/review/reviewWalkthroughTurn';
 import { readScmDiffSummaryIntent } from './kinds/scmDiffSummary/readScmDiffSummaryIntent';
 import { buildExecutionRunProfileStartParams } from './profileStart';
+import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 /** One host publisher for retained structured turns, independent of input transport. */
 export async function publishExecutionRunTurn(args: Readonly<{
@@ -41,20 +42,24 @@ export async function publishExecutionRunTurn(args: Readonly<{
   const run = args.runs.get(args.runId);
   const current = () => args.controllers.get(args.runId) === args.controller && !args.controller.cancelled;
   if (!run || run.status !== 'running' || !current()) return false;
+  // Agent output is stored, published and materialized from here. Redact registered secrets
+  // now, while the launch that registered them is live, so no later read depends on them.
+  const rawText = redactTranscriptSecrets(args.rawText);
+  const diagnostic = redactTranscriptSecrets(args.diagnostic);
   const profile = args.profileCatalog
     ? resolveExecutionRunIntentProfileFromCatalog(args.profileCatalog, run.intent, run.profileId, run.profileSourceCustody)
     : resolveExecutionRunIntentProfile(run.intent);
   const params = {
     start: { ...run, ...buildExecutionRunProfileStartParams(run) },
     turnId: args.turnId,
-    rawText: args.rawText,
+    rawText,
     finishedAtMs: args.finishedAtMs,
     inputIds: args.inputIds ?? [args.controller.currentInputTurn, args.controller.lastInputTurn]
       .find((turn) => turn?.turnId === args.turnId)?.inputIds,
     ...(run.structuredMeta ? { previousStructuredMeta: run.structuredMeta } : {}),
   };
-  let completion = args.started ? await profile.onStarted?.(params) : args.diagnostic
-    ? await profile.onTurnFailed?.({ ...params, diagnostic: args.diagnostic })
+  let completion = args.started ? await profile.onStarted?.(params) : diagnostic
+    ? await profile.onTurnFailed?.({ ...params, diagnostic })
     : await profile.onTurnComplete?.(params);
   if (!completion || !current()) return false;
   const projected = await materializeReviewFindings({ run,
@@ -120,7 +125,7 @@ export async function publishExecutionRunTurn(args: Readonly<{
     && (!projected.materialization || projected.materialization.status === 'materialized');
   const clearPreviousOperationError = successfulCurrentPublication && (latest.error?.code === 'execution_run_send_outcome_unknown'
     || (completion.status === 'succeeded' && completion.structuredMeta?.kind === EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary
-      && !args.diagnostic && ScmDiffSummaryResultErrorCodeSchema.safeParse(latest.error?.code).success));
+      && !diagnostic && ScmDiffSummaryResultErrorCodeSchema.safeParse(latest.error?.code).success));
   const updated = {
     ...latest,
     summary: completion.summary,
