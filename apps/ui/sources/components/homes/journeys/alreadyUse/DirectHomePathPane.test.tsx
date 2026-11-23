@@ -34,6 +34,10 @@ describe('Direct Home address outcome', () => {
         const manual = createManualSystemTaskRunner('tauri');
         os.bridge = manual.bridge;
         vi.stubGlobal('isTauri', true);
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke: async (command: string) => {
+            if (command === 'desktop_secure_storage_read') return null;
+            throw new Error(`Unexpected desktop command: ${command}`);
+        } });
         vi.stubGlobal('location', { protocol: 'https:' });
         network.fetch.mockImplementation(async () => new Response('{}', { status: 404 }));
         const screen = await renderScreen(
@@ -44,6 +48,7 @@ describe('Direct Home address outcome', () => {
             />,
         );
 
+        await vi.waitFor(() => expect(screen.findHostByTestId('already-use-happier.home-connect')?.props.accessibilityState?.disabled).toBe(false));
         await screen.pressByTestIdAsync('already-use-happier.home-connect');
         await vi.waitFor(() => expect(screen.findByTestId('server-settings-add-remediation-action-prepare_tailscale')).not.toBeNull());
         await screen.pressByTestIdAsync('server-settings-add-remediation-action-prepare_tailscale');

@@ -10,7 +10,7 @@ import { createDefaultSshCredentialsDraft } from '@/components/ssh/sshCredential
 import { areServerProfileIdentifiersEquivalent, getServerProfileById, getActiveServerSnapshot } from '@/sync/domains/server/serverProfiles';
 import { retryActiveServerConnection } from '@/sync/runtime/orchestration/connectionManager';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
-import { connectHomeAtAddress } from '@/sync/ops/home/connectHomeAtAddress';
+import { connectHomeAtAddress, type ConnectHomeAtAddressInput, type ConnectHomeAtAddressResult } from '@/sync/ops/home/connectHomeAtAddress';
 import { machineTerminalEnsure, machineTerminalList, machineTerminalStreamReadBytes, machineTerminalStreamSendInput, machineTerminalClose, machineTerminalRestart, trackPendingMachineTerminalCreation } from '@/sync/ops/machineTerminal';
 import { MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineTerminal';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from './actionAccountContext';
@@ -45,8 +45,14 @@ export type UiHomePairingDelivery = Pick<Parameters<typeof startPairingForHome>[
     onResult: (result: StartPairingForHomeResult) => void;
 }>;
 
+/** Local prompts and presentation details for one mounted Home connection. */
+export type UiHomeAddressDelivery = Pick<ConnectHomeAtAddressInput, 'confirmInsecureHttp' | 'confirmCanonicalUrl'> & Readonly<{
+    onResult: (result: ConnectHomeAtAddressResult) => void;
+}>;
+
 export function createMachineConnectionActionDeps(options: Readonly<{ runner?: SystemTaskRunner; account?: LazyActionAccountContext;
-    homePairingDelivery?: UiHomePairingDelivery; personalHomeSshDraftSecrets?: PersonalHomeSshDraftSecrets }> = {}): Pick<ActionExecutorDeps, 'homeConnect' | 'homeReconnect' | 'personalHomeCreate' | 'localDaemonServiceAction' | 'machineAddCommand' | 'machinePairingCreate' | 'machineTerminalAction' | 'machineAddSshTaskAction' | 'machineAddLocalStart' | 'machineAddLocalCancel' | 'machinePageAction' | 'machineManagedInstallationRespond'> {
+    homePairingDelivery?: UiHomePairingDelivery; homeAddressDelivery?: UiHomeAddressDelivery;
+    personalHomeSshDraftSecrets?: PersonalHomeSshDraftSecrets }> = {}): Pick<ActionExecutorDeps, 'homeConnect' | 'homeReconnect' | 'personalHomeCreate' | 'localDaemonServiceAction' | 'machineAddCommand' | 'machinePairingCreate' | 'machineTerminalAction' | 'machineAddSshTaskAction' | 'machineAddLocalStart' | 'machineAddLocalCancel' | 'machinePageAction' | 'machineManagedInstallationRespond'> {
     return {
         ...(options.account ? { personalHomeCreate: createPersonalHomeCreateAction(options.account, options.runner, options.personalHomeSshDraftSecrets) } : {}),
         machinePageAction: async ({ actionId, input, context }) => {
@@ -141,10 +147,12 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
             return { serverId: input.serverId };
         },
         homeConnect: async (input, context) => {
+            const delivery = options.homeAddressDelivery;
             const outcome = await connectHomeAtAddress({ serverUrl: input.address, displayName: input.displayName,
-                signal: context.signal, confirmInsecureHttp: async () => input.acceptInsecureHttp,
-                confirmCanonicalUrl: async (change) => change ? false : input.acceptCanonicalUrl,
+                signal: context.signal, confirmInsecureHttp: delivery?.confirmInsecureHttp ?? (async () => input.acceptInsecureHttp),
+                confirmCanonicalUrl: delivery?.confirmCanonicalUrl ?? (async (change) => change ? false : input.acceptCanonicalUrl),
             });
+            delivery?.onResult(outcome);
             if (outcome.kind === 'connected') return { kind: 'connected', serverId: outcome.profile.id,
                 serverUrl: outcome.profile.serverUrl, name: outcome.profile.name };
             if (outcome.kind === 'identity_mismatch') return {

@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { classifyPairingLink } from '@/auth/pairing/classifyPairingLink';
 import { ADD_HOME_RESTORE_PATH } from '@/auth/pairing/homeQrEntryIntent';
+import { useLocalRuntimeActionExecution } from '@/components/approvals/useLocalRuntimeActionExecution';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -12,7 +13,8 @@ import type { EndpointReachabilityRemediation } from '@/components/serverReachab
 import { ServerReachabilityRemediationCard } from '@/components/settings/server/sections/ServerReachabilityRemediationCard';
 import { useEndpointReachabilityRemediationController } from '@/components/settings/server/hooks/useEndpointReachabilityRemediationController';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
-import { connectHomeAtAddress } from '@/sync/ops/home/connectHomeAtAddress';
+import { requireActionSuccess } from '@/sync/ops/actions/actionResult';
+import { connectHomeAtAddress, type ConnectHomeAtAddressResult } from '@/sync/ops/home/connectHomeAtAddress';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -66,6 +68,7 @@ export function DirectHomePathPane(props: Readonly<{
     const [linkError, setLinkError] = React.useState<string | null>(null);
     const [address, setAddress] = React.useState(props.initialAddress ?? '');
     const [addressState, setAddressState] = React.useState<AddressState>({ kind: 'idle' });
+    const { execute, ready, requiresAction, runSignedOutDraft } = useLocalRuntimeActionExecution();
     const attemptRef = React.useRef<AbortController | null>(null);
     React.useEffect(() => () => attemptRef.current?.abort(), []);
 
@@ -83,18 +86,38 @@ export function DirectHomePathPane(props: Readonly<{
     }, [leaveFor, link]);
 
     const connect = React.useCallback(async (requestedAddress = address) => {
+        if (!ready) return;
         attemptRef.current?.abort();
         const controller = new AbortController();
         attemptRef.current = controller;
         setAddressState({ kind: 'connecting' });
-        let result: Awaited<ReturnType<typeof connectHomeAtAddress>>;
+        let result: ConnectHomeAtAddressResult;
         try {
-            result = await connectHomeAtAddress({
-                serverUrl: requestedAddress,
-                signal: controller.signal,
+            const prompts = {
                 confirmInsecureHttp: confirmInsecureHomeHttp,
                 confirmCanonicalUrl: confirmCanonicalHomeUrl,
-            });
+            };
+            if (requiresAction) {
+                const delivery: { result?: ConnectHomeAtAddressResult } = {};
+                const receipt = await execute('homes.connect', { address: requestedAddress }, {
+                    confirmed: true,
+                    signal: controller.signal,
+                    executorOptions: { homeAddressDelivery: { ...prompts, onResult: value => { delivery.result = value; } } },
+                });
+                if (!receipt.ok && receipt.errorCode === 'invalid_parameters') {
+                    result = { kind: 'invalid_address' };
+                } else {
+                    if (receipt.ok || receipt.errorCode !== 'home_identity_mismatch') requireActionSuccess(receipt);
+                    if (!delivery.result) throw new Error('Missing Home address outcome');
+                    result = delivery.result;
+                }
+            } else {
+                result = await runSignedOutDraft(() => connectHomeAtAddress({
+                    serverUrl: requestedAddress,
+                    signal: controller.signal,
+                    ...prompts,
+                }));
+            }
             if (controller.signal.aborted) return;
             if (result.kind === 'connected') {
                 await onHomeConnected(result.profile);
@@ -123,7 +146,7 @@ export function DirectHomePathPane(props: Readonly<{
         } else {
             setAddressState({ kind: 'idle' });
         }
-    }, [address, onHomeConnected]);
+    }, [address, execute, onHomeConnected, ready, requiresAction, runSignedOutDraft]);
 
     const submitAddress = React.useCallback(() => {
         if (isStep) {
@@ -247,6 +270,7 @@ export function DirectHomePathPane(props: Readonly<{
                         <StepPrimaryButton
                             testID="already-use-happier.home-connect"
                             title={t('homesJourneys.connect')}
+                            disabled={!ready}
                             loading={addressState.kind === 'connecting'}
                             onPress={submitAddress}
                         />
@@ -276,6 +300,7 @@ export function DirectHomePathPane(props: Readonly<{
                         testID="already-use-happier.home-connect"
                         size="normal"
                         title={t('homesJourneys.connect')}
+                        disabled={!ready}
                         loading={addressState.kind === 'connecting'}
                         onPress={submitAddress}
                     />
