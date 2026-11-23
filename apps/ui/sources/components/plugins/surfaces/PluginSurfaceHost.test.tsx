@@ -4811,10 +4811,13 @@ describe('PluginSurfacePlacementHost', () => {
         });
         const busyRow = screen.findByTestId('plugin-declarative-collection-list:root:row:task-7');
         expect(busyRow?.props).toMatchObject({
-            disabled: true,
+            'aria-disabled': true,
             accessibilityState: expect.objectContaining({ busy: true, disabled: true }),
         });
         expect(busyRow?.props.onPress).toEqual(expect.any(Function));
+        const dispatchesBeforeBusyPress = dispatchAction.mock.calls.length;
+        await act(async () => { screen.pressByTestId('plugin-declarative-collection-list:root:row:task-7'); });
+        expect(dispatchAction).toHaveBeenCalledTimes(dispatchesBeforeBusyPress);
         await act(async () => { settlePendingAction(); await pendingAction; });
     });
 
