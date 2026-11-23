@@ -23,9 +23,13 @@ async function upload(input: CloudflareRoleInput<DeploymentTargetUploadDeployInp
   }
   const io = { http: context.services.http, signal: context.signal, now: () => Date.now() };
   const preview = uploadedPreviewSelection(input);
+  const observe = (providerDeploymentId: string) => {
+    const identified = { ...input, providerDeploymentId };
+    return preview && isUploadedPreviewReference(providerDeploymentId)
+      ? observeUploadedPreview(identified, preview, io) : observeUploadedWorker(identified, io);
+  };
   if (input.providerDeploymentId) {
-    const observed = preview && isUploadedPreviewReference(input.providerDeploymentId)
-      ? await observeUploadedPreview(input, preview, io) : await observeUploadedWorker(input, io);
+    const observed = await observe(input.providerDeploymentId);
     if ('code' in observed) throw withActionFailureDiagnostic(new PluginError({ code: observed.code, retryable: observed.retryable, details: { phase: observed.phase },
       failureCause: projectActionFailureCauseV1(observed, `deployment.cloudflare.${observed.phase}`) }),
       { phase: `deployment.cloudflare.${observed.phase}`, causeKind: 'native_failure', error: observed });
@@ -112,17 +116,27 @@ async function upload(input: CloudflareRoleInput<DeploymentTargetUploadDeployInp
   if ('code' in reply) throw withActionFailureDiagnostic(new PluginError({ code: reply.code, retryable: reply.retryable, details: { phase: reply.phase },
     failureCause: projectActionFailureCauseV1(reply, `deployment.cloudflare.${reply.phase}`) }),
     { phase: `deployment.cloudflare.${reply.phase}`, causeKind: 'native_failure', error: reply });
-  // The pinned Wrangler deploy adapter reads deployment_id as the uploaded
-  // version id for this endpoint. Acceptance is not serving confirmation: the
-  // existing deployment operation observes this id before terminal success.
+  // Wrangler's script PUT returns the uploaded version in deployment_id.
   const nativeId = isObject(reply.value) ? previewRoot ? reply.value.id : reply.value.deployment_id : undefined;
   if (typeof nativeId !== 'string' || !nativeId) {
     throw new PluginError({ code: 'outcome_unknown', retryable: false, details: { phase: 'send' } });
   }
-  return { v: 1, state: 'running', providerDeploymentId: previewRoot ? uploadedPreviewReference(nativeId) : uploadedWorkerReference(nativeId),
-    observedAtMs: io.now(), uploadProvenance: { sourceManifestFingerprint: source.manifestFingerprint,
-      build: { location: 'controller', image: CLOUDFLARE_BUILD_IMAGE, toolchain: { name: 'wrangler', version: CLOUDFLARE_WRANGLER_VERSION },
-        outputManifestFingerprint: prepared.outputManifestFingerprint } } };
+  const providerDeploymentId = previewRoot ? uploadedPreviewReference(nativeId) : uploadedWorkerReference(nativeId);
+  const uploadProvenance = { sourceManifestFingerprint: source.manifestFingerprint,
+    build: { location: 'controller' as const, image: CLOUDFLARE_BUILD_IMAGE,
+      toolchain: { name: 'wrangler' as const, version: CLOUDFLARE_WRANGLER_VERSION },
+      outputManifestFingerprint: prepared.outputManifestFingerprint } };
+  // Confirm serving in the same invocation and retain the exact acknowledged
+  // identity even when Cloudflare cannot prove it is serving yet.
+  const uncertain = (failure: unknown): DeploymentTargetRoleResultV1 => ({ v: 1, state: 'outcome_unknown',
+    providerDeploymentId, observedAtMs: io.now(), uploadProvenance,
+    failureCause: projectActionFailureCauseV1(failure, 'deployment.cloudflare.observe') });
+  try {
+    const observed = await observe(providerDeploymentId);
+    return 'code' in observed ? uncertain(observed) : { ...observed, uploadProvenance };
+  } catch (error) {
+    return uncertain(error);
+  }
 }
 
 export const workersUpload: Extract<PluginActionDeclaration, { execution?: { target: 'daemon' } }> & {

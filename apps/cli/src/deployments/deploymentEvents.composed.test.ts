@@ -12,9 +12,11 @@ import { buildDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployment
 import { UpdateBodySchema } from '@happier-dev/protocol/updates';
 import { createDeploymentReceiptEventSourceAdapter, deploymentEventActions } from '../../../../packages/plugins/machine-services/src/deploymentEvents';
 import { projectDeploymentReceiptInvalidationsForHost } from './receiptEventInvalidation';
-import type { JsonValue } from '@happier-dev/plugin-sdk';
+import type { DeploymentTargetRoleResultV1, JsonValue } from '@happier-dev/plugin-sdk';
 import { plugin as cloudflare } from '../../../../packages/plugins/deploy-cloudflare/src/manifest';
-import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { observePagesDeployment } from '../../../../packages/plugins/deploy-cloudflare/src/platform/pages';
+import { observeVercelDeployment } from '../../../../packages/plugins/deploy-vercel/src/platform/operations';
 import { settleInterruptedDeploymentReceiptForHost } from './receiptRecovery';
 
 const materialization = { pluginId: 'happier.machine.services', machineId: 'observer', materializationId: 'installed' };
@@ -92,11 +94,11 @@ function fixture(event: string | readonly string[] = 'deployment-failed', pageSi
     } as unknown as BackgroundServiceContext;
     const adapter = createDeploymentReceiptEventSourceAdapter(context.services.events.host, () => 10, nativeCompletion ? context : undefined);
     let wakeSubscription = adapter.subscribeWake?.(async () => {});
-    const cycle = async (source = adapter) => {
+    const cycle = async (source = adapter, cycleContext = context) => {
         // The real runner owns its subscription during a finite cycle. Keep one
         // connected host delivery boundary between cycles, without overlapping it.
         wakeSubscription?.dispose();
-        try { await runCheckpointedPluginEventObserverV1({ context, source, mode: 'once', now: () => 10 }); }
+        try { await runCheckpointedPluginEventObserverV1({ context: cycleContext, source, mode: 'once', now: () => 10 }); }
         finally { wakeSubscription = source.subscribeWake?.(async () => {}); }
     };
     return { context, adapter, execute, admissions, rows, reads, cycle, safe(value: boolean) { safe = value; },
@@ -285,6 +287,90 @@ describe('deployment receipt Events through canonical admission', () => {
         expect(f.admissions.at(-1)).toMatchObject({ eventRef: { localId: 'deployment-succeeded' },
             payload: { state: 'succeeded', receiptRevision: 2, observedAt: 4 } });
     });
+    it.each(['pages', 'vercel-preview', 'vercel-production'] as const)(
+        'follows the ordinary %s receipt at its saved cadence, resumes on adoption and goes idle at success',
+        async target => {
+            const periodMs = 1000;
+            let now = 10;
+            const f = fixture(['deployment-failed', 'deployment-succeeded']);
+            const pending = createDeploymentReceiptHeaderV1({ ...f.rows[0], state: 'queued', settledAtMs: undefined });
+            f.rows.splice(0, f.rows.length, pending);
+            const pages = target === 'pages';
+            const preview = target === 'vercel-preview';
+            const providerEnvironment = preview ? 'preview' : 'production';
+            const providerDeploymentId = 'provider-deployment';
+            const providerIdentity = { providerAccountId: 'account', providerResourceId: 'project', providerEnvironment };
+            const credentialPrincipal = { kind: 'account', accountId: 'owner',
+                purpose: { consumer: { pluginId: pages ? cloudflare.manifest.id : 'happier.deploy.vercel',
+                    localId: pages ? 'pages-observe' : 'observe' }, purpose: 'deploy.manage' },
+                target: { kind: 'account', account: { service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' },
+                    accountId: 'provider-account' } } };
+            f.sources(['deployment-failed', 'deployment-succeeded'].map(event => ({ ...definition(event),
+                sourceConfig: { ...config, targetLinkId: pending.targetLinkId, credentialPrincipal, periodMs } })));
+
+            const statusRequests: string[] = [];
+            const http = createPluginHttpFixture({ async request(request) {
+                const url = new URL(request.url);
+                expect(request.method).toBe('GET');
+                expect(url.pathname.endsWith(`/deployments/${providerDeploymentId}`)).toBe(true);
+                statusRequests.push(url.origin);
+                const ready = statusRequests.length >= 3;
+                const record = pages ? { success: true, result: { id: providerDeploymentId, environment: 'production',
+                    latest_stage: ready ? { name: 'deploy', status: 'success' } : { name: 'build', status: 'active' } } }
+                    : { id: providerDeploymentId, projectId: providerIdentity.providerResourceId,
+                        target: preview ? null : 'production', readyState: ready ? 'READY' : 'BUILDING', aliasAssigned: ready };
+                return { status: 200, finalUrl: request.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(record)) };
+            } });
+            const providerContext = { http, signal: f.context.signal, now: () => now };
+            const readProvider = async (): Promise<DeploymentTargetRoleResultV1> => {
+                const result = pages ? await observePagesDeployment({ providerIdentity, providerDeploymentId,
+                    preparedNative: { projectName: 'project' }, providerEnvironment: { kind: 'native', selection: { kind: 'production' } } },
+                providerContext) : await observeVercelDeployment({ providerIdentity, providerDeploymentId }, providerContext);
+                if ('code' in result) throw new Error(result.code);
+                return result;
+            };
+            const context = { ...f.context, services: { ...f.context.services, actions: {
+                execute: async (actionId: string, input: Record<string, unknown>) => {
+                    if (actionId !== 'deployments.receipts.observe') return f.execute(actionId, input);
+                    expect(input).toEqual({ serverId: 'home', environmentId: pending.environmentId, deploymentId: pending.id });
+                    const { state } = await readProvider();
+                    // Home transport retains the transition the provider observer wrote.
+                    const retained = f.rows[0];
+                    f.rows[0] = createDeploymentReceiptHeaderV1({ ...retained, revision: retained.revision + 1, state,
+                        settledAtMs: state === 'succeeded' ? now : undefined });
+                    return { ok: true, state };
+                },
+            } } } as unknown as BackgroundServiceContext;
+
+            const createSource = () => createDeploymentReceiptEventSourceAdapter(context.services.events.host, () => now);
+            const active = createSource();
+            await f.cycle(active, context);
+            expect(statusRequests).toHaveLength(1);
+            // The queued-to-running publication wakes the real source. It must
+            // open the receipt without requesting the vendor ahead of its deadline.
+            await f.wake(pending.environmentId, pending.id);
+            await f.cycle(active, context);
+            expect(statusRequests).toHaveLength(1);
+            now += periodMs;
+            await f.cycle(active, context);
+            expect(statusRequests).toHaveLength(2);
+
+            // A new daemon adopts retained definitions and reads pending Home
+            // receipts once, then follows the exact saved provider deployment.
+            now += periodMs;
+            const restarted = createSource();
+            await f.cycle(restarted, context);
+            expect(statusRequests).toHaveLength(3);
+            expect(f.rows[0]).toMatchObject({ state: 'succeeded' });
+
+            await f.wake(pending.environmentId, pending.id);
+            now += periodMs * 10;
+            await f.cycle(restarted, context);
+            await f.cycle(createSource(), context);
+            expect(statusRequests).toEqual(Array.from({ length: 3 }, () =>
+                pages ? 'https://api.cloudflare.com' : 'https://api.vercel.com'));
+        },
+    );
     it.each(['failed', 'succeeded'] as const)('produces exactly one generic %s Event for a Cloudflare receipt', async state => {
         const localId = state === 'failed' ? 'deployment-failed' : 'deployment-succeeded';
         const f = fixture(localId);

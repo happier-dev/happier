@@ -115,12 +115,12 @@ it('inspects and links explicit Workers upload without native Git access or a bu
 it('builds exact source in the pinned container and uploads executable multipart modules without provider credentials in Exec', async () => {
   const h = await fixture();
   try {
-    expect(await h.invoke()).toMatchObject({ state: 'running', providerDeploymentId: providerReference,
+    expect(await h.invoke()).toMatchObject({ state: 'succeeded', providerDeploymentId: providerReference,
       uploadProvenance: { sourceManifestFingerprint: 'approved-source',
         build: { location: 'controller', image: CLOUDFLARE_BUILD_IMAGE, toolchain: { name: 'wrangler', version: '4.156.0' },
           outputManifestFingerprint: expect.stringMatching(/^sha256:[0-9a-f]{64}$/) } } });
     expect(h.materialize).toHaveBeenCalledExactlyOnceWith({ environmentId: 'environment', deploymentId: 'receipt' }, { signal: expect.any(AbortSignal) });
-    expect(h.requests).toHaveLength(1);
+    expect(h.requests.map(request => request.method)).toEqual(['PUT', 'GET', 'GET']);
     const request = h.requests[0];
     expect([request.method, new URL(request.url).pathname]).toEqual(['PUT', '/client/v4/accounts/account/workers/scripts/app']);
     expect(request.credentialBinding).toMatchObject({ purpose: 'deploy.manage', method: 'PUT' });
@@ -136,7 +136,7 @@ it('builds exact source in the pinned container and uploads executable multipart
     expect(spawn.deploymentEnv).toBeUndefined();
     expect(h.disposeProcess).toHaveBeenCalledOnce();
     expect(await h.invoke({ providerDeploymentId: providerReference })).toMatchObject({ state: 'succeeded', providerDeploymentId: providerReference });
-    expect(h.requests.map(request => request.method)).toEqual(['PUT', 'GET', 'GET']);
+    expect(h.requests.map(request => request.method)).toEqual(['PUT', 'GET', 'GET', 'GET', 'GET']);
     expect(h.spawn).toHaveBeenCalledOnce();
   } finally { await h.dispose(); }
 });
@@ -145,11 +145,11 @@ it('observes the canonical version UUID after the legacy script upload returns a
   const h = await fixture('compactVersion');
   try {
     const accepted = await h.invoke();
-    expect(accepted).toMatchObject({ state: 'running', providerDeploymentId: providerReference });
+    expect(accepted).toMatchObject({ state: 'succeeded', providerDeploymentId: providerReference });
     if (!accepted || typeof accepted !== 'object' || Array.isArray(accepted)) throw new Error('Expected upload observation');
     expect(await h.invoke({ providerDeploymentId: accepted.providerDeploymentId }))
       .toMatchObject({ state: 'succeeded', providerDeploymentId: providerReference });
-    expect(h.requests.map(request => request.method)).toEqual(['PUT', 'GET', 'GET']);
+    expect(h.requests.map(request => request.method)).toEqual(['PUT', 'GET', 'GET', 'GET', 'GET']);
     expect(h.spawn).toHaveBeenCalledOnce();
   } finally { await h.dispose(); }
 });
@@ -227,10 +227,18 @@ it('does not declare upload success from another serving version', async () => {
   } finally { await h.dispose(); }
 });
 
+it('retains the uploaded version without declaring success when another version still serves', async () => {
+  const h = await fixture('otherVersion');
+  try {
+    expect(await h.invoke()).toMatchObject({ state: 'outcome_unknown', providerDeploymentId: providerReference });
+    expect(h.requests.map(request => request.method)).toEqual(['PUT', 'GET']);
+  } finally { await h.dispose(); }
+});
+
 it.each(['assets', 'assetsCached'] as const)('uploads the exact Worker Static Assets output using the provider %s session before publishing modules', async mode => {
   const h = await fixture(mode);
   try {
-    expect(await h.invoke()).toMatchObject({ state: 'running', providerDeploymentId: providerReference });
+    expect(await h.invoke()).toMatchObject({ state: 'succeeded', providerDeploymentId: providerReference });
     expect(h.requests[0].url).toContain('/workers/scripts/app/assets-upload-session');
     expect(JSON.parse(new TextDecoder().decode(h.requests[0].body))).toEqual({ manifest: { '/binary.bin': { hash: 'asset-hash', size: binary.length } } });
     if (mode === 'assets') {
@@ -240,7 +248,7 @@ it.each(['assets', 'assetsCached'] as const)('uploads the exact Worker Static As
       const files = await new Response(assetRequest.body ? Uint8Array.from(assetRequest.body).buffer : undefined, { headers: assetRequest.headers }).formData();
       expect(await (files.get('asset-hash') as File).text()).toBe(Buffer.from(binary).toString('base64'));
     }
-    const publish = h.requests.at(-1)!;
+    const publish = h.requests.find(request => request.method === 'PUT')!;
     const form = await new Response(publish.body ? Uint8Array.from(publish.body).buffer : undefined, { headers: publish.headers }).formData();
     expect(JSON.parse(String(form.get('metadata')))).toMatchObject({ main_module: 'worker.js', assets: {
       jwt: mode === 'assets' ? 'asset-completion-token' : 'asset-upload-token', config: { run_worker_first: false } } });
@@ -269,7 +277,7 @@ it('uploads executable modules and Static Assets only to the captured native Pre
     expect(await h.kit.invokeAction('workers-link', { ...preparation, ...prepared })).toMatchObject({ preparedNative: { previewId } });
     expect(h.requests).toHaveLength(2);
     const observed = await h.invoke(preview);
-    expect(observed).toMatchObject({ state: 'running', providerDeploymentId: 'preview-deployment:preview-deployment' });
+    expect(observed).toMatchObject({ state: 'succeeded', providerDeploymentId: 'preview-deployment:preview-deployment' });
     const publishes = h.requests.filter(request => request.url.endsWith('/deployments') && request.method === 'POST');
     expect(publishes).toHaveLength(1);
     expect(publishes[0].url).toContain(`/workers/workers/app/previews/${previewId}/deployments`);
@@ -299,7 +307,7 @@ it('publishes the first deployment of the captured Preview when Cloudflare repor
       providerEnvironment: { kind: 'native', selection: { kind: 'preview', scriptName: 'app', previewName: 'pr-1' } },
       preparedNative: { projectName: 'app', previewId, scriptName: 'app' },
     });
-    expect(accepted).toMatchObject({ state: 'running', providerDeploymentId: 'preview-deployment:preview-deployment' });
+    expect(accepted).toMatchObject({ state: 'succeeded', providerDeploymentId: 'preview-deployment:preview-deployment' });
     const publish = h.requests.find(request => request.method === 'POST'
       && request.url.endsWith(`/previews/${previewId}/deployments`));
     expect(publish).toBeDefined();

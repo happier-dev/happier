@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
+import { canRetryDeploymentReceiptObservationOnWake } from '@happier-dev/plugins-machine-services';
+import { isPluginErrorData } from '@happier-dev/protocol/plugins/errors';
 import { buildDeploymentTeardownInputV1, DeploymentDeployInputV1Schema, DeploymentReceiptObserveInputV1Schema, DeploymentTeardownDetachInputV1Schema,
     type ActionExecutorContext } from '@happier-dev/protocol';
 import type { HostReviewedChildrenPlanV1, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { createActionExecuteFailureError, ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1,
     type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { deploymentInProgressStates, DeploymentProviderTeardownContentV1Schema, type DeploymentProviderTeardownContentV1, DeploymentPlatformContentV1Schema, resolveDeploymentSourceMethodV1, type DeploymentPlatformContentV1, type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentReceiptFailureV1 } from '@happier-dev/deployments/contracts/v1';
-import { DEPLOYMENT_PROMOTE_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_PROMOTE_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { projectDeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { DEPLOYMENT_TEARDOWN_STEPS_V1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
 import { selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
@@ -18,6 +20,7 @@ import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/acti
 import { resolvePluginLocalizedStringV2Text, type PluginLocalizedStringV2 } from '@happier-dev/protocol/plugins/contributions/publicTypes';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
+import type { StablePluginEventsBroker } from '@/plugins/runtime/invocation/services/events';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
@@ -118,6 +121,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
             children: HostReviewedChildrenPlanV1['children'];
             activeDeploymentId: string | undefined;
             targetTitle: PluginLocalizedStringV2;
+            pendingReceiptEvents?: StablePluginEventsBroker;
             admit(input: unknown, phase: 'preparation' | 'execution', receipt?: DeploymentReceiptDetailV1): Promise<void>;
         }>) => Promise<T>): Promise<T> {
         if (!host.acquirePluginRuntimeRegistryLease) return refuse('unsupported_action');
@@ -193,7 +197,9 @@ export function createContributedDeploymentTargetForHost(host: Host) {
             return await run({ common, action, children, credentials, admit, assertCurrent,
                 activeDeploymentId: link.activeDeploymentId, targetTitle: descriptor.title,
                 generatedDomains: descriptor.generatedDomains === true,
-                gitSource: descriptor.gitSource, gitProviders: descriptor.sources?.gitIntegration });
+                gitSource: descriptor.gitSource, gitProviders: descriptor.sources?.gitIntegration,
+                pendingReceiptEvents: descriptor.statusIntervalMs === undefined ? undefined : lease.registry.stableEventsBroker,
+            });
         } finally { await lease.release(); }
     }
 
@@ -375,7 +381,8 @@ export function createContributedDeploymentTargetForHost(host: Host) {
     async function writeObservation(receipt: DeploymentReceiptDetailV1, content: ContributedReceiptContent,
         observation: ReturnType<typeof DeploymentTargetRoleResultV1Schema.parse>, context: ActionExecutorContext,
         environmentRevision: number,
-        controller: NonNullable<DeploymentReceiptDetailV1['deployment']['acceptedExecution']>['controller']) {
+        controller: NonNullable<DeploymentReceiptDetailV1['deployment']['acceptedExecution']>['controller'],
+        providerRefusal?: ActionExecuteFailure) {
         const absenceFailure = receipt.deployment.operation === 'teardown' ? readProviderTeardownAbsenceFailure(observation) : null;
         if (absenceFailure) {
             await host.writeTransition({ environmentId: receipt.deployment.environmentId, deploymentId: receipt.deployment.id,
@@ -383,14 +390,16 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 content: receiptFailureContent(content, absenceFailure, 'teardown'), context });
             return absenceFailure;
         }
-        const observed = observedReceiptContent(content, observation);
+        const observed = providerRefusal
+            ? receiptFailureContent(observedReceiptContent(content, observation), providerRefusal, 'observe')
+            : observedReceiptContent(content, observation);
         // Observation records provider progress without reclaiming an unknown receipt's released effect slot.
         const state = receipt.deployment.state === 'outcome_unknown' && deploymentInProgressStates().includes(observation.state)
             ? receipt.deployment.state : observation.state;
         // A provider's read timestamp is liveness, not new receipt content.
         if (receipt.deployment.state === state && sameStrictJsonValue(
             { ...content.platform.observation, observedAtMs: 0 }, { ...observed.platform.observation, observedAtMs: 0 })
-            && (!observation.failureCause || sameStrictJsonValue(content.failure, observed.failure))) {
+            && (!(observation.failureCause || providerRefusal) || sameStrictJsonValue(content.failure, observed.failure))) {
             return { ok: true as const, environmentId: receipt.deployment.environmentId, revision: environmentRevision,
                 deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state };
         }
@@ -451,7 +460,20 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                             if (!context.hostReviewedChild) return failure('unsupported_action');
                             const result = await context.hostReviewedChild.invoke({ action: scope.action, role: 'observe',
                                 input: normalizeStrictJsonValue(input) });
-                            if (!result.ok) return result;
+                            if (!result.ok) {
+                                context.signal?.throwIfAborted();
+                                const authored = isPluginErrorData(result.details) ? result.details : undefined;
+                                if (receipt.deployment.operation !== 'deploy' || !deploymentInProgressStates().includes(receipt.deployment.state)
+                                    || canRetryDeploymentReceiptObservationOnWake({ code: result.errorCode,
+                                        details: authored && 'details' in authored ? authored.details : undefined,
+                                        retryable: authored?.retryable, httpStatus: result.failureCause?.httpStatus })) return result;
+                                // The provider has the deploy. A terminal status refusal ends automatic follow
+                                // without asserting that the provider build itself failed.
+                                const written = await writeObservation(receipt, content, {
+                                    ...content.platform.observation, state: 'outcome_unknown', observedAtMs: Date.now(),
+                                }, context, environment.environment.revision, accepted.controller, { ...result, effectAttempted: true });
+                                return written.ok ? { ok: true, result: written } : written;
+                            }
                             const observation = DeploymentTargetRoleResultV1Schema.safeParse(result.result);
                             if (!observation.success || receipt.deployment.operation !== 'teardown'
                                 && observation.data.providerDeploymentId !== content.platform.observation.providerDeploymentId)
@@ -571,8 +593,14 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 providerEffectObserved = true;
                 effectContent = observedReceiptContent(content, observation.data);
                 transitionAttempted = true;
-                return writeObservation(receipt!, content, observation.data, request.context, environment.environment.revision,
-                    accepted.controller);
+                const written = await writeObservation(receipt!, content, observation.data, request.context,
+                    environment.environment.revision, accepted.controller);
+                if (request.actionId === DEPLOYMENT_DEPLOY_ACTION_ID_V1 && scope.pendingReceiptEvents && written.ok
+                    && deploymentInProgressStates().includes(written.state)
+                    && request.context.operationAcceptance?.actionId === DEPLOYMENT_DEPLOY_ACTION_ID_V1) {
+                    return { pendingPlatformReceipt: written, events: scope.pendingReceiptEvents };
+                }
+                return written;
             });
         } catch (error) {
             if (effectContent) effectContent = captureControllerBuildLog(effectContent, buildOutput);

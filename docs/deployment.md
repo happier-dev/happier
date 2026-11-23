@@ -1633,12 +1633,15 @@ not supply a polling interval. The generic source configuration accepts an expli
 positive `periodMs`. This is the person's pending-receipt observation period,
 editable on the same observation-only trigger through `workflow.trigger.update`;
 it is not inferred from unrelated
-health checks. A successful read that still reports a pending receipt keeps the
-saved cadence. A transport or offline refusal parks that receipt until a reconnect
-or an addressed receipt change. Other refusals stop observation of that receipt
-revision until a reconnect or a new revision. The source reports its typed
-reason through the existing attention status. A refusal leaves the receipt's
-deployment outcome unchanged. Once no successfully observed receipts remain
+health checks. A read that still reports a pending Receipt schedules the next
+read from the last attempt and the saved period. A progress notification can
+open the Home Receipt immediately. The next provider read remains due at the
+saved cadence. A retryable transport or offline refusal parks that Receipt until
+a reconnect or an addressed receipt change. A terminal refusal from the
+authorized provider reader ends automatic follow with the typed reason retained
+on the Receipt. The outcome remains unknown at the provider and Check status
+can reconcile it later. Failure before the authorized read is reported through
+the existing attention status. Once no successfully observed Receipts remain
 pending, the adapter returns `null`, leaving zero scheduled idle work. In unreleased 0.3, initial runtime Link enrollment
 seeds `periodMs` from the plugin target's declared `statusIntervalMs`. Vercel,
 Cloudflare Pages and Workers declare one second: Vercel's client starts status
@@ -1704,6 +1707,14 @@ recovery hint. Read that receipt for its recorded result and use
 native settlement stays with the rollout owner. Reassigned controllers cannot borrow an earlier accepted
 installation's receipt custody; that retained-operation recovery boundary remains
 separate from future-controller selection.
+
+An admitted Pages or Vercel Deploy Action returns its accepted operation address
+and consumes the exact committed terminal Receipt on the existing host invalidation
+stream. After a daemon restart, adoption of the saved source opens retained
+Receipts in its assigned Environment and continues their provider reads. A
+reconnect wakes that same source. Workers Upload checks the exact uploaded
+version or immutable Preview in the original Action before reporting success.
+A missing serving proof retains that provider identity for Check status.
 
 Receipt admission, meaningful running/failed transitions, cancellation and
 Environment deletion publish a separate bodyless `deployment-activity` fact on

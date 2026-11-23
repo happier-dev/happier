@@ -62,6 +62,8 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 it.each([
     { scenario: 'READY', title: 'settles the retained Vercel receipt from READY' },
     { scenario: 'ERROR', title: 'settles the retained Vercel receipt from ERROR' },
+    { scenario: 'status access revoked', title: 'stops following a Vercel receipt when the provider refuses its status read' },
+    { scenario: 'status unavailable', title: 'retains an in-progress Vercel receipt when the provider status service is unavailable' },
     { scenario: 'concurrent observer', title: 'returns the settled Vercel receipt when another observer activates it during the provider read' },
     { scenario: 'exact SHA', title: 'prepares an exact-SHA Vercel deploy without Compose' },
     { scenario: 'Session GitHub HEAD', title: 'prepares Vercel from native GitHub HEAD through its retained Session MCP' },
@@ -156,6 +158,12 @@ it.each([
         expect(new Headers(init?.headers).get('authorization') === 'Bearer preview-fixture-secret').toBe(true);
         providerRequests.push({ method: init?.method ?? 'GET', path: parsed.pathname, body: null });
         settleConcurrentObservation?.();
+        if (scenario === 'status access revoked') {
+            return Response.json({ error: { code: 'forbidden', message: 'Permission revoked' } }, { status: 403 });
+        }
+        if (scenario === 'status unavailable') {
+            return Response.json({ error: { code: 'unavailable', message: 'Service unavailable' } }, { status: 503 });
+        }
         return Response.json({ id: 'dpl_reviewed', projectId, readyState,
             ...(readyState === 'ERROR' ? { errorCode: 'NOW_SANDBOX_WORKER_ROOTDIR_NOT_EXIST',
                 errorMessage: 'provider-private-output-must-not-escape' } : {}) });
@@ -287,7 +295,7 @@ it.each([
         const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
             listContributedActionDefinitions: list, readContributedActionSchemas: createCommittedContributedActionSchemaReader(list),
             invokeContributedAction: invoke });
-        receipt.contentArtifactId = candidate.input.contentArtifactId;
+        receipt = { ...receipt, contentArtifactId: candidate.input.contentArtifactId };
         seed(receipt.contentArtifactId, 'deployment-receipt.v1', { ...candidate.content,
             platform: { ...candidate.content.platform, observation: { v: 1, state: 'running',
                 providerDeploymentId: 'dpl_reviewed', observedAtMs: 1 } } });
@@ -303,7 +311,15 @@ it.each([
         };
         const input = { serverId, environmentId: environment.environment.id, deploymentId: receipt.id };
         const observed = await executor.execute('deployments.receipts.observe', input, context);
-        const state = readyState === 'READY' ? 'succeeded' : 'failed';
+        if (scenario === 'status unavailable') {
+            expect(observed).toMatchObject({ ok: false, errorCode: 'provider_request_failed' });
+            expect(receipt).toMatchObject({ state: 'running', revision: 2 });
+            expect(transitions).toHaveLength(0);
+            expect(providerRequests).toHaveLength(1);
+            return;
+        }
+        const statusRefused = scenario === 'status access revoked';
+        const state = statusRefused ? 'outcome_unknown' : readyState === 'READY' ? 'succeeded' : 'failed';
         expect(observed, JSON.stringify(observed)).toMatchObject({ ok: true, result: {
             state, deploymentId: receipt.id, deploymentRevision: 3 } });
         expect(receipt).toMatchObject({ state, revision: 3 });
@@ -317,8 +333,12 @@ it.each([
         const decoded = decodePlainArtifactStoredContent(stored.body);
         if (!decoded || typeof decoded !== 'object' || !('body' in decoded) || typeof decoded.body !== 'string')
             throw new Error('Expected persisted receipt content');
-        expect(DeploymentPlatformContentV1Schema.parse(JSON.parse(decoded.body)).platform.observation)
-            .toMatchObject({ state, providerDeploymentId: 'dpl_reviewed' });
+        const content = DeploymentPlatformContentV1Schema.parse(JSON.parse(decoded.body));
+        expect(content.platform.observation).toMatchObject({ state, providerDeploymentId: 'dpl_reviewed' });
+        if (statusRefused) {
+            expect(content.failure).toMatchObject({ code: 'deployment_access_denied', phase: 'observe', effectAttempted: true });
+            return;
+        }
         expect(JSON.stringify({ observed, stored })).not.toContain('provider-private-output-must-not-escape');
         expect(JSON.stringify({ observed, stored })).not.toContain('preview-fixture-secret');
         expect(await executor.execute('deployments.receipts.observe', input, context))

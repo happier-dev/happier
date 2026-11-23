@@ -8,7 +8,7 @@ import { createOwnServerDataRoleBindingsForHost } from './targets/ownServer/data
 import { createDomainDnsActionsForHost } from './targets/domainDnsActionsForHost';
 import { isDeploymentDomainDnsActionIdV1 } from '@happier-dev/protocol';
 import { deploymentOutputValidationFailure } from './outputValidation';
-import { projectDeploymentFailure } from './deploymentFailure';
+import { projectDeploymentException, projectDeploymentFailure } from './deploymentFailure';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { readExpectedDownDomainReferencesForHost, readTelemetryCollectorDomainForHost,
@@ -157,6 +157,7 @@ import { prepareServiceAdoptionForHost } from './serviceAdoptionForHost';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { cancelPendingDeploymentForHost, preparePendingDeploymentForHost, waitForPendingDeploymentForHost, validatePendingDeploymentInputForHost,
+    waitForPlatformDeploymentReceiptForHost,
 } from './pendingDeploy';
 import { readPendingDeploymentRecoveryOperation, readCompactPendingDeploymentRecovery } from './pendingDeploymentRecovery';
 import { createDeploymentArtifactForHost } from './createArtifactForHost';
@@ -1061,12 +1062,27 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         const link = environment.targetLinks.find(item => item.id === request.input.targetLinkId);
         if (!link) return failure('target_mismatch');
         if (providerTeardownReceipt && link.role === 'data') return dataTeardown.executeProject(request, providerTeardownReceipt, link);
-        return link.source.kind === 'plugin' ? contributedTarget.execute(request, {
-            environment: environment.environment, link, receipt: providerTeardownReceipt,
-        })
-            : request.actionId === 'deployments.teardown'
-                ? host.teardownBoundary ? injectedTeardown(request) : ownServerTeardown.execute(request)
-                : target.execute(request);
+        if (link.source.kind === 'plugin') {
+            const result = await contributedTarget.execute(request, {
+                environment: environment.environment, link, receipt: providerTeardownReceipt,
+            });
+            if (!('pendingPlatformReceipt' in result)) return result;
+            const { context } = request;
+            const initial = result.pendingPlatformReceipt;
+            const serverId = context.externalActionExecutionAuthorization?.binding.serverIdentityId
+                ?? context.serverIdentityId ?? host.serverId;
+            try {
+                return await waitForPlatformDeploymentReceiptForHost({ serverId, initial, context, events: result.events }, {
+                    readReceipt: async () => (await readReceiptMetadata(initial.environmentId, initial.deploymentId, context)).deployment,
+                    readEnvironmentRevision: async () => (await readEnvironmentMetadata({ environmentId: initial.environmentId, context })).environment.revision,
+                });
+            } catch (error) {
+                return { ...projectDeploymentException(error, { signal: context.signal }), effectAttempted: true as const };
+            }
+        }
+        return request.actionId === 'deployments.teardown'
+            ? host.teardownBoundary ? injectedTeardown(request) : ownServerTeardown.execute(request)
+            : target.execute(request);
     };
     const platformVariables = createPlatformVariablesForHost({ withTargetRole: contributedTarget.withTargetRole,
         readEnvironment: targetHostReaders.readEnvironment });

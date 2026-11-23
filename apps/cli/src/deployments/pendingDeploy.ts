@@ -1,5 +1,13 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
+import { raceWithAbort } from '@happier-dev/cli-common/plugins/http';
+import {
+    HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1,
+    HAPPIER_DEPLOYMENT_RECEIPT_INVALIDATED_HOST_EVENT_ID_V1,
+    projectDeploymentReceiptCompletionV1,
+    type DeploymentReceiptCompletionV1,
+} from '@happier-dev/protocol/plugins/events/hostReferencesV1';
+import type { StablePluginEventsBroker } from '@/plugins/runtime/invocation/services/events';
 import { deploymentOutputValidationFailure } from './outputValidation';
 import { isDeepStrictEqual } from 'node:util';
 import axios from '@/api/client/credentialAxios';
@@ -11,7 +19,7 @@ import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { DeploymentReceiptListResultV1Schema, readDeploymentAccountChangeV1,
     type ActionExecutorContext, type DeploymentDeployInputV1, type DeploymentEnvironmentHeaderV1,
-    type DeploymentEnvironmentGetResultV1Schema, type DeploymentReceiptResultV1 } from '@happier-dev/protocol';
+    type DeploymentEnvironmentGetResultV1Schema, type DeploymentReceiptHeaderV1, type DeploymentReceiptResultV1 } from '@happier-dev/protocol';
 import type { z } from 'zod/mini';
 import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { observeSessionSocketEvents } from '@/session/transport/socket/sessionSocketAgentState';
@@ -180,6 +188,68 @@ export async function waitForPendingDeploymentForHost(request: Readonly<{
             return await host.resume();
         }
     } finally { stopCancellation?.(); await observation.dispose(); }
+}
+
+/** Consume the follower's committed result without starting another provider read. */
+export async function waitForPlatformDeploymentReceiptForHost(request: Readonly<{
+    serverId: string; initial: Extract<DeploymentReceiptResultV1, { ok: true; deploymentId: string }>;
+    context: ActionExecutorContext; events: StablePluginEventsBroker;
+}>, host: Readonly<{
+    readReceipt(): Promise<DeploymentReceiptHeaderV1>;
+    readEnvironmentRevision(): Promise<number>;
+}>) {
+    const { context, initial, serverId } = request;
+    const { environmentId, deploymentId } = initial;
+    const acceptance = context.operationAcceptance;
+    if (!acceptance) return refuse('action_operation_unavailable');
+
+    let changed = Promise.withResolvers<DeploymentReceiptCompletionV1 | undefined>();
+    const isCurrent = () => context.signal?.aborted !== true;
+    const receipt = request.events.subscribeHost({
+        target: { eventId: HAPPIER_DEPLOYMENT_RECEIPT_INVALIDATED_HOST_EVENT_ID_V1, scope: { kind: 'account' } },
+        isCurrent,
+        listener: event => {
+            if (event.eventId !== HAPPIER_DEPLOYMENT_RECEIPT_INVALIDATED_HOST_EVENT_ID_V1) return;
+            const address = event.payload;
+            if (address.serverId === serverId && address.environmentId === environmentId
+                && address.deploymentId === deploymentId && address.completion !== null) changed.resolve(address.completion);
+        },
+    });
+    const reconnect = request.events.subscribeHost({
+        target: { eventId: HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1, scope: { kind: 'account' } },
+        isCurrent,
+        listener: event => {
+            if (event.eventId === HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1
+                && event.payload.reason === 'reconnect') changed.resolve(undefined);
+        },
+    });
+    try {
+        acceptance.accept({ ok: true, kind: 'pending', environmentId, revision: initial.revision,
+            actionOperationId: acceptance.operationId });
+        const readCompletion = async () => {
+            context.signal?.throwIfAborted();
+            const current = await host.readReceipt();
+            return projectDeploymentReceiptCompletionV1(initial.state, {
+                state: current.state,
+                settledAt: current.settledAtMs === undefined ? null : new Date(current.settledAtMs),
+                cancelRequestedAt: current.cancelRequestedAtMs === undefined ? null : new Date(current.cancelRequestedAtMs),
+            }, current.revision, current.startedAtMs ?? current.requestedAtMs);
+        };
+        // Subscriptions precede the catch-up read so early settlement is retained.
+        let completion = await readCompletion();
+        while (!completion) {
+            const delivered = await raceWithAbort(changed.promise, context.signal);
+            changed = Promise.withResolvers<DeploymentReceiptCompletionV1 | undefined>();
+            // A committed wake carries the Receipt owner's result. Reconnects
+            // and old senders only invalidate and need one exact read.
+            completion = delivered ?? await readCompletion();
+        }
+        return { ...initial, revision: await host.readEnvironmentRevision(),
+            deploymentRevision: completion.revision, state: completion.state };
+    } finally {
+        receipt.dispose();
+        reconnect.dispose();
+    }
 }
 
 /** A reload loses runner custody, not the pending owner's admitted intent.

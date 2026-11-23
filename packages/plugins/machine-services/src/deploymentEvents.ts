@@ -125,7 +125,7 @@ type PendingReceipt = { receipt?: Receipt | null; completion?: ReceiptCompletion
     templateEnvironmentId?: string | null; domains?: string };
 type ReceiptObservationFailure = { revision: number; code: string; retryOnWake: boolean };
 type State = { config: DeploymentReceiptEventSourceConfigV1; event: EventId; fullRead: boolean;
-    pending: Map<string, PendingReceipt>; observing: Set<string>; failures: Map<string, ReceiptObservationFailure>;
+    pending: Map<string, PendingReceipt>; observing: Map<string, number>; failures: Map<string, ReceiptObservationFailure>;
     observations: PluginEventObservationV1[] | null };
 const inProgressStates = new Set(deploymentInProgressStates());
 
@@ -133,6 +133,17 @@ function readReceiptObservationFailure(error: unknown, revision: number): Receip
     const failure = isPluginError(error) ? error : undefined;
     const diagnostic = failure ? undefined : readUnexpectedActionErrorDiagnosticV1(error);
     const code = failure?.code ?? diagnostic?.errorCode ?? diagnostic?.errorClass.replace(/^\$/u, '') ?? 'Error';
+    return { revision, code, retryOnWake: canRetryDeploymentReceiptObservationOnWake({
+        code, details: failure?.details, retryable: failure?.retryable, httpStatus: failure?.data.failureCause?.httpStatus,
+    }) };
+}
+
+/** The authorized native reader and the scheduled observer share one failure disposition. */
+export function canRetryDeploymentReceiptObservationOnWake(failure: Readonly<{
+    code: string; details?: unknown; retryable?: boolean | undefined; httpStatus?: number | null | undefined;
+}>): boolean {
+    const { code, details, retryable, httpStatus } = failure;
+    if (httpStatus === 429 || (httpStatus !== null && httpStatus !== undefined && httpStatus >= 500)) return true;
     switch (code) {
         case 'machine_offline':
         case 'machine_unavailable':
@@ -143,14 +154,11 @@ function readReceiptObservationFailure(error: unknown, revision: number): Receip
         case 'ETIMEDOUT':
         // A queued receipt can still be waiting for its provider handoff.
         case 'outcome_unknown':
-            return { revision, code, retryOnWake: true };
-        case 'target_unavailable': {
-            const details = failure?.details;
-            return { revision, code, retryOnWake: !!details && typeof details === 'object'
-                && 'reason' in details && details.reason === 'machine_offline' };
-        }
+            return true;
+        case 'target_unavailable':
+            return !!details && typeof details === 'object' && 'reason' in details && details.reason === 'machine_offline';
         default:
-            return { revision, code, retryOnWake: failure?.retryable === true };
+            return retryable === true;
     }
 }
 
@@ -180,9 +188,16 @@ function projectReceiptObservation(input: Readonly<{
             ...(receipt.acceptedExecution ? [{ role: 'context' as const, subject: { kind: 'machine' as const, serverId: input.serverId, machineId: receipt.acceptedExecution.controller.machineId } }] : []),
         ], payload };
 }
-function pendingEligibility(state: State, time: number): number | null {
-    return state.observing.size > 0 && state.config.periodMs !== undefined
-        ? Math.min(Number.MAX_SAFE_INTEGER, time + state.config.periodMs) : null;
+function nextObservationAt(observedAt: number, periodMs: number): number {
+    return Math.min(Number.MAX_SAFE_INTEGER, observedAt + periodMs);
+}
+
+function pendingEligibility(state: State): number | null {
+    const periodMs = state.config.periodMs;
+    if (periodMs === undefined || state.observing.size === 0) return null;
+    let earliest = Number.MAX_SAFE_INTEGER;
+    for (const observedAt of state.observing.values()) earliest = Math.min(earliest, nextObservationAt(observedAt, periodMs));
+    return earliest;
 }
 /** Receipts own durable facts; this adapter holds only the current finite attempt.
  * Adoption/reconnect replays retained receipts through the existing occurrence dedupe. */
@@ -232,7 +247,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
         const event = definition.eventRef.localId as EventId;
         let state = states.get(definition.sourceInstanceId);
         if (!state || sourceId(state.config, state.event) !== sourceId(source, event)) {
-            state = { config: source, event, fullRead: true, pending: new Map(), observing: new Set(), failures: new Map(), observations: null };
+            state = { config: source, event, fullRead: true, pending: new Map(), observing: new Map(), failures: new Map(), observations: null };
             states.set(definition.sourceInstanceId, state);
         }
         state.config = source;
@@ -297,11 +312,10 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                             || sibling.config.previewChildren !== source.previewChildren
                             || (sibling.event === changedEvent) !== (event === changedEvent)) continue;
                         for (const [id, entry] of entries) if (!sibling.pending.has(id)) sibling.pending.set(id, entry);
-                        sibling.observing.clear();
                         sibling.fullRead = false;
                     }
                 }
-                for (const id of state.observing) if (!state.pending.has(id)) state.pending.set(id, {});
+                for (const id of state.observing.keys()) if (!state.pending.has(id)) state.pending.set(id, {});
                 for (const [id, entry] of state.pending) pending.set(id, entry);
                 for (const id of pending.keys()) state.pending.delete(id);
                 const domainFacts = new Map<string, string>();
@@ -372,6 +386,10 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                         }
                         const previous = state.failures.get(receipt.id);
                         if (previous && !previous.retryOnWake && previous.revision === receipt.revision) continue;
+                        const time = now();
+                        const observedAt = state.observing.get(receipt.id);
+                        if (observedAt !== undefined && source.periodMs !== undefined
+                            && time < nextObservationAt(observedAt, source.periodMs)) continue;
                         let result;
                         try {
                             result = await context.services.actions.execute('deployments.receipts.observe', {
@@ -387,7 +405,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                             continue;
                         }
                         state.failures.delete(receipt.id);
-                        state.observing.add(receipt.id);
+                        state.observing.set(receipt.id, time);
                         if ('state' in result && !inProgressStates.has(result.state)) {
                             state.observing.delete(receipt.id);
                             const read = await context.services.actions.execute('deployments.receipts.get', {
@@ -444,7 +462,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
             }
             const failure = state.failures.values().next().value;
             return { observations: state.observations, checkpoint: state, complete: true,
-                nextEligibleAt: state.pending.size || state.fullRead ? now() : pendingEligibility(state, now()),
+                nextEligibleAt: state.pending.size || state.fullRead ? now() : pendingEligibility(state),
                 ...(failure ? { status: { state: 'attention' as const, code: failure.code } }
                     : state.observing.size > 0 && source.periodMs === undefined
                     ? { status: { state: 'attention' as const, code: 'sourceContractIncompatible' as const } } : {}) };
@@ -452,7 +470,8 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
         async save({ checkpoint }) { checkpoint.observations = null; },
         retryAt({ definition, now: time }) {
             const state = definition && states.get(definition.sourceInstanceId);
-            return state ? pendingEligibility(state, time) : null;
+            const periodMs = state?.config.periodMs;
+            return state && state.observing.size > 0 && periodMs !== undefined ? nextObservationAt(time, periodMs) : null;
         },
         async retire({ context, definitions }) {
             const current = new Set<string>();
