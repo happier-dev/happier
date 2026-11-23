@@ -9,13 +9,22 @@ import { runWithServerHttpBaseUrl } from './client/serverHttpBaseUrl';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { classifyDaemonServerWorkError } from '@/daemon/serverWork/classifyDaemonServerWorkError';
 
+const readableSetup = { version: 1, revision: 2, exclusions: [], sources: [{ kind: 'direct', setup: {} }] };
+const retainedSetup = {
+  ...readableSetup,
+  sources: [
+    ...readableSetup.sources,
+    { kind: 'accountPreset', presetId: 'retained-preset', presetRevision: 1, setup: {} },
+  ],
+};
+
 describe('ApiClient.getMachine capability authority', () => {
   it('preserves outage classification and registers retained Machine content on recovery', async () => {
     const metadata = { host: 'outage-host', homeDir: '/home/owner', platform: 'linux',
       happyCliVersion: 'test', happyHomeDir: '/home/owner/.happier' };
     const daemonState = { status: 'running', pid: 10 };
     const machine = { id: 'outage-machine', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
-      metadata: encodePlainMachineStoredContent({ ...metadata, retiredMetadata: true }), metadataVersion: 4,
+      metadata: encodePlainMachineStoredContent({ ...metadata, retiredMetadata: true, setup: retainedSetup }), metadataVersion: 4,
       daemonState: encodePlainMachineStoredContent({ ...daemonState, retiredDaemonField: true,
         managedActivity: { kind: 'idle', since: 10 } }), daemonStateVersion: 3 };
     let online = false;
@@ -38,7 +47,7 @@ describe('ApiClient.getMachine capability authority', () => {
     expect(recovered).toMatchObject({
       id: machine.id, encryptionMode: 'plain', metadata, daemonState,
     });
-    expect(recovered.metadata).toEqual(metadata);
+    expect(recovered.metadata).toEqual({ ...metadata, setup: readableSetup });
     expect(recovered.daemonState).toEqual(daemonState);
     expect(post.mock.calls[0]?.[1]).toMatchObject({
       metadata: machine.metadata, daemonState: machine.daemonState, dataEncryptionKey: machine.dataEncryptionKey,
@@ -95,15 +104,17 @@ describe('ApiClient.getMachine capability authority', () => {
     const secret = new Uint8Array(32).fill(17);
     const machine = { id: 'repeat-machine', dataEncryptionKey: null,
       metadata: encodeBase64(encrypt(secret, 'legacy', { host: 'incumbent', homeDir: '/home/owner', platform: 'linux',
-        happyCliVersion: 'test', happyHomeDir: '/home/owner/.happier', displayName: 'User edit' })), metadataVersion: 4,
+        happyCliVersion: 'test', happyHomeDir: '/home/owner/.happier', displayName: 'User edit', setup: retainedSetup })), metadataVersion: 4,
       daemonState: encodeBase64(encrypt(secret, 'legacy', { status: 'running' })), daemonStateVersion: 3 };
     const get = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => url.endsWith(`/v1/machines/${machine.id}`)
       ? { status: 200, data: { machine } } : { status: 200, data: { mode: 'e2ee', updatedAt: 1 } });
     const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { machine } });
     onTestFinished(() => { get.mockRestore(); post.mockRestore(); });
     const api = await ApiClient.create({ token: 'test-token', encryption: { type: 'legacy', secret } });
-    await api.getOrCreateMachine({ machineId: machine.id, metadata: { host: 'startup', homeDir: '/home/owner', platform: 'linux',
+    const registered = await api.getOrCreateMachine({ machineId: machine.id, metadata: { host: 'startup', homeDir: '/home/owner', platform: 'linux',
       happyCliVersion: 'test', happyHomeDir: '/home/owner/.happier' } });
+    expect(registered.metadata).toMatchObject({ displayName: 'User edit' });
+    expect(registered.metadata?.setup).toEqual(readableSetup);
     expect(post.mock.calls[0]?.[1]).toMatchObject({ metadata: machine.metadata, daemonState: machine.daemonState,
       dataEncryptionKey: machine.dataEncryptionKey });
   });
