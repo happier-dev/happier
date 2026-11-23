@@ -12,7 +12,7 @@ import { MachineNativeEffectAdmissionError } from '@/daemon/local/services/launc
 import { readPluginActionError, readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { DeploymentSourceAdmissionFailureV1Schema, DeploymentReceiptFailureV1Schema,
     type DeploymentReceiptFailureV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
-import { DeploymentImageResolutionFailureV1Schema, describeDeploymentImageResolutionFailureV1,
+import { DeploymentFailureRecoveryV1Schema, DeploymentImageResolutionFailureV1Schema, describeDeploymentImageResolutionFailureV1,
     projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { readDeploymentBackupMaintenanceFailureEvidenceV1 } from '@happier-dev/deployments/contracts/v1';
 import { DeploymentMissingRequiredSecretsV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
@@ -60,8 +60,11 @@ export function projectDeploymentReceiptFailure(result: ActionExecuteFailure,
         authorDetails && typeof authorDetails === 'object' && 'phase' in authorDetails ? authorDetails.phase : undefined);
     const sourceAdmission = DeploymentSourceAdmissionFailureV1Schema.safeParse(authorDetails);
     const validation = readDeploymentOutputValidation(result);
+    const socketRecovery = result.failureCause?.errorCode === 'deployment_docker_socket_access_denied'
+        ? DeploymentFailureRecoveryV1Schema.safeParse(result.details).data : undefined;
     return DeploymentReceiptFailureV1Schema.parse(projectDeploymentFailureRecoveryV1({ code: result.errorCode,
         phase: phase.success ? phase.data : fallbackPhase,
+        ...socketRecovery,
         ...(validation ? { validation } : {}),
         ...(sourceAdmission.success ? { sourceAdmission: sourceAdmission.data } : {}),
         failureCause: result.failureCause ?? normalizeActionExecutorThrownError(result, `deployment.${fallbackPhase}`).failureCause,
@@ -150,7 +153,9 @@ function readAuthoredDeploymentFailure(errorCode: string, error: unknown, phase:
         && typeof reason.reason === 'string' && /^[a-z][a-z0-9_]{0,63}$/u.test(reason.reason) ? reason.reason : undefined;
     const cause = thrownCause && typedReason && thrownCause.errorCode === errorCode
         ? { ...thrownCause, errorCode: typedReason } : thrownCause;
-    const retainedDetails = readDeploymentBackupMaintenanceFailureEvidenceV1(error)
+    const socketRecovery = thrownCause?.errorCode === 'deployment_docker_socket_access_denied' && normalized?.errorCode === errorCode
+        ? DeploymentFailureRecoveryV1Schema.safeParse(normalizedDetails).data : undefined;
+    const retainedDetails = socketRecovery ?? readDeploymentBackupMaintenanceFailureEvidenceV1(error)
         ?? (error instanceof MachineNativeEffectAdmissionError && error.code === errorCode ? error.details : undefined)
         ?? (error instanceof ManagedMachineControllerError && error.code === errorCode && error.details?.kind === 'managedNative'
             ? error.details : undefined)

@@ -57,7 +57,15 @@ function recovery(remedy: string, destination: DeploymentFailureRecoveryDestinat
 
 // Read-only presentation, never persisted into strict receipts or approval details.
 // Keep diagnostic codes out of the prose; all surfaces consume this one owner.
+function dockerSocketAccessRecovery(endpoint?: string) {
+    return recovery(
+        `Docker refused access to ${endpoint ?? 'its socket'}. Grant Docker socket access to the Happier service user on the executing Machine.`,
+        'machines', 'Review Docker access',
+    );
+}
+
 const recoveries = {
+    deployment_docker_socket_access_denied: dockerSocketAccessRecovery(),
     restore_snapshot_not_confirmed: recovery('The Machine snapshot was not confirmed. Data has not been replaced. Stop here, or reopen Restore and review continuing without a confirmed snapshot. An agent can review the original restore input with snapshot disabled.', 'settings', 'Review restore'),
     stateful_service_multi_machine: recovery('A service keeps data on its server, so this Environment cannot run on several servers. Keep one server, or ask an agent to move the data service into a separate Environment and connect this app to it before adding servers.', 'settings', 'Review servers and data'),
     deployment_start_first_unavailable: recovery('Start First runs the new release beside the current one, so every service needs a health check and must not keep data on the server, publish a fixed host port, or set a container name or fixed address. Switch the rollout to Recreate in Environment Settings, or change the Compose file.', 'settings', 'Review rollout'),
@@ -335,6 +343,10 @@ function recoveryFor(details: Record<string, unknown>, errorCode?: string, reque
     const codes = [sourceAdmission?.reason, failure?.reason, failureCause?.errorCode, failure?.code, details.reason, details.code, errorCode];
     const code = codes.find((candidate): candidate is keyof typeof recoveries =>
         typeof candidate === 'string' && Object.hasOwn(recoveries, candidate));
+    if (code === 'deployment_docker_socket_access_denied' && typeof details.dockerEndpoint === 'string'
+        && /^(?:unix:\/\/\/[a-z0-9_./-]+\.sock|npipe:\/\/\/\/\.\/pipe\/[a-z0-9_-]+)$/iu.test(details.dockerEndpoint)) {
+        return dockerSocketAccessRecovery(details.dockerEndpoint);
+    }
     const adminMachineId = readDomainAdminRecoveryMachineId(details, code);
     if (adminMachineId) return recovery(
         `This address change needs administrator access on Machine ${adminMachineId}. Set up administrator access there, then review the address again.`,

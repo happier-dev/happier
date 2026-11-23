@@ -44,6 +44,30 @@ describe('phase-correct native platform image production', () => {
         }
     });
 
+    it.each(['bake', 'info'] as const)('names the attempted Docker socket when %s is denied', async command => {
+        const endpoint = 'unix:///run/user/1001/docker.sock';
+        const native = `permission denied while trying to connect to the Docker daemon socket at ${endpoint}: private-output-sentinel`;
+        await withBuilder(async ({ project }) => {
+            const error: unknown = await (command === 'bake'
+                ? admitted(project, context => project.prepareImages({ context, platforms: ['linux/amd64'],
+                    build: { noCacheServices: [], secretVariableNames: ['BUILD_SECRET'] } }))
+                : project.describeBuild()).catch((failure: unknown) => failure);
+            const errorCode = command === 'bake' ? 'native_failed' : 'native_tool_unavailable';
+            const failure = projectDeploymentFailure(errorCode, error);
+            const child = readDeploymentChildResult(JSON.parse(JSON.stringify(failure)));
+            const receipt = projectDeploymentReceiptFailure(projectDeploymentFailure(errorCode, new Error('refused', { cause: child })), 'build');
+            expect(receipt).toMatchObject({ code: errorCode, failureCause: {
+                errorCode: 'deployment_docker_socket_access_denied', nativeErrorCode: 'EACCES',
+            } });
+            const recovery = readDeploymentFailureRecoveryV1(receipt.code, receipt);
+            expect(recovery.remedy).toContain(endpoint);
+            expect(recovery.remedy).toMatch(/grant.*Docker socket access/i);
+            expect(recovery.nextAction.destination).toBe('machines');
+            expect(JSON.stringify({ child, receipt })).not.toContain('private-output-sentinel');
+            if (command === 'bake') expect(receipt.effectAttempted).toBe(true);
+        }, { failureOutput: { command, stderr: native } });
+    });
+
     it.each(['process exited with code: 137', 'Killed', 'unrecognized private-output-sentinel'])(
         'keeps ambiguous output generic instead of guessing memory exhaustion (%s)', async stdout => {
         await withBuilder(async ({ project }) => {

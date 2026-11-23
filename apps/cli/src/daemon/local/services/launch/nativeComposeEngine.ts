@@ -1,5 +1,5 @@
 import { recordFailureCause } from '@/diagnostics/recordFailureCause';
-import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
 import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
 import { hostname } from 'node:os';
@@ -11,6 +11,7 @@ import type { LocalServiceNativePrerequisiteV1 } from '@happier-dev/protocol/loc
 import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 import { machineNativeEffectAdmission } from './machineNativeEffectAdmission';
 import { readObservedDockerEngineIds } from './dockerEngineObservation';
+import { readNativeDockerSocketAccessFailure } from './nativeComposeFailure';
 
 type NormalizationProfile = Readonly<{
     command: string;
@@ -187,9 +188,10 @@ export async function prepareNativeComposeNormalizationProfileForHost(input: Nor
 export type NativeComposeEngineFacts = NativeDockerEngineFacts;
 
 export class NativeComposePrerequisiteError extends PluginError {
-    constructor(cause: LocalServiceNativePrerequisiteV1['cause']) {
+    constructor(cause: LocalServiceNativePrerequisiteV1['cause'], failure?: ActionExecuteFailure) {
         const prerequisite: LocalServiceNativePrerequisiteV1 = { tool: 'docker', machineName: hostname(), cause };
-        super({ code: 'native_tool_unavailable', message: 'Docker is unavailable on this machine', details: { prerequisite } });
+        super({ code: 'native_tool_unavailable', message: 'Docker is unavailable on this machine', details: { prerequisite },
+            ...(failure?.failureCause ? { failureCause: failure.failureCause } : {}) }, failure ? { cause: failure } : undefined);
     }
 }
 
@@ -239,7 +241,11 @@ export async function readNativeComposeEngine(input: EngineReadInput): Promise<N
         throw new NativeComposePrerequisiteError(dockerFailureCause('', code));
     }
     assertNotCancelled();
-    if (output.exitCode !== 0) throw new NativeComposePrerequisiteError(dockerFailureCause(output.stderr ?? ''));
+    if (output.exitCode !== 0) {
+        const stderr = output.stderr ?? '';
+        const failure = readNativeDockerSocketAccessFailure(stderr, 'native_tool_unavailable', 'deployment.native.docker.info');
+        throw new NativeComposePrerequisiteError(failure ? 'permission_denied' : dockerFailureCause(stderr), failure);
+    }
     const facts = parseNativeDockerEngineInfo(output.stdout);
     if (!facts) throw new NativeComposePrerequisiteError('unavailable');
     return facts;

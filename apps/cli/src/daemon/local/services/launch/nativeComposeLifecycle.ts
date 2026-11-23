@@ -1,10 +1,10 @@
 import type { DeploymentSourceIntentV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { recordFailureCause } from '@/diagnostics/recordFailureCause';
-import { classifyNativeComposeFailure, NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE } from './nativeComposeFailure';
+import { classifyNativeComposeFailure, NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE, readNativeDockerSocketAccessFailure } from './nativeComposeFailure';
 import { readNativeComposeLogsForHost } from './nativeComposeLogs';
 import { MANAGED_SERVICE_NATIVE_LOG_PAGE_BYTES } from '@/plugins/runtime/invocation/services/managedServiceNativeLogBudget';
 export { readNativeComposeLogsForHost } from './nativeComposeLogs';
-import { parseActionExecuteFailure, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, parseActionExecuteFailure, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import { logger } from '@/ui/logger';
 import { readSQLiteRuntimeAvailabilityV1 } from '@happier-dev/deployments';
@@ -931,26 +931,28 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
         assertOpen(signal);
         if (checkExit && output.exitCode !== 0) {
             const args = launch.args.slice(tuple.prefix.length);
-            const dockerAccessDenied = /permission denied while trying to connect to the docker (?:API|daemon socket)\b/iu.test(output.stderr ?? '');
             // Docker parses plugin flags itself when Buildx is absent. Keep
             // the closed prerequisite fact, never its private stderr or args.
             if (args[0] === 'buildx' && /unknown command:[^\r\n]*\bbuildx\b|unknown flag: --(?:raw|print|file|allow|metadata-file)\b/iu.test(output.stderr ?? '')) {
                 throw new PluginError({ code: 'docker_buildx_not_installed',
                     message: 'Install Docker Buildx on the build machine before deploying', retryable: false });
             }
-            if (!dockerAccessDenied && args[0] === 'buildx' && args[1] === 'bake' && !args.includes('--print')) {
-                throw new NativeComposeBakeFailure(output.exitCode, output.stdout + '\n' + (output.stderr ?? ''), authority ? true : undefined);
-            }
             const registryInspect = args[0] === 'buildx' && args[1] === 'imagetools' && args[2] === 'inspect';
-            const cause = dockerAccessDenied ? null
-                : classifyNativeComposeFailure(output.stdout + '\n' + (output.stderr ?? ''), registryInspect ? args.at(-1) : undefined);
             const step = args[0] === 'compose'
                 ? args.includes('--no-interpolate') || args.includes('--no-consistency')
                     ? 'deployment.native.compose.config' : 'deployment.native.compose'
                 : args[0] === 'version' ? 'deployment.native.docker.version'
                 : registryInspect ? NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE : 'deployment.native.command';
-            return nativeRefusal(cause ?? 'native_compose_command_failed', step,
-                dockerAccessDenied ? 'EACCES' : cause,
+            const stderr = output.stderr ?? '';
+            const socketFailure = readNativeDockerSocketAccessFailure(launch.secretRedactionLease?.redact(stderr) ?? stderr,
+                'native_failed', step, authority ? true : undefined);
+            if (socketFailure) throw createActionExecuteFailureError(socketFailure);
+            const nativeOutput = output.stdout + '\n' + stderr;
+            if (args[0] === 'buildx' && args[1] === 'bake' && !args.includes('--print')) {
+                throw new NativeComposeBakeFailure(output.exitCode, nativeOutput, authority ? true : undefined);
+            }
+            const cause = classifyNativeComposeFailure(nativeOutput, registryInspect ? args.at(-1) : undefined);
+            return nativeRefusal(cause ?? 'native_compose_command_failed', step, cause,
                 // A returned process result proves this admitted native effect ran.
                 // Launch errors and read-only native commands remain unknown.
                 authority ? true : undefined);

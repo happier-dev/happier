@@ -58,7 +58,7 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
     missingBuildx?: boolean; subdirectoryCompose?: boolean;
     bakeFailure?: 'unsupportedPlatform' | 'execFormat' | 'buildFailed';
     bakeFailurePlatform?: string;
-    failureOutput?: Readonly<{ command: 'bake' | 'compose' | 'imagetools'; stdout?: string; stderr?: string }>;
+    failureOutput?: Readonly<{ command: 'bake' | 'compose' | 'imagetools' | 'info'; stdout?: string; stderr?: string }>;
     prebuiltContainerd?: 'unchanged' | 'changed' | 'movesAfterLookup';
     effectivePlatforms?: boolean;
     preapprovalArmOnly?: boolean;
@@ -239,7 +239,8 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
             }
             if (options?.failureOutput && (options.failureOutput.command === 'bake'
                 ? request.args[0] === 'buildx' && request.args[1] === 'bake' && !request.args.includes('--print')
-                : options.failureOutput.command === 'compose' && request.args[0] === 'compose' && request.args.includes('config'))) {
+                : options.failureOutput.command === 'compose' ? request.args[0] === 'compose' && request.args.includes('config')
+                : options.failureOutput.command === 'info' && request.args[0] === 'info')) {
                 return { exitCode: 1, stdout: options.failureOutput.stdout ?? '', stderr: options.failureOutput.stderr ?? '' };
             }
             // Docker output is this fixture's OS boundary. Exercise the real

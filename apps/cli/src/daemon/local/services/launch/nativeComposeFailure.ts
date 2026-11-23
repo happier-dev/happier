@@ -1,4 +1,25 @@
+import type { ActionExecuteFailure, ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+
 export const NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE = 'deployment.native.image.registry';
+
+/** Docker reports its attempted socket. Publish only a closed cause and the shared recovery. */
+export function readNativeDockerSocketAccessFailure(
+    stderr: string,
+    errorCode: 'native_failed' | 'native_tool_unavailable',
+    phase: string,
+    effectAttempted?: true,
+): ActionExecuteFailure | undefined {
+    const denied = /permission denied while trying to connect to the docker (?:API|daemon socket)\b(?: at ([^\s]+))?/iu.exec(stderr);
+    if (!denied) return undefined;
+    const failureCause: ActionFailureCauseV1 = { phase, errorClass: 'Error', errorCode: 'deployment_docker_socket_access_denied',
+        nativeErrorCode: 'EACCES', httpStatus: null };
+    const { requiredFact, remedy } = projectDeploymentFailureRecoveryV1({
+        failureCause, dockerEndpoint: denied[1]?.replace(/:$/u, ''),
+    }, errorCode);
+    return { ok: false, errorCode, error: errorCode, failureCause, details: { requiredFact, remedy },
+        ...(effectAttempted ? { effectAttempted } : {}) };
+}
 
 /** Closed observations only: private native output stays at this process boundary. */
 const nativeFailurePatterns = [
