@@ -128,7 +128,7 @@ export function planetRowsForColumns(columns) {
 }
 
 /** Calm breathing: a plain sine from fully exhaled (0) to fully inhaled (1). */
-function breathAt(seconds) {
+export function planetBreathAt(seconds) {
   return 0.5 - 0.5 * Math.cos((2 * Math.PI * (seconds % PLANET_BREATH_SECONDS)) / PLANET_BREATH_SECONDS);
 }
 
@@ -186,7 +186,7 @@ export function createPlanetFrame(options = {}) {
   const palette = PLANET_PALETTES[options.theme === 'light' ? 'light' : 'dark'];
   const seconds = Math.max(0, options.seconds ?? SETTLED_SECONDS);
   const reveal = options.intro === false ? 1 : smooth(seconds / INTRO_SECONDS);
-  const breath = breathAt(seconds);
+  const breath = planetBreathAt(seconds);
   const spin = spinAt(seconds);
   const opacity = mix(1, DIM_OPACITY, clamp(options.dim ?? 0));
 

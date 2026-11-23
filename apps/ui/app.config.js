@@ -590,7 +590,7 @@ const baseExpoConfig = {
             [
                 'expo-splash-screen',
                 {
-                    imageWidth: 256,
+                    imageWidth: 320,
                     ios: {
                         image: "./public/launch-planet-light.png",
                         backgroundColor: "#F2F2F7",

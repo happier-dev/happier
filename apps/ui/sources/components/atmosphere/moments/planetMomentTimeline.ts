@@ -1,9 +1,10 @@
 import {
   PLANET_MOMENT_TIMINGS,
+  PLANET_SAMPLER,
   planetMomentFrame,
 } from '@happier-dev/brand/planet';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
-import { planetGlyphLayer, type createLoadingPlanetScene, type GlyphLayer, type PlanetGlyphLayer } from '@happier-dev/brand/glyph-scene';
+import { loadingPlanetDecodeS, planetGlyphLayer, type createLoadingPlanetScene, type GlyphLayer, type PlanetGlyphLayer } from '@happier-dev/brand/glyph-scene';
 import type { HomePane } from '../homePlanetPlacement';
 
 /**
@@ -43,17 +44,23 @@ export function loadingPlanetLayers(
 ): readonly GlyphLayer[] {
   if (phase.kind === 'none') return [];
   if (phase.kind === 'landed') return !phase.fast && target ? [target.layer] : [];
-  if (phase.kind === 'assembly') return loading(phase.seconds, origin, phase.orbitOpacity);
+  if (phase.kind === 'assembly') return loading(phase.seconds, origin, phase.orbitOpacity, phase.decode ? L4.GRACE : undefined);
   if (!target) return [];
-  const [departing] = loading(phase.seconds, origin, 0);
+  const [departing] = loading(phase.seconds, origin, 0, L4.GRACE);
   const from = departing.geometry;
-  const { cx, cy, R, rotate, halo } = target.layer.geometry;
+  const { cx, cy, R, rotate, halo, glow = 1 } = target.layer.geometry;
   const mix = (start: number, finish: number) => start + (finish - start) * phase.k;
+  const lightOf = (geometry: typeof from) => geometry.light ?? PLANET_SAMPLER.lightForReveal(geometry.reveal ?? 1);
+  const [fromLight, toLight] = [lightOf(from), lightOf(target.layer.geometry)];
+  const light = fromLight.map((value, axis) => mix(value, toLight[axis]!));
+  const length = Math.hypot(...light);
   return [planetGlyphLayer({
     ...target.layer,
     geometry: {
       ...target.layer.geometry,
       cx: mix(from.cx, cx), cy: mix(from.cy, cy), R: mix(from.R, R), rotate: mix(from.rotate, rotate),
+      glow: mix(from.glow ?? 1, glow),
+      light: [light[0]! / length, light[1]! / length, light[2]! / length],
       halo: { top: mix(from.halo.top, halo.top), right: mix(from.halo.right, halo.right),
         bottom: mix(from.halo.bottom, halo.bottom), left: mix(from.halo.left, halo.left) },
     },
@@ -64,10 +71,11 @@ export function loadingPlanetLayers(
 export type LoadingPlanetPhase =
   /** The grace: nothing is drawn yet. */
   | Readonly<{ kind: 'none' }>
-  /** The centred planet and its floating digits. Breathing stops at readiness. */
+  /** The centred planet on the moment's clock: decoding in from the grace (`decode`), then breathing while digits gather into it. */
   | Readonly<{
       kind: 'assembly';
       seconds: number;
+      decode: boolean;
       orbitOpacity: number;
       opacity: number;
       cover: number;
@@ -79,50 +87,44 @@ export type LoadingPlanetPhase =
 
 /**
  * Loading at `t` seconds of the moment's clock, with Home ready at `ready` (null while it is not).
- * The centred planet holds for as long as loading is real.
+ * The centred planet keeps breathing for as long as loading is real. Home's readiness lifts the cover at once;
+ * the planet first finishes decoding in, so it never leaves half-built.
  */
 export function loadingPlanetPhase(
   t: number,
   ready: number | null,
   options: Readonly<{ reducedMotion: boolean; toPlanet: boolean }>,
 ): LoadingPlanetPhase {
-  const frame = planetMomentFrame('loading', t, ready);
-  if (frame.fast) return { kind: 'landed', fast: true };
+  const { cover = 1, fast } = planetMomentFrame('loading', t, ready);
+  if (fast) return { kind: 'landed', fast: true };
   if (t < L4.GRACE) return { kind: 'none' };
-  const after = ready === null ? -1 : t - ready;
-  const seconds = options.reducedMotion ? 0 : Math.max(0, Math.min(t, ready ?? t) - L4.GRACE);
   if (options.reducedMotion) {
+    const after = ready === null ? -1 : t - ready;
     if (after >= CROSSFADE_S) return { kind: 'landed', fast: false };
     const opacity = after < 0 ? 1 : 1 - after / CROSSFADE_S;
-    return {
-      kind: 'assembly',
-      seconds,
-      orbitOpacity: 1,
-      opacity,
-      cover: opacity,
-    };
+    return { kind: 'assembly', seconds: 0, decode: false, orbitOpacity: 1, opacity, cover: opacity };
   }
+  const seconds = t;
+  const settled = ready === null ? null : Math.max(ready, L4.GRACE + loadingPlanetDecodeS - L4.RESOLVE);
+  const frame = planetMomentFrame('loading', t, settled);
+  const after = settled === null ? -1 : t - settled;
   if (frame.assembly)
     return {
       kind: 'assembly',
       seconds,
+      decode: true,
       orbitOpacity: options.toPlanet && after > 0 ? 1 - Math.min(1, after / L4.RESOLVE) : 1,
       opacity: 1,
-      cover: frame.cover ?? 1,
+      cover,
     };
-  if (ready === null) return { kind: 'none' };
+  if (settled === null) return { kind: 'none' };
   if (!options.toPlanet) {
-    // Home shows no planet: the assembled planet stays centred and cross-fades away.
+    // Home shows no planet: the whole planet stays centred and cross-fades away.
     const fade = after - L4.RESOLVE;
     if (fade >= CROSSFADE_S) return { kind: 'landed', fast: false };
-    return {
-      kind: 'assembly',
-      seconds,
-      orbitOpacity: 1,
-      opacity: 1 - fade / CROSSFADE_S,
-      cover: 0,
-    };
+    return { kind: 'assembly', seconds, decode: true, orbitOpacity: 1, opacity: 1 - fade / CROSSFADE_S, cover: 0 };
   }
   if (frame.rest) return { kind: 'landed', fast: false };
-  return { kind: 'travel', k: frame.travel ?? 0, cover: frame.cover ?? 0, seconds, startS: ready + L4.RESOLVE };
+  const startS = settled + L4.RESOLVE;
+  return { kind: 'travel', k: frame.travel ?? 0, cover, seconds: startS, startS };
 }

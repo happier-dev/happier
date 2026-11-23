@@ -1,4 +1,4 @@
-import { PLANET_PALETTES, PLANET_SAMPLER, PLANET_SCENE_RENDERER, shadePlanetDot } from './planet.mjs';
+import { PLANET_PALETTES, PLANET_SAMPLER, PLANET_SCENE_RENDERER, planetBreathAt, shadePlanetDot } from './planet.mjs';
 import { orderedFade, rippleRingGeometry } from './atmosphere.mjs';
 import { createGlyphFieldSampler, glyphDotRadii } from './glyph-field.mjs';
 export { fieldDotLayer, glyphFieldDurationS, glyphDotRadii, glyphFieldPhase, glyphFieldTrailCell, glyphFieldTrailLifeS, glyphFieldRippleLifeS } from './glyph-field.mjs';
@@ -10,6 +10,8 @@ const clamp = (value, min = 0, max = 1) => Math.min(max, Math.max(min, value));
 const mix = (a, b, progress) => a + (b - a) * progress;
 const smooth = (value) => { const k = clamp(value); return k * k * (3 - 2 * k); };
 const fadeBetween = (value, from, to) => smooth((value - from) / (to - from));
+/** A radial assembly's front, in planet radii, at assembly progress 0..1 (eased out, a little past the limb). */
+const assemblyFront = (progress) => 1.2 * (1 - (1 - clamp(progress)) ** 2);
 const intensityLook = { quiet: [0.42, 0.7], calm: [0.66, 0.8], full: [1, 0.95] };
 const homeFieldLook = { quiet: 0.5, calm: 0.7, full: 1 };
 
@@ -27,35 +29,70 @@ export const travellerGlyphLayer = (options) => ({ kind: 'traveller', ...options
 export const frontGlyphLayer = (options) => ({ kind: 'front', ...options });
 export const placedGlyphLayer = (cells) => ({ kind: 'placed', cells });
 
-export const loadingPlanetSize = 256;
+export const loadingPlanetSize = 320;
 const loadingPlanetCentre = loadingPlanetSize / 2;
-const loadingPlanetOrigin = { cx: loadingPlanetCentre, cy: loadingPlanetCentre, R: 57 };
+const loadingPlanetOrigin = { cx: loadingPlanetCentre, cy: loadingPlanetCentre, R: 88 };
 const loadingPlanetHalo = { top: 1, right: 1, bottom: 1, left: 1 };
+// Lit more from the front than Home's resting planet, so the whole disc reads at this small size; the hand-off
+// to Home turns the light to Home's own.
+const loadingPlanetLight = (([x, y, z]) => { const n = Math.hypot(x, y, z); return [x / n, y / n, z / n]; })([0.3, -0.3, 1]);
+/** How long the planet takes to decode in behind the front when nothing was on screen before it. */
+export const loadingPlanetDecodeS = 0.8;
+const gatheringDigits = 22;
+const gatheringPeriodS = 3.2;
 
-/** The launch poster is this scene at time zero. The same traveller tiles carry its floating digits. */
+/**
+ * The Loading planet: a whole planet that breathes on the brand's calm cycle while digits drift in from around
+ * it and gather into its limb, one after another, for as long as loading lasts. `seconds` is the surface's own
+ * clock. Its first moment is the Still frame (the launch poster, reduced motion): the whole planet at rest, no
+ * digit in flight. A planet that was not on screen before passes `decodeFromS`, the clock time at which it
+ * decodes in through the shared front over `loadingPlanetDecodeS`.
+ */
 export function createLoadingPlanetScene() {
-    const count = 14;
-    const particles = new Float32Array(count * 8);
-    const floatingDigits = travellerGlyphLayer({ particles, ink: 'sunrise', small: true, alpha: 0.62, presentationTimeS: 0 });
-    for (let index = 0; index < count; index++) particles[index * 8 + 7] = cellHash(index, 32);
-    return (seconds, origin = loadingPlanetOrigin, orbitOpacity = 1) => {
-        const phase = seconds / 3.6 * Math.PI * 2;
-        const radius = origin.R * (1 + 0.018 * (1 - Math.cos(phase)));
-        for (let index = 0; index < count; index++) {
+    const particles = new Float32Array(gatheringDigits * 8);
+    const gathering = travellerGlyphLayer({ particles, ink: 'sunrise', small: true, alpha: 0.9, fade: true });
+    return (seconds, origin = loadingPlanetOrigin, digitOpacity = 1, decodeFromS) => {
+        const start = decodeFromS ?? 0;
+        const since = Math.max(0, seconds - start);
+        const breath = planetBreathAt(since);
+        const R = origin.R * (1 + 0.035 * breath);
+        for (let index = 0; index < gatheringDigits; index++) {
             const at = index * 8;
-            const seed = particles[at + 7];
-            const angle = Math.PI * 2 * (index + seed * 0.55) / count + seconds * (0.21 + seed * 0.12);
-            const orbit = radius * (1.28 + seed * 0.43 + 0.035 * Math.sin(phase + index));
-            particles[at] = particles[at + 2] = origin.cx + Math.cos(angle) * orbit;
-            particles[at + 1] = particles[at + 3] = origin.cy + Math.sin(angle) * orbit * 0.89;
+            const seed = cellHash(index, 32);
+            // Each digit leaves after the first moment, so that frame carries none, then repeats on its own cycle.
+            const period = gatheringPeriodS * (0.85 + 0.3 * seed);
+            const offset = period * ((index + seed) / gatheringDigits);
+            const cycle = Math.max(0, Math.floor((since - offset) / period));
+            const angle = Math.PI * 2 * (index * 0.618 + cycle * 0.382 + seed * 0.1);
+            const from = origin.R * (1.5 + 0.3 * cellHash(index, cycle + 7));
+            const into = angle + 0.35 + 0.25 * seed;
+            particles[at] = origin.cx + Math.cos(angle) * from;
+            particles[at + 1] = origin.cy + Math.sin(angle) * from;
+            particles[at + 2] = origin.cx + Math.cos(into) * R * 0.9;
+            particles[at + 3] = origin.cy + Math.sin(into) * R * 0.9;
+            particles[at + 4] = offset + cycle * period;
+            particles[at + 5] = period * 0.8;
+            particles[at + 6] = 0;
+            particles[at + 7] = seed;
         }
-        const planet = planetGlyphLayer({ geometry: { ...origin, R: radius, rotate: -1.5, halo: loadingPlanetHalo }, digits: true, digitTimeS: 0 });
-        return [planet, orbitOpacity === 1 ? floatingDigits : { ...floatingDigits, alpha: floatingDigits.alpha * orbitOpacity }];
+        const geometry = { ...origin, R, rotate: -1.5, halo: loadingPlanetHalo, light: loadingPlanetLight, glow: 1 + 0.25 * breath };
+        const decoding = decodeFromS !== undefined && since < loadingPlanetDecodeS;
+        const planet = planetGlyphLayer({ geometry, digits: false,
+            ...decoding ? { assemble: { startS: start, durationS: loadingPlanetDecodeS, from: 'centre' } } : {} });
+        const digits = { ...gathering, presentationTimeS: since, alpha: gathering.alpha * digitOpacity };
+        if (!decoding) return [planet, digits];
+        const progress = since / loadingPlanetDecodeS;
+        const reach = R * 1.25;
+        const front = frontGlyphLayer({ shape: 'circle', origin: { x: origin.cx, y: origin.cy },
+            rect: { x: origin.cx - reach, y: origin.cy - reach, width: reach * 2, height: reach * 2 },
+            front: R * assemblyFront(progress), band: R * 0.16, ragged: R * 0.12,
+            alpha: 0.5 * (1 - smooth((progress - 0.55) / 0.45)), ink: 'sunrise', mode: 'decode' });
+        return [planet, front, digits];
     };
 }
 
 function frontEdge(shape, dx, dy, front, ragged, i, j) {
-    const distance = shape === 'superellipse' ? Math.sqrt(Math.hypot(dx * dx, dy * dy)) : Math.max(dx, dy);
+    const distance = shape === 'superellipse' ? Math.sqrt(Math.hypot(dx * dx, dy * dy)) : shape === 'circle' ? Math.hypot(dx, dy) : Math.max(dx, dy);
     return distance - front + (cellHash(i, j) - 0.5) * ragged;
 }
 
@@ -91,6 +128,7 @@ function planetPresentation(layer, time) {
         gain: layer.gain ?? 1,
         ring: layer.ring,
         assembly: layer.assemble ? clamp((time - (layer.assemble.startS ?? 0)) / layer.assemble.durationS) : 1,
+        radial: layer.assemble?.from === 'centre',
     };
 }
 
@@ -136,10 +174,10 @@ function planetBody(out, grid, planet, fade, palette, previous, theme, soft) {
 }
 
 function shadePlanetCells(out, grid, planet, fade, palette, previous, theme, soft) {
-    const { cx, cy, R, spin, rotate, light, reveal, glow, assembly, halo } = planet;
+    const { cx, cy, R, spin, rotate, light, reveal, glow, assembly, radial, halo } = planet;
     const { dpr } = out;
     const { cols, rows, cell } = grid;
-    const key = [cols, rows, ...cell, cx, cy, R, spin, rotate, ...light, reveal, glow, assembly, palette, fade?.from, fade?.to, dpr, out.height, theme, soft];
+    const key = [cols, rows, ...cell, cx, cy, R, spin, rotate, ...light, reveal, glow, assembly, radial, palette, fade?.from, fade?.to, dpr, out.height, theme, soft];
     if (previous && key.every((value, index) => previous.key[index] === value)) return previous;
     const size = cols * rows;
     const reuse = previous?.body.rgba.length === size * 4;
@@ -183,7 +221,10 @@ function shadePlanetCells(out, grid, planet, fade, palette, previous, theme, sof
             const distance = Math.hypot(fx, fy);
             if (distance > haloReach) continue;
             const shade = shadeAt(fx, fy, i, j);
-            const appearance = (assembly === 1 ? 1 : fadeBetween(assembly, cellHash(i, j) * 0.8, cellHash(i, j) * 0.8 + 0.2)) * fadeBetween(assembly, 0, 0.12);
+            const appearance = assembly === 1 ? 1 : radial
+                // Behind a front leaving the centre: a cell resolves as the front passes it, the halo with the limb.
+                ? fadeBetween(assemblyFront(assembly) - Math.min(distance, 1) - (cellHash(i, j) - 0.5) * 0.12, 0, 0.12)
+                : fadeBetween(assembly, cellHash(i, j) * 0.8, cellHash(i, j) * 0.8 + 0.2) * fadeBetween(assembly, 0, 0.12);
             const n = j * cols + i;
             const inside = distance < 1;
             if (distance <= 1 + edge) {
@@ -390,17 +431,19 @@ function sampleTravellers(out, layer, time, palette) {
         sampleStepTravellers(out, layer, time, palette);
         return;
     }
-    const { particles, ink, small, alpha = 1 } = layer;
+    const { particles, ink, small, alpha = 1, fade } = layer;
     for (let i = 0; i < particles.length; i += 8) {
         const emit = particles[i + 4], duration = particles[i + 5];
         if (time < emit || time > emit + duration) continue;
         const p = duration === 0 ? 1 : clamp((time - emit) / duration);
+        const envelope = fade ? smooth(p / 0.25) * (1 - smooth((p - 0.6) / 0.4)) : 1;
+        if (envelope <= 0) continue;
         const travel = smooth(p);
         const x = mix(particles[i], particles[i + 2], travel);
         const y = mix(particles[i + 1], particles[i + 3], travel) - Math.sin(Math.PI * p) * particles[i + 6];
         const tone = particles[i + 7];
         const color = ink === 'sunrise' ? gradient(palette.body, tone, out.ink) : ink;
-        writeSprite(out, x * out.dpr, y * out.dpr, digitOf(i, 0, Math.floor(time * 6)) + (small ? 10 : 0), color, alpha * (color[3] ?? 255) / 255);
+        writeSprite(out, x * out.dpr, y * out.dpr, digitOf(i, 0, Math.floor(time * 6)) + (small ? 10 : 0), color, alpha * envelope * (color[3] ?? 255) / 255);
     }
 }
 

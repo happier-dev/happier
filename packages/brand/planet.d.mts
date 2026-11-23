@@ -23,6 +23,8 @@ export const PLANET_GRAIN: Readonly<{ opacity: 0.02; tileSize: 16 }>;
 export const PLANET_ACCENT_HEX: string;
 export const PLANET_ATTENTION_HEX: Readonly<{ light: string; dark: string }>;
 export const PLANET_BREATH_SECONDS: number;
+/** Calm breathing at `seconds`: 0 fully exhaled, 1 fully inhaled, over one `PLANET_BREATH_SECONDS` cycle. */
+export function planetBreathAt(seconds: number): number;
 export const PLANET_FRAME_INTERVAL_MS: number;
 export const PLANET_BREATH_FRAME_INTERVAL_MS: number;
 export function planetFrameIntervalMs(seconds: number): number;

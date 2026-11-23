@@ -4,9 +4,9 @@ import { View } from 'react-native';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
-import { glyphFrame, planetGlyphLayer } from '@happier-dev/brand/glyph-scene';
+import { createLoadingPlanetScene, glyphFrame, planetGlyphLayer } from '@happier-dev/brand/glyph-scene';
 import { useHomeLoadingMoment, type HomePlanetHold } from './homeLoadingMoment';
-import type { PlanetMomentTarget } from './planetMomentTimeline';
+import { loadingPlanetOrigin, type PlanetMomentTarget } from './planetMomentTimeline';
 
 vi.mock('react-native', async () => {
   const { createReactNativeWebMock } =
@@ -158,6 +158,20 @@ describe('Home loading moment', () => {
     });
   });
 
+  it('keeps moving for as long as Home loads and stops its clock once Home has taken over', async () => {
+    const seen: Seen[] = [];
+    const screen = await renderScreen(<Home waiting target={null} drawn={false} seen={seen} />);
+    // Well past the decode and a whole breath later, the clock is still running.
+    await frames(5400);
+    expect(screen.findByTestId('loading-planet.assembly')).not.toBeNull();
+    expect(vi.getTimerCount()).toBe(1);
+    await screen.update(<Home waiting={false} target={planet} drawn={false} seen={seen} />);
+    await frames(1200);
+    await screen.update(<Home waiting={false} target={planet} drawn seen={seen} />);
+    expect(screen.findByTestId('loading-planet')).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("under reduced motion releases Home's planet on ready and cross-fades the resting one away", async () => {
     const seen: Seen[] = [];
     const screen = await renderScreen(
@@ -165,6 +179,10 @@ describe('Home loading moment', () => {
     );
     await frames(1000);
     expect(screen.findByTestId('loading-planet.assembly')).not.toBeNull();
+    // One whole planet at rest: the Still frame, never a planet caught mid-decode.
+    const whole = glyphFrame({ view: { w: pane.width, h: pane.height }, dpr: 1, theme: 'dark',
+      layers: createLoadingPlanetScene()(0, loadingPlanetOrigin(pane)) });
+    expect(pixels.body).toEqual(whole.body?.rgba);
     // The reduced-motion resting planet has no changing fact to display while Home connects.
     expect(vi.getTimerCount()).toBe(0);
     await act(async () => { vi.advanceTimersByTime(60_000); });

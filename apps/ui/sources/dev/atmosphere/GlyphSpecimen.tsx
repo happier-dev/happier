@@ -51,6 +51,11 @@ export default function GlyphSpecimen() {
         }
         return scene;
     }, [at, dark, loadingFrame, moment, palette, themeFrame]);
+    // Moments sample their layers on the surface clock: draw once at the requested time.
+    const motion = React.useMemo(() => {
+        const seconds = Number(at ?? '0.5') || 0;
+        return moment === 'loading' ? { kind: 'sequence' as const, readTimeS: () => seconds, continues: () => false } : null;
+    }, [at, moment]);
     const cycles = requested === '20' ? 20 : 1;
     const [draws, setDraws] = React.useState(0);
     const [status, setStatus] = React.useState('warming');
@@ -65,7 +70,7 @@ export default function GlyphSpecimen() {
     >
         {moment === 'pairing' ? <PairingQrMomentCanvas size={224} theme={palette} pairing reducedMotion machines={['Desktop']}
             scene={{ kind: 'pairing', device: 'Laptop', scan: null, joinedAtMs: 0 }} />
-            : <GlyphSurface key={key} width={pane.width} height={pane.height} theme={palette} scene={layers}
+            : <GlyphSurface key={key} width={pane.width} height={pane.height} theme={palette} scene={layers} motion={motion}
                 cell={moment === 'theme' ? themeHorizonGlyphCell : undefined} onReady={onReady} testID="glyph-specimen-surface" />}
     </View>;
 }

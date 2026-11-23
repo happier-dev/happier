@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { glyphFrame, glyphLatticeTile, glyphPlanetDigitFirstTile, planetGlyphLayer, travellerGlyphLayer, frontGlyphLayer, markGlyphLayer } from './glyph-scene.mjs';
+import { glyphFrame, glyphLatticeTile, glyphPlanetDigitFirstTile, glyphRampFirstTile, planetGlyphLayer, travellerGlyphLayer, frontGlyphLayer, markGlyphLayer } from './glyph-scene.mjs';
 import { horizonPlanetGeometry, welcomePlanetPose } from './planet-placement.mjs';
 
 const view = { w: 390, h: 844 };
@@ -76,24 +76,67 @@ test('phone lattice dots just outside the limb retain the sparse halo density', 
     assert.ok(haloDots < surfaceDots / 2, `dense surface dots leaked outside the limb: ${haloDots} vs ${surfaceDots}`);
 });
 
-test('the launch planet breathes on a slow cycle while its outer digits orbit', async () => {
+// The Loading planet's own grid, as the launch surface and the poster draw it.
+const loadingView = (size) => ({ w: size, h: size });
+const loadingDraw = (layers, size, time) => glyphFrame({ view: loadingView(size), dpr: 1, theme: 'light', layers }, { time });
+const isPlanetInk = (tile) => tile >= glyphRampFirstTile && tile < glyphPlanetDigitFirstTile;
+const isGatheringDigit = (tile) => tile >= 10 && tile < 20;
+const spritesOf = (frame, keep) => [...frame.sprites.glyph].flatMap((tile, index) => keep(tile)
+    ? [{ x: frame.sprites.at[index * 2], y: frame.sprites.at[index * 2 + 1], alpha: frame.sprites.rgba[index * 4 + 3] }] : []);
+/** Share of the disc's grid cells (inside 0.9 R) that carry visible planet ink. */
+function discCoverage(frame, disc) {
+    const [cw, ch] = frame.grid.cell;
+    const inked = new Set(spritesOf(frame, isPlanetInk).filter(({ alpha }) => alpha > 24)
+        .map(({ x, y }) => `${Math.floor(x / cw)}:${Math.floor(y / ch)}`));
+    let cells = 0, covered = 0;
+    for (let j = 0; j < frame.grid.rows; j++) for (let i = 0; i < frame.grid.cols; i++) {
+        const x = (i + 0.5) * cw, y = (j + 0.5) * ch;
+        if (Math.hypot(x - disc.cx, y - disc.cy) > disc.R * 0.9) continue;
+        cells++;
+        if (inked.has(`${i}:${j}`)) covered++;
+    }
+    return covered / cells;
+}
+
+test('the Loading planet rests whole: its Still frame fills the disc and holds no loose digits', async () => {
     const { createLoadingPlanetScene, loadingPlanetSize } = await import('./glyph-scene.mjs');
-    const sample = createLoadingPlanetScene();
-    const draw = (time) => glyphFrame({ view: { w: loadingPlanetSize, h: loadingPlanetSize }, dpr: 1, theme: 'dark', layers: sample(time) });
-    const still = draw(0);
-    const peak = draw(1.8);
-    const cycle = draw(3.6);
-    assert.equal(still.body.disc.cx, loadingPlanetSize / 2);
-    assert.equal(still.body.disc.cy, loadingPlanetSize / 2);
-    assert.ok(peak.body.disc.R > still.body.disc.R * 1.02 && peak.body.disc.R < still.body.disc.R * 1.06);
-    assert.equal(cycle.body.disc.R, still.body.disc.R);
-    const orbit = (frame) => [...frame.sprites.glyph].flatMap((tile, index) => tile >= 10 && tile < 20
-        ? [[frame.sprites.at[index * 2], frame.sprites.at[index * 2 + 1]]]
-        : []);
-    assert.ok(orbit(still).length > 0, 'the pre-bundle Still frame contains the floating digits');
-    assert.equal(orbit(still).length, orbit(peak).length);
-    assert.notDeepEqual(orbit(still), orbit(peak));
-    assert.deepEqual(draw(0), still, 'the Still frame has no time dependence');
+    const still = loadingDraw(createLoadingPlanetScene()(0), loadingPlanetSize, 0);
+    assert.ok(discCoverage(still, still.body.disc) > 0.9, `coverage ${discCoverage(still, still.body.disc)}`);
+    assert.equal(spritesOf(still, isGatheringDigit).length, 0);
+    assert.deepEqual(loadingDraw(createLoadingPlanetScene()(0), loadingPlanetSize, 0), still, 'the Still frame has no history');
+});
+
+test('the Loading planet decodes in once, then stays whole while digits keep gathering into it', async () => {
+    const { createLoadingPlanetScene, loadingPlanetDecodeS } = await import('./glyph-scene.mjs');
+    const size = 900, origin = { cx: 450, cy: 405, R: 150 };
+    const scene = createLoadingPlanetScene();
+    const at = (t) => loadingDraw(scene(t, origin, 1, 0), size, t);
+    const whole = discCoverage(loadingDraw(createLoadingPlanetScene()(0, origin), size, 0), origin);
+    const early = at(loadingPlanetDecodeS * 0.3);
+    assert.ok(discCoverage(early, origin) < whole * 0.5, 'the planet is still decoding behind its front');
+    assert.ok(spritesOf(early, (tile) => tile < 10).length > 0, 'the front scrambles digits');
+    let near = 0, far = 0;
+    for (let t = loadingPlanetDecodeS; t < 60; t += 0.37) {
+        const frame = at(t);
+        assert.ok(discCoverage(frame, origin) >= whole * 0.98, `whole at ${t.toFixed(2)} s`);
+        const digits = spritesOf(frame, isGatheringDigit);
+        if (t > 1.5) assert.ok(digits.length > 0, `digits gathering at ${t.toFixed(2)} s`);
+        for (const { x, y } of digits) {
+            const distance = Math.hypot(x - origin.cx, y - origin.cy) / origin.R;
+            if (distance < 1.05) near++;
+            if (distance > 1.3) far++;
+        }
+    }
+    assert.ok(near > 20 && far > 20, `digits travel from outside into the limb (${far} far, ${near} near)`);
+});
+
+test('the Loading planet breathes on the brand cycle', async () => {
+    const { createLoadingPlanetScene } = await import('./glyph-scene.mjs');
+    const { PLANET_BREATH_SECONDS } = await import('./planet.mjs');
+    const scene = createLoadingPlanetScene();
+    const radius = (t) => scene(t)[0].geometry.R;
+    assert.ok(radius(PLANET_BREATH_SECONDS / 2) > radius(0) * 1.03);
+    assert.equal(radius(PLANET_BREATH_SECONDS), radius(0));
 });
 
 test('travellers land at the specified endpoint and fronts sample deterministically', () => {

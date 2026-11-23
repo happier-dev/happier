@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  PLANET_BREATH_SECONDS,
   PLANET_MOMENT_TIMINGS,
 } from '@happier-dev/brand/planet';
-import { createLoadingPlanetScene, planetGlyphLayer } from '@happier-dev/brand/glyph-scene';
+import { createLoadingPlanetScene, glyphFrame, loadingPlanetDecodeS, planetGlyphLayer } from '@happier-dev/brand/glyph-scene';
 import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
 import {
   loadingPlanetLayers,
@@ -47,7 +48,7 @@ describe('Loading planet timeline', () => {
     ).toBe(false);
   });
 
-  it('keeps the loading planet Full and breathing for as long as loading is real', () => {
+  it('decodes the planet in, then keeps it Full, breathing and gathering on a clock that never stops while loading is real', () => {
     const frames = play(null, { reducedMotion: false, toPlanet: true }, 30);
     expect(
       frames
@@ -56,21 +57,47 @@ describe('Loading planet timeline', () => {
     ).toBe(true);
     const origin = loadingPlanetOrigin(pane);
     const scene = createLoadingPlanetScene();
-    const planetAt = (t: number) => loadingPlanetLayers(scene, loadingPlanetPhase(t, null, { reducedMotion: false, toPlanet: true }),
-      origin, null).find(layer => layer.kind === 'planet');
+    const layersAt = (t: number) => loadingPlanetLayers(scene, loadingPlanetPhase(t, null, { reducedMotion: false, toPlanet: true }),
+      origin, null);
+    const planetAt = (t: number) => layersAt(t).find(layer => layer.kind === 'planet');
     const first = planetAt(L4.GRACE);
-    const peak = planetAt(L4.GRACE + 1.8);
+    const peak = planetAt(L4.GRACE + PLANET_BREATH_SECONDS / 2);
     expect(first?.intensity).toBe('full');
-    expect(peak?.geometry.R).toBeGreaterThan(first!.geometry.R * 1.02);
+    expect(first?.assemble).toBeDefined();
+    expect(layersAt(L4.GRACE + loadingPlanetDecodeS / 2).some(layer => layer.kind === 'front')).toBe(true);
+    expect(planetAt(L4.GRACE + loadingPlanetDecodeS)?.assemble).toBeUndefined();
+    expect(peak?.geometry.R).toBeGreaterThan(first!.geometry.R * 1.03);
     const waiting = frames.filter(({ t }) => t >= L4.GRACE);
     expect(
       waiting.every(
-        ({ phase }) =>
+        ({ phase }, i) =>
           phase.kind === 'assembly' &&
           phase.orbitOpacity === 1 &&
-          phase.cover === 1,
+          phase.cover === 1 &&
+          (i === 0 || phase.seconds > (waiting[i - 1]!.phase as { seconds: number }).seconds),
       ),
     ).toBe(true);
+  });
+
+  it('lifts the cover at once when Home is ready mid-decode, and lets the planet finish decoding before it travels', () => {
+    const ready = L4.GRACE + 0.1;
+    const frames = play(ready, { reducedMotion: false, toPlanet: true });
+    expect(
+      frames
+        .filter(({ t }) => t >= ready + L4.FADE)
+        .every(({ phase }) => phase.kind === 'landed' || phase.cover === 0),
+    ).toBe(true);
+    const travel = frames.find(({ phase }) => phase.kind === 'travel')!;
+    expect(travel.t).toBeGreaterThanOrEqual(L4.GRACE + loadingPlanetDecodeS);
+    const scene = createLoadingPlanetScene();
+    const origin = loadingPlanetOrigin(pane);
+    const lastLoading = frames.filter(({ t, phase }) => phase.kind === 'assembly' && t < travel.t).at(-1)!;
+    // The last loading frame already draws the whole planet: the same body as that planet fully assembled.
+    expect(lastLoading.phase.kind).toBe('assembly');
+    const planetLayer = loadingPlanetLayers(scene, lastLoading.phase, origin, null).find(layer => layer.kind === 'planet')!;
+    const body = (layer: typeof planetLayer) => glyphFrame({ view: { w: pane.width, h: pane.height }, dpr: 1, theme: 'light',
+      layers: [layer] }, { time: lastLoading.t }).body?.rgba;
+    expect(body(planetLayer)).toEqual(body({ ...planetLayer, assemble: undefined }));
   });
 
   it.each([false, true])('resolves the visible planet when readiness lands at grace, reducedMotion=%s', (reducedMotion) => {
@@ -112,9 +139,11 @@ describe('Loading planet timeline', () => {
     const last = planetFor(travel.at(-1)!.phase);
     expect(Math.abs(last.geometry.cx - geometry.cx)).toBeLessThan(2);
     expect(Math.abs(last.geometry.R - geometry.R)).toBeLessThan(2);
+    // The travel departs from the loading planet's last frame, light and breath included.
     const first = planetFor({ ...travel[0]!.phase, k: 0 });
-    const previous = planetFor(loadingPlanetPhase(ready, ready, { reducedMotion: false, toPlanet: true }));
-    expect(first.geometry).toMatchObject(previous.geometry);
+    const previous = planetFor(loadingPlanetPhase(ready + L4.RESOLVE - 1e-6, ready, { reducedMotion: false, toPlanet: true }));
+    for (const key of ['cx', 'cy', 'R', 'glow'] as const) expect(first.geometry[key]).toBeCloseTo(previous.geometry[key]!, 4);
+    first.geometry.light!.forEach((value, axis) => expect(value).toBeCloseTo(previous.geometry.light![axis]!, 6));
     expect(first.intensity).toBe('full');
   });
 
@@ -128,7 +157,8 @@ describe('Loading planet timeline', () => {
     expect(fading.length).toBeGreaterThan(0);
     expect(
       fading.every(
-        ({ phase }) => phase.kind === 'assembly' && phase.seconds === ready - L4.GRACE,
+        ({ phase }) => phase.kind === 'assembly' && !loadingPlanetLayers(createLoadingPlanetScene(), phase, loadingPlanetOrigin(pane), null)
+          .some(layer => layer.kind === 'planet' && layer.assemble),
       ),
     ).toBe(true);
     expect(frames.find(({ phase }) => phase.kind === 'landed')!.t).toBeLessThan(
@@ -147,6 +177,7 @@ describe('Loading planet timeline', () => {
         ({ phase }) =>
           phase.kind === 'assembly' &&
           phase.seconds === 0 &&
+          !phase.decode &&
           phase.opacity === 1,
       ),
     ).toBe(true);

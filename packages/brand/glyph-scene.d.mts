@@ -7,6 +7,8 @@ export type GlyphGrid = Readonly<{ cell: readonly [number, number]; cols: number
 export type GlyphInkMap = Readonly<{ rgba: Uint8Array; cols: number; rows: number }>;
 export type PlanetIntensity = 'quiet' | 'calm' | 'full';
 type Timing = Readonly<{ startS?: number; durationS: number }>;
+/** `from: 'centre'` resolves the cells behind a front leaving the centre instead of in scattered order. */
+type AssembleTiming = Timing & Readonly<{ from?: 'centre' }>;
 export type PlanetGlyphOptions = Readonly<{
     geometry: GlyphPlanetGeometry;
     /** Full-colour lab ink by default. Preference-backed surfaces can supply their selected intensity. */
@@ -15,7 +17,7 @@ export type PlanetGlyphOptions = Readonly<{
     /** Visible digit cadence. Defaults to the scene clock for callers that choreograph their own digits. */
     digitTimeS?: number;
     fade?: Readonly<{ from: number; to: number }>;
-    assemble?: Timing;
+    assemble?: AssembleTiming;
     fall?: Timing & Readonly<{ from: Pick<GlyphPlanetGeometry, 'cx' | 'cy' | 'R'> }>;
     settle?: Timing;
     gain?: number;
@@ -36,9 +38,11 @@ export type TravellerGlyphOptions = Readonly<{
     presentationTimeS?: number;
     /** Step morph progress supplies the envelope around the particles' individual flight times. */
     stepMorphProgress?: number;
+    /** Each particle fades in as it leaves and out as it arrives. */
+    fade?: boolean;
 }>;
 export type FrontGlyphOptions = Readonly<{
-    shape: 'superellipse' | 'roundRect' | 'horizontal';
+    shape: 'superellipse' | 'circle' | 'roundRect' | 'horizontal';
     origin?: GlyphPoint;
     rect?: GlyphRect;
     front: number;
@@ -109,9 +113,16 @@ export function markGlyphLayer(options: MarkGlyphOptions): MarkGlyphLayer;
 export function markGlyphTone(layer: Pick<MarkGlyphOptions, 'centre' | 'size'>, x: number, y: number): number;
 export function travellerGlyphLayer(options: TravellerGlyphOptions): TravellerGlyphLayer;
 export const loadingPlanetSize: number;
+/** How long the Loading planet decodes in when nothing was on screen before it. */
+export const loadingPlanetDecodeS: number;
+/**
+ * The Loading planet on its surface's clock: a whole planet breathing while digits gather into it. The first
+ * moment is the Still frame (whole planet, no digit in flight); a planet that was not on screen passes
+ * `decodeFromS`, the clock time from which it decodes in over `loadingPlanetDecodeS`.
+ */
 export function createLoadingPlanetScene(): (
-    seconds: number, origin?: Pick<GlyphPlanetGeometry, 'cx' | 'cy' | 'R'>, orbitOpacity?: number,
-) => readonly [PlanetGlyphLayer, TravellerGlyphLayer];
+    seconds: number, origin?: Pick<GlyphPlanetGeometry, 'cx' | 'cy' | 'R'>, digitOpacity?: number, decodeFromS?: number,
+) => readonly [PlanetGlyphLayer, ...GlyphLayer[]];
 export function frontGlyphLayer(options: FrontGlyphOptions): FrontGlyphLayer;
 /** Pre-positioned cells packed as CSS x, CSS y, atlas index, R, G, B, and opacity. */
 export function placedGlyphLayer(cells: Float32Array): PlacedGlyphLayer;
