@@ -8,6 +8,7 @@ const PRE_DISPATCH_INPUT_REJECTION_CODES = [
   'permission_mode_not_granted',
   SESSION_MODEL_TRANSITION_APPLY_FAILED_CODE,
   'attachment_unavailable',
+  'team_credential_binding_not_current',
 ] as const;
 export type PreDispatchInputRejectionCodeV1 = (typeof PRE_DISPATCH_INPUT_REJECTION_CODES)[number];
 

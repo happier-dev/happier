@@ -536,7 +536,7 @@ describe("pendingMessageService (shared sessions)", () => {
         } })).resolves.toBeNull();
     });
 
-    it.each(['permission_mode_not_granted', 'session_model_transition_apply_failed'] as const)(
+    it.each(['permission_mode_not_granted', 'session_model_transition_apply_failed', 'team_credential_binding_not_current'] as const)(
         'settles an encrypted shared editor input refused before dispatch (%s) and delivers the following input', async refusal => {
         const ownerKey = tweetnacl.box.keyPair();
         const editorKey = tweetnacl.box.keyPair();
@@ -633,8 +633,9 @@ describe("pendingMessageService (shared sessions)", () => {
             try {
                 await new Promise<void>(resolve => client.once('session-sync-server-contract', resolve));
                 await expect(client.materializeNextPendingMessageSafely()).resolves.toMatchObject({ localId: refused });
-                if (refusal === 'session_model_transition_apply_failed') {
+                if (refusal === 'session_model_transition_apply_failed' || refusal === 'team_credential_binding_not_current') {
                     expect((await queue.waitForMessagesAndGetAsString()).message.localId).toBe(refused);
+                    if (refusal === 'team_credential_binding_not_current') client.markPendingProviderInputDispatched([refused]);
                     await client.observeProviderInputSettlement({
                         kind: 'rejected_before_effect', localId: refused, userMessageSeq: null,
                         reason: refusal, retryable: false,

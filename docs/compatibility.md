@@ -1192,7 +1192,8 @@ scoped working change at the corresponding paths.
 
 The existing Pending input admission rejection enum includes
 `session_model_transition_apply_failed` for a confirmed native model apply
-refusal before dispatch. The runner, Home and UI carry this under the 0.3
+refusal before dispatch, and `team_credential_binding_not_current` for an exact
+daemon endpoint reset refusal before any Provider effect. The runner, Home and UI carry this under the 0.3
 development direct cut. Earlier strict 0.3 readers require the corresponding
 reload. Existing stored Pending records retain their format and reason.
 The inspected `../0.2` frontier (`24731ff73c`) has neither the settlement

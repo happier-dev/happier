@@ -271,6 +271,7 @@ const sessionInputFailureLabelKeys = {
     model_not_granted: 'session.pendingMessages.admissionRejected.modelNotGranted',
     permission_mode_not_granted: 'session.pendingMessages.admissionRejected.permissionModeNotGranted',
     session_model_transition_apply_failed: 'modelTransitionFailure.title',
+    team_credential_binding_not_current: 'startFailure.cause.team_credential_binding_not_current',
     attachment_unavailable: 'files.transfers.failureReasons.sourceUnavailable',
     session_input_archived: 'session.pendingMessages.admissionRejected.archived',
     session_input_unauthorized: 'session.pendingMessages.admissionRejected.unauthorized',

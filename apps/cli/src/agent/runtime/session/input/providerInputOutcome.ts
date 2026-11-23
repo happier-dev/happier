@@ -1,5 +1,5 @@
 import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
-import type { PreDispatchInputRejectionCodeV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
+import { isPreDispatchInputRejectionCodeV1, type PreDispatchInputRejectionCodeV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
 
 type NativeInputAcceptedEvent = Extract<
     AgentSessionRuntimeEvent,
@@ -47,9 +47,9 @@ export type RuntimeExactProviderInputOutcome =
     }>)
     | (RuntimeExactProviderInputOutcomeBase & Readonly<{
         type: 'input-rejected-before-provider';
-        reason: 'provider_unavailable_before_acceptance' | 'host_retired_before_dispatch';
+        reason: 'provider_unavailable_before_acceptance' | 'host_retired_before_dispatch' | PreDispatchInputRejectionCodeV1;
         diagnostic: NativeInputRejectedEvent['diagnostic'];
-        retryable: true;
+        retryable: boolean;
         retireLocalCustodyAfterDurableBlock: true;
     }>);
 
@@ -86,7 +86,7 @@ export function isReversibleSessionProviderInputBlockReason(
 function readSessionProviderInputRejectedBeforeEffectReason(
     value: unknown,
 ): SessionProviderInputRejectedBeforeEffectReason {
-    return value === 'permission_mode_not_granted'
+    return isPreDispatchInputRejectionCodeV1(value)
         || value === 'terminal_composer_draft'
         || value === 'runtime_config_blocked'
         || value === 'provider_unavailable_before_acceptance'

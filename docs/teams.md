@@ -139,8 +139,9 @@ Agent. That retryable refusal fails the input cleanly before any effect, read as
 its own cause ("The Team model connection on this machine was reset. Send your
 message again."), and makes the next input reopen the runtime, which opens a new
 binding at the catalog's current revision through ordinary Home admission; a
-withdrawn share still answers `resource_forbidden`. The refused input stays
-visible and is not retried automatically. A successful refresh for the same turn
+withdrawn share still answers `resource_forbidden`. The refused input is terminally settled as failed through the existing Pending
+rejection owner, remains visible, and is not retried automatically. It does not
+hold later input behind a blocked predecessor. A successful refresh for the same turn
 supersedes an earlier refusal in the Session's denial evidence. No timer, retry
 or extra read is added.
 

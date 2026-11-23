@@ -5590,8 +5590,9 @@ export class ApiSessionClient extends EventEmitter {
                 try {
                     const accepted = this.terminalPendingSettlementLocalIds.get(localId);
                     if (accepted?.kind === 'rejected_before_effect') {
-                        if (isPreDispatchInputRejectionCodeV1(accepted.outcome.reason) && !authority.executionRun
-                            && !this.dispatchedPendingProviderInputLocalIds.has(localId)) {
+                        // Native admission may refuse after dispatch was entered, before any Provider effect.
+                        // The typed pre-dispatch outcome owns that fact; dispatch entry is not acceptance.
+                        if (isPreDispatchInputRejectionCodeV1(accepted.outcome.reason) && !authority.executionRun) {
                             if (await this.rejectPendingInputBeforeProviderDispatch(
                                 localId, accepted.outcome.reason, authority.socket, authority.abortSignal,
                             )) {

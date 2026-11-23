@@ -207,7 +207,11 @@ confirms a native model apply refusal before prompt dispatch, the current runner
 settles the exact primary Pending input via pre-dispatch rejection. Home retains
 the original content and records `session_model_transition_apply_failed` for
 the sender's exact result. Later Pending input becomes eligible at that
-settlement.
+settlement. A daemon admission refusal with `team_credential_binding_not_current`
+uses the same terminal rejection owner: the refused input remains visible as
+failed, without holding the next input behind a blocked predecessor. The next
+input still opens a fresh Team binding through ordinary admission. Generic
+unavailable admission and ambiguous delivery keep their existing parked states.
 
 In 0.3 development, blocked custody invalidates an otherwise idle CLI Session
 projection. The existing message-page reader accepts `projection=activity` for

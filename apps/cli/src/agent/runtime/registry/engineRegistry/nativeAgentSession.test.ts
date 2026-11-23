@@ -14975,7 +14975,7 @@ describe('native Agent session host adapter', () => {
         expect(cancel.mock.calls[0]?.[0]).toEqual({ turnId: 'turn-pre-ack', reason: 'user' });
     });
 
-    it('publishes exact terminal pre-provider evidence when daemon admission is unavailable', async () => {
+    it.each([false, true])('settles a reset refusal terminally while parking unavailable admission (reset=%s)', async reset => {
         const send = vi.fn<AgentSessionRuntime['send']>(async () => ({
             status: 'admitted',
         }));
@@ -14997,9 +14997,10 @@ describe('native Agent session host adapter', () => {
             undefined,
             undefined,
             async () => {
-                throw createNativeAgentSessionEffectBoundaryError(
+                throw Object.assign(createNativeAgentSessionEffectBoundaryError(
                     'authority_unavailable_before_effect',
-                );
+                ), reset ? { failureCause: { code: 'team_credential_binding_not_current',
+                    phase: 'turn_start', failureReason: 'unknown', retryable: true } } : {});
             },
         );
         const deliveryOutcomes: unknown[] = [];
@@ -15024,12 +15025,12 @@ describe('native Agent session host adapter', () => {
             localId: 'queue-local-admission-unavailable',
             userMessageSeq: 42,
             userMessageSeqs: [42],
-            reason: 'provider_unavailable_before_acceptance',
+            reason: reset ? 'team_credential_binding_not_current' : 'provider_unavailable_before_acceptance',
             diagnostic: {
-                code: 'daemon_turn_admission_unavailable',
+                code: reset ? 'team_credential_binding_not_current' : 'daemon_turn_admission_unavailable',
                 severity: 'error',
             },
-            retryable: true,
+            retryable: !reset,
             retireLocalCustodyAfterDurableBlock: true,
         }]);
         expect(send).not.toHaveBeenCalled();

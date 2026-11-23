@@ -272,7 +272,7 @@ import { createExternalSessionTerminalFollowProjector } from '@/session/external
 import { publishNativeAgentTerminalHostBinding } from '@/agent/runtime/session/terminal/terminalHostBinding';
 import { reportSessionToDaemonIfRunning } from '@/agent/runtime/startupSideEffects';
 import { normalizeUnsetEnvKeys } from '@/utils/processEnv/buildScopedProcessEnv';
-import { projectSessionRuntimeFailureCause } from '@/agent/runtime/session/errors/readSessionRuntimeFailureCause';
+import { readSessionRuntimeFailureCause, projectSessionRuntimeFailureCause } from '@/agent/runtime/session/errors/readSessionRuntimeFailureCause';
 import {
     AGENT_SESSION_CONTINUATION_UNREACHABLE_ERROR_NAME,
 } from '@/session/shared/spawnSessionContract';
@@ -3806,6 +3806,9 @@ export function createNativeAgentSessionOperations(
                         classifyNativeAgentSessionEffectBoundaryError(error)
                         === 'authority_unavailable_before_effect'
                     ) {
+                        const cause = readSessionRuntimeFailureCause(error);
+                        const resetBeforeEffect = cause?.phase === 'turn_start'
+                            && cause.code === 'team_credential_binding_not_current';
                         emitDeliveryOutcome({
                             type: 'input-rejected-before-provider',
                             localInputId: correlation.inputId,
@@ -3813,12 +3816,12 @@ export function createNativeAgentSessionOperations(
                             ...(correlation.userMessageSeqs
                                 ? { userMessageSeqs: correlation.userMessageSeqs }
                                 : {}),
-                            reason: 'provider_unavailable_before_acceptance',
+                            reason: resetBeforeEffect ? 'team_credential_binding_not_current' : 'provider_unavailable_before_acceptance',
                             diagnostic: {
-                                code: 'daemon_turn_admission_unavailable',
+                                code: resetBeforeEffect ? 'team_credential_binding_not_current' : 'daemon_turn_admission_unavailable',
                                 severity: 'error',
                             },
-                            retryable: true,
+                            retryable: !resetBeforeEffect,
                             retireLocalCustodyAfterDurableBlock: true,
                         });
                     }
