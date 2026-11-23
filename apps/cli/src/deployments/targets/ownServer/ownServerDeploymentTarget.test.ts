@@ -322,10 +322,10 @@ describe('own-server target at the Action host boundary', () => {
     for (const { scenario, sourceKind } of [
         ...(['iroh_publication_refused', 'iroh_publication_loopback', 'iroh_publication_host_network', 'private_publication_matching_restore', 'private_publication_refused', 'private_publication_withdrawal_refused', 'private_publication_failed_attempt', 'private_publication_forward_withdrawal'] as const)
             .map(scenario => ({ scenario, sourceKind: 'stored' as const })),
-        ...(['promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_failed_logs', 'runtime_health', 'runtime_stage', 'cleanup_without_candidate', 'cleanup_source_failure', 'cleanup_native_candidate', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'joining_current', 'joining_current_successor', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_start_first_restore_join_recovery', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_backup_configured_native_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'standalone_public_restore_upload', 'standalone_public_restore_volume_upload', 'standalone_public_restore_volume', 'standalone_public_restore_snapshot_confirmed', 'standalone_public_restore_stale_input', 'public_copy', 'public_restore_drill', 'public_preview_copy', 'public_preview_copy_failure', 'public_preview_configure_failure', 'public_preview_companion_copy', 'public_preview_companion_create_failure', 'public_preview_companion_main_deleted', 'public_preview_companion_connect_failure', 'native_preview_cleanup', 'native_preview_cleanup_failure', 'native_preview_cleanup_companion', 'native_preview_cleanup_companion_failure', 'public_backup', 'public_backup_restore', 'public_backup_restore_local', 'public_backup_restore_sftp', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
+        ...(['promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_failed_logs', 'runtime_health', 'runtime_stage', 'cleanup_without_candidate', 'cleanup_source_failure', 'cleanup_native_candidate', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'joining_current', 'joining_current_successor', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_refused', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_start_first_restore_join_recovery', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_backup_configured_native_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'standalone_public_restore_upload', 'standalone_public_restore_volume_upload', 'standalone_public_restore_volume', 'standalone_public_restore_snapshot_confirmed', 'standalone_public_restore_stale_input', 'public_copy', 'public_restore_drill', 'public_preview_copy', 'public_preview_copy_failure', 'public_preview_configure_failure', 'public_preview_companion_copy', 'public_preview_companion_create_failure', 'public_preview_companion_main_deleted', 'public_preview_companion_connect_failure', 'native_preview_cleanup', 'native_preview_cleanup_failure', 'native_preview_cleanup_companion', 'native_preview_cleanup_companion_failure', 'public_backup', 'public_backup_restore', 'public_backup_restore_local', 'public_backup_restore_sftp', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
         ...(['telemetry_delivery', 'telemetry_own_collector', 'telemetry_no_header'] as const)
             .map(scenario => ({ scenario, sourceKind: 'repository' as const })),
-        ...(['stop_first_route_direct', 'stop_first_route_tunnel'] as const)
+        ...(['stop_first_route_direct', 'stop_first_route_tunnel', 'stop_first_replaces_start_first'] as const)
             .map(scenario => ({ scenario, sourceKind: 'repository' as const })),
         { scenario: 'standalone_public_restore_volume_upload_activation_failure' as const, sourceKind: 'repository' as const },
         { scenario: 'standalone_public_restore_volume_upload_activation_failure_superseded' as const, sourceKind: 'repository' as const },
@@ -352,7 +352,8 @@ describe('own-server target at the Action host boundary', () => {
         const promotionScenario = scenario === 'promote_source_demoted' || scenario === 'promote_destination_demoted'
             || scenario === 'promote_build_refused' || scenario === 'promote_archive_custody' || scenario === 'promote_cleanup_refused';
         const startFirst = scenario.startsWith('candidate_start_first');
-        const replaceRoute = scenario === 'stop_first_route_direct' || scenario === 'stop_first_route_tunnel';
+        const replacesStartFirst = scenario === 'stop_first_replaces_start_first';
+        const replaceRoute = replacesStartFirst || scenario === 'stop_first_route_direct' || scenario === 'stop_first_route_tunnel';
         const storedPrivatePublication = sourceKind === 'stored';
         const migrationBackup = scenario.startsWith('candidate_backup_configured') || scenario.startsWith('public_backup');
         const reverseStartFirst = scenario.startsWith('candidate_start_first_restore');
@@ -390,7 +391,7 @@ describe('own-server target at the Action host boundary', () => {
             ...(scenario === 'iroh_publication_host_network' ? { network_mode: 'host' } : {}),
             privileged: true, restart: 'on-failure', deploy: { replicas: scenario === 'public_restore_drill' ? 1 : 2,
                 resources: { limits: { cpus: '1.0', memory: '128M' } } },
-            ...(startFirst || scenario.startsWith('joining_current') ? { healthcheck: { test: ['CMD', 'true'] }, stop_grace_period: '17s' } : scenario === 'routing_review' || previewCopy ? {} : {
+            ...(startFirst || replacesStartFirst || scenario.startsWith('joining_current') ? { healthcheck: { test: ['CMD', 'true'] }, stop_grace_period: '17s' } : scenario === 'routing_review' || previewCopy ? {} : {
                 volumes: [{ type: 'volume', source: 'shared', target: '/data' }],
                 ports: nativePostgresql ? [{ target: 5432, published: String(nativePostgresql.port), protocol: 'tcp', host_ip: '127.0.0.1' }]
                     : [{ target: 3000, published: '3000', protocol: 'tcp', host_ip: scenario === 'iroh_publication_loopback' || scenario === 'iroh_publication_host_network' ? '127.0.0.1' : scenario === 'private_publication_refused' || scenario === 'private_publication_failed_attempt' || scenario === 'private_publication_matching_restore' || scenario === 'private_publication_forward_withdrawal' || scenario === 'runtime_stage' ? '100.81.1.12' : '0.0.0.0' }],
@@ -406,7 +407,7 @@ describe('own-server target at the Action host boundary', () => {
                     volumes: [{ type: 'volume', source: 'postgres-data', target: '/var/lib/postgresql/data' }] } } : {}),
                 ...(scenario.startsWith('native_preview_cleanup') ? { 'later-app': { image: image.registryReference,
                     ports: [{ target: 3000, published: '3000', protocol: 'tcp', host_ip: '127.0.0.1' }] } } : {}) },
-            ...(previewCopy && !previewCompanion ? { volumes: { 'postgres-data': {} } } : previewCompanion || scenario === 'routing_review' ? {} : { volumes: { shared: scenario.startsWith('native_preview_cleanup')
+            ...(previewCopy && !previewCompanion ? { volumes: { 'postgres-data': {} } } : previewCompanion || replacesStartFirst || scenario === 'routing_review' ? {} : { volumes: { shared: scenario.startsWith('native_preview_cleanup')
                 ? {} : { name: 'target-review-shared' } } }) }));
         const git = (...args: string[]) => execFileSync('git', args, { cwd: repository, encoding: 'utf8' }).trim();
         if (scenario === 'required_project_secret') {
@@ -765,7 +766,7 @@ describe('own-server target at the Action host boundary', () => {
             if (!first) throw new Error('Expected the actual incumbent replicas');
             const route: CaddyDomainRouteInput = { domainId: 'start-first-domain', domain: { hostname: 'start-first.example.test',
                 target: { service: 'app', containerPort: 3000 }, healthCheck: { path: '/healthz', expectStatus: 200 } },
-                listener: scenario === 'stop_first_route_direct' ? 'public' : 'privateOrigin',
+                listener: replaceRoute && scenario !== 'stop_first_route_tunnel' ? 'public' : 'privateOrigin',
                 upstreams: { kind: 'replicas', containerNames: [first, ...rest] }, privateSourceRanges: [] };
             const material = materializeCaddyDomainRouteV1(route);
             return { route, http: { routes: material.tls ? [material.tls.redirectRoute] : [] },
@@ -3613,12 +3614,13 @@ describe('own-server target at the Action host boundary', () => {
             if (startFirst || replaceRoute) {
                 phase('seed-incumbent');
                 if (scenario === 'stop_first_route_tunnel') environment.content.ingress = { kind: 'cloudflareTunnel' };
-                if (scenario === 'candidate_start_first_restore_candidate') environment.content.ownServer!.rollout = 'startFirst';
+                if (replacesStartFirst || scenario === 'candidate_start_first_restore_candidate') environment.content.ownServer!.rollout = 'startFirst';
                 const initial = await target.review({ actionId: request.actionId, input: request.input, content: receipt.content, context: sourceContext });
                 receipt.deployment.state = 'running';
                 receipt.content.ownServer = { approvedInputBasis: initial.inputBasis };
-                expect(await target.executeMember({ request, machineId: 'machine-a', installationId: 'installation-a',
-                    phase: 'activate', selectedDeploymentId: receipt.deployment.id })).toMatchObject({ ok: true, state: 'running' });
+                const seeded = await target.executeMember({ request, machineId: 'machine-a', installationId: 'installation-a',
+                    phase: 'activate', selectedDeploymentId: receipt.deployment.id });
+                expect(seeded, JSON.stringify(seeded)).toMatchObject({ ok: true, state: 'running' });
                 if (replaceRoute) {
                     incumbentNativeIds = await docker.readContainerIds();
                     caddyState = installFixtureRoute(incumbentNativeIds.map(id => id.slice(0, 12)));
@@ -3639,7 +3641,7 @@ describe('own-server target at the Action host boundary', () => {
                 request = { ...request, input: { ...request.input, contentArtifactId: receipt.deployment.contentArtifactId },
                     receipt: { ...request.receipt, deploymentId: receipt.deployment.id, deploymentRevision: 1 },
                     context: { ...request.context, operationAcceptance: { operationId: receipt.deployment.actionOperationId, accept() {} } } };
-                if (startFirst) environment.content.ownServer!.rollout = 'startFirst';
+                if (startFirst || replacesStartFirst) environment.content.ownServer!.rollout = startFirst ? 'startFirst' : 'recreate';
                 environmentReads = 0;
             }
             const candidateMigration = scenario.startsWith('candidate_') && !startFirst;
@@ -3899,11 +3901,18 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
                 receipt.deployment.state = 'running';
                 receipt.content.ownServer = { approvedInputBasis: review.inputBasis };
                 const previous = incumbentNativeIds;
+                const previousNetworks = await docker.readNetworkIds();
                 const result = await target.executeMember({ request, machineId: 'machine-a', installationId: 'installation-a',
                     phase: 'activate', selectedDeploymentId: receipt.deployment.id });
                 expect(result, JSON.stringify(result)).toMatchObject({ ok: true, state: 'running' });
                 const current = await docker.readContainerIds();
                 expect(previous.length).toBeGreaterThan(0);
+                if (replacesStartFirst) {
+                    const networks = await docker.readNetworkIds();
+                    expect(networks).toHaveLength(1);
+                    expect(previousNetworks).toHaveLength(1);
+                    expect(previousNetworks).not.toContain(networks[0]);
+                }
                 expect(current).toHaveLength(previous.length);
                 expect(current.every(id => !previous.includes(id))).toBe(true);
                 const route = JSON.stringify(caddyState?.server ?? null);
@@ -3969,12 +3978,25 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
                             State: expect.objectContaining({ Status: 'running', Health: { Status: 'unhealthy' } }) })));
                         phase('confirmed-unhealthy-candidate');
                     }
+                    const restoreRefused = scenario === 'candidate_start_first_restore_refused';
+                    const forwardNetworks = restoreRefused ? await docker.readNetworkIds() : [];
+                    if (restoreRefused) await docker.failImageHealth(serving.content.images[0]!.configDigest);
                     const reverseBefore = (await docker.readInvocations()).length;
                     phase('reverse-start-first');
                     const restored = await target.executeMember({ request, machineId: 'machine-a', installationId: 'installation-a',
                         phase: 'restore', selectedDeploymentId: serving.deployment.id });
                     phase('reverse-start-first-settled');
                     const reverse = (await docker.readInvocations()).slice(reverseBefore);
+                    if (restoreRefused) {
+                        expect(restored).toMatchObject({ ok: false, errorCode: 'native_failed' });
+                        expect(routeWrites).toHaveLength(1);
+                        expect(await docker.readContainerIds()).toEqual(forwardNativeIds);
+                        expect(await docker.readNetworkIds()).toEqual(forwardNetworks);
+                        expect(receipt.content.machineResults).toEqual([expect.objectContaining({
+                            restoration: 'failed', currentDeploymentId: receipt.deployment.id, health: 'healthy',
+                        })]);
+                        return;
+                    }
                     expect(restored, restored.ok ? 'restored' : restored.errorCode).toMatchObject(
                         scenario === 'candidate_start_first_restore_unknown'
                             ? { ok: false, errorCode: 'outcome_unknown' } : { ok: true, state: 'running' });

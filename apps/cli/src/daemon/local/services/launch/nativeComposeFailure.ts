@@ -14,6 +14,7 @@ const nativeFailurePatterns = [
     ['deployment_image_rate_limited', /toomanyrequests|You have reached your (?:unauthenticated )?pull rate limit/iu],
     ['deployment_image_pull_denied', /pull access denied|repository does not exist or may require|unauthorized: authentication required/iu],
     ['deployment_image_not_found', /manifest unknown|manifest for \S+ not found/iu],
+    ['deployment_network_address_pool_exhausted', /all predefined address pools have been fully subnetted/iu],
     ['deployment_network_unavailable', /Could not resolve host|Temporary failure in name resolution|getaddrinfo (?:EAI_AGAIN|ENOTFOUND)|Network is unreachable|TLS handshake timeout/iu],
     ['deployment_build_script_missing', /Missing script: ["']?build["']?/iu],
     ['deployment_build_input_missing', /COPY failed:[^\r\n]*(?:not found|no source files)|failed to calculate checksum of ref[^\r\n]*not found/iu],

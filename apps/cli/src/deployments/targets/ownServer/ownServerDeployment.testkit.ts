@@ -790,7 +790,7 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
         const separator = label.indexOf('=');
         return separator < 0 ? Object.hasOwn(row.Labels, label)
             : row.Labels[label.slice(0, separator)] === label.slice(separator + 1);
-    })).map(row => row.Id).join('\n'));
+    })).map(row => args.includes('{{.ID}}\t{{.Name}}') ? row.Id + '\t' + row.Name : row.Id).join('\n'));
 } else if (args[0] === 'network' && args[1] === 'connect') {
     const network = state.networks.find(row => row.Id === args[2] || row.Name === args[2]);
     const caddy = state.nativeCaddy;
@@ -1235,9 +1235,10 @@ else throw new Error('fixture_unexpected_docker_command:' + JSON.stringify(args)
             const state = JSON.parse(await readFile(statePath, 'utf8')) as { networks: Array<{ Id: string; Containers: Record<string, object> }> };
             return Object.keys(state.networks.find(network => network.Id === id)?.Containers ?? {});
         },
-        async readNetworkIds(): Promise<readonly string[]> {
-            const state = JSON.parse(await readFile(statePath, 'utf8')) as { networks: Array<{ Id: string }> };
-            return state.networks.map(network => network.Id);
+        async readNetworkIds(project?: string): Promise<readonly string[]> {
+            const state = JSON.parse(await readFile(statePath, 'utf8')) as { networks: Array<{ Id: string; Labels: Record<string, string> }> };
+            return state.networks.filter(network => project === undefined || network.Labels['com.docker.compose.project'] === project)
+                .map(network => network.Id);
         },
         async stopCurrentContainers() {
             const state = JSON.parse(await readFile(statePath, 'utf8')) as { containers: Array<{ State: { Status: string } }> };
@@ -1274,9 +1275,11 @@ else throw new Error('fixture_unexpected_docker_command:' + JSON.stringify(args)
             state.holdOperationConstruction = false;
             await writeState(state);
         },
-        async readContainerIds(): Promise<readonly string[]> {
-            const state = JSON.parse(await readFile(statePath, 'utf8')) as { containers: Array<{ Id: string }> };
-            return state.containers.map(row => row.Id);
+        async readContainerIds(project?: string): Promise<readonly string[]> {
+            const state = JSON.parse(await readFile(statePath, 'utf8')) as {
+                containers: Array<{ Id: string; Config: { Labels: Record<string, string> } }> };
+            return state.containers.filter(row => project === undefined || row.Config.Labels['com.docker.compose.project'] === project)
+                .map(row => row.Id);
         },
         async readOperationContainerIds(): Promise<readonly string[]> {
             const state = JSON.parse(await readFile(statePath, 'utf8')) as { containers: Array<{ Id: string; Config: { Labels: Record<string, string> } }> };

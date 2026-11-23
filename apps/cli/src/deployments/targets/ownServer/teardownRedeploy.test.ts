@@ -19,10 +19,11 @@ import { createOwnServerDockerBoundary } from './ownServerDeployment.testkit';
 import { createOwnServerDeploymentRuntimeForHost } from './ownServerDeploymentHostRuntime';
 import { buildOwnServerDeploymentReceipt } from './buildReceipt';
 import { createOwnServerTeardownForHost } from './teardown';
+import { resolveOwnServerDeploymentIdentityForHost } from './paths';
 import { createOwnServerDeploymentTargetForHost, type OwnServerDeploymentTargetHostInput,
     type OwnServerDeploymentRequest, type OwnServerDeploymentReceipt } from './ownServerDeploymentTarget';
 
-it('deploys after native teardown and preserves a later activation failure without restoring removed code', { timeout: 300_000 }, async context => {
+it('releases superseded and failed Compose networks, tears down the project, and redeploys', { timeout: 300_000 }, async context => {
     const root = await mkdtemp(join(tmpdir(), 'happier-teardown-redeploy-'));
     const mounted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: configuration.happyHomeDir,
         controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
@@ -102,15 +103,19 @@ it('deploys after native teardown and preserves a later activation failure witho
             async dispatchMember(input) { phases.push(input.phase); return target.executeMember(input); },
             async dispatchRetention(input) { return target.retain(input); },
         };
+        const { projectName } = await resolveOwnServerDeploymentIdentityForHost({
+            happierHomeDir: root, serverId: host.serverId, environmentId: environment.environment.id });
+        const foreignNetworkId = 'f'.repeat(64);
+        await docker.seedNetwork(foreignNetworkId, 'another-project');
         const target = createOwnServerDeploymentTargetForHost(host);
         const teardown = createOwnServerTeardownForHost({ ...host, async findReceipt() { return null; },
             async *readHistoryHeaders() { for (const receipt of [...receipts.values()].reverse()) yield structuredClone(receipt.deployment); },
             async createCandidate() { throw new Error('Receipt is supplied at the storage boundary'); } });
         let revision = 0;
-        const candidate = async (id: string) => {
+        const candidate = async (id: string, network = 'default') => {
             const image = await docker.registerImage('app', id);
             const document = JSON.stringify({ services: { app: { image: image.registryReference,
-                healthcheck: { test: ['CMD', 'true'] } } } });
+                healthcheck: { test: ['CMD', 'true'] }, networks: [network] } }, networks: { [network]: {} } });
             const sourceIntent = { kind: 'stored' as const, document, contentRevision: ++revision,
                 composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`, services: ['app'], profiles: [] };
             environment.content.definition = sourceIntent;
@@ -152,13 +157,29 @@ it('deploys after native teardown and preserves a later activation failure witho
                 .toMatchObject({ ok: true, state: 'succeeded' });
             expect(link.activeDeploymentId).toBeUndefined();
             expect(await docker.readRunningImageConfig('app')).toBeNull();
-            expect(await docker.readContainerIds()).toEqual([]);
-            expect(await docker.readNetworkIds()).toEqual([]);
+            expect(await docker.readContainerIds(projectName)).toEqual([]);
+            expect(await docker.readNetworkIds(projectName)).toEqual([]);
+            expect(await docker.readNetworkIds()).toEqual([foreignNetworkId]);
         };
-        const first = await candidate('v1');
+        const first = await candidate('v1', 'retired');
         expect(await target.execute(first.request)).toMatchObject({ ok: true, state: 'succeeded' });
+        const retired = await docker.readNetworkIds(projectName);
+        expect(retired).toHaveLength(1);
+        const successor = await candidate('successor');
+        expect(await target.execute(successor.request)).toMatchObject({ ok: true, state: 'succeeded' });
+        const current = (await docker.readNetworkIds(projectName)).filter(id => !retired.includes(id));
+        expect(current).toHaveLength(1);
+        expect(await docker.readNetworkIds(projectName), 'the superseded network is released').toEqual(current);
+
+        const broken = await candidate('broken', 'broken');
+        await docker.failImageHealth(broken.image.configDigest);
+        const beforeRollback = phases.length;
+        expect(await target.execute(broken.request)).toMatchObject({ ok: false, errorCode: 'native_failed' });
+        expect(phases.slice(beforeRollback)).toContain('restore');
+        expect(await docker.readRunningImageConfig('app')).toBe(successor.image.configDigest);
+        expect(await docker.readNetworkIds(projectName), 'the failed candidate network is released after rollback').toEqual(current);
         await docker.stopCurrentContainers();
-        expect((await docker.readContainerIds()).length).toBeGreaterThan(0);
+        expect((await docker.readContainerIds(projectName)).length).toBeGreaterThan(0);
         await stop('stop-v1');
         for (const unhealthy of [false, true]) {
             if (unhealthy) await stop('stop-v2');
@@ -176,11 +197,15 @@ it('deploys after native teardown and preserves a later activation failure witho
             expect(phases.slice(before)).not.toContain('restore');
             if (unhealthy) {
                 expect(persisted.deployment.state).toBe('failed');
-                expect(persisted.content.failure).toEqual({ code: 'native_failed', phase: 'activate',
+                expect(persisted.content.failure).toMatchObject({ code: 'native_failed', phase: 'activate',
                     requiredFact: 'deploymentActionResult', remedy: expect.stringMatching(/\S/),
                     // The native owner's closed reason is the typed cause.
-                    failureCause: { phase: 'deployment.failure', errorClass: 'Error', errorCode: 'deployment_activation_failed', httpStatus: null } });
+                    effectAttempted: true,
+                    failureCause: { errorCode: 'deployment_health_check_failed' } });
                 expect(await docker.readRunningImageConfig('app')).toBeNull();
+                expect(await docker.readNetworkIds(projectName)).toEqual([]);
+                expect(await docker.readContainerIds(projectName)).toEqual([]);
+                expect(await docker.readNetworkIds()).toEqual([foreignNetworkId]);
             } else {
                 expect(persisted.content.failure).toBeUndefined();
                 expect(link.activeDeploymentId).toBe('v2');

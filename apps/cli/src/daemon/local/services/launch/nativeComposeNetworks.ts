@@ -3,14 +3,22 @@ import { disconnectNativeCaddyNetworks } from '@happier-dev/cli-common/machineSe
 /** Release project-owned networks without disturbing another running or stopped workload. */
 export async function removeUnusedNativeComposeNetworks(input: Readonly<{
     projects: readonly string[];
+    retainedNetworkNames?: ReadonlySet<string>;
     run(args: readonly string[]): Promise<Readonly<{ exitCode: number | null; stdout: string; stderr?: string }>>;
 }>): Promise<string | null> {
     const networkIds = new Set<string>();
+    const format = input.retainedNetworkNames ? '{{.ID}}\t{{.Name}}' : '{{.ID}}';
     for (const project of input.projects) {
         const networks = await input.run(['network', 'ls', '--no-trunc', '--filter',
-            `label=com.docker.compose.project=${project}`, '--format', '{{.ID}}']);
+            `label=com.docker.compose.project=${project}`, '--format', format]);
         if (networks.exitCode !== 0) return 'network_observation_unavailable';
-        for (const id of networks.stdout.trim().split('\n').filter(Boolean)) networkIds.add(id);
+        for (const row of networks.stdout.trim().split('\n').filter(Boolean)) {
+            const [id, name] = row.split('\t');
+            if (!id || input.retainedNetworkNames && !name) return 'network_observation_unavailable';
+            // An external declaration can reference a native network by ID.
+            if (name && (input.retainedNetworkNames?.has(name) || input.retainedNetworkNames?.has(id))) continue;
+            networkIds.add(id);
+        }
     }
     if (!networkIds.size) return null;
     const detached = await disconnectNativeCaddyNetworks({ networkIds: [...networkIds], onlyUnused: true }, {

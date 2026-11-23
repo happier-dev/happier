@@ -1208,9 +1208,11 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 const incumbentReceipt = incumbentDeploymentId === receipt.deployment.id ? receipt
                     : incumbentDeploymentId ? await host.readReceipt({ environmentId: receipt.deployment.environmentId,
                         deploymentId: incumbentDeploymentId, context: request.context }) : undefined;
+                const replacesDistinctProject = incumbentReceipt !== undefined && !startFirst
+                    && (incumbentReceipt.content.ownServer?.approvedInputBasis.ownServer?.rollout === 'startFirst') !== (candidate !== undefined);
                 let incumbentRender: NativeComposeProjectRender | undefined;
                 let readIncumbentDatabaseUsername: OwnServerNativeRestoreInput['readDatabaseUsername'] | undefined;
-                const prepareIncumbent = async (current: OwnServerDeploymentReceipt) => {
+                const prepareIncumbent = async (current: OwnServerDeploymentReceipt, allowAbsent = false) => {
                     const incumbentBasis = current.content.ownServer?.approvedInputBasis;
                     if (!incumbentBasis) refuse('rollback_image_unavailable');
                     retained = await prepare({ ...request, materialization: { kind: 'restoration', deploymentId: receipt.deployment.id,
@@ -1227,10 +1229,11 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                         ? retained.project.createStartFirstCandidate() : retained.project;
                     incumbentRender = await retainedProject.render({ signal: snapshot.signal });
                     const observed = await retainedProject.observeActivated({ render: incumbentRender, signal: snapshot.signal, purpose: 'retire' });
+                    if (observed.kind === 'absent' && allowAbsent) return;
                     if (observed.kind !== 'active') refuse(observed.kind === 'unknown' ? 'outcome_unknown' : 'deployment_generation_required');
                     incumbent = observed.activation;
                 };
-                if (startFirst && incumbentReceipt) await prepareIncumbent(incumbentReceipt);
+                if (incumbentReceipt && (startFirst || replacesDistinctProject)) await prepareIncumbent(incumbentReceipt, replacesDistinctProject);
                 {
                     const source = await captureOwnServerDeploymentSource({ source: prepared.source,
                         admission: prepared.runtime.source, sharedBinds: rendered.sharedData?.bindings, namedVolumes: rendered.namedVolumes });
@@ -1328,7 +1331,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                             try {
                                 // The candidate has not started. pg_dump belongs to
                                 // the captured serving generation, under this job.
-                                if (!incumbent) {
+                                if (!incumbent && !retained) {
                                     if (!snapshot.link.activeDeploymentId) return refuse('backup_required');
                                     await prepareIncumbent(await host.readReceipt({ environmentId: receipt.deployment.environmentId,
                                         deploymentId: snapshot.link.activeDeploymentId, context: request.context }));
@@ -1386,7 +1389,10 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                                 if (restored) {
                                     let observed = await activationProject.observeActivated({ render: activationRender, signal: snapshot.signal });
                                     if (observed.kind === 'absent') {
-                                        await activationProject.activate({ render: activationRender, context, signal: snapshot.signal });
+                                        // Rebuilding an absent rollback target is a fresh native generation.
+                                        // A confirmed failure must leave the serving project in place.
+                                        await activationProject.activate({ render: activationRender, context, signal: snapshot.signal,
+                                            cleanupOnFailure: true });
                                         observed = await activationProject.observeActivated({ render: activationRender, signal: snapshot.signal });
                                     }
                                     if (observed.kind !== 'active') return refuse('outcome_unknown');
@@ -1415,7 +1421,8 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                                 affectedServices: activationRender.services, context, signal: snapshot.signal });
                             const replacement = await activateReplacement();
                             try {
-                                const route = await routes.switch({ candidate: replacement.routingGeneration(), signal: snapshot.signal });
+                                const route = await routes.switch({ candidate: replacement.routingGeneration(),
+                                    ...(replacesDistinctProject && incumbent ? { incumbent: incumbent.routingGeneration() } : {}), signal: snapshot.signal });
                                 if (route.kind !== 'switched') return refuse('outcome_unknown');
                                 return replacement;
                             } catch (error) {
@@ -1430,6 +1437,10 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     });
                     incumbentStopped = undefined;
                     try {
+                        if (replacesDistinctProject) await incumbent?.retire({ context, signal: snapshot.signal });
+                        // For a reused project, up removes orphan containers and
+                        // leaves their undeclared networks for the native owner.
+                        if (!(startFirst && incumbent)) await project.releaseObsoleteNetworks({ context, signal: snapshot.signal });
                         if (!restored && receipt.content.services && isOwnServerPreviewDataEnvironment(snapshot.environment.environment)) {
                             const docker = await activationProject.readNativeDocker({ render: activationRender, signal: snapshot.signal });
                             try {
@@ -1494,10 +1505,11 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 let failed: DeploymentMachineResultV1 = { ...previous, machineId: host.machineId, installationId: input.installationId,
                     steps: previous?.steps ?? [], actionOperationId: receipt.deployment.actionOperationId,
                     activation: restored ? previous?.activation ?? 'pending' : uncertain ? 'outcome_unknown' : code === 'cancelled' ? 'cancelled' : 'failed',
-                    health: activated && !uncertain ? 'unhealthy' : previous?.health ?? 'unknown',
+                    health: activated && !uncertain && !(restored && nativeRemoved)
+                        ? 'unhealthy' : previous?.health ?? 'unknown',
                     incumbentStopped,
                     ...(restored ? { restoration: uncertain ? 'outcome_unknown' : 'failed' } : {}) };
-                if (nativeRemoved || cleanupFailure) {
+                if (!restored && (nativeRemoved || cleanupFailure)) {
                     failed = recordOwnServerCandidateCleanup(nativeRemoved
                         ? { ...failed, currentDeploymentId: undefined, health: 'unknown' } : failed, cleanupFailure ? 'failed' : 'succeeded');
                 }

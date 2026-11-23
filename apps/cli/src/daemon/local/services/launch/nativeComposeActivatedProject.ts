@@ -13,7 +13,8 @@ export function createNativeComposeActivatedProject(input: Readonly<{
     current: NativeComposeProjectRender; composeArgs: readonly string[];
     generation: Generation; launch: HostAuthorizedPluginExecLaunch; prefix: readonly string[];
     release(): Promise<void>;
-    retire(options: Parameters<NativeComposeActivatedProject['retire']>[0]): Promise<void>;
+    retire: NativeComposeActivatedProject['retire'];
+    releaseObsoleteNetworks: NativeComposeActivatedProject['releaseObsoleteNetworks'];
 }>): NativeComposeActivatedProject {
     const { current, generation, launch, prefix } = input;
     const serviceFacts = new Map(current.services.map((service, index) => [service, {
@@ -35,6 +36,7 @@ export function createNativeComposeActivatedProject(input: Readonly<{
                 projectName: current.projectName, admissionProjectName: current.admissionProjectName, services: generation.routingServices() };
         },
         retire: input.retire,
+        releaseObsoleteNetworks: input.releaseObsoleteNetworks,
         nativeIdsForService(service) {
             const ids = generation.serviceNativeIds.get(service);
             if (released || !ids) return unavailable();

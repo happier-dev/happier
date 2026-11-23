@@ -5,12 +5,14 @@ import { expect, it } from 'vitest';
 import type { DeploymentImageV1 } from '@happier-dev/deployments/contracts/v1';
 import { createProjectNativeToolchainIoForHost, createStablePluginExecService,
     type ProjectNativeEffectCaptureForHost } from '@/plugins/runtime/invocation/services/exec';
+import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { projectDeploymentException, projectDeploymentReceiptFailure } from '@/deployments/deploymentFailure';
 import { createDeploymentExecEnvPortForHost } from '@/deployments/secrets/deploymentExecEnvPort';
 import { createOwnServerDockerBoundary } from '@/deployments/targets/ownServer/ownServerDeployment.testkit';
 import { createNativeComposeLifecycle } from './nativeComposeLifecycle';
 import { machineNativeEffectAdmission } from './machineNativeEffectAdmission';
 
-it.skipIf(process.platform === 'win32').each(['proven', 'beforeCreate', 'cancelled', 'unprovedRemoval', 'previewFresh', 'previewExisting'] as const)('limits first-deploy cleanup to witnessed introduced containers and fresh preview data after %s failure', async mode => {
+it.skipIf(process.platform === 'win32').each(['proven', 'beforeCreate', 'addressPoolExhausted', 'cancelled', 'unprovedRemoval', 'previewFresh', 'previewExisting'] as const)('limits first-deploy cleanup to witnessed introduced containers and fresh preview data after %s failure', async mode => {
     const root = await mkdtemp(join(tmpdir(), 'happier-first-deploy-'));
     const captures = new Set<ProjectNativeEffectCaptureForHost>();
     try {
@@ -30,6 +32,7 @@ it.skipIf(process.platform === 'win32').each(['proven', 'beforeCreate', 'cancell
         const realIo = createProjectNativeToolchainIoForHost({ async resolveTool() { return { executablePath: docker.executablePath, version: 'fixture' }; } })
             .createInvocation({ signal, retainCapture(capture) { captures.add(capture); } });
         const candidateController = new AbortController();
+        const refusesBeforeCreate = mode === 'beforeCreate' || mode === 'addressPoolExhausted';
         let cancelAfterUp = false;
         let failBeforeCreate = false;
         let removalUnproved = false;
@@ -37,7 +40,15 @@ it.skipIf(process.platform === 'win32').each(['proven', 'beforeCreate', 'cancell
         // boundary interruption must not be interpreted as proven failure.
         const io = { ...realIo, async run(request: Parameters<typeof realIo.run>[0]) {
             // Docker can refuse up before creating a candidate container.
-            if (failBeforeCreate && request.args.includes('up')) return { exitCode: 1, stdout: '', stderr: 'fixture up refused before create' };
+            if (failBeforeCreate && request.args.includes('up')) {
+                // Compose may allocate the first network before a later
+                // allocation fails, without ever creating a container.
+                const project = request.args[request.args.indexOf('--project-name') + 1]!;
+                await docker.seedNetwork('e'.repeat(64), project);
+                return { exitCode: 1, stdout: '', stderr: mode === 'addressPoolExhausted'
+                    ? 'failed to create network project_extra: all predefined address pools have been fully subnetted'
+                    : 'fixture up refused before create' };
+            }
             if (removalUnproved && ['ps', 'inspect'].includes(request.args[0]!)) return { exitCode: 1, stdout: '[]', stderr: '' };
             const output = await realIo.run(request);
             if (cancelAfterUp && request.args.includes('up')) candidateController.abort();
@@ -67,28 +78,40 @@ it.skipIf(process.platform === 'win32').each(['proven', 'beforeCreate', 'cancell
         }, volumes: { app_data: {}, db_data: {} } }));
         const project = native(['app', 'db'], [image, database]);
         cancelAfterUp = mode === 'cancelled';
-        failBeforeCreate = mode === 'beforeCreate';
+        failBeforeCreate = refusesBeforeCreate;
         const candidateSignal = mode === 'cancelled' ? candidateController.signal : signal;
         try {
             const rendered = await project.render();
+            const beforeNetworks = await docker.readNetworkIds(rendered.projectName);
+            expect(beforeNetworks).toHaveLength(1);
             const appVolume = `${rendered.projectName}_app_data`;
             const dbVolume = `${rendered.projectName}_db_data`;
             await docker.seedVolume('source-postgres-data', 'source-project');
             if (mode === 'previewExisting') await docker.seedVolume(appVolume, rendered.projectName);
             const activation = machineNativeEffectAdmission.run({ operation: { operationId: 'first', kind: 'deployments.deploy', signal: candidateSignal }, keys: rendered.keys },
                 context => project.activate({ render: rendered, context, cleanupOnFailure: true, signal: candidateSignal }));
-            if (mode === 'proven' || mode === 'beforeCreate' || mode.startsWith('preview')) await expect(activation).rejects.toMatchObject({ code: 'native_failed',
-                details: { reason: mode === 'beforeCreate' ? 'native_compose_command_failed' : 'deployment_activation_failed', firstDeployCleanup: 'removed' } });
+            if (mode === 'addressPoolExhausted') {
+                const error = await activation.catch((failure: unknown) => failure);
+                const receiptFailure = projectDeploymentReceiptFailure(projectDeploymentException(error), 'activate');
+                expect(receiptFailure).toMatchObject({ code: 'native_failed', phase: 'activate',
+                    effectAttempted: true, failureCause: { errorCode: 'deployment_network_address_pool_exhausted' } });
+                expect(readDeploymentFailureRecoveryV1(receiptFailure.code, receiptFailure)).toMatchObject({
+                    remedy: expect.stringMatching(/free unused Docker networks/i),
+                    nextAction: { destination: 'machines' },
+                });
+            } else if (mode === 'proven' || mode === 'beforeCreate' || mode.startsWith('preview')) await expect(activation).rejects.toMatchObject({ code: 'native_failed',
+                details: { reason: mode === 'beforeCreate' ? 'native_compose_command_failed' : 'deployment_health_check_failed', firstDeployCleanup: 'removed' } });
             else if (mode === 'unprovedRemoval') {
-                await expect(activation).rejects.toMatchObject({ code: 'native_failed', details: { reason: 'deployment_activation_failed' } });
+                await expect(activation).rejects.toMatchObject({ code: 'native_failed', details: { reason: 'deployment_health_check_failed' } });
                 await expect(activation).rejects.not.toMatchObject({ details: { firstDeployCleanup: 'removed' } });
             } else await expect(activation).rejects.toBeDefined();
             expect(await docker.readRunningImageConfig('app')).toBe(mode === 'cancelled' ? image.configDigest : null);
             expect(await docker.readRunningImageConfig('db')).toBe(database.configDigest);
-            expect(await docker.readVolumeNames()).toEqual((mode === 'previewFresh' || mode === 'beforeCreate'
+            expect(await docker.readNetworkIds(rendered.projectName)).toEqual(beforeNetworks);
+            expect(await docker.readVolumeNames()).toEqual((mode === 'previewFresh' || refusesBeforeCreate
                 ? [dbVolume, 'source-postgres-data'] : [appVolume, dbVolume, 'source-postgres-data']).sort());
             const invocations = await docker.readInvocations();
-            expect(invocations.some(call => call.args[0] === 'container' && call.args[1] === 'rm')).toBe(mode !== 'cancelled' && mode !== 'beforeCreate');
+            expect(invocations.some(call => call.args[0] === 'container' && call.args[1] === 'rm')).toBe(mode !== 'cancelled' && !refusesBeforeCreate);
             expect(invocations.filter(call => call.args[0] === 'container' && call.args[1] === 'rm')
                 .some(call => incumbentIds.some(id => call.args.includes(id)))).toBe(false);
             expect(invocations.some(call => call.args.includes('down') || call.args.includes('--volumes') || call.args.includes('prune'))).toBe(false);

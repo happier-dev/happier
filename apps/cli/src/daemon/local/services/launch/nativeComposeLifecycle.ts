@@ -114,6 +114,8 @@ export type NativeComposeActivatedProject = Readonly<{
     health: 'healthy' | 'unverified';
     routingGeneration(): NativeComposeRoutingGeneration;
     retire(input: Readonly<{ context: MachineNativeEffectContext; signal?: AbortSignal }>): Promise<void>;
+    /** Run after ingress has accepted the replacement, while native project custody is still held. */
+    releaseObsoleteNetworks(input: Readonly<{ context: MachineNativeEffectContext; signal?: AbortSignal }>): Promise<void>;
     nativeIdsForService(composeService: string): readonly string[];
     nativeFactsForService(composeService: string): NativeComposeActivatedServiceFacts;
     isCurrent(): boolean;
@@ -1003,23 +1005,43 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
             proveImage: (reference, image) => identity.prove(reference, image), signal, ...observation });
     const retainActivation = (current: NativeComposeProjectRender, capture: RenderCapture,
         proof: Awaited<ReturnType<typeof inspectGeneration>>, launch: HostAuthorizedPluginExecLaunch,
-        prefix: readonly string[], stopLending?: () => void) => createNativeComposeActivatedProject({
-        current, composeArgs: capture.composeArgs, generation: proof, launch, prefix,
-        async release() {
-            stopLending?.();
-            try { await launch.release(); } finally { await removeDirectory(); }
-        },
-        async retire(options) {
-            const signal = options.signal ?? options.context.operation.signal;
-            await machineNativeEffectAdmission.runStage(options.context, async () => {
-                signal?.throwIfAborted();
-                const ids = current.services.flatMap(service => [...proof.serviceNativeIds.get(service)!]);
-                if (!await removeWitnessedProjectResources({ ids, project: projectName, services: current.services,
-                    stopWithNativeGrace: true, run: args => input.io.run({ command: launch.command, args: [...prefix, ...args],
-                        cwd: launch.cwd!, env: launch.env, ...(signal ? { signal } : {}) }) })) return nativeRefusal('deployment_generation_unavailable');
-            });
-        },
-    });
+        prefix: readonly string[], stopLending?: () => void) => {
+        const runNative = (args: readonly string[], signal?: AbortSignal) => input.io.run({
+            command: launch.command, args: [...prefix, ...args], cwd: launch.cwd!, env: launch.env, ...(signal ? { signal } : {}) });
+        return createNativeComposeActivatedProject({
+            current, composeArgs: capture.composeArgs, generation: proof, launch, prefix,
+            async release() {
+                stopLending?.();
+                try { await launch.release(); } finally { await removeDirectory(); }
+            },
+            async releaseObsoleteNetworks({ context, signal = context.operation.signal }) {
+                const retainedNetworkNames = new Set(Object.values(record(capture.model.networks) ? capture.model.networks : {})
+                    .flatMap(network => record(network) && typeof network.name === 'string' ? [network.name] : []));
+                await machineNativeEffectAdmission.runStage(context, async () => {
+                    signal?.throwIfAborted();
+                    try {
+                        const reason = await removeUnusedNativeComposeNetworks({ projects: [projectName], retainedNetworkNames,
+                            run: args => runNative(args, signal) });
+                        if (reason) logger.warnLocalFile('[Native Compose] Obsolete network cleanup incomplete', { reason });
+                    } catch (error) {
+                        signal?.throwIfAborted();
+                        // Failure to reclaim the losing networks does not invalidate the new workload.
+                        logger.warnLocalFile('[Native Compose] Obsolete network cleanup incomplete',
+                            projectActionFailureCauseV1(error, 'deployment.native.compose.network_cleanup', { allowUnknownErrorCode: false }));
+                    }
+                });
+            },
+            async retire(options) {
+                const signal = options.signal ?? options.context.operation.signal;
+                await machineNativeEffectAdmission.runStage(options.context, async () => {
+                    signal?.throwIfAborted();
+                    const ids = current.services.flatMap(service => [...proof.serviceNativeIds.get(service)!]);
+                    if (!await removeWitnessedProjectResources({ ids, project: projectName, services: current.services,
+                        stopWithNativeGrace: true, run: args => runNative(args, signal) })) return nativeRefusal('deployment_generation_unavailable');
+                });
+            },
+        });
+    };
     const normalize = async (signal?: AbortSignal, definitionReview = false) => {
         const toolVersion = (await run(['compose', 'version', '--short'], signal)).stdout.trim();
         const configInputDigests: { path: string; digest: string }[] = [];
