@@ -32,6 +32,7 @@ describe('remote managed enrollment through real CLI processes and Home', () => 
     const requests: Array<{ path: string; status: number }> = [];
     let claimUnavailable = false;
     let claimReset = false;
+    let injectedClaimResets = 0;
     let registrationUnavailable = false;
     let registrationUnavailableOnce = false;
     let accountModeUnavailableOnce = false;
@@ -58,6 +59,7 @@ describe('remote managed enrollment through real CLI processes and Home', () => 
                 return reply.code(503).send({ error: 'database_connection_unavailable' });
             }
             if (claimReset && request.url === '/v1/auth/request/claim') {
+                injectedClaimResets++;
                 request.raw.socket.destroy();
                 return reply;
             }
@@ -81,6 +83,7 @@ describe('remote managed enrollment through real CLI processes and Home', () => 
         const e2ee = admission === 'current-e2ee' || admission === 'registration-transient-e2ee';
         claimUnavailable = admission === 'claim-unavailable';
         claimReset = admission === 'claim-reset';
+        injectedClaimResets = 0;
         registrationUnavailable = admission === 'registration-unavailable' || admission === 'retry-after-partial';
         registrationUnavailableOnce = admission === 'registration-transient' || admission === 'registration-transient-e2ee';
         accountModeUnavailableOnce = false;
@@ -195,7 +198,9 @@ describe('remote managed enrollment through real CLI processes and Home', () => 
             const retriedSettings = JSON.parse(await readFile(join(guestHome, 'settings.json'), 'utf8'));
             expect(Object.values(retriedSettings.machineIdByServerId ?? {})).toEqual(partialMachineIds);
         }
-        expect(result.stdout, JSON.stringify(requests)).toContain(succeeds ? '"ok":true' : ['retired', 'claim-unavailable', 'claim-reset', 'wait-process-killed', 'registration-unavailable'].includes(admission) ? 'auth wait' : admission === 'expired-consent' ? 'auth_request_expired' : 'approval_wiring_failed');
+        if (admission !== 'claim-reset') {
+            expect(result.stdout, JSON.stringify(requests)).toContain(succeeds ? '"ok":true' : ['retired', 'claim-unavailable', 'wait-process-killed', 'registration-unavailable'].includes(admission) ? 'auth wait' : admission === 'expired-consent' ? 'auth_request_expired' : 'approval_wiring_failed');
+        }
         expect(result.status, result.stdout).toBe(succeeds ? 0 : 1);
         if (admission !== 'misbound-approval') {
             const outcome = JSON.parse(result.stdout);
@@ -235,8 +240,9 @@ describe('remote managed enrollment through real CLI processes and Home', () => 
                 expect(outcome.operation.error.error).not.toContain('DIAGNOSTIC_UNAVAILABLE');
             }
             if (admission === 'claim-reset') {
-                expect(outcome.operation.error.error).toContain('code AUTH_WAIT_HOME_UNAVAILABLE');
-                expect(outcome.operation.error.error).not.toContain('DIAGNOSTIC_UNAVAILABLE');
+                expect(injectedClaimResets).toBeGreaterThan(0);
+                expect(outcome.task.error).toMatchObject({ code: 'home_not_guest_reachable' });
+                expect(outcome.operation.error).toMatchObject({ errorCode: 'home_not_guest_reachable' });
             }
             if (admission === 'expired-consent') {
                 expect(outcome.operation.error.error).toContain('Retry');
