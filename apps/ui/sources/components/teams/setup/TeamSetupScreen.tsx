@@ -1058,7 +1058,7 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
         itemTrigger={{ title: t('projects.open.chooseCheckout', { count: cloneChoice.length }) }}
       />
     ) : null}
-    {checkout ? <TeamSetupSourceChange sourceId={props.source.id} teamName={props.teamName} checkout={checkout} /> : null}
+    {checkout ? <TeamSetupSourceChange source={props.source} teamName={props.teamName} checkout={checkout} /> : null}
     </>
   );
 });

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { ProjectDefinitionInspectRead } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
+import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { ProjectPendingSharedSetupV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectDefinitionCompositionV1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import {
@@ -82,22 +83,28 @@ export function TeamSetupSourceChangeNotice(
  */
 export const TeamSetupSourceChange = React.memo(function TeamSetupSourceChange(
   props: Readonly<{
-    sourceId: string;
+    source: ProjectSourceV1;
     teamName: string;
     checkout: WorkspaceRefV1;
   }>,
 ) {
-  const { checkout } = props;
+  const { checkout, source } = props;
   const router = useRouter();
   const { binding } = useServerCredentialAccountScopeBinding(checkout.serverId);
   const address = React.useMemo(
     () => workspaceAddressFromRefV1(checkout),
     [checkout],
   );
+  // The listed Source already carries the publication metadata. Only a changed
+  // setup attachment invalidates the checkout owner's inspection.
+  const setup = source.attachments?.find((attachment) => attachment.purpose === 'setup');
+  const publication = setup ? JSON.stringify([source.id, setup.ref.artifactId, setup.ref.serverId,
+    setup.contentRevision.headerVersion, setup.contentRevision.bodyVersion]) : null;
   const { effectiveDefinition } = useProjectDefinitionInspection(
     address,
     binding,
     SETUP_READ,
+    publication,
   );
   const pending =
     effectiveDefinition?.kind === 'available'
@@ -118,7 +125,7 @@ export const TeamSetupSourceChange = React.memo(function TeamSetupSourceChange(
   );
   return pending ? (
     <TeamSetupSourceChangeNotice
-      sourceId={props.sourceId}
+      sourceId={source.id}
       teamName={props.teamName}
       pending={pending}
       onReview={review}

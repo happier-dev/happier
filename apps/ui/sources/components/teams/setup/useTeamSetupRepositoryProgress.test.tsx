@@ -300,6 +300,65 @@ describe('selected Team batch progress', () => {
             expect(screen.findByTestId('team-setup-repository-start:next')).not.toBeNull();
         } finally { await screen.unmount(); }
     });
+    it('refreshes a mounted checkout’s change notice only when its Source publishes a different setup', async () => {
+        const [{ TeamSetupPageView }, { ItemList }, { answerExternalActionAccountForHome }, { resolveProjectDefinitionV1 }] = await Promise.all([
+            import('./TeamSetupScreen'), import('@/components/ui/lists/ItemList'),
+            import('@/dev/testkit/harness/externalActionAccountHttpBoundary'),
+            import('@happier-dev/protocol/workspaces/projectSetup/projectDefinitionCompositionV1'),
+        ]);
+        const id = 'shared-source';
+        const workspace = { id: 'checkout', serverId: query.serverId, machineId: query.machineId,
+            rootPath: '/checkout', createdAtMs: 1, source: { sourceId: id, revision: 1 } };
+        const checkouts = new Map([[id, workspace]]);
+        const attachment = (bodyVersion: number) => ({
+            purpose: 'setup' as const, ref: { kind: 'doc' as const, artifactId: 'shared-setup' },
+            contentRevision: { headerVersion: 1, bodyVersion },
+        });
+        let source = { ...teamProjectSourceFixture({ id, name: 'Shared repository', nameWithOwner: 'team/repo' }),
+            attachments: [attachment(1)] };
+        const manifest = { version: 1 as const, workspace: { setup: [{ kind: 'command' as const, command: 'printf updated' }] } };
+        const inspect = vi.fn((_input: unknown) => ({
+            definition: { basis: { kind: 'absent' }, document: null },
+            detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] },
+            importCandidates: [],
+            effectiveDefinition: resolveProjectDefinitionV1({ repositoryManifest: null,
+                ...(source.attachments[0]?.contentRevision.bodyVersion === 2 ? {
+                    pendingSharedSetup: { source, setup: { sourceId: id, contentRevision: attachment(2).contentRevision,
+                        digest: 'a'.repeat(64) }, manifest },
+                } : {}),
+            }),
+        }));
+        await answerExternalActionAccountForHome(homes, homeProfileId, {
+            machineId: query.machineId, actionId: 'projects.inspect', tokenEpoch: 0, requesterInvocation: 'none', execute: inspect,
+        });
+        const view = () => <ItemList pageColumn="wide"><TeamSetupPageView
+            header={null} teamName="Team" selection={createMachineAdministrationTargetSelectionFixture()}
+            machineId={query.machineId} machineLabel="Member Machine" homeDir="/home/member"
+            run={{ kind: 'idle' }} canRun={false} onRun={vi.fn()} onOpenOperation={vi.fn()}
+            sources={{ loading: false, failure: null, onRetry: vi.fn() }}
+            hasPreset={false} machinePlan={null} repositories={[source]} repositoryFreeSources={[]} checkouts={checkouts}
+            excluded={new Set()} onToggleRepository={vi.fn()} batch={null} sharedKeys={[]} keyDisplayNames={{}}
+            firstTask={null} presetChange={null}
+            clones={{ onFind: vi.fn(), searching: false, folder: null, adopted: new Map(), failure: null, noneFound: false }}
+        /></ItemList>;
+        const screen = await renderScreen(view());
+        const noticeId = `team-setup-source-changed:${id}`;
+        try {
+            await vi.waitFor(() => expect(inspect).toHaveBeenCalledOnce());
+            expect(screen.findByTestId(noticeId)).toBeNull();
+            source = { ...source, name: 'Renamed repository', revision: 2 };
+            await screen.update(view());
+            expect(inspect).toHaveBeenCalledOnce();
+            source = { ...source, revision: 3, attachments: [attachment(2)] };
+            await screen.update(view());
+            await vi.waitFor(() => expect(screen.findByTestId(noticeId)).not.toBeNull());
+            expect(inspect).toHaveBeenCalledTimes(2);
+            expect(inspect.mock.calls[1]?.[0]).toMatchObject({
+                workspace: { workspaceId: 'checkout', machineId: query.machineId, rootPath: '/checkout' },
+                read: { kind: 'setup' },
+            });
+        } finally { await screen.unmount(); }
+    });
     it('requires actual setup success, retains native failure, and announces only a live ready transition', async () => {
         daemonReply.mockReturnValue(new Promise(() => {}));
         const batch = selectedBatch();

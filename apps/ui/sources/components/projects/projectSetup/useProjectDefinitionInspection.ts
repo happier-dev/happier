@@ -30,7 +30,8 @@ export function projectDefinitionInspectionKey(workspace: WorkspaceAddressV1): s
 type InspectionStore = SharedSubscriptionStore<WorkspaceAddressV1, ProjectDefinitionInspectionRead | null,
     ProjectDefinitionInspectionRead | null, typeof createProjectManifestActionClient>;
 type InspectionReader = Readonly<{ workspace: WorkspaceAddressV1; store: InspectionStore; retained: boolean;
-    bindings: Map<() => void, ServerCredentialAccountScopeBinding>; release(): void }>;
+    bindings: Map<() => void, ServerCredentialAccountScopeBinding>;
+    observeSourceSetupPublication(publication: string | null): void; release(): void }>;
 
 // Hook bindings have distinct object lifetimes. Share only their exact credential-backed
 // display identity while demanded; the last consumer or credential mutation evicts it.
@@ -167,8 +168,15 @@ function inspectionReader(workspace: WorkspaceAddressV1, binding: ServerCredenti
     let reader = key ? readers.get(key) : unqualified?.get(selectionKey);
     if (!reader && create) {
         const bindings = new Map<() => void, ServerCredentialAccountScopeBinding>();
+        const store = createInspectionStore(read, () => [...bindings.values()].find(current => current.isCurrent()));
+        let sourceSetupPublication: string | null | undefined;
         const created: InspectionReader = { workspace, bindings, retained,
-            store: createInspectionStore(read, () => [...bindings.values()].find(current => current.isCurrent())),
+            store,
+            observeSourceSetupPublication(publication) {
+                const previous = sourceSetupPublication;
+                sourceSetupPublication = publication;
+                if (previous !== undefined && previous !== publication) store.invalidate(workspace);
+            },
             release() {
                 if (bindings.size > 0 || retained) return;
                 if (key) { if (readers.get(key) === created) readers.delete(key); }
@@ -186,7 +194,7 @@ function inspectionReader(workspace: WorkspaceAddressV1, binding: ServerCredenti
 
 /** One demand-owned inspection per exact checkout, read selection and credential scope; nothing here executes. */
 export function useProjectDefinitionInspection(workspace: WorkspaceAddressV1 | null, binding: ServerCredentialAccountScopeBinding | null,
-    selection: ProjectDefinitionInspectRead = { kind: 'scripts' }): Readonly<{
+    selection: ProjectDefinitionInspectRead = { kind: 'scripts' }, sourceSetupPublication?: string | null): Readonly<{
     read: ProjectDefinitionInspectionRead | null;
     effectiveDefinition: ProjectEffectiveDefinitionInspection | null;
     retry: () => void;
@@ -223,6 +231,11 @@ export function useProjectDefinitionInspection(workspace: WorkspaceAddressV1 | n
         return reader ? reader.store.getState(reader.workspace) : null;
     }, [binding, presented, lookupReader]);
     const read = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+    React.useEffect(() => {
+        if (sourceSetupPublication !== undefined && presented && binding?.isCurrent()) {
+            lookupReader(false)?.observeSourceSetupPublication(sourceSetupPublication);
+        }
+    }, [binding, lookupReader, presented, sourceSetupPublication]);
     const inspection = read && 'value' in read ? read.value : null;
     const effective = inspection?.effectiveDefinition;
     const effectiveDefinition = React.useMemo(() => readProjectEffectiveDefinition({ effectiveDefinition: effective }), [effective]);
