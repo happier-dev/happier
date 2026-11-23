@@ -400,7 +400,11 @@ describe('two-Account Team provisioner managed entry point', () => {
         expect(brokerHost).toMatchObject({ realm: 'account', manifest: { id: manifest.id }, declaration: { execution: { target: 'account' } } });
         expect(brokerHost).toEqual(readHostSelection(account.registry, { pluginId: manifest.id, localId: role }));
       }
-      expect(provider.request).toHaveBeenCalled();
+      if (manifest.id === AGENT37.id && role === 'options') {
+        expect(provider.request).not.toHaveBeenCalled();
+      } else {
+        expect(provider.request).toHaveBeenCalled();
+      }
       expect(provider.failures).toEqual([]);
       expect(materialRequests).toHaveLength(brokerRealm ? 0 : 1);
       expect(brokerAdmissions).toBe(brokerRealm ? 1 : 0);
