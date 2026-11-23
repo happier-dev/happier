@@ -25,7 +25,7 @@ let machineId: string;
 let workspaceDir: string;
 
 beforeAll(async () => {
-  fixture = await startTeamSetupFFixture({ testDir });
+  fixture = await startTeamSetupFFixture({ testDir, dbProvider: 'sqlite' });
   account = await fixture.createAccount('member');
   auth = account.auth;
   const enrolled = await fixture.enrollDaemon(account);
