@@ -36,7 +36,7 @@ async function createSocketMachine(owner?: { accountId: string; token: string })
     const keys = tweetnacl.sign.keyPair();
     const installationId = randomUUID();
     const machine = await db.machine.create({ data: {
-        id: randomUUID(), accountId, installationId, installationPublicKey: keys.publicKey,
+        id: randomUUID(), accountId, installationId, installationPublicKey: new Uint8Array(keys.publicKey),
         metadata: encodePlainMachineStoredContent(PUBLISHED_METADATA),
         dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
     } });
