@@ -27,12 +27,17 @@ describe('settled worktree removal identity', () => {
  });
  it('consumes unassociated removal after runtime recreation, clearing exact retained roots and preserving siblings', async () => {
   const f = createCaptureSqliteFixture();
+  const removalReads: (readonly DaemonDatabaseValue[])[] = [];
+  const database: DaemonDatabase = { ...f.db, query<T extends DaemonDatabaseRow>(statement: string, params: readonly DaemonDatabaseValue[] = []) {
+   if (statement.includes('FROM captureWorktrees')) removalReads.push(params);
+   return f.db.query<T>(statement, params);
+  } };
   let receive: ((event: HostEventEnvelope<'@happier/machine/service-observed'>) => void | Promise<void>) | undefined;
   // Authenticated host-event delivery is the boundary; the background owner and SQLite remain real.
   const host = { subscribe(_target: unknown, listener: typeof receive) { receive = listener; return { dispose() { receive = undefined; } }; } } as HostEvents;
   const first = createCaptureBackgroundOwner(), restarted = createCaptureBackgroundOwner();
   const lifetime = new AbortController(), secondLifetime = new AbortController();
-  const services = { storage: { daemon: { async database() { return f.db; } } }, events: { host } };
+  const services = { storage: { daemon: { async database() { return database; } } }, events: { host } };
   let running: Promise<void> | undefined, second: Promise<void> | undefined;
   try {
    for (const migration of captureMigrations.filter(migration => migration.version <= 2)) await migration.up(f.db);
@@ -56,6 +61,8 @@ describe('settled worktree removal identity', () => {
     kind: 'worktreeRemoved', serverId: 'server', occurredAt: 1, removal: { workspace: null, project: null, machineId: 'machine', operationId: 'remove', worktreePath: '/physical/project', outcome: 'removed', removalKind: 'retired' },
    } };
    await receive!(event);
+   expect(removalReads).toHaveLength(1);
+   expect(removalReads[0]).toContain('/physical/project');
    expect(await restarted.readRuntime()!.store.detail('selected', 'event')).toBeNull();
    expect(await restarted.readRuntime()!.store.detail('alias', 'event')).toBeNull();
    expect(await restarted.readRuntime()!.store.detail('sibling', 'event')).toEqual({ body: 'sibling' });
