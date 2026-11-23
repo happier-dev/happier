@@ -102,7 +102,12 @@ function resolveAgentInstallCommands(
   if (!commandsRaw || commandsRaw.length === 0) return null;
   return commandsRaw.map((c) => ({
     cmd: c.cmd,
-    args: [...c.args],
+    // Both the local and Session target executors use this plan. Preserve an
+    // upstream failure even when the last stage of a Bash pipeline exits zero.
+    args: runtimeSpec.manualInstallKind === 'vendor_recipe' && c.cmd === 'bash'
+      && (c.args[0] === '-c' || c.args[0] === '-lc')
+      ? ['-o', 'pipefail', ...c.args]
+      : [...c.args],
     requiresAdmin: Boolean(c.requiresAdmin),
     note: typeof c.note === 'string' ? c.note : null,
   }));

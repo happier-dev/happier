@@ -56,8 +56,8 @@ export const CODERABBIT_PLUGIN = definePlugin({
             manual: {
               kind: 'vendor_recipe',
               recipes: {
-                darwin: [{ cmd: 'sh', args: ['-c', 'curl -fsSL https://cli.coderabbit.ai/install.sh | CR_CLI_SKIP_LOGIN=1 sh'] }],
-                linux: [{ cmd: 'sh', args: ['-c', 'curl -fsSL https://cli.coderabbit.ai/install.sh | CR_CLI_SKIP_LOGIN=1 sh'] }],
+                darwin: [{ cmd: 'sh', args: ['-c', 'installer=$(curl -fsSL https://cli.coderabbit.ai/install.sh) && printf "%s\\n" "$installer" | CR_CLI_SKIP_LOGIN=1 sh'] }],
+                linux: [{ cmd: 'sh', args: ['-c', 'installer=$(curl -fsSL https://cli.coderabbit.ai/install.sh) && printf "%s\\n" "$installer" | CR_CLI_SKIP_LOGIN=1 sh'] }],
                 win32: [{ cmd: 'powershell.exe', args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', "$env:CR_CLI_SKIP_LOGIN = '1'; irm https://cli.coderabbit.ai/install.ps1 | iex"] }],
               },
             },

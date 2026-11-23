@@ -4395,22 +4395,70 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "environmentVariables": [
         "CODERABBIT_API_KEY"
       ],
-      "loginLaunches": [],
+      "loginLaunches": [
+        {
+          "args": [
+            "auth",
+            "login"
+          ],
+          "kind": "primary"
+        }
+      ],
       "missingCredentialState": "unknown",
-      "support": "status_only"
+      "support": "login_terminal"
     },
     "displayName": "CodeRabbit",
     "executable": {
       "binaryName": "coderabbit",
-      "knownUserBinDirSuffixes": null,
+      "knownEnvironmentBinDirs": [
+        {
+          "envVar": "LOCALAPPDATA",
+          "relativeDir": "Programs/coderabbit"
+        }
+      ],
+      "knownUserBinDirSuffixes": [
+        ".local/bin"
+      ],
       "sourcePreference": "system-first"
     },
     "install": {
-      "docsUrl": null,
-      "guideUrl": null,
+      "docsUrl": "https://docs.coderabbit.ai/cli",
+      "guideUrl": "https://docs.coderabbit.ai/cli",
       "managed": null,
       "manual": {
-        "kind": "command"
+        "kind": "vendor_recipe",
+        "recipes": {
+          "darwin": [
+            {
+              "args": [
+                "-c",
+                "installer=$(curl -fsSL https://cli.coderabbit.ai/install.sh) && printf \"%s\\n\" \"$installer\" | CR_CLI_SKIP_LOGIN=1 sh"
+              ],
+              "cmd": "sh"
+            }
+          ],
+          "linux": [
+            {
+              "args": [
+                "-c",
+                "installer=$(curl -fsSL https://cli.coderabbit.ai/install.sh) && printf \"%s\\n\" \"$installer\" | CR_CLI_SKIP_LOGIN=1 sh"
+              ],
+              "cmd": "sh"
+            }
+          ],
+          "win32": [
+            {
+              "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "$env:CR_CLI_SKIP_LOGIN = '1'; irm https://cli.coderabbit.ai/install.ps1 | iex"
+              ],
+              "cmd": "powershell.exe"
+            }
+          ]
+        }
       }
     }
   },
