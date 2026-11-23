@@ -20,7 +20,8 @@ import {
   type DeploySuggestionUnavailableMachine,
 } from '@/execution/llmTasks/suggestDeploySetup';
 import { isUsageLimitedRuntimeIssue, presentExecutionRunFailureSummary } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
-import { useSettingMutable } from '@/sync/domains/state/storage';
+import { useDeploymentSuggestionRunner } from '@/components/settings/deployments/DeploySuggestionRunnerSetting';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { storage } from '@/sync/domains/state/storageStore';
 import { buildQualifiedConnectedAccountLocalSubjectId } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { t } from '@/text';
@@ -67,7 +68,8 @@ export function useNewAppAutoSuggestions(
 ) {
   const { theme } = useUnistyles();
   const router = useRouter();
-  const [runnerChoice] = useSettingMutable('deploySuggestionRunnerV1');
+  const { binding } = useServerCredentialAccountScopeBinding(params.active ? params.serverId : null);
+  const runnerChoice = useDeploymentSuggestionRunner(binding ?? null);
   const [description, setDescription] = React.useState(params.initial?.description ?? '');
   const [phase, setPhase] = React.useState<Phase>(() => params.initial ? {
     kind: 'settled', outcome: { kind: 'recommendations', recommendations: [params.initial.chosen.recommendation], catalog: params.initial.chosen.catalog, dropped: [] }, runner: null,
@@ -120,7 +122,7 @@ export function useNewAppAutoSuggestions(
     answers?: Readonly<Record<string, InteractionTransientQuestionAnswerV1>>;
     note?: string;
   }>) => {
-    if (!params.serverId || !description.trim()) return;
+    if (!params.serverId || !description.trim() || runnerChoice === undefined || !binding?.isCurrent()) return;
     const serverId = params.serverId;
     const previous = followUp && round.current?.serverId === params.serverId ? round.current : null;
     const answers = previous ? { ...previous.answers, ...followUp?.answers } : followUp?.answers;
@@ -139,7 +141,7 @@ export function useNewAppAutoSuggestions(
       ...(previous && previous.connections === connections ? { catalog: previous.catalog } : {}),
       ...(answers ? { answers } : {}),
       ...(followUp?.note === undefined ? {} : { note: followUp.note }),
-      choice: runnerChoice ?? null,
+      choice: runnerChoice,
       signal: controller.signal,
       onProgress: (progress) => {
         if (progress.kind === 'run') runStop.current = progress.stop;
@@ -172,7 +174,7 @@ export function useNewAppAutoSuggestions(
       if (outcome.kind === 'recommendations') { lastRecommendations.current = outcome; setChosenCardId(cardId(0)); }
       setPhase({ kind: 'settled', outcome, runner });
     });
-  }, [connections, description, params.serverId, runnerChoice]);
+  }, [binding, connections, description, params.serverId, runnerChoice]);
 
   const suggest = React.useCallback(() => runSuggestion(), [runSuggestion]);
   const answerQuestions = React.useCallback((answers: Readonly<Record<string, InteractionTransientQuestionAnswerV1>>) =>
@@ -288,6 +290,7 @@ export function useNewAppAutoSuggestions(
 
   return {
     description,
+    runnerReady: runnerChoice !== undefined,
     setDescription,
     view,
     suggest,

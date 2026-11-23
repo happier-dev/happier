@@ -582,13 +582,13 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       ? deployFrame ? { ...deployFrame.primary, onPress: deployFrame.press } : null
       : step === 'auto'
       ? autoKind === 'describe'
-        ? { title: t('newApp.auto.suggest'), disabled: !auto.description.trim() || !scope, onPress: auto.suggest, testID: 'newApp.auto.suggest' }
+        ? { title: t('newApp.auto.suggest'), disabled: !auto.description.trim() || !auto.runnerReady, onPress: auto.suggest, testID: 'newApp.auto.suggest' }
         : autoKind === 'recommendations'
           ? { title: t('newApp.auto.useSetup'), disabled: auto.chosen === null, onPress: () => { void applySuggestionRef.current(); }, testID: 'newApp.auto.useSetup' }
           : autoKind === 'noAgent'
             ? { title: t('newApp.auto.addMachine'), disabled: false, onPress: addComputer, testID: 'newApp.auto.addMachine' }
           : autoKind === 'questions'
-            ? { title: t('newApp.auto.suggestAgain'), disabled: !questionAnswers?.ready,
+            ? { title: t('newApp.auto.suggestAgain'), disabled: !questionAnswers?.ready || !auto.runnerReady,
                 onPress: () => { if (questionAnswers?.ready) auto.answerQuestions(questionAnswers.answers); }, testID: 'newApp.auto.suggestAgain' }
             : null
       : step === 'start'
@@ -680,7 +680,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     step !== 'auto' || addingMachine ? null
     : adjustingNow ? [
         { title: t('common.back'), testID: 'newApp.auto.adjustBack', onPress: () => setAdjusting(false) },
-        { title: t('newApp.auto.suggestAgain'), testID: 'newApp.auto.suggestAgain', disabled: !adjustNote.trim(),
+        { title: t('newApp.auto.suggestAgain'), testID: 'newApp.auto.suggestAgain', disabled: !adjustNote.trim() || !auto.runnerReady,
           onPress: () => { const note = adjustNote.trim(); if (!note) return; setAdjusting(false); setAdjustNote(''); auto.suggestAgain(note); } },
       ]
     : autoKind === 'recommendations' ? [{ title: t('newApp.auto.adjust'), testID: 'newApp.auto.adjust', disabled: auto.chosen === null,

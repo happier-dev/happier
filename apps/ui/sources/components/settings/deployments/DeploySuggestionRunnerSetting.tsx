@@ -6,10 +6,25 @@ import { useThisComputerMachineId } from '@/components/machines/add/useMachineAd
 import { presentSettingWriteFailure } from '@/components/settings/shell/writeFailure';
 import { LlmTaskRunnerPicker } from '@/components/settings/llmTasks/LlmTaskRunnerPicker';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { useSettingMutable } from '@/sync/domains/state/storage';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { subscribeScopedAccountSettings } from '@/sync/ops/account/scopedAccountSettings';
 import { t } from '@/text';
 
 import { DEPLOYMENTS_SETTINGS } from './deploymentsSettings';
+
+/** Undefined while the exact Account choice is unavailable. A stored null means Auto. */
+export function useDeploymentSuggestionRunner(lifetime: ServerAccountScopeLifetime | null) {
+    const [value, setValue] = React.useState<Readonly<{
+        lifetime: ServerAccountScopeLifetime; choice: LlmTaskRunnerChoiceV1 | null;
+    }> | null>(null);
+    React.useEffect(() => {
+        if (!lifetime) return;
+        return subscribeScopedAccountSettings(lifetime, ['deploySuggestionRunnerV1'], settings => {
+            setValue(settings && lifetime.isCurrent() ? { lifetime, choice: settings.deploySuggestionRunnerV1 } : null);
+        });
+    }, [lifetime]);
+    return value?.lifetime === lifetime ? value.choice : undefined;
+}
 
 /**
  * Describe your app runs on the background-task runner this picks (the same picker commit messages use). Settings and a
@@ -28,7 +43,7 @@ export function DeploySuggestionRunnerSetting(props: Readonly<{
     limited?: LlmTaskRunnerConfigV1;
     testIDPrefix: string;
 }>) {
-    const [stored] = useSettingMutable('deploySuggestionRunnerV1');
+    const stored = useDeploymentSuggestionRunner(props.execution.binding ?? null);
     const choice = props.limited && isLlmTaskRunnerAutoV1(stored) ? props.limited : stored;
     const thisComputer = useThisComputerMachineId();
     const { execution } = props;
@@ -40,7 +55,7 @@ export function DeploySuggestionRunnerSetting(props: Readonly<{
     })(); }, [execution]);
     return <ItemGroup title={t('projects.deployments.autoSectionTitle')}>
         <LlmTaskRunnerPicker task="deploy_suggestion" value={choice} machineId={props.machineId ?? thisComputer} serverId={props.serverId}
-            engineFieldTitle={t('projects.deployments.autoAgentTitle')} disabled={!execution.ready}
+            engineFieldTitle={t('projects.deployments.autoAgentTitle')} disabled={!execution.ready || stored === undefined}
             testIDPrefix={props.testIDPrefix} onChange={write} />
     </ItemGroup>;
 }

@@ -31,6 +31,25 @@ const { IconButton } = await import('@/components/ui/buttons/IconButton');
 const original = storage.getState();
 afterEach(() => { standardCleanup(); storage.setState(original, true); router.resetParams(); vi.unstubAllGlobals(); });
 
+it('reads an off-focus Home’s runner preference for deployments instead of the focused Home’s choice', async () => {
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const { useMountedActionExecution } = await import('@/components/approvals/useMountedActionExecution');
+    const { DeploySuggestionRunnerSetting } = await import('@/components/settings/deployments/DeploySuggestionRunnerSetting');
+    const { LlmTaskRunnerPicker } = await import('@/components/settings/llmTasks/LlmTaskRunnerPicker');
+    const desired = { v: 1, mode: 'auto', permissionMode: 'read_only' } as const;
+    const home = await createSecretSettingsTestHarness({ mode: 'plain', settings: settingsParse({ deploySuggestionRunnerV1: desired }) });
+    const scope = (await captureLazyActionAccountContext(home.scope.serverId));
+    storage.setState({ settingsScope: null, settingsVersion: null, settings: settingsParse({ deploySuggestionRunnerV1: null }) });
+    function Harness() {
+        const execution = useMountedActionExecution(scope.accountLifetime.scope);
+        return <DeploySuggestionRunnerSetting serverId={scope.serverId} execution={execution} testIDPrefix="off-focus-runner" />;
+    }
+    const screen = await renderSettingsView(<InjectedAuthProvider credentials={home.credentials}><Harness /></InjectedAuthProvider>);
+    try {
+        await vi.waitFor(() => expect(screen.findAllByType(LlmTaskRunnerPicker)[0]?.props.value).toEqual(desired));
+    } finally { await screen.unmount(); scope.dispose(); await home.dispose(); }
+});
+
 describe('deployment defaults pages', () => {
     it.each(['plain', 'e2ee'] as const)('opens the searchable Account preference and saves through Settings Actions (%s)', async mode => {
         const pages = SETTINGS_PAGE_CATALOG.flatMap(root => root.children?.flatMap(group => group.children ?? []) ?? []);
