@@ -26,7 +26,7 @@ import { t } from '@/text';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 installTokenStorageTestIsolation('e2ee-password-recovery', { preserveGenerations: true });
-const router = vi.hoisted(() => ({ replace: vi.fn(), back: vi.fn() }));
+const router = vi.hoisted(() => ({ replace: vi.fn(), back: vi.fn(), canGoBack: vi.fn(() => true) }));
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router }).module);
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
@@ -132,7 +132,7 @@ beforeEach(async () => {
     }
     resetServerFeaturesClientForTests();
     installPasswordKdfWorkerBoundary();
-    router.replace.mockClear(); router.back.mockClear();
+    router.replace.mockClear(); router.back.mockClear(); router.canGoBack.mockReturnValue(true);
 });
 afterEach(async () => {
     blockFocus = false;
@@ -145,6 +145,16 @@ it('can leave recovery before proving a key without authenticating or mutating a
     await mount(); await screen!.pressByTestIdAsync('unauth-shell-back-chevron');
     expect(router.back).toHaveBeenCalledOnce(); expect(homes.requestsFor('/v1/auth')).toHaveLength(0);
     expect(homes.requestsFor(PREPARE)).toHaveLength(0); expect(homes.requestsFor(CHANGE)).toHaveLength(0);
+});
+it('returns to sign-in from a direct recovery link without an in-app back entry', async () => {
+    router.canGoBack.mockReturnValue(false);
+    const activeHome = getActiveServerSnapshot().serverId;
+    await mount('b');
+    await screen!.pressByTestIdAsync('unauth-shell-back-chevron');
+    expect(router.replace).toHaveBeenCalledWith('/');
+    expect(router.back).not.toHaveBeenCalled();
+    expect(getActiveServerSnapshot().serverId).toBe(activeHome);
+    expect(homes.requestsFor('/v1/auth')).toHaveLength(0);
 });
 it('names the Home being recovered by its label, not its raw address', async () => {
     await mount(); expect(screen!.findHostByTestId('e2ee-password-recovery-home')?.props.accessibilityLabel).toBe('Home A');

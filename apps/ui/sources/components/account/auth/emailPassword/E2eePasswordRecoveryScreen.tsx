@@ -1,6 +1,5 @@
 import { canonicalizeKeyChallengeV2AudienceOrigin } from '@happier-dev/protocol/auth/keyChallenge';
 import { normalizeVerifiedEmail } from '@happier-dev/protocol/auth/verifiedEmail';
-import { useRouter } from 'expo-router';
 import * as React from 'react';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -10,6 +9,7 @@ import { resolveHomeAuthenticationTarget, type ResolvedHomeAuthenticationTarget 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { presentFirstKeyCredentialLifecycle } from '@/components/account/presentFirstKeyCredentialLifecycle';
 import { SecretKeyEntryForm, type SecretKeyEntrySubmitResult } from '@/components/account/restore/SecretKeyEntryForm';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { usePortableHomeLinkTarget } from '@/components/teams/join/teamJoinTarget';
 import { Text } from '@/components/ui/text/Text';
 import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
@@ -76,6 +76,10 @@ export const E2eePasswordRecoveryScreen = React.memo(function E2eePasswordRecove
 ) {
     const auth = useAuth();
     const router = useRouter();
+    const leaveRecovery = () => {
+        if (router.canGoBack()) router.back();
+        else router.replace('/');
+    };
     // Acquiring the Home a recovery link names — observing it and proving its
     // stable identity before this device records it — belongs to the portable
     // Home link owner. This screen consumes the result and owns nothing about it.
@@ -269,7 +273,7 @@ export const E2eePasswordRecoveryScreen = React.memo(function E2eePasswordRecove
             testID="e2ee-password-recovery"
             progress={{ index: 1, count: 2 }}
             title={t('settingsAccount.nativePassword.resetTitle')}
-            onBack={() => router.back()}
+            onBack={leaveRecovery}
             primary={destinationState.kind === 'blocked'
                 ? { label: t('common.retry'), onPress: destinationState.retry }
                 : undefined}
@@ -293,7 +297,7 @@ export const E2eePasswordRecoveryScreen = React.memo(function E2eePasswordRecove
         return <AuthRouteStepFrame
             testID="e2ee-password-recovery"
             progress={{ index: 0, count: 2 }}
-            onBack={() => router.back()}
+            onBack={leaveRecovery}
             mark={<StepMark iconName="lifebuoy" />}
             title={t('settingsAccount.nativePassword.forgotTitle')}
             primary={{ label: t('settingsAccount.nativePassword.useRecoveryKey'), onPress: () => {}, disabled: true, iconName: 'key' }}
@@ -317,7 +321,7 @@ export const E2eePasswordRecoveryScreen = React.memo(function E2eePasswordRecove
         return <AuthRouteStepFrame
             testID="e2ee-password-recovery"
             progress={{ index: 0, count: 2 }}
-            onBack={() => router.back()}
+            onBack={leaveRecovery}
             title={t('settingsAccount.nativePassword.useRecoveryKey')}
             subtitle={t('connect.restoreWithSecretKeyDescription')}
             context={homeContext}
