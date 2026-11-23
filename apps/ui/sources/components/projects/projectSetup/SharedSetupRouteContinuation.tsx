@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { useCurrentRouteParamsSelector } from '@/components/appShell/workspace/currentRouteLocation';
+import { useDestinationParamsSelector } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useProjectSource } from '@/components/projects/sources/useProjectSources';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useServerScopedMachine } from '@/sync/store/hooks';
@@ -39,7 +39,7 @@ export function SharedSetupRouteContinuation(
   }>,
 ): null {
   const router = useRouter();
-  const sourceId = useCurrentRouteParamsSelector(selectRequestedSource);
+  const sourceId = useDestinationParamsSelector(selectRequestedSource);
   const source = useProjectSource(sourceId ? props.binding : null, sourceId);
   const machineName =
     useServerScopedMachine(
