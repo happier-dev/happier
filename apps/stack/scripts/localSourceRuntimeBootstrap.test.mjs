@@ -225,6 +225,42 @@ test('checkout tooling loads product packages at the committed revision, on the 
   assert.equal(afterMoveProbe.stdout, 'committed+helper');
 });
 
+test('a detached worktree pin survives its controller-only Git pointer on the worker', async t => {
+  const { readToolingPinManifest, refreshToolingPin } = await import('../bin/localToolingPackagePin.mjs');
+  const root = await mkdtemp(join(tmpdir(), 'happier-linked-tooling-pin-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const primary = join(root, 'primary');
+  const worktree = join(root, 'detached');
+  const mirror = join(root, 'worker');
+  const modulePath = 'packages/example/index.mjs';
+  await mkdir(join(primary, dirname(modulePath)), { recursive: true });
+  const git = (...args) => {
+    const result = spawnSync('git', ['-C', primary, '-c', 'user.name=fixture',
+      '-c', 'user.email=fixture@example.invalid', ...args], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  git('init', '-q');
+  await writeFile(join(primary, modulePath), 'export const revision = "detached";\n');
+  git('add', '--', modulePath);
+  git('commit', '-qm', 'detached basis');
+  const revision = git('rev-parse', 'HEAD');
+  git('worktree', 'add', '--detach', worktree, revision);
+  await writeFile(join(primary, modulePath), 'export const revision = "primary";\n');
+  git('commit', '-qam', 'primary moves on');
+
+  const pin = refreshToolingPin({ repoDir: worktree });
+  assert.equal(pin.revision, revision);
+  assert.notEqual(pin.blobs[modulePath], refreshToolingPin({ repoDir: primary }).blobs[modulePath]);
+  await mkdir(mirror);
+  await cp(join(worktree, '.happier-tooling-pin'), join(mirror, '.happier-tooling-pin'), { recursive: true });
+  // As on the worker, this is a synced control file without its controller metadata.
+  await writeFile(join(mirror, '.git'), 'gitdir: ../missing/worktrees/detached\n');
+  const mirrored = readToolingPinManifest({ repoDir: mirror });
+  assert.equal(mirrored?.hasGit, false);
+  assert.equal(mirrored?.blobs[modulePath], pin.blobs[modulePath]);
+});
+
 // P03-ENTRY-PARSE 2026-11-18: the workspace build loads the bundled-plugin
 // generator through a namespaced tsx loader, and the generator re-imports the
 // source runtime. tsx's namespace query made that a second module instance,

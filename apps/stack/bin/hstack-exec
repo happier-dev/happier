@@ -1464,7 +1464,7 @@ flush_selected_sync() {
   fi
   selected_sync_name=$(sync_name_for_target "$selected_name" "$selected_number") || return 1
   configure_mutagen_environment
-  exec "$script_dir/hstack-dev-target-control" \
+  HAPPIER_STACK_SYNC_SOURCE_DIR=$repo_root exec "$script_dir/hstack-dev-target-control" \
     --sync-flush "$selected_sync_name" \
     -- mutagen sync flush "$selected_sync_name"
 }

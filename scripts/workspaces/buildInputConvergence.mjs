@@ -1,8 +1,8 @@
-import { chmod, copyFile, cp, lstat, mkdir, readFile, readdir, readlink, realpath, rm, stat, symlink } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { chmod, copyFile, cp, lstat, mkdir, readFile, readdir, readlink, realpath, rm, stat, symlink, unlink } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { readCachedFileDigest } from '../../apps/stack/scripts/utils/fs/cached_file_digest.mjs';
 import { createHash } from 'node:crypto';
-import { readDependencyPublicationState, resolveDependencyInstallRoot, waitForDependencyRefresh } from '../../apps/stack/scripts/utils/proc/dependency_refresh.mjs';
+import { readDependencyPublicationState, resolveDependencyInstallRoot, resolveDependencyRefreshMarkerPath, waitForDependencyRefresh } from '../../apps/stack/scripts/utils/proc/dependency_refresh.mjs';
 import { readCurrentDependencyGeneration, resolveDependencyGenerationContainer } from '../../apps/stack/scripts/utils/proc/dependency_generations.mjs';
 import { buildInputDependencyIdentityMatches } from '../../packages/cli-common/sourceRuntimeDependencies.mjs';
 import cliDistBuildManifest from '../../packages/cli-common/cliDistBuildManifest.cjs';
@@ -187,8 +187,11 @@ export async function mountInstalledNodeModules({ sourceModules, targetModules, 
     if (error.code === 'ENOENT') return [];
     throw error;
   });
+  // Readiness authenticates the install's own input tree. Copying it into a
+  // capture can trigger pnpm refresh there when the captured inputs differ.
+  const readinessMarker = basename(resolveDependencyRefreshMarkerPath(dirname(installedModules)));
   for (const entry of entries) {
-    if (entry.name === '.pnpm-task-run-state-v1' || excludedNames.includes(entry.name)) continue;
+    if (entry.name === '.pnpm-task-run-state-v1' || entry.name === readinessMarker || excludedNames.includes(entry.name)) continue;
     const source = join(installedModules, entry.name);
     const target = join(targetModules, entry.name);
     const info = entry.isSymbolicLink() ? await stat(source) : entry;
@@ -196,7 +199,9 @@ export async function mountInstalledNodeModules({ sourceModules, targetModules, 
       if (error.code === 'ENOENT') return null;
       throw error;
     });
-    if (captured) {
+    if (captured?.isFile() && info.isDirectory()) {
+      await unlink(target);
+    } else if (captured) {
       // Preserve physical captured package inputs, while filling the remaining
       // scope from installed tools. Never recurse through an installed link.
       if (captured.isDirectory() && info.isDirectory()) {

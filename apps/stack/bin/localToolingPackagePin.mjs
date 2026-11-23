@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import * as nodeModule from 'node:module';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -95,11 +95,13 @@ function writeAtomic(path, bytes) {
   renameSync(temporary, path);
 }
 
-function git(repoDir, args, options = {}) {
+function git(repoDir, args, { allowMissingRepository = false, ...options } = {}) {
   // Read-only: never take the shared checkout's index lock (an index refresh by
   // `git diff` would, and a killed tool would leave it behind for every lane).
   const result = spawnSync('git', ['-C', repoDir, ...args], { maxBuffer: 1 << 30, windowsHide: true, ...options,
-    env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } });
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C' } });
+  if (allowMissingRepository && (result.error?.code === 'ENOENT'
+    || (result.status === 128 && String(result.stderr).includes('not a git repository')))) return null;
   if (result.status !== 0) {
     throw new Error(`[tooling-pin] git ${args[0]} failed (${result.status}): ${String(result.stderr ?? '').trim()}`);
   }
@@ -107,7 +109,7 @@ function git(repoDir, args, options = {}) {
 }
 
 /** HEAD's blob ids for every pinned module. The controller writes each distinct manifest once and moves the pointer only when it changes. */
-export function readToolingPinManifest({ repoDir, hasGit = existsSync(join(repoDir, '.git')), refreshChanged = false }) {
+export function readToolingPinManifest({ repoDir, hasGit, refreshChanged = false }) {
   const pinDir = join(repoDir, TOOLING_PIN_DIR);
   const pointerPath = join(pinDir, 'manifest.json');
   const manifestPath = digest => join(pinDir, 'manifests', `${digest}.json`);
@@ -127,15 +129,18 @@ export function readToolingPinManifest({ repoDir, hasGit = existsSync(join(repoD
       return pointer?.version === MANIFEST_VERSION ? pointer.manifest : null;
     } catch { return null; }
   };
+  // Only Git can distinguish a usable linked checkout from a mirrored gitfile
+  // pointing at the controller. Keep HEAD and its record scoped to the worktree.
+  const checkout = hasGit === false ? null : git(repoDir, [
+    'rev-parse', '--path-format=absolute', '--git-common-dir', '--git-path', 'happier-tooling-pin.json',
+    '--show-toplevel', '--verify', 'HEAD^{commit}',
+  ], { encoding: 'utf8', allowMissingRepository: hasGit !== true });
+  const [commonDir, headRecordPath, topLevel, revision] = checkout?.trim().split(/\r?\n/u) ?? [];
+  hasGit = Boolean(commonDir && topLevel && realpathSync(topLevel) === realpathSync(repoDir));
   if (!hasGit) {
     const recorded = readManifestFile(readPointer());
     return recorded ? { ...recorded, hasGit } : null;
   }
-  const [gitDir, revision] = String(git(repoDir, ['rev-parse', '--absolute-git-dir', '--verify', 'HEAD^{commit}'],
-    { encoding: 'utf8' })).trim().split(/\r?\n/u);
-  // Controller-local: which manifest this checkout's HEAD selects. It moves
-  // with every commit, so it lives in the Git directory, never in the mirror.
-  const headRecordPath = join(gitDir, 'happier-tooling-pin.json');
   let head = null;
   try { head = JSON.parse(readFileSync(headRecordPath, 'utf8')); } catch { /* absent */ }
   if (head?.version === MANIFEST_VERSION && head.revision === revision && readPointer() === head.manifest) {
@@ -366,8 +371,8 @@ export async function load(url, context, nextLoad) {
  * last commit. Only changed modules are diffed and copied.
  */
 export function refreshToolingPin({ repoDir }) {
-  if (!existsSync(join(repoDir, '.git'))) return null;
-  return readToolingPinManifest({ repoDir, hasGit: true, refreshChanged: true });
+  const manifest = readToolingPinManifest({ repoDir, refreshChanged: true });
+  return manifest?.hasGit ? manifest : null;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url) && process.argv[2] === '--refresh') {
