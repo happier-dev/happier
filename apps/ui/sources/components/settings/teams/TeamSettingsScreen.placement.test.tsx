@@ -79,6 +79,10 @@ it('selects a pool preset in mounted Team Settings, retains its name, and clears
 
     const screen = await renderScreen(<TeamNewMembersScreen serverId={serverId} teamId="team-1" />);
     const { getPermissionModeLabelForAgentType } = await import('@/sync/domains/permissions/permissionModeOptions');
+    const otherAgents = () => screen.findAll(node => node.props.testID === 'team-new-members-defaults-otherAgents'
+        && typeof node.props.onExpandedChange === 'function')[0];
+    await waitForHomeGovernance(() => expect(otherAgents()).toBeDefined());
+    await act(async () => { otherAgents()!.props.onExpandedChange(true); });
     const agent = () => screen.findAll(node => node.props.testID === 'team-new-members-defaults-agent:claude'
         && typeof node.props.onExpandedChange === 'function')[0];
     await waitForHomeGovernance(() => expect(agent()).toBeDefined());

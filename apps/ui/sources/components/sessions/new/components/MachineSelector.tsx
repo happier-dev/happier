@@ -82,7 +82,8 @@ export interface MachineSelectorProps {
     /** A short fact about one machine ("This machine"), shown in the dropdown row's subtitle. */
     describeMachine?: (machine: Machine) => string | null;
     dropdownTitle?: string;
-    dropdownSubtitle?: string | null;
+    /** Can include the exact selected label the picker already resolved. */
+    dropdownSubtitle?: string | null | ((selectedTitle: string | null) => string);
     dropdownTestID?: string;
     popoverBoundaryRef?: React.RefObject<RNView> | null;
     /**
@@ -135,7 +136,9 @@ function renderMachineSelectorDropdown(
         matchTriggerWidth connectToTrigger popoverBoundaryRef={props.popoverBoundaryRef}
         itemTrigger={{
             title: props.dropdownTitle ?? t('newSession.selectMachineTitle'),
-            subtitle: props.dropdownSubtitle ?? selectedTitle ?? t('newSession.selectMachineDescription'),
+            subtitle: (typeof props.dropdownSubtitle === 'function'
+                ? props.dropdownSubtitle(selectedTitle ?? null) : props.dropdownSubtitle)
+                ?? selectedTitle ?? t('newSession.selectMachineDescription'),
             showSelectedDetail: false, showSelectedSubtitle: false,
             // A Machine choice is a preference row and carries no icon.
             itemProps: { testID: props.dropdownTestID },
