@@ -122,6 +122,7 @@ describe('Review round preparation', () => {
       executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: 'review-machine' }),
       reviewEnginesList: async input => {
         inventoryReads++;
+        expect(input.engineIds).toEqual(['codex']);
         expect(input.profileSelections).toEqual([{ engineId: 'codex', profileId: 'paid-profile',
           profileSourceCustody: { kind: 'development', registeredRootId: 'paid-root' } }]);
         return { items: [], selectionItems: [{ engineId: 'codex', value: 'codex', label: 'Paid reviewer', enabled: true,

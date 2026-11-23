@@ -3790,10 +3790,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
             && error.cause !== undefined ? { details: error.cause } : {}) };
       }
     },
-    reviewEnginesList: async ({ sessionId, machineId, includeDisabled, scope }) => {
+    reviewEnginesList: async ({ sessionId, machineId, includeDisabled, engineIds, scope, profileSelections }) => {
       if (!accountContext) return { ok: false, errorCode: 'not_authenticated', errorMessage: 'not_authenticated' };
-      const result = await listReviewEnginesForVoiceTool({ sessionId, machineId, includeDisabled, scope, serverId: accountContext.serverId,
-      }, accountContext);
+      const result = await listReviewEnginesForVoiceTool({ sessionId, machineId, includeDisabled, engineIds, scope, profileSelections,
+        serverId: accountContext.serverId }, accountContext);
       accountContext.assertCurrent();
       return result;
     },

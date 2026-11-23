@@ -365,6 +365,7 @@ export const ReviewEnginesListInputSchema = lazyZodSchema(() => z.looseObject({
   sessionId: z.optional(z.nullable(z.string().check(z.minLength(1)))),
   machineId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   includeDisabled: z.optional(z.boolean()),
+  engineIds: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
   scope: z.optional(ReviewEngineScopeSchema),
   profileSelections: z.optional(z.array(ReviewEngineProfileSelectionSchema)),
 }));

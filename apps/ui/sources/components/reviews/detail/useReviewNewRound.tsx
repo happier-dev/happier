@@ -43,6 +43,7 @@ async function readNewRoundInventory(execute: Execution['execute'], machineId: s
         ? [{ engineId: reviewer.engineId, profileId: reviewer.profileId,
             ...(reviewer.profileSourceCustody ? { profileSourceCustody: reviewer.profileSourceCustody } : {}) }] : []);
     const result = await execute('review.engines.list', { sessionId: null, machineId, includeDisabled: false,
+        engineIds: [...new Set(reviewers.flatMap(reviewer => reviewer.kind === 'engine' ? [reviewer.engineId] : []))],
         ...(profileSelections.length ? { profileSelections } : {}) }, { executionRunTargetMachineId: machineId });
     if (!result.ok) throw Object.assign(new Error(resolveActionExecutionErrorMessage(result, t('common.error'))), result);
     return ReviewEngineInventorySchema.parse(result.result);

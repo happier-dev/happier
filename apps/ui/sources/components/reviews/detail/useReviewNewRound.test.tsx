@@ -70,6 +70,7 @@ it.each([false, true])('opens the actual native New round with exact inventory a
       inventoryInputs.push(input);
       expect(context.target.machineId).toBe('selected-machine');
       expect(input).toMatchObject({ sessionId: null, machineId: 'selected-machine',
+        engineIds: [paid ? 'claude' : 'opencode'],
         ...(paid ? { profileSelections: [{ engineId: 'claude', profileId: 'paid-profile',
           profileSourceCustody: { kind: 'development', registeredRootId: 'selected-root' } }] } : {}) });
       if (paid && inventoryInputs.length === 1) throw Object.assign(new Error('Catalog unavailable'), { code: 'target_unavailable' });

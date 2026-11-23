@@ -7081,6 +7081,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const res = await deps.reviewEnginesList({
             ...target.target,
             ...(typeof data.includeDisabled === 'boolean' ? { includeDisabled: data.includeDisabled } : {}),
+            ...(args.engineIds ? { engineIds: args.engineIds } : {}),
             ...(args.scope ? { scope: args.scope } : {}),
             ...(args.profileSelections ? { profileSelections: args.profileSelections } : {}),
           }, ctx);

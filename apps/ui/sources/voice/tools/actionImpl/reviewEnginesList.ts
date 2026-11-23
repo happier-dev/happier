@@ -16,6 +16,7 @@ const normalizeId = (raw: unknown) => typeof raw === 'string' ? raw.trim() : '';
 /** The daemon owns the inventory and launch defaults; the UI only chooses the exact transport target. */
 export async function listReviewEnginesForVoiceTool(params: Readonly<{
   sessionId: string | null; machineId?: string; includeDisabled?: boolean; scope?: 'paths'; serverId?: string;
+  engineIds?: readonly string[];
   profileSelections?: readonly ReviewEngineProfileSelection[];
 }>, capturedAccount?: LazyActionAccountContext): Promise<unknown> {
   const detached = params.sessionId === null;
@@ -41,6 +42,7 @@ export async function listReviewEnginesForVoiceTool(params: Readonly<{
     const response = await executeOriginalAccountMachineAction({ account, machineId, actionId: 'review.engines.list',
       requestId: randomUUID(), input: { sessionId: null, machineId,
         ...(params.includeDisabled !== undefined ? { includeDisabled: params.includeDisabled } : {}),
+        ...(params.engineIds ? { engineIds: params.engineIds } : {}),
         ...(params.scope ? { scope: params.scope } : {}),
         ...(params.profileSelections ? { profileSelections: params.profileSelections } : {}) },
       ...(account.invocationSignal ? { signal: account.invocationSignal } : {}),

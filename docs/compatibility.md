@@ -10477,6 +10477,16 @@ together; older strict development readers reject the added field. The inspected
 earlier native-engine list, not this inventory contract. This adds no persisted
 consent, runtime ABI, wire epoch or mixed-development adapter.
 
+The existing `review.engines.list` read optionally accepts `engineIds` to
+restrict readiness and model observations to the requested roster. Review start,
+Retry and New round pass only their reviewers; omission retains the full inventory and an
+empty array returns no engines. The existing additive input and closed inventory
+output keep their policies; no identity, authority, routing or stored shape
+changes. Older readers may safely ignore the filter and return the full list.
+The inspected `../0.2` frontier at `001ec4ea8502c60053ba5a32baeb30f806b2352a`
+has the earlier native-engine list with a loose input. No wire epoch, package
+version or compatibility adapter changes.
+
 Unreleased 0.3 Review engine inventory and discovery retain the declared
 `repository` scope alongside `worktree` and `paths`. Repository Review admission
 rejects explicit selected-file aliases, captured comparisons and pull requests

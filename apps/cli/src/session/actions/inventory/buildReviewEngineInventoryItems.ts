@@ -119,6 +119,7 @@ export function selectReviewEngineAgentIds(
 export async function buildReviewEngineInventoryItems(params: Readonly<{
   limit?: unknown;
   includeDisabled?: boolean;
+  engineIds?: readonly string[];
   accountSettings?: AccountSettings | null;
   acpCatalogSnapshot?: AcpCatalogSnapshotV1;
   scope?: ReviewEngineScope;
@@ -173,7 +174,8 @@ export async function buildReviewEngineInventoryItems(params: Readonly<{
       reviewScopes: [...ReviewEngineScopeSchema.options],
       ...(item.description ? { description: item.description } : {}),
     }));
-  const roster = [...agentItems, ...configuredItems];
+  const roster = [...agentItems, ...configuredItems]
+    .filter(item => !params.engineIds || params.engineIds.includes(item.engineId) || params.engineIds.includes(item.value));
   const readiness = roster.length > 0 ? await params.readReadiness?.(roster.map(item => item.value)) : null;
   const visible = roster
     .map((item, index) => ({ item, state: readiness?.[index] }))

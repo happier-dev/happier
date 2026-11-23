@@ -658,7 +658,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
         throw error;
       }
     },
-    reviewEnginesList: async ({ sessionId, machineId, includeDisabled, scope, profileSelections }, context = {}) => {
+    reviewEnginesList: async ({ sessionId, machineId, includeDisabled, engineIds, scope, profileSelections }, context = {}) => {
       const captured = await readAcpCatalogSnapshot(context.signal);
       const selectedMachineId = machineId ?? params.localMachineId;
       const authorization = context.externalActionExecutionAuthorization;
@@ -672,6 +672,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
       });
       const inventory = await (await import('./buildReviewEngineInventoryItemsLazy')).buildReviewEngineInventoryItemsLazy({
         includeDisabled,
+        engineIds,
         scope,
         profileSelections,
         accountSettings: captured.account.settings,

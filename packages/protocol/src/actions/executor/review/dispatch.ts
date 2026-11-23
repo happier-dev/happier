@@ -344,6 +344,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           sessionId,
           ...(detached && dispatchOptions?.targetMachineId ? { machineId: dispatchOptions.targetMachineId } : {}),
           includeDisabled: false,
+          engineIds: [...new Set(reviewers.flatMap(selection => selection.kind === 'engine' ? [selection.engineId] : []))],
           ...(profileSelections.length > 0 ? { profileSelections } : {}),
           scope: reviewScopeForInput(reviewInput),
         }, ctx);

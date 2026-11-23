@@ -44,6 +44,25 @@ function runCapableDefinition(definition: Record<string, unknown>) {
 }
 
 describe('buildReviewEngineInventoryItems', () => {
+  it.each([false, true])('reads readiness only for the requested reviewer roster (empty %s)', async empty => {
+    const agents = ['selected', 'unrelated'].map(id => projectManifestAgentContribution({
+      pluginId: 'acme.review', provenance: 'external', source: { kind: 'path' },
+      definition: PluginAgentContributionV2Schema.parse({ id, title: id, primary: 'executionRuns', runtime: { kind: 'custom' },
+        capabilities: { executionRuns: { open: ['create'], checkpoint: false, stop: true } } }),
+    }));
+    const selected = agents[0]!;
+    const requested = empty ? [] : [selected.id];
+    const readinessReads: string[][] = [];
+    const inventory = await buildReviewEngineInventory({
+      acpCatalogSnapshot: emptyCatalog,
+      registrySnapshot: { agentDefinitionsById: new Map(agents.map(agent => [agent.id, agent])), executionRunProfiles: [] },
+      engineIds: requested,
+      readReadiness: async targets => { readinessReads.push([...targets]); return targets.map(() => 'ready' as const); },
+    });
+    expect(inventory.items.map(item => item.engineId)).toEqual(requested);
+    expect(readinessReads).toEqual(empty ? [] : [[inventory.items[0]!.value]]);
+  });
+
   it.each([true, false])('admits an explicitly connected Pi reviewer while preserving executable prerequisites (installed %s)', async installed => {
     const agent = projectManifestAgentContribution({ pluginId: 'happier.agent.pi', provenance: 'first_party', source: { kind: 'bundled' },
       definition: PluginAgentContributionV2Schema.parse({ id: 'pi', title: 'Pi', primary: 'sessions', runtime: { kind: 'custom' },
