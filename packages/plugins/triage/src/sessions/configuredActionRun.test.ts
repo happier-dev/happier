@@ -27,7 +27,11 @@ import { readTriageActionsForSurface } from '../actions/actionsCatalog.js';
 import { createTestkitAccountKv } from '../settings/testkit/accountKv.test-support.js';
 import { mutateTriageAction, TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 } from '../settings/actions.js';
 import { parseTriageComposerEntryAttachmentValue, readTriageComposerForgeEvidenceV1 } from '../composer/attachmentValue.js';
-import { PLUGIN_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol';
+import { ActionDefinitionSummaryV1Schema, PLUGIN_ACTION_INPUT_SCHEMAS, projectSessionSummaryV1 } from '@happier-dev/protocol';
+import { createActionExecutor, formatQualifiedPluginActionId } from '@happier-dev/protocol/actions';
+import { createActionExecutorBoundaryFixture } from '../../../../tests/src/testkit/actionExecutorBoundary.js';
+import { PLUGIN_MANIFEST } from '../manifest.js';
+import { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1 } from '../actions/configuredActionRunProtocol.js';
 import { buildAgentTargetKeyV2, type AgentExecutionTargetV1 } from '@happier-dev/plugin-sdk/agents';
 import { SessionPullRequestWatchReadResultV1Schema, SessionPullRequestWatchInputV1Schema } from '@happier-dev/channels-protocol/v1';
 import { requestTriageSessionHandoffV1 } from '@happier-dev/triage-sources/runtime';
@@ -1568,7 +1572,11 @@ describe('configured action execution through the shared Session owner', () => {
         { delivery: 'compose', exhausted: false, outcome: 'accepted' }, { delivery: 'send', exhausted: false, outcome: 'accepted' },
         { delivery: 'send', exhausted: true, outcome: 'accepted' }, { delivery: 'send', exhausted: false, outcome: 'rejected' },
         { delivery: 'send', exhausted: false, outcome: 'uncertain' }, { delivery: 'send', exhausted: false, outcome: 'outstanding' },
-    ] as const)('verifies an existing PR checkout before $delivery without bypassing exhausted fixing custody ($exhausted, $outcome)', async ({ delivery, exhausted, outcome }) => {
+        { delivery: 'send', exhausted: false, outcome: 'accepted', requester: 'agent' },
+        { delivery: 'send', exhausted: false, outcome: 'held', requester: 'agent' },
+    ] as const)('verifies an existing PR checkout before $delivery ($requester $exhausted $outcome)', async (scenario) => {
+        const { delivery, exhausted, outcome } = scenario;
+        const fromAgent = 'requester' in scenario;
         const effects: string[] = [];
         const selected = { entryRef: testkitEntryRef(), sourceInstanceId: entry.sourceInstance.sourceInstanceId };
         const locator = testkitLocator({ webUrl: 'https://github.com/example/repository/pull/17' });
@@ -1586,7 +1594,7 @@ describe('configured action execution through the shared Session owner', () => {
                 reason: exhausted ? 'exhausted' : null, fixAttemptLimit: 3, roundsStarted: exhausted ? 3 : 0,
                 progress: { roundsStarted: exhausted ? 3 : 0, continuationRounds: 0 }, watchingMachine: null }, latestUpdate: null,
         }] });
-        const host = {
+        const hostTransport = {
             context: async () => ({ targetedContributions: { target: { pluginId: 'happier.triage', occurrenceId: 'target-1',
                 sourceCustody: { kind: 'development', registeredRootId: 'triage-root' } }, points: [{ pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
                 protocols: [{ protocol, contributions: [{ contributor, protocol, descriptor: { v: 1, purpose: 'triage-source', displayName: 'Selected source',
@@ -1619,6 +1627,10 @@ describe('configured action execution through the shared Session owner', () => {
                                 : outcome === 'outstanding' ? { kind: 'configuredFixHeld', reason: 'outstanding' }
                                 : outcome === 'uncertain' && watchRequests.length === 2 ? { kind: 'configuredFixUncertain' }
                                 : outcome === 'rejected' ? { kind: 'configuredFixResult', result: { status: 'rejected', code: 'session_input_cancelled' } }
+                                : outcome === 'held' ? { kind: 'configuredFixResult', result: { status: 'held', localId: 'verified-pr-input',
+                                    code: 'session_input_target_unavailable',
+                                    failureCause: { phase: 'session.message.send', errorClass: 'UnknownThrownValue',
+                                        errorCode: 'held_by_person', httpStatus: null } } }
                                 : { kind: 'configuredFixResult', result: { status: 'accepted', localId: 'verified-pr-input' } };
                         } catch (error) { boundaryFailures.push(error); throw error; }
                     }
@@ -1639,13 +1651,65 @@ describe('configured action execution through the shared Session owner', () => {
                 if (id === 'session.message.send') return { status: 'accepted', localId: 'verified-pr-input' };
                 throw new Error(`Unexpected creation or selection ${id}`);
             },
-        } as unknown as TestAccountActionContext['ui']; // Actual source/Session/Composer RPC boundaries; selection is deliberately absent.
+        };
+        const host = hostTransport as unknown as TestAccountActionContext['ui']; // RPC boundaries, without an input selector.
         const input = parseHandoffInput({ v: 1, handoff: { task: 'fix', configuredActionId: 'fix',
             context: { kind: 'entry', entry: selected }, evidence: [{ kind: 'entry', entry: selected }],
             sessionChoice: { kind: 'existing', session: 'session-a' }, agentChoice: { kind: 'configured' }, delivery } });
-        const result = await createTriageRunConfiguredActionHandler()(input, { ui: host, signal: new AbortController().signal,
-            sessionTargetsV1: { targets: [{ serverId: 'server-a', sessionId: 'session-a' }] } } as unknown as TestAccountActionContext);
+        const handler = createTriageRunConfiguredActionHandler();
+        const address = { serverId: 'server-a', sessionId: 'session-a' };
+        const signal = new AbortController().signal;
+        const runAsAgent = async () => {
+            const snapshot = await hostTransport.context();
+            const contributions = snapshot.targetedContributions?.points[0]?.protocols[0]?.contributions;
+            expect(contributions).toHaveLength(1);
+            const declaration = PLUGIN_MANIFEST.contributes?.actions?.find(item => item.id === TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1);
+            if (!declaration) throw new Error('Missing configured Action declaration');
+            const actionRef = { pluginId: PLUGIN_MANIFEST.id, localId: declaration.id };
+            const actionId = formatQualifiedPluginActionId(actionRef);
+            const definition = ActionDefinitionSummaryV1Schema.parse({
+                id: actionId, title: 'Run a configured entry action', description: null,
+                safety: 'danger', sideEffectClass: 'write', executionPlacement: 'account',
+                placements: [], slash: null, bindings: null, examples: null, inputHints: null,
+                sessionTarget: declaration.sessionTarget,
+                surfaces: Object.fromEntries(declaration.surfaces.map(surface => [surface, true])),
+            });
+            const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+                listContributedActionDefinitions: () => [definition],
+                resolveSessionReference: async () => ({ kind: 'unique', address }),
+                invokeContributedAction: async request => {
+                    expect(request.context).toMatchObject({ surface: 'agent', authority: 'account_automation' });
+                    const result = await handler(TriagePublicHandoffActionInputV1Schema.parse(request.input), {
+                        signal, surface: request.context.surface, sessionTargetsV1: request.context.sessionTargetsV1,
+                        services: {
+                            targetedContributions: { observeForSelf: () => ({
+                                readCurrent: async () => ({ contributions }), dispose() {},
+                            }) },
+                            actions: { execute: async (id: Parameters<typeof hostTransport.executeAction>[0], value: JsonValue) => {
+                                if (id === 'session.status.get') return { session: projectSessionSummaryV1({
+                                    row: { id: address.sessionId, createdAt: 1, updatedAt: 2, active: false, activeAt: 1 },
+                                    metadata: null, encryption: null,
+                                }), acceptedWorkspace };
+                                return hostTransport.executeAction(id, value);
+                            } },
+                        },
+                    } as unknown as PluginAccountActionContext); // Host transport to the portable Account handler.
+                    return { ok: true, result };
+                },
+            }));
+            const result = await executor.execute('action.invoke', { action: actionRef, input }, {
+                surface: 'agent', authority: 'account_automation', serverId: address.serverId, signal,
+                defaultSessionId: address.sessionId,
+                actionCaller: { kind: 'session', sessionId: address.sessionId, starterDepth: 0, turnDepth: 0 },
+            });
+            if (!result.ok) throw new Error(JSON.stringify(result));
+            return TriagePublicHandoffActionResultV1Schema.parse(result.result);
+        };
+        const result = fromAgent ? await runAsAgent() : await handler(input, {
+            ui: host, signal, sessionTargetsV1: { targets: [address] },
+        } as unknown as TestAccountActionContext);
         expect(boundaryFailures).toEqual([]);
+        if (fromAgent) expect(result).toMatchObject({ handoff: { kind: 'sendResult' } });
         if (delivery === 'send') expect(watchRequests).toHaveLength(2);
         if (exhausted || outcome === 'outstanding' || outcome === 'uncertain') {
             expect(effects).not.toContain('session.message.send');
@@ -1663,6 +1727,7 @@ describe('configured action execution through the shared Session owner', () => {
         }
         expect(result).toMatchObject({ v: 1, handoff: delivery === 'compose' ? { kind: 'composed' }
             : outcome === 'rejected' ? { kind: 'sendResult', result: { status: 'rejected', code: 'session_input_cancelled' } }
+            : outcome === 'held' ? { kind: 'sendResult', result: { status: 'held', failureCause: { errorCode: 'held_by_person' } } }
             : { kind: 'sendResult', result: { status: 'accepted', localId: 'verified-pr-input' } } });
         const effect = delivery === 'compose' ? 'applyComposer' : 'channels:deliverConfiguredFix';
         expect(effects).not.toContain('session.message.send');

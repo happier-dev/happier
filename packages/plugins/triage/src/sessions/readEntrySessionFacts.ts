@@ -74,6 +74,10 @@ export async function readTriageEntrySessionFactsV1(
     const facts = sourceFacts(contributions, selected.entryRef);
     const operation = facts.operation;
     const reviewRevision = present.snapshot.reviewRevision;
+    const observedReviewWorkspace = reviewRevision === undefined ? undefined : {
+        entryRef: selected.entryRef, lastKnownLocator: present.locator,
+        observed: { ...reviewRevision, observedAtMs: observation.observedAtMs },
+    };
     return {
         key: triageEntryRowKey(selected.entryRef), entryRef: selected.entryRef,
         sourceInstance: { source: selected.entryRef.source, sourceInstanceId: selected.sourceInstanceId },
@@ -84,11 +88,8 @@ export async function readTriageEntrySessionFactsV1(
         ...(observed.investigationDefaults === undefined ? {} : { investigationDefaults: observed.investigationDefaults }),
         workflowSubject: facts.workflowSubject,
         ...(present.repository === undefined ? {} : { repository: present.repository }),
-        ...(operation === undefined || reviewRevision === undefined ? {} : {
-            reviewWorkspace: { operation, preparation: {
-                instance: detail.instance, entryRef: selected.entryRef, lastKnownLocator: present.locator,
-                observed: { ...reviewRevision, observedAtMs: observation.observedAtMs },
-            } },
-        }),
+        ...(observedReviewWorkspace === undefined ? {} : operation === undefined
+            ? { reviewWorkspacePreparation: observedReviewWorkspace }
+            : { reviewWorkspace: { operation, preparation: { instance: detail.instance, ...observedReviewWorkspace } } }),
     };
 }

@@ -106,6 +106,7 @@ export async function runTriageConfiguredHandoffV1(
     const primary = selected === undefined ? undefined : options.entries.find((entry) =>
         sameTriageEntryReference(entry.entryRef, selected.entryRef) && entry.sourceInstance.sourceInstanceId === selected.sourceInstanceId);
     if (selected !== undefined && primary === undefined) return unavailable('evidenceInvalid');
+    const reviewWorkspacePreparation = primary?.reviewWorkspace?.preparation ?? primary?.reviewWorkspacePreparation;
     if (primary !== undefined && input.sessionChoice.kind !== 'existing' && options.resumeStart !== undefined) {
         const recovery = options.resumeStart;
         const original = 'handoff' in recovery ? recovery.handoff : undefined;
@@ -283,12 +284,11 @@ export async function runTriageConfiguredHandoffV1(
             const accepted = eligibility.workspace;
             if (suppliedWorkspace !== undefined && !sameWorkspace(suppliedWorkspace, accepted.checkout)) return unavailable('scopeMismatch');
             if (action.workspaceMode === 'pull_request') {
-                const preparation = primary?.reviewWorkspace?.preparation;
-                if (primary === undefined || preparation === undefined) return targetUnavailable('existing_session_review_preparation_missing');
+                if (primary === undefined || reviewWorkspacePreparation === undefined) return targetUnavailable('existing_session_review_preparation_missing');
                 const verified = TriageVerifyExistingReviewWorkspaceResultV1Schema.safeParse(await host.executeAction(
                     { pluginId: 'happier.triage', localId: TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1 }, { v: 1, session: existing,
                         entryRef: primary.entryRef, sourceInstanceId: primary.sourceInstance.sourceInstanceId,
-                        lastKnownLocator: preparation.lastKnownLocator, observed: preparation.observed }, cancellation).catch(() => null));
+                        lastKnownLocator: reviewWorkspacePreparation.lastKnownLocator, observed: reviewWorkspacePreparation.observed }, cancellation).catch(() => null));
                 if (!verified.success || verified.data.kind !== 'verified' || !sameWorkspace(verified.data.checkout, accepted.checkout)) return targetUnavailable('existing_session_review_verification_failed');
                 verifiedReviewWorkspace = true;
             }
@@ -401,9 +401,8 @@ export async function runTriageConfiguredHandoffV1(
         if (sendConfiguredFix) {
             const unavailableFix = () => new PluginError({ code: 'triage_configured_fix_unavailable',
                 message: 'Retain this Fix input and retry its current PR watch.', retryable: true });
-            const preparation = primary.reviewWorkspace?.preparation;
             const pullRequest = parseGithubConversationUrlV1(primary.display.locator.webUrl ?? '');
-            if (!knownSession || !preparation || pullRequest?.kind !== 'githubPullRequest'
+            if (!knownSession || !reviewWorkspacePreparation || pullRequest?.kind !== 'githubPullRequest'
                 || !('message' in value) || !('idempotencyKey' in value) || typeof value.idempotencyKey !== 'string') throw unavailableFix();
             const watch = { pluginId: 'happier.channels', localId: SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1 };
             const watchOptions = { signal: options.signal, sessionAddress: knownSession };
@@ -418,7 +417,7 @@ export async function runTriageConfiguredHandoffV1(
             if (!binding || options.signal.aborted) throw unavailableFix();
             const request = SessionPullRequestConfiguredFixInputV1Schema.parse({ kind: 'deliverConfiguredFix', sessionId: knownSession.sessionId,
                 bindingId: binding.bindingId, expectedRevision: binding.revision,
-                pullRequest: { repository: binding.link.repository, number: binding.link.number }, expectedHeadSha: preparation.observed.headSha,
+                pullRequest: { repository: binding.link.repository, number: binding.link.number }, expectedHeadSha: reviewWorkspacePreparation.observed.headSha,
                 delivery: { idempotencyKey: value.idempotencyKey, text: value.message,
                     ...('attachments' in value && value.attachments ? { attachments: value.attachments } : {}) } });
             const delivered = SessionPullRequestConfiguredFixResultV1Schema.parse(await host.executeAction(watch, request, watchOptions));
