@@ -1928,9 +1928,13 @@ describe('retained global Voice Run authority', () => {
         if (method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START) return { ok: true, runId: retainedRun.runId, created: false };
         throw new Error(`Unexpected retained Run RPC: ${method}`);
       });
+      const settings = normalizeVoiceSettingsLocalDelta({
+        voice: { providers: { local_conversation: { schemaVersion: 1, config: { agent: { rootSessionPolicy: 'continue' } } } } },
+      }, storage.getState().settings);
+      if (!('voiceSettingsV1' in settings)) throw new Error('Expected the canonical Voice settings projection');
       harness = await createStandaloneVoicePolicyHarness({ mode: 'off', dispatch, initializeSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
         machines: [createHydratedPlainMachineFixture({ id: 'voice-machine', accountId: 'account-a', machine: { activeAt: Date.now() } })],
-        settings: normalizeVoiceSettingsLocalDelta({ voice: { providers: { local_conversation: { schemaVersion: 1, config: { agent: { rootSessionPolicy: 'continue' } } } } } }, storage.getState().settings),
+        settings,
         handleRequest: async (path, init) => path === '/v1/machines'
           ? Response.json([createPlainMachineRowFixture({ id: 'voice-machine', accountId: 'account-a' })])
           : createPlainMachineReadHttpResponseFixture(path, init, 'account-a') ?? createEmptyAccountBootstrapHttpResponse(path, init),

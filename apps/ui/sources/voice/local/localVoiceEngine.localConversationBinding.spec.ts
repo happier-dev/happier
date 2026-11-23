@@ -405,7 +405,7 @@ describe('local voice engine local conversation binding', () => {
             expect(confirmation.type).toBe('custom');
             expect(artifacts.list()).toEqual([]);
             expect(createCarrier).not.toHaveBeenCalled();
-            if (confirmation.type !== 'custom') throw new Error('Expected the receiving daemon review');
+            if (confirmation.type !== 'custom' || !confirmation.props) throw new Error('Expected the receiving daemon review');
             confirmation.props.onAnswer(true);
             await starting;
             expect(lifecycle.getSnapshot()).toMatchObject({
@@ -455,7 +455,7 @@ describe('local voice engine local conversation binding', () => {
             // 02102e614e: present-user product confirmation has no agent approval Artifact.
             expect(artifacts.list()).toEqual([]);
             expect(createCarrier).not.toHaveBeenCalled();
-            if (confirmation.type !== 'custom') throw new Error('Expected the receiving daemon review');
+            if (confirmation.type !== 'custom' || !confirmation.props) throw new Error('Expected the receiving daemon review');
             confirmation.props.onAnswer(false);
             await starting;
             expect(lifecycle.getSnapshot()).toMatchObject({ status: 'disconnected', canStop: false });

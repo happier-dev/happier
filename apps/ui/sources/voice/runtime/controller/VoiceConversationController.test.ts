@@ -2360,7 +2360,7 @@ describe('VoiceConversationController', () => {
     });
     const barrier = createDefaultRealtimeToolBarrier({
       resolveSessionId: () => null,
-      currentSessionAddress: { serverId: account.scope.serverId, sessionId: 'slow-tool-session' },
+      currentServerId: account.scope.serverId,
       submitResults: async (_responseId, results) => { submitted.resolve(results); },
       continueResponse: async () => {},
     });

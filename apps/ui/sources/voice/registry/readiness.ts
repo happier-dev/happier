@@ -7,6 +7,7 @@ import type {
 import { resolveVoiceDeviceSpeechRolePath } from '@/voice/settings/resolveVoiceProviderAvailability';
 import type { VoiceProviderLocalAvailability } from '@/voice/settings/voiceProviderLocalAvailability';
 import type { VoiceAttemptRecoveryRuntimeTarget } from '@/voice/agent/voiceAgentRecoveryTarget';
+import type { VoiceSelectedAgentRuntimeReadiness } from '@/voice/agent/projectVoiceAgentSelection';
 
 import {
   type VoiceProviderRegistry,
@@ -33,7 +34,7 @@ export type VoiceRoleReadinessFacts = Readonly<{
   credential?: VoiceCredentialReadinessFact;
   /** Canonical endpoint-policy fact, including exact-origin + selected-machine-bound consent. */
   endpoint?: VoiceReadinessFact;
-  runtime?: VoiceReadinessFact;
+  runtime?: VoiceSelectedAgentRuntimeReadiness;
   model?: VoiceReadinessFact;
 }>;
 
@@ -129,7 +130,7 @@ export function projectVoiceReadinessRequirement(
   role: VoiceReadinessRole,
   providerId: string,
   requirement: VoiceReadinessRequirement,
-  fact: VoiceCredentialReadinessFact | VoiceServerFeatureReadinessFact | undefined,
+  fact: VoiceCredentialReadinessFact | VoiceServerFeatureReadinessFact | VoiceSelectedAgentRuntimeReadiness | undefined,
 ): VoiceRoleReadiness | null {
   if (fact === 'ready') return null;
   if (requirement === 'server_feature' && fact === 'policy_disabled') {

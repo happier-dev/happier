@@ -103,7 +103,7 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
   settings: VoiceSettingsReadinessFact;
   serverFeature: VoiceServerFeatureReadinessFact;
   executionMachine: VoiceReadinessFact;
-  runtime: VoiceReadinessFact;
+  runtime: VoiceSelectedAgentRuntimeReadiness;
   model: VoiceReadinessFact;
   endpoint: VoiceReadinessFact;
   credential: VoiceCredentialReadinessFact;

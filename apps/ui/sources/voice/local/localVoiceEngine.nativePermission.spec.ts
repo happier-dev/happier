@@ -534,7 +534,7 @@ describe('native Voice permission input', () => {
           : { ...(run120 ? { kind: 'permission' as const, tool: 'Bash', arguments: null } : run111 ? { kind: 'permission' as const, tool: 'Bash', arguments: {
             command: '/bin/bash -lc "printf \'hollo.\' > cold_hollo.txt"', cwd: '/tmp/run111-codex',
           } } : { tool: 'Write', arguments: { file_path: '/tmp/native-voice-test' } }), createdAt: Date.now(),
-            ...(nativeOffer ? { nativeChoices: offeredChoices } : {}) } } },
+            ...(nativeOffer ? { nativeChoices: { ...offeredChoices, choices: [...offeredChoices.choices] } } : {}) } } },
       });
       if (retarget) {
         const { voiceConversationBindingResolver } = await import('@/voice/binding/VoiceConversationBindingResolver');
