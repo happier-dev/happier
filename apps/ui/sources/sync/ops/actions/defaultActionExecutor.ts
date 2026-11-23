@@ -3478,9 +3478,12 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     } satisfies Pick<ActionExecutorDeps, 'approvalRequestApproveRefusal'> : {}),
 
     approvalRequestOutcomePublication: async ({ artifactId, request, context }) => {
-      const machineId = request.executionOriginV1.machineId?.trim();
+      const origin = request.executionOriginV1;
+      const machineId = origin.machineId?.trim();
       if (!machineId || !accountContext || accountContext.credentialAuthorityKind !== 'account'
         || context.externalActionCredential || context.rpcSessionAuthorization) return null;
+      // Signed proposals owned by the app need no daemon replay to deliver their result.
+      if (origin.externalActionExecutionAuthorization && resolveApprovalExecutor(request).kind === 'app') return null;
       return withAccountLifetime(context.signal, signal => replayApprovedApprovalRequestAtExactDaemon({
         artifactId,
         executionTarget: { serverId: accountContext.serverId, accountId: accountContext.accountId, machineId },
