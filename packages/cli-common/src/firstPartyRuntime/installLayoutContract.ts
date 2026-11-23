@@ -17,12 +17,12 @@ export class InvalidFirstPartyVersionIdError extends Error {
   }
 }
 
+export function isValidFirstPartyVersionId(versionId: string): boolean {
+  return versionId.length <= FIRST_PARTY_VERSION_ID_MAX_LENGTH && FIRST_PARTY_VERSION_ID_PATTERN.test(versionId);
+}
+
 export function assertValidFirstPartyVersionId(versionId: string): void {
-  if (
-    versionId.length === 0
-    || versionId.length > FIRST_PARTY_VERSION_ID_MAX_LENGTH
-    || !FIRST_PARTY_VERSION_ID_PATTERN.test(versionId)
-  ) {
+  if (!isValidFirstPartyVersionId(versionId)) {
     throw new InvalidFirstPartyVersionIdError(versionId);
   }
 }

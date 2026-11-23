@@ -5,6 +5,7 @@ import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRi
 import { compareVersions } from '../update/index.js';
 import type { FirstPartyComponentId } from './componentCatalog.js';
 import { resolveFirstPartyInstallLayout } from './installLayout.js';
+import { isValidFirstPartyVersionId } from './installLayoutContract.js';
 
 export async function listInstalledVersionIdsNewestFirst(params: Readonly<{
   componentId: FirstPartyComponentId;
@@ -21,7 +22,7 @@ export async function listInstalledVersionIdsNewestFirst(params: Readonly<{
   const entries = await readdir(layout.versionsDir, { withFileTypes: true }).catch(() => []);
 
   return entries
-    .filter((entry) => entry.isDirectory())
+    .filter((entry) => entry.isDirectory() && isValidFirstPartyVersionId(entry.name))
     .map((entry) => entry.name)
     .sort((left, right) => compareVersions(right, left));
 }
