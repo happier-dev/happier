@@ -5,7 +5,7 @@ const closed = { type: 'object', properties: {}, additionalProperties: false };
 const target = { id: 'example', role: 'runtime', title: 'Example', icon: 'server-outline', targetKind: 'example',
     targetSchema: closed, linkSchema: closed, nativeSelectorSchema: closed, actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe' } };
 const plan = { id: 'free', title: 'Free', price: { amount: '0', currency: 'USD', unit: 'month' },
-    facts: [{ label: 'Builds', value: '500 a month' }], included: ['Custom domains'],
+    facts: [{ label: 'Builds', value: '500 a month' }], included: ['Custom domains', 'Try 3 build options'],
     source: { url: 'https://example.com/pricing', checkedAt: '2026-11-16' } };
 
 it('admits declared plan facts without requiring plans on existing targets', () => {
@@ -17,6 +17,17 @@ it('a priced fact carries the shared ProviderAmountV1 shape, beside text facts t
     const priced = { ...plan, facts: [...plan.facts,
         { label: 'Extra requests', price: { amount: '0.30', currency: 'USD', unit: '1M requests' } }] };
     expect(DeploymentTargetContributionV1Schema.parse({ ...target, plans: [priced] }).plans).toEqual([priced]);
+});
+
+it.each([
+    { title: 'Pro $20' },
+    { included: ['Costs $5 extra'] },
+    { facts: [{ label: 'CHF 5 credit', value: 'Monthly' }] },
+    { facts: [{ label: 'Extra requests', value: 'JPY 500' }] },
+    { facts: [{ label: 'Extra requests', value: '500 CHF' }] },
+    { facts: [{ label: 'Extra requests', value: '10 AUD' }] },
+])('rejects price text in the plan display fields: %j', (override) => {
+    expect(DeploymentTargetContributionV1Schema.safeParse({ ...target, plans: [{ ...plan, ...override }] }).success).toBe(false);
 });
 
 it('rejects unknown plan fields and malformed source provenance', () => {

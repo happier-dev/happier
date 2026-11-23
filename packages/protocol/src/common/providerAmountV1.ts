@@ -18,9 +18,18 @@ export const ProviderAmountV1Schema = lazyZodSchema(() =>
 );
 export type ProviderAmountV1 = z.infer<typeof ProviderAmountV1Schema>;
 
+// Supplemental codes use their ISO casing so ordinary text such as "try 3 options" stays valid.
+const currencyCodes = Intl.supportedValuesOf?.('currency').join('|');
+const isoPriceText = currencyCodes
+  ? new RegExp(String.raw`\b(?:${currencyCodes})\s*\d|\d\s*(?:${currencyCodes})\b`, 'u')
+  : null;
+
 /** Money written as text ("$5", "0.30 USD", "20 dollars"): a price that belongs in a ProviderAmountV1 instead. */
 export function containsPriceTextV1(value: unknown): boolean {
-  if (typeof value === 'string') return /\p{Sc}\s*\d|\d\s*\p{Sc}|\b(?:USD|EUR|GBP|CAD)\s*\d+(?:[.,]\d+)?\b|\b\d+(?:[.,]\d+)?\s*(?:USD|EUR|GBP|CAD|dollars?)\b/iu.test(value);
+  if (typeof value === 'string') {
+    return /\p{Sc}\s*\d|\d\s*\p{Sc}|\b(?:USD|EUR|GBP|CAD|CHF|JPY)\s*\d|\d\s*(?:USD|EUR|GBP|CAD|CHF|JPY|dollars?)\b/iu.test(value)
+      || isoPriceText?.test(value) === true;
+  }
   if (Array.isArray(value)) return value.some(containsPriceTextV1);
   return value !== null && typeof value === 'object' && Object.values(value).some(containsPriceTextV1);
 }

@@ -29,7 +29,7 @@ export const DeploySuggestionCatalogV1Schema = lazyZodSchema(() => z.strictObjec
     targets: z.array(z.strictObject({ id: id(), title: z.string(), targetClass: z.enum(['ownServer', 'platform']),
         // `needs_connection`: the Account has no working connection for the platform yet; it stays offerable.
         availability: z.enum(['available', 'needs_connection', 'unavailable', 'unknown']), ...deploymentTargetFitFieldsV1(),
-        // The target's declared plans, as the plugin dated them; cards show them, the model never writes a price.
+        // The target's dated plan facts provide context for the model's plan selection.
         plans: z.optional(z.array(DeploymentTargetPlanV1Schema)) })),
     // `label` is absent while the Machine owner has no name for it yet (still loading); never its placeholder.
     machines: z.array(z.strictObject({ machineId: id(), label: z.optional(z.string()), online: z.boolean(),
