@@ -77,13 +77,23 @@ export function useUsageWork(
       && summary.moneyBasis.currency === moneyBasis.currency ? value ?? format(null) : format(value, moneyBasis),
     [format, query.metric, summary?.moneyBasis]);
   // A mixed whole has no numeric column formatter; retain each admitted row's own exact amount and basis.
-  const datum = React.useCallback((label: string, value: number | null, moneyBasis: UsageWorkMoneyBasis | null = summary?.moneyBasis ?? null): HappierChartDatum | null => {
+  const datum = React.useCallback((
+    label: string,
+    value: number | null,
+    moneyBasis: UsageWorkMoneyBasis | null = summary?.moneyBasis ?? null,
+    qualifier?: string,
+  ): HappierChartDatum | null => {
     if (value === null || query.metric === 'cost' && moneyBasis === null) return null;
     const exact = formatHappierDataValue(value, getPreferredLanguage());
     const visible = format(value, moneyBasis);
-    return visible.includes(exact) ? null : { label,
-      value: query.metric === 'cost' ? `${moneyBasis!.currency} ${exact}` : `${exact} ${t('usage.board.page.tokensUnit')}`,
-      subtitle: visible };
+    if (!qualifier && visible.includes(exact)) return null;
+    const exactAmount = query.metric === 'cost' ? `${moneyBasis!.currency} ${exact}` : `${exact} ${t('usage.board.page.tokensUnit')}`;
+    return {
+      label,
+      value: exactAmount,
+      subtitle: qualifier ? `${visible} · ${qualifier}` : visible,
+      ...(qualifier ? { accessibilityLabel: `${label}: ${exactAmount} · ${qualifier}` } : {}),
+    };
   }, [format, query.metric, summary?.moneyBasis]);
   const basisLabel = React.useCallback((moneyBasis: UsageWorkMoneyBasis | null) => moneyBasis
     ? `${usageCostKindPhrase(moneyBasis.kind)} · ${moneyBasis.currency}` : undefined, []);

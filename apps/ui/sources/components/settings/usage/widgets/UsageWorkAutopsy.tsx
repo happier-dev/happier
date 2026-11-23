@@ -219,8 +219,10 @@ export function UsageWorkAutopsy(
   // With one recorded turn the largest turn is the Session itself, so it is not said a second time.
   const largest = ordinals.size > 1 && ranked[0]?.amount != null && ranked[0].amount > 0 && ranked[0].turnId !== null ? ranked[0] : null;
   const largestShare = largest && amount ? Math.round((largest.amount! / amount) * 100) : null;
-  // "Added up from the reported parts" is said once, by the Session's figure, never again on its turns.
-  const fromPartsSaid = !(metric === 'cost' && cost) && Boolean(accounting?.hero.totalTokensFromParts);
+  // The hero qualifies the Session total; only mixed token provenance needs exact detail on a turn.
+  const mixedTurnTokens = metric === 'tokens'
+    && turns.some(turn => turn.turnId !== null && turn.tokensFromParts)
+    && turns.some(turn => turn.turnId !== null && turn.amount !== null && !turn.tokensFromParts);
   // The no-turn row is a row title: it opens with a capital like "Turn 1".
   const missingTurn = t('usage.board.work.reason_missing_turn');
   const missingTurnTitle = `${missingTurn.charAt(0).toLocaleUpperCase()}${missingTurn.slice(1)}`;
@@ -277,8 +279,7 @@ export function UsageWorkAutopsy(
                 label={t('usage.board.work.largestTurn')}
                 value={largest.amount!}
                 valueFormatter={value => format(value, largest.moneyBasis)}
-                caption={[turnLabel(largest.turnId), largestShare === null ? null : `${largestShare}%`,
-                  largest.tokensFromParts && !fromPartsSaid ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · ')}
+                caption={[turnLabel(largest.turnId), largestShare === null ? null : `${largestShare}%`].filter(Boolean).join(' · ')}
               />
             ) : null}
           </View>
@@ -365,7 +366,12 @@ export function UsageWorkAutopsy(
             showProportionShares={false}
             valueFormatter={format}
             rowIds={shownTurns.rows.map((turn) => turn.contributionId)}
-            rowDatums={shownTurns.rows.map(turn => datum(turn.turnId === null ? missingTurnTitle : turnLabel(turn.turnId), turn.amount, turn.moneyBasis))}
+            rowDatums={shownTurns.rows.map(turn => datum(
+              turn.turnId === null ? missingTurnTitle : turnLabel(turn.turnId),
+              turn.amount,
+              turn.moneyBasis,
+              mixedTurnTokens && turn.turnId !== null && turn.tokensFromParts ? t('usage.board.page.tokensFromParts') : undefined,
+            ))}
             columns={[
               { label: t('usage.board.work.turn') },
               { label: metricLabel, proportion: true },
@@ -378,7 +384,7 @@ export function UsageWorkAutopsy(
             rows={shownTurns.rows.map((turn) => [
               turn.turnId === null ? missingTurnTitle : turnLabel(turn.turnId),
               cell(turn.amount, turn.moneyBasis),
-              [outcomeLine(turn), turn.tokensFromParts && !fromPartsSaid ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · '),
+              outcomeLine(turn),
               evidenceLine(turn),
               usageWorkRetainedChangeLine(turn.retainedChanges),
               sharedIdentity === null ? identityLine(turn) : '',

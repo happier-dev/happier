@@ -11,27 +11,32 @@ import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity'
 import { t } from '@/text';
 import type { UsageWorkProvider } from './usageWorkPresentation';
 
-/**
- * A witnessed model source. Optional display metadata reuses the admitted catalog, never fetches.
- * In a row it is the mark alone, beside the Agent marks; its name stays in the accessible label
- * and is written out only where the caller asks for it.
- */
+/** A witnessed Provider's display metadata reuses the admitted catalog. */
+export function resolveUsageWorkProviderDisplay(provider: UsageWorkProvider, serverId: string) {
+  const cached = readReusableDaemonMergedProjectionCacheEntry({
+    machineId: provider.machineId,
+    serverId,
+    sections: ['familiesById.providers'],
+  });
+  const contribution =
+    cached?.kind === 'ready'
+      ? cached.inputs.pluginProjectionV2?.familiesById.providers?.entriesById[provider.providerId]
+      : undefined;
+  const parsed = ProviderContributionV1Schema.safeParse(contribution?.definition);
+  return {
+    label: parsed.success ? parsed.data.name : provider.providerId,
+    contributionKey: contribution?.id,
+    icon: parsed.success ? parsed.data.icon : null,
+  };
+}
+
+/** A Provider mark, with the same name in its spoken label and optional visible text. */
 export function UsageWorkProviderMark(
   props: UsageWorkProvider & Readonly<{ serverId: string; showLabel?: boolean; testID?: string }>,
 ) {
   const { theme } = useUnistyles();
   const metrics = usePageRowMetrics('list');
-  const cached = readReusableDaemonMergedProjectionCacheEntry({
-    machineId: props.machineId,
-    serverId: props.serverId,
-    sections: ['familiesById.providers'],
-  });
-  const contribution =
-    cached?.kind === 'ready'
-      ? cached.inputs.pluginProjectionV2?.familiesById.providers?.entriesById[props.providerId]
-      : undefined;
-  const parsed = ProviderContributionV1Schema.safeParse(contribution?.definition);
-  const label = parsed.success ? parsed.data.name : props.providerId;
+  const { label, contributionKey, icon } = resolveUsageWorkProviderDisplay(props, props.serverId);
   return (
     <View
       testID={props.testID}
@@ -40,8 +45,8 @@ export function UsageWorkProviderMark(
       style={styles.mark}
     >
       <ProviderIcon
-        contributionKey={contribution?.id}
-        icon={parsed.success ? parsed.data.icon : null}
+        contributionKey={contributionKey}
+        icon={icon}
         size={ICON_SIZE.sm}
         color={theme.colors.text.secondary}
       />

@@ -43,13 +43,15 @@ import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolve
 import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { UsageProjectLedgerWidget } from './UsageProjectLedgerWidget';
-import { UsageWorkMarks } from './UsageWorkParts';
+import { UsageWorkProviderMark } from './UsageWorkProviderMark';
+import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
 import { UsageSessionValueWidget } from './UsageSessionValueWidget';
 import { UsageHumanLoopWidget } from './UsageHumanLoopWidget';
 import { UsageParallelWidget } from './UsageParallelWidget';
 import { UsageOutcomesWidget } from './UsageOutcomesWidget';
 import { UsageChartInteractions } from '../usageChartInteractions';
 import { UsageEfficiencyWidget } from './UsageEfficiencyWidget';
+import { UsagePeriodSummaryWidget } from './UsagePeriodSummaryWidget';
 import { UsageCoachWidget } from './UsageCoachWidget';
 import { storage } from '@/sync/domains/state/storage';
 import { formatUsageObservedAt } from '@/sync/domains/usage/usageCalendarPresentation';
@@ -346,20 +348,39 @@ describe('Work and Coach widget bodies', () => {
       expect(hook.getCurrent().cell(null, null)).toBe(t('usage.board.page.notMeasuredYet'));
     } finally { await hook.unmount(); }
   });
-  it('keeps an identity mark strip on one line and folds what does not fit into "+n" (acceptance 1122 #46)', async () => {
-    const agentIds = Array.from({ length: 18 }, (_, index) => `agent-${index}`);
-    const screen = await renderScreen(<UsageWorkMarks fitWidth agentIds={agentIds} providers={[]} serverId="server" testID="marks" />);
-    const strip = () => screen.findByTestId('marks.marks');
+  it('keeps all hidden identities recoverable in a narrow Project row’s disclosure', async () => {
+    const agentIds = ['claude', 'codex', 'muse', 'pi', ...Array.from({ length: 12 }, (_, index) => `a-fixture-agent-${index}`)];
+    const sessionlessProvider = 'provider.project-only';
+    const rows = [
+      ...agentIds.map(agentId => ({ ...contribution(agentId, 's1', null), agentId })),
+      { ...contribution('project-only', 'unused', null), sessionId: null, agentId: null,
+        providerId: sessionlessProvider, providerConnectionId: 'connection' },
+    ];
+    const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] }));
+    const screen = await renderScreen(<UsageChartInteractions>
+      <UsageProjectLedgerWidget {...props} query={normalizeUsageQuery({ ...query, metric: 'tokens' })}
+        slice={{ ...slice, work }} id="usage_project_ledger" testID="ledger" />
+    </UsageChartInteractions>);
+    const strip = () => screen.findByTestId('ledger.marks');
     const layout = async (width: number) => act(() => { strip().props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width, height: 16 } } }); });
-    const shown = () => screen.findAllByType(UsageAgentMark).length;
-    // A narrow row: as many marks as fit beside the count, the rest counted, never a second line.
+    const displayed = () => screen.findAllByType(UsageAgentMark);
     await layout(160);
-    expect(shown()).toBeGreaterThan(0);
-    expect(shown()).toBeLessThan(agentIds.length);
-    expect(screen.getTextContent()).toContain(t('usage.board.work.moreMarks', { count: agentIds.length - shown() }));
-    // A row with room shows every mark and no count.
+    expect(displayed().length).toBeGreaterThan(0);
+    const shown = new Set(displayed().map(mark => mark.props.agentId));
+    const hidden = agentIds.filter(agentId => !shown.has(agentId));
+    expect(hidden.length).toBeGreaterThan(0);
+    expect(screen.findAllByType(UsageWorkProviderMark)).toHaveLength(0);
+    expect(screen.getTextContent()).toContain(t('usage.board.work.moreMarks', { count: hidden.length + 1 }));
+    const toggle = 'ledger.project.p1.toggle';
+    expect(screen.findByTestId('ledger.project.p1.detail')).toBeNull();
+    await screen.pressByTestIdAsync(toggle);
+    expect(screen.findByTestId('ledger.project.p1.detail')).toBeTruthy();
+    const identities = String(screen.findByTestId('ledger.project.p1.identities')?.props.children ?? '').split(' · ');
+    expect(identities).toEqual(expect.arrayContaining([...hidden.map(id => usageAgentTitle(id)), sessionlessProvider]));
+    await screen.pressByTestIdAsync(toggle);
     await layout(1000);
-    expect(shown()).toBe(agentIds.length);
+    expect(displayed()).toHaveLength(agentIds.length);
+    expect(screen.findAllByType(UsageWorkProviderMark)).toHaveLength(1);
     expect(screen.getTextContent()).not.toContain('+');
   });
   it('never falls back to raw opaque Project or Session ids', async () => {
@@ -1068,6 +1089,43 @@ describe('Work and Coach widget bodies', () => {
       expect.objectContaining({ value: 'USD 4.56789', subtitle: expect.stringContaining('estimated') }),
     ]));
     expect(screen.getTextContent()).toContain('$4.57');
+  });
+  it.each([
+    { kind: 'mixed', fromParts: [false, true], exactDerived: true },
+    { kind: 'all reported', fromParts: [false, false], exactDerived: false },
+    { kind: 'all derived', fromParts: [true, true], exactDerived: false },
+  ])('keeps precise turn provenance in the exact detail only when $kind', async ({ fromParts, exactDerived }) => {
+    const sessionQuery = normalizeUsageQuery({ ...query, session: 's1', metric: 'tokens' });
+    const rows = [10, 7].map((amount, index) => ({
+      ...contribution(`turn-${index}`, 's1', `t${index + 1}`),
+      tokens: { input: amount - 1, output: 1, reasoning: null, cacheRead: null, cacheWrite: null,
+        total: fromParts[index] ? null : amount },
+    }));
+    const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] }));
+    const total = fromParts.some(Boolean)
+      ? { input: 15, output: 2, reasoning: null, cacheRead: null, cacheWrite: null, total: null, measured: { total: 17, fromParts: true } }
+      : { input: 15, output: 2, reasoning: null, cacheRead: null, cacheWrite: null, total: 17 };
+    const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery}
+      slice={{ ...slice, shownQuery: sessionQuery, work,
+        accounting: { ...slice.accounting!, totals: { ...slice.accounting!.totals, eventCount: 2, tokens: total }, contributions: rows } }}
+      id="usage_session_value" testID="value" />);
+    const qualifier = t('usage.board.page.tokensFromParts');
+    const hero = screen.findAllByType(HappierDataMetric).find(node => node.props.label === usagePeriodPhrase(sessionQuery));
+    expect(hero?.props.value).toBe(17);
+    expect(Boolean(hero?.props.caption.includes(qualifier))).toBe(fromParts.some(Boolean));
+    const table = screen.findAllByType(HappierDataRows).find(node => node.props.testID === 'value.autopsy.turns')!;
+    expect(table.props.rows.map((row: readonly unknown[]) => row[1])).toEqual([10, 7]);
+    expect(JSON.stringify(table.props.rows)).not.toContain(qualifier);
+    const datums = screen.findAllByType(ChartDatum)
+      .filter(node => String(node.props.testID).startsWith('value.autopsy.turns-datum-')).map(node => node.props.datum);
+    const qualified = datums.filter(datum => datum.subtitle?.includes(qualifier));
+    if (exactDerived) {
+      expect(qualified).toEqual([expect.objectContaining({
+        label: t('usage.board.work.turnNumber', { number: 2 }),
+        value: `7 ${t('usage.board.page.tokensUnit')}`,
+        accessibilityLabel: expect.stringContaining(qualifier),
+      })]);
+    } else expect(qualified).toEqual([]);
   });
   it('formats witnessed Autopsy git moments in the preferred language without changing their instants', async () => {
     const previous = getPreferredLanguage();

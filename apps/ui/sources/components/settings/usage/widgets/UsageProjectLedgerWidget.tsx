@@ -13,6 +13,7 @@ import { usageMeterFill, usageSignatureAccent } from '../usageAccent';
 import { useUsageDrill } from '../usageDrill';
 import { usageCostKindPhrase } from '../usageCostPresentation';
 import { formatUsageCost } from '@/utils/format/usageNumbers';
+import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
 import {
   UsageBodyInsufficient,
   UsageCoverageLine,
@@ -23,6 +24,7 @@ import {
   type UsageBodyProps,
 } from './usageBodyKit';
 import { useUsageWork } from './useUsageWork';
+import { resolveUsageWorkProviderDisplay } from './UsageWorkProviderMark';
 import type {
   UsageWorkBranchRow,
   UsageWorkProjectRow,
@@ -196,6 +198,16 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
     { label: t('usage.board.work.linesKept') },
     { label: t('usage.board.work.linkedPrs') },
   ];
+  const projectIdentityNames = (row: UsageWorkProjectRow, testID: string) => {
+    // The disclosure lists the full witnessed set, independently of the strip's current width.
+    const names = [
+      ...row.agentIds.map(id => usageAgentTitle(id)),
+      ...row.providers.map(provider => resolveUsageWorkProviderDisplay(provider, props.serverId).label),
+    ];
+    return names.length === 0 ? null : (
+      <Text style={[styles.reasonLabel, caption]} testID={`${testID}.identities`}>{names.join(' · ')}</Text>
+    );
+  };
   const projectDetail = (row: UsageWorkProjectRow, testID: string) => (
     <>
       {row.projectKey !== null && drill.available('projects') ? (
@@ -216,6 +228,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
           </Text>
         </HappierPressable>
       ) : null}
+      {projectIdentityNames(row, testID)}
       {row.outcomes.length > 0 ? (
         <View style={styles.group}>
           <UsageWorkSectionTitle quiet>{t('usage.board.work.linkedPrs')}</UsageWorkSectionTitle>
