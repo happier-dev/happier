@@ -4,6 +4,14 @@ import { DeploymentStateV1Schema, deploymentInProgressStates, DeploymentStepV1Sc
 import { DeploymentContentV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptContentV1';
 import { deploymentStoredContentV1Schema } from './storedDeploymentContent.js';
 
+type DeploymentPromotionEnvironment = Readonly<{ id: string; protection: string; projectSourceId: string }>;
+
+export function isDeploymentProductionPromotionPairV1(source: DeploymentPromotionEnvironment,
+    destination: DeploymentPromotionEnvironment): boolean {
+    return source.id !== destination.id && source.protection === 'nonProduction'
+        && destination.protection === 'production' && source.projectSourceId === destination.projectSourceId;
+}
+
 export { DeploymentStateV1Schema };
 export { deploymentInProgressStates };
 export type DeploymentStateV1 = z.infer<typeof DeploymentStateV1Schema>;
@@ -65,6 +73,13 @@ export function isDeploymentSettledV1(state: DeploymentStateV1): boolean {
 /** Successful settled releases remain rollback sources even without verified health. */
 export function isDeploymentRollbackSourceEligibleV1(state: DeploymentStateV1): boolean {
     return state === 'succeeded' || state === 'running_unverified';
+}
+
+/** A saved native release with recorded images is a candidate for exact promotion. */
+export function isNativeDeploymentPromotionSourceV1(receipt: Readonly<{
+    state: DeploymentStateV1; hasImages: boolean;
+}>): boolean {
+    return isDeploymentRollbackSourceEligibleV1(receipt.state) && receipt.hasImages;
 }
 
 /** Reconciliation observes unknown effects; settled receipts cannot launch another effect. */

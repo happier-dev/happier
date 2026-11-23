@@ -1087,32 +1087,66 @@ describe('Project deployments page', () => {
     } finally { await act(async () => { controller.retire(); }); }
   });
 
-  it('a preview offers Deploy to Production, which opens Deploy an app on its code with this preview for Review (deploy auto-mode U9)', async () => {
-    const { ModalProvider } = await import('@/modal');
-    const base = environmentDetailForHome();
-    for (const purpose of ['preview', 'standard'] as const) {
-      const detail = { ...base, environment: environmentHeaderForHome({ ...base.environment, purpose,
-        ...(purpose === 'preview' ? { previewTemplateEnvironmentId: 'environment-production',
+  it.each(['standard', 'preview'] as const)(
+    'promotes the serving repository revision to Production from a %s Environment', async purpose => {
+      const { ModalProvider } = await import('@/modal');
+      const base = environmentDetailForHome();
+      const live = base.targetLinks[0]!.targetLink.activeDeploymentId!;
+      const detail = { ...base, environment: environmentHeaderForHome({ ...base.environment, purpose, protection: 'nonProduction',
+        ...(purpose === 'preview' ? { previewTemplateEnvironmentId: 'production',
           previewRepositoryId: base.environment.projectSourceId, previewPullRequestId: 'pr:12',
           previewTargetLinkId: base.environment.runtimeTargetLinkId! } : {}) }) };
-      const { controller } = controllerFor({ detail });
+      const destination = environmentHeaderForHome({ id: 'production', protection: 'production',
+        projectSourceId: detail.environment.projectSourceId,
+        capabilities: { ...detail.environment.capabilities, role: 'deployer', manage: false } });
+      const nonProduction = environmentHeaderForHome({ id: 'other-staging', projectSourceId: detail.environment.projectSourceId });
+      const list = vi.fn();
+      const { controller } = controllerFor({ detail, destinations: [destination, nonProduction], onListEnvironments: list });
+      const request = vi.fn();
+      const { HappyError } = await import('@/utils/errors/errors');
+      const promote = vi.fn(async () => {
+        throw new HappyError('approval_request_created', false, { code: 'approval_request_created',
+          details: { kind: 'approval_request_created', actionId: 'deployments.promote', artifactId: 'promotion-review' } });
+      });
+      let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
       try {
-        const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
-          demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null}
-          review={noReview} onOpenReceipt={() => {}} /></ModalProvider>);
+        screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+          demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null} promote={promote}
+          review={{ ...noReview, request }} onOpenReceipt={() => {}} /></ModalProvider>);
         await waitForContent(screen, 'project-deployments.environment.menu');
+        expect(list).not.toHaveBeenCalled();
         await screen.pressByTestIdAsync('project-deployments.environment.menu');
-        await waitForContent(screen, 'project-deployments.environment.menu.settings');
-        if (purpose === 'standard') {
-          expect(screen.findByTestId('project-deployments.environment.menu.deployProduction'), 'only a preview offers it').toBeNull();
-          continue;
-        }
+        await waitForContent(screen, 'project-deployments.environment.menu.deployProduction');
         await screen.pressByTestIdAsync('project-deployments.environment.menu.deployProduction');
-        // The one Deploy an app opener (useOpenNewApp → NewAppDialog) carries this preview and its Project's code.
-        await waitForHomeGovernance(() => expect(screen.root.findAll((node) => node.props?.previewEnvironmentId === detail.environment.id
-          && node.props?.projectSourceId === detail.environment.projectSourceId).length).toBeGreaterThan(0));
-      } finally { await act(async () => { controller.retire(); }); }
-    }
+        await waitForContent(screen, 'project-deployments.promote.destination:production');
+        expect(list).toHaveBeenCalledTimes(1);
+        expect(screen.findByTestId('project-deployments.promote.destination:other-staging')).toBeNull();
+        await act(async () => { await screen.pressByTestIdAsync('project-deployments.promote.destination:production'); });
+        await act(async () => { await screen.pressByTestIdAsync('project-deployments.promote.confirm'); });
+        await waitForHomeGovernance(() => expect(request).toHaveBeenCalledWith('promotion-review'));
+        expect(promote).toHaveBeenCalledExactlyOnceWith({ environmentId: destination.id,
+          sourceEnvironmentId: detail.environment.id, sourceDeploymentId: live, artifact: 'image' });
+      } finally { await screen?.unmount(); await act(async () => { controller.retire(); }); }
+    });
+
+  it('opens Production creation when Promote has no destination', async () => {
+    const { ModalProvider } = await import('@/modal');
+    const { controller, detail } = controllerFor({ destinations: [] });
+    const createProduction = vi.fn();
+    const promote = vi.fn(async () => ({ ok: true as const, deploymentId: 'promoted' }));
+    const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+      demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null} promote={promote}
+      review={noReview} onOpenReceipt={() => {}} onCreateProduction={createProduction} /></ModalProvider>);
+    try {
+      await waitForContent(screen, 'project-deployments.environment.menu');
+      await screen.pressByTestIdAsync('project-deployments.environment.menu');
+      await waitForContent(screen, 'project-deployments.environment.menu.deployProduction');
+      await screen.pressByTestIdAsync('project-deployments.environment.menu.deployProduction');
+      await waitForContent(screen, 'project-deployments.promote.destination.empty.action');
+      await screen.pressByTestIdAsync('project-deployments.promote.destination.empty.action');
+      expect(createProduction).toHaveBeenCalledExactlyOnceWith(expect.any(Function));
+      expect(promote).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); await act(async () => { controller.retire(); }); }
   });
 
   it.each(['review', 'refusal', 'receipt', 'retained'] as const)(
@@ -1133,7 +1167,7 @@ describe('Project deployments page', () => {
       ...(response === 'retained' ? { targetLinks: [] } : {}) });
     const baseReceipt = createDeploymentReceiptDetailV1();
     const sourceReceipt = createDeploymentReceiptDetailV1({ content: { ...baseReceipt.content, sourceIntent: definition } });
-    const destination = environmentHeaderForHome({ id: 'production' });
+    const destination = environmentHeaderForHome({ id: 'production', protection: 'production' });
     const viewOnly = environmentHeaderForHome({ id: 'view-only', capabilities: { ...destination.capabilities,
       role: 'reader', deploy: false, manage: false } });
     const list = vi.fn();
@@ -1271,14 +1305,14 @@ describe('Project deployments page', () => {
     } finally { await act(async () => { Modal.hideAll(); controller.retire(); await installed.dispose(); }); }
   });
 
-  it.each(['repository', 'platform'] as const)('hides promotion for an unsupported %s receipt and platform header', async kind => {
+  it.each(['without retained images', 'without provider Promote'] as const)('hides promotion for a receipt %s', async kind => {
     const previousPromotionRequests = homes.requestsFor('/v1/actions/deployments.promote').length;
     const base = environmentDetailForHome();
-    const detail = kind === 'platform' ? environmentDetailForHome({ targetLinks: base.targetLinks.map(row => ({ ...row,
+    const detail = kind === 'without provider Promote' ? environmentDetailForHome({ targetLinks: base.targetLinks.map(row => ({ ...row,
       targetLink: { ...row.targetLink, source: { kind: 'plugin', contribution: { pluginId: 'vercel', localId: 'project' } },
         targetKind: 'vercel', machines: [], members: [] } })) }) : base;
     const baseReceipt = createDeploymentReceiptDetailV1();
-    const sourceReceipt = kind === 'platform' ? createDeploymentReceiptDetailV1({ content: {
+    const sourceReceipt = kind === 'without provider Promote' ? createDeploymentReceiptDetailV1({ content: {
       sourceIntent: { kind: 'stored', document: 'services:\n  app:\n    image: app:tested\n', contentRevision: 1,
         composeDigest: `sha256:${'a'.repeat(64)}`, profiles: [], services: ['app'] },
       sourceMethod: 'upload', machines: [], images: [], machineResults: [], steps: [],
@@ -1287,7 +1321,7 @@ describe('Project deployments page', () => {
         target: { kind: 'account', account: { service: { pluginId: 'happier.machine-vercel', localId: 'vercel' }, accountId: 'connected' } } },
         providerIdentity: { providerAccountId: 'team', providerResourceId: 'project', providerEnvironment: 'production' },
         providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, targetLinkRevision: 1, observation: { v: 1, state: 'queued', observedAtMs: 1000 } },
-    } }) : baseReceipt;
+    } }) : createDeploymentReceiptDetailV1({ content: { ...baseReceipt.content, images: [] } });
     const { controller, receipt } = controllerFor({ detail, receipt: sourceReceipt });
     const { createDeploymentActions } = await import('./deploymentActions');
     const promote = createDeploymentActions({ scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) }, scope.projectSourceId).promote;

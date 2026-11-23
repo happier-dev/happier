@@ -1,5 +1,6 @@
 import { projectDeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import type { DeploymentReceiptHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { isNativeDeploymentPromotionSourceV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentContentV1, DeploymentEnvironmentContentV1, DeploymentMachineResultV1, DeploymentReceiptFailureV1, DeploymentReceiptDetailV1, DeploymentStepV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
@@ -59,14 +60,20 @@ export function readDeploymentConnectionPermissionRemedy(code: string | undefine
 
 type ReceiptState = DeploymentReceiptHeaderV1['state'];
 
-/** Present the succeeded stored receipt supported by the native image promotion producer. */
-export function canPromoteDeploymentReceipt(
+/** Both entry points present a release its Promote owner can review. */
+export function readDeploymentPromotionTarget(
   receipt: Pick<DeploymentReceiptDetailV1, 'deployment' | 'content'>,
   environment: DeploymentEnvironmentReadDetailV1 | null,
-): boolean {
-  return receipt.deployment.state === 'succeeded' && receipt.content.sourceIntent?.kind === 'stored'
-    && environment?.environment.capabilities.deploy === true
-    && receipt.content.platform === undefined;
+  providerPromote: Readonly<{ consequence: string | null }> | undefined | null,
+) {
+  if (environment?.environment.capabilities.deploy !== true) return null;
+  const { content, deployment } = receipt;
+  if (content.platform) {
+    return providerPromote && deployment.state === 'succeeded' && content.platform.observation.providerDeploymentId
+      ? { kind: 'platform' as const, consequence: providerPromote.consequence } : null;
+  }
+  return isNativeDeploymentPromotionSourceV1({ state: deployment.state, hasImages: content.images.length > 0 })
+    ? { kind: 'ownServer' as const } : null;
 }
 
 /** A receipt's state through the one Work status owner: the glyph and tone every Work row uses. */

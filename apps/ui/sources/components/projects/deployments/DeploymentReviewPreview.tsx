@@ -5,15 +5,11 @@ import type { DeploymentReadControllerV1, DeploymentReadDemandV1 } from '@happie
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
-import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 import { deploymentAddressExpected, deploymentLiveAddressDemand, formatDeploymentLiveAddress, resolveDeploymentLiveAddress } from './deploymentLiveAddressFacts';
 import { deploymentHealthFact } from './deploymentPresentation';
 import { useDeploymentEnvironmentDomains, useDeploymentEnvironmentHealthRecord, useReceiptRead } from './useDeploymentReads';
-import { useDeploymentPresentationDemand } from './useDeploymentPresentationDemand';
-import { useDeploymentAccountController } from './useDeploymentProject';
 
 /**
  * The build preview a person checks before Production (deploy auto-mode U9): its address and health, read from the
@@ -67,18 +63,3 @@ export const DeploymentReviewPreview = React.memo(function DeploymentReviewPrevi
     </ItemGroup>
   );
 });
-
-/** The draft's Review (Deploy an app opened from a build preview): the same rows, on the Account's read owner. */
-export function DeploymentReviewPreviewForAccount(props: Readonly<{
-  lifetime: ServerAccountScopeLifetime;
-  environmentId: string;
-}>) {
-  const demand = useDeploymentPresentationDemand(true);
-  const controller = useDeploymentAccountController(props.lifetime, true, demand);
-  const { serverId, accountId } = props.lifetime.scope;
-  const openAddress = React.useCallback((url: string) => {
-    void requestOpenExternalUrl(url, { serverId, expectedAccountId: accountId });
-  }, [accountId, serverId]);
-  return <DeploymentReviewPreview controller={controller} environmentId={props.environmentId} demand={demand}
-    onOpenAddress={openAddress} />;
-}

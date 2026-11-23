@@ -254,8 +254,10 @@ const ProjectDeploymentsPage = React.memo(
     const [localDraft, setLocalDraft] = React.useState<Readonly<{
       scope: string;
       source: DeploymentEnvironmentDetailV1 | null;
+      promoteAfterCreate?: (environmentId: string) => void;
     }>>();
-    const draftSource = localDraftSelected && localDraft?.scope === draftScope ? localDraft.source : undefined;
+    const ownDraft = localDraftSelected && localDraft?.scope === draftScope ? localDraft : undefined;
+    const draftSource = ownDraft?.source;
     React.useLayoutEffect(() => {
       setLocalDraft(current => localDraftSelected && current?.scope === draftScope ? current : undefined);
     }, [draftScope, localDraftSelected]);
@@ -398,8 +400,8 @@ const ProjectDeploymentsPage = React.memo(
         if (approvalId) router.pushRetainingCurrent(buildApprovalHref(approvalId, props.serverId));
       },
     }), [approval.approvalPending, approval.requestApproval, approvalId, props.serverId, router, openRecoveryDestination]);
-    const startDraft = React.useCallback((source: DeploymentEnvironmentDetailV1 | null) => {
-      setLocalDraft({ scope: draftScope, source });
+    const startDraft = React.useCallback((source: DeploymentEnvironmentDetailV1 | null, promoteAfterCreate?: (environmentId: string) => void) => {
+      setLocalDraft({ scope: draftScope, source, promoteAfterCreate });
       setSelection(DRAFTING);
     }, [draftScope, setSelection]);
     const openDefaults = React.useCallback(() => setSelection({ ...NOTHING_SELECTED, defaults: true }), [setSelection]);
@@ -462,6 +464,7 @@ const ProjectDeploymentsPage = React.memo(
       <DeploymentEnvironmentDraft
         key={seededDraft ? JSON.stringify([routeNewDefinition, initialMachineId]) : draftSource?.environment.id ?? 'new'}
         copyFrom={seededDraft ? null : draftSource}
+        createProduction={ownDraft?.promoteAfterCreate !== undefined}
         definitionKind={newDefinition}
         initialMachineId={initialMachineId}
         lifetime={props.lifetime}
@@ -473,6 +476,7 @@ const ProjectDeploymentsPage = React.memo(
         onSaved={(id, next) => {
           setSelection({ environmentId: id, deploymentId: null });
           if (next?.tab) navigateEnvironment({ tab: next.tab, section: null });
+          else ownDraft?.promoteAfterCreate?.(id);
           void refresh();
         }}
         onDiscard={() => router.setParams({ newDefinition: undefined, deployMachine: undefined })}
@@ -547,6 +551,7 @@ const ProjectDeploymentsPage = React.memo(
           cancel={props.actions?.cancel ?? null}
           promote={props.actions?.promote ?? null}
           onOpenPromotionReceipt={(environmentId, deploymentId) => setSelection({ environmentId, deploymentId })}
+          onCreateProduction={canCreate ? onCreated => startDraft(null, onCreated) : undefined}
           deploy={props.actions?.deploy ?? null}
           teardown={props.actions?.teardown ?? null}
           readLogs={props.actions?.readLogs ?? null}
@@ -591,6 +596,9 @@ const ProjectDeploymentsPage = React.memo(
           serverId={props.serverId}
           phone={phone}
           deploy={props.actions?.deploy ?? null}
+          promote={props.actions?.promote ?? null}
+          onOpenPromotionReceipt={(environmentId, deploymentId) => setSelection({ environmentId, deploymentId })}
+          onCreateProduction={canCreate ? onCreated => startDraft(null, onCreated) : undefined}
           review={review}
           environmentTitle={environmentTitle}
           referenceEnvironments={referenceEnvironments}

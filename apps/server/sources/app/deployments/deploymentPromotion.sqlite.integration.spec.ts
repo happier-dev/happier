@@ -72,23 +72,29 @@ describe('stored promotion storage composition', () => {
         });
     });
 
-    async function promotionFixture() {
+    async function promotionFixture(deployerId?: string) {
         const keys = nacl.sign.keyPair();
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        if (deployerId) await makeShareEligibleForTest(owner.id, deployerId);
         const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId, requestKey: randomUUID(),
-            name: 'Promotion', repository, audience: [] }));
+            name: 'Promotion', repository, audience: deployerId
+                ? [{ principal: { kind: 'account', accountId: deployerId }, level: 'view' }] : [] }));
         if (!source.ok) throw new Error(source.error);
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
             metadata: encodePlainMachineStoredContent({ host: 'promotion-controller', platform: 'linux', happyCliVersion: 'test',
                 homeDir: '/home/controller', happyHomeDir: '/home/controller/.happier' }),
             dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
             installationId: randomUUID(), installationPublicKey: new Uint8Array(keys.publicKey) } });
-        const artifact = async (kind: string, content: unknown) => {
-            const created = await createArtifact({ actorUserId: owner.id, artifactId: randomUUID(),
+        const artifact = async (kind: string, content: unknown, actorAccountId = owner.id) => {
+            const created = await createArtifact({ actorUserId: actorAccountId, artifactId: randomUUID(),
                 header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind, title: 'Promotion fixture' })),
                 body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(content) })),
                 dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
             if (!created.ok) throw new Error(created.error);
+            if (actorAccountId !== owner.id) await db.artifactGrant.create({ data: {
+                principalKind: 'account', artifactId: created.artifact.id, accountId: owner.id,
+                accessLevel: 'admin', createdByAccountId: actorAccountId,
+            } });
             return { contentArtifactId: created.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
         };
         const definition = (document: string, contentRevision: number) => ({ kind: 'stored' as const, document, contentRevision,
@@ -98,11 +104,13 @@ describe('stored promotion storage composition', () => {
         current.definition = definition('{"services":{"app":{"image":"example/app:A"}}}', 3);
         current.bindings = [{ purpose: 'variable', name: 'DESTINATION', phase: 'runtime', source: { kind: 'value', value: 'production' } }];
         current.ownServer = { rollout: 'startFirst', autoRestorePreviousRelease: false };
-        const createEnvironment = async (content: typeof current) => {
+        const createEnvironment = async (content: typeof current, protection: 'production' | 'nonProduction' = 'nonProduction') => {
             const environmentArtifact = await artifact('deployment-environment.v1', content);
             const created = await inTx(tx => createDeploymentEnvironmentInTx(tx, owner.id, { serverId, requestKey: randomUUID(),
                 projectSourceId: source.source.id, controllerMachineId: machine.id, buildMachineId: machine.id,
-                protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', ...environmentArtifact }));
+                protection, purpose: 'standard',
+                ...(deployerId ? { deployerMode: 'chosen' as const, deployerPrincipals: [{ kind: 'account' as const, accountId: deployerId }] }
+                    : { deployerMode: 'managers' as const }), ...environmentArtifact }));
             if (!created.ok) throw new Error(created.error);
             const linkArtifact = await artifact('deployment-target-link.v1', {});
             const linked = await inTx(tx => linkDeploymentTargetInTx(tx, owner.id, { serverId, environmentId: created.environmentId,
@@ -112,7 +120,7 @@ describe('stored promotion storage composition', () => {
             return linked;
         };
         const from = await createEnvironment({ ...current, definition: sourceDefinition });
-        const to = await createEnvironment(current);
+        const to = await createEnvironment(current, deployerId ? 'production' : 'nonProduction');
         const receiptContent = createDeploymentReceiptDetailV1().content;
         receiptContent.sourceIntent = sourceDefinition;
         receiptContent.machines = [machine.id]; receiptContent.buildMachineId = machine.id; receiptContent.machineResults = [];
@@ -130,9 +138,27 @@ describe('stored promotion storage composition', () => {
             requestKey: randomUUID(), actionOperationId: randomUUID(), sourceEnvironmentId: from.environmentId,
             sourceDeploymentId: retained.id,
             artifact: 'image', destinationContent, ...await artifact('deployment-receipt.v1', {
-                ...receiptContent, sourceIntent: candidate.definition }) };
+                ...receiptContent, sourceIntent: candidate.definition }, deployerId) };
         return { owner, machine, keys, to, retained, serving, destinationContent, input };
     }
+
+    it('admits a deploy-only Production handoff without writing its definition', async () => {
+        const deployer = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const { to, input } = await promotionFixture(deployer.id);
+        const destination = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: to.environmentId } });
+        const candidate = { ...input, destinationContent: {
+            contentArtifactId: destination.contentArtifactId,
+            contentHeaderVersion: destination.contentHeaderVersion,
+            contentBodyVersion: destination.contentBodyVersion,
+        } };
+        const refusedEdit = await inTx(tx => promoteDeploymentInTx(tx, deployer.id, DeploymentPromoteAdmissionInputV1Schema.parse(input)));
+        expect(refusedEdit).toMatchObject({ ok: false, error: 'deployment_access_denied' });
+        const admitted = await inTx(tx => promoteDeploymentInTx(tx, deployer.id, DeploymentPromoteAdmissionInputV1Schema.parse(candidate)));
+        expect(admitted).toMatchObject({ ok: true, state: 'queued' });
+        expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: destination.id } })).toMatchObject({
+            ...candidate.destinationContent, revision: destination.revision + 1,
+        });
+    });
 
     it('spends compact Promote source reads through the real signed HTTP decider without admitting unrelated Environments', async () => {
         const { owner, machine, keys, to, input } = await promotionFixture();

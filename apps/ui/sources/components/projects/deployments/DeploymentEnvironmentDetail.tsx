@@ -87,6 +87,7 @@ import {
   deploymentReceiptTitle,
   deploymentRevisionLabel,
   deploymentOperationLabel,
+  readDeploymentPromotionTarget,
   deploymentSourceLabel,
   deploymentStateLabel,
   deploymentStateNotice,
@@ -155,7 +156,8 @@ import {
   type DropdownMenuItem,
 } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { useOpenNewApp } from '@/components/projects/starters/newAppPresentation';
+import { showDeploymentPromotionSheet } from './DeploymentPromotionSheet';
+
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useDeploymentActorPresentations } from './useDeploymentActorPresentations';
 import {
@@ -223,6 +225,9 @@ export const DeploymentEnvironmentDetail = React.memo(
       /** The Action owner's Deploy; absent while the Source's Account is not current. */
       deploy: ReturnType<typeof createDeploymentActions>['deploy'] | null;
       cancel?: ReturnType<typeof createDeploymentActions>['cancel'] | null;
+      promote?: ReturnType<typeof createDeploymentActions>['promote'] | null;
+      onOpenPromotionReceipt?: (environmentId: string, deploymentId: string) => void;
+      onCreateProduction?: (onCreated: (environmentId: string) => void) => void;
       /** The page's one approval continuation: a held review opens the existing approval page. */
       review: DeploymentReviewHandle;
       /** Names a sibling Environment a variable reference points at, from the page's Environment list. */
@@ -840,6 +845,7 @@ export const DeploymentEnvironmentDetail = React.memo(
       });
     } : null;
     const moveEligibility = readDeploymentMoveEligibility(detail, runtime, activeReceipt, lifetime);
+    const promotionTarget = activeReceipt && readDeploymentPromotionTarget(activeReceipt, detail, platform?.promote);
     const environmentMenu = (
       <EnvironmentMenu
         onDuplicate={props.onDuplicate ? () => props.onDuplicate?.(detail) : undefined}
@@ -856,8 +862,15 @@ export const DeploymentEnvironmentDetail = React.memo(
         } } : undefined}
         deleteTitle={disposition.canDelete ? t('projects.deployments.menuDelete', { name: detail.content.name }) : null}
         onDelete={() => openDisposition(null)}
-        deployProduction={detail.environment.purpose === 'preview'
-          ? { projectSourceId: detail.environment.projectSourceId, previewEnvironmentId: detail.environment.id } : undefined}
+        deployProduction={props.promote && detail.environment.protection === 'nonProduction' && activeReceipt
+          && promotionTarget ? () => showDeploymentPromotionSheet({
+            controller: props.controller, serverId: props.serverId, sourceEnvironmentId: detail.environment.id,
+            sourceDeploymentId: activeReceipt.deployment.id, target: promotionTarget,
+            production: { source: detail.environment, create: props.onCreateProduction },
+            name: detail.content.name, version: deploymentSourceLabel(activeReceipt.content) ?? activeReceipt.deployment.id,
+            promote: props.promote!, review,
+            onOpenReceipt: (environmentId, deploymentId) => props.onOpenPromotionReceipt?.(environmentId, deploymentId),
+          }) : undefined}
         pin={{ pinned: pinned.includes(detail.environment.id), toggle: () => {
           void pinProjectService({ serverId: props.serverId, environmentId: detail.environment.id, pinned: !pinned.includes(detail.environment.id) });
         } }}
@@ -2101,16 +2114,11 @@ function EnvironmentMenu(
     onDelete: () => void;
     /** Pin keeps it at the top of the person's Services column; Unpin takes it off (projects.services.pin). */
     pin?: Readonly<{ pinned: boolean; toggle: () => void }>;
-    /**
-     * A preview's Deploy to Production (deploy auto-mode U9): Deploy an app on this Project's code, its Review showing
-     * this preview's address and health before the person deploys Production.
-     */
-    deployProduction?: Readonly<{ projectSourceId: string; previewEnvironmentId: string }>;
+    deployProduction?: () => void;
   }>,
 ) {
   const { theme } = useUnistyles();
   const [open, setOpen] = React.useState(false);
-  const openNewApp = useOpenNewApp();
   const items = React.useMemo(
     (): readonly DropdownMenuItem[] => [
       ...(props.deployProduction ? [{ id: 'deployProduction', testID: 'project-deployments.environment.menu.deployProduction',
@@ -2174,7 +2182,7 @@ function EnvironmentMenu(
       placement="bottom"
       popoverAccessibilityLabel={t('common.more')}
       onSelect={(id) => {
-        if (id === 'deployProduction' && props.deployProduction) openNewApp(null, null, props.deployProduction);
+        if (id === 'deployProduction') props.deployProduction?.();
         else if (id === 'pin') props.pin?.toggle();
         else if (id === 'history') props.onOpenHistory?.();
         else if (id === 'duplicate') props.onDuplicate?.();

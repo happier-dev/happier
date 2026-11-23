@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { configuration } from '@/configuration';
+import { usesCapturedPromotionSource } from '../../storedPromotionCandidate';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
 import { createOwnServerExpectedDownPublisher } from './expectedDown';
 import { projectDeploymentFailure, projectDeploymentReceiptFailure } from '../../deploymentFailure';
@@ -166,8 +167,10 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
             deploymentId: link.activeDeploymentId, context }) : undefined;
         const retainedSourceIntent = selectOwnServerRetainedServingSource({ actionId: request.actionId,
             environmentId: receipt.deployment.environmentId, link, sourceIntent: receipt.content.sourceIntent, servingReceipt: selected });
-        if (admitCandidate && request.actionId !== 'deployments.rollback' && !retainedSourceIntent)
+        if (admitCandidate && request.actionId !== 'deployments.rollback' && !retainedSourceIntent
+            && !usesCapturedPromotionSource(request.actionId, environment.environment.protection)) {
             admitOwnServerDeploymentSource(environment, receipt.content.sourceIntent);
+        }
         if (selected && (!selected.content.images.length || selected.deployment.environmentId !== receipt.deployment.environmentId
             || !['succeeded', 'running_unverified'].includes(selected.deployment.state))) {
             throw createActionExecuteFailureError({ ok: false, errorCode: 'rollback_image_unavailable', error: 'rollback_image_unavailable' });
@@ -300,9 +303,9 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
                 return rejectBeforeEffects('rollback_image_unavailable');
             }
         }
-        // Rollback reuses the selected release's immutable images. Its fresh
-        // approval has no new builder outcomes and must never request a rebuild.
-        if (request.actionId !== 'deployments.rollback'
+        // These actions activate the recorded images, with any required
+        // transfer admitted against the selected Receipt's image lineage.
+        if (request.actionId !== 'deployments.rollback' && !usesCapturedPromotionSource(request.actionId, initial.environment.environment.protection)
             && requiresOwnServerBuildReceipt(receipt.content) && !isOwnServerBuildReceiptComplete(receipt.content)) {
             if (!host.dispatchBuild) return await write('failed', { ...receipt.content,
                 failure: { code: 'deployment_executor_unavailable', phase: 'build' } });

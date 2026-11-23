@@ -15,7 +15,7 @@ import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/m
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { Tx } from '@/storage/inTx';
 import type { Prisma } from '@prisma/client';
-import { admitDeploymentMachinesInTx, canDeployDeploymentEnvironment, projectDeploymentControllerPlacementFailure, type DeploymentAuthentication } from './deploymentAdmission';
+import { admitDeploymentMachinesInTx, canDeployDeploymentEnvironment, canPromoteToDeploymentEnvironment, projectDeploymentControllerPlacementFailure, type DeploymentAuthentication } from './deploymentAdmission';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { loadDeploymentEnvironmentInTx, loadDeploymentEnvironmentCustodyInTx, readCreatedDeploymentEnvironmentIdInTx } from './deploymentEnvironmentService';
 import { admitDeploymentStoredContentInTx } from './deploymentStoredContent';
@@ -377,10 +377,11 @@ async function isCurrentDeploymentChildRoutingInTx(tx: Tx,
     if (routing.kind === 'prepare') return loaded.row.revision === routing.expectedRevision;
     if (routing.promotion) {
         const promotion = routing.promotion;
-        if (!('admission' in loaded) || !loaded.admission.canManage || promotion.sourceEnvironmentId === loaded.row.id) return false;
+        if (!('admission' in loaded)) return false;
         const source = await loadDeploymentEnvironmentInTx(tx, binding.accountId, routing.input.serverId,
             promotion.sourceEnvironmentId, authentication);
         if (!source.ok || !canDeployDeploymentEnvironment(source.admission, source.row)
+            || !canPromoteToDeploymentEnvironment(source.row, loaded.row, loaded.admission)
             || !await tx.deployment.findFirst({ where: { id: promotion.sourceDeploymentId,
                 environmentId: source.row.id,
                 state: { in: ['succeeded', 'running_unverified'] } }, select: { id: true } })) return false;

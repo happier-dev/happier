@@ -1,7 +1,7 @@
 import type { DeploymentPromoteAdmissionInputV1 } from '@happier-dev/protocol';
 import type { Tx } from '@/storage/inTx';
-import { deploymentFailure, type DeploymentAuthentication } from './deploymentAdmission';
-import { loadDeploymentEnvironmentInTx, lockDeploymentEnvironmentInTx, projectDeploymentEnvironmentHeader } from './deploymentEnvironmentService';
+import { canDeployDeploymentEnvironment, canPromoteToDeploymentEnvironment, deploymentFailure, type DeploymentAuthentication } from './deploymentAdmission';
+import { loadDeploymentEnvironmentInTx, lockDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
 import { createDeploymentInTx } from './deploymentService';
 import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
@@ -14,12 +14,14 @@ export async function promoteDeploymentInTx(tx: Tx, actorAccountId: string, inpu
     if (input.sourceEnvironmentId === input.environmentId) return deploymentFailure('deployment_invalid');
     const source = await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, input.sourceEnvironmentId, authentication);
     if (!source.ok) return source;
-    if (!projectDeploymentEnvironmentHeader(source.row, input.serverId, source.admission).capabilities.deploy) {
+    if (!canDeployDeploymentEnvironment(source.admission, source.row)) {
         return deploymentFailure('deployment_access_denied');
     }
     const destination = await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, input.environmentId, authentication);
     if (!destination.ok) return destination;
-    if (destination.row.deletedAt || !destination.admission.canManage) return deploymentFailure('deployment_access_denied');
+    if (!canPromoteToDeploymentEnvironment(source.row, destination.row, destination.admission)) {
+        return deploymentFailure('deployment_access_denied');
+    }
     const repeated = await tx.deployment.findUnique({ where: { environmentId_requestKey: {
         environmentId: input.environmentId, requestKey: input.requestKey } } });
     if (repeated) return createDeploymentInTx(tx, actorAccountId, input, 'promote', authentication, executionBinding, destination);

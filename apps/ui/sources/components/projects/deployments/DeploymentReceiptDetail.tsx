@@ -53,7 +53,7 @@ import { DeploymentVersionComparison } from './DeploymentVersionComparison';
 import { DeploymentPendingRequest } from './DeploymentPendingRequest';
 
 import {
-  canPromoteDeploymentReceipt,
+  readDeploymentPromotionTarget,
   deploymentDeployAvailability,
   deploymentFailureTitle,
   deploymentHeadline,
@@ -120,6 +120,7 @@ export const DeploymentReceiptDetail = React.memo(
       teardown?: ReturnType<typeof createDeploymentActions>['teardown'] | null;
       promote?: ReturnType<typeof createDeploymentActions>['promote'] | null;
       onOpenPromotionReceipt?: (environmentId: string, deploymentId: string) => void;
+      onCreateProduction?: (onCreated: (environmentId: string) => void) => void;
       phone: boolean;
       /** This receipt's in-app path, for Copy link; null where it has no stable address. */
       linkPath: string | null;
@@ -308,10 +309,7 @@ export const DeploymentReceiptDetail = React.memo(
     const providerEnvironment = content.platform?.providerEnvironment.selection.kind;
     const rollback = mayDeploy && (!platform || (platformTarget?.rollback
       && (providerEnvironment === 'production' || providerEnvironment === 'script'))) ? props.rollback : null;
-    const promotionTarget = platform
-      ? mayDeploy && platformTarget?.promote && deployment.state === 'succeeded' && content.platform?.observation.providerDeploymentId
-        ? { kind: 'platform' as const, consequence: platformTarget.promote.consequence } : null
-      : canPromoteDeploymentReceipt(value, environmentValue) ? { kind: 'ownServer' as const } : null;
+    const promotionTarget = readDeploymentPromotionTarget(value, environmentValue, platformTarget?.promote);
     // Source eligibility is shared with admission; the serving release needs no rollback.
     const retainedTarget = facts.retainedRollbackTarget;
     const { review } = props;
@@ -474,6 +472,8 @@ export const DeploymentReceiptDetail = React.memo(
         onPromote={environmentValue && promotionTarget && promote
           ? () => showDeploymentPromotionSheet({ controller: props.controller, serverId: props.serverId,
               target: promotionTarget, initialDestination: promotionDestination.current,
+              ...(environmentValue.environment.protection === 'nonProduction'
+                ? { production: { source: environmentValue.environment, create: props.onCreateProduction } } : {}),
               onChooseDestination: (chosen) => { promotionDestination.current = chosen; },
               sourceEnvironmentId: environmentId, sourceDeploymentId: deployment.id,
               name: props.environmentName ?? environmentValue.content.name, version: deploymentSourceLabel(content) ?? deployment.id,

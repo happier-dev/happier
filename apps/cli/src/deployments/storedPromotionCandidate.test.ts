@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
-import { prepareStoredPromotionCandidate, readStoredPromotionCandidateForHost } from './storedPromotionCandidate';
+import { createStoredPromotionReceiptContentForHost, prepareStoredPromotionCandidate, readStoredPromotionCandidateForHost } from './storedPromotionCandidate';
 import { projectDeploymentFailure } from './deploymentFailure';
 import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
@@ -32,6 +32,41 @@ describe('stored promotion destination candidate', () => {
         destination.environment.buildMachineId = 'configured-builder';
         expect(await readStoredPromotionCandidateForHost(request, readers)).toMatchObject({ buildMachineId: 'configured-builder',
             sourceReceipt: { deployment: { id: source.deployment.id, state: 'running_unverified' } } });
+    });
+
+    it.each(['repository', 'folder', 'stored'] as const)('pins the %s release and retained images for the Production review', async kind => {
+        const source = createDeploymentReceiptDetailV1();
+        const destination = createDeploymentEnvironmentDetailV1();
+        destination.environment.id = 'production';
+        destination.environment.protection = 'production';
+        destination.environment.runtimeTargetLinkId = destination.targetLinks[0].targetLink.id;
+        destination.targetLinks[0].targetLink.environmentId = destination.environment.id;
+        if (source.content.sourceIntent.kind !== 'repository') throw new Error('Expected repository fixture');
+        const compose = { path: 'compose.release.yml', profiles: [], services: ['app'] };
+        source.content.sourceIntent = kind === 'repository' ? { ...source.content.sourceIntent, projectSourceId: destination.environment.projectSourceId,
+            sha: 'a'.repeat(40), sourceRevision: 12, compose }
+            : kind === 'folder' ? { kind, workspaceId: 'reviewed-folder', manifestFingerprint: `sha256:${'f'.repeat(64)}`,
+                fileCount: 2, totalBytes: 128, excludedPaths: [], compose }
+                : definition('{"services":{"app":{"image":"app:captured"}}}', 19);
+        destination.environment.capabilities.manage = false;
+        const sourceEnvironment = { ...destination.environment, id: source.deployment.environmentId, protection: 'nonProduction' as const };
+        const request = { input: {
+            serverId: destination.environment.serverId, environmentId: destination.environment.id,
+            sourceEnvironmentId: sourceEnvironment.id, sourceDeploymentId: source.deployment.id, artifact: 'image' as const,
+        }, context: {} };
+        const readers = {
+            async readEnvironmentMetadata() { return sourceEnvironment; },
+            async readEnvironment() { return destination; },
+            async readReceipt() { return source; },
+        };
+        const candidate = await readStoredPromotionCandidateForHost(request, readers);
+        expect(candidate.candidateEnvironmentContent).toEqual(destination.content);
+        expect(createStoredPromotionReceiptContentForHost(candidate, 'rollbackAll')).toMatchObject({
+            sourceIntent: source.content.sourceIntent, images: source.content.images,
+        });
+        await expect(readStoredPromotionCandidateForHost(request, { ...readers,
+            async readEnvironmentMetadata() { return { ...sourceEnvironment, projectSourceId: 'different-app' }; },
+        })).rejects.toMatchObject({ code: 'target_mismatch' });
     });
 
     it('copies the captured receipt definition while retaining every destination-owned choice', () => {

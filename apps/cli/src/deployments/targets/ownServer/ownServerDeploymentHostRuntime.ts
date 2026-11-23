@@ -114,7 +114,7 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
         stageContent(sourceIntent: DeploymentSourceIntentV1): Promise<string>;
     }>), snapshot: Readonly<{ environment: DeploymentEnvironmentDetailV1; content?: DeploymentOwnServerContentV1;
         retainedSourceIntent?: DeploymentOwnServerContentV1['sourceIntent'] | null;
-        retainedFolderSource?: NonNullable<DeploymentOwnServerContentV1['ownServer']>['sources'];
+        retainedFolderSource?: Readonly<{ environmentId: string; sources: NonNullable<NonNullable<DeploymentOwnServerContentV1['ownServer']>['sources']> }>;
         deployment?: DeploymentReceiptHeaderV1;
         readReferenceEnvironment?: import('./ownServerDeploymentTarget').OwnServerDeploymentTargetHostInput['readEnvironment'];
         readTelemetryCollectorDomain?: import('./ownServerDeploymentTarget').OwnServerDeploymentTargetHostInput['readTelemetryCollectorDomain'];
@@ -167,12 +167,18 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                 const rootIdentity = await resolveOwnServerDeploymentIdentityForHost({
                     happierHomeDir: configuration.happyHomeDir, serverId: host.serverId, environmentId: environment.environment.id });
                 const openRetainedFolder = async (sourceIntent: NonNullable<typeof retainedFolder>) => {
-                    const retained = snapshot.retainedFolderSource?.find(source => source.role === 'runtime'
+                    const custody = snapshot.retainedFolderSource;
+                    if (!custody) return refuse('deployment_source_unavailable');
+                    const retained = custody.sources.find(source => source.role === 'runtime'
                         && source.machineId === host.machineId && source.installationId === identity.installationId
                         && source.manifestFingerprint === sourceIntent.manifestFingerprint);
                     if (!retained) return refuse('deployment_source_unavailable');
-                    const deploymentRoot = await realpath(rootIdentity.deploymentRoot);
-                    const rootPath = resolveDeploymentSourcePathForHost({ ...rootIdentity, deploymentRoot,
+                    const retainedIdentity = custody.environmentId === environment.environment.id ? rootIdentity
+                        : await resolveOwnServerDeploymentIdentityForHost({
+                            happierHomeDir: configuration.happyHomeDir, serverId: host.serverId, environmentId: custody.environmentId });
+                    const deploymentRoot = await realpath(retainedIdentity.deploymentRoot).catch(() => null);
+                    if (!deploymentRoot) return refuse('deployment_source_unavailable');
+                    const rootPath = resolveDeploymentSourcePathForHost({ ...retainedIdentity, deploymentRoot,
                         deploymentId: retained.deploymentId, restorationForDeploymentId: retained.restorationForDeploymentId });
                     const assertRetainedRoot = async () => {
                         await assertAuthority();

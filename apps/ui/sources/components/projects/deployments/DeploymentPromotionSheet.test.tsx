@@ -240,7 +240,7 @@ describe('Promote', () => {
     try {
       await act(async () => {
         showDeploymentPromotionSheet({ controller, serverId: 'home', sourceEnvironmentId: preview.environment.id, sourceDeploymentId: 'receipt-1',
-          target: { kind: 'ownServer' },
+          target: { kind: 'ownServer' }, production: { source: preview.environment },
           name: 'Preview 12', version: 'a41c09e', promote: vi.fn() as never,
           review: { pendingId: null, request() {}, open() {} }, onOpenReceipt: () => {} });
       });

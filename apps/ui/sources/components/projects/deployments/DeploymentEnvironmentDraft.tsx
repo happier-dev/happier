@@ -89,7 +89,6 @@ import { DeploymentOwnMachineCost, DeploymentTargetPlans, DeploymentTargetPlansF
 import { describeDeploymentPlatformRefusal } from './deploymentPlatformRefusal';
 import { buildPlatformTargetCreateLinkInput, buildPlatformTargetLinkInput, readPreparedPlatformAccount, readPreparedPlatformResourceName, type PreparedPlatformTargetLink } from './platformTargetLink';
 import type { readDeploymentPlatformTargets } from './platformTargetLink';
-import { DeploymentReviewPreviewForAccount } from './DeploymentReviewPreview';
 import {
   DeploymentRetentionChoice,
   deploymentManagedRetention,
@@ -146,11 +145,11 @@ export const DeploymentEnvironmentDraft = React.memo(
       lifetime: ServerAccountScopeLifetime | null;
       sourceId: string | null;
       /** The build preview explicitly selected by the entry point, for Review only. */
-      previewEnvironmentId?: string | null;
       projectChoice?: DeploymentProjectChoiceModel;
       phone: boolean;
       actions: Pick<Actions, 'prepareCreate' | 'checkPlatformTarget' | 'inspectPlatformTarget' | 'link'> | null;
       copyFrom?: DeploymentEnvironmentDetailV1 | null;
+      createProduction?: boolean;
       /** A door that names what it starts from (Store → Apps): a stored definition, in any Project. */
       definitionKind?: DeploymentNewDefinitionKind | null;
       /** The exact registry App pin and its declared inputs. */
@@ -225,7 +224,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     const [folderEnvFiles, setFolderEnvFiles] = React.useState(false);
     const [ref, setRef] = React.useState<string | null>(null);
     // A copy is a new Environment beside its source, never a second production one by default (PAGE-ACCEPT-176 R10-D12).
-    const [production, setProduction] = React.useState(props.copyFrom ? false : stepped);
+    const [production, setProduction] = React.useState(props.createProduction || (!props.copyFrom && Boolean(stepped)));
     const [deployerMode, setDeployerMode] = React.useState<DeploymentEnvironmentDetailV1['environment']['deployerMode']>(
       props.copyFrom?.environment.deployerMode ?? 'managers',
     );
@@ -1190,9 +1189,9 @@ export const DeploymentEnvironmentDraft = React.memo(
               title={t(onPlatform ? 'newApp.deploy.protectEnvironment' : 'projects.deployments.production')}
               subtitle={t(onPlatform ? 'newApp.deploy.protectEnvironmentHint' : 'projects.deployments.productionHint')}
               rightElement={
-                <Switch value={production} onValueChange={setProduction} />
+                <Switch value={production} disabled={props.createProduction} onValueChange={setProduction} />
               }
-              onPress={() => setProduction((current) => !current)}
+              onPress={props.createProduction ? undefined : () => setProduction((current) => !current)}
               showChevron={false}
             />
           </ItemGroup>
@@ -1230,8 +1229,6 @@ export const DeploymentEnvironmentDraft = React.memo(
           )}
           {draftStep === 'review' ? (partialProgress ?? <>{machineCausedRefusal ? machineAwayNotice : refusalBanner}
             {/* Opened from a build preview: what it built, and whether it answers, before Production (deploy auto-mode U9). */}
-            {props.previewEnvironmentId && props.lifetime
-              ? <DeploymentReviewPreviewForAccount lifetime={props.lifetime} environmentId={props.previewEnvironmentId} /> : null}
             {reviewBody}</>) : null}
         </View>
       );

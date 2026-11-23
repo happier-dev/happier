@@ -2049,9 +2049,11 @@ before those facts can be reported. These are typed review facts, not a claim
 that every UI row or the composed native journey is verified.
 
 Promotion selects a successful source receipt by identity and uses its captured
-source bytes. Source Environment edits and receipt metadata revisions do not
-replace that immutable source. New promotion and review still require source
-deploy rights, destination management rights and destination/link/content CAS.
+source bytes. Source Environment edits and receipt metadata revisions leave that
+source pinned. A Production handoff requires a non-production source and a
+Production destination in the same App, Deploy rights on both Environments, and
+destination/link/content CAS. Legacy promotion that edits a non-production
+destination definition requires Manage there.
 Initial review pins the source archive custody. An admitted build may adopt the
 same image identities into the destination receipt's archive location; subsequent
 children consume that receipt's custody rather than comparing its new location
@@ -2061,19 +2063,23 @@ In 0.3 development source, UI, CLI and agent callers can send a compact
 `deployments.promote` request with `environmentId` (destination),
 `sourceEnvironmentId`, `sourceDeploymentId`, explicit `artifact: 'image' | 'rebuild'`
 and an optional `requestKey`. The receiving destination controller uses the same
-Action preparation and review path as Deploy. The stored-promotion owner derives
-the candidate from the selected receipt, preserves destination configuration and
+Action preparation and review path as Deploy. The promotion owner derives the
+candidate from the selected receipt, preserves destination configuration and
 publishes both reviewed content references before approval. Storage and approved
 replay still require the prepared input; replay cannot regenerate candidates.
 Home projects the compact Promote source Environment and receipt into the closed
 native admission, admits their provenance at mint, and retains those operands in
 the signed binding. Preparation reads consume that same admitted scope through
 the existing ActionSpec transports.
-The current native producer supports recorded-image promotion between stored
-definitions; explicit rebuild remains typed unsupported until its producer lands.
-Promote review names the source Receipt's version and the receiving Environment.
-Destination is the first fact. Own-server reviews show the selected version
-even when the destination assigns it a different Compose revision. For platform
+In 0.3 development source, the non-production Environment and its Receipt both
+offer this Production handoff. The Environment opens it for the serving Receipt.
+If the App lacks a Production Environment, the picker can lead to the existing
+creation flow. The native Action runs the source Receipt's recorded images with
+the destination's configuration. Repository releases use the recorded commit and
+Compose path. Folder releases also require a verified local copy of the captured
+Compose manifest and files on the destination installation. A missing capture or
+image produces a typed refusal. Explicit rebuild is unsupported by this producer.
+The review names the receiving Environment and the selected Receipt's version. For platform
 receipts, the chooser shows the effect declared by the target's Promote Action,
 and review names the provider target. A platform Rollback review shows which
 provider deployment will serve and keeps its data.

@@ -129,7 +129,6 @@ export type NewAppScreenProps = Partial<
     /** A Project's Deploy an app: that Project's code starts chosen as Your code. */
     projectSourceId?: string | null;
     /** Review the build preview named by a Deploy to Production entry point. */
-    previewEnvironmentId?: string | null;
     /** A checked Session suggestion to open with its description and first card already selected. */
     suggestion?: NewAppSuggestionContext | null;
     /** An empty state's "Describe your app": the dialog opens on the describe step (journey-deploy S1). */
@@ -895,8 +894,6 @@ export const NewAppScreen = React.memo(function NewAppScreen(
               ...(deployCatalogItem ? { mark: <StoreItemMark facts={{ kind: deployCatalogItem.kind, title: deployCatalogItem.title,
                 brand: deployCatalogItem.brandMark }} size={ICON_SIZE.md} /> } : {}) }} />
         <NewAppDeploySteps serverId={scope.serverId} source={deploySource} machineId={props.machine?.machineId ?? null}
-          previewEnvironmentId={deploySource.kind === 'repository' && deploySource.projectSourceId === props.projectSourceId
-            ? props.previewEnvironmentId : null}
           phone={phone} steps={deploySteps} onLeave={stepAside} />
       </View>
     );

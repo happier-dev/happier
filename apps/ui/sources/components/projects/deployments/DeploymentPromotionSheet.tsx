@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import type { DeploymentReadControllerV1 } from '@happier-dev/deployments';
-import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployments/contracts/v1';
+import { isDeploymentProductionPromotionPairV1, type DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployments/contracts/v1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -36,6 +36,8 @@ export type DeploymentPromotionSheetInput = Readonly<{
   sourceEnvironmentId: string;
   sourceDeploymentId: string;
   target: Readonly<{ kind: 'ownServer' } | { kind: 'platform'; consequence: string | null }>;
+  production?: Readonly<{ source: Parameters<typeof isDeploymentProductionPromotionPairV1>[0] & { purpose: string };
+    create?: (onCreated: (environmentId: string) => void) => void }>;
   name: string;
   version: string;
   promote: ReturnType<typeof createDeploymentActions>['promote'];
@@ -87,8 +89,21 @@ function DeploymentPromotionSheet(props: DeploymentPromotionSheetInput & CustomM
       onOpenReceipt(destination, deploymentId);
     }
   });
-  const isDestination = (row: DeploymentEnvironmentCollectionV1['items'][number]) => row.environment.id !== props.sourceEnvironmentId
-    && row.environment.capabilities.manage && row.environment.capabilities.deploy;
+  const production = props.production;
+  const isDestination = ({ environment }: DeploymentEnvironmentCollectionV1['items'][number]) =>
+    environment.capabilities.deploy && (production
+      ? isDeploymentProductionPromotionPairV1(production.source, environment)
+      : environment.protection === 'nonProduction' && environment.id !== props.sourceEnvironmentId && environment.capabilities.manage);
+  const create = production?.create;
+  const createProduction = production && create ? {
+    label: t('projects.deployments.promotion.createProduction'),
+    onPress: () => {
+      onClose();
+      create(environmentId => showDeploymentPromotionSheet({ ...props, initialDestination: {
+        environmentId, projectSourceId: production.source.projectSourceId, title: t('projects.deployments.production'),
+      } }));
+    },
+  } : undefined;
   const busy = press.running || press.reviewPending;
   // Own servers offer a separately reviewed rebuild only when the exact images cannot reach the destination.
   const [artifact, setArtifact] = React.useState<'image' | 'rebuild'>('image');
@@ -101,7 +116,7 @@ function DeploymentPromotionSheet(props: DeploymentPromotionSheetInput & CustomM
   const confirm = () => request('image');
   const target = props.target;
   const ownServer = target.kind === 'ownServer';
-  const exactImageUnavailable = ownServer && artifact === 'image' && press.outcome?.kind === 'refused'
+  const exactImageUnavailable = ownServer && !production && artifact === 'image' && press.outcome?.kind === 'refused'
     && press.outcome.code === 'rollback_image_unavailable';
   const effect = ownServer
     ? { title: t('projects.deployments.promotion.image'), subtitle: t('projects.deployments.promotion.imageBody') }
@@ -120,13 +135,16 @@ function DeploymentPromotionSheet(props: DeploymentPromotionSheetInput & CustomM
       <View testID="project-deployments.promote" style={deploymentSheetStyles.body}>
         <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.promotion.lead', { name: props.name, version: props.version })}</Text>
         {/* Promoting a build preview: its address and health first, from the Environment's own owners (U9). */}
-        <DeploymentReviewPreview controller={props.controller} environmentId={props.sourceEnvironmentId} demand={SHEET_DEMAND}
+        {production?.source.purpose === 'preview' ? <DeploymentReviewPreview
+          controller={props.controller} environmentId={props.sourceEnvironmentId} demand={SHEET_DEMAND}
           onOpenAddress={(url) => { void requestOpenExternalUrl(url, { serverId: props.serverId, expectedAccountId: props.controller.scope.accountId }); }} />
+          : null}
         <DeploymentEnvironmentChooser controller={props.controller} testID="project-deployments.promote.destination"
           title={t('projects.deployments.promotion.destination')} eligible={isDestination}
           selectedId={destination} onSelect={selectDestination} disabled={busy}
           loadFailedTitle={t('projects.deployments.promotion.loadFailed')}
-          emptyTitle={t('projects.deployments.promotion.emptyTitle')} emptyBody={t('projects.deployments.promotion.emptyBody')} />
+          emptyTitle={t(production ? 'projects.deployments.promotion.emptyProduction' : 'projects.deployments.promotion.emptyTitle')}
+          emptyBody={t('projects.deployments.promotion.emptyBody')} emptyAction={createProduction} />
         {chosen && gaps.result.status === 'ready' && gaps.result.gaps.length > 0 ? <AttentionBanner
           testID="project-deployments.promote.missingVariables" tone="warning"
           title={gaps.result.gaps.length === 1

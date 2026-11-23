@@ -5,7 +5,7 @@ import { DeploymentPlatformContentV1Schema, type DeploymentContentV1, type Deplo
 import { readPromotionSelectionForHost, prepareStoredPromotionForHost, createStoredPromotionReceiptContentForHost } from './storedPromotionCandidate';
 import { DEFAULT_OWN_SERVER_DEPLOYMENT_ON_FAILURE } from './targets/ownServer/prepareCandidate';
 
-/** Compact requests join the existing stored-promotion review and publication path. */
+/** Compact requests join the existing promotion review and publication path. */
 export async function preparePromotionForHost(request: Readonly<{
     input: DeploymentPromoteIntentInputV1; context: ActionExecutorContext;
 }>, host: Parameters<typeof readPromotionSelectionForHost>[1] & Readonly<{
@@ -29,7 +29,7 @@ export async function preparePromotionForHost(request: Readonly<{
     return { promotion, environment: destination, sourceReceipt: selected.sourceReceipt, input: buildDeploymentPromoteInputV1(request.input, {
         requestKey: request.input.requestKey ?? randomUUID(), expectedRevision: environment.revision,
         targetLinkId: link.id, expectedTargetLinkRevision: link.revision, candidate,
-        // The existing review owner publishes the replacement before approval.
+        // The existing review owner publishes a replacement before approval when Compose changes.
         destinationContent: { contentArtifactId: environment.contentArtifactId,
             contentHeaderVersion: environment.contentHeaderVersion, contentBodyVersion: environment.contentBodyVersion },
     }) };

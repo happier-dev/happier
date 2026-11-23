@@ -322,7 +322,7 @@ describe('own-server target at the Action host boundary', () => {
     for (const { scenario, sourceKind } of [
         ...(['iroh_publication_refused', 'iroh_publication_loopback', 'iroh_publication_host_network', 'private_publication_matching_restore', 'private_publication_refused', 'private_publication_withdrawal_refused', 'private_publication_failed_attempt', 'private_publication_forward_withdrawal'] as const)
             .map(scenario => ({ scenario, sourceKind: 'stored' as const })),
-        ...(['promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_failed_logs', 'runtime_health', 'runtime_stage', 'cleanup_without_candidate', 'cleanup_source_failure', 'cleanup_native_candidate', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'joining_current', 'joining_current_successor', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_refused', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_start_first_restore_join_recovery', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_backup_configured_native_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'standalone_public_restore_upload', 'standalone_public_restore_volume_upload', 'standalone_public_restore_volume', 'standalone_public_restore_snapshot_confirmed', 'standalone_public_restore_stale_input', 'public_copy', 'public_restore_drill', 'public_preview_copy', 'public_preview_copy_failure', 'public_preview_configure_failure', 'public_preview_companion_copy', 'public_preview_companion_create_failure', 'public_preview_companion_main_deleted', 'public_preview_companion_connect_failure', 'native_preview_cleanup', 'native_preview_cleanup_failure', 'native_preview_cleanup_companion', 'native_preview_cleanup_companion_failure', 'public_backup', 'public_backup_restore', 'public_backup_restore_local', 'public_backup_restore_sftp', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
+        ...(['promote_repository_production', 'promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_failed_logs', 'runtime_health', 'runtime_stage', 'cleanup_without_candidate', 'cleanup_source_failure', 'cleanup_native_candidate', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'joining_current', 'joining_current_successor', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_refused', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_start_first_restore_join_recovery', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_backup_configured_native_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'standalone_public_restore_upload', 'standalone_public_restore_volume_upload', 'standalone_public_restore_volume', 'standalone_public_restore_snapshot_confirmed', 'standalone_public_restore_stale_input', 'public_copy', 'public_restore_drill', 'public_preview_copy', 'public_preview_copy_failure', 'public_preview_configure_failure', 'public_preview_companion_copy', 'public_preview_companion_create_failure', 'public_preview_companion_main_deleted', 'public_preview_companion_connect_failure', 'native_preview_cleanup', 'native_preview_cleanup_failure', 'native_preview_cleanup_companion', 'native_preview_cleanup_companion_failure', 'public_backup', 'public_backup_restore', 'public_backup_restore_local', 'public_backup_restore_sftp', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
         ...(['telemetry_delivery', 'telemetry_own_collector', 'telemetry_no_header'] as const)
             .map(scenario => ({ scenario, sourceKind: 'repository' as const })),
         ...(['stop_first_route_direct', 'stop_first_route_tunnel', 'stop_first_replaces_start_first'] as const)
@@ -349,7 +349,8 @@ describe('own-server target at the Action host boundary', () => {
         const retainedBackupTransport = scenario === 'public_backup_restore_local' ? 'local'
             : scenario === 'public_backup_restore_sftp' ? 'sftp' : undefined;
         const runtimeRead = scenario === 'runtime_reads' || scenario === 'runtime_health' || scenario === 'runtime_failed_logs';
-        const promotionScenario = scenario === 'promote_source_demoted' || scenario === 'promote_destination_demoted'
+        const exactProductionPromotion = scenario === 'promote_repository_production';
+        const promotionScenario = exactProductionPromotion || scenario === 'promote_source_demoted' || scenario === 'promote_destination_demoted'
             || scenario === 'promote_build_refused' || scenario === 'promote_archive_custody' || scenario === 'promote_cleanup_refused';
         const startFirst = scenario.startsWith('candidate_start_first');
         const replacesStartFirst = scenario === 'stop_first_replaces_start_first';
@@ -388,6 +389,7 @@ describe('own-server target at the Action host boundary', () => {
             execFileSync(process.execPath, [docker.executablePath, 'image', 'tag', registeredImage.registryReference!, image.registryReference!]);
         }
         await writeFile(join(repository, 'compose.yaml'), JSON.stringify({ services: { app: { image: image.registryReference,
+            ...(exactProductionPromotion ? { build: { context: '.' } } : {}),
             ...(scenario === 'iroh_publication_host_network' ? { network_mode: 'host' } : {}),
             privileged: true, restart: 'on-failure', deploy: { replicas: scenario === 'public_restore_drill' ? 1 : 2,
                 resources: { limits: { cpus: '1.0', memory: '128M' } } },
@@ -544,7 +546,8 @@ describe('own-server target at the Action host boundary', () => {
         const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
         const credentials = { token, encryption: null };
         const serverHttpBaseUrl = 'https://deployment-health.test';
-        environment.environment.protection = 'production';
+        // Retain coverage of builder refusal in the definition-writing legacy flow.
+        environment.environment.protection = scenario === 'promote_build_refused' ? 'nonProduction' : 'production';
         environment.environment.controllerMachineId = scenario === 'retained_health_remote' ? 'other-controller' : 'machine-a';
         if (scenario === 'retained_health_remote') receipt.deployment.acceptedExecution!.controller = {
             machineId: 'other-controller', installationId: 'controller-installation',
@@ -1021,7 +1024,7 @@ describe('own-server target at the Action host boundary', () => {
             // Same-Machine transport forwards into the incumbent builder. Its
             // native images, archive custody and receipt transitions stay real.
             ...(previewCopy ? { dispatchBuild: input => buildOwnServerDeploymentReceipt(measuredHost, input) } : {}),
-            ...(scenario === 'canonical_home_build' ? { reviewMember: input => target.reviewMember(input) } : {}),
+            ...(scenario === 'canonical_home_build' || exactProductionPromotion ? { reviewMember: input => target.reviewMember(input) } : {}),
             // Observe the member transport boundary while forwarding into the
             // real executor, so aggregate failure cannot hide its native cause.
             ...(runtimeRead || telemetry ? { dispatchMember: async (input: Parameters<NonNullable<OwnServerDeploymentTargetHostInput['dispatchMember']>>[0]) => {
@@ -1041,6 +1044,32 @@ describe('own-server target at the Action host boundary', () => {
         };
         const currentness = acquireRequesterAccountEncryptionCurrentness({ accountId, token, serverBaseUrl: serverHttpBaseUrl });
         try {
+            if (exactProductionPromotion) {
+                environment.environment.protection = 'production';
+                receipt.deployment.operation = 'promote';
+                serving.deployment.environmentId = promotionSource.environment.id;
+                serving.content.sourceIntent = structuredClone(receipt.content.sourceIntent);
+                const input = { ...request.input, sourceEnvironmentId: promotionSource.environment.id,
+                    sourceDeploymentId: serving.deployment.id, artifact: 'image' as const,
+                    destinationContent: { contentArtifactId: environment.environment.contentArtifactId,
+                        contentHeaderVersion: environment.environment.contentHeaderVersion,
+                        contentBodyVersion: environment.environment.contentBodyVersion } };
+                const promotion = await readStoredPromotionCandidateForHost({ input, context: request.context }, measuredHost);
+                expect(promotion.candidateEnvironmentContent).toEqual(environment.content);
+                const review = await target.review({ actionId: 'deployments.promote', input, content: receipt.content,
+                    candidateEnvironmentContent: promotion.candidateEnvironmentContent, context: sourceContext });
+                expect(review.inputBasis).toMatchObject({ sourceIntent: serving.content.sourceIntent, images: serving.content.images });
+                expect(review.inputBasis.buildServices).toBeUndefined();
+                receipt.content.ownServer = { approvedInputBasis: review.inputBasis };
+                const result = await target.execute({ ...request, actionId: 'deployments.promote', input });
+                expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+                expect(['succeeded', 'running_unverified']).toContain(receipt.deployment.state);
+                const invocations = await docker.readInvocations();
+                expect(invocations.some(call => call.args.includes('up'))).toBe(true);
+                expect(invocations.some(call => call.args.includes('build'))).toBe(false);
+                expect(await docker.readRunningImageConfig('app')).toBe(image.configDigest);
+                return;
+            }
             if (promotionScenario) {
                 const document = await readFile(join(repository, 'compose.yaml'), 'utf8');
                 const definition = { kind: 'stored' as const, document, contentRevision: 1,

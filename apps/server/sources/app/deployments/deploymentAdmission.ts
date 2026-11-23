@@ -1,3 +1,4 @@
+import { isDeploymentProductionPromotionPairV1 } from '@happier-dev/deployments/contracts/v1';
 import type { z } from 'zod/mini';
 import { DeploymentActionFailureV1Schema } from '@happier-dev/protocol';
 import type { DeploymentMachinePlacementDiagnosticV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -94,6 +95,17 @@ export function canDeployDeploymentEnvironment(admission: DeploymentSourceAdmiss
     environment: Readonly<{ deletedAt: Date | null; deployerMode: string; principals?: readonly DeploymentEnvironmentPrincipalRow[] }>,
 ): boolean {
     return !environment.deletedAt && admitsDeploymentEnvironmentPeople(admission, environment.deployerMode, environment.principals, 'deploy');
+}
+
+/** Production handoff is a deploy. Legacy promotion may also edit the destination definition. */
+export function canPromoteToDeploymentEnvironment(
+    source: Parameters<typeof isDeploymentProductionPromotionPairV1>[0],
+    destination: Parameters<typeof isDeploymentProductionPromotionPairV1>[1] & Parameters<typeof canDeployDeploymentEnvironment>[1],
+    admission: DeploymentSourceAdmission,
+): boolean {
+    return canDeployDeploymentEnvironment(admission, destination) && (destination.protection === 'production'
+        ? isDeploymentProductionPromotionPairV1(source, destination)
+        : source.id !== destination.id && admission.canManage);
 }
 
 /** Database editing (P3 M1): Off, or the same people choice and member predicate as deployers, over 'dataEdit' rows. */

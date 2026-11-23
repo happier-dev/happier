@@ -51,7 +51,6 @@ export function NewAppDeploySteps(
     serverId: string;
     source: NewAppDeploySource;
     /** A "Deploy an app here" door's Machine; the person can still choose another. */
-    previewEnvironmentId?: string | null;
     machineId: string | null;
     phone: boolean;
     steps: DeploymentDraftStepsHost;
@@ -97,7 +96,6 @@ export function NewAppDeploySteps(
 type BoundProps = Readonly<{
   lifetime: ServerAccountScopeLifetime;
   machineId: string | null;
-  previewEnvironmentId?: string | null;
   phone: boolean;
   steps: DeploymentDraftStepsHost;
   onLeave: () => void;
@@ -139,7 +137,6 @@ function RepositoryDeploy(
       actions={actions}
       platformAvailable
       initialMachineId={props.machineId}
-      previewEnvironmentId={props.previewEnvironmentId}
       steps={props.steps}
       onApprovalRequested={onApprovalRequested}
       onDiscard={props.onLeave}

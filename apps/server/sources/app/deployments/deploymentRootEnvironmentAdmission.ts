@@ -28,6 +28,7 @@ import { resolveMachineAdmissionsInTx } from '@/app/machines/machineAccess';
 import { loadDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
 import {
   canDeployDeploymentEnvironment,
+  canPromoteToDeploymentEnvironment,
   canTeardownDeploymentEnvironment,
   admitDeploymentMachineInTx,
   projectDeploymentControllerPlacementFailure,
@@ -93,13 +94,16 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
     ? environment.admission.canManage && !environment.row.deletedAt
     : canDeployDeploymentEnvironment(environment.admission, environment.row))
     ? { ok: true } : { ok: false, phase: 'environment_capability' };
-  if ('kind' in nativeAdmission && nativeAdmission.kind === 'promote') {
-    if (!environment.admission.canManage) return { ok: false, phase: 'promote_manage' };
+  const promoting = 'kind' in nativeAdmission && nativeAdmission.kind === 'promote';
+  if (promoting) {
     const source = await loadDeploymentEnvironmentInTx(tx, root.accountId, root.serverIdentityId,
       nativeAdmission.sourceEnvironmentId, authentication);
     if (!source.ok || !canDeployDeploymentEnvironment(source.admission, source.row)
       || !await tx.deployment.findFirst({ where: { id: nativeAdmission.sourceDeploymentId,
         environmentId: source.row.id }, select: { id: true } })) return { ok: false, phase: 'promote_source' };
+    if (!canPromoteToDeploymentEnvironment(source.row, environment.row, environment.admission)) {
+      return { ok: false, phase: 'promote_destination' };
+    }
   }
   if (
     'kind' in nativeAdmission &&
@@ -142,7 +146,7 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
     !isDeploymentBackupReadActionIdV1(root.actionId)
   ) {
     if (
-      !(ingressUpdateRoot || configureRoot || telemetryRoot
+      !promoting && !(ingressUpdateRoot || configureRoot || telemetryRoot
         ? environment.admission.canManage && !environment.row.deletedAt
         : root.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1
         ? canTeardownDeploymentEnvironment(environment.admission, environment.row)

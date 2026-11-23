@@ -237,12 +237,17 @@ export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
     let environmentRevision = loaded.row.revision;
     if (operation === 'promote') {
         if (!('destinationContent' in input)) return deploymentFailure('deployment_invalid');
-        // Every ordinary admission refusal precedes the sole definition write.
-        // Subsequent CAS/create failures throw, rolling back the coupled transaction.
-        const updated = await updateDeploymentEnvironmentInTx(tx, actorAccountId, { serverId: input.serverId,
-            environmentId: input.environmentId, expectedRevision: input.expectedRevision, ...input.destinationContent }, authentication, 'environment', loaded, accountIds);
-        if (!updated.ok) return updated;
-        environmentRevision = updated.revision;
+        if (loaded.row.protection === 'production') {
+            if (!isDeepStrictEqual(input.destinationContent, deploymentContentReference(loaded.row))) {
+                return deploymentFailure('deployment_access_denied');
+            }
+        } else {
+            // Legacy promotion edits the destination under the definition owner's Manage check.
+            const updated = await updateDeploymentEnvironmentInTx(tx, actorAccountId, { serverId: input.serverId,
+                environmentId: input.environmentId, expectedRevision: input.expectedRevision, ...input.destinationContent }, authentication, 'environment', loaded, accountIds);
+            if (!updated.ok) return updated;
+            environmentRevision = updated.revision;
+        }
     }
     const changed = await tx.deploymentEnvironment.updateMany({ where: { id: loaded.row.id, revision: environmentRevision }, data: {
         revision: { increment: 1 },

@@ -25,7 +25,7 @@ import { formatRelativeTime } from '@/utils/time/formatShortRelativeTime';
 import { DeploymentEnvironmentMark, DeploymentEnvironmentStateMark, type DeploymentPlatformIdentity } from './rows/DeploymentEnvironmentRow';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { SurfaceStateCard, type SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
 import { selectDeploymentSingleDataMachineV1, type DeploymentReadControllerV1 } from '@happier-dev/deployments';
 
 import { deploymentActionRefusalRemedy, deploymentReceiptAtMs, deploymentRevisionLabel, deploymentStateLabel, deploymentEnvironmentRowState } from './deploymentPresentation';
@@ -329,6 +329,8 @@ export function DeploymentEnvironmentChooser(props: Readonly<{
   loadFailedTitle: string;
   emptyTitle: string;
   emptyBody: string;
+  /** Where an empty list leads to meet its prerequisite (Move: Store databases). */
+  emptyAction?: SurfaceStateAction;
 }>) {
   const { theme } = useUnistyles();
   const collection = useDeploymentCollection(props.controller, { mounted: true, visible: true, focused: true },
@@ -356,7 +358,9 @@ export function DeploymentEnvironmentChooser(props: Readonly<{
         : collection.snapshot.status !== 'ready' && rows.length === 0 ? <SurfaceStateCard size="line" kind="loading"
             testID={`${props.testID}.loading`} title={t('projects.deployments.loading')} />
         : rows.length === 0 ? <SurfaceStateCard size="line" kind="empty" testID={`${props.testID}.empty`}
-            title={props.emptyTitle} reason={props.emptyBody} /> : null}
+            title={props.emptyTitle} reason={props.emptyBody}
+            {...(props.emptyAction && !collection.hasNextPage
+              ? { action: { ...props.emptyAction, testID: `${props.testID}.empty.action` } } : {})} /> : null}
     </ItemGroup>
   );
 }

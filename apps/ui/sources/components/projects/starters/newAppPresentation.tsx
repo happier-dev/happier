@@ -20,13 +20,13 @@ export type NewAppSuggestionContext = Readonly<{
   recommendation: DeploySuggestionRecommendationV1;
   catalog: DeploySuggestionCatalogV1;
 }>;
-export type NewAppContext = Readonly<{ projectSourceId?: string | null; previewEnvironmentId?: string | null; startOn?: 'describe' | null; suggestion?: NewAppSuggestionContext | null }>;
+export type NewAppContext = Readonly<{ projectSourceId?: string | null; startOn?: 'describe' | null; suggestion?: NewAppSuggestionContext | null }>;
 
-function NewAppDialog(props: CustomModalInjectedProps & Readonly<{ onClone?: (() => void) | null; starterId?: string | null; machine?: QualifiedMachineV1 | null; projectSourceId?: string | null; previewEnvironmentId?: string | null; startOn?: 'describe' | null; suggestion?: NewAppSuggestionContext | null }>) {
+function NewAppDialog(props: CustomModalInjectedProps & Readonly<{ onClone?: (() => void) | null; starterId?: string | null; machine?: QualifiedMachineV1 | null; projectSourceId?: string | null; startOn?: 'describe' | null; suggestion?: NewAppSuggestionContext | null }>) {
   return (
     <React.Suspense fallback={<View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}><ActivitySpinner /></View>}>
       <LazyNewAppScreen onClose={props.onClose} setChrome={props.setChrome} onClone={props.onClone} starterId={props.starterId} machine={props.machine}
-        projectSourceId={props.projectSourceId} previewEnvironmentId={props.previewEnvironmentId} startOn={props.startOn} suggestion={props.suggestion} />
+        projectSourceId={props.projectSourceId} startOn={props.startOn} suggestion={props.suggestion} />
     </React.Suspense>
   );
 }
@@ -40,7 +40,7 @@ export function useOpenNewApp(onClone?: (() => void) | null): (starterId?: strin
   return React.useCallback((starterId?: string | null, machine?: QualifiedMachineV1 | null, context?: NewAppContext) => {
     Modal.show({
       component: NewAppDialog,
-      props: { onClone: onClone ?? null, starterId: starterId ?? null, machine: machine ?? null, projectSourceId: context?.projectSourceId ?? null, previewEnvironmentId: context?.previewEnvironmentId ?? null, startOn: context?.startOn ?? null, suggestion: context?.suggestion ?? null },
+      props: { onClone: onClone ?? null, starterId: starterId ?? null, machine: machine ?? null, projectSourceId: context?.projectSourceId ?? null, startOn: context?.startOn ?? null, suggestion: context?.suggestion ?? null },
       ...newAppDialogPresentation(!context?.suggestion && context?.startOn !== 'describe'),
     });
   }, [onClone]);

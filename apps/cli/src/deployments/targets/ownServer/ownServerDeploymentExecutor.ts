@@ -15,6 +15,7 @@ import { presentMachineAuthorityV1 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentExecutionFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { configuration } from '@/configuration';
+import { usesCapturedPromotionSource } from '../../storedPromotionCandidate';
 import { readProjectManifest } from '@/workspaces/projectSetup/projectManifestFile';
 import { createDeploymentExecEnvPortForHost, createDeploymentBackupEnvironmentForHost } from '@/deployments/secrets/deploymentExecEnvPort';
 import { prepareEnvironmentSecretBindingsForLaunch } from '@/deployments/secrets/prepareEnvironmentSecretBindingsForLaunch';
@@ -205,8 +206,10 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 deploymentId: snapshot.link.activeDeploymentId, context: request.context }) : null;
         const retainedSourceIntent = selectOwnServerRetainedServingSource({ actionId: request.actionId,
             environmentId: request.input.environmentId, link: snapshot.link, sourceIntent: receipt.content.sourceIntent, servingReceipt });
-        if (phase === 'activate' && request.actionId !== 'deployments.rollback' && !retainedSourceIntent)
+        if (phase === 'activate' && request.actionId !== 'deployments.rollback' && !retainedSourceIntent
+            && !usesCapturedPromotionSource(request.actionId, snapshot.environment.environment.protection)) {
             admitOwnServerDeploymentSource(snapshot.environment, receipt.content.sourceIntent);
+        }
         const approved = receipt.content.ownServer?.approvedInputBasis;
         if (phase === 'activate' && approved && (!isDeepStrictEqual(approved.bindings, snapshot.environment.content.bindings)
             || !isDeepStrictEqual(approved.ownServer, snapshot.environment.content.ownServer))) refuse('deployment_conflict');
@@ -262,11 +265,16 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
         const nativeOrigin = environment.targetLinks.find(row => row.targetLink.id === link.id)?.content?.nativeOrigin;
         if (nativeOrigin?.capture && !link.members.some(member => member.installationId === nativeOrigin.capture!.installationId)) refuse('target_mismatch');
         const sourceIntent = content.sourceIntent;
-        const retainedSourceIntent = snapshot.retainedSourceIntent ?? selectOwnServerRetainedServingSource({
+        let retainedSourceIntent = snapshot.retainedSourceIntent ?? selectOwnServerRetainedServingSource({
             actionId: request.actionId, environmentId: environment.environment.id, link, sourceIntent,
             servingReceipt: snapshot.servingReceipt });
         let rollbackReceipt: OwnServerDeploymentReceipt | undefined;
-        let retainedFolderSource: NonNullable<OwnServerDeploymentReceipt['content']['ownServer']>['sources'];
+        let retainedFolderSource: Readonly<{ environmentId: string; sources: NonNullable<NonNullable<OwnServerDeploymentReceipt['content']['ownServer']>['sources']> }>;
+        const retainFolder = (receipt: OwnServerDeploymentReceipt) => {
+            if (sourceIntent.kind === 'folder') retainedFolderSource = {
+                environmentId: receipt.deployment.environmentId, sources: receipt.content.ownServer?.sources ?? [],
+            };
+        };
         let imageTargetLinkId = link.id;
         if (request.materialization.kind === 'restoration') {
             const retained = snapshot.servingReceipt?.deployment.id === request.materialization.sourceDeploymentId
@@ -274,7 +282,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     deploymentId: request.materialization.sourceDeploymentId, context: request.context });
             if (!isDeepStrictEqual(retained.content.sourceIntent, sourceIntent)
                 || !isDeepStrictEqual(retained.content.images, content.images)) refuse('target_mismatch');
-            if (sourceIntent.kind === 'folder') retainedFolderSource = retained.content.ownServer?.sources ?? [];
+            retainFolder(retained);
             imageTargetLinkId = retained.deployment.targetLinkId;
         } else if (request.actionId === 'deployments.rollback') {
             if (!('deploymentId' in request.input)) refuse('invalid_parameters');
@@ -285,20 +293,22 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 || retained.deployment.environmentId !== environment.environment.id
                 || !isDeepStrictEqual(retained.content.sourceIntent, sourceIntent)
                 || !isDeepStrictEqual(retained.content.images, content.images)) refuse('target_mismatch');
-            if (sourceIntent.kind === 'folder') retainedFolderSource = retained.content.ownServer?.sources ?? [];
+            retainFolder(retained);
             rollbackReceipt = retained;
-        } else if (sourceIntent.kind === 'stored') {
-            if (request.actionId === 'deployments.deploy' || request.actionId === 'deployments.promote') {
-                if (!retainedSourceIntent) admitOwnServerDeploymentSource(environment, sourceIntent);
-                if (request.actionId === 'deployments.promote') {
-                    if (!('sourceDeploymentId' in request.input) || request.input.artifact !== 'image') refuse('unsupported');
-                    const retained = await host.readReceipt({ environmentId: request.input.sourceEnvironmentId,
-                        deploymentId: request.input.sourceDeploymentId, context: request.context });
-                    if (retained.deployment.id !== request.input.sourceDeploymentId
-                        || retained.deployment.environmentId !== request.input.sourceEnvironmentId
-                        || !isDeepStrictEqual(retained.content.images, content.images)) refuse('target_mismatch');
-                }
-            }
+        } else if (request.actionId === 'deployments.promote') {
+            if (!('sourceDeploymentId' in request.input) || request.input.artifact !== 'image') refuse('unsupported');
+            const retained = await host.readReceipt({ environmentId: request.input.sourceEnvironmentId,
+                deploymentId: request.input.sourceDeploymentId, context: request.context });
+            if (retained.deployment.id !== request.input.sourceDeploymentId
+                || retained.deployment.environmentId !== request.input.sourceEnvironmentId
+                || !isDeepStrictEqual(retained.content.images, content.images)) refuse('target_mismatch');
+            if (usesCapturedPromotionSource(request.actionId, environment.environment.protection)) {
+                if (!isDeepStrictEqual(retained.content.sourceIntent, sourceIntent)) refuse('target_mismatch');
+                retainedSourceIntent = sourceIntent;
+                retainFolder(retained);
+            } else if (!retainedSourceIntent) admitOwnServerDeploymentSource(environment, sourceIntent);
+        } else if (request.actionId === 'deployments.deploy' && sourceIntent.kind === 'stored' && !retainedSourceIntent) {
+            admitOwnServerDeploymentSource(environment, sourceIntent);
         }
         const compose = sourceIntent.kind === 'stored' ? { path: 'compose.yaml', ...sourceIntent } : sourceIntent.compose;
         const materializationId = request.materialization.kind === 'review' ? request.materialization.contentArtifactId
@@ -844,7 +854,8 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             profiles: snapshot.content.sourceIntent.kind === 'stored' ? snapshot.content.sourceIntent.profiles : snapshot.content.sourceIntent.compose.profiles,
             members: snapshot.link.members.map(({ machineId, installationId }) => ({ machineId, installationId })),
             bindings: snapshot.environment.content.bindings, images: snapshot.content.images,
-            ...(native.buildServices.length ? { buildServices: native.buildServices } : {}),
+            ...(native.buildServices.length && !usesCapturedPromotionSource(request.actionId, snapshot.environment.environment.protection)
+                ? { buildServices: native.buildServices } : {}),
             ...(snapshot.environment.content.ownServer ? { ownServer: snapshot.environment.content.ownServer } : {}) });
     }
 
@@ -870,6 +881,11 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             // A reviewed restriction cannot start dependencies outside its explicit set.
             const services = content.services;
             if (services && native.services.some(service => !services.includes(service))) refuse('target_mismatch');
+            if (usesCapturedPromotionSource(request.actionId, snapshot.environment.environment.protection)
+                && native.servicePlatforms.some(pair => !content.images.some(image => image.service === pair.service
+                    && normalizeNativeComposePlatform(image.platform) === normalizeNativeComposePlatform(pair.platform)))) {
+                refuse('rollback_image_unavailable');
+            }
             await prepared.assertCurrent();
             // Publish basis and preview from the same captured render. The
             // later mutation CAS owns admission of an edited Environment.

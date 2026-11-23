@@ -108,7 +108,7 @@ import { createDeploymentTeardownExecutor, resumeDeploymentTeardownReceiptForHos
 import { createOwnServerTeardownForHost } from './targets/ownServer/teardown';
 import { readDeploymentUniformTargetLinkRevisionV1 } from './deploymentUniformProof';
 import { createPrepareEnvironmentContentForHost } from './prepareEnvironmentContentForHost';
-import { readStoredPromotionCandidateForHost, createStoredPromotionReceiptContentForHost } from './storedPromotionCandidate';
+import { readStoredPromotionCandidateForHost, createStoredPromotionReceiptContentForHost, usesCapturedPromotionSource } from './storedPromotionCandidate';
 import { preparePromotionForHost } from './preparePromotionForHost';
 import { projectDeploymentReviewRevisionV1, type DeploymentPromotionReviewV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { previewDeploymentFolderOnHost } from './readDeploymentSourceIntentForHost';
@@ -2303,10 +2303,14 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 else if (isDeploymentPromoteActionIdV1(originalRequest.actionId) && 'sourceDeploymentId' in originalInput) {
                     if (originalInput.serverId !== host.serverId) return failure('server_scope_mismatch');
                     if (replayingDeployment) return failure('invalid_parameters');
-                    await requireDefinitionManage(originalRequest.context);
                     const prepared = await preparePromotionForHost({ input: originalInput, context: originalRequest.context }, {
                         ...targetHostReaders, readReceipt: targetHostReaders.readAnyReceipt,
                         async createCandidate(environment, content) {
+                            if (usesCapturedPromotionSource(originalRequest.actionId, environment.environment.protection)) {
+                                await definitionRole(originalRequest.context);
+                            } else {
+                                await requireDefinitionManage(originalRequest.context);
+                            }
                             await admitPreview(environment, originalRequest.context);
                             return createCandidate(environment, content);
                         },
@@ -2402,11 +2406,14 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         ? candidate.content.sourceIntent.sha : undefined);
                     const role = await definitionRole(request.context);
                     if (role === 'use') {
-                        if (request.actionId === 'deployments.promote') return failure('action_forbidden');
-                        const retained = request.actionId === 'deployments.rollback' && 'deploymentId' in request.input
-                            ? await targetHostReaders.readReceipt({ environmentId: request.input.environmentId,
-                                deploymentId: request.input.deploymentId, context: request.context }) : undefined;
-                        admitUseDeploymentDefinition(environment, candidate.content, request.input.targetLinkId, retained?.content);
+                        if (request.actionId === 'deployments.promote') {
+                            if (!usesCapturedPromotionSource(request.actionId, environment.environment.protection)) return failure('action_forbidden');
+                        } else {
+                            const retained = request.actionId === 'deployments.rollback' && 'deploymentId' in request.input
+                                ? await targetHostReaders.readReceipt({ environmentId: request.input.environmentId,
+                                    deploymentId: request.input.deploymentId, context: request.context }) : undefined;
+                            admitUseDeploymentDefinition(environment, candidate.content, request.input.targetLinkId, retained?.content);
+                        }
                     }
                 }
                 const metadata = { environment: environment.environment, targetLinks: environment.targetLinks.map(item => item.targetLink) };
@@ -2448,22 +2455,36 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     contentOwner = destination.environment.owner;
                     sourceImageArchives = sourceReceipt.content.ownServer?.imageArchives;
                     candidateEnvironmentContent = promotion.candidateEnvironmentContent;
-                    if (candidateEnvironmentContent.definition.kind !== 'stored' || destination.content.definition.kind !== 'stored') return failure('deployment_invalid');
-                    await admitStoredComposeDefinition(candidateEnvironmentContent.definition);
+                    const definition = candidateEnvironmentContent.definition;
+                    const incumbent = destination.content.definition;
+                    const capturedProduction = usesCapturedPromotionSource(request.actionId, destination.environment.protection);
+                    if (!capturedProduction && definition.kind === 'stored' && incumbent.kind === 'stored') {
+                        await admitStoredComposeDefinition(definition);
+                        promotionReview = { artifact: 'image', previousDocument: incumbent.document, candidateDocument: definition.document,
+                            sourceRevision: projectDeploymentReviewRevisionV1(sourceReceipt.content.sourceIntent, sourceReceipt.content.commitSubject) };
+                    }
                     const { ownServer: _review, ...unreviewed } = nativeCandidate;
                     content = createStoredPromotionReceiptContentForHost(promotion, nativeCandidate.onFailure);
                     if (nativeCandidate.ownServer) {
                         if (nativeCandidate.previewDomain) content = { ...content, previewDomain: nativeCandidate.previewDomain };
                         if (!isDeepStrictEqual(unreviewed, content)) return failure('target_mismatch');
                         if (!isDeepStrictEqual(nativeCandidate.ownServer.imageArchives, sourceImageArchives)) return failure('target_mismatch');
-                        const retained = readDeploymentEnvironmentArtifactV1(request.input.destinationContent,
-                            await open(request.input.destinationContent.contentArtifactId, request.context,
-                                reviewedReentry ? candidateArtifactAuthorization(request.context) : undefined));
-                        if (!retained.ok) return failure(reviewedReentry && retained.error === 'deployment_conflict'
-                            ? 'approval_stale' : 'target_mismatch', retained);
-                        if (!isDeepStrictEqual(retained.content, candidateEnvironmentContent)) return failure('target_mismatch');
+                        if (capturedProduction) {
+                            if (request.input.destinationContent.contentArtifactId !== destination.environment.contentArtifactId
+                                || request.input.destinationContent.contentHeaderVersion !== destination.environment.contentHeaderVersion
+                                || request.input.destinationContent.contentBodyVersion !== destination.environment.contentBodyVersion) {
+                                return failure(reviewedReentry ? 'approval_stale' : 'target_mismatch');
+                            }
+                        } else {
+                            const retained = readDeploymentEnvironmentArtifactV1(request.input.destinationContent,
+                                await open(request.input.destinationContent.contentArtifactId, request.context,
+                                    reviewedReentry ? candidateArtifactAuthorization(request.context) : undefined));
+                            if (!retained.ok) return failure(reviewedReentry && retained.error === 'deployment_conflict'
+                                ? 'approval_stale' : 'target_mismatch', retained);
+                            if (!isDeepStrictEqual(retained.content, candidateEnvironmentContent)) return failure('target_mismatch');
+                        }
                         content = nativeCandidate;
-                    } else {
+                    } else if (promotionReview) {
                         const created = await atHome(async () => createDeploymentArtifactForHost({ artifacts,
                             owner: destination.environment.owner, assertCurrent: assertContentOwnerCurrent, content: {
                             ...await candidateIdentity(request.input.environmentId, request.context, 'environment', metadata.environment, request.admittedTemplateSource),
@@ -2473,9 +2494,6 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         effectInput = { ...request.input, destinationContent: { contentArtifactId: created.artifactId,
                             contentHeaderVersion: created.revision.headerVersion, contentBodyVersion: created.revision.bodyVersion } };
                     }
-                    promotionReview = { artifact: 'image', previousDocument: destination.content.definition.document,
-                        candidateDocument: candidateEnvironmentContent.definition.document,
-                        sourceRevision: projectDeploymentReviewRevisionV1(sourceReceipt.content.sourceIntent, sourceReceipt.content.commitSubject) };
                 }
                 if (!content.previewDomain && !nativeCandidate.ownServer) {
                     const effectiveEnvironment = candidateEnvironmentContent ?? environment.content;
