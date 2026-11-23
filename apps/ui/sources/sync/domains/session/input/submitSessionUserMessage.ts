@@ -308,6 +308,18 @@ function rejectInactiveSessionNotResumable(): SubmitSessionUserMessageResult {
     };
 }
 
+function pendingInputWakeUnavailable(localId?: string): SubmitSessionUserMessageResult {
+    const errorMessage = 'This inactive session cannot be resumed; the pending message remains queued.';
+    return {
+        type: 'wake_failed',
+        persistence: 'pending',
+        wake: { attempted: false, state: 'failed', errorMessage },
+        errorCode: SESSION_MESSAGE_SEND_NOT_RESUMABLE_ERROR_CODE,
+        errorMessage,
+        localId,
+    };
+}
+
 function shouldRejectInactiveNonResumablePendingWake(
     opts: SubmitSessionUserMessageOptions,
     decision: SessionMessageDeliveryDecision,
@@ -544,13 +556,13 @@ async function enqueuePending(
     const inactiveResumePolicy = !isExecutionRun && decision !== undefined
         ? selectInactiveSessionResumePolicy(opts, decision, requestedAction)
         : null;
-    const wakeOpts = !isExecutionRun && (requestedActionRequiresRuntimeActivation(requestedAction) || inactiveResumePolicy !== null) ? getPendingQueueWakeResumeOptions({
+    const wakeRequested = !isExecutionRun && (requestedActionRequiresRuntimeActivation(requestedAction) || inactiveResumePolicy !== null);
+    const wakeOpts = wakeRequested ? getPendingQueueWakeResumeOptions({
         sessionId: opts.sessionId,
         session: opts.session,
         resumeCapabilityOptions: opts.resumeCapabilityOptions,
         resumeTargetOverride: opts.resumeTargetOverride,
         permissionOverride: opts.permissionOverride,
-        canWakeMachineId: port.canWakeMachineId,
     }) : null;
 
     let enqueueResult: PendingMessageSubmitResult;
@@ -644,6 +656,7 @@ async function enqueuePending(
     }
     if (!wakeOpts) {
         if (!reportHandoffIfCurrent()) return accountScopeRetiredResult('send_failed', 'pending', localId);
+        if (wakeRequested && !isSessionRuntimeRunning(opts.session)) return pendingInputWakeUnavailable(localId);
         return {
             type: 'wake_pending',
             persistence: 'pending',
@@ -720,7 +733,7 @@ async function enqueuePending(
                     state: 'failed',
                     errorMessage: wakeResult.errorMessage,
                 },
-                errorCode: wakeResult.errorCode,
+                errorCode: wakeResult.rpcErrorCode ?? wakeResult.errorCode,
                 errorMessage: wakeResult.errorMessage,
                 ...(wakeResult.errorDetail ? { errorDetail: wakeResult.errorDetail } : {}),
                 ...(isSendCrossingStopHold(opts) ? { stopHoldResumeFailed: true as const } : {}),
@@ -877,26 +890,16 @@ export async function submitSessionUserMessage(
                 localId,
             };
         }
-        const wakeOpts = requestedActionRequiresRuntimeActivation(requestedAction) ? getPendingQueueWakeResumeOptions({
+        const wakeRequested = requestedActionRequiresRuntimeActivation(requestedAction);
+        const wakeOpts = wakeRequested ? getPendingQueueWakeResumeOptions({
             sessionId: effectiveOpts.sessionId,
             session: effectiveOpts.session,
             resumeCapabilityOptions: effectiveOpts.resumeCapabilityOptions,
             resumeTargetOverride: effectiveOpts.resumeTargetOverride,
             permissionOverride: effectiveOpts.permissionOverride,
-            canWakeMachineId: port.canWakeMachineId,
         }) : null;
         if (!wakeOpts) {
-            if (requestedActionRequiresRuntimeActivation(requestedAction) && effectiveOpts.session.active === false) {
-                const errorMessage = 'This inactive session cannot be resumed; the pending message remains queued.';
-                return {
-                    type: 'wake_failed',
-                    persistence: 'pending',
-                    wake: { attempted: false, state: 'failed', errorMessage },
-                    errorCode: SESSION_MESSAGE_SEND_NOT_RESUMABLE_ERROR_CODE,
-                    errorMessage,
-                    localId,
-                };
-            }
+            if (wakeRequested && !isSessionRuntimeRunning(effectiveOpts.session)) return pendingInputWakeUnavailable(localId);
         } else if (await shouldWakePendingInputFromUi(port, effectiveOpts, wakeOpts.machineId)) {
             if (!isSubmitAccountLifetimeCurrent(effectiveOpts)) return accountScopeRetiredResult('send_failed', 'pending', localId);
             try {
@@ -920,7 +923,7 @@ export async function submitSessionUserMessage(
                         type: 'wake_failed',
                         persistence: 'pending',
                         wake: { attempted: true, state: 'failed', errorMessage: wakeResult.errorMessage },
-                        errorCode: wakeResult.errorCode,
+                        errorCode: wakeResult.rpcErrorCode ?? wakeResult.errorCode,
                         errorMessage: wakeResult.errorMessage,
                         ...(wakeResult.errorDetail ? { errorDetail: wakeResult.errorDetail } : {}),
                         localId,

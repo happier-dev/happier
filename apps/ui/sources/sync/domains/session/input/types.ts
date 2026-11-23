@@ -265,7 +265,6 @@ export interface SessionSubmitPort {
             accountLifetime?: ServerAccountScopeLifetime;
         }>,
     ): Promise<void>;
-    canWakeMachineId?(machineId: string): boolean;
     /**
      * Source-owned routing fact for the current active server. Host admission
      * uses it only to prevent an incompatible remote target from taking the

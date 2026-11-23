@@ -19,7 +19,6 @@ type SyncSubmitRuntime = Pick<
     | 'sendMessage'
     | 'refreshSessionForSubmit'
     | 'isSessionTargetRemoteToActiveServer'
-    | 'encryption'
 >;
 
 /** Admission shared by standalone and Sync-owned submit ports. */
@@ -60,9 +59,5 @@ export function createSyncBackedSubmitPort(syncRuntime: SyncSubmitRuntime = defa
         switchSessionControlToRemote: async (sessionId, options) => {
             await sessionSwitch(sessionId, 'remote', options);
         },
-        canWakeMachineId: (machineId) => Boolean(
-            syncRuntime.encryption?.getMachineEncryption(machineId)
-            || storage.getState().machines[machineId]?.storageMode === 'plain',
-        ),
     };
 }

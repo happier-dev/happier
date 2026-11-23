@@ -200,7 +200,7 @@ describe('submitSessionUserMessage Pending action ownership', () => {
             serverId: 'server-1', accountLifetime: lifetime,
         });
         expect(result).toMatchObject({ type: 'wake_failed', persistence: 'pending', localId: 'accepted-input',
-            errorCode: 'UNEXPECTED', wake: { attempted: true, state: 'failed' } });
+            errorCode: 'forbidden', wake: { attempted: true, state: 'failed' } });
         expect(harness.enqueuePendingMessage).not.toHaveBeenCalled();
         expect(harness.sendMessage).not.toHaveBeenCalled();
     });
@@ -1214,6 +1214,28 @@ describe('submitSessionUserMessage Pending action ownership', () => {
         expect(ensureSessionRuntimeForPendingInput).toHaveBeenCalledWith(expect.objectContaining({
             executionAuthorization: { provenance: 'user_request', requestId: 'durable-wake-1' },
         }));
+    });
+
+    it('returns a typed wake failure when newly queued input has no Resume target', async () => {
+        const session = createSession({
+            active: false,
+            presence: 0,
+            metadata: { ...createSession().metadata!, flavor: 'claude' },
+        });
+        const { port, ensureSessionRuntimeForPendingInput } = createPort();
+
+        await expect(submitSessionUserMessage(port, {
+            ...submitOptions(session),
+            configuredMode: 'server_pending',
+            requestedAction: { v: 1, kind: 'send_now' },
+        })).resolves.toMatchObject({
+            type: 'wake_failed',
+            persistence: 'pending',
+            localId: 'pending-1',
+            errorCode: 'SESSION_NOT_RESUMABLE',
+            wake: { attempted: false, state: 'failed' },
+        });
+        expect(ensureSessionRuntimeForPendingInput).not.toHaveBeenCalled();
     });
 
     it('distinguishes action persistence failure from a later wake failure', async () => {

@@ -39,11 +39,8 @@ export function getPendingQueueWakeResumeOptions(opts: {
     resumeCapabilityOptions: ResumeCapabilityOptions;
     resumeTargetOverride?: PendingQueueWakeTargetOverride | null;
     permissionOverride?: PermissionModeOverrideForSpawn | null;
-    // Optional: gate waking behind an external capability check (e.g. local machine encryption).
-    // This is used to avoid attempting machine RPCs in contexts where the client cannot encrypt them.
-    canWakeMachineId?: (machineId: string) => boolean;
 }): PendingQueueWakeResumeOptions | null {
-    const { sessionId, session, resumeCapabilityOptions, resumeTargetOverride, permissionOverride, canWakeMachineId } = opts;
+    const { sessionId, session, resumeCapabilityOptions, resumeTargetOverride, permissionOverride } = opts;
 
     // Only gate waking on "idle" when the session is actively running.
     // For inactive/archived sessions, `thinking` / `agentState.requests` can be stale; blocking wake would
@@ -79,7 +76,6 @@ export function getPendingQueueWakeResumeOptions(opts: {
     const directory = overrideDirectory
         ?? normalizeNonEmptyString(reachableTarget?.basePath);
     if (!machineId || !directory) return null;
-    if (canWakeMachineId && canWakeMachineId(machineId) === false) return null;
 
     const base = buildResumeSessionBaseOptionsFromSession({
         sessionId,

@@ -470,6 +470,7 @@ async function runResumeSession(
         const retirementSubscription = exactAccountLifetime?.onRetire(() => retirementAbort?.abort());
         const cancellation = mergeAbortSignals([retirementAbort?.signal, options.signal]);
         let result: unknown;
+        let actionErrorCode: string | undefined;
         try {
             const execution = await (async () => {
                 const account = await captureLazyActionAccountContext(serverId ?? getActiveServerSnapshot().serverId, cancellation.signal);
@@ -485,6 +486,7 @@ async function runResumeSession(
                     });
                 } finally { account.dispose(); }
             })();
+            if (execution && !execution.ok) actionErrorCode = execution.errorCode;
             // session.open owns the Action's opened outcome; its result is not
             // a raw spawn RPC response with a type discriminator.
             result = execution ? execution.ok ? { type: 'success', sessionId } : {
@@ -563,10 +565,13 @@ async function runResumeSession(
                 storage.getState().armSessionResumingFallback(sessionId);
             }
         }
-        return normalizedResult.type === 'error'
-            && normalizedResult.errorDetail?.kind === 'launch_error'
-            && normalizedResult.errorDetail.code === 'plugin_disabled'
-            ? { ...normalizedResult, errorCode: 'plugin_disabled' }
+        if (normalizedResult.type !== 'error') return normalizedResult;
+        if (normalizedResult.errorDetail?.kind === 'launch_error' && normalizedResult.errorDetail.code === 'plugin_disabled') {
+            return { ...normalizedResult, errorCode: 'plugin_disabled' };
+        }
+        // Preserve the Action cause while retaining the normalized spawn code for lifecycle decisions.
+        return actionErrorCode && actionErrorCode !== normalizedResult.errorCode
+            ? { ...normalizedResult, rpcErrorCode: actionErrorCode }
             : normalizedResult;
     } catch (error) {
         if (shouldPresentAsResuming && canProjectResumePresentation()) {

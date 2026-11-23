@@ -935,10 +935,10 @@ function createSessionMessageSubmitFailureError(
     const resolvedMessage = errorCode === 'action-conflict'
         ? t('session.pendingMessages.errors.actionConflict')
         : errorMessage ?? fallbackMessage;
-    return Object.assign(
-        new Error(resolvedMessage),
-        ...(errorCode ? [{ code: errorCode }] : []),
-    );
+    if (!errorCode) return new Error(resolvedMessage);
+    return Object.assign(new Error(resolvedMessage, {
+        cause: { ok: false, errorCode, error: resolvedMessage },
+    }), { code: errorCode });
 }
 
 type SyncSocketSessionHydrationReason = SocketSessionHydrationReason;
@@ -5295,11 +5295,11 @@ class Sync {
             if (result.type === 'send_failed' || result.type === 'rejected' || result.type === 'wake_failed') {
                 if (!recipient && ownsProjectedSessionState) storage.getState().clearSessionOptimisticThinking(sessionId);
                 if (result.errorCode === SESSION_MESSAGE_SEND_NOT_RESUMABLE_ERROR_CODE) {
-                    throw new HappyError(
-                        result.errorMessage ?? 'This inactive session cannot be resumed; the pending message remains queued.',
-                        false,
-                        { kind: 'config', code: SESSION_MESSAGE_SEND_NOT_RESUMABLE_ERROR_CODE },
-                    );
+                    const message = result.errorMessage ?? 'This inactive session cannot be resumed; the pending message remains queued.';
+                    throw new HappyError(message, false, {
+                        kind: 'config', code: result.errorCode,
+                        cause: { ok: false, errorCode: result.errorCode, error: message },
+                    });
                 }
                 throw createSessionMessageSubmitFailureError(
                     result.errorCode,
@@ -5673,12 +5673,6 @@ class Sync {
             if (embedScope && (this.embedSessionScope !== embedScope || !embedScope.isCurrent())) throw new StaleServerGenerationError();
             if (!embedScope && isEmbedWindowContext()) throw new StaleServerGenerationError();
         };
-        const canWakeMachineId = (machineId: string): boolean => {
-            if (embedScope) return false;
-            const machine = storage.getState().machines[machineId];
-            if (machine?.storageMode === 'plain') return true;
-            return Boolean(this.encryption?.getMachineEncryption(machineId));
-        };
 
         return {
             blockPendingDelivery: (targetSessionId, localId, reason, options) => {
@@ -5721,7 +5715,6 @@ class Sync {
             refreshSessionForSubmit: (targetSessionId, options) => {
                 assertScope(); return this.refreshSessionForSubmit(targetSessionId, options);
             },
-            canWakeMachineId,
             isSessionTargetRemoteToActiveServer: (targetSessionId) =>
                 this.isSessionTargetRemoteToActiveServer(targetSessionId),
         };
