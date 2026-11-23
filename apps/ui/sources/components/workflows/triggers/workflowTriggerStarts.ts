@@ -1,4 +1,5 @@
 import { readAutomationEventSubjectKindsV1, type PluginEventAutomationDeclarationV1 } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
+import { isPluginAutomationActionSubjectV1 } from '@happier-dev/protocol/automations/automationPluginSubjectV1';
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
@@ -86,11 +87,9 @@ export function buildResourceWorkflowTriggerStartOptions(params: Readonly<{
     const options: ResourceWorkflowTriggerStartOption[] = [];
     for (const action of params.actions) {
         if (!action.automation?.subjectKinds?.includes(subject.kind)) continue;
-        if (subject.kind === 'plugin') {
-            const kind = action.approvalScope;
-            if (typeof kind !== 'object' || kind.kind !== 'plugin' || action.plugin?.id !== subject.pluginId
-                || kind.subjectKindId !== subject.subjectKindId) continue;
-        }
+        if (subject.kind === 'plugin' && (!action.plugin || !isPluginAutomationActionSubjectV1(subject, {
+            pluginId: action.plugin.id, approvalScope: action.approvalScope,
+        }))) continue;
         for (const option of buildActionWorkflowTriggerStartOptions({ actionId: action.id, actions: [action] })) {
             const when = { ...option.when, subject };
             options.push({ ...option, subject, when, trigger: { ...when, enabled: true } });

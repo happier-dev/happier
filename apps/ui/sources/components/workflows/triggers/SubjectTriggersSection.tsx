@@ -313,7 +313,8 @@ export const SubjectTriggersSectionContent = React.memo(
               : linkHeld ? { kind: 'held' } : null,
           }}
           leading={props.leading}
-          readState={unsettled ? describeReadState({ status: status === 'failed' ? 'failed' : 'loading', onRetry: read.retry }) : undefined}
+          readState={unsettled ? describeReadState({ status: status === 'failed' ? 'failed' : 'loading',
+            onRetry: read.retryable === false ? undefined : read.retry }) : undefined}
           rows={sectionRows}
           startNotice={startNotice}
           persistentStarters={empty ? null : persistentStarters.filter(starterAvailable).map((starter) => (
@@ -323,7 +324,7 @@ export const SubjectTriggersSectionContent = React.memo(
           notSharedTitle={skippedNotSharedCount > 0 ? t('workflows.triggers.section.skippedNotShared', { count: skippedNotSharedCount }) : undefined}
           more={read.attachedPage?.nextCursor ? { label: t('workflows.triggers.section.showMore'), onPress: read.loadMore } : undefined}
           freshness={held && status === 'failed' ? { reason: t('workflows.triggers.section.accountLoadFailed'),
-            action: { label: t('workflows.triggers.popover.tryAgain'), onPress: read.retry } } : undefined}
+            action: read.retryable === false ? undefined : { label: t('workflows.triggers.popover.tryAgain'), onPress: read.retry } } : undefined}
           also={also.length === 0 ? undefined : {
             title: t('workflows.triggers.section.alsoRunsHere'),
             rows: also.map((row) => (

@@ -11,7 +11,8 @@ import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import type { WorkflowActionOperand } from '@/components/workflows/presentation/workflowActionCatalog';
 import { areServerAccountScopesEqual, readServerAccountScopeOwnerLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { useServerCredentialAccountScopeStates } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { retryServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import {
   useAutomationSubjectPicker,
   type AutomationSubjectPickerInput,
@@ -126,10 +127,7 @@ export const ActionSubjectSelect = React.memo(function ActionSubjectSelect(
   const saved = props.subject?.kind === 'environment' || props.subject?.kind === 'backup' ? props.subject : null;
   const savedKey = saved ? automationSubjectKeyV1(saved) : null;
   const savedUnnamed = savedKey !== null && chosen?.key !== savedKey;
-  const accounts = useServerCredentialAccountScopeStates(
-    (open || savedUnnamed) && serverId !== null ? [serverId] : [],
-  );
-  const binding = accounts.values().next().value?.binding ?? null;
+  const { binding, resolution } = useServerCredentialAccountScopeBinding(open || savedUnnamed ? serverId : null);
   const lifetime = React.useMemo(
     () => (binding ? readServerAccountScopeOwnerLifetime(binding) : null),
     [binding],
@@ -183,6 +181,13 @@ export const ActionSubjectSelect = React.memo(function ActionSubjectSelect(
     return { ...common, kind } as AutomationSubjectPickerInput;
   }, [lifetime, open, context, kind, declaration, databaseLocation]);
   const read = useAutomationSubjectPicker(input);
+  const resolvingAccount = open && resolution.kind === 'resolving';
+  const accountReadFailed = open && resolution.kind === 'unavailable';
+  const accountUnavailable = open && lifetime === null && !resolvingAccount && !accountReadFailed;
+  const retry = React.useCallback(() => {
+    if (accountReadFailed && serverId !== null) retryServerCredentialAccountScope(serverId);
+    else void read.reload();
+  }, [accountReadFailed, serverId, read.reload]);
   const savedRef = React.useRef(saved);
   savedRef.current = saved;
   React.useEffect(() => {
@@ -216,7 +221,8 @@ export const ActionSubjectSelect = React.memo(function ActionSubjectSelect(
     ...(databaseLocation === null ? [] : [{ id: DATABASE_LOCATIONS, title: t('common.back'), keepMenuOpen: true }]),
     ...(choosingDatabaseLocation && worktreeLocation && checkout
       ? [{ id: DATABASE_WORKTREE, title: checkout.rootPath, keepMenuOpen: true }] : []),
-  ], [words.any, iconColor, databaseLocation, choosingDatabaseLocation, worktreeLocation, checkout]);
+    ...(accountUnavailable ? [{ id: 'subject:unavailable', title: t('common.unavailable'), disabled: true }] : []),
+  ], [words.any, iconColor, databaseLocation, choosingDatabaseLocation, worktreeLocation, checkout, accountUnavailable]);
   const formatChoice = React.useCallback((option: Readonly<{ label: string }>, selected: boolean) =>
     selected ? `${words.this} · ${option.label}` : option.label, [words.this]);
   const retained = React.useMemo(() => selectedKey === ANY ? null : {
@@ -246,9 +252,9 @@ export const ActionSubjectSelect = React.memo(function ActionSubjectSelect(
         open={open} onOpenChange={openChange} value={props.subject ?? null} selectedId={selectedKey}
         options={read.items} subjectKey={automationSubjectKeyV1} formatChoice={formatChoice}
         leading={leading} onSelectLeading={selectLeading} retained={retained} narrowing={choosingDatabaseLocation}
-        waiting={read.status === 'loading' || read.status === 'loading_more' || (open && lifetime === null && serverId !== null)}
-        failed={read.status === 'error'} hasMore={read.hasMore} canSelect={ALWAYS}
-        onRetry={read.reload} onLoadMore={read.loadMore} onChange={choose}
+        waiting={read.status === 'loading' || read.status === 'loading_more' || resolvingAccount}
+        failed={read.status === 'error' || accountReadFailed} hasMore={read.hasMore} canSelect={ALWAYS}
+        onRetry={retry} onLoadMore={read.loadMore} onChange={choose}
         chooseLabel={words.label} emptyLabel={t('common.noMatches')} loadingLabel={t('common.loading')}
         retryLabel={t('common.retry')} failureLabel={t('common.requestFailed')} moreLabel={t('common.more')} />
   );

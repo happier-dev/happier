@@ -407,6 +407,15 @@ describe('useWorkflowActionCatalog', () => {
         } finally { await hook.unmount(); }
     });
 
+    it('settles Account Action discovery when the addressed Home is missing', async () => {
+        const hook = await renderHook(() => useWorkflowActionCatalog({ kind: 'machine', machineId: null, serverId: 'unknown-home' }));
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().phase).toBe('unsupported'));
+            expect(hook.getCurrent().specs).toEqual([]);
+            expect(sectionsRead.size).toBe(0);
+        } finally { await hook.unmount(); }
+    });
+
     it('withdraws a pending Account read when that Account retires and admits its successor', async () => {
         let releaseOld: ((response: Response) => void) | undefined;
         const retiredRead = new Promise<Response>(resolve => { releaseOld = resolve; });

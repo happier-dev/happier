@@ -10,7 +10,8 @@ import { PLUGIN_UI_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections
 import type { ActionDiscoveryDefinitionSummaryV1 } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import { acquireDaemonMergedWorkflowActionCatalog, acquireWorkflowAccountActionCatalog, readCachedDaemonMergedProjectionCacheEntry, readObservedDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
-import { useServerCredentialAccountScopeStates } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { retryServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { readServerAccountScopeOwnerLifetime, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 
@@ -38,8 +39,8 @@ export function useWorkflowActionCatalog(scope?: AuthoringComposerScope, purpose
     [enabled, machineId, serverId, options.accountLifetime, projection.phase, projection.inputs]);
     const activeAccount = useActiveServerAccountScopeLifetime();
     const accountServerId = serverId ?? activeAccount?.scope.serverId;
-    const accountStates = useServerCredentialAccountScopeStates(enabled && options.accountLifetime === undefined && !machineId && accountServerId ? [accountServerId] : []);
-    const accountBinding = accountStates.values().next().value?.binding ?? null;
+    const { binding: accountBinding, resolution: accountResolution } = useServerCredentialAccountScopeBinding(
+        enabled && options.accountLifetime === undefined && !machineId ? accountServerId : null);
     const account = options.accountLifetime !== undefined ? options.accountLifetime
         : accountBinding ? readServerAccountScopeOwnerLifetime(accountBinding) : null;
     const target = !enabled ? null : machineId ? entry?.kind === 'ready' ? entry : null : account;
@@ -62,6 +63,10 @@ export function useWorkflowActionCatalog(scope?: AuthoringComposerScope, purpose
     }, [target, refreshKey]);
     const retry = useEventCallback(() => {
         if (!enabled) return;
+        if (!machineId && accountResolution.kind === 'unavailable' && accountServerId) {
+            retryServerCredentialAccountScope(accountServerId);
+            return;
+        }
         setDiscovery(null);
         setRefreshKey(value => value + 1);
     });
@@ -73,6 +78,8 @@ export function useWorkflowActionCatalog(scope?: AuthoringComposerScope, purpose
     const uiProjection = projection.phase === 'ready' ? projection.inputs?.pluginUiProjection ?? null : null;
     const localize = usePluginLocalizedTextResolver({ projection: uiProjection, locale: language });
     const specs = React.useMemo(() => listWorkflowStepActionSpecs(current, uiProjection, localize, offered, purpose), [current, uiProjection, language, localize, offered, purpose]);
-    const phase = !enabled ? 'idle' : !machineId || projection.phase === 'ready' ? currentDiscovery?.phase ?? 'loading' : projection.phase;
+    const phase = !enabled ? 'idle' : !machineId && target === null
+        ? accountResolution.kind === 'resolving' ? 'loading' : accountResolution.kind === 'unavailable' ? 'error' : 'unsupported'
+        : !machineId || projection.phase === 'ready' ? currentDiscovery?.phase ?? 'loading' : projection.phase;
     return { specs, phase, machineId, sessionId, serverId: serverId ?? null, retry };
 }

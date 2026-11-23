@@ -12,6 +12,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { useActiveHomeSettling } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 
 const EMPTY_SETS: readonly WorkflowTriggerSetV1[] = [];
+const noRetry = () => {};
 
 /**
  * Read lifecycle only; the existing Account Automation projection remains the row owner.
@@ -23,7 +24,12 @@ export type AttachedTriggerPage = Readonly<Omit<WorkflowAttachedTriggerPageV1, '
 }>;
 
 export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | null, accountLifetime?: ServerAccountScopeLifetime | null,
-    options?: Readonly<{ demanded?: boolean; context?: NonNullable<Parameters<typeof listWorkflowTriggerPage>[1]>['context'] }>): {
+    options?: Readonly<{
+        demanded?: boolean;
+        context?: NonNullable<Parameters<typeof listWorkflowTriggerPage>[1]>['context'];
+        /** A settled exact Home binding failure; while resolving, the caller leaves this absent. */
+        unavailableAccount?: Readonly<{ retry?: () => void }>;
+    }>): {
     sets: readonly WorkflowTriggerSetV1[];
     attachedPage: AttachedTriggerPage | undefined;
     /** Session context from the same admitted lifetime page, never a second list read. */
@@ -31,11 +37,13 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
     loadMore: () => void;
     status: 'loading' | 'ready' | 'failed';
     retry: () => void;
+    retryable?: boolean;
     acknowledge: (written: WorkflowTriggerSetV1) => void;
 } {
     const addressed = accountLifetime !== undefined;
     const demanded = options?.demanded !== false;
     const context = options?.context;
+    const unavailableAccount = options?.unavailableAccount;
     const activeLifetime = useActiveServerAccountScopeLifetime();
     const lifetime = addressed ? accountLifetime ?? null : activeLifetime;
     const scope = lifetime?.scope ?? null;
@@ -97,7 +105,8 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
         }
     }, [addressed, focused, identity, lifetime, sets, state]);
     const [attempt, setAttempt] = React.useState<Readonly<{ revision: number; cursor?: string; identity?: object }>>({ revision: 0 });
-    const retry = React.useCallback(() => setAttempt(current => ({ revision: current.revision + 1 })), []);
+    const retryRead = React.useCallback(() => setAttempt(current => ({ revision: current.revision + 1 })), []);
+    const retry = unavailableAccount ? unavailableAccount.retry ?? noRetry : retryRead;
     // The read inputs the last settled answer covered. Demand returning with the same inputs reads nothing.
     const settledRead = React.useRef<readonly unknown[] | null>(null);
     const readNotCurrent = React.useRef(false);
@@ -193,7 +202,7 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
         if (wasSettling.current && !homeSettling && failedRef.current) retry();
         wasSettling.current = homeSettling;
     }, [homeSettling, retry]);
-    const status = state.identity !== identity ? 'loading' as const : state.status;
+    const status = unavailableAccount ? 'failed' as const : state.identity !== identity ? 'loading' as const : state.status;
     const attachedPage = attachments?.identity === identity && lifetime?.isCurrent() ? attachments.page : undefined;
     const loadMore = React.useCallback(() => {
         const cursor = attachedPage?.nextCursor;
@@ -203,5 +212,6 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
         ? focused ? sets : snapshot.current?.identity === identity ? snapshot.current.sets : EMPTY_SETS
         : EMPTY_SETS : sets, attachedPage,
         pullRequestLinks: sessionContext?.identity === identity && lifetime?.isCurrent() ? sessionContext.pullRequestLinks : undefined,
-        loadMore, status: request === null ? 'ready' as const : status, retry, acknowledge };
+        loadMore, status: request === null ? 'ready' as const : status, retry,
+        retryable: unavailableAccount === undefined || unavailableAccount.retry !== undefined, acknowledge };
 }

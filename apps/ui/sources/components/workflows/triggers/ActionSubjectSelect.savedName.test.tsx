@@ -53,6 +53,22 @@ describe('A reopened Action trigger names its saved resource', () => {
     portal.restore();
   });
 
+  it('settles the exact subject picker when its Home has no credential binding', async () => {
+    const { t } = await import('@/text');
+    const screen = await renderScreen(<ActionSubjectSelect testID="subject"
+      operand={{ kind: { kind: 'environment' } }} subject={undefined} machineId={null} serverId="unknown-home"
+      onChange={() => {}} />);
+    try {
+      const menu = () => screen.findByType(DropdownMenu);
+      await act(async () => menu().props.onOpenChange(true));
+      await vi.waitFor(() => expect(menu().props.items).toContainEqual(expect.objectContaining({
+        title: t('common.unavailable'), disabled: true,
+      })));
+      expect(menu().props.items).not.toContainEqual(expect.objectContaining({ title: t('common.loading') }));
+      expect(homes.requests.some(request => request.path.startsWith('/v1/deployments/environments'))).toBe(false);
+    } finally { await screen.unmount(); }
+  });
+
   it('offers saved Environments as scopes for an exact Database selection', async () => {
     const serverIdentityId = 'srv_database_subject_scope';
     const machineId = 'environment-controller';

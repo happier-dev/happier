@@ -944,13 +944,23 @@ describe('Account Workflow Library and settings', () => {
         const reads = listRequests().length;
         await hook.rerender({ accountLifetime: null });
         expect(hook.getCurrent().accountLifetime).toBeNull();
-        expect(hook.getCurrent().read.status).toBe('loading');
+        expect(hook.getCurrent().read.status).toBe('failed');
+        expect(hook.getCurrent().read.retryable).toBe(false);
         expect(hook.getCurrent().rows).toEqual([]);
         expect(listRequests()).toHaveLength(reads);
         await hook.rerender({ accountLifetime: physicalAccount });
         await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).toBe('ready'));
         expect(listRequests()).toHaveLength(reads + 1);
         await hook.unmount();
+    });
+    it('settles a selected Automations read when the resource Home is unknown', async () => {
+        const { SubjectTriggersSection } = await import('./SubjectTriggersSection');
+        const screen = await renderScreen(<SubjectTriggersSection subject={{ kind: 'environment', serverId: 'unknown-home',
+            environmentId: 'production' }} subjectName="Production" />);
+        try {
+            await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('workflows.triggers.section.automationsLoadFailed'));
+            expect(listRequests()).toHaveLength(0);
+        } finally { await screen.unmount(); }
     });
     it.each(['project', 'healthCheck', 'worktree database', 'plugin ticket'] as const)('settles saved Workflow Link review for an Account-private %s without waiting for share grants', async kind => {
         const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');

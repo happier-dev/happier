@@ -20,6 +20,7 @@ import { useLayoutPresentationActive } from '@/components/ui/presentation/Plugin
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { useSessionCollaborationAvailabilityState } from '@/hooks/session/useSessionCollaborationAvailability';
 import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { retryServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 
@@ -102,12 +103,6 @@ export type ResourceAutomationsSectionRead = SelectedAutomationsSectionRead & Re
 /** The selected read owns membership; every section consumes the same admitted rows and editor. */
 type SessionEditorContext = Readonly<{ sessionId: string; sets: readonly WorkflowTriggerSetV1[] }>;
 
-function useSelectedAutomationsSection(request: WorkflowTriggerListRequestV1 | null,
-    accountLifetime: ServerAccountScopeLifetime | null | undefined, demanded: boolean,
-    session?: SessionEditorContext): SelectedAutomationsSectionRead {
-    return useSelectedAutomationsProjection(useWorkflowTriggerSets(request, accountLifetime, { demanded }), accountLifetime, session);
-}
-
 function useSelectedAutomationsProjection(read: ReturnType<typeof useWorkflowTriggerSets>,
     accountLifetime: ServerAccountScopeLifetime | null | undefined, session?: SessionEditorContext): SelectedAutomationsSectionRead {
     const editor = useAccountWorkflowEditor({ read: session ? { ...read, sets: session.sets } : read, accountLifetime,
@@ -184,9 +179,14 @@ export function useResourceAutomationsSection(props: ResourceSectionInput): Reso
     const legacySubject = 'serverId' in props.subject ? null : props.subject;
     const serverId = 'serverId' in props.subject ? props.subject.serverId
         : props.serverId ?? props.deploymentEnvironment?.serverId ?? activeScope?.serverId;
-    const { binding: capturedBinding } = useServerCredentialAccountScopeBinding(props.accountLifetime === undefined ? serverId : '');
+    const { binding: capturedBinding, resolution } = useServerCredentialAccountScopeBinding(props.accountLifetime === undefined ? serverId : '');
     const binding = props.accountLifetime === undefined ? capturedBinding : props.accountLifetime;
     const accountLifetime = props.accountLifetime !== undefined ? props.accountLifetime : serverId ? binding : undefined;
+    const retryAccount = React.useCallback(() => {
+        if (serverId) retryServerCredentialAccountScope(serverId);
+    }, [serverId]);
+    const unavailableAccount = accountLifetime === null && resolution.kind !== 'resolving'
+        ? { retry: resolution.kind === 'unavailable' ? retryAccount : undefined } : undefined;
     const demanded = useLayoutPresentationActive();
     // The retained service page is explicitly its Machine's view; service is not a canonical subject.
     const subject: AutomationSubjectV1 | null = 'serverId' in props.subject ? props.subject : !serverId ? null
@@ -194,9 +194,11 @@ export function useResourceAutomationsSection(props: ResourceSectionInput): Reso
             : { kind: 'machine', serverId, machineId: props.subject.machineId };
     const sessionContext = useSessionWorkflowContext(subject?.kind === 'session' ? subject.sessionId : null,
         { demanded, accountLifetime });
-    const { read, editor, rows, also, skippedNotSharedCount } = useSelectedAutomationsSection(
+    const selectedRead = useWorkflowTriggerSets(
         subject ? { subject, ...(props.contextSubjects ? { contextSubjects: [...props.contextSubjects] } : {}) } : null,
-        accountLifetime, demanded, subject?.kind === 'session' ? { sessionId: subject.sessionId, sets: sessionContext.sets } : undefined);
+        accountLifetime, { demanded, unavailableAccount });
+    const { read, editor, rows, also, skippedNotSharedCount } = useSelectedAutomationsProjection(selectedRead, accountLifetime,
+        subject?.kind === 'session' ? { sessionId: subject.sessionId, sets: sessionContext.sets } : undefined);
     const legacyMachineId = legacySubject?.machineId;
     const project = React.useMemo(() => props.executionContext ?? (legacyMachineId ? { machineId: legacyMachineId, directory: '~' } : undefined),
         [props.executionContext, legacyMachineId]);
