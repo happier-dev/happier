@@ -2393,7 +2393,7 @@ async function executeHostAction(
         context = routedContext;
     }
     if (actionId === SESSION_MESSAGE_SEND_ACTION_ID_V1 && isPluginActionInputRecord(input.input)) {
-        const pressed = input[claimPressedSessionSend]?.(input.input.sessionId, context.serverId);
+        const pressed = input[claimPressedSessionSend]?.(input.input.sessionId, context.serverId ?? undefined);
         if (pressed) context = { ...context, presentUserSessionSend: pressed };
     }
     const reviewedParent = readHostAdmittedReviewedParentV1(context.hostReviewedChild);

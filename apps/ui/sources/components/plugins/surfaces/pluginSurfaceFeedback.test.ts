@@ -527,7 +527,7 @@ describe('mounted plugin surface feedback and confirmation (§3.4, UI-T21)', () 
         const declaration = PLUGIN_MANIFEST.contributes?.actions?.find(action => action.id === 'sessions/run-configured-v1');
         if (!declaration?.confirmation) throw new Error('Expected the Triage Send confirmation');
         const { host, adapter } = createMountedSurface(undefined, 'writesLocal', 'send', undefined, {
-            confirmation: declaration.confirmation,
+            confirmation: PluginProjectedActionV2Schema.shape.confirmation.parse(declaration.confirmation),
         });
         try {
             const pending = adapter.api.admitAction('send', { recipientStopNotice: 'Stopped by a person' });
