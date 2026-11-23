@@ -165,6 +165,51 @@ describe('SoftSlideTransitionFrame', () => {
         });
     });
 
+    it('waits for the current slide to paint before starting and timing its crossfade', async () => {
+        const { SoftSlideTransitionFrame } = await import('./SoftSlideTransitionFrame');
+        const { slideTransitionTokens } = await import('./slideTransitionTokens');
+        const duration = slideTransitionTokens.signature.reducedMotionDurationMs;
+        const frames = new Map<number, FrameRequestCallback>();
+        let nextId = 0;
+        vi.useFakeTimers();
+        vi.stubGlobal('requestAnimationFrame', (draw: FrameRequestCallback) => {
+            const id = ++nextId;
+            frames.set(id, draw);
+            return id;
+        });
+        vi.stubGlobal('cancelAnimationFrame', (id: number) => { frames.delete(id); });
+        const frame = (key: string) => <SoftSlideTransitionFrame direction="forward" reducedMotion testID="soft" transitionKey={key}>
+            <View testID={`slide-${key}`} />
+        </SoftSlideTransitionFrame>;
+        const paint = () => act(async () => {
+            const callbacks = [...frames.values()];
+            frames.clear();
+            for (const draw of callbacks) draw(performance.now());
+        });
+        const screen = await renderScreen(frame('one'));
+        try {
+            await screen.update(frame('two'));
+            await paint();
+            await screen.update(frame('three'));
+            await paint();
+            const incoming = () => flattenStyle(screen.findByTestId('soft-current-layer')?.props.style);
+            const outgoing = () => screen.findByTestId('soft-exit-layer');
+            expect(incoming().opacity).toBe(0);
+            expect(outgoing()).toBeTruthy();
+            await act(async () => { vi.advanceTimersByTime(duration); });
+            expect(outgoing()).toBeTruthy();
+            await paint();
+            expect(incoming().opacity).toBe(1);
+            expect(outgoing()).toBeTruthy();
+            await act(async () => { vi.advanceTimersByTime(duration); });
+            expect(outgoing()).toBeNull();
+        } finally {
+            await screen.unmount();
+            vi.unstubAllGlobals();
+            vi.useRealTimers();
+        }
+    });
+
     it('keeps outgoing and incoming web slides mounted during a reduced-motion crossfade', async () => {
         const { SoftSlideTransitionFrame } = await import('./SoftSlideTransitionFrame');
         const screen = await renderScreen(

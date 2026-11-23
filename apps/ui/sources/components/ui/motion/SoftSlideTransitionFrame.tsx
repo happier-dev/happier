@@ -166,23 +166,11 @@ function WebSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
     const exitMs = timedDurationMs(props, roleTokens, 'exit');
     const lastKeyRef = React.useRef(props.transitionKey);
     const { layers, completeExit } = useSoftSlideLayers(props);
-    const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-    const frameRef = React.useRef<ReturnType<typeof setTimeout> | number | null>(null);
+    const cancelPending = React.useRef<(() => void) | undefined>(undefined);
     const [phase, setPhase] = React.useState<WebSlidePhase>('idle');
     const exitLayer = layers.exit;
 
-    React.useEffect(() => {
-        return () => {
-            if (timeoutRef.current) clearTimeout(timeoutRef.current);
-            if (frameRef.current != null) {
-                if (typeof cancelAnimationFrame === 'function' && typeof frameRef.current === 'number') {
-                    cancelAnimationFrame(frameRef.current);
-                } else {
-                    clearTimeout(frameRef.current as ReturnType<typeof setTimeout>);
-                }
-            }
-        };
-    }, []);
+    React.useLayoutEffect(() => () => cancelPending.current?.(), []);
 
     React.useLayoutEffect(() => {
         if (lastKeyRef.current === props.transitionKey) {
@@ -190,34 +178,28 @@ function WebSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
         }
         lastKeyRef.current = props.transitionKey;
 
-        if (timeoutRef.current) {
-            clearTimeout(timeoutRef.current);
-            timeoutRef.current = null;
-        }
-
+        cancelPending.current?.();
         setPhase('prepare');
 
-        const scheduleFrame = (callback: () => void) => {
-            if (typeof requestAnimationFrame === 'function') {
-                return requestAnimationFrame(() => {
-                    frameRef.current = requestAnimationFrame(() => {
-                        frameRef.current = null;
-                        callback();
-                    });
-                });
-            }
-            return setTimeout(callback, 16);
+        const animate = () => {
+            setPhase('animate');
+            const timeout = setTimeout(() => {
+                cancelPending.current = undefined;
+                completeExit(props.transitionKey);
+                setPhase('idle');
+            }, enterMs);
+            cancelPending.current = () => clearTimeout(timeout);
         };
 
-        frameRef.current = scheduleFrame(() => {
-            setPhase('animate');
-        });
-
-        timeoutRef.current = setTimeout(() => {
-            timeoutRef.current = null;
-            completeExit(props.transitionKey);
-            setPhase('idle');
-        }, enterMs);
+        if (typeof requestAnimationFrame === 'function' && typeof cancelAnimationFrame === 'function') {
+            let frame = requestAnimationFrame(() => {
+                frame = requestAnimationFrame(animate);
+            });
+            cancelPending.current = () => cancelAnimationFrame(frame);
+        } else {
+            const timeout = setTimeout(animate, 16);
+            cancelPending.current = () => clearTimeout(timeout);
+        }
     }, [completeExit, enterMs, props.transitionKey]);
 
     const currentOffset = !props.reducedMotion && phase === 'prepare'
