@@ -140,17 +140,10 @@ function resolveExecutablePluginRuntimeRegistry(
 }
 
 const externalSessionsBoundary = vi.hoisted(() => ({
-    ensureExternalSessionLink: vi.fn(async () => ({
-        sessionId: 'linked-current-global-routing',
-    })),
     readStoredCredentials: vi.fn(async () => ({
         token: 'current-global-routing-token',
         encryption: null,
     })),
-}));
-
-vi.mock('@/api/session/external/linking/ensureExternalSessionLink', () => ({
-    ensureExternalSessionLink: externalSessionsBoundary.ensureExternalSessionLink,
 }));
 
 vi.mock('@/persistence', async (importOriginal) => ({
@@ -235,7 +228,9 @@ function pluginManifest(input: Readonly<{
     version: 'G' | 'H' | 'I';
     accountServiceId: string;
     toolName: string;
+    policyOrigin?: string;
 }>) {
+    const policyOrigin = input.policyOrigin ?? 'https://policy.example.test';
     const manifestVersion = input.version === 'G'
         ? '1.0.0'
         : input.version === 'H'
@@ -285,7 +280,7 @@ function pluginManifest(input: Readonly<{
                 scope: {
                     targets: [{
                         kind: 'fixedOrigin',
-                        origin: 'https://policy.example.test',
+                        origin: policyOrigin,
                     }],
                     methods: ['GET'],
                 },
@@ -362,7 +357,7 @@ function pluginManifest(input: Readonly<{
             },
             requestInterceptors: input.version === 'G' ? [] : [{
                 id: 'deny-retained-http',
-                origins: ['https://policy.example.test'],
+                origins: [policyOrigin],
                 methods: ['GET'],
             }],
             agents: [{
@@ -443,6 +438,7 @@ async function writePluginSource(input: Readonly<{
     version: 'G' | 'H' | 'I';
     accountServiceId: string;
     toolName: string;
+    policyOrigin?: string;
 }>): Promise<void> {
     await mkdir(join(input.pluginRoot, '.happier-plugin'), {
         recursive: true,
@@ -665,10 +661,13 @@ async function writePluginSource(input: Readonly<{
                             };
                         }
                         if (
-                            request.headers.authorization !== '[redacted]'
+                            request.headers.authorization !== 'Bearer runner-caller-value'
                             || request.headers['x-tenant-label'] !== 'caller-visible'
                         ) {
-                            return { decision: 'deny' };
+                            return {
+                                decision: 'deny',
+                                code: 'retained_policy_unexpected_headers',
+                            };
                         }
                         return {
                             decision: 'continue',
@@ -1170,10 +1169,23 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                 followOperation: currentGlobalFollowOperation,
             });
         facetOwners.push(currentGlobalFollowOwner);
+        const policyServer = fastify();
+        const httpRequests: Array<Readonly<{
+            path: string;
+            authorization: string | undefined;
+            tenantLabel: string | string[] | undefined;
+        }>> = [];
+        policyServer.addHook('onRequest', async request => {
+            httpRequests.push({ path: request.url, authorization: request.headers.authorization,
+                tenantLabel: request.headers['x-tenant-label'] });
+        });
+        policyServer.get('/allowed', async () => 'allowed');
         try {
+            const policyOrigin = await policyServer.listen({ host: '127.0.0.1', port: 0 });
             await writePluginSource({
                 pluginRoot,
                 version: 'G',
+                policyOrigin,
                 accountServiceId: 'account-g',
                 toolName: gToolName,
             });
@@ -1683,6 +1695,7 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
             await writePluginSource({
                 pluginRoot,
                 version: 'H',
+                policyOrigin,
                 accountServiceId: 'account-h',
                 toolName: hToolName,
             });
@@ -1696,17 +1709,6 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                     happyHomeDir,
                     expectedVersion: 'H',
                 });
-            const httpRequests: Array<Readonly<{
-                url: string;
-                headers: Readonly<Record<string, string>>;
-            }>> = [];
-            vi.stubGlobal('fetch', vi.fn<typeof globalThis.fetch>(async (input, init) => {
-                httpRequests.push(Object.freeze({
-                    url: input instanceof Request ? input.url : String(input),
-                    headers: Object.freeze(Object.fromEntries(new Headers(init?.headers).entries())),
-                }));
-                return new Response('allowed', { status: 200 });
-            }));
             const resolvedHRegistry =
                 await resolveExecutablePluginRuntimeRegistry({
                 happyHomeDir,
@@ -1962,53 +1964,41 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                         backgroundServices: unavailable.backgroundServices,
                     },
                 });
-            const originalGlobalFetch = globalThis.fetch;
-            const terminalFetch = vi.fn(async () => new Response('allowed'));
-            vi.stubGlobal('fetch', terminalFetch);
-            try {
-                await expect(retainedCurrentPolicyServices.http.request({
-                    url: 'https://policy.example.test/blocked',
-                    method: 'GET',
-                    redirect: 'error',
-                })).rejects.toMatchObject({
-                    code: 'plugin_fetch_interceptor_denied',
-                });
-                await expect(retainedCurrentPolicyServices.http.request({
-                    url: 'https://policy.example.test/allowed',
-                    method: 'GET',
-                    headers: {
-                        authorization: 'Bearer runner-caller-value',
-                        'x-tenant-label': 'caller-visible',
-                    },
-                    redirect: 'error',
-                })).resolves.toMatchObject({
-                    status: 200,
-                    body: new TextEncoder().encode('allowed'),
-                });
-            } finally {
-                vi.stubGlobal('fetch', originalGlobalFetch);
-            }
-            expect(daemonPluginOperations).toContainEqual(
-                expect.objectContaining({
-                    kind: 'plugin_fetch.request_v1',
-                    invocationId:
-                        'retained-routing-current-http-policy',
-                    request: expect.objectContaining({
-                        url: 'https://policy.example.test/blocked',
-                        method: 'GET',
+            const blockedUrl = `${policyOrigin}/blocked`;
+            const allowedUrl = `${policyOrigin}/allowed`;
+            await expect(retainedCurrentPolicyServices.http.request({
+                url: blockedUrl,
+                method: 'GET',
+                redirect: 'error',
+            })).rejects.toMatchObject({
+                code: 'plugin_fetch_interceptor_denied',
+            });
+            await expect(retainedCurrentPolicyServices.http.request({
+                url: allowedUrl,
+                method: 'GET',
+                headers: {
+                    authorization: 'Bearer runner-caller-value',
+                    'x-tenant-label': 'caller-visible',
+                },
+                redirect: 'error',
+            })).resolves.toMatchObject({
+                status: 200,
+                body: new TextEncoder().encode('allowed'),
+            });
+            for (const url of [blockedUrl, allowedUrl]) {
+                expect(daemonPluginOperations).toContainEqual(
+                    expect.objectContaining({
+                        kind: 'plugin_fetch.request_v1',
+                        invocationId: 'retained-routing-current-http-policy',
+                        request: expect.objectContaining({ url, method: 'GET' }),
                     }),
-                }),
-            );
-            expect(terminalFetch).not.toHaveBeenCalled();
-            expect(httpRequests).toEqual([
-                expect.objectContaining({
-                    url: 'https://policy.example.test/allowed',
-                    headers: {
-                        authorization: 'Bearer runner-caller-value',
-                        'x-tenant-label': 'rewritten-by-current-policy',
-                    },
-                }),
-            ]);
+                );
+            }
+            expect(httpRequests).toEqual([{
+                path: '/allowed',
+                authorization: 'Bearer runner-caller-value',
+                tenantLabel: 'rewritten-by-current-policy',
+            }]);
 
             await expect(
                 runnerServices.sessions.external.capabilities(),
@@ -2084,7 +2074,7 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                     deliveredHostEvents.push(event);
                 });
             await vi.waitFor(() => expect(
-                daemonPluginOperations.some((operation) =>
+                completedDaemonPluginOperations.some((operation) =>
                     operation.kind
                         === 'plugin_events.host.subscribe.open_v1'),
             ).toBe(true));
@@ -2223,7 +2213,7 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                     sessionId: SESSION_ID,
                 },
             })).rejects.toMatchObject({
-                code: 'plugin_mcp_access_denied',
+                code: 'plugin_final_resource_not_selected',
             });
 
             const execResult = await runnerServices.exec.run({
@@ -2545,6 +2535,7 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                 })).resolves.toEqual({
                     status: 'unavailable',
                     code: 'plugin_external_follow_unavailable',
+                    retryable: false,
                 });
             expect(exactGVoiceLookup.mock.calls.every(
                 ([calledAuthority]) => calledAuthority.retainedAgent
@@ -2644,6 +2635,7 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
             await writePluginSource({
                 pluginRoot,
                 version: 'I',
+                policyOrigin,
                 accountServiceId: 'account-i',
                 toolName: hToolName,
             });
@@ -2739,7 +2731,7 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
             )).resolves.toBe('G');
             const postHRetirementHostEvents: unknown[] = [];
             const hostEventSubscriptionOpenCount =
-                daemonPluginOperations.filter((operation) =>
+                completedDaemonPluginOperations.filter((operation) =>
                     operation.kind
                         === 'plugin_events.host.subscribe.open_v1')
                     .length;
@@ -2754,7 +2746,7 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                     postHRetirementHostEvents.push(event);
                 });
             await vi.waitFor(() => expect(
-                daemonPluginOperations.filter((operation) =>
+                completedDaemonPluginOperations.filter((operation) =>
                     operation.kind
                         === 'plugin_events.host.subscribe.open_v1')
                     .length,
@@ -2912,6 +2904,7 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
             }
         } finally {
             pluginServicesLifetime.abort();
+            await policyServer.close();
             await currentGlobalFollowInstallation.dispose();
             await Promise.allSettled(
                 facetServices.map((service) => service.dispose()),
@@ -2930,7 +2923,6 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                 rm(pluginRoot, { recursive: true, force: true }),
                 rm(toolRoot, { recursive: true, force: true }),
             ]);
-            vi.unstubAllGlobals();
         }
     }, 60_000);
 });

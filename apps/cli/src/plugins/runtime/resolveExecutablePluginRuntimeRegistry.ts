@@ -7757,6 +7757,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 surface: 'agent' as const,
                 session: Object.freeze({ id: agentParams.sessionId }),
                 signal: agentParams.signal,
+                // Immutable retained services follow the admitted runner invocation lifetime.
+                ...(verified.sourceKind === 'managed' ? { retirementSignal: agentParams.signal } : {}),
                 isOccurrenceCurrent: agentParams.isOccurrenceCurrent,
             });
             const composedHostAccess = composeProviderBindingProcessAccess({
