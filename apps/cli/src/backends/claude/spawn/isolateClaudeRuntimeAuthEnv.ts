@@ -4,12 +4,16 @@ import {
   findConnectedServiceChildSelection,
   readConnectedServiceMaterializedEnvKeysFromEnv,
 } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
+import { isAllowedExactEnvKey } from '@/utils/env/isAllowedExactEnvKey';
 
 import {
   CLAUDE_AUTH_ENV_KEYS,
   CLAUDE_RUNTIME_REFRESH_SECRET_ENV_KEYS,
   type ClaudeAuthEnvKey,
 } from '../auth/claudeAuthEnvKeys';
+
+const AUTH_ENV_KEYS = new Set<string>(CLAUDE_AUTH_ENV_KEYS);
+const REFRESH_ENV_KEYS = new Set<string>(CLAUDE_RUNTIME_REFRESH_SECRET_ENV_KEYS);
 
 function toMaterializedKeySet(env: Pick<NodeJS.ProcessEnv, string>): Set<string> {
   return new Set(readConnectedServiceMaterializedEnvKeysFromEnv(env));
@@ -39,18 +43,11 @@ function stripInternalConnectedServiceEnv(env: NodeJS.ProcessEnv): void {
 
 export function isolateClaudeRuntimeAuthEnv<T extends NodeJS.ProcessEnv>(env: T): T {
   const allowedConnectedAuthKeys = resolveAllowedConnectedAuthEnvKeys(env);
-  if (allowedConnectedAuthKeys) {
-    for (const key of CLAUDE_AUTH_ENV_KEYS) {
-      if (!allowedConnectedAuthKeys.has(key)) {
-        delete env[key];
-      }
-    }
-    stripInternalConnectedServiceEnv(env);
-    return env;
-  }
-
-  for (const key of CLAUDE_RUNTIME_REFRESH_SECRET_ENV_KEYS) {
-    delete env[key];
+  for (const key of Object.keys(env)) {
+    const shouldStrip = allowedConnectedAuthKeys
+      ? isAllowedExactEnvKey(key, AUTH_ENV_KEYS) && !isAllowedExactEnvKey(key, allowedConnectedAuthKeys)
+      : isAllowedExactEnvKey(key, REFRESH_ENV_KEYS);
+    if (shouldStrip) delete env[key];
   }
   stripInternalConnectedServiceEnv(env);
   return env;

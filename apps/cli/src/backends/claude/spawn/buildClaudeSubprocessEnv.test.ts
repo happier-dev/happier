@@ -60,6 +60,17 @@ describe('buildClaudeSubprocessEnv', () => {
     })).toEqual(baseEnv);
   });
 
+  it('keeps refresh secrets out of a Windows child even when selected by the daemon', () => {
+    Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'win32' });
+    expect(buildClaudeSubprocessEnv({
+      baseEnv: {
+        Path: 'C:\\Tools',
+        Claude_Code_Oauth_Refresh_Token: 'private',
+        HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON: '["CLAUDE_CODE_OAUTH_REFRESH_TOKEN"]',
+      },
+    })).toEqual({ Path: 'C:\\Tools' });
+  });
+
   it('preserves only Claude\'s exact external sandbox assertion from the runner environment', () => {
     expect(buildClaudeSubprocessEnv({
       baseEnv: {

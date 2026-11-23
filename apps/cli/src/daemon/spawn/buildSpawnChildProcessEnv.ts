@@ -7,6 +7,9 @@ import {
   type HappierRuntimeServerContext,
 } from '@/utils/env/resolveHappierRuntimeContextEnv';
 import { resolveStackProcessKindOverrideForSessionSpawn } from './resolveStackProcessKindOverrideForSessionSpawn';
+import { MACHINE_SESSION_FORWARD_ENV_KEY } from './selectMachineSessionEnvironment';
+import { HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR } from './spawnExplicitEnvKeysMarker';
+import { isAllowedExactEnvKey } from '@/utils/env/isAllowedExactEnvKey';
 
 type ChildServerSelectionEnv = HappierRuntimeServerContext;
 
@@ -27,6 +30,8 @@ export const DAEMON_DECIDED_CHILD_ENV_KEYS = [
   ...HAPPIER_RUNTIME_CONTEXT_ENV_KEYS,
   ...STANDARD_MANAGED_CLI_RELEASE_CHANNEL_ENV_KEYS,
   ...DAEMON_ONLY_ENV_KEYS,
+  MACHINE_SESSION_FORWARD_ENV_KEY,
+  HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR,
 ] as const;
 
 export function buildSpawnChildProcessEnv(params: {
@@ -35,8 +40,18 @@ export function buildSpawnChildProcessEnv(params: {
   homeDir?: string;
   serverSelectionEnv?: ChildServerSelectionEnv;
 }): NodeJS.ProcessEnv {
-  const env = stripNestedSessionDetectionEnv({ ...params.processEnv, ...params.extraEnv });
+  const extraKeys = new Set(Object.keys(params.extraEnv));
+  const baseEnv = process.platform === 'win32'
+    ? Object.fromEntries(Object.entries(params.processEnv).filter(([key]) => !isAllowedExactEnvKey(key, extraKeys)))
+    : params.processEnv;
+  const env = stripNestedSessionDetectionEnv({ ...baseEnv, ...params.extraEnv });
   for (const key of DAEMON_ONLY_ENV_KEYS) delete env[key];
+  for (const key of Object.keys(env)) {
+    if (key.toUpperCase() === MACHINE_SESSION_FORWARD_ENV_KEY) delete env[key];
+    if (key.toUpperCase() === HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR) delete env[key];
+  }
+  const explicitEnvKeys = params.extraEnv[HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR];
+  if (explicitEnvKeys !== undefined) env[HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR] = explicitEnvKeys;
   const stackProcessKindOverride = resolveStackProcessKindOverrideForSessionSpawn(env);
 
   // Stack-spawned session runners are headless: their file log is the ONLY forensic artifact

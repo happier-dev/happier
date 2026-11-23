@@ -76,19 +76,13 @@ export function buildClaudeSubprocessEnv(params?: Readonly<{
   ];
 
   const out: Record<string, string> = Object.create(null);
-  const denyExact = new Set<string>([
-    'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
-    'CLAUDE_CODE_OAUTH_SCOPES',
-  ]);
-
   for (const [key, value] of Object.entries(baseEnv)) {
     const windowsSystemKey = isWindowsSystemEnvKey(key);
     // Windows defines system names such as ProgramFiles(x86), which are not
     // valid POSIX shell assignment names. Do not widen explicit env validation.
     if (!windowsSystemKey && !isValidEnvVarKey(key)) continue;
-    if (denyExact.has(key)) continue;
     if (typeof value !== 'string') continue;
-    if (windowsSystemKey || explicitSpawnEnvKeys.has(key) || isAllowedExactEnvKey(key, allowExact) || allowPrefixes.some((prefix) => key.startsWith(prefix))) {
+    if (windowsSystemKey || isAllowedExactEnvKey(key, explicitSpawnEnvKeys) || isAllowedExactEnvKey(key, allowExact) || allowPrefixes.some((prefix) => key.startsWith(prefix))) {
       out[key] = value;
     }
   }
