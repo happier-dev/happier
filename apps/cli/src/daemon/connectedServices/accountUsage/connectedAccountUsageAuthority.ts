@@ -97,7 +97,7 @@ export async function readConnectedAccountProviderUsage(input: Readonly<{
                   const [primary, ...additionalHeaders] = headers;
                   if (!primary) throw new ProviderProbeCredentialResolutionError(unavailable('provider_credential_transport_unavailable').error);
                   const query = Object.entries(projectRequestAuthQueryParameters(materialization, material.facts) ?? {})
-                    .map(([name, value]) => ({ kind: 'queryParameter' as const, name, value }));
+                    .map(([name, value]) => ({ kind: 'queryParam' as const, name, value }));
                   return { credential: { ...primary, additionalCredentials: [...additionalHeaders, ...query] },
                     containsSensitiveValue: redaction.containsSensitiveValue, close: redaction.close };
                 } catch (error) {
