@@ -20,8 +20,6 @@ export type CodexRolloutAction =
     | { type: 'subagent-complete'; threadId: string; status: 'completed' | 'interrupted'; summaryText: string | null }
     | { type: 'debug'; message: string; value?: unknown };
 
-type RolloutEnvelope = { timestamp?: string; type?: string; payload?: unknown };
-
 /**
  * Rollout envelopes the pinned recorder durably writes that carry no
  * recipient-facing transcript row. `compacted` restates history this reader
@@ -135,9 +133,9 @@ export type CodexRolloutRecordProjection = Readonly<{
 }>;
 
 /**
- * Native 0.162.1 compaction records wrap the raw assistant summary in
- * `compacted.payload.message`. That raw message has no internal role or phase.
- * Associate only its nearest preceding content row, across content-free events.
+ * Older rollouts omit the response item's compaction metadata. Use the
+ * `compacted.payload.message` checkpoint to associate the summary with its
+ * nearest preceding content row, across content-free events.
  */
 export function createCodexRolloutCompactionFilter() {
     let compactionMessage: string | null = null;
@@ -317,7 +315,7 @@ export function projectCodexRolloutRecord(
     event: unknown,
     opts: { debug: boolean; localControl?: boolean },
 ): CodexRolloutRecordProjection {
-    const env = asRecord(event) as RolloutEnvelope | null;
+    const env = asRecord(event);
     if (!env || typeof env.type !== 'string') {
         return { disposition: 'unsupported', actions: [] };
     }
@@ -433,7 +431,9 @@ export function projectCodexRolloutRecord(
         };
     }
 
-    if (CODEX_KNOWN_NON_TRANSCRIPT_RESPONSE_ITEM_TYPES.has(payloadType)) {
+    // The native writer tags compaction output on the envelope before writing the checkpoint.
+    if (asRecord(env.metadata)?.compaction_output === true ||
+        CODEX_KNOWN_NON_TRANSCRIPT_RESPONSE_ITEM_TYPES.has(payloadType)) {
         return { disposition: 'known', actions: [] };
     }
 

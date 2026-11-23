@@ -138,6 +138,33 @@ function decodeSingleStreamCursor(cursor: string): Record<string, unknown> {
 }
 
 describe('Codex external transcript cursor generations', () => {
+  it('keeps recorder-tagged compaction output out of append reads before the checkpoint', async () => {
+    const fixture = await createFixture();
+    try {
+      const filePath = join(fixture.dayDir, `rollout-2026-07-23T08-00-00-${fixture.remoteSessionId}.jsonl`);
+      await writeFile(filePath, rollout({ remoteSessionId: fixture.remoteSessionId,
+        timestamp: '2026-07-23T08:00:00.000Z', messages: ['Earlier answer'] }));
+      const params = { ...sourceParams(fixture), direction: 'older' as const, maxBytes: 64 * 1024, maxItems: 100 };
+      const tail = await readAfterCodexExternalSessionTranscript({ ...params, cursor: 'tail' });
+      await appendFile(filePath, [
+        { type: 'response_item', payload: { type: 'message', role: 'assistant',
+          content: [{ type: 'output_text', text: 'Your answer' }] }, metadata: { compaction_output: false } },
+        { type: 'response_item', payload: { type: 'message', role: 'assistant',
+          content: [{ type: 'output_text', text: 'Internal compaction context' }] }, metadata: { compaction_output: true } },
+      ].map((record, index) => jsonl({ timestamp: new Date(Date.parse('2026-07-23T08:00:02Z') + index * 1000).toISOString(), ...record })).join(''));
+
+      const after = await readAfterCodexExternalSessionTranscript({ ...params, cursor: tail.nextCursor! });
+      expect(after.items.map(transcriptItemText)).toEqual(['Your answer']);
+      const page = await pageCodexExternalSessionTranscript(params);
+      expect(page.items.map(transcriptItemText)).toEqual(['Earlier answer', 'Your answer']);
+      const search = await searchCodexExternalTranscript({ ...params, query: 'Internal compaction context',
+        ripgrep: { run: async () => ({ exitCode: 0, stdout: `${filePath}\0`, stderr: '' }) } });
+      expect(search.match).toBeUndefined();
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   it('excludes native compaction output from pages, append reads and content search', async () => {
     const fixture = await createFixture();
     try {
