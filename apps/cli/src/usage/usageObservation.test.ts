@@ -21,7 +21,7 @@ describe('usageObservation', () => {
         expect(buildTokenCountSessionMessageFromUsageObservation({ ...observation,
             tokens: { input: 8, output: null, reasoning: null, cacheRead: 4, cacheWrite: null, total: null } })?.tokens).toEqual({ input: 8, cache_read: 4 });
         expect(buildLegacyUsageReportFromUsageObservation({ sessionId: 'session-1',
-            observation: { ...observation, tokens: { total: 0 }, cost: { reportedUsd: 0, estimatedUsd: null, currency: 'USD' } } }))
+            observation: { ...observation, tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 }, cost: { reportedUsd: 0, estimatedUsd: null, currency: 'USD' } } }))
             .toMatchObject({ tokens: { total: 0 }, cost: { total: 0 } });
     });
     it.each([

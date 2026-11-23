@@ -17,7 +17,7 @@ describe('Claude native MCP witness → retained evidence → Coach remedy', () 
         'admits only witnessed unused selected bindings (%s)', async shape => {
             vi.useFakeTimers({ toFake: ['Date'] });
             vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
-            onTestFinished(() => vi.useRealTimers());
+            onTestFinished(() => { vi.useRealTimers(); });
             const exec = createSdkExecFixture();
             const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service,
                 { exec: exec.service });

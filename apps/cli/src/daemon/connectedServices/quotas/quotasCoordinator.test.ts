@@ -603,7 +603,7 @@ it('keeps a just-added account that names only its organization on one identity-
       readQuota: async () => stored ? {
         ref: profile.ref,
         sourceResolution: { source: { ref: profile.ref, bindingKind: 'account' as const }, recordId: stored.recordId,
-          providerAccountId: null, fetchedAt: stored.fetchedAtMs, staleAfterMs: stored.staleAfterMs },
+          providerAccountId: stored.recordKey.accountSubjectId, fetchedAt: stored.fetchedAtMs, staleAfterMs: stored.staleAfterMs },
         content: { t: 'plain' as const, v: projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4({ snapshot: stored, ref: profile.ref }) },
         metadata: { fetchedAt: stored.fetchedAtMs, staleAfterMs: stored.staleAfterMs,
           status: stored.state === 'not_loaded' ? 'unavailable' as const : 'ok' as const },
@@ -2147,7 +2147,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       v: 1, recordKey, recordId: buildProviderAccountUsageRecordId(recordKey), providerId: CODEX_QUALIFIED_SERVICE_ID,
       accountSubject: { kind: 'providerSubject', id: 'provider-backup' }, observedAtMs: now, fetchedAtMs: now, staleAfterMs: 300_000,
       source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', planLabel: null, accountLabel: null,
-      meters: [{ meterId: 'weekly', label: 'Weekly', used: 20, limit: 100, unit: 'count', utilizationPct: 20, remainingPct: 80, resetsAt: null, status: 'ok' }],
+      meters: [{ meterId: 'weekly', label: 'Weekly', used: 20, limit: 100, unit: 'count', utilizationPct: 20, remainingPct: 80, resetsAt: null, status: 'ok', details: {} }],
     };
     const group = buildQualifiedConnectedAccountGroupV4Fixture({ groupId: 'team', activeProfileId: 'backup', memberProfileIds: ['backup'] });
     const source = { serviceId: CODEX_QUALIFIED_SERVICE_ID, profileId: 'backup', bindingKind: 'group_member' as const, groupId: 'team', groupGeneration: group.generation };
@@ -2176,9 +2176,10 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       discoveryEnabled: false, accountUsageStore: store, runtimeQuotaSnapshots,
       qualifiedConnectedAccountRuntime: { resolvePeerClass: () => 'advertised_v4', establishedRuntimeOwner: fixture.owner,
         readQuota: readQualifiedConnectedAccountQuotaV4,
+        listScheduledAccounts: async () => [profile],
         listGroupQuotaTargets: async () => [{ profile, groupGeneration: group.generation }],
         writeProviderAccountUsage: async () => ({ success: true, source: { status: 'linked' } }),
-      } as QualifiedConnectedAccountQuotaRuntime,
+      },
     });
     try {
       const hydrate = () => coordinator.hydrateQualifiedGroupQuotaSnapshots({ group, profiles: [profile] });
@@ -4012,6 +4013,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
             },
           } });
           if (!invoke) throw new Error('Missing recovery credit RPC');
+          const invokeRecoveryCredit = invoke;
           const debit = { serviceId: serviceKey, profileId: request.profileId, idempotencyKey: 'confirmed-reset',
             ...(lateAcknowledgementAfterCheck ? { providerCreditId: 'earliest' } : {}) };
           const pending = invoke(debit);
@@ -4065,7 +4067,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
             }
             await writeFile(acknowledgementRelease, 'release');
             await vi.waitFor(async () => {
-              await expect(invoke(debit)).resolves.toMatchObject({ ok: true, receipt: {
+              await expect(invokeRecoveryCredit(debit)).resolves.toMatchObject({ ok: true, receipt: {
                 status: 'consumed', idempotencyKey: 'confirmed-reset', providerCreditId: 'earliest',
               } });
             });

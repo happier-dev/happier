@@ -240,7 +240,7 @@ describe('Project choices through the real CLI Account composition', () => {
       cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } },
       scopeKeys: [{ dimension: 'project', keys: [desktop, laptop, unknown, foreignCheckout] }] });
     const deps = createCliActionDeps({ token, credentials: { token, encryption }, sessionId: 'cli-global',
-      mode: 'legacy', ctx: null, serverId, serverHttpBaseUrl: 'https://home-a.test' });
+      mode: 'e2ee', ctx: null, serverId, serverHttpBaseUrl: 'https://home-a.test' });
     const actions = createActionExecutor({ ...deps, usageActions: {
       query: async ({ queries }) => resolveUsagePageAggregation({ queries,
         accounting: queries.map(query => ({ query, value: accounting, status: 'available' as const })),

@@ -64,7 +64,7 @@ describe('startConnectedServiceQuotasLoop', () => {
         getConnectedServiceCredentialSealed: async () => null },
     });
     const handle = startConnectedServiceQuotasLoop({ enabled: true, tickMs: 50, coordinator,
-      subscribeWake: listener => registry.subscribeTargetRegistrations(listener), onTickError: () => {} });
+      subscribeWake: listener => registry.subscribeTargetRegistrations(() => listener()), onTickError: () => {} });
     try {
       handle?.wake();
       await vi.advanceTimersByTimeAsync(0);
