@@ -63,9 +63,19 @@ function equivalentTable(left: string, right: string) {
     const tokens = (value: string) => {
         const table = confinedTable(value);
         let result = '', ordinary = '', quoted = false, escaped = false, comment = false;
-        const flush = () => { result += ordinary.replace(/priorityfilter-10/g, 'priority-10'); ordinary = ''; };
+        const flush = () => {
+            // nft lists a full-length host prefix as a bare address.
+            const normalized = ordinary.replace(/\b(ip6?\s+[sd]addr\s+)([\da-fA-F:.]+)\/(32|128)(?=[\s;]|$)/g,
+                (match, selector: string, address: string, prefix: string) => {
+                    const family = selector.startsWith('ip6') ? 6 : 4;
+                    return isIP(address) === family && prefix === (family === 4 ? '32' : '128')
+                        ? selector + address : match;
+                });
+            result += normalized.replace(/[\s;]/g, '').replace(/priorityfilter-10/g, 'priority-10');
+            ordinary = '';
+        };
         for (const char of table) {
-            if (comment) { if (char === '\n') comment = false; continue; }
+            if (comment) { if (char === '\n') { comment = false; ordinary += char; } continue; }
             if (quoted) {
                 result += char;
                 if (escaped) escaped = false;
@@ -73,7 +83,7 @@ function equivalentTable(left: string, right: string) {
                 else if (char === '"') quoted = false;
             } else if (char === '#') comment = true;
             else if (char === '"') { flush(); quoted = true; result += char; }
-            else if (!/[\s;]/.test(char)) ordinary += char;
+            else ordinary += char;
         }
         flush(); return result;
     };

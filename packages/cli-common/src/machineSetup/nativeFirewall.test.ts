@@ -671,6 +671,28 @@ describe('native owned firewall', () => {
         expect((await f.backend.observe(f.step)).status).toBe('satisfied');
     });
 
+    it.each([
+        { selector: 'ip', address: '192.168.5.2', hostPrefix: 32, subnet: '192.168.5.0/24' },
+        { selector: 'ip6', address: '2001:db8::2', hostPrefix: 128, subnet: '2001:db8::/64' },
+    ])('verifies and rolls back an SSH host rule rendered without its $selector host prefix', async ({ selector, address, hostPrefix, subnet }) => {
+        const host = `${address}/${hostPrefix}`;
+        const hostRules = rules.replace('    ct state new drop',
+            `    iifname "eth0" ${selector} saddr ${host} tcp dport 22 accept\n    ct state new drop`);
+        const f = await fixture(undefined, table => table.replace(host, address));
+        const step = { ...f.step, rules: hostRules };
+        const staged = await stage(f, step);
+        expect(await staged.verify()).toBe(true);
+
+        f.setEffectiveTable(hostRules.replace(host, subnet));
+        await expect(staged.undo()).rejects.toMatchObject({ reasonCode: 'foreign_effect_conflict' });
+        expect(f.readEffectiveTable()).toContain(subnet);
+
+        f.setEffectiveTable(hostRules.replace(host, address));
+        await staged.undo();
+        expect(f.readEffectiveTable()).toBeUndefined();
+        await expect(f.fs.lstat(f.disk(rulesPath))).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
     it('reports boot verification failure and restores the previously absent state', async () => {
         const f = await fixture(); f.rejectBootVerification();
         await expect(stage(f)).rejects.toMatchObject({ reasonCode: 'required_fact_unavailable' });
