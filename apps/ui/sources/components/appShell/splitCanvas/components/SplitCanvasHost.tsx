@@ -179,8 +179,7 @@ function SplitCanvasHostInner<TLeafPayload>(props: Readonly<{
             return next;
         });
     }, [props.state.root]);
-    const handleContentSlotLayout = React.useCallback((leafId: string, event: LayoutChangeEvent) => {
-        const { x, y } = event.nativeEvent.layout;
+    const handleContentSlotLayout = React.useCallback((leafId: string, { x, y }: Readonly<{ x: number; y: number }>) => {
         if (!Number.isFinite(x) || !Number.isFinite(y)) return;
         setContentSlots(current => current[leafId]?.x === x && current[leafId]?.y === y ? current : { ...current, [leafId]: { x, y } });
     }, []);
@@ -521,7 +520,7 @@ function SplitCanvasLeafRendererInner<TLeafPayload>(props: Readonly<{
     renderLeaf: RenderLeaf<TLeafPayload>;
     renderLeafLabel?: (leaf: SplitCanvasLeafNode<TLeafPayload>) => string;
     retainedContent: boolean;
-    onContentSlotLayout: (leafId: string, event: LayoutChangeEvent) => void;
+    onContentSlotLayout: (leafId: string, offset: Readonly<{ x: number; y: number }>) => void;
     onLeafLayout: (leafId: string, event: LayoutChangeEvent) => void;
     registerLeafHost: (leafId: string, host: SplitCanvasLeafHostRef | null) => void;
     onRequestSplit: (leafId: string, direction: SplitCanvasDirection) => void;
@@ -529,6 +528,13 @@ function SplitCanvasLeafRendererInner<TLeafPayload>(props: Readonly<{
     const handleLayout = React.useCallback((event: LayoutChangeEvent) => {
         props.onLeafLayout(props.leaf.id, event);
     }, [props.leaf.id, props.onLeafLayout]);
+
+    const contentSlotRef = React.useCallback((slot: React.ComponentRef<typeof View> | null) => {
+        // A hidden desktop webview can lay out the slot before it delivers onLayout.
+        if (typeof HTMLElement === 'undefined' || !(slot instanceof HTMLElement) || !slot.ownerDocument.hidden) return;
+        if (slot.offsetParent !== slot.parentElement || slot.offsetWidth === 0 || slot.offsetHeight === 0) return;
+        props.onContentSlotLayout(props.leaf.id, { x: slot.offsetLeft, y: slot.offsetTop });
+    }, [props.leaf.id, props.onContentSlotLayout]);
 
     const handleHostRefChange = React.useCallback((host: SplitCanvasLeafHostRef | null) => {
         props.registerLeafHost(props.leaf.id, host);
@@ -570,9 +576,9 @@ function SplitCanvasLeafRendererInner<TLeafPayload>(props: Readonly<{
         >
             <View style={leafContentContainerStyle}>
                 {props.retainedContent ? <View style={{ flexShrink: 0 }}>{content}</View> : content}
-                {props.retainedContent ? <View pointerEvents="none" testID={`split-canvas-content-slot-${props.leaf.id}`}
+                {props.retainedContent ? <View ref={contentSlotRef} pointerEvents="none" testID={`split-canvas-content-slot-${props.leaf.id}`}
                     style={{ flex: 1, minWidth: 0, minHeight: 0 }}
-                    onLayout={event => props.onContentSlotLayout(props.leaf.id, event)} /> : null}
+                    onLayout={event => props.onContentSlotLayout(props.leaf.id, event.nativeEvent.layout)} /> : null}
             </View>
         </SplitCanvasLeafFrame>
     );

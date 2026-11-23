@@ -8,7 +8,8 @@ import { isWorkspaceActionId } from '@happier-dev/protocol/actions/workspaceActi
 import type { EntityDragItemV1 } from '@happier-dev/protocol/plugins/ui';
 import { createEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropRuntime';
 import { useEntityDragDomBinding } from '@/components/ui/treeDragDrop/useEntityDragDomBinding';
-import { resolveCompactAppDestinations } from '../../destinations/compactAppDestinationCatalog';
+import { resolveCompactAppDestinations, resolveDestinationRefFromHref } from '../../destinations/compactAppDestinationCatalog';
+import { buildMachineAddHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { createWorkspaceNavigationAdapter } from '../../workspace/workspaceNavigationAdapter';
 import { createWorkspaceActionAdapter } from '../../workspace/workspaceActions';
 import { createWorkspaceState, reduceWorkspaceState } from '../../workspace/workspaceState';
@@ -97,6 +98,47 @@ async function harness(width = 1400) {
 }
 
 describe('pane DOM carry through workspace owners', () => {
+    it('presents an addressed tab when a hidden webview has layout but has not delivered onLayout', async () => {
+        vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+        vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+        // The hidden Linux webview already has a real viewport. Supply those platform
+        // measurements without delivering the ResizeObserver notification.
+        vi.spyOn(HTMLElement.prototype, 'offsetParent', 'get').mockImplementation(function (this: HTMLElement) {
+            return this.parentElement;
+        });
+        vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(840);
+        vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(717);
+        vi.spyOn(HTMLElement.prototype, 'offsetTop', 'get').mockImplementation(function (this: HTMLElement) {
+            return this.dataset.testid?.startsWith('split-canvas-content-slot-') ? 40 : 0;
+        });
+        scratch.push(async () => { vi.restoreAllMocks(); });
+
+        const href = `${buildMachineAddHref({ path: 'thisComputer' })}&intent=connect`;
+        const catalog = resolveCompactAppDestinations({
+            pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false },
+        });
+        const target = resolveDestinationRefFromHref(catalog, href);
+        expect(target?.params).toMatchObject({ path: 'thisComputer', intent: 'connect' });
+        if (!target) throw new Error('Expected the machine-add route to be admitted');
+        const tab = { id: 'machine-draft', target, pinned: false, preview: true };
+        const state = createWorkspaceState(tab);
+        const container = document.createElement('div');
+        document.body.append(container);
+        const root = createRoot(container);
+        scratch.push(async () => { await act(async () => root.unmount()); container.remove(); });
+
+        await act(async () => root.render(<SplitCanvasHost
+            state={{ root: state.root, focusedLeafId: state.focusedGroupId, maximizedLeafId: null }}
+            dispatch={() => {}}
+            renderLeafHeader={() => <View style={{ height: 40 }} />}
+            retainedLeafContents={[{ id: tab.id, leafId: state.focusedGroupId, isActive: true,
+                render: () => <View testID="addressed-tab-body" /> }]}
+        />));
+        const frame = container.querySelector<HTMLElement>('[data-testid="split-canvas-retained-content-machine-draft"]');
+        expect(frame?.querySelector('[data-testid="addressed-tab-body"]')).toBeTruthy();
+        expect(frame?.style.top).toBe('40px');
+    });
+
     it('paints pane feedback above the retained transcript', async () => {
         const h = await harness();
         await h.begin(); await h.move(1450);
