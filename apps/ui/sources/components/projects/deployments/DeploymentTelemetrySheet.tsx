@@ -19,6 +19,7 @@ import { Text } from '@/components/ui/text/Text';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import type { CustomModalInjectedProps } from '@/modal/types';
+import { readProjectDeploymentDefaults } from '@/sync/api/projects/projectDeploymentDefaults';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useMachineListForServer } from '@/sync/store/hooks';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
@@ -79,16 +80,23 @@ export function DeploymentTelemetrySheet(
     [allMachines],
   );
   const setUp = Boolean(environment.telemetryMachineId);
-  const [collectorId, setCollectorId] = React.useState<string | null>(() => {
-    if (environment.telemetryMachineId) return environment.telemetryMachineId;
-    const proposed = resolveTelemetryCollectorSelectionV1({
-      environment,
-      targetLinks: detail.targetLinks.map((row) => ({
-        targetLink: row.targetLink,
-      })),
+  const canManage = environment.capabilities.manageBindings;
+  const [collectorId, setCollectorId] = React.useState<string | null>(environment.telemetryMachineId ?? null);
+  React.useEffect(() => {
+    if (setUp || !canManage || environment.owner.kind === 'team') return;
+    const cancellation = new AbortController();
+    const retirement = lifetime.onRetire(() => cancellation.abort());
+    void readProjectDeploymentDefaults(lifetime, environment.projectSourceId, cancellation.signal).then(({ preferences }) => {
+      if (cancellation.signal.aborted) return;
+      const proposed = resolveTelemetryCollectorSelectionV1({
+        environment, targetLinks: detail.targetLinks, projectDefaultMachineId: preferences.telemetryMachineId,
+      });
+      if (proposed.kind === 'selected') setCollectorId(selected => selected ?? proposed.machineId);
+    }, () => {
+      // Without a readable Project default, the picker still lets the person choose explicitly.
     });
-    return proposed.kind === 'selected' ? proposed.machineId : null;
-  });
+    return () => { cancellation.abort(); retirement.dispose(); };
+  }, [setUp, canManage, environment, detail.targetLinks, lifetime]);
   const saved = resolveDeploymentTelemetryCapabilitiesV1(
     detail.content.telemetry,
   );
@@ -113,7 +121,6 @@ export function DeploymentTelemetrySheet(
       ? getMachineDisplayName(machine, allMachines)
       : t('projects.deployments.aMachine');
   };
-  const canManage = environment.capabilities.manageBindings;
   const ready = !requests || collectorId !== null;
   const change =
     <T,>(set: (value: T) => void) =>

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
+import 'fake-indexeddb/auto';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import {
   createDeploymentEnvironmentHeaderV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
@@ -9,6 +10,10 @@ import {
   standardCleanup,
   waitForTestEvent,
 } from '@/dev/testkit';
+import { createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
@@ -20,6 +25,9 @@ const router = await vi.hoisted(async () =>
   (await import('@/dev/testkit/mocks/router')).createExpoRouterMock(),
 );
 vi.mock('expo-router', () => router.module);
+vi.mock('socket.io-client', async original =>
+  (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
+installDisconnectedServerSocketBoundary();
 vi.mock(
   '@/modal',
   async () =>
@@ -115,6 +123,42 @@ describe('Environment Telemetry tab', () => {
 });
 
 describe('Environment telemetry sheet', () => {
+  it('uses the selected Project collector default ahead of the runtime Machine on first setup', async () => {
+    const account = await createSecretSettingsTestHarness({ handleRequest: async path => {
+      if (path.startsWith('/v1/projects/sources/source-app')) return Response.json({ ok: true, canManage: true,
+        source: { id: 'source-app', revision: 1, name: 'App', owner: { kind: 'account', accountId: 'account-a' },
+          audience: [], createdByAccountId: 'account-a', defaultRef: 'main' } });
+      if (path.startsWith('/v1/projects/source-app/deployment-defaults')) return Response.json({ ok: true,
+        projectSourceId: 'source-app', sourceRevision: 1, revision: 1,
+        content: { contentArtifactId: 'project-defaults', contentHeaderVersion: 1, contentBodyVersion: 1 } });
+      return null;
+    } });
+    account.artifacts.replaceStoredRow(createPlainArtifactHttpFixture({ id: 'project-defaults', isDecrypted: true,
+      header: { kind: 'project-deployment-defaults.v1', title: 'App' },
+      body: JSON.stringify({ projectSourceId: 'source-app', deploymentDefaults: { telemetryMachineId: 'collector-default' } }),
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 }, account.scope.accountId));
+    const context = await captureLazyActionAccountContext(account.scope.serverId);
+    const { SessionMachineField } = await import('@/components/sessions/new/placement/SessionPlacementChips');
+    const targetLink = createDeploymentTargetLinkHeaderV1({ environmentId: 'production' });
+    const environment = createDeploymentEnvironmentHeaderV1({ id: 'production', projectSourceId: 'source-app',
+      owner: { kind: 'account', accountId: account.scope.accountId }, runtimeTargetLinkId: targetLink.id });
+    const detail = createDeploymentEnvironmentDetailV1({ environment, targetLinks: [{ targetLink, content: {} }] });
+    const setTelemetry = vi.fn(async () => ({ ok: true as const, environmentId: 'production', revision: 2, state: 'redeploy_required' as const }));
+    const screen = await renderScreen(<ModalProvider><View testID="host" /></ModalProvider>);
+    try {
+      await act(async () => { showDeploymentTelemetrySheet({ detail, lifetime: context.accountLifetime,
+        environmentName: 'Production', setTelemetry, onSaved: () => {} }); });
+      const picker = () => screen.findAllByType(SessionMachineField).find(row => row.props.testID === 'project-deployments.telemetry.collector');
+      await vi.waitFor(() => expect(picker()?.props.machineId).toBe('collector-default'));
+      await screen.pressByTestIdAsync('project-deployments.telemetry.save');
+      expect(setTelemetry).toHaveBeenCalledWith(expect.objectContaining({ collector: { machineId: 'collector-default' } }));
+    } finally {
+      await screen.unmount();
+      context.dispose();
+      await account.dispose();
+    }
+  });
+
   it('saves the collector with the three capability choices, then the next deploy applies them', async () => {
     const setTelemetry = vi.fn(async () => ({
       ok: true as const,
