@@ -13377,6 +13377,7 @@ const ru: ReviewWalkthroughTranslations = {
         revisionAt: 'на',
         runningSince: ({ time }) => `Выполняется с ${time}`,
         findingsNoneYet: 'Пока ничего не найдено',
+        checkingReviewer: 'Проверка…',
         reviewers: 'Рецензенты',
         reviewersReadRepository: 'Каждый прочитал весь репозиторий.',
         reviewersReadComparison: 'Каждый прочитал одни и те же изменения.',

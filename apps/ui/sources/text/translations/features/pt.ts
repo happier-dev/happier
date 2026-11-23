@@ -13343,6 +13343,7 @@ const pt: ReviewWalkthroughTranslations = {
         revisionAt: 'em',
         runningSince: ({ time }) => `Em execução desde ${time}`,
         findingsNoneYet: 'Nada encontrado ainda',
+        checkingReviewer: 'Verificando…',
         reviewers: 'Revisores',
         reviewersReadRepository: 'Cada um leu o repositório inteiro.',
         reviewersReadComparison: 'Cada um leu as mesmas alterações.',

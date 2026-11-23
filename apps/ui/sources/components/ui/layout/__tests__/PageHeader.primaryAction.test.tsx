@@ -258,6 +258,8 @@ describe('PageHeader primary action placement', () => {
         const inHeader = await renderScreen(lastHeaderRight() as unknown as React.ReactElement);
         expect(inHeader.findHostByTestId('preset-create')).not.toBeNull();
         expect(inHeader.findHostByTestId('page-header-actions.trigger')).toBeNull();
+        // The header draws it as quietly as the page does ("Stop reviewing", U8 R7 RN3).
+        expect(inHeader.findAllByType(RoundButton as never).find(node => node.props.testID === 'preset-create')?.props.display).toBe('secondary');
     });
 
     it('hands the primary action to the native header on phones instead of stacking it under the purpose', async () => {

@@ -148,7 +148,13 @@ export function ReviewNewRoundDialog(
             testID={`review-new-round:reviewer:${reviewer.id}`}
             title={reviewer.label}
             icon={reviewer.mark ?? undefined}
-            rightElement={continuityLabel(reviewer) === null ? undefined : (
+            // While the preview reads, the row says it is being checked where "starts fresh" lands (U8 R7 R6c).
+            loading={continuityLabel(reviewer) === null && props.loading === true}
+            rightElement={continuityLabel(reviewer) === null ? props.loading ? (
+              <Text testID={`review-new-round:reviewer:${reviewer.id}:checking`} variant="meta" style={[styles.continuity, styles.checking]}>
+                {t('reviewWalkthrough.detail.checkingReviewer')}
+              </Text>
+            ) : undefined : (
               <Text variant="meta" style={styles.continuity}>
                 {continuityLabel(reviewer)}
               </Text>
@@ -181,6 +187,8 @@ export function showReviewNewRoundDialog(
 const styles = StyleSheet.create((theme) => ({
   body: { gap: theme.space.s12, paddingBottom: theme.space.s8 },
   continuity: { color: theme.colors.text.secondary },
+  // The row's pending spinner sits just before its word.
+  checking: { marginLeft: theme.space.s6 },
   note: {
     color: theme.colors.text.secondary,
     paddingHorizontal: theme.space.s16,

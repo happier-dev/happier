@@ -13301,6 +13301,7 @@ const ja: ReviewWalkthroughTranslations = {
         revisionAt: 'コミット',
         runningSince: ({ time }) => `${time} から実行中`,
         findingsNoneYet: 'まだ何も見つかっていません',
+        checkingReviewer: '確認中…',
         reviewers: 'レビュアー',
         reviewersReadRepository: 'それぞれがリポジトリ全体を読みました。',
         reviewersReadComparison: 'それぞれが同じ変更を読みました。',

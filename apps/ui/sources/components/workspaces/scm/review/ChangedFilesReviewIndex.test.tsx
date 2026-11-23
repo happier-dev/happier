@@ -311,3 +311,15 @@ it('highlights the file being read in the phone tree picker without a separate r
     await settleMenuPress(screen, `repository-tree-row-${entries[0]!.fullPath}`);
     expect(selected).toEqual([entries[0]!.fullPath]);
 });
+
+it('says the phone position once, against the comparison total: "1 of 6004", not "1 of 10" beside "10 / 6004" (U8 R7 CF1b)', async () => {
+    getStorage().setState({ settings: { ...initialSettings, scmChangedFilesLayout: 'list' } });
+    const entries = files(10);
+    const screen = await renderScreen(<ChangedFilesReviewPhoneFileControl fileIndex={buildChangedFilesReviewFileIndex(entries)} totalFiles={6004}
+        activePath={entries[0]!.fullPath} rootPath="/repo" commentCountByPath={new Map<string, number>()} onFocusPath={() => {}} />);
+    try {
+        const { t } = await import('@/text');
+        expect(screen.getTextContent()).toContain(t('walkthrough.stopOf', { number: 1, total: 6004 }));
+        expect(screen.getTextContent()).not.toContain('10 / 6004');
+    } finally { await screen.unmount(); }
+});

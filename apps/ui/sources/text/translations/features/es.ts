@@ -13248,6 +13248,7 @@ const es: ReviewWalkthroughTranslations = {
         revisionAt: 'en',
         runningSince: ({ time }) => `En curso desde ${time}`,
         findingsNoneYet: 'Nada encontrado todavía',
+        checkingReviewer: 'Comprobando…',
         reviewers: 'Revisores',
         reviewersReadRepository: 'Cada uno leyó todo el repositorio.',
         reviewersReadComparison: 'Cada uno leyó los mismos cambios.',

@@ -13368,6 +13368,7 @@ const fr: ReviewWalkthroughTranslations = {
         revisionAt: 'à',
         runningSince: ({ time }) => `En cours depuis ${time}`,
         findingsNoneYet: 'Rien trouvé pour l’instant',
+        checkingReviewer: 'Vérification…',
         reviewers: 'Relecteurs',
         reviewersReadRepository: 'Chacun a lu tout le dépôt.',
         reviewersReadComparison: 'Chacun a lu les mêmes modifications.',

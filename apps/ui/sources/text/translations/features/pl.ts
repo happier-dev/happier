@@ -13377,6 +13377,7 @@ const pl: ReviewWalkthroughTranslations = {
         revisionAt: 'w',
         runningSince: ({ time }) => `Trwa od ${time}`,
         findingsNoneYet: 'Na razie nic nie znaleziono',
+        checkingReviewer: 'Sprawdzanie…',
         reviewers: 'Recenzenci',
         reviewersReadRepository: 'Każdy przeczytał całe repozytorium.',
         reviewersReadComparison: 'Każdy przeczytał te same zmiany.',

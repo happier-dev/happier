@@ -59,8 +59,9 @@ export type PageHeaderTextEditor = InlineTextEditor;
 export type PageHeaderPrimaryAction = NavigationHeaderAction & Readonly<{
     /**
      * `secondary`: a page whose lab keeps its main action quiet beside its content (a preset's "Create one",
-     * Home's "Invite people") draws it as a secondary button on wide layouts. It is the page's primary all the
-     * same, so a phone puts it in the navigation header rather than folding it into "More actions".
+     * Home's "Invite people", a running Review's "Stop reviewing") draws it as a secondary button. It is the page's
+     * primary all the same, so a phone puts it in the navigation header, still secondary, rather than folding it into
+     * "More actions".
      */
     presentation?: 'secondary';
 }>;

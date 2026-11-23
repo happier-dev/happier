@@ -108,6 +108,10 @@ describe('Retrying reviewers that did not finish', () => {
       expect(loading.findByTestId('review-new-round:reviewer:step-2-reviewer-1')).not.toBeNull();
       const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
       expect(loading.findAllByType(SurfaceStateCard).filter(card => card.props.kind === 'loading')).toHaveLength(0);
+      // The row says it is being checked where "starts fresh" lands, so Start isn't a dead button (U8 R7 R6c).
+      const { t } = await import('@/text');
+      expect(loading.findByTestId('review-new-round:reviewer:step-2-reviewer-1:checking')).not.toBeNull();
+      expect(loading.getTextContent()).toContain(t('reviewWalkthrough.detail.checkingReviewer'));
     } finally { await loading.unmount(); }
   });
 });

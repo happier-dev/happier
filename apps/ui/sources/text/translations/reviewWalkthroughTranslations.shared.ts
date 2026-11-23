@@ -246,6 +246,7 @@ export type ReviewWalkthroughTranslations = {
         revisionAt: string;
         runningSince: (params: Readonly<{ time: string }>) => string;
         findingsNoneYet: string;
+        checkingReviewer: string;
         reviewers: string;
         reviewersReadRepository: string;
         reviewersReadComparison: string;
@@ -539,6 +540,7 @@ export const en: ReviewWalkthroughTranslations = {
         revisionAt: 'at',
         runningSince: ({ time }) => `Running since ${time}`,
         findingsNoneYet: 'Nothing found yet',
+        checkingReviewer: 'Checking…',
         reviewers: 'Reviewers',
         reviewersReadRepository: 'Each read the whole repository.',
         reviewersReadComparison: 'Each read the same changes.',

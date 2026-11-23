@@ -13356,6 +13356,7 @@ const it: ReviewWalkthroughTranslations = {
         revisionAt: 'a',
         runningSince: ({ time }) => `In corso da ${time}`,
         findingsNoneYet: 'Ancora niente trovato',
+        checkingReviewer: 'Verifica in corso…',
         reviewers: 'Revisori',
         reviewersReadRepository: 'Ognuno ha letto l’intero repository.',
         reviewersReadComparison: 'Ognuno ha letto le stesse modifiche.',

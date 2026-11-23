@@ -13349,6 +13349,7 @@ const ca: ReviewWalkthroughTranslations = {
         revisionAt: 'a',
         runningSince: ({ time }) => `En curs des de ${time}`,
         findingsNoneYet: 'Encara no s’ha trobat res',
+        checkingReviewer: 'Comprovant…',
         reviewers: 'Revisors',
         reviewersReadRepository: 'Cadascun ha llegit tot el repositori.',
         reviewersReadComparison: 'Cadascun ha llegit els mateixos canvis.',

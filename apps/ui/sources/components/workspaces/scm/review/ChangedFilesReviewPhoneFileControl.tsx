@@ -35,8 +35,9 @@ export function ChangedFilesReviewPhoneFileControl(props: Readonly<{
     const { files, items, indexById } = props.fileIndex;
     const index = Math.max(0, props.activePath ? indexById.get(props.activePath) ?? -1 : -1);
     const active = files[index];
-    const position = t('walkthrough.stopOf', { number: index + 1, total: files.length });
-    const loadedCount = props.totalFiles !== undefined && props.totalFiles > files.length ? `${files.length} / ${props.totalFiles}` : null;
+    // One counter: the position against the comparison's total when the host knows more than it loaded ("1 of 6004"),
+    // never "1 of 10" beside "10 / 6004" (U8 R7 CF1b).
+    const position = t('walkthrough.stopOf', { number: index + 1, total: Math.max(files.length, props.totalFiles ?? 0) });
     const itemSource: MenuItemSource<DropdownMenuItem> = {
         items, indexById,
         getItem(index) {
@@ -53,10 +54,9 @@ export function ChangedFilesReviewPhoneFileControl(props: Readonly<{
                 findModel={props.findModel}
                 commentCountByPath={props.commentCountByPath} onFocusPath={focus} rootPath={props.rootPath} placement="comparisonStream" />{props.listFooter}</> : props.listFooter}
             trigger={({ toggle }) => <HappierPressable testID="scm-comparison-file-trigger" accessibilityRole="button"
-                accessibilityLabel={`${position}${loadedCount ? ` · ${loadedCount}` : ''} · ${active?.fullPath ?? ''}`} onPress={toggle}
+                accessibilityLabel={`${position} · ${active?.fullPath ?? ''}`} onPress={toggle}
                 style={(state) => [styles.trigger, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}>
                 <Text style={styles.position}>{position}</Text>
-                {loadedCount ? <Text style={styles.position}>{loadedCount}</Text> : null}
                 <Text numberOfLines={1} style={styles.name}>{active?.fileName}</Text>
                 <Icon name="caret-down" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
             </HappierPressable>} />

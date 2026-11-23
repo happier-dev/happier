@@ -150,6 +150,8 @@ export type NavigationHeaderAction = Readonly<{
     disabled?: boolean;
     loading?: boolean;
     testID?: string;
+    /** A quiet main action (`PageHeaderPrimaryAction.presentation`): the header draws it as secondary too. */
+    presentation?: 'secondary';
 }>;
 
 type HeaderOptionsTarget = Readonly<{ setOptions: (options: Record<string, unknown>) => void }>;
@@ -213,7 +215,8 @@ export function useNavigationHeaderActions(input: Readonly<{
     const actions = input.enabled ? input.actions : null;
     const trailing = input.enabled ? input.trailing ?? null : null;
     const foldedActions = React.useMemo(() => foldContextActions(actions), [actions]);
-    const primaryKey = primary ? [primary.title, primary.disabled === true, primary.loading === true, primary.testID ?? ''] : null;
+    const primaryKey = primary ? [primary.title, primary.disabled === true, primary.loading === true, primary.testID ?? '',
+        primary.presentation ?? ''] : null;
     const cancelKey = cancel ? [cancel.title, cancel.disabled === true, cancel.testID ?? ''] : null;
     const key = JSON.stringify([primaryKey, cancelKey]);
     React.useEffect(() => {
@@ -238,6 +241,7 @@ export function useNavigationHeaderActions(input: Readonly<{
                                 accessibilityLabel={primary.title}
                                 disabled={primary.disabled}
                                 loading={primary.loading}
+                                {...(primary.presentation === 'secondary' ? { display: 'secondary' as const } : {})}
                                 action={() => Promise.resolve(primaryRef.current?.onPress())}
                             />
                         </HeaderPrimarySlot>

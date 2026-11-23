@@ -13241,6 +13241,7 @@ const zhHans: ReviewWalkthroughTranslations = {
         revisionAt: '提交',
         runningSince: ({ time }) => `自 ${time} 起运行中`,
         findingsNoneYet: '尚未发现任何问题',
+        checkingReviewer: '正在检查…',
         reviewers: '审查者',
         reviewersReadRepository: '每位都阅读了整个仓库。',
         reviewersReadComparison: '每位都阅读了相同的更改。',
