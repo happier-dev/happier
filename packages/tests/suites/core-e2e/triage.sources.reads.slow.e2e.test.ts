@@ -9,6 +9,8 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { expect, it } from 'vitest';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1 } from '@happier-dev/triage-sources/runtime';
 import { PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 import { connectUiTriageActionClient } from '@happier-tests/ui-action-client';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 as connectionOutputs } from '@happier-dev/protocol/connect/configurationActionsV1';
@@ -85,6 +87,7 @@ import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwt
 import { startTestDaemon } from '../../src/testkit/daemon/daemon';
 import { startConnectedAccountTlsRecordingProxy } from '../../src/testkit/providers/connectedAccountTlsRecordingProxy';
 import { waitFor } from '../../src/testkit/timing';
+import { runCliJson } from '../../src/testkit/uiE2e/cliJson';
 
 const run = createRunDirs({ runLabel: 'triage-sources-reads' });
 const sentryService = { pluginId: SENTRY_PLUGIN_ID, localId: SENTRY_CONNECTED_ACCOUNT_ID };
@@ -305,12 +308,13 @@ globalThis.fetch = (input, init) => external(input) ? originalUndiciFetch(input,
       HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT: '1', HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1' } });
     cleanup.push(() => server.stop());
     const auth = await createTestAuth(server.baseUrl);
-    await seedCliAuthForTestAccount({ cliHome: homeDir, serverUrl: server.baseUrl, auth, mode: 'dataKey' });
-    const daemon = await startTestDaemon({ testDir, happyHomeDir: homeDir, requireMachineControlReady: true, env: {
+    const { machineId } = await seedCliAuthForTestAccount({ cliHome: homeDir, serverUrl: server.baseUrl, auth, mode: 'dataKey' });
+    const daemonEnv = {
       ...process.env, NODE_OPTIONS: sourceOptions, CI: '1', HAPPIER_VARIANT: 'dev', HAPPIER_HOME_DIR: homeDir,
       HAPPIER_SERVER_URL: server.baseUrl, HAPPIER_WEBAPP_URL: server.baseUrl, HAPPIER_DISABLE_CAFFEINATE: '1',
       HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1', HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
-    } });
+    };
+    const daemon = await startTestDaemon({ testDir, happyHomeDir: homeDir, requireMachineControlReady: true, env: daemonEnv });
     cleanup.push(() => daemon.stop());
     const accountProxy = await startHttpRequestRecordingProxy({ targetBaseUrl: server.baseUrl,
       onRequestStart(request) {
@@ -440,7 +444,6 @@ globalThis.fetch = (input, init) => external(input) ? originalUndiciFetch(input,
       expect(selection.ok, selection.ok ? undefined : `${pluginId}: ${selection.errorCode}`).toBe(true);
     };
     await selectDiscovery(SENTRY_PLUGIN_ID, SENTRY_ACTION_IDS.listInstances, SENTRY_CONNECTED_ACCOUNT_PURPOSE, [us, usSecond, de]);
-    await selectDiscovery(POSTHOG_PLUGIN_ID, POSTHOG_ACTION_IDS.listInstances, POSTHOG_CONNECTED_ACCOUNT_PURPOSE, [ph]);
     proxy.clear();
     const sentryDiscovery = TriageListInstancesResultV1Schema.parse(await invoke(SENTRY_PLUGIN_ID, SENTRY_ACTION_IDS.listInstances, { v: 1 }));
     expect(sentryDiscovery).toMatchObject({ kind: 'complete', failures: [] });
@@ -451,6 +454,44 @@ globalThis.fetch = (input, init) => external(input) ? originalUndiciFetch(input,
       `https://us.sentry.io${SENTRY_SCOPE_SEPARATOR}7701`, `https://us.sentry.io${SENTRY_SCOPE_SEPARATOR}7701`, `https://de.sentry.io${SENTRY_SCOPE_SEPARATOR}7701`,
     ].sort());
     expect(new Set(proxy.entries().map(row => row.authorizationFingerprint))).toEqual(new Set([tokens.us, tokens.usSecond, tokens.de].map(fingerprint)));
+
+    const configure = async (pluginId: string, sourceId: string, draft: TriageSourceInstanceDraftV1) => {
+      const source = { pluginId, localId: sourceId };
+      const administered = TriageSourceAdministrationActionResultV1Schema.parse(await invoke('happier.triage',
+        TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1, { v: 1, kind: 'create', source, draft }));
+      expect(administered).toMatchObject({ kind: 'active' });
+      if (administered.kind !== 'active') throw new Error(`Source configuration did not activate (${administered.kind})`);
+      const read = TriageReadConfiguredSourceInstancesResultV1Schema.parse(await invoke('happier.triage',
+        TRIAGE_SOURCES_READ_CONFIGURED_ACTION_LOCAL_ID_V1, { v: 1, source }));
+      if (read.kind !== 'read') throw new Error(`Configured source read refused (${read.kind})`);
+      const configured = read.instances.find(row => row.configured.instance.sourceInstanceId === administered.sourceInstanceId)?.configured;
+      if (!configured) throw new Error('Configured source was not persisted');
+      expect(configured.binding).toEqual(draft.binding);
+      return TriageConfiguredSourceConnectedAccountInstanceV1Schema.parse(configured);
+    };
+    // The Workflow Source chooser executes options on its selected Machine.
+    // This CLI entry reaches that daemon and the bundled Account reader, using
+    // the same persisted source rows as the ordinary Account Actions above.
+    const watchSourceOptions = () => runCliJson({
+      testDir, cliHomeDir: homeDir, serverUrl: server.baseUrl, webappUrl: server.baseUrl,
+      env: daemonEnv, label: `sentry-watch-options-${randomUUID()}`,
+      launchOptions: { preferSourceEntrypoint: true, skipSharedDepsBuild: true },
+      args: ['actions', 'invoke', 'action.options.resolve', '--machine-id', machineId, '--json',
+        '--input-json', JSON.stringify({
+          actionId: formatQualifiedPluginActionId({ pluginId: SENTRY_PLUGIN_ID, localId: TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1 }),
+          fieldPath: 'sourceInstanceId', draftInput: {},
+        })],
+    });
+    const emptyWatch = await watchSourceOptions();
+    expect(emptyWatch).toMatchObject({ ok: true, data: { options: [] } });
+    const sentryInstances: TriageConfiguredSourceConnectedAccountInstanceV1[] = [];
+    for (const draft of sentryDiscovery.candidates) sentryInstances.push(await configure(SENTRY_PLUGIN_ID, 'sentry-issues', draft));
+    const configuredWatch = await watchSourceOptions();
+    expect(configuredWatch).toMatchObject({ ok: true, data: { options: expect.arrayContaining(
+      sentryInstances.map(({ instance }) => expect.objectContaining({ value: instance.sourceInstanceId })),
+    ) } });
+
+    await selectDiscovery(POSTHOG_PLUGIN_ID, POSTHOG_ACTION_IDS.listInstances, POSTHOG_CONNECTED_ACCOUNT_PURPOSE, [ph]);
     const phDiscovery = TriageListInstancesResultV1Schema.parse(await invoke(POSTHOG_PLUGIN_ID, POSTHOG_ACTION_IDS.listInstances, { v: 1 }));
     expect(phDiscovery).toMatchObject({ kind: 'complete', failures: [], candidates: [{ binding: { account: ph } }] });
     if (phDiscovery.kind === 'failed') throw new Error('PostHog discovery failed');
@@ -476,22 +517,6 @@ globalThis.fetch = (input, init) => external(input) ? originalUndiciFetch(input,
     });
     console.info('POSTHOG_REAUTH_LISTING_VERIFIED');
 
-    const configure = async (pluginId: string, sourceId: string, draft: TriageSourceInstanceDraftV1) => {
-      const source = { pluginId, localId: sourceId };
-      const administered = TriageSourceAdministrationActionResultV1Schema.parse(await invoke('happier.triage',
-        TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1, { v: 1, kind: 'create', source, draft }));
-      expect(administered).toMatchObject({ kind: 'active' });
-      if (administered.kind !== 'active') throw new Error(`Source configuration did not activate (${administered.kind})`);
-      const read = TriageReadConfiguredSourceInstancesResultV1Schema.parse(await invoke('happier.triage',
-        TRIAGE_SOURCES_READ_CONFIGURED_ACTION_LOCAL_ID_V1, { v: 1, source }));
-      if (read.kind !== 'read') throw new Error(`Configured source read refused (${read.kind})`);
-      const configured = read.instances.find(row => row.configured.instance.sourceInstanceId === administered.sourceInstanceId)?.configured;
-      if (!configured) throw new Error('Configured source was not persisted');
-      expect(configured.binding).toEqual(draft.binding);
-      return TriageConfiguredSourceConnectedAccountInstanceV1Schema.parse(configured);
-    };
-    const sentryInstances: TriageConfiguredSourceConnectedAccountInstanceV1[] = [];
-    for (const draft of sentryDiscovery.candidates) sentryInstances.push(await configure(SENTRY_PLUGIN_ID, 'sentry-issues', draft));
     const posthogInstance = await configure(POSTHOG_PLUGIN_ID, 'posthog-error-tracking', phDiscovery.candidates[0]!);
     const listed = TriageListEntriesResultV1Schema.parse(await invoke('happier.triage', TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,
       { v: 1, sources: { kind: 'allConfigured' }, limit: 20, order: 'newest' }));
