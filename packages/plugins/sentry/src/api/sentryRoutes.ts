@@ -15,6 +15,7 @@
  * so there is exactly one rule for what makes an instance addressable.
  */
 
+import { SENTRY_ISSUE_STATS_PERIOD } from '../sentryContracts.js';
 import { normalizeSentryOrigin } from '../auth/sentryOrigin.js';
 import {
   isSentryNumericId,
@@ -26,15 +27,6 @@ import {
  * 100. It is a provider ceiling, not a source preference.
  */
 export const SENTRY_MAX_DETAIL_PAGE_SIZE = 100;
-
-/**
- * The window every detail collection is read over.
- *
- * `[SOURCE]` `api/utils.py` `MAX_STATS_PERIOD = timedelta(days=90)` — the same
- * ceiling the scan declares, stated here too rather than inherited, so an
- * occurrence list and a scan row describe the same window.
- */
-export const SENTRY_DETAIL_STATS_PERIOD = '90d';
 
 /**
  * A Sentry tag key that is safe as exactly one path segment.
@@ -131,7 +123,7 @@ export function buildSentryIssueEventsUrl(input: SentryIssueEventsRouteInputV1):
   const url = new URL(`${issueBasePath(input.instance, input.entryId)}events/`, origin);
   url.searchParams.set('per_page', String(assertPageSize(input.perPage)));
   url.searchParams.set('full', 'false');
-  url.searchParams.set('statsPeriod', SENTRY_DETAIL_STATS_PERIOD);
+  url.searchParams.set('statsPeriod', SENTRY_ISSUE_STATS_PERIOD);
   // Absent is the ordinary walk, so a declined spread sends nothing rather than
   // an explicit `false` the provider would have to interpret.
   if (input.sample === true) url.searchParams.set('sample', 'true');

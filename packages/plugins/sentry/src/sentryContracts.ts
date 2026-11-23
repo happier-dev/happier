@@ -94,8 +94,8 @@ export const SENTRY_MAX_NATIVE_ISSUE_PAGE_LIMIT = 100;
 export const SENTRY_ORGANIZATIONS_PAGE_SIZE = 100;
 /** Organization projects API documents a maximum `per_page` of 100. */
 export const SENTRY_PROJECTS_PAGE_SIZE = 100;
-/** `[SOURCE]` `api/utils.py` `MAX_STATS_PERIOD = timedelta(days=90)`. */
-export const SENTRY_SCAN_STATS_PERIOD = '90d';
+/** Sentry's issue scan and detail window (`api/utils.py`, `MAX_STATS_PERIOD`). */
+export const SENTRY_ISSUE_STATS_PERIOD = '90d';
 
 /** The unit separator that joins the two collision-scope components. */
 export const SENTRY_SCOPE_SEPARATOR = '\u001F';

@@ -29,7 +29,7 @@ import {
 } from '@happier-dev/triage-sources/runtime';
 import {
   SENTRY_MAX_NATIVE_ISSUE_PAGE_LIMIT,
-  SENTRY_SCAN_STATS_PERIOD,
+  SENTRY_ISSUE_STATS_PERIOD,
 } from '../sentryContracts.js';
 
 import {
@@ -128,7 +128,7 @@ export function encodeSentryScanContinuation(
   if (readSentryWalkHealth(continuation.walkHealth) === null) return null;
   if (
     continuation.query !== SENTRY_SCAN_QUERY
-    || continuation.statsPeriod !== SENTRY_SCAN_STATS_PERIOD
+    || continuation.statsPeriod !== SENTRY_ISSUE_STATS_PERIOD
     || continuation.sort !== SENTRY_SCAN_SORT
   ) {
     return null;
@@ -172,7 +172,7 @@ export function decodeSentryScanContinuation(token: string): SentryScanContinuat
   const walkHealth = readSentryWalkHealth(record['walkHealth']);
   if (walkHealth === null) return REJECTED;
   if (query !== SENTRY_SCAN_QUERY) return REJECTED;
-  if (statsPeriod !== SENTRY_SCAN_STATS_PERIOD) return REJECTED;
+  if (statsPeriod !== SENTRY_ISSUE_STATS_PERIOD) return REJECTED;
   if (sort !== SENTRY_SCAN_SORT) return REJECTED;
   return Object.freeze({
     ok: true as const,
@@ -184,7 +184,7 @@ export function decodeSentryScanContinuation(token: string): SentryScanContinuat
       probe,
       walkHealth,
       query: SENTRY_SCAN_QUERY,
-      statsPeriod: SENTRY_SCAN_STATS_PERIOD,
+      statsPeriod: SENTRY_ISSUE_STATS_PERIOD,
       sort: SENTRY_SCAN_SORT,
     }),
   });

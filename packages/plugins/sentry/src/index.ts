@@ -98,8 +98,8 @@ export type {
   SentryFrameV1,
   SentryRedactionV1,
 } from './privacy/sentryEventProjection.js';
+export { SENTRY_ISSUE_STATS_PERIOD } from './sentryContracts.js';
 export {
-  SENTRY_DETAIL_STATS_PERIOD,
   SENTRY_MAX_DETAIL_PAGE_SIZE,
   assertRoutableSentryInstance,
   buildSentryIssueEventUrl,

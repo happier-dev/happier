@@ -20,7 +20,7 @@
 
 import {
   SENTRY_MAX_NATIVE_ISSUE_PAGE_LIMIT,
-  SENTRY_SCAN_STATS_PERIOD,
+  SENTRY_ISSUE_STATS_PERIOD,
 } from '../sentryContracts.js';
 
 import { assertRoutableSentryInstance } from '../api/sentryRoutes.js';
@@ -57,7 +57,7 @@ export function buildSentryScanIssuesUrl(input: SentryScanRequestInputV1): strin
     origin,
   );
   url.searchParams.set('query', SENTRY_SCAN_QUERY);
-  url.searchParams.set('statsPeriod', SENTRY_SCAN_STATS_PERIOD);
+  url.searchParams.set('statsPeriod', SENTRY_ISSUE_STATS_PERIOD);
   if (input.projectIds === undefined) url.searchParams.set('project', SENTRY_SCAN_PROJECT_SCOPE);
   else {
     if (input.projectIds.length === 0 || !input.projectIds.every(isSentryNumericId)) {

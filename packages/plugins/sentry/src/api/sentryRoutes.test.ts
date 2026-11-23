@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { buildSentryScanIssuesUrl } from '../scan/sentryScanQuery.js';
 import type { SentryInvokedInstanceV1 } from '../instances/sentryCollisionScope.js';
 
 import {
@@ -34,6 +35,8 @@ describe('Sentry detail routes', () => {
     // `full=false` keeps the raw event bodies out of a list read entirely.
     expect(url.searchParams.get('full')).toBe('false');
     expect(url.searchParams.get('statsPeriod')).toBe('90d');
+    const listUrl = new URL(buildSentryScanIssuesUrl({ instance: INSTANCE, nativeLimit: 100 }));
+    expect(listUrl.searchParams.get('statsPeriod')).toBe(url.searchParams.get('statsPeriod'));
   });
 
   /**
