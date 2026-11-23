@@ -1214,9 +1214,18 @@ describe('mounted Usage page scope commands', () => {
         await act(async () => screen.findByTestId('usage-page')!.props.onLayout?.({
             nativeEvent: { layout: { x: 0, y: 0, width: 1000, height: 900 } },
         }));
-        await vi.waitFor(() => expect(screen.findAll(node => typeof node.props.testID === 'string'
-            && node.props.testID.startsWith('usage-area.widget.how-you-work:')
-            && node.props.diagnosticCode === 'denied').length).toBeGreaterThan(0));
+        // A batch-wide refusal has no accounting slice. The mounted body owns the quiet state.
+        const details = await vi.waitFor(() => {
+            const disclosure = screen.findAll(node => typeof node.type === 'string' && typeof node.props.testID === 'string'
+                && node.props.testID.startsWith('usage-area.widget.how-you-work:')
+                && node.props.testID.endsWith('.scopeRefused.technicalDetails.header'))[0];
+            expect(disclosure).toBeDefined();
+            return disclosure.props.testID as string;
+        });
+        expect(screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityLabel === t('common.retry'))).toHaveLength(0);
+        expect(screen.getTextContent()).not.toContain('denied');
+        await screen.pressByTestIdAsync(details);
+        expect(screen.getTextContent()).toContain('denied');
         await flushHookEffects({ cycles: 30 });
         expect(posts(), 'a settled refusal does not cause an automatic second accounting read').toHaveLength(1);
     });
