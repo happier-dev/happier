@@ -36,6 +36,7 @@ import { projectDeploymentReceiptHistoryEntryV1, projectDeploymentReceiptUrlFact
 import { DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { DeploymentDatabaseSizeV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { deploymentLiveAddressDemand, resolveDeploymentLiveAddress } from './deploymentLiveAddressFacts';
+import { hasDeploymentManagedDataLink } from './deploymentRestore';
 
 function failure(code: string, retryable = false): Extract<DeploymentReadResultV1<never>, { ok: false }> {
     return { ok: false, failure: { code, retryable } };
@@ -137,7 +138,8 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
         return { ok: true as const, value: detail };
     };
     const readEnvironmentPageMetadata = async (scope: DeploymentReadScopeV1,
-        query: Omit<Parameters<DeploymentReadTransportV1['listEnvironments']>[1], 'includeDatabaseMoveCandidates'>,
+        query: Omit<Parameters<DeploymentReadTransportV1['listEnvironments']>[1], 'includeDatabaseMoveCandidates'>
+            & Readonly<{ dataTargetLinks?: true }>,
         options: DeploymentReadOptionsV1) => {
         const parsed = DeploymentEnvironmentListResultV1Schema.safeParse(await execute('deployments.environments.list',
             { ...home, projectSourceId: scope.projectSourceId, ...query }, { signal: options.signal }));
@@ -153,6 +155,9 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             if (page.runtimeTargetLinks.some(link => environmentsById.get(link.environmentId)?.runtimeTargetLinkId !== link.id)) {
                 return failure('invalid_response');
             }
+        }
+        if (page.dataTargetLinks?.some(link => link.role !== 'data' || !page.items.some(row => row.id === link.environmentId))) {
+            return failure('invalid_response');
         }
         return { ok: true as const, value: page };
     };
@@ -275,8 +280,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 };
                 // Before the first deploy the authored declaration owns native identity.
                 if (selectedMetadata && !runtimeTargetLink?.activeDeploymentId) projectDeclaredDatabaseSubjects(row.content.bindings);
-                const hasManagedData = selectedMetadata?.targetLinks.some(link => link.role === 'data'
-                    && link.source.kind === 'plugin' && link.deletedAtMs === undefined && link.detachedAtMs === undefined
+                const hasManagedData = selectedMetadata?.targetLinks.some(link => hasDeploymentManagedDataLink([link])
                     && (query.database === undefined || data.length === 0 && link.id === query.database));
                 const selection = query.database === undefined ? undefined : data.length > 0
                     ? { kind: 'native_service' as const, service: query.database }
@@ -390,11 +394,14 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             ? Promise.resolve({ ok: true, value: { items: [], nextCursor: null } })
             : scoped(scope, options, async account => {
             const { includeDatabaseMoveCandidates, ...metadataQuery } = query;
-            const metadata = await readEnvironmentPageMetadata(scope, metadataQuery, options);
+            const metadata = await readEnvironmentPageMetadata(scope,
+                includeDatabaseMoveCandidates ? { ...metadataQuery, dataTargetLinks: true } : metadataQuery, options);
             if (!metadata.ok) return metadata;
             const page = metadata.value;
             const environmentsById = new Map(page.items.map(row => [row.id, row]));
             const runtimeByEnvironment = new Map(page.runtimeTargetLinks?.map(link => [link.environmentId, link]));
+            const managedDataEnvironments = new Set(page.dataTargetLinks?.filter(link => hasDeploymentManagedDataLink([link]))
+                .map(link => link.environmentId));
             const sourceNames = new Map(page.projectSources?.map(source => [source.id, source.name]));
             const receipts = query.environmentIds === undefined
                 ? (page.currentDeployments ?? []).filter(row => environmentsById.has(row.environmentId)) : [];
@@ -478,7 +485,8 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                     ...(opened.ok ? { backupConfigured: opened.content.backup !== undefined
                         && !('notNeeded' in opened.content.backup),
                         ...(includeDatabaseMoveCandidates
-                            ? { databaseMoveCandidate: await isDeploymentDatabaseMoveCandidateV1(opened.content, runtimeTargetLink) } : {}),
+                            ? { databaseMoveCandidate: managedDataEnvironments.has(environment.id)
+                                || await isDeploymentDatabaseMoveCandidateV1(opened.content, runtimeTargetLink) } : {}),
                         previewTemplateConfigured: opened.content.previewTemplate !== undefined,
                         ...(opened.content.template ? { catalogTemplate: { sourceId: opened.content.template.templateRef.sourceId,
                             itemId: opened.content.template.templateRef.itemId, version: opened.content.template.templateRef.version } } : {}) } : {}),
@@ -530,7 +538,8 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 if (row) row.content = opened.content;
             }
             return { ok: true, value: { environment: detail.environment, content: environment.content, targetLinks,
-                databaseMoveCandidate: await isDeploymentDatabaseMoveCandidateV1(environment.content, runtime),
+                databaseMoveCandidate: hasDeploymentManagedDataLink(detail.targetLinks)
+                    || await isDeploymentDatabaseMoveCandidateV1(environment.content, runtime),
                 ...(pendingDeployment === undefined ? {} : { pendingDeployment }),
                 ...(detail.savedSecretRevisions === undefined ? {} : { savedSecretRevisions: detail.savedSecretRevisions }),
                 ...(detail.controller ? { controller: detail.controller } : {}) } };

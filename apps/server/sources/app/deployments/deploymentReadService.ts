@@ -484,6 +484,37 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
             }
         }
     }
+    // Move destination choice only: the projected page's live data custody, read once, then
+    // admitted with the exact Environment reader's link-content admission once per page owner.
+    // A link whose Artifact this requester may not read is omitted, never disclosed.
+    const dataTargetLinks: ReturnType<typeof projectDeploymentTargetHeader>[] = [];
+    const dataLinksByOwner = new Map<string, { owner: DeploymentSourceAdmission['owner'];
+        links: Prisma.DeploymentTargetLinkGetPayload<{ include: { machines: true } }>[] }>();
+    if (input.dataTargetLinks && items.length) {
+        const ownerByEnvironment = new Map(selected.map(row => [row.id, sources.get(row.projectSourceId)!.owner]));
+        for (const environmentIds of portableQueryChunks({ values: items.map(item => item.id), bindingsPerValue: 1, fixedBindings: 3 })) {
+            const links = await tx.deploymentTargetLink.findMany({ where: { environmentId: { in: [...environmentIds] },
+                role: 'data', deletedAt: null, detachedAt: null }, orderBy: { id: 'asc' },
+                include: { machines: { orderBy: { position: 'asc' } } } });
+            for (const link of links) {
+                const owner = ownerByEnvironment.get(link.environmentId)!;
+                const key = owner.kind === 'account' ? `account:${owner.accountId}` : `team:${owner.teamId}`;
+                const group = dataLinksByOwner.get(key) ?? { owner, links: [] };
+                group.links.push(link);
+                dataLinksByOwner.set(key, group);
+            }
+        }
+    }
+    for (const { owner, links } of dataLinksByOwner.values()) {
+        const failures = await admitDeploymentStoredContentsInTx(tx, actorAccountId, owner, links.map(reference =>
+            ({ reference, expectedStoredKind: DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1, access: 'read' as const })));
+        for (const [index, link] of links.entries()) {
+            if (failures[index] !== null) continue;
+            const projected = projectDeploymentListRow(() => projectDeploymentTargetHeader(link));
+            if (projected) dataTargetLinks.push(projected);
+            else coverage = 'partial';
+        }
+    }
     const last = selected.at(-1);
     const nextCursor = hasNext && last
         ? items.at(-1)?.id === last.id ? last.id : sealDeploymentReadCursor(actorAccountId, input, last.id)
@@ -491,6 +522,7 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
     return { ok: true as const, items, projectSources: [...projectSources.values()], currentDeployments, runtimeTargetLinks, coverage,
         ...(!input.includeTotal || !totalComplete || coverage === 'partial' ? {} : { totalCount }),
         ...(input.environmentIds === undefined ? { servingDeployments, liveAddressDomains } : {}),
+        ...(input.dataTargetLinks ? { dataTargetLinks } : {}),
         nextCursor };
 }
 

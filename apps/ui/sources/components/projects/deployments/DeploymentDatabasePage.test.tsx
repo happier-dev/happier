@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { readFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createDeploymentReadControllerV1, isDeploymentDatabaseMoveCandidateV1, selectDeploymentRuntimeTargetLinkV1 } from '@happier-dev/deployments';
+import { createDeploymentReadControllerV1 } from '@happier-dev/deployments';
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import {
   createDeploymentEnvironmentHeaderV1,
@@ -261,7 +261,8 @@ async function renderDatabase(
   }
   // Each case uses its own Home and Machine.
   const detail = { ...authored, environment: { ...authored.environment,
-    serverId: input.movePickerScope || input.readDatabaseAutomations ? serverIdentityId : serverId, controllerMachineId: machineId },
+    serverId: input.moveDestination || input.movePickerScope || input.readDatabaseAutomations ? serverIdentityId : serverId,
+    controllerMachineId: machineId },
     targetLinks: authored.targetLinks.map((row) => ({ ...row, targetLink: { ...row.targetLink,
     ...(row.targetLink.source.kind === 'host' && Array.isArray(row.targetLink.machines)
       ? { machines: [machineId, ...(input.sourceMultiMachine ? [`${machineId}-second`] : [])] } : {}),
@@ -276,15 +277,14 @@ async function renderDatabase(
     environment: { ...detail.environment, id: 'database-dedicated', revision: 3, runtimeTargetLinkId: 'target-database-dedicated',
       contentArtifactId: 'artifact-database-dedicated',
       ...(input.movePickerScope ? { projectSourceId: 'source-dedicated' } : {}) },
-    targetLinks: input.moveManagedDestination ? [{ targetLink: createDeploymentTargetLinkHeaderV1({
-      id: 'target-database-dedicated', environmentId: 'database-dedicated', role: 'data', targetKind: 'neon', machines: [], members: [],
+    // The live #204 managed shape: the App keeps its own-server runtime and adds a retained provider data link.
+    targetLinks: [...detail.targetLinks.filter(row => row.targetLink.role === 'runtime').map(row => ({ ...row, targetLink: { ...row.targetLink,
+      id: 'target-database-dedicated', environmentId: 'database-dedicated', activeDeploymentId: 'deployment-dedicated' } })),
+    ...(input.moveManagedDestination ? [{ targetLink: createDeploymentTargetLinkHeaderV1({
+      id: 'data-database-dedicated', environmentId: 'database-dedicated', role: 'data', targetKind: 'neon', machines: [], members: [],
       source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.neon', localId: 'database' } },
-    }), content: { providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'main' },
-      providerEnvironment: { kind: 'native', selection: { branchId: 'main' } }, credentialPrincipal: { kind: 'account', accountId: 'owner',
-        purpose: { consumer: { pluginId: 'happier.deploy.neon', localId: 'database' }, purpose: 'database.manage' },
-        target: { kind: 'account', account: { service: { pluginId: 'happier.deploy.neon', localId: 'database' }, accountId: 'token' } } } } }]
-      : detail.targetLinks.filter(row => row.targetLink.role === 'runtime').map(row => ({ ...row, targetLink: { ...row.targetLink,
-        id: 'target-database-dedicated', environmentId: 'database-dedicated', activeDeploymentId: 'deployment-dedicated' } })),
+      contentArtifactId: 'artifact-data-database-dedicated',
+    }) }] : [])],
     content: { ...detail.content, name: 'Dedicated Postgres',
       backup: input.moveDestinationUnprotected ? undefined : { ...backup,
         ownership: { environmentId: 'database-dedicated', prefix: 'dedicated/' } },
@@ -305,23 +305,29 @@ async function renderDatabase(
         variables: { username: 'POSTGRES_USER', password: 'POSTGRES_PASSWORD', database: 'POSTGRES_DB' } }] },
     },
   });
-  const moveCandidate = await isDeploymentDatabaseMoveCandidateV1(moved.content, selectDeploymentRuntimeTargetLinkV1(moved));
   const movePickerQueries: URLSearchParams[] = [];
   if (input.moveDestination || input.movePickerScope) {
-    const neighbor = (id: string, engine: 'postgres' | 'mysql', targetMachineId: string) => createDeploymentEnvironmentDetailV1({
+    // A data link whose content the requester may not read: the Home omits it from the Move page.
+    const hiddenLinkIds = new Set<string>();
+    const neighbor = (id: string, engine: 'postgres' | 'mysql', targetMachineId: string, hiddenDataLink = false) => createDeploymentEnvironmentDetailV1({
       environment: { ...moved.environment, id, projectSourceId: detail.environment.projectSourceId,
         contentArtifactId: `artifact-${id}`, runtimeTargetLinkId: `target-${id}` },
       content: { ...moved.content, name: id, definition: { kind: 'stored', contentRevision: 1,
         composeDigest: `sha256:${'b'.repeat(64)}`, document: `services:\n  ${engine}:\n    image: ${engine}:latest\n`,
         profiles: [], services: [engine], primaryService: engine },
         template: { ...moved.content.template!, services: [engine], data: [{ engine, service: engine }] } },
-      targetLinks: moved.targetLinks.map(row => ({ ...row, targetLink: { ...row.targetLink,
+      targetLinks: [...moved.targetLinks.filter(row => row.targetLink.role === 'runtime').map(row => ({ ...row, targetLink: { ...row.targetLink,
         id: `target-${id}`, environmentId: id, machines: [targetMachineId],
         members: [{ machineId: targetMachineId, installationId: 'installation-a', state: 'active' }] } })),
+      ...(hiddenDataLink ? [{ targetLink: createDeploymentTargetLinkHeaderV1({ id: `data-${id}`, environmentId: id, role: 'data',
+        targetKind: 'neon', machines: [], members: [], contentArtifactId: `artifact-data-${id}`,
+        source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.neon', localId: 'database' } } }) }] : [])],
     });
+    if (input.moveManagedDestination) hiddenLinkIds.add('data-database-hidden-link');
     const environments = [detail, ...(input.moveDestination ? [moved] : []),
       ...(input.moveDestination && input.movePickerScope
-        ? [neighbor('database-other-machine', 'postgres', `${machineId}-other`), neighbor('database-mysql', 'mysql', machineId)] : [])];
+        ? [neighbor('database-other-machine', 'postgres', `${machineId}-other`), neighbor('database-mysql', 'mysql', machineId),
+          ...(input.moveManagedDestination ? [neighbor('database-hidden-link', 'mysql', machineId, true)] : [])] : [])];
     // HTTP and Artifact storage are boundaries; the Action, transport, candidate classifier and read owners stay real.
     for (const environment of environments) {
       await account.createArtifactDocument({ artifactId: environment.environment.contentArtifactId,
@@ -348,6 +354,9 @@ async function renderDatabase(
         items: selected.map(environment => ({ ...environment.environment, serverId: serverIdentityId })),
         runtimeTargetLinks: selected.flatMap(environment => environment.targetLinks
           .filter(row => row.targetLink.id === environment.environment.runtimeTargetLinkId).map(row => row.targetLink)),
+        // The Home's Move projection: the page's live data links its exact-read admission lets this requester see.
+        ...(query.get('dataTargetLinks') === 'true' ? { dataTargetLinks: selected.flatMap(environment => environment.targetLinks
+          .filter(row => row.targetLink.role === 'data' && !hiddenLinkIds.has(row.targetLink.id)).map(row => row.targetLink)) } : {}),
         nextCursor: null, coverage: 'complete' }) };
     } });
   }
@@ -603,7 +612,7 @@ async function renderDatabase(
     await account.createArtifactDocument({ artifactId: detail.environment.contentArtifactId,
       header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Shop database' }, body: JSON.stringify(detail.content) });
   }
-  const publicReadTransport = input.movePickerScope || input.readDatabaseAutomations
+  const publicReadTransport = input.moveDestination || input.movePickerScope || input.readDatabaseAutomations
     ? (await import('./deploymentReadTransport')).createDeploymentReadTransport(account.accountLifetime) : null;
   const controller = createDeploymentReadControllerV1({
     scope: {
@@ -618,11 +627,11 @@ async function renderDatabase(
           { environment: detail.environment, title: 'Shop database' },
           { environment: createDeploymentEnvironmentHeaderV1({ id: 'environment-web', revision: 4,
             serverId, projectSourceId: detail.environment.projectSourceId }), title: 'Shop web' },
-          ...(input.moveDestination ? [{ environment: moved.environment, title: 'Dedicated Postgres', databaseMoveCandidate: moveCandidate }] : []),
         ], nextCursor: null },
       }),
-      readEnvironment: async (_scope, id) => ({ ok: true,
-        value: id === moved.environment.id ? { ...moved, databaseMoveCandidate: moveCandidate } : detail }),
+      // Move destinations read through the real transport; no test-supplied candidate fact.
+      readEnvironment: async (scope, id, options) => id !== environmentId && input.moveDestination && publicReadTransport
+        ? publicReadTransport.readEnvironment(scope, id, options) : { ok: true, value: detail },
       listHistory: async () => ({
         ok: true,
         value: { ok: true, items: [receipt.deployment], nextCursor: null },
@@ -676,6 +685,7 @@ async function renderDatabase(
     serverIdentityId,
     machineId,
     movePickerQueries,
+    requests: () => homes.requests,
     moveDestination: moved,
     readScheduleSets: async () => {
       const { createDeploymentActions } = await import('./deploymentActions');
@@ -955,16 +965,26 @@ describe('Environment → Database → Move', () => {
       expect(view.effects.filter(effect => effect.actionId === 'workflow.run.start')).toEqual([]);
     } finally { await view.dispose(); }
   });
-  it('explains unsupported managed import without starting a copy or offering cutover', async () => {
+  it('offers a managed data link from the real Move page and explains unsupported import without a copy or cutover', async () => {
     const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
-    const view = await renderDatabase({ moveDestination: true, moveManagedDestination: true, storedDefinition: true });
+    // Like the live App: an app-plus-database definition is no native destination, so only the managed fact offers it.
+    const view = await renderDatabase({ moveDestination: true, moveManagedDestination: true, moveDestinationWithApp: true,
+      movePickerScope: true, storedDefinition: true, databaseOnly: true });
     try {
       await view.settle(`${page}.move`);
+      const beforePicker = view.requests().length;
       await view.screen.pressByTestIdAsync(`${page}.move`);
-      const { DeploymentEnvironmentChooser } = await import('./DeploymentEnvironmentCollection');
-      expect(view.screen.findByTestId('project-deployments.move.destination:database-dedicated')).toBeNull();
-      const chooser = view.screen.findAllByType(DeploymentEnvironmentChooser)[0]!;
-      await act(async () => chooser.props.onSelect({ environment: view.moveDestination.environment, title: 'Managed database' }));
+      // Managed positive and native control come from the Home's page projection, never an injected flag.
+      expect(await view.settle('project-deployments.move.destination:database-dedicated')).not.toBeNull();
+      expect(view.screen.findByTestId('project-deployments.move.destination:database-other-machine')).not.toBeNull();
+      // A link the Home hid from this requester offers nothing.
+      expect(view.screen.findByTestId('project-deployments.move.destination:database-hidden-link')).toBeNull();
+      // Opening the picker is one list page plus one batched Artifact read, whatever the Environment count.
+      const pickerPaths = view.requests().slice(beforePicker).map(request => request.path.split('?')[0])
+        .filter(path => path.startsWith('/v1/deployments/') || path.startsWith('/v1/artifacts/'));
+      expect(pickerPaths).toEqual(['/v1/deployments/environments', '/v1/artifacts/read']);
+      expect(view.movePickerQueries.at(-1)?.get('dataTargetLinks')).toBe('true');
+      await view.screen.pressByTestIdAsync('project-deployments.move.destination:database-dedicated');
       await view.settle('project-deployments.move.destination.unavailable');
       await waitForHomeGovernance(() => expect(view.screen.findAllByType(SurfaceStateCard)
         .find(card => card.props.testID === 'project-deployments.move.destination.unavailable')?.props.diagnosticCode).toBe('unsupported'));

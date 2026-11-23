@@ -787,4 +787,73 @@ describe('deployment detail admission cost', () => {
             runtimeTargetLinks: [], servingDeployments: [], currentDeployments: [{ id: latest.id }] });
     });
 
+    it('projects the page’s admitted live data links for the Move picker in a fixed number of reads', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const source = await inTx(tx => createProjectSourceInTx(tx, owner.id,
+            { serverId, requestKey: randomUUID(), name: 'Move destinations', audience: [] }));
+        if (!source.ok) throw new Error(source.error);
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
+            metadata: '{}', installationId: randomUUID() } });
+        const content = async (kind: string, accountId = owner.id) => {
+            const artifact = await createArtifact({ actorUserId: accountId, artifactId: randomUUID(), kind: `v1:other:${kind}`,
+                header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind, title: 'Move page' })),
+                body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: '{}' })),
+                dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+            if (!artifact.ok) throw new Error(artifact.error);
+            return { contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        };
+        // Each Environment serves on its own Machine and may keep one managed data link (the live #204 App shape).
+        const environment = async (data: 'managed' | 'foreign' | 'detached' | 'none') => {
+            const row = await db.deploymentEnvironment.create({ data: { projectSourceId: source.source.id,
+                createdByAccountId: owner.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+                controllerMachineId: machine.id, ...await content('deployment-environment.v1') } });
+            const runtime = await db.deploymentTargetLink.create({ data: { environmentId: row.id, createdByAccountId: owner.id,
+                role: 'runtime', sourceKind: 'host', hostTargetId: 'own-server', targetKind: 'ownServer', state: 'configured',
+                ...await content('deployment-target-link.v1'),
+                machines: { create: { machineId: machine.id, installationId: machine.installationId!, position: 0, state: 'active' } } } });
+            await db.deploymentEnvironment.update({ where: { id: row.id }, data: { runtimeTargetLinkId: runtime.id } });
+            const link = data === 'none' ? null : await db.deploymentTargetLink.create({ data: { environmentId: row.id,
+                createdByAccountId: owner.id, role: 'data', sourceKind: 'plugin', pluginId: 'happier.deploy.neon',
+                contributionLocalId: 'database', targetKind: 'neon', state: 'configured',
+                ...(data === 'detached' ? { detachedAt: new Date() } : {}),
+                ...await content('deployment-target-link.v1', data === 'foreign' ? stranger.id : owner.id) } });
+            return { id: row.id, link: link?.id ?? null };
+        };
+        const managed = await environment('managed');
+        const foreign = await environment('foreign');
+        const detached = await environment('detached');
+        const native = await environment('none');
+        const queries: string[] = [];
+        const read = async () => {
+            let body: unknown;
+            await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+                const stop = observeSqliteRequests({ before: query => { if (query.model) queries.push(`${query.model}.${query.action}`); } });
+                try {
+                    const response = await app.inject({ method: 'GET', headers: { 'x-test-user-id': owner.id },
+                        url: `/v1/deployments/environments?${new URLSearchParams({ serverId, projectSourceId: source.source.id, dataTargetLinks: 'true' })}` });
+                    expect(response.statusCode, response.body).toBe(200);
+                    body = response.json();
+                } finally { stop(); }
+            });
+            const page = DeploymentEnvironmentListResultV1Schema.parse(body);
+            if (!page.ok) throw new Error(page.error);
+            return page;
+        };
+        const page = await read();
+        expect(page.items.map(row => row.id).sort()).toEqual([managed.id, foreign.id, detached.id, native.id].sort());
+        // A link whose content the requester may not read stays hidden; retained custody is not a destination.
+        expect(page.dataTargetLinks?.map(link => link.id)).toEqual([managed.link]);
+        expect(JSON.stringify(page)).not.toContain(foreign.link!);
+        expect(JSON.stringify(page)).not.toContain(detached.link!);
+        const fixedReads = queries.length;
+        queries.length = 0;
+        for (let index = 0; index < 3; index++) await environment('managed');
+        const larger = await read();
+        expect(larger.dataTargetLinks).toHaveLength(4);
+        expect(queries, 'opening the picker costs the same reads for a larger page').toHaveLength(fixedReads);
+        const ordinary = await inTx(tx => listDeploymentEnvironmentsInTx(tx, owner.id, { serverId, projectSourceId: source.source.id }));
+        expect(ordinary).not.toHaveProperty('dataTargetLinks');
+    });
+
 });

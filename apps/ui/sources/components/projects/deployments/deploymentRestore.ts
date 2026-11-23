@@ -1,4 +1,5 @@
-import { DeploymentRestorePreparationV1Schema, type DeploymentBackupSourceV1, type DeploymentRestorePreparationV1 } from '@happier-dev/deployments/contracts/v1';
+import { DeploymentRestorePreparationV1Schema, type DeploymentBackupSourceV1, type DeploymentRestorePreparationV1,
+  type DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
 import { DeploymentNativeSnapshotOfferV1Schema, DeploymentNativeSnapshotUnavailableV1Schema, type DeploymentNativeSnapshotOfferV1, type DeploymentNativeSnapshotUnavailableV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentBackupRestoreResultV1 } from '@happier-dev/protocol';
 import type { DeploymentBackupInventoryResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
@@ -48,16 +49,22 @@ export function retainedBackupFromSummary(
 type DatabaseMoveDestination = Readonly<{ kind: 'ready'; selection: DatabaseMoveCutoverSelection }>
   | Readonly<{ kind: 'unavailable'; reason: 'unsupported' | 'backup_required' }>;
 
+/** A live provider data link: Move offers it, and the destination decision below explains its import. */
+export function hasDeploymentManagedDataLink(links: readonly DeploymentTargetLinkHeaderV1[]): boolean {
+  return links.some(link => link.role === 'data' && link.source.kind === 'plugin'
+    && link.detachedAtMs === undefined && link.deletedAtMs === undefined);
+}
+
 /** Copy admission owns destination support; Create/Link and saved connections are not an import. */
 export function deploymentDatabaseMoveDestination(detail: Pick<DeploymentEnvironmentReadDetailV1,
   'environment' | 'runtimeTargetLink' | 'content' | 'targetLinks' | 'databaseMoveCandidate'> | null): DatabaseMoveDestination | null {
   if (!detail) return null;
-  if (!deploymentDataTargetOperands(detail)) {
-    // The current dataV1 contract declares no restore/import role. Never substitute an empty provider database.
-    return detail.targetLinks.some(({ targetLink }) => targetLink.role === 'data' && targetLink.source.kind === 'plugin'
-      && targetLink.detachedAtMs === undefined && targetLink.deletedAtMs === undefined)
-      ? { kind: 'unavailable', reason: 'unsupported' } : null;
+  // The current dataV1 contract declares no restore/import role, even beside an own-server runtime.
+  // Never substitute an empty provider database or the App's native service for its managed data.
+  if (hasDeploymentManagedDataLink(detail.targetLinks.map(({ targetLink }) => targetLink))) {
+    return { kind: 'unavailable', reason: 'unsupported' };
   }
+  if (!deploymentDataTargetOperands(detail)) return null;
   if (detail.databaseMoveCandidate !== true) return { kind: 'unavailable', reason: 'unsupported' };
   if (!detail.content.backup || !('configRevision' in detail.content.backup))
     return { kind: 'unavailable', reason: 'backup_required' };

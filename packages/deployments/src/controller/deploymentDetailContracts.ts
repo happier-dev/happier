@@ -24,7 +24,7 @@ export const DeploymentEnvironmentCollectionV1Schema = z.strictObject({
         projectSourceName: z.optional(z.nullable(z.string())),
         /** Saved configuration, independent of backup runs; omitted by older readers or unreadable content. */
         backupConfigured: z.optional(z.boolean()),
-        /** Dedicated PostgreSQL on a native data target; omission is unknown, not eligible. */
+        /** Move destination: dedicated PostgreSQL on a native data target, or a live managed data link; omission is unknown. */
         databaseMoveCandidate: z.optional(z.boolean()),
         /** Actual opened template configuration; omitted when the private Artifact is unavailable. */
         previewTemplateConfigured: z.optional(z.boolean()),

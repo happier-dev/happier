@@ -666,6 +666,8 @@ export const DeploymentEnvironmentListInputV1Schema = lazyZodSchema(() => z.stri
   includeTotal: z.optional(z.literal(true)),
   /** Metadata-only Account/Source summary, independent of inventory continuation. */
   projection: z.optional(z.literal('activity')),
+  /** Move destination choice: the page's live data links this requester may read, admitted like the exact reader. */
+  dataTargetLinks: z.optional(z.literal(true)),
   // Exact visible owner headers, not an inventory crawl. All inventory omits
   // this field; an empty public vector must not disappear in GET encoding.
   environmentIds: z.optional(z.array(DeploymentIdentifierV1Schema).check(z.minLength(1))),
@@ -684,7 +686,8 @@ export const DeploymentEnvironmentListInputV1Schema = lazyZodSchema(() => z.stri
   z.refine(input => input.projection !== 'activity' || (input.machineId === undefined && input.environmentIds === undefined
     && input.previewRepositoryId === undefined && input.previewRepository === undefined && input.previewTemplateEnvironmentId === undefined
     && input.previewCompanionOfEnvironmentId === undefined
-    && input.cursor === undefined && input.limit === undefined && input.includeDeleted === undefined && input.includeTotal === undefined),
+    && input.cursor === undefined && input.limit === undefined && input.includeDeleted === undefined && input.includeTotal === undefined
+    && input.dataTargetLinks === undefined),
     { message: 'Activity selects one Home or Source, without an inventory page or Machine filter.' })));
 export const DeploymentReceiptListInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...deploymentEnvironmentReadAddress,
@@ -708,6 +711,8 @@ export const DeploymentEnvironmentListResultV1Schema = lazyZodSchema(() => z.uni
     /** Authorized header total for this query, independent of cursor and page size. */
     totalCount: z.optional(z.number().check(z.int(), z.nonnegative())),
     runtimeTargetLinks: z.optional(z.array(DeploymentTargetLinkHeaderV1Schema)),
+    /** Present only when demanded: live data links on this page whose content the requester may read. */
+    dataTargetLinks: z.optional(z.array(DeploymentTargetLinkHeaderV1Schema)),
     /** Current runtime custody, independent of the latest attempt. Private bytes stay in Artifacts. */
     servingDeployments: z.optional(z.array(DeploymentReceiptHeaderV1Schema)),
     liveAddressDomains: z.optional(z.array(DeploymentDomainHeaderV1Schema)),
