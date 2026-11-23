@@ -18,10 +18,10 @@ const product: PluginJsonSchema = { type: 'string', enum: ['workers', 'pages'] }
 const inputSchema: PluginJsonSchema = { type: 'object', additionalProperties: false, properties: {
   credentialRef: base.properties!.credentialRef!, credentialPrincipal: base.properties!.credentialPrincipal!,
   product, providerIdentity, providerAccountId: base.properties!.providerAccountId!,
-  resourceName: DeploymentTargetRoleInputProtocolSchemasV1.create.jsonSchema.properties!.resourceName!, scriptName: text, fieldPath: text, query: { type: 'string' }, cursor: { type: 'string', pattern: '^[1-9][0-9]*$' },
+  resourceName: DeploymentTargetRoleInputProtocolSchemasV1.create.jsonSchema.properties!.resourceName!, scriptName: text, gitBranch: text, fieldPath: text, query: { type: 'string' }, cursor: { type: 'string', pattern: '^[1-9][0-9]*$' },
 }, required: ['credentialRef', 'credentialPrincipal', 'fieldPath'] };
 type Input = Readonly<{ product?: 'workers' | 'pages'; providerIdentity?: { providerAccountId?: string; providerResourceId?: string };
-  providerAccountId?: string; resourceName?: string; scriptName?: string;
+  providerAccountId?: string; resourceName?: string; scriptName?: string; gitBranch?: string;
   fieldPath: string; query?: string; cursor?: string }>;
 type Option = { value: JsonValue; label: string };
 function invalid(): never { throw new PluginError({ code: 'provider_response_invalid' }); }
@@ -58,7 +58,12 @@ async function read(input: Input, context: DeploymentContext) {
   } else if (input.product === 'pages' && input.fieldPath === 'providerEnvironment') {
     // Pages environments are fixed; a pre-Create draft names one before any Account is chosen.
     return { options: options([
-      { value: { kind: 'native', selection: { kind: 'production' } }, label: 'Production' }, { value: { kind: 'native', selection: { kind: 'preview' } }, label: 'Preview' },
+      { value: { kind: 'native', selection: { kind: 'production' } }, label: 'Production' },
+      { value: { kind: 'native', selection: { kind: 'preview' } }, label: 'Preview' },
+      ...(input.gitBranch ? [{
+        value: { kind: 'native', selection: { kind: 'preview', gitBranch: input.gitBranch } },
+        label: `Preview: ${input.gitBranch}`,
+      }] : []),
     ], input.query) };
   } else {
     const accountId = input.providerIdentity?.providerAccountId ?? input.providerAccountId;
@@ -161,8 +166,10 @@ function targetOptionsFor(product?: 'workers' | 'pages') {
     const selectedProduct = product ?? draftProduct(draft);
     if (selectedProduct !== undefined) input.product = selectedProduct;
     const carrier = draft.providerEnvironment;
-    if (isObject(carrier) && isObject(carrier.selection) && typeof carrier.selection.scriptName === 'string') {
-      input.scriptName = carrier.selection.scriptName;
+    if (isObject(carrier) && isObject(carrier.selection)) {
+      const selection = carrier.selection;
+      if (typeof selection.scriptName === 'string') input.scriptName = selection.scriptName;
+      if (selectedProduct === 'pages' && selection.kind === 'preview' && name(selection.gitBranch)) input.gitBranch = selection.gitBranch;
     }
     return input;
   });
@@ -207,7 +214,7 @@ export const targetOptionInputHints = { fields: [
   { path: 'providerIdentity.providerResourceId', title: 'Project or Worker', required: true, widget: 'select',
     optionsDraftDependencies: ['product', 'providerEnvironment.selection.kind', 'providerEnvironment.selection.scriptName'],
     inputType: { pluginId, localId: 'target-choice' } },
-  environmentField,
+  { ...environmentField, optionsDraftDependencies: [...environmentField.optionsDraftDependencies, 'providerEnvironment.selection.gitBranch'] },
   { ...projectField, requiredWhen: { op: 'not', predicate: { op: 'truthy', path: 'providerEnvironment.selection.scriptName' } } },
   workerTriggerField,
 ] } as const;
@@ -217,7 +224,7 @@ export function targetProductInputHints(product: 'workers' | 'pages') {
   // The product sheet selects native coordinates. Inspect resolves the exact comparison identity.
   const fields = [{ ...accountField, path: 'providerAccountId' }, ...(product === 'pages' ? [
     { ...projectField, required: true, optionsDraftDependencies: [] },
-    { ...environmentField, optionsDraftDependencies: [projectField.path] },
+    { ...environmentField, optionsDraftDependencies: [projectField.path, 'providerEnvironment.selection.gitBranch'] },
   ] : [environmentField, workerTriggerField])];
   return { fields: fields.map(field => ({ ...field, inputType: { pluginId, localId: `${product}-target-choice` } })) };
 }

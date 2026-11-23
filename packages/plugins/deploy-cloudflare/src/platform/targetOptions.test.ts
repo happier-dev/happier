@@ -102,6 +102,25 @@ it.each([
   } finally { await kit.dispose(); }
 });
 
+it('offers the explicit Pages Preview branch already carried by the Inspect draft', async () => {
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry,
+    services: { http: createPluginHttpFixture({ async request() { throw new Error('Pages environment choices need no provider request'); } }) } });
+  try {
+    const resource = kit.registration('resources', 'pages-target-options');
+    if (!resource) throw new Error('Missing Pages environment choices');
+    const selected = { kind: 'native', selection: { kind: 'preview', gitBranch: 'feature/qa-pr' } };
+    const bytes = await resource.read(createTestResourceInvocationContext({
+      query: { draftInput: { ...draft, providerEnvironment: selected }, fieldPath: 'providerEnvironment' },
+      readAction: async (ref, input) => ({ ok: true, result: await kit.invokeAction(ref.localId, input) }) }));
+    const page = JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes));
+    expect(page.options.map((option: { value: unknown }) => option.value)).toEqual([
+      { kind: 'native', selection: { kind: 'production' } },
+      { kind: 'native', selection: { kind: 'preview' } },
+      selected,
+    ]);
+  } finally { await kit.dispose(); }
+});
+
 it('loads one requested Pages page through the registered global Resource and named Account Action, without prefetch or secret projection', async () => {
   const requests: HttpRequest[] = [];
   const http = createPluginHttpFixture({ async request(request) {
