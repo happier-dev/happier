@@ -1213,6 +1213,15 @@ target; `buildCliBinaryArtifactCodePayload` calls it in place of the former Bun 
   (`resolveJavaScriptRuntimeCommand`, `resolveJavaScriptRuntimePathEntries`).
 - Official Linux Node binaries require glibc 2.28 or later.
 
+The 0.3 CLI bootstrap adds Node's system CA certificates to its existing
+TLS defaults before command dispatch, including daemon startup. HTTPS and
+WebSocket clients using Node's defaults share those roots and keep Node's
+certificate and hostname verification. The bundled runtime reads the Linux
+OpenSSL trust store, macOS keychains, or Windows certificate stores. The
+default roots also retain certificates supplied through `NODE_EXTRA_CA_CERTS`
+at process launch. Externally supplied Node runtimes need
+`tls.setDefaultCACertificates` for this behavior.
+
 Checkout Stack entrypoints use the same authored workspace resolver. In current
 0.3 development, successful `localSourceRuntimeBootstrap.mjs` registration owns
 that entrypoint's workspace imports, so its ordinary commands do not prepare or

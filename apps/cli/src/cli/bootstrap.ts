@@ -7,6 +7,7 @@ import { configuration } from '@/configuration';
 import { maybeAutoUpdateNotice } from '@/cli/runtime/update/autoUpdateNotice';
 import { maybeReexecToRuntime } from '@/cli/runtime/update/runtimeReexec';
 import { dirname } from 'node:path';
+import * as tls from 'node:tls';
 import { fileURLToPath } from 'node:url';
 import packageJson from '../../package.json' with { type: 'json' };
 import { resolveNpmPackageNameOverride } from '@happier-dev/cli-common/update';
@@ -20,6 +21,11 @@ import { joinCurrentWindowsSessionProcessCustody } from '@/subprocess/supervisio
 
 export async function runCliBootstrap(entrypointUrl: string): Promise<void> {
   try {
+    // Extend process defaults before dispatch opens HTTPS or WebSocket connections.
+    // The bundled Node supports this API. Older system Node runtimes retain their defaults.
+    if (typeof tls.setDefaultCACertificates === 'function') {
+      tls.setDefaultCACertificates([...tls.getCACertificates('default'), ...tls.getCACertificates('system')]);
+    }
     const custody = await joinCurrentWindowsSessionProcessCustody();
     if (custody?.state === 'unavailable') logger.debug('[process-custody] session Job join unavailable');
     applyStackSessionPriority();
