@@ -227,19 +227,26 @@ export function resolveUsageHowYouWork(input: Readonly<{
     }
     const retained = input.detail === undefined ? input.retained : undefined;
     const nightHours = input.nightHours ? UsageNightHoursV1Schema.parse(input.nightHours) : undefined;
+    const retainedIntervals = retained?.intervals;
     let intervals = detail?.facts !== undefined
         ? projectUsagePrivateIntervals(detail, { ...input, facts: detail.facts, activityAtMs: detail.activityAtMs })
-        : retained?.intervals ? { ...retained.intervals, night: nightHours ? { ...nightHours,
-            busyMs: retained.intervals.weekdayHourBuckets.reduce((sum, row) =>
+        : retainedIntervals ?? null;
+    if (retainedIntervals && (retainedIntervals.night?.startHour !== nightHours?.startHour
+        || retainedIntervals.night?.endHour !== nightHours?.endHour)) {
+        // Old hour buckets can regroup busy time, but carry no event counts.
+        intervals = { ...retainedIntervals, night: nightHours ? { ...nightHours,
+            busyMs: retainedIntervals.weekdayHourBuckets.reduce((sum, row) =>
                 sum + (isUsageNightHour(row.hour, nightHours) ? row.busyMs : 0), 0),
             activityCount: null,
-        } : null } : null;
+        } : null };
+    }
     const buckets = input.accounting?.activity?.weekdayHourBuckets;
     const nightShift = nightHours ? { ...nightHours, observedBusyMs: intervals?.night?.busyMs ?? null,
         recordedActivityCount: input.accounting ? buckets === undefined ? null : buckets.reduce((sum, row) =>
             sum + (isUsageNightHour(row.hour, nightHours) ? row.eventCount : 0), 0) : intervals?.night?.activityCount ?? null,
     } : null;
-    if (intervals?.night && nightShift && intervals.night.activityCount !== nightShift.recordedActivityCount) {
+    // A retained interval carries the count witnessed inside its own window.
+    if (!retainedIntervals && intervals?.night && nightShift && intervals.night.activityCount !== nightShift.recordedActivityCount) {
         intervals = { ...intervals, night: { ...intervals.night, activityCount: nightShift.recordedActivityCount } };
     }
     const today = input.nowMs === undefined ? null : resolveUsageCalendarInstant(input.nowMs, input.timeZoneOffsetMinutes);

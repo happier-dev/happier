@@ -1096,7 +1096,7 @@ describe('resolveUsagePageAggregation', () => {
     const revised = resolveUsagePageAggregation({ queries: [query], accounting: [source], previous: first,
       nightHours: { startHour: 9, endHour: 17 }, sources: [{ source: 'how_you_work', status: 'pending' }] }, bundledUsageModelPriceCatalog);
     expect(revised.results[0]?.howYouWork).toMatchObject({ detailStatus: 'partial',
-      intervals: { agentTimeMs: hour, night: { startHour: 9, endHour: 17, busyMs: 0, activityCount: 3 } },
+      intervals: { agentTimeMs: hour, night: { startHour: 9, endHour: 17, busyMs: 0, activityCount: null } },
       nightShift: { startHour: 9, endHour: 17, recordedActivityCount: 3, observedBusyMs: 0 } });
     const cleared = resolveUsagePageAggregation({ queries: [query], accounting: [source], previous: revised,
       nightHours: null, sources: [{ source: 'how_you_work', status: 'pending' }] }, bundledUsageModelPriceCatalog);
@@ -1664,29 +1664,38 @@ describe('resolveUsagePageAggregation', () => {
     } }] }).success).toBe(false);
   });
 
-  it('delivers the previous whole-Session intervals as pending when accounting advances first', () => {
+  it('keeps the witnessed night count in pending whole-Session intervals while accounting advances', () => {
     const query = normalizeUsageQuery({ session: ['session'], period: { relative: 'all' },
-      includeCoach: false, includeSessionEvidence: true, includeWorkEvidence: true });
+      timeZoneOffsetMinutes: 0, includeActivity: true, includeCoach: false, includeQuota: false,
+      includeComparison: false, includeSessionEvidence: true, includeWorkEvidence: false });
+    const nightHours = { startHour: 0, endHour: 6 };
     const firstEnd = 1_000;
     const nextEnd = 2_000;
     const readAccounting = (endMs: number, eventCount: number) => ({
       query, period: { endMs }, status: 'available' as const,
       value: UsageAnalyticsQueryResponseSchema.parse({ ...accounting, totals: { ...accounting.totals, eventCount },
+        activity: { weekdayHourBuckets: [{ weekday: 4, hour: 0, eventCount }] },
         coverage: { status: 'partial', reasons: ['incomplete_history'], missingDimensions: [], ranked: [], sources: [],
           range: { endMs, complete: false } },
       }),
     });
     const detail = { status: 'available' as const, facts: [{ workId: 'session', evidenceId: 'turn',
       agentId: null, machineId: null, kind: 'busy' as const, startMs: 100, endMs: 400 }] };
-    const previous = resolveUsagePageAggregation({ queries: [query], nowMs: firstEnd,
-      accounting: [readAccounting(firstEnd, 1)], howYouWork: [{ query, detail, asOfMs: firstEnd + 10 }],
+    const previous = resolveUsagePageAggregation({ queries: [query], nightHours, nowMs: firstEnd,
+      accounting: [readAccounting(firstEnd, 1)],
+      howYouWork: [{ query, detail: { ...detail, activityAtMs: [firstEnd - 100] }, asOfMs: firstEnd + 10 }],
     }, bundledUsageModelPriceCatalog);
-    const inProgress = resolveUsagePageAggregation({ queries: [query], previous, nowMs: nextEnd,
+    const previousIntervals = previous.results[0]?.howYouWork?.intervals;
+    expect(previousIntervals?.night?.activityCount).toBe(1);
+    const inProgress = resolveUsagePageAggregation({ queries: [query], previous, nightHours, nowMs: nextEnd,
       accounting: [readAccounting(nextEnd, 2)], sources: [{ source: 'how_you_work', status: 'pending', asOfMs: firstEnd + 10 }],
     }, bundledUsageModelPriceCatalog);
     const slice = inProgress.results[0]!;
     expect(slice).toMatchObject({ pending: true, accounting: { totals: { eventCount: 2 }, coverage: { range: { endMs: nextEnd } } },
-      howYouWork: { intervals: { period: { startMs: 0, endMs: firstEnd }, elapsedBusyMs: 300 } } });
+      howYouWork: { intervals: { period: { startMs: 0, endMs: firstEnd }, elapsedBusyMs: 300,
+        night: { busyMs: 300, activityCount: 1 } }, nightShift: { recordedActivityCount: 2 } } });
+    expect(slice.howYouWork?.intervals).toEqual(previousIntervals);
+    expect(slice.howYouWork?.activity?.weekdayHourBuckets).toEqual([{ weekday: 4, hour: 0, eventCount: 2 }]);
     expect(slice.sources).toContainEqual({ source: 'how_you_work', status: 'pending', asOfMs: firstEnd + 10 });
     expect(UsageQueryBatchResultSchema.safeParse(inProgress)).toMatchObject({ success: true });
     for (const status of ['available', 'stale'] as const) {
@@ -1697,10 +1706,13 @@ describe('resolveUsagePageAggregation', () => {
     expect(UsageQueryBatchResultSchema.safeParse({ ...inProgress, results: [{ ...slice,
       sources: slice.sources.map(source => source.source === 'how_you_work' ? { ...source, asOfMs: firstEnd - 1 } : source),
     }] }).success).toBe(false);
-    const settled = resolveUsagePageAggregation({ queries: [query], previous: inProgress, nowMs: nextEnd,
-      accounting: [readAccounting(nextEnd, 2)], howYouWork: [{ query, detail, asOfMs: nextEnd + 10 }],
+    const settled = resolveUsagePageAggregation({ queries: [query], previous: inProgress, nightHours, nowMs: nextEnd,
+      accounting: [readAccounting(nextEnd, 2)],
+      howYouWork: [{ query, detail: { ...detail, activityAtMs: [firstEnd - 100, firstEnd + 100] }, asOfMs: nextEnd + 10 }],
     }, bundledUsageModelPriceCatalog);
-    expect(settled.results[0]?.howYouWork?.intervals?.period).toEqual({ startMs: 0, endMs: nextEnd });
+    expect(settled.results[0]).toMatchObject({ pending: false,
+      howYouWork: { intervals: { period: { startMs: 0, endMs: nextEnd }, night: { activityCount: 2 } },
+        nightShift: { recordedActivityCount: 2 } } });
     expect(settled.results[0]?.sources).toContainEqual({ source: 'how_you_work', status: 'available', asOfMs: nextEnd + 10 });
     expect(UsageQueryBatchResultSchema.safeParse(settled).success).toBe(true);
   });
