@@ -5,7 +5,7 @@ import { TriageSourcesContributionProtocolV1 } from '@happier-dev/triage-protoco
 import '../hostedWeb/guestBootstrap.generated';
 import { createPluginProjectContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
 import { derivePluginReactNativeBundleCacheKey } from '@/components/plugins/reactNative/bundleCache';
-import { createMachineReadBatchResponseFixture, createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPluginArtifactTransferBoundary, pluginArtifactTransferDaemonState } from '@/dev/testkit/harness/pluginArtifactTransferBoundary';
 import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 import { createSessionListSourceFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
@@ -334,15 +334,11 @@ function createPluginSurfaceMachines(accountId: string) {
         'machine-stale', 'machine-old', 'machine-new', 'machine-current', 'machine-compose', 'machine_a'];
     return machineIds.map(id => {
         const active = pluginSurfaceConnectivity.machineOnlineById.get(id) ?? pluginSurfaceConnectivity.machineOnline;
-        return createMachineFixture({ id, active, presenceProtocolVersion: 1,
+        return createHydratedPlainMachineFixture({ id, accountId, machine: { active, presenceProtocolVersion: 1, installationId: null,
             // Publish current activity; an epoch-zero offline row cannot
             // supersede the Machine owner's newer observed presence.
             activeAt: Date.now(), daemonStateVersion: pluginSurfaceConnectivity.daemonStateVersion,
-            ...(realResourceTransport.settingsEnabled
-                ? { storageMode: 'plain' as const, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
-                    access: { custodian: { accountId, displayName: 'Owner' }, role: 'manage' as const,
-                        resourceMode: 'plain' as const, accessState: 'ready' as const } } : {}),
-        });
+        } });
     });
 }
 function applyPluginSurfaceConnectivity() {
@@ -18238,8 +18234,10 @@ describe('installed Session widget through the mounted plugin controller', () =>
             sessionListIndexByServerId: { [widgetAccountScope.serverId]: availableSessions.map(entry => ({ type: 'session', sessionId: entry.id, serverId: widgetAccountScope.serverId, serverName: 'Home' })) },
         });
         storage.getState().applyMachines([
-            createMachineFixture({ id: 'machine_1', active: true, activeAt: Date.now() }),
-            createMachineFixture({ id: 'machine_a', active: true }),
+            createHydratedPlainMachineFixture({ id: 'machine_1', accountId: widgetAccountScope.accountId,
+                machine: { activeAt: Date.now(), installationId: null } }),
+            createHydratedPlainMachineFixture({ id: 'machine_a', accountId: widgetAccountScope.accountId,
+                machine: { installationId: null } }),
         ], true, { sourceServerId: widgetAccountScope.serverId });
         if (repair === 'lost') {
             // Missing hydration is not Session retirement: publish the same
