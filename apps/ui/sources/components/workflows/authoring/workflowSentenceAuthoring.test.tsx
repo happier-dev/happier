@@ -1,7 +1,11 @@
 import 'fake-indexeddb/auto';
+import { createRef } from 'react';
+import type { View } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { t } from '@/text';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
@@ -20,9 +24,185 @@ import { getWorkflowDefinition } from '@/sync/domains/workflows/workflowDefiniti
 import { readWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
 import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
 import type { WorkflowActionLeafV1 } from '@happier-dev/protocol/workflows/workflowV1';
+import { WORKFLOW_AUTHORING_ACTION_ID } from '@happier-dev/protocol/actions/workflowAuthoringActionIds';
+import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import * as authoring from './useWorkflowSentenceDraft';
 import { createSessionWorkflowSentenceIntent } from './workflowSentenceAuthoring';
 import { editWorkflowTriggerDraft } from '../triggers/workflowTriggerDraft';
+import { useWorkflowSessionBinding } from '../editor/useWorkflowSessionBinding';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { buildUiActionDispatchRequestV1, UiActionChildExecuteRequestV1Schema } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { createUiClientActionReverseHandler } from '@/sync/ops/actions/clientActionReverseDispatch';
+
+// The invoking host supplies the Session's admission facts before the Action reaches the editor.
+const agentCaller = { kind: 'session', sessionId: 'lifetime-session', starterDepth: 0, turnDepth: 0 } as const;
+const sentenceAgentContext = {
+    surface: 'agent', authority: 'account_automation', actionCaller: agentCaller,
+    callerPermissionMode: 'default',
+    agentStartContext: { caller: agentCaller, baseline: { machineId: 'machine-a', directory: '/repo' },
+        ledSubtreeSessionIds: [], roles: {}, workDepthLimit: 4, callerPermissionCeiling: 'default' },
+} as const;
+
+const sentenceSaveRequestId = 'mounted-sentence-save';
+type SentenceChild = ReturnType<typeof UiActionChildExecuteRequestV1Schema.parse>;
+
+async function mountAgentSentence(home: Awaited<ReturnType<typeof sourceHome>>, onClose?: () => void) {
+    const hook = await renderHook(() => {
+        const sentence = authoring.useWorkflowSentenceDraft({ name: 'Notify',
+            step: { ...message, input: { ...message.input, sessionId: { kind: 'literal', value: agentCaller.sessionId } } }, trigger,
+            project: { machineId: 'machine-a', directory: '/repo' } }, home.lifetime, onClose);
+        useWorkflowSessionBinding({ context: { scope: home.lifetime.scope, draft: sentence.draftStore.get(), editable: true,
+            whereMachineId: sentence.project?.machineId ?? null, candidates: [] }, onChange: sentence.onChange,
+            whereName: null, machineName: id => id, draftActions: sentence.draftActions });
+        return sentence;
+    });
+    const address = { scope: home.lifetime.scope, draftId: hook.getCurrent().draftStore.get().draftId };
+    const receive = createUiClientActionReverseHandler({ ...home.lifetime.scope, machineId: 'machine-a',
+        isCurrent: () => home.lifetime.isCurrent() });
+    const save = () => receive(buildUiActionDispatchRequestV1({
+        actionId: 'workflow.authoring.draft.save', input: address,
+        context: { ...sentenceAgentContext, serverId: home.lifetime.scope.serverId,
+            expectedAccountId: home.lifetime.scope.accountId, defaultSessionId: agentCaller.sessionId,
+            actionRequestId: sentenceSaveRequestId },
+    }), { signal: new AbortController().signal });
+    return { hook, address, save };
+}
+
+it.each([false, true])('uses Action policy enabled=%s for a native sentence Save', async enabled => {
+    const home = await sourceHome(enabled ? undefined : WORKFLOW_AUTHORING_ACTION_ID.draftSave);
+    const close = vi.fn();
+    const { hook } = await mountAgentSentence(home, close);
+    await act(async () => { await hook.getCurrent().saveFromUi(); });
+    expect(home.creates).toHaveLength(enabled ? 1 : 0);
+    expect(close).toHaveBeenCalledTimes(enabled ? 1 : 0);
+    expect(hook.getCurrent().failed === null).toBe(enabled);
+});
+
+it.each([false, true])('uses Action policy enabled=%s for a native sentence Cancel', async enabled => {
+    const home = await sourceHome(enabled ? undefined : WORKFLOW_AUTHORING_ACTION_ID.draftDiscard);
+    const { WorkflowSentenceBuilder } = await import('../sentence/WorkflowSentenceBuilder');
+    const close = vi.fn();
+    const restorePopover = withPopoverWebGlobals();
+    try {
+        const screen = await renderScreen(<WorkflowSentenceBuilder anchorRef={createRef<View>()}
+            intent={{ name: 'Keep this draft', trigger }} accountLifetime={home.lifetime} onRequestClose={close} />, {
+            createNodeMock: element => element.type === 'View' ? {
+                addEventListener() {},
+                removeEventListener() {},
+                measureInWindow: callback => callback(0, 0, 300, 40),
+            } satisfies Pick<View, 'measureInWindow'> & Pick<EventTarget, 'addEventListener' | 'removeEventListener'> : null,
+        });
+        try {
+            await screen.pressByTestIdAsync('workflow-builder-cancel');
+            await vi.waitFor(() => {
+                if (enabled) expect(close).toHaveBeenCalledTimes(1);
+                else expect(screen.findHostByTestId('workflow-builder-failed')).not.toBeNull();
+            });
+            expect(close).toHaveBeenCalledTimes(enabled ? 1 : 0);
+            expect(home.creates).toEqual([]);
+        } finally {
+            await screen.unmount();
+        }
+    } finally {
+        restorePopover();
+    }
+});
+
+it('authors the mounted sentence through Actions with shared history and caller-scoped Save', async () => {
+    const home = await sourceHome();
+    let closed = false;
+    const { hook, address, save } = await mountAgentSentence(home, () => { closed = true; });
+    const executor = createDefaultActionExecutor();
+    const context = { ...sentenceAgentContext,
+        serverId: home.lifetime.scope.serverId, runtimeAccountId: home.lifetime.scope.accountId };
+    const read = async () => {
+        const result = await executor.execute('workflow.authoring.draft.get', address, context);
+        expect(result).toMatchObject({ ok: true, result: { status: 'available' } });
+        if (!result.ok || !result.result || typeof result.result !== 'object' || !('drafts' in result.result)) throw new Error('Missing mounted draft');
+        const { WorkflowDraftGetResultV1Schema } = await import('@happier-dev/protocol/actions/workflowAuthoringAction');
+        const parsed = WorkflowDraftGetResultV1Schema.parse(result.result);
+        if (parsed.status !== 'available') throw new Error('Missing mounted draft');
+        return parsed.drafts[0]!;
+    };
+    const initial = await read();
+    expect(initial.settings.triggers.rows).toHaveLength(1);
+    await act(async () => {
+        expect(await executor.execute('workflow.authoring.draft.edit', { ...address,
+            expectedDraftRevision: initial.draftRevision, ops: [{ kind: 'rename', name: 'Agent notice' }],
+            settings: { description: 'Authored together', projectTarget: { machineId: 'machine-a', directory: '/other' }, executionTarget: 'detached_run' } }, context))
+            .toMatchObject({ ok: true, result: { status: 'applied' } });
+    });
+    expect(await read()).toMatchObject({ name: 'Agent notice', settings: { description: 'Authored together',
+        projectTarget: { directory: '/other' }, executionTarget: 'detached_run' } });
+    const transferred = hook.getCurrent().openInEditor();
+    expect(transferred && readWorkflowDefinitionDraftSeed(transferred.params.definitionDraftSeedId, home.lifetime.scope))
+        .toMatchObject({ description: 'Authored together', project: { directory: '/other' }, executionTarget: 'detached_run' });
+    await act(async () => {
+        expect(await executor.execute('workflow.authoring.draft.edit', { ...address, expectedDraftRevision: initial.draftRevision,
+            ops: [{ kind: 'rename', name: 'Stale overwrite' }] }, context))
+            .toMatchObject({ ok: true, result: { status: 'refused', reason: 'stale_draft_revision' } });
+    });
+    await act(async () => { await executor.execute('workflow.authoring.draft.undo', address, context); });
+    expect(await read()).toMatchObject({ name: initial.name, settings: { description: '', projectTarget: { directory: '/repo' }, executionTarget: 'session' } });
+    await act(async () => { await executor.execute('workflow.authoring.draft.redo', address, context); });
+    home.refuseChild('workflow.definition.create');
+    await act(async () => {
+        expect(await save()).toMatchObject({ execution: { ok: true, result: { status: 'refused', reason: 'action_disabled' } } });
+    });
+    expect(home.children.map(child => child.actionId)).toEqual(['workflow.definition.create']);
+    expect(home.creates).toHaveLength(0);
+    home.refuseChild(undefined);
+    await act(async () => {
+        expect(await save()).toMatchObject({ execution: { ok: true, result: { status: 'applied' } } });
+    });
+    expect(home.children.map(child => child.actionId))
+        .toEqual(['workflow.definition.create', 'workflow.definition.create', 'workflow.trigger.add']);
+    const saved = await getWorkflowDefinition({ definitionId: hook.getCurrent().saved!.definitionId, accountLifetime: home.lifetime });
+    expect(saved.metadata).toMatchObject({ title: 'Agent notice', description: 'Authored together' });
+    expect(home.automations.creates).toHaveLength(1);
+    expect(closed).toBe(true);
+    closed = false;
+    const latest = await read();
+    await act(async () => {
+        await executor.execute('workflow.authoring.draft.edit', { ...address, expectedDraftRevision: latest.draftRevision,
+            ops: [{ kind: 'rename', name: 'Unsaved later edit' }] }, context);
+        expect(await executor.execute('workflow.authoring.draft.discard', address,
+            { surface: 'ui', serverId: home.lifetime.scope.serverId, expectedAccountId: home.lifetime.scope.accountId }))
+            .toMatchObject({ ok: true, result: { status: 'applied' } });
+    });
+    expect(closed).toBe(true);
+});
+
+it('authors the mounted sentence through Actions without upgrading a refused trigger child to UI', async () => {
+    const home = await sourceHome();
+    const { hook, save } = await mountAgentSentence(home);
+    home.refuseChild('workflow.trigger.add');
+    await act(async () => {
+        expect(await save()).toMatchObject({ execution: { ok: true, result: { status: 'refused', reason: 'action_disabled' } } });
+    });
+    expect(home.children.map(child => child.actionId)).toEqual(['workflow.definition.create', 'workflow.trigger.add']);
+    expect(home.creates).toHaveLength(1);
+    expect(home.automations.creates).toHaveLength(0);
+    expect(hook.getCurrent().failed).not.toBeNull();
+    expect(hook.getCurrent().triggers.dirty).toBe(true);
+});
+
+it('hands an agent-cleared Project to the full editor without reviving the source place', async () => {
+    const home = await sourceHome();
+    const project = { machineId: 'machine-a', directory: '/repo' };
+    const hook = await renderHook(() => authoring.useWorkflowSentenceDraft({ name: 'Notify', step: message, trigger, project }, home.lifetime));
+    await act(async () => {
+        expect(await hook.getCurrent().draftActions.execute('workflow.authoring.draft.edit', { scope: home.lifetime.scope,
+            draftId: hook.getCurrent().draftStore.get().draftId, expectedDraftRevision: 0, settings: { projectTarget: null } }))
+            .toMatchObject({ status: 'applied' });
+    });
+    const entry = hook.getCurrent().openInEditor();
+    expect(entry && readWorkflowDefinitionDraftSeed(entry.params.definitionDraftSeedId, home.lifetime.scope)).not.toHaveProperty('project');
+    await act(async () => { hook.getCurrent().history.undo(); });
+    expect(hook.getCurrent().project).toEqual(project);
+});
 
 // Expo's native randomness adapter is outside the Node host renderer.
 vi.mock('expo-crypto', async () => ({ randomUUID: (await import('node:crypto')).randomUUID }));
@@ -44,21 +224,49 @@ const message: WorkflowActionLeafV1 = { kind: 'action', id: 'message', actionId:
 const trigger = { kind: 'schedule', enabled: true,
     schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: null } } as const;
 
-async function sourceHome() {
+async function sourceHome(disabledAction?: typeof WORKFLOW_AUTHORING_ACTION_ID['draftSave' | 'draftDiscard']) {
     disposeLoader = await installRealActionExecutorModuleLoader();
     const accountId = 'sentence-author';
     const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => accountId, encryptionMode: 'plain' });
     const automations = createWorkflowAutomationHttpBoundary();
     const creates: unknown[] = [];
     const requests: string[] = [];
+    const children: SentenceChild[] = [];
+    let refusedChild: SentenceChild['actionId'] | undefined;
     let beforeCreate: (() => Promise<Response | undefined>) | undefined;
     const restored = await restoreServerAccountForTest({ serverUrl: 'https://sentence-authoring.test', accountId,
         serverIdentityId: 'srv_sentence-authoring',
-        configureSocket: configureConnectedServerSocketBoundary,
+        configureSocket: socket => {
+            configureConnectedServerSocketBoundary(socket);
+            const emitWithAck = socket.emitWithAck.bind(socket);
+            socket.timeout = vi.fn<typeof socket.timeout>(() => socket);
+            socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (event, raw: unknown) => {
+                if (event !== SOCKET_RPC_EVENTS.CALL) return emitWithAck(event, raw);
+                if (typeof raw !== 'object' || raw === null || !('method' in raw)
+                    || raw.method !== `machine-a:${RPC_METHODS.UI_ACTION_CHILD_EXECUTE}` || !('params' in raw)) {
+                    throw new Error('Unexpected mounted Sentence Machine RPC');
+                }
+                const child = UiActionChildExecuteRequestV1Schema.parse(raw.params);
+                expect(child).toMatchObject({ parentRequestId: sentenceSaveRequestId, sessionId: agentCaller.sessionId });
+                children.push(child);
+                // This fixture is the daemon side of the real reverse RPC. It makes
+                // the child decision before letting the accepted write reach the Home.
+                const execution = child.actionId === refusedChild
+                    ? { ok: false, errorCode: 'action_disabled', error: 'action_disabled' }
+                    : await createDefaultActionExecutor().execute(child.actionId, child.input,
+                        { surface: 'ui', authority: 'present_user', defaultSessionId: agentCaller.sessionId });
+                return { ok: true, result: { v: 1, execution } };
+            });
+        },
         request: async (input, init) => {
             const url = new URL(String(input));
             requests.push(`${init?.method ?? 'GET'} ${url.pathname}`);
             if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+            if (disabledAction !== undefined && url.pathname === '/v2/account/settings') {
+                return Response.json(AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: {
+                    actionsSettingsV1: { v: 1, actions: { [disabledAction]: { enabled: false } } },
+                } }, version: 1 }));
+            }
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
             if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             const machine = createPlainMachineReadHttpResponseFixture(url.pathname, init, accountId);
@@ -78,7 +286,14 @@ async function sourceHome() {
     disposeHome = restored.dispose;
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Expected the sentence Account');
-    return { creates, requests, automations, lifetime, interceptCreate: (intercept: typeof beforeCreate) => { beforeCreate = intercept; } };
+    if (disabledAction !== undefined) {
+        const { sync } = await import('@/sync/sync');
+        await sync.awaitBootstrapForegroundAcquisition();
+        await sync.refreshAccountSettingsFromServer(1, lifetime.scope);
+    }
+    return { creates, requests, automations, lifetime, children,
+        refuseChild: (actionId: SentenceChild['actionId'] | undefined) => { refusedChild = actionId; },
+        interceptCreate: (intercept: typeof beforeCreate) => { beforeCreate = intercept; } };
 }
 
 it('saves a mounted sentence once through the real definition and trigger Actions without executing its verb', async () => {

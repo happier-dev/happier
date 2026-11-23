@@ -26,6 +26,7 @@ import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { useWorkflowSentenceDraft } from '../authoring/useWorkflowSentenceDraft';
 import type { WorkflowSentenceEditorIntent } from '../authoring/workflowSentenceAuthoring';
 import { useWorkflowEditorComposerCustody } from '../editor/useWorkflowEditorComposerCustody';
+import { useWorkflowSessionBinding } from '../editor/useWorkflowSessionBinding';
 import { WorkflowBlockListEditor } from '../editor/WorkflowBlockListEditor';
 import { WorkflowInspector } from '../editor/WorkflowInspector';
 import { useWorkflowEditorSelector } from '../editor/workflowEditorDraftStore';
@@ -115,7 +116,7 @@ function WorkflowSentenceBuilderBody(
   const router = useRouter();
   const lifetime = props.accountLifetime;
   const serverId = lifetime.scope.serverId;
-  const sentence = useWorkflowSentenceDraft(props.intent, lifetime);
+  const sentence = useWorkflowSentenceDraft(props.intent, lifetime, props.onRequestClose);
   const { draftStore, onChange, project } = sentence;
   const blocks = useWorkflowEditorSelector(draftStore, readBlocks);
   const { blockIds } = useWorkflowEditorSelector(draftStore, readWorkflowBlockShape, sameRetainedValue);
@@ -131,6 +132,15 @@ function WorkflowSentenceBuilderBody(
   const machines = useMachineListForServer(serverId, true) ?? undefined;
   const machineName = machine ? getMachineDisplayName(machine) : null;
   const host = useWorkflowAuthoringHost({ projectTarget: project, serverId });
+  useWorkflowSessionBinding({
+    context: { get scope() { return lifetime.isCurrent() ? host.sessionBindingScope : null; },
+      get draft() { return draftStore.get(); }, editable: true,
+      whereMachineId: project?.machineId ?? null, candidates: host.sessionDropCandidates },
+    onChange, whereName: machineName, machineName: id => {
+      const candidate = machines?.find(item => item.id === id);
+      return candidate ? getMachineDisplayName(candidate) : id;
+    }, draftActions: sentence.draftActions,
+  });
   const readDraft = draftStore.get;
   const composerCustody = useWorkflowEditorComposerCustody({
     readDraft,
@@ -184,10 +194,6 @@ function WorkflowSentenceBuilderBody(
     triggerEvents: triggers.triggerEvents,
   });
   const close = props.onRequestClose;
-  const save = async () => {
-    const outcome = await sentence.save();
-    if (outcome.status === 'applied' || outcome.status === 'unchanged') close();
-  };
   const openEditor = () => {
     const route = sentence.openInEditor();
     if (route === null) return false;
@@ -255,7 +261,7 @@ function WorkflowSentenceBuilderBody(
                 display="inverted"
                 testID={`${TEST_ID}-cancel`}
                 title={t('common.cancel')}
-                onPress={close}
+                onPress={sentence.discardFromUi}
               />
               <RoundButton
                 size="small"
@@ -264,7 +270,7 @@ function WorkflowSentenceBuilderBody(
                 disabled={!canSave}
                 loading={sentence.saving}
                 onPress={() => {
-                  void save();
+                  void sentence.saveFromUi();
                 }}
               />
             </View>
