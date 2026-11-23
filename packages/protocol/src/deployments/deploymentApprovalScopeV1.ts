@@ -3,7 +3,7 @@ import type { ActionEnvironmentApprovalScopeAdmissionV1 } from '../actions/actio
 import { readActionFailureEnvelope } from '../actions/executor/actionFailureEnvelope.js';
 import { artifactSavedByFromActionContextV1 } from '../artifacts/artifactBinaryV1.js';
 import { readRecord } from '../inputs/inputRecords.js';
-import { isDatabaseActionIdV1 } from '../actions/actionIdsDatabaseV1.js';
+import { isDatabaseActionIdV1, type DatabaseActionIdV1 } from '../actions/actionIdsDatabaseV1.js';
 import { databaseActionOperationClass } from '../actions/databaseActionMetadata.js';
 import { isDelegatedActionRequesterV1 } from '../actions/delegatedRequesterV1.js';
 import { DatabaseTargetV1Schema } from '../databases/databaseTargetIdentityV1.js';
@@ -83,7 +83,7 @@ export function createDeploymentApprovalScopeResolverV1(
   readMetadata?: ApprovalMetadataRead,
 ): NonNullable<ActionExecutorDeps['resolveEnvironmentApprovalScope']> {
   return async ({ actionId, input, context }): Promise<ActionEnvironmentApprovalScopeAdmissionV1 | ActionExecuteFailure> => {
-    if (isDatabaseActionIdV1(actionId)) return resolveDatabaseTargetApprovalScope(read, readRecord(input).target, context);
+    if (isDatabaseActionIdV1(actionId)) return resolveDatabaseTargetApprovalScope(read, actionId, input, context);
     const target = readRecord(input);
     const serverId = actionId === 'deployments.prepare' ? context.serverId : target.serverId;
     if (typeof serverId !== 'string') return failure('invalid_parameters');
@@ -157,9 +157,9 @@ export function withMachineLocalDatabaseAgentLevelV1(
 }
 
 /** A database Action names its Environment inside its target; Machine-local databases have no Environment scope. */
-async function resolveDatabaseTargetApprovalScope(read: NonNullable<ActionExecutorDeps['deploymentAction']>, operand: unknown,
+async function resolveDatabaseTargetApprovalScope(read: NonNullable<ActionExecutorDeps['deploymentAction']>, actionId: DatabaseActionIdV1, input: unknown,
   context: ActionExecutorContext): Promise<ActionEnvironmentApprovalScopeAdmissionV1 | ActionExecuteFailure> {
-  const target = DatabaseTargetV1Schema.safeParse(operand);
+  const target = DatabaseTargetV1Schema.safeParse(readRecord(input).target);
   if (!target.success) return failure('invalid_parameters');
   if (target.data.kind !== 'deployment_service' && target.data.kind !== 'managed_deployment') return { scope: null };
   const { serverId, environmentId, projectSourceId } = target.data.environment;
@@ -167,7 +167,7 @@ async function resolveDatabaseTargetApprovalScope(read: NonNullable<ActionExecut
   if (!current.ok) return current;
   if (current.environment.projectSourceId !== projectSourceId) return failure('deployment_access_denied');
   const admitted = readDeploymentEnvironmentApprovalScopeV1(current.environment);
-  return 'ok' in admitted ? admitted
+  return 'ok' in admitted || databaseActionOperationClass(actionId, input) === 'read' ? admitted
     : { ...admitted, targetApproval: { databaseAgentLevel: current.environment.dataAgentAccess } };
 }
 

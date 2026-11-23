@@ -141,6 +141,32 @@ describe('database Action approval scope (P3 U3)', () => {
     expect(reads).toBe(0);
   });
 
+  it('routes delegated SQL reads independently of the Environment write-approval setting', async () => {
+    const actionId = DATABASE_STATEMENT_RUN_ACTION_ID_V1;
+    const context = { surface: 'cli', authority: 'account_automation' } as const;
+    const scope = { kind: 'environment', environmentId: 'staging' } as const;
+    const settings = ActionsSettingsV1Schema.parse({ v: 1 });
+    const resolve = createDeploymentApprovalScopeResolverV1(async () => ({ ok: true,
+      environment: { ...environment('staging'), dataEditorMode: 'managers', dataAgentAccess: 'readWriteAsk' }, targetLinks: [] }));
+    const requiresApproval = async (input: unknown, preferences = settings) => {
+      const admitted = await resolve({ actionId, input, context, phase: 'prepare' });
+      if ('ok' in admitted) throw new Error(admitted.errorCode);
+      return resolveActionApprovalRouting({ actionId: 'action.invoke', profileActionId: actionId,
+        spec: getActionSpec('action.invoke'), input, settings: preferences, context,
+        approvalScope: admitted.scope ?? undefined, targetApproval: admitted.targetApproval }).required;
+    };
+    const read = { operation: 'statement.run', mode: 'read', target: deploymentTarget,
+      statement: { sql: 'SELECT 1' } };
+    const write = { operation: 'statement.run', mode: 'write', target: deploymentTarget,
+      executionMode: 'transaction', statements: [{ sql: 'UPDATE widgets SET count = 1' }] };
+    const explicitAsk = setScopedActionApprovalPreference({ settings, actionId, scope, surface: 'cli', mode: 'required' });
+    expect({
+      read: await requiresApproval(read),
+      write: await requiresApproval(write),
+      readWithExplicitAsk: await requiresApproval(read, explicitAsk),
+    }).toEqual({ read: false, write: true, readWithExplicitAsk: true });
+  });
+
   it('refuses a deployment database target that names another Project', async () => {
     const resolve = createDeploymentApprovalScopeResolverV1(async () => ({ ok: true,
       environment: { ...environment('staging'), projectSourceId: 'other' }, targetLinks: [] }));
