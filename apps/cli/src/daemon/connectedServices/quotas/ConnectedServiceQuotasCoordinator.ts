@@ -1680,7 +1680,7 @@ export class ConnectedServiceQuotasCoordinator {
         accountMode: 'plain' | 'e2ee',
         expectedCredentialRevision: string,
         receipt: ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1,
-        signal?: AbortSignal,
+        signal: AbortSignal,
       ): Promise<ConnectedServiceQuotaRecoveryCreditConsumeResult> => {
         const providerRequestEndedBeforeRead = attempt.providerRequestEnded;
         const refreshed = await this.invokeQualifiedAccountQuota({
@@ -1689,7 +1689,7 @@ export class ConnectedServiceQuotasCoordinator {
           afterConfirmedReset: receipt.status === 'consumed' || receipt.status === 'already_consumed',
           signal,
         });
-        signal?.throwIfAborted();
+        signal.throwIfAborted();
         if (!refreshed?.result || !refreshed.basis.isCurrent()) return { ...unavailable('refresh_unavailable'), receipt };
         if (receipt.status === 'unknown_after_timeout' && providerRequestEndedBeforeRead) {
           inventorySettlement = this.settleRecoveryCreditFromInventory(receipt, refreshed.result.recoveryCredits, attempt.grantExpiresAtMs);
@@ -1702,7 +1702,7 @@ export class ConnectedServiceQuotasCoordinator {
         if (!await this.persistQualifiedConnectedAccountQuota({ accountMode, profile, snapshot, basis: refreshed.basis })) {
           return { ...unavailable('refresh_unavailable'), receipt };
         }
-        signal?.throwIfAborted();
+        signal.throwIfAborted();
         const groupIds = new Set<string>(input.groupId ? [input.groupId] : []);
         for (const target of this.runtimeRegistry.listQuotaTargets()) {
           for (const binding of extractActiveBindings(target)) {
@@ -1713,7 +1713,7 @@ export class ConnectedServiceQuotasCoordinator {
         if (runtime.listGroupQuotaTargets) {
           for (const groupId of groupIds) {
             const targets = await runtime.listGroupQuotaTargets({ service, groupId, accountIds: [profileId], signal });
-            signal?.throwIfAborted();
+            signal.throwIfAborted();
             const target = targets.find((candidate) => candidate.profile.ref.accountId === profileId
               && matchesQualifiedService(candidate.profile.ref.service, service)
               && candidate.profile.credentialRevision === refreshed.basis.credentialRevision);
@@ -1803,7 +1803,9 @@ export class ConnectedServiceQuotasCoordinator {
         try {
           // A lost acknowledgement gets one qualified read under the existing quota
           // acquisition budget, including after the consume's signal has expired.
-          const refreshed = await refreshAfterAttempt(attemptAccountMode, observed.basis.credentialRevision, receipt);
+          const refreshed = await refreshAfterAttempt(
+            attemptAccountMode, observed.basis.credentialRevision, receipt, new AbortController().signal,
+          );
           if (inventorySettlement?.ok === false) return inventorySettlement;
           return refreshed.receipt?.status === 'unknown_after_timeout' ? unknown : refreshed;
         } catch {

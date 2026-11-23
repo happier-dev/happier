@@ -3129,7 +3129,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       state: {}, members: [{ v: 1, connectedAccountId: profile.ref.accountId, priority: 0, enabled: true,
         state: {}, createdAt: now, updatedAt: now }], createdAt: now, updatedAt: now });
     // Production shares the admitted registry between group targeting and quota acquisition.
-    const groupTargetController = recoveryMode === 'deadline_active' ? createPluginReloadController({
+    const reconcileActivePool = recoveryMode === 'manual_reconcile_absent';
+    const groupTargetController = recoveryMode === 'deadline_active' || reconcileActivePool ? createPluginReloadController({
       happyHomeDir, resolveRuntimeRegistry: async () => runtimeRegistry,
     }) : null;
     const groupTargets = groupTargetController ? createDaemonConnectedAccountPurposeBindingRuntime({
@@ -3239,7 +3240,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
           fallbackProfileId: profile.ref.accountId, generation: 4,
         }]) } });
       if (recoveryMode === 'deadline_active' || recoveryMode === 'deadline_fresh'
-        || recoveryMode.startsWith('persistence_unchanged_')) registerRunningPoolSession(coordinator);
+        || recoveryMode.startsWith('persistence_unchanged_') || reconcileActivePool) registerRunningPoolSession(coordinator);
       if (recoveryMode === 'usage_notice_requester') {
         const { startDaemonConnectedServiceRuntime } = await import('../../startup/startDaemonRuntimeBootstrap');
         const { createRequesterSessionControlRuntimeFixture } = await import('../../testkit/requesterSessionControlRuntimeFixture');
