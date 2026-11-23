@@ -21,6 +21,7 @@ import {
   ScrollArea,
   Stack,
   Status,
+  SurfaceState,
   TargetedSurface,
   Text,
   useSessionStates,
@@ -45,7 +46,7 @@ import type {
 import { readTriageComparisonSource } from './readComparison.js';
 import type { PluginUiActionControlController, PluginUiTargetedContributionOperationV1 } from '@happier-dev/plugin-sdk/ui';
 import { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1 } from '../../actions/configuredActionRunProtocol.js';
-import { applyTriageActionLaunchModeV1, type TriageActionV1 } from '../../settings/actions.js';
+import { applyTriageActionLaunchModeV1, readTriageActionTitleKeyV1, type TriageActionV1 } from '../../settings/actions.js';
 import { createReviewCommentLinkedIssueIdV1 } from '@happier-dev/plugin-sdk/reviews';
 import { renderSessionInputContextPromptV1 } from '@happier-dev/plugin-sdk/sessions';
 import {
@@ -112,14 +113,14 @@ import { TriageFixPullRequests } from './fixPullRequests.js';
 import { useTriageDetailFixPullRequest } from './useTriageDetailFixPullRequest.js';
 import { planTriageDetailTabsV1 } from './tabs.js';
 import { projectPullRequestStatusFactsV1 } from '../../sessions/pullRequestGlance/glanceModel.js';
-import { TRIAGE_DETAIL_ACTIONS_PANEL_V1, describeTriageSourceFailureV1, formatTriageTimestampV1, isReviewTriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
-import { useReviewEntryWorkV1 } from '../../reviews/decisionPending.js';
+import { TRIAGE_DETAIL_ACTIONS_PANEL_V1, describeTriageSourceFailureV1, formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
 import { TriageEditTaskScope, type TriageEditTaskPlacementV1 } from './taskFields.js';
 import { TriageTaskStory } from './taskStory.js';
 import { TriageTaskOrigin } from './taskOrigin.js';
 import { readTriageTaskShareRefV1 } from './taskProperties.js';
 import { useHostTaskShareSheet } from '@happier-dev/plugin-ui/hostApi';
 import { TriageSourceMark } from '../list/sourceMark.js';
+import type { TriageListWindowErrorV1 } from '../../projection/listWindowStore.js';
 
 /**
  * The mounted detail region: the aggregate's common header, and beneath it the
@@ -297,9 +298,11 @@ function renderEntrySessionNotice(
   const label = text(notice.labelKey, notice.label, notice.labelParams);
   if (notice.failureCode !== undefined) return <ActionFailureDetails code={notice.failureCode} message={label} />;
   // A failure's codes sit behind the line's own quiet Details, so the sentence leads and nothing below outweighs it (N13).
-  return failure === undefined || failure.codes.length === 0 ? <Status tone={notice.tone} label={label} />
-    : <ErrorState layout="line" title={label} details={[...new Set(failure.codes),
-      ...(failure.requestId === undefined ? [] : [`${text('plugins.triage.sourceFailure.requestId', 'Request ID')}: ${failure.requestId}`])].join('\n')} />;
+  const details = failure === undefined || failure.codes.length === 0 ? undefined : [...new Set(failure.codes),
+    ...(failure.requestId === undefined ? [] : [`${text('plugins.triage.sourceFailure.requestId', 'Request ID')}: ${failure.requestId}`])].join('\n');
+  if (notice.tone === 'attention') return <SurfaceState kind="warning" size="line" title={label} details={details} />;
+  return details === undefined ? <Status tone={notice.tone} label={label} />
+    : <ErrorState layout="line" title={label} details={details} />;
 }
 
 /**
@@ -369,10 +372,6 @@ function TriageEntryScopedActionRegion(props: Readonly<{
   const shareSheet = useHostTaskShareSheet();
   const viewerScope = useSurfaceContext().accountScope;
   const shareRef = props.target.kind === 'entry' ? readTriageTaskShareRefV1(props.target.entryRef, viewerScope) : null;
-  // A Review's findings are decided in its summary before any agent fixes them, and a Review with no findings offers
-  // no fix at all (the Review owner's facts).
-  const reviewWork = useReviewEntryWorkV1(props.target.kind === 'entry' && isReviewTriageEntryRefV1(props.target.entryRef)
-    ? props.target.entryRef.entryId : undefined);
   const [orchestrationPrompt, setOrchestrationPrompt] = React.useState<string | null>(null);
   const promptFocus = usePluginUiFocusTarget();
   const editingOrchestration = orchestrationPrompt !== null;
@@ -492,7 +491,13 @@ function TriageEntryScopedActionRegion(props: Readonly<{
   const prepareSend: NonNullable<TriageEntryActionControlsPropsV1['sendControl']>['prepare'] = async (request, options, session) => {
     const resolved = await resolveStartRequest(request);
     if (resolved?.kind !== 'ready') return resolved;
-    return controller.prepareAction({ ...resolved.request, destinationChoice: 'existingSession' }, options, session);
+    const action = resolved.request.action;
+    const titleKey = readTriageActionTitleKeyV1(action);
+    return controller.prepareAction({ ...resolved.request, destinationChoice: 'existingSession',
+      sendPresentation: {
+        actionLabel: titleKey === null ? action.label : text(titleKey, action.label),
+        untitledSession: text('plugins.triage.surface.actions.untitledSession', 'Untitled Session'),
+      } }, options, session);
   };
   const walk = React.useCallback(() => {
     if (reading.current || props.target.kind !== 'entry') return;
@@ -551,8 +556,6 @@ function TriageEntryScopedActionRegion(props: Readonly<{
         actions={props.actions.actions}
         workflowSubject={props.workflowSubject}
         viewerIsAuthor={props.viewerIsAuthor}
-        {...(reviewWork === 'decide' || reviewWork === 'nothingToFix' ? { decisionFirst: true } : {})}
-        {...(reviewWork === 'nothingToFix' ? { nothingToFix: true } : {})}
         reviewPreparation={props.reviewPreparation}
         {...(props.workflowSubject !== 'errorIssue' || props.target.kind !== 'entry' ? {} : {
           taskDraft: { title: props.presentation.label, originError: { entryRef: props.target.entryRef,
@@ -666,14 +669,15 @@ function TriageDetailKindMark(props: Readonly<{ header: TriageDetailHeaderV1 }>)
 export function TriageDetailReadFailure(props: Readonly<{
   failure?: PluginError;
   sourceFailure?: TriageSourceFailureV1;
+  rosterFailure?: TriageListWindowErrorV1;
   lastReadAtMs?: number | null;
   retry: () => unknown;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const { locale } = useSurfaceContext();
-  const { failure, sourceFailure, lastReadAtMs } = props;
-  const refusal = presentInternalTaskReadFailure(sourceFailure?.code ?? failure?.code, text);
-  const canRetry = failure?.data.retryable !== false;
+  const { failure, sourceFailure, rosterFailure, lastReadAtMs } = props;
+  const refusal = presentInternalTaskReadFailure(sourceFailure?.code ?? failure?.code ?? rosterFailure?.code, text);
+  const canRetry = (failure?.data.retryable ?? rosterFailure?.retryable) !== false;
   const recovery = canRetry
     ? text('plugins.triage.surface.detail.accountError.description', "This entry's details are unavailable right now. Try again when the connection is available.")
     : text('plugins.triage.surface.detail.accountError.permanent', "The source refused this entry's details. Details below say why.");
@@ -691,9 +695,11 @@ export function TriageDetailReadFailure(props: Readonly<{
     />
     {sourceFailure !== undefined ? <ActionFailureDetails code={sourceFailure.code} requestId={sourceFailure.requestId}
       detail={sourceFailure.detail} showReason={false} />
-    : failure === undefined ? null : <PullRequestFailureDetails
+    : failure !== undefined ? <PullRequestFailureDetails
       codes={[failure.code, ...(failure.diagnostics ?? []).map(diagnostic => diagnostic.code)]}
-      requestId={readPluginErrorRequestIdV1(failure)} detail={failure.data.message} />}
+      requestId={readPluginErrorRequestIdV1(failure)} detail={failure.data.message} />
+    : rosterFailure === undefined ? null : <PullRequestFailureDetails
+      codes={[rosterFailure.code, ...(rosterFailure.diagnostics ?? [])]} requestId={rosterFailure.requestId} />}
   </Stack>;
 }
 

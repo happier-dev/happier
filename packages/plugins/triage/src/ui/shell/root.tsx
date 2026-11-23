@@ -2464,6 +2464,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       leading: <Icon name={readTriageEntryGlyphV1(null, kind?.workflowSubject ?? null, kind?.glyph ?? null)} />,
     };
   };
+  const routedRosterFailure = routedEntry !== null && surface.selection === null && !configuredSourcesReady
+    && window.snapshot.pending === 'idle' ? window.snapshot.error : undefined;
   const detailContent = (headerHosted: boolean, pushed: boolean): React.ReactNode => openEntry === null ? null : (
     detailRow !== null ? (
       <TriagePublishedDetail
@@ -2502,7 +2504,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         }}
         onClose={dismissDetail}
       />
-    ) : headerHosted && absentRoute === null && !readFailed && routedIdentity?.kind !== undefined ? (
+    ) : headerHosted && absentRoute === null && !readFailed && routedRosterFailure === undefined && routedIdentity?.kind !== undefined ? (
       // A deep link the list has not listed yet keeps the listed detail's geometry from its route (F10).
       <TriageDetailRouteReading
         workflowSubject={routedIdentity.kind.workflowSubject ?? null}
@@ -2526,6 +2528,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           {absentRoute.failure === undefined ? null : <ActionFailureDetails code={absentRoute.failure.code}
             detail={absentRoute.failure.detail} requestId={absentRoute.failure.requestId} showReason={false} />}
         </> : readFailed ? <TriageDetailReadFailure failure={selectedReadFailure} retry={completePostMutation} />
+          : routedRosterFailure !== undefined ? <TriageDetailReadFailure rosterFailure={routedRosterFailure} retry={refreshPage} />
           : <LoadingState title={readTriageDetailReadingLineV1(text, routedIdentity?.kind?.displayName ?? null, routedIdentity?.sourceLabel ?? null)} />}
       </Stack>
     )
@@ -2627,8 +2630,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const machineUnreachable = coldMachineOutage ? readTriageMachineUnreachableNoticeV1(text) : null;
   const listFailureStatus = listWindow?.failure == null || coldMachineOutage || (hostSpeaksForOutage && rowCount > 0) ? null : (
     <TriageListFailureStatus failure={listWindow.failure} manageSources={sourceManagementStatusAction}
-      retry={<TriageFailureLineAction label={retryLabel}
-        busy={refreshState.kind === 'running'} disabled={refreshState.kind === 'blocked'} onPress={refreshPage} />} />
+      retry={refreshState.kind === 'available' ? <TriageFailureLineAction label={retryLabel} onPress={refreshPage} /> : null} />
   );
   const failureLine = machineUnreachable === null ? listFailureStatus
     : <Status tone="warning" label={machineUnreachable.title} value={machineUnreachable.description} />;

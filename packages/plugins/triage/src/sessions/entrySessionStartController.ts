@@ -117,6 +117,8 @@ type TriageSingleStartRecoveryV1 = Extract<TriageConfiguredStartRecoveryV1['stat
  */
 
 export type TriageEntrySessionStartRequestV1 = Readonly<{
+    /** Localized confirmation copy captured by the mounted entry. */
+    sendPresentation?: Readonly<{ actionLabel: string; untitledSession: string }>;
     /** Explicit host-shaped destinations use the incumbent draft projection. */
     settlement?: unknown;
     /**
@@ -275,10 +277,9 @@ export type TriageEntrySessionStartPhaseV1 =
     | Readonly<{ kind: 'idle' }>
     /** The action's profile, prompt and placement are being resolved. */
     | Readonly<{ kind: 'resolving' }>
-    /** The host's New Session surface is open and the reader is choosing. */
+    /** A host chooser or confirmation owns the interaction. */
     | Readonly<{ kind: 'choosing' }>
-    /** `session`: the input goes to this existing Session, so the reader is told it is sending there (N13). */
-    | Readonly<{ kind: 'starting'; session?: ActionSessionAddressV1 }>
+    | Readonly<{ kind: 'starting' }>
     /** The configured Action retains its native receipt, refusal and recovery unchanged. */
     | Readonly<{ kind: 'handoffSettled'; result: TriageRunConfiguredActionResultV1 }>
     /** The orchestrator answered. Every arm — including its refusals — is here. */
@@ -1155,7 +1156,7 @@ export function createTriageEntrySessionStartController(
         inFlight.current = true;
         authoringResult = undefined;
         setReview(null);
-        setPhase(RESOLVING);
+        setPhase(selectedSession !== undefined || request.destinationChoice === 'existingSession' ? CHOOSING : RESOLVING);
         let prepared = false;
         const cancel = () => {
             inFlight.current = false;
@@ -1167,7 +1168,6 @@ export function createTriageEntrySessionStartController(
         try {
             let session = selectedSession;
             if (session === undefined && request.destinationChoice === 'existingSession') {
-                setPhase(CHOOSING);
                 const choice = await selectTriageSendRecipientV1(host, {
                     action: request.action, ...(request.repository === undefined ? {} : { repository: request.repository }),
                 }, options);
@@ -1200,18 +1200,23 @@ export function createTriageEntrySessionStartController(
                 signal: options.signal, includeActivity: false,
             }).catch(() => null);
             if (options.signal.aborted || retired.current) { cancel(); return null; }
-            const stoppedByPerson = session !== undefined && recipient?.hasExplicitStopHold === true
-                && recipient.sessionId === session.sessionId && recipient.serverId === session.serverId;
+            const exactRecipient = session !== undefined && recipient?.sessionId === session.sessionId
+                && recipient.serverId === session.serverId ? recipient : undefined;
             const resumeStart = sameRequest ? previous : undefined;
             if (!sameRequest) configuredResult = null;
             preparedAction = TriageRunConfiguredActionInputV1Schema.parse({ v: 1, handoff,
                 ...(singleIntent === undefined ? {} : { singleIntent }), ...(resumeStart === undefined ? {} : { resumeStart }) });
             preparedComparison = request.comparisonSource;
             prepared = true;
-            setPhase(session === undefined ? STARTING : Object.freeze({ kind: 'starting', session }));
-            return { input: projectNativeJsonValueForTransport(stoppedByPerson
-                ? { ...preparedAction, recipientStopNotice: TRIAGE_RECIPIENT_STOP_NOTICE }
-                : preparedAction) };
+            if (session === undefined) setPhase(STARTING);
+            return { input: projectNativeJsonValueForTransport({
+                ...preparedAction,
+                ...(session === undefined ? {} : { sendPresentation: {
+                    actionLabel: request.sendPresentation?.actionLabel ?? request.action.label,
+                    sessionTitle: exactRecipient?.title?.trim() || (request.sendPresentation?.untitledSession ?? 'Untitled Session'),
+                } }),
+                ...(exactRecipient?.hasExplicitStopHold === true ? { recipientStopNotice: TRIAGE_RECIPIENT_STOP_NOTICE } : {}),
+            }) };
         } catch (error) {
             inFlight.current = false;
             if (!retired.current) setPhase(unavailable('dispatch', projectTriageNewSessionFailureV1(error)));

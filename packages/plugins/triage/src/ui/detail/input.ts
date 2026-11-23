@@ -48,7 +48,7 @@ export type TriageDetailSurfaceInputBuildInputV1 = Readonly<{
   linkedSessionsHasMore?: boolean;
   /** The entry's latest admitted PR Review and round, recorded by Triage; absent when none. */
   admittedReview?: TriageDetailSurfaceInputV1['admittedReview'];
-  /** The entry's latest skipped Review as recorded; carried only while it judged the observed head. */
+  /** The entry's latest skipped Review as recorded for the observed comparison. */
   reviewSkip?: TriageDetailSurfaceInputV1['reviewSkip'];
   /** Transient source-owned facts from this exact opening read. */
   detailData?: TriageDetailSurfaceInputV1['detailData'];
@@ -73,15 +73,18 @@ export function buildTriageDetailSurfaceInputV1(
     // Reject malformed trusted values before projecting presentation, so fitting
     // cannot hide a bad identity, unknown authority field or invalid source data.
     const sessions = input.linkedSessions.map((session) => TriageLinkedSessionProjectionV1Schema.parse(session));
+    const { reviewRevision, branches } = input.observation.snapshot;
+    const skip = input.reviewSkip;
+    const currentSkip = skip !== undefined && reviewRevision !== undefined
+      && skip.headSha === reviewRevision.headSha && skip.rules.baseRevision === reviewRevision.baseSha
+      && (skip.occurrence.baseRef === undefined || branches === undefined || skip.occurrence.baseRef === branches.base);
     const parsed = TriageDetailSurfaceInputV1Schema.parse({
       v: 1,
       instance: input.instance,
       observation: input.observation,
       ...(input.detailData === undefined ? {} : { detailData: input.detailData }),
       ...(input.admittedReview === undefined ? {} : { admittedReview: input.admittedReview }),
-      // A push after the skip is a head no Prepare judged yet: its skip no longer describes this pull request.
-      ...(input.reviewSkip === undefined || input.reviewSkip.headSha !== input.observation.snapshot.reviewRevision?.headSha
-        ? {} : { reviewSkip: input.reviewSkip }),
+      ...(currentSkip ? { reviewSkip: skip } : {}),
       linkedSessions: sessions.slice(0, MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1),
       linkedSessionsHasMore: input.linkedSessionsHasMore || sessions.length > MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
       ...(input.panel === undefined ? {} : { panel: input.panel }),

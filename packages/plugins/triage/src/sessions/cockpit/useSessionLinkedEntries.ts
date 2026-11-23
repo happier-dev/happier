@@ -17,6 +17,7 @@ export type TriageSessionLinkedEntriesV1 = Readonly<{
     /** Current admitted coverage, independent of whether any links exist. */
     sourceHealth: readonly TriageSourceSessionLinksLaneV1[] | undefined;
     refresh: () => Promise<void>;
+    refreshRevision: number;
     loadMore: () => Promise<void>;
 }>;
 
@@ -43,7 +44,7 @@ export function useTriageSessionLinkedEntries(sessionId: string, resolveEntries 
     }
     const window = useTriageListWindow();
     const { targetedContributions } = useSurfaceContext();
-    const { value: resource, refresh } = useLivePluginResourceProjection(
+    const { value: resource, refresh: refreshRelation } = useLivePluginResourceProjection(
         TRIAGE_SESSION_LINKS_RESOURCE_LOCAL_ID_V1, TRIAGE_SESSION_LINKS_RESOURCE_PROJECTION_V1, selectRelationSnapshot,
     );
     const admitted = React.useMemo(() => {
@@ -60,9 +61,16 @@ export function useTriageSessionLinkedEntries(sessionId: string, resolveEntries 
     }, [links, readOwner]);
     // These leases belong to rendered links. Keep them through a detail open
     // and drop them when the link, pane, or host scope leaves.
-    const openingReads = React.useMemo(() => new Map<string, {
-        controller: AbortController; row: TriageListRowV1 | null;
-    }>(), [host, owner, sessionId]);
+    type OpeningRead = { controller: AbortController; row?: TriageListRowV1 | null };
+    const openingReads = React.useMemo(() => new Map<string, OpeningRead>(), [host, owner, sessionId]);
+    const [refreshRevision, refreshRequested] = React.useReducer(revision => revision + 1, 0);
+    const refresh = React.useCallback(() => {
+        for (const [key, read] of openingReads) {
+            if (read.row === null) openingReads.delete(key);
+        }
+        refreshRequested();
+        return refreshRelation();
+    }, [openingReads, refreshRelation]);
     const [exactRevision, exactChanged] = React.useReducer(revision => revision + 1, 0);
     React.useEffect(() => () => {
         for (const read of openingReads.values()) read.controller.abort();
@@ -78,7 +86,7 @@ export function useTriageSessionLinkedEntries(sessionId: string, resolveEntries 
                 needed.add(key);
                 if (openingReads.has(key)) continue;
                 const controller = new AbortController();
-                const read: { controller: AbortController; row: TriageListRowV1 | null } = { controller, row: null };
+                const read: OpeningRead = { controller };
                 openingReads.set(key, read);
                 const kind = resolveTriageSourceDescriptorV1(targetedContributions, entryRef.source)
                     ?.kinds.find(candidate => candidate.id === entryRef.kindId);
@@ -87,9 +95,9 @@ export function useTriageSessionLinkedEntries(sessionId: string, resolveEntries 
                     sharedScope: owner, linkedRowLifetime: controller.signal,
                     includeTaskFieldChoices: kind?.taskCapabilities?.fieldChoices === true,
                 }).then(row => {
-                    if (controller.signal.aborted || row === null) return;
+                    if (controller.signal.aborted) return;
                     read.row = row;
-                    exactChanged();
+                    if (row !== null) exactChanged();
                 });
             }
         }
@@ -99,7 +107,7 @@ export function useTriageSessionLinkedEntries(sessionId: string, resolveEntries 
             openingReads.delete(key);
         }
     });
-    React.useEffect(() => { readMissingEntries(); }, [resolveEntries, active, openingReads, links, readOwner, rowRevision]);
+    React.useEffect(() => { readMissingEntries(); }, [resolveEntries, active, openingReads, links, readOwner, rowRevision, refreshRevision]);
     const view = React.useMemo(() => {
         // The Session relation names the entries. The list lens only names which ones it is displaying.
         const entries = links?.flatMap(link => {
@@ -127,5 +135,5 @@ export function useTriageSessionLinkedEntries(sessionId: string, resolveEntries 
 
     // Every selected corpus page is already included by the relation owner.
     const sourceHealth = resource.error === undefined && resource.pending === 'idle' ? admitted?.lanes : undefined;
-    return React.useMemo(() => ({ view, sourceHealth, refresh, loadMore: noMoreLinks }), [view, sourceHealth, refresh]);
+    return React.useMemo(() => ({ view, sourceHealth, refresh, refreshRevision, loadMore: noMoreLinks }), [view, sourceHealth, refresh, refreshRevision]);
 }

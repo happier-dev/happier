@@ -1,12 +1,13 @@
 import * as React from 'react';
-import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
+import { readPluginActionFailureAuthorPayload } from '@happier-dev/plugin-sdk/actions';
 import { presentActionFailure, type PluginUiActionFailurePresentationV1 } from '@happier-dev/plugin-sdk/ui';
-import { Stack, Text, TechnicalDetailsDisclosure, usePluginHostApi, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { ErrorState, Stack, Text, TechnicalDetailsDisclosure, usePluginHostApi, usePluginTranslation } from '@happier-dev/plugin-ui';
 import type { ProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
 
 /** One presentation and technical-reference owner for Triage read and write failures. */
-export function ActionFailureDetails({ code, message, details, requestId, detail, phase, effectAttempted, showReason = true, title }: Readonly<{
+export function ActionFailureDetails({ code, message, details, requestId, detail, phase, effectAttempted, showReason = true, title, inline }: Readonly<{
   code?: string; message?: string; details?: ProtocolJsonValue; requestId?: string; detail?: string; phase?: string; effectAttempted?: boolean; showReason?: boolean; title?: string;
+  inline?: Readonly<{ fallback: string; diagnostics?: readonly string[]; action?: React.ReactNode }>;
 }>) {
   const host = usePluginHostApi();
   const text = usePluginTranslation();
@@ -40,6 +41,11 @@ export function ActionFailureDetails({ code, message, details, requestId, detail
   ];
   for (const line of presentation?.technicalDetails ?? []) {
     if (!lines.some(existing => existing.key === line.key)) lines.push(line);
+  }
+  if (inline !== undefined) {
+    return <ErrorState layout="line" kind="unavailable" title={presentation?.reason ?? inline.fallback}
+      details={[...new Set([...lines.map(line => line.value), ...(inline.diagnostics ?? [])])].join('\n') || undefined}
+      action={inline.action} />;
   }
   return <Stack gap="small">
     {!showReason || (message === undefined && presentation === null) ? null : <Text>{presentation?.reason ?? message}</Text>}

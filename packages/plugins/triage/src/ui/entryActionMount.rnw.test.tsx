@@ -899,6 +899,24 @@ describe('the entry action controls on the mounted detail header', () => {
         await expect(shell.queryByRole('button', { name: 'Fix' })).resolves.toBeUndefined();
         await expect(shell.queryByText(PREPARATION_UNSUPPORTED_COPY)).resolves.toBeUndefined();
     }, 60_000);
+    it.each([true, false])('enables the Review options split only after the exact detail is ready (available: %s)', async available => {
+        const harness = createHarness({ formalReviewReady: true, detailUnavailable: !available });
+        harness.setActions([{
+            actionId: 'review-workspace-options',
+            label: 'Review',
+            enabled: true,
+            appliesTo: ['pullRequest'],
+            profileId: 'profile-1',
+            workspaceMode: 'pull_request',
+            target: { kind: 'agent', promptInvocationId: 'review-prompt', delivery: 'send' },
+        }]);
+        resolveDirectStart(harness);
+        const shell = await mountShell(harness);
+        await openTheRow(shell);
+        const options = await shell.getByRole('button', { name: 'Review options' });
+        expect(options.state?.disabled === true).toBe(!available);
+    }, 60_000);
+
     it('gives a newly selected entry its own action controller while the prior entry is still starting', async () => {
         const harness = createHarness({ includeSecondEntry: true });
         harness.setActions([{
@@ -1571,7 +1589,7 @@ describe('the entry action controls on the mounted detail header', () => {
                 failureCause: { phase: 'session.message.send', errorClass: 'UnknownThrownValue',
                     errorCode: 'held_by_person', httpStatus: null },
             },
-            notice: 'Waiting in Checkout fix until it can take your message.',
+            notice: 'Checkout fix is stopped by a person.',
             details: /held_by_person/u,
         },
         {

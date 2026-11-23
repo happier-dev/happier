@@ -1045,11 +1045,11 @@
   "plugins.triage.tasks.where.more": "Weitere Orte anzeigen",
   "plugins.triage.tasks.where.recent": "Zuletzt",
   "plugins.triage.tasks.where.lastUsed": "Zuletzt verwendet",
-  "plugins.triage.surface.session.sendingTo": "Wird an {session} gesendet…",
+  "plugins.triage.surface.session.stoppedByPerson": "{session} wurde von einer Person gestoppt.",
   "plugins.triage.surface.session.sentTo": "An {session} gesendet.",
   "plugins.triage.surface.session.heldIn": "Wartet in {session}, bis sie deine Nachricht annehmen kann.",
   "plugins.triage.surface.session.resumeFailedIn": "Zustellung an {session} fehlgeschlagen: Sie konnte nicht fortgesetzt werden. Sende es erneut, sobald sie läuft.",
   "plugins.triage.surface.session.turnFailedIn": "Der Zug in {session} ist fehlgeschlagen. Prüfe sie, bevor du erneut sendest.",
   "plugins.triage.surface.session.selectedSessionName": "die ausgewählte Sitzung",
-  "plugins.triage.surface.failure.pacedUntil": "{names} hat uns gebeten, bis {time} langsamer zu machen."
+  "plugins.triage.surface.failure.pacedUntil": "{names} hat uns gebeten zu warten · nächster Abruf um {time}"
 }

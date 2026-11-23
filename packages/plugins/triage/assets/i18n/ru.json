@@ -1045,11 +1045,11 @@
   "plugins.triage.tasks.where.more": "Показать больше мест",
   "plugins.triage.tasks.where.recent": "Недавние",
   "plugins.triage.tasks.where.lastUsed": "Последнее",
-  "plugins.triage.surface.session.sendingTo": "Отправка в «{session}»…",
+  "plugins.triage.surface.session.stoppedByPerson": "Пользователь остановил сессию {session}.",
   "plugins.triage.surface.session.sentTo": "Отправлено в «{session}».",
   "plugins.triage.surface.session.heldIn": "Ожидает в «{session}», пока сеанс не сможет принять сообщение.",
   "plugins.triage.surface.session.resumeFailedIn": "Не удалось доставить в «{session}»: сеанс не возобновился. Отправьте снова, когда он будет запущен.",
   "plugins.triage.surface.session.turnFailedIn": "Ход в «{session}» завершился с ошибкой. Проверьте сеанс перед повторной отправкой.",
   "plugins.triage.surface.session.selectedSessionName": "выбранный сеанс",
-  "plugins.triage.surface.failure.pacedUntil": "{names} попросил снизить частоту запросов до {time}."
+  "plugins.triage.surface.failure.pacedUntil": "{names} попросил подождать · следующее чтение в {time}"
 }

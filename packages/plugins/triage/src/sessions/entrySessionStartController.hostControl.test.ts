@@ -29,6 +29,7 @@ describe('Session start host-control preparation', () => {
                 expect(parsed.handoff.sessionChoice).toEqual({
                     kind: 'existing', session: { selector: 'sessions', addresses: [session] },
                 });
+                expect(describeTriageEntrySessionPhaseV1(owner.getSnapshot().phase)).toBeNull();
                 if (outcome === 'explicit Stop') {
                     expect(parsed).toHaveProperty('recipientStopNotice', 'Stopped by a person');
                 } else {
@@ -36,6 +37,21 @@ describe('Session start host-control preparation', () => {
                 }
             } finally { owner.dispose(); }
         });
+    it('presents a person-stopped Send receipt as attention with the original cause', () => {
+        const session = { sessionId: 'session-a', serverId: 'home-a' };
+        const owner = createTriageEntrySessionStartController({} as TriageStartHostV1);
+        try {
+            owner.getSnapshot().settleAction({ status: 'success', result: { v: 1, handoff: {
+                kind: 'sendResult', session, result: { status: 'failed', code: 'resume_failed',
+                    localId: 'native-receipt', admissionResult: { status: 'accepted', localId: 'native-receipt' },
+                    errorDetail: { kind: 'launch_error', code: 'held_by_person', message: 'Explicit Stop hold' } },
+            } } });
+            expect(describeTriageEntrySessionPhaseV1(owner.getSnapshot().phase, { sessionName: 'Release checks' })).toMatchObject({
+                tone: 'attention', label: 'Release checks is stopped by a person.',
+                failure: { codes: expect.arrayContaining(['held_by_person']) },
+            });
+        } finally { owner.dispose(); }
+    });
     it('replaces physical outcomes when automation starts a different run', async () => {
         const owner = createTriageEntrySessionStartController({} as TriageStartHostV1);
         try {

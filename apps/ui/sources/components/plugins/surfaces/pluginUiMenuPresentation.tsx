@@ -41,7 +41,7 @@ export function PluginUiMenuPresentation({ input, controls }: Readonly<{ input: 
                 : item.icon ? { icon: <Icon name={item.icon} size="small" tone={item.destructive ? 'danger' : 'secondary'} /> } : {}),
         ...(item.kind === 'checkbox' ? { checked: item.checked, multiSelect: true }
             : item.kind === 'radio' ? { checked: radioGroups.get(item.radioGroupId)?.selectedId === item.id } : {}),
-        ...(menu.keepOpen || item.kind === 'checkbox' ? { keepMenuOpen: true } : {}),
+        ...(item.kind === 'checkbox' || (menu.keepOpen && item.action === undefined) ? { keepMenuOpen: true } : {}),
         ...(item.action?.accessibilityLabel === undefined ? {} : { accessibilityLabel: item.action.accessibilityLabel }),
         ...(item.meta === undefined ? {} : {
             accessibilityLabel: item.action?.accessibilityLabel ?? [item.label, item.subtitle, item.meta].filter(Boolean).join(' · '),

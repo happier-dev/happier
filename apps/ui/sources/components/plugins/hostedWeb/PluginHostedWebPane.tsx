@@ -53,6 +53,7 @@ import {
     createPluginSurfaceContext,
     getPluginSurfaceTargetAuthorityKey,
     usePluginSurfaceEnvironment,
+    usePluginSurfacePreferredAgent,
 } from '@/components/plugins/surfaces/pluginSurfaceContext';
 
 import { HostedFrameHost } from '@/components/ui/surfaces/framed/HostedFrameHost';
@@ -608,6 +609,7 @@ export function PluginHostedWebPane(props: Readonly<{
         }
     }, [props.artifactCandidatePreparing, rendererMount.isCurrent]);
     const surfaceEnvironment = usePluginSurfaceEnvironment(platform);
+    const preferredAgent = usePluginSurfacePreferredAgent(props.accountLifetime);
     const policyContext = React.useMemo(() => createPluginUiPolicyEvaluationContext(
         props.policyContext,
         {
@@ -818,6 +820,7 @@ export function PluginHostedWebPane(props: Readonly<{
                 target: binding.target,
                 accountEncryptionMode: binding.accountEncryptionMode,
                 accountLifetime: props.accountLifetime,
+                preferredAgent,
                 environment: surfaceEnvironment,
                 translations: binding.translations,
                 targetedContributions: binding.targetedContributions,
@@ -836,6 +839,7 @@ export function PluginHostedWebPane(props: Readonly<{
         isSurfaceCurrent,
         surfaceEnvironment,
         props.accountLifetime,
+        preferredAgent,
     ]);
     // Collection UI-query messages are meaningful only once the canonical
     // hosted bootstrap exists. A descriptor cannot expose Data by declaring a

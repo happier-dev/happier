@@ -13,7 +13,7 @@ const digest = `sha256:${'2'.repeat(64)}`;
 
 /** The Review owner's own needs-you facts, read through the admitted host Resource (the genuine boundary). */
 async function waitsFor(needsYou: Readonly<{ requestedVerdict: boolean; pendingDecisions: boolean }>, total = 2): Promise<string> {
-  const labels = { decide: 'decision first', fix: 'fix first', nothingToFix: 'nothing to fix' } as const;
+  const labels = { unresolved: 'reading findings', decide: 'decision first', fix: 'fix first', nothingToFix: 'nothing to fix' } as const;
   const surface = defineUiSurface(() => {
     const work = useReviewEntryWorkV1('review/one');
     return <Text value={work === null ? 'not a review' : labels[work]} />;

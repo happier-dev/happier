@@ -443,6 +443,51 @@ describe('mounted plugin surface feedback and confirmation (§3.4, UI-T21)', () 
         expect(confirmation?.confirmLabel).toBe('Publish preview');
     });
 
+    it('shows the configured Action label and exact Session title in the host Send confirmation', async () => {
+        const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/triage/src/manifest');
+        const { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1 } = await import('../../../../../../packages/plugins/triage/src/actions/configuredActionRunProtocol');
+        const { TRIAGE_DEFAULT_ACTIONS_V1 } = await import('../../../../../../packages/plugins/triage/src/settings/actions');
+        const { testkitEntryRef } = await import('../../../../../../packages/plugins/triage/src/corpus/testkit/observations.test-support');
+        const { createTriageEntrySessionStartController } = await import('../../../../../../packages/plugins/triage/src/sessions/entrySessionStartController');
+        const declaration = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1);
+        if (!declaration?.confirmation) throw new Error('Expected the Triage Send confirmation');
+        const action = PluginProjectedActionV2Schema.parse({
+            id: declaration.id, title: declaration.title, dangerLevel: declaration.dangerLevel, surfaces: declaration.surfaces,
+            execution: declaration.execution, confirmation: declaration.confirmation,
+            pluginId: PLUGIN_MANIFEST.id, occurrenceId: 'triage-account', scopes: ['global'], available: true,
+        });
+        const session = { serverId: 'home-a', sessionId: 'raw-session-id' };
+        const owner = createTriageEntrySessionStartController({ readSession: async () => ({
+            ...session, title: 'Release checks', hasExplicitStopHold: true,
+            lifecycle: 'inactive', runtime: 'unknown', operational: 'idle',
+            workStatus: { state: 'idle', bucket: 'idle', tone: 'muted' },
+        }) } as Parameters<typeof createTriageEntrySessionStartController>[0]);
+        try {
+            const entryRef = testkitEntryRef();
+            const prepared = await owner.getSnapshot().prepareAction({
+                action: { ...TRIAGE_DEFAULT_ACTIONS_V1.find(action => action.actionId === 'fix')!, label: 'Repair the regression' },
+                destinationChoice: 'existingSession', entryRef, display: { scopeLabel: 'example/repository', locator: { v: 1 } },
+                sourceInstance: { source: entryRef.source, sourceInstanceId: '11111111-1111-4111-8111-111111111111' },
+                presentation: { label: 'Example issue' },
+            }, { signal: new AbortController().signal }, session);
+            if (!prepared?.input) throw new Error('Expected an exact review input');
+            const requestCurrentIntent = createPluginActionCurrentIntentHandler({
+                requester: { pluginId: PLUGIN_MANIFEST.id, contributionId: action.id, occurrenceId: action.occurrenceId, invocationId: 'surface-1' },
+                isCurrent: () => true,
+            });
+            const pending = requestCurrentIntent({ action, input: prepared.input, fingerprint: 'send-1', surface: 'ui', invocationSurface: 'ui' });
+            await openedDialog();
+            const { props, chrome } = modalHarness.readConfig();
+            expect(chrome?.title).toBe('Send to this Session?');
+            expect(props.description).toContain('Action: Repair the regression');
+            expect(props.description).toContain('Session: Release checks');
+            expect(props.description).toContain('Session status: Stopped by a person');
+            expect(props.description).not.toContain(session.sessionId);
+            props.onConfirm();
+            await expect(pending).resolves.toMatchObject({ status: 'approved' });
+        } finally { owner.dispose(); }
+    });
+
     it('retains the unavailable presentation settlement and its interaction request', async () => {
         const requestCurrentIntent = createPluginActionCurrentIntentHandler({
             requester: { pluginId: 'acme.preview', contributionId: 'publish', occurrenceId: 'occurrence-1', invocationId: 'surface-1' },

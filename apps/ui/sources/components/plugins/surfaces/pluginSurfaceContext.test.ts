@@ -12,6 +12,11 @@ import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePr
 import { readLastUsedBackendSelection, rememberLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
 import { readProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { WorkspaceRefV1Schema } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { applyAcpCatalogSnapshot } from '@/sync/store/settings/acpCatalogSnapshot';
+import { saveAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 const targetedContributions: PluginUiTargetedContributionsV1 = {
     target: {
@@ -61,6 +66,40 @@ describe('createPluginSurfaceContext', () => {
         expect(published.preferredAgent?.targetKey).toBe(buildBackendTargetKeyV2(preferred));
         expect(published.preferredAgent?.label).toMatch(/codex/iu);
     });
+    it('names an enabled Agent when an unfocused Account remembers a disabled one', () => {
+        const fixture = createPluginSurfaceContextFixture();
+        const scope = { serverId: 'home-disabled-agent', accountId: 'viewer-disabled-agent' };
+        const codex = resolvePreferredBackendTarget({ lastUsedAgent: 'codex' });
+        rememberLastUsedBackendSelection(scope, { lastUsedBackendTarget: codex, lastUsedAgent: 'codex' });
+        saveAccountSettings(scope, { ...settingsDefaults, backendEnabledByTargetKey: {
+            [buildBackendTargetKeyV2(codex)]: false,
+        } }, 1);
+        const published = createPluginSurfaceContext({
+            mount: fixture.mount, target: fixture.target, accountEncryptionMode: fixture.accountEncryptionMode,
+            environment: { ...fixture, columnVisible: false }, translations: fixture.translations,
+            accountLifetime: { scope, isCurrent: () => true },
+        });
+        expect(published.preferredAgent?.label).toMatch(/claude/iu);
+    });
+
+    it('names the remembered configured ACP Agent from the admitted Account catalog', () => {
+        const fixture = createPluginSurfaceContextFixture();
+        const scope = { serverId: 'home-configured-agent', accountId: 'viewer-configured-agent' };
+        const record = AcpCatalogRecordV1Schema.parse({ v: 1, definitions: [
+            { id: 'team-review', name: 'team-review', title: 'Team review',
+                launch: { kind: 'command', command: 'review-agent', args: [] }, createdAt: 1, updatedAt: 1 },
+        ] });
+        const target = { kind: 'agent' as const, identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId: 'team-review' };
+        rememberLastUsedBackendSelection(scope, { lastUsedBackendTarget: target, lastUsedAgent: null });
+        applyAcpCatalogSnapshot(scope, { status: 'ready', revision: 1, record }, true);
+        const published = createPluginSurfaceContext({
+            mount: fixture.mount, target: fixture.target, accountEncryptionMode: fixture.accountEncryptionMode,
+            environment: { ...fixture, columnVisible: false }, translations: fixture.translations,
+            accountLifetime: { scope, isCurrent: () => true },
+        });
+        expect(published.preferredAgent).toEqual({ targetKey: buildBackendTargetKeyV2(target), label: 'Team review' });
+    });
+
     it('publishes only the admitted current Account lifetime scope, never a global or retired identity', () => {
         const fixture = createPluginSurfaceContextFixture();
         const input = { mount: fixture.mount, target: fixture.target, accountEncryptionMode: fixture.accountEncryptionMode,

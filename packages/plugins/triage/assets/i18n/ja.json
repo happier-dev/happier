@@ -1045,11 +1045,11 @@
   "plugins.triage.tasks.where.more": "さらに表示",
   "plugins.triage.tasks.where.recent": "最近",
   "plugins.triage.tasks.where.lastUsed": "前回使用",
-  "plugins.triage.surface.session.sendingTo": "{session} に送信しています…",
+  "plugins.triage.surface.session.stoppedByPerson": "{session} はユーザーが停止しました。",
   "plugins.triage.surface.session.sentTo": "{session} に送信しました。",
   "plugins.triage.surface.session.heldIn": "{session} がメッセージを受け取れるようになるまで待機しています。",
   "plugins.triage.surface.session.resumeFailedIn": "{session} に届けられませんでした: 再開できませんでした。実行中になったらもう一度送信してください。",
   "plugins.triage.surface.session.turnFailedIn": "{session} でターンが失敗しました。再送信する前に確認してください。",
   "plugins.triage.surface.session.selectedSessionName": "選択したセッション",
-  "plugins.triage.surface.failure.pacedUntil": "{names} から {time} まで頻度を下げるよう求められました。"
+  "plugins.triage.surface.failure.pacedUntil": "{names} から待つよう求められました · 次回の読み込み {time}"
 }

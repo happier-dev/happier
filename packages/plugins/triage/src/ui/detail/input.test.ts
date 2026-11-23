@@ -46,6 +46,18 @@ describe('Triage detail surface input', () => {
     expect(built.kind === 'admitted' ? built.input.admittedReview : 'refused').toEqual(admittedReview);
     expect(build({ admittedReview: { reviewId: '', roundOrdinal: 1 } }).kind).toBe('refused');
   });
+
+  it('drops a recorded Review skip when the same head has a different base', () => {
+    const reviewSkip = { headSha: 'head', reason: 'noReviewablePaths' as const,
+      rules: { baseRevision: 'original-base', provenance: {} }, occurrence: {} };
+    const observedAtBase = (baseSha: string) => ({ ...OBSERVATION, snapshot: {
+      ...OBSERVATION.snapshot, reviewRevision: { baseSha, headSha: 'head', nativeRevision: 'head' },
+    } });
+    const original = build({ reviewSkip, observation: observedAtBase('original-base') });
+    expect(original.kind === 'admitted' && original.input.reviewSkip).toEqual(reviewSkip);
+    const retargeted = build({ reviewSkip, observation: observedAtBase('new-base') });
+    expect(retargeted.kind === 'admitted' && retargeted.input.reviewSkip).toBeUndefined();
+  });
   it('preserves source-produced relationships in the embedded typed detail', async () => {
     const [{ readGithubIssueRelations }, { createGithubRepositoryReader }, {
       GITHUB_ISSUE_RESPONSE, GITHUB_OTHER_REPOSITORY_RESPONSE,

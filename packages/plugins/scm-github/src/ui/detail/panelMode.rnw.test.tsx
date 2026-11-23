@@ -421,15 +421,24 @@ describe('the GitHub detail as Triage panels', () => {
     ['draft', {}, 'It’s a draft, and drafts are skipped under the repository’s review rules.'],
     ['noReviewablePaths', {}, 'Every changed file matches a path ignored under this automation.'],
   ] as const;
+  it.each([false, true])('drops the recorded draft skip once the exact GitHub read reports ready (direct=%s)', async direct => {
+    const fixture = await mountPanel('overview', { direct, overview: { ...(overviewAnswer() as Record<string, JsonValue>), draft: false },
+      reviewSkip: { headSha: HEAD_REVISION, reason: 'draft', rules: skipRules, occurrence: {} } });
+    if (direct) await act(async () => { await fixture.press(await fixture.findByRole('button', { name: 'Re-read this overview from GitHub' })); });
+    await expect(fixture.getByText('Moves rounding to the pricing service.')).resolves.toBeDefined();
+    expect(await fixture.queryByText('Review skipped')).toBeUndefined();
+  });
   it.each(skipCases.flatMap(([reason, occurrence, why]) => [false, true].map(direct => [reason, direct, occurrence, why] as const)))(
     'says why the Review was skipped (%s) with its two ways on (direct=%s)', async (reason, direct, occurrence, why) => {
       const openedResources: unknown[] = [];
       let started = 0;
       const reads: string[] = [];
       const fixture = await mountPanel('overview', { direct, openedResources, reads,
+        ...(reason === 'draft' ? { overview: { ...(overviewAnswer() as Record<string, JsonValue>), draft: true } } : {}),
         reviewSkip: { headSha: HEAD_REVISION, reason, rules: skipRules, occurrence, automationId: 'automation-review-prs' },
         panelNavigation: { panels: ['overview'], select: () => {}, reviewAnyway: () => { started += 1; } },
       });
+      if (reason === 'draft' && direct) await act(async () => { await fixture.press(await fixture.findByRole('button', { name: 'Re-read this overview from GitHub' })); });
       await expect(fixture.getByText('Review skipped')).resolves.toBeDefined();
       await expect(fixture.getByText(why)).resolves.toBeDefined();
       expect(reads).not.toContain('review.get');
@@ -441,7 +450,9 @@ describe('the GitHub detail as Triage panels', () => {
 
   it('offers no Review start where the frame cannot start one, and no automation link for a skip no automation asked for', async () => {
     const fixture = await mountPanel('overview', { direct: true,
+      overview: { ...(overviewAnswer() as Record<string, JsonValue>), draft: true },
       reviewSkip: { headSha: HEAD_REVISION, reason: 'draft', rules: skipRules, occurrence: {} } });
+    await act(async () => { await fixture.press(await fixture.findByRole('button', { name: 'Re-read this overview from GitHub' })); });
     await expect(fixture.getByText('Review skipped')).resolves.toBeDefined();
     expect(await fixture.queryAllByRole('button', { name: 'Review anyway' })).toHaveLength(0);
     expect(await fixture.queryAllByRole('button', { name: 'Edit the automation' })).toHaveLength(0);

@@ -216,6 +216,7 @@ import {
     resolvePluginSurfaceTarget,
     usePluginSurfaceAccountEncryptionMode,
     usePluginSurfaceEnvironment,
+    usePluginSurfacePreferredAgent,
     usePluginSessionSurfaceTarget,
     type PluginSurfaceEnvironment,
     type PluginSurfaceTargetResolution,
@@ -722,16 +723,19 @@ function DeclarativePluginSurfaceWithDocumentSource(
 ) {
     const environment = props.environment;
     const presented = useLayoutPresentationActive();
+    const preferredAgent = usePluginSurfacePreferredAgent(props.accountLifetime);
     const surface = React.useMemo(() => createPluginSurfaceContext({
         mount: props.surfaceMount,
         target: props.surfaceTarget,
         accountEncryptionMode: props.accountEncryptionMode,
         accountLifetime: props.accountLifetime,
+        preferredAgent,
         environment,
         translations: props.surfaceTranslations,
         targetedContributions: props.targetedContributions,
     }), [
         environment,
+        preferredAgent,
         props.accountEncryptionMode,
         props.accountLifetime,
         props.surfaceMount,
@@ -1029,6 +1033,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
     // plugin's translation bundle all come from `pluginSurfaceContext.ts`, the
     // same module the hosted-web mount consumes.
     const environment = usePluginSurfaceEnvironment(canonicalIdentity.platform);
+    const preferredAgent = usePluginSurfacePreferredAgent(canonicalIdentity.accountLifetime);
     const rendererMount = useUiSurfaceRendererMount({
         lifetime: props.mountLifetime,
         interactionEnabled: props.interactionEnabled,
@@ -1040,6 +1045,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
         target: canonicalIdentity.target,
         accountEncryptionMode: canonicalIdentity.accountEncryptionMode,
         accountLifetime: canonicalIdentity.accountLifetime,
+        preferredAgent,
         environment,
         translations: canonicalIdentity.translations,
         targetedContributions: canonicalIdentity.targetedContributions,
@@ -1059,6 +1065,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
         canonicalIdentity.machineConnectionPending,
         canonicalIdentity.machineExecutionReady,
         canonicalIdentity.requesterExecutionReady,
+        preferredAgent,
         environment,
     ]);
     const canonicalRenderIdentity = React.useMemo(() => {

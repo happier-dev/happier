@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { testkitEntryRef } from '../../corpus/testkit/observations.test-support.js';
 import { TRIAGE_DEFAULT_ACTIONS_V1, type TriageActionV1 } from '../../settings/actions.js';
-import { TRIAGE_DEFAULT_FIX_ACTION_ID_V1, TRIAGE_DEFAULT_INVESTIGATE_ACTION_ID_V1, TriagePullRequestStatusV1Schema } from '@happier-dev/triage-protocol/v1';
+import { REVIEW_TRIAGE_SOURCE_V1, reviewTriageLocalRefV1, TRIAGE_DEFAULT_FIX_ACTION_ID_V1, TRIAGE_DEFAULT_INVESTIGATE_ACTION_ID_V1, TriagePullRequestStatusV1Schema } from '@happier-dev/triage-protocol/v1';
 import {
   readTriagePrimaryActionIdV1,
   resolveTriageReviewPreparationV1,
@@ -51,6 +51,14 @@ function formalAction(actionId: string, label: string): TriageActionV1 {
   });
 }
 
+const REVIEW_ENTRY = { source: REVIEW_TRIAGE_SOURCE_V1, ...reviewTriageLocalRefV1('review-1') };
+const REVIEW_DIGEST = `sha256:${'2'.repeat(64)}`;
+function reviewResource(total: number, needsYou = false) {
+  return { contentType: 'application/json', digest: REVIEW_DIGEST, bytes: new TextEncoder().encode(JSON.stringify({
+    review: { reviewId: REVIEW_ENTRY.entryId, counts: { total } }, human: { needsYou: { needsYou } },
+  })) };
+}
+
 describe('the mounted configured entry action controls', () => {
   it('opens the existing task draft from an error with its exact origin, without creating anything', async () => {
     const entryRef = testkitEntryRef({ kindId: 'error-issue', entryId: 'checkout-error' });
@@ -82,16 +90,17 @@ describe('the mounted configured entry action controls', () => {
         identity: { instanceId: 'fixture-instance-decision', mountNonce: `decision-${String(decisionFirst)}` },
         authorPlugin: { id: 'happier.triage', version: '0.0.0' },
         surface: defineUiSurface(() => <TriageEntryActionControls
-          target={{ kind: 'entry', sectionId: 'open', entryRef: testkitEntryRef({ entryId: 'r1', kindId: 'issue' }),
+          target={{ kind: 'entry', sectionId: 'open', entryRef: REVIEW_ENTRY,
             sourceInstanceId: '11111111-1111-4111-8111-111111111111' }}
           actions={TRIAGE_DEFAULT_ACTIONS_V1} workflowSubject="issue" viewerIsAuthor={false}
-          reviewPreparation="unsupported" {...(decisionFirst ? { decisionFirst: true } : {})}
+          reviewPreparation="unsupported"
           onAction={(request) => { requests.push(request); }} />),
         surfaceContext: createSurfaceContextFixture(),
         adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
+        handlers: { readResource: async () => reviewResource(1, decisionFirst), watchResource: async () => ({ digest: REVIEW_DIGEST }) },
       });
       try {
-        const fix = await fixture.getByRole('button', { name: 'Fix' });
+        const fix = await fixture.findByRole('button', { name: 'Fix' });
         const node = [...document.querySelectorAll<HTMLElement>('[role="button"]')].find(candidate => candidate.textContent === 'Fix');
         if (node === undefined) throw new Error('No Fix button');
         const fill = getComputedStyle(node).backgroundColor;
@@ -211,16 +220,17 @@ describe('the mounted configured entry action controls', () => {
     expect(lent.at(-1)).toBeNull();
   });
 
-  it('offers no Fix on an entry with nothing to fix, in its row or its More menu (T2)', async () => {
+  it.each([0, 1])('keeps Fix out of a cold Review until its read reports findings (total=%s)', async total => {
+    const pending = Promise.withResolvers<void>();
     const surface = defineUiSurface(() => (
       <TriageEntryActionControls
-        target={{ kind: 'entry', sectionId: 'open', entryRef: testkitEntryRef({ entryId: 'review-1', kindId: 'review' }),
+        target={{ kind: 'entry', sectionId: 'open',
+          entryRef: REVIEW_ENTRY,
           sourceInstanceId: '11111111-1111-4111-8111-111111111111' }}
         actions={TRIAGE_DEFAULT_ACTIONS_V1}
         workflowSubject="issue"
         viewerIsAuthor
         reviewPreparation="unsupported"
-        nothingToFix
         onAction={() => null}
       />
     ));
@@ -230,6 +240,14 @@ describe('the mounted configured entry action controls', () => {
       surface,
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
+      handlers: {
+        readResource: async ({ resource }) => {
+          expect(resource).toEqual({ hostRead: 'review.get', input: { reviewId: 'review-1' } });
+          await pending.promise;
+          return reviewResource(total);
+        },
+        watchResource: async () => ({ digest: REVIEW_DIGEST }),
+      },
     });
     mounted.push(fixture);
     const names = Array.from(document.querySelectorAll('button, [role="button"]'))
@@ -242,6 +260,9 @@ describe('the mounted configured entry action controls', () => {
     }
     // What the entry can do still stands: its question.
     await expect(fixture.getByRole('button', { name: 'Ask' })).resolves.toBeDefined();
+    await act(async () => { pending.resolve(); });
+    if (total === 0) await expect(fixture.queryByRole('button', { name: 'Fix' })).resolves.toBeUndefined();
+    else await expect(fixture.findByRole('button', { name: 'Fix' })).resolves.toBeDefined();
   });
 
   it('names the settled agent on a row-opened pull request from first paint, while its workspace still reads (F10)', async () => {
@@ -344,6 +365,10 @@ describe('the mounted configured entry action controls', () => {
     await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
     const firstPaint = row();
     expect(firstPaint).toContain('Review with Codex');
+    const face = Array.from(document.querySelectorAll('button, [role="button"]'))
+      .find(node => node.getAttribute('aria-label') === 'Review with Codex');
+    expect(face?.textContent).toContain('Review with Codex');
+    expect(face?.querySelector('[style*="opacity: 0"]')).toBeNull();
     await act(async () => {
       for (const release of held.splice(0)) release();
       await new Promise<void>((resolve) => setTimeout(resolve, 0));

@@ -1045,11 +1045,11 @@
   "plugins.triage.tasks.where.more": "Mostrar mais locais",
   "plugins.triage.tasks.where.recent": "Recentes",
   "plugins.triage.tasks.where.lastUsed": "Último usado",
-  "plugins.triage.surface.session.sendingTo": "A enviar para {session}…",
+  "plugins.triage.surface.session.stoppedByPerson": "Uma pessoa parou {session}.",
   "plugins.triage.surface.session.sentTo": "Enviado para {session}.",
   "plugins.triage.surface.session.heldIn": "À espera em {session} até poder receber a sua mensagem.",
   "plugins.triage.surface.session.resumeFailedIn": "Não foi possível entregar a {session}: não conseguiu retomar. Envie novamente quando estiver em execução.",
   "plugins.triage.surface.session.turnFailedIn": "O turno falhou em {session}. Verifique-a antes de enviar novamente.",
   "plugins.triage.surface.session.selectedSessionName": "a sessão selecionada",
-  "plugins.triage.surface.failure.pacedUntil": "{names} pediu-nos para abrandar até às {time}."
+  "plugins.triage.surface.failure.pacedUntil": "{names} pediu-nos que aguardássemos · próxima leitura às {time}"
 }

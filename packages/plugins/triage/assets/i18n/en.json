@@ -1045,11 +1045,11 @@
   "plugins.triage.tasks.where.more": "Show more places",
   "plugins.triage.tasks.where.recent": "Recent",
   "plugins.triage.tasks.where.lastUsed": "Last used",
-  "plugins.triage.surface.session.sendingTo": "Sending to {session}…",
+  "plugins.triage.surface.session.stoppedByPerson": "{session} is stopped by a person.",
   "plugins.triage.surface.session.sentTo": "Sent to {session}.",
   "plugins.triage.surface.session.heldIn": "Waiting in {session} until it can take your message.",
   "plugins.triage.surface.session.resumeFailedIn": "Couldn’t deliver to {session}: it could not resume. Send it again once it’s running.",
   "plugins.triage.surface.session.turnFailedIn": "The turn failed in {session}. Check it before sending again.",
   "plugins.triage.surface.session.selectedSessionName": "the selected Session",
-  "plugins.triage.surface.failure.pacedUntil": "{names} asked us to slow down until {time}."
+  "plugins.triage.surface.failure.pacedUntil": "{names} asked us to wait · next read {time}"
 }

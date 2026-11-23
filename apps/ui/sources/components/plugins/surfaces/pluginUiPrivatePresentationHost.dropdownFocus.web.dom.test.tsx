@@ -272,6 +272,115 @@ describe('plugin Dropdown through the private presentation host (real RNW)', () 
         return trigger;
     }
 
+    it('closes the Triage Send menu before handing the gesture to the Session picker and host confirmation', async () => {
+        const { ModalProvider } = await import('@/modal');
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { createSessionFixture, createSessionListRenderableSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const { AgentActionButton } = await import('@happier-dev/plugin-ui/components');
+        const { createPluginSurfaceActionControls } = await import('./pluginSurfaceActionControls');
+        const { createPluginActionCurrentIntentHandler } = await import('./pluginSurfaceFeedback');
+        const { createPluginActionInputSelector } = await import('./pluginActionInputSelectionHostApi');
+        const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+        const { PluginProjectedActionV2Schema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+        const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
+        const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/triage/src/manifest');
+        const { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1 } = await import('../../../../../../packages/plugins/triage/src/actions/configuredActionRunProtocol');
+        const { createTriageEntrySessionStartController } = await import('../../../../../../packages/plugins/triage/src/sessions/entrySessionStartController');
+        const { TRIAGE_DEFAULT_ACTIONS_V1 } = await import('../../../../../../packages/plugins/triage/src/settings/actions');
+        const { testkitEntryRef } = await import('../../../../../../packages/plugins/triage/src/corpus/testkit/observations.test-support');
+        const declaration = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1);
+        if (!declaration?.confirmation) throw new Error('Expected the Triage Send confirmation');
+        const pluginId = PLUGIN_MANIFEST.id;
+        const action = PluginProjectedActionV2Schema.parse({
+            id: declaration.id, title: declaration.title, dangerLevel: declaration.dangerLevel, surfaces: declaration.surfaces,
+            execution: declaration.execution, confirmation: declaration.confirmation,
+            pluginId, occurrenceId: 'triage-account', scopes: ['global'], available: true,
+        });
+        const signal = new AbortController();
+        const serverId = 'send-home';
+        const sessionId = 'selected-session';
+        const session = { serverId, sessionId };
+        const accountLifetime = { scope: { serverId, accountId: 'send-account' }, signal: signal.signal, isCurrent: () => true };
+        const select = createPluginActionInputSelector({ host: { serverId, accountLifetime, targetPluginId: pluginId }, isCurrent: accountLifetime.isCurrent });
+        const readRecipient = async () => ({ ...session, title: 'Release checks' });
+        const context = createSurfaceContext();
+        const entryRef = testkitEntryRef();
+        const owner = createTriageEntrySessionStartController({
+            executeAction: async () => ({ sessions: [{ id: sessionId, serverId, updatedAt: 1 }], hasNext: false }),
+            selectActionInput: (request, options) => select(request, options),
+            readSession: readRecipient,
+        } as Parameters<typeof createTriageEntrySessionStartController>[0]);
+        const requestCurrentIntent = createPluginActionCurrentIntentHandler({
+            requester: { pluginId, contributionId: action.id, occurrenceId: action.occurrenceId, invocationId: 'send-surface' },
+            isCurrent: accountLifetime.isCurrent,
+        });
+        const effect = vi.fn();
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture());
+        const controls = createPluginSurfaceActionControls({
+            pluginId, surfaceId: 'send-surface', signal: signal.signal,
+            isCurrent: accountLifetime.isCurrent, captureCurrentBinding: () => accountLifetime.isCurrent,
+            hostAction: { execute: Object.assign(async (...args: Parameters<typeof executor.execute>) => {
+                const wrapper = args[1] as { input?: unknown };
+                const decision = await requestCurrentIntent({ action, input: wrapper.input, fingerprint: 'send', surface: 'ui', invocationSurface: 'ui', signal: args[2]?.signal });
+                if (decision.status === 'approved') effect(wrapper.input);
+                return { ok: true as const, result: null };
+            }, { confirmed: executor.execute }), context: { serverId, runtimeAccountId: accountLifetime.scope.accountId } },
+        });
+        const host = createPluginUiPrivatePresentationHost(undefined, { actionControls: controls });
+        const nativeSession = createSessionFixture({ id: sessionId, serverId, active: true,
+            metadata: { path: '/fixture/release-checks', host: 'test-machine', name: 'Release checks' } });
+        const before = storage.getState();
+        try {
+            before.applySessions([nativeSession]);
+            storage.setState({ isDataReady: true });
+            before.applyServerScopedSessionListRows(serverId, [createSessionListRenderableSessionFixture(nativeSession)],
+                { source: 'rowOnly', mode: 'append' });
+            const mounted = await renderContent(<ModalProvider><PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+                <PluginUiPresentationHostProviderInternal host={host}>
+                    <AgentActionButton title="Ask" launchMode="review" onLaunch={() => {}}
+                        groups={[{ id: 'send', accessibilityLabel: 'Send to a Session', items: [{ id: 'find-session', label: 'Send to a Session…', action: {
+                            action: { pluginId, localId: action.id },
+                            prepare: (_, options) => owner.getSnapshot().prepareAction({
+                                action: TRIAGE_DEFAULT_ACTIONS_V1.find(candidate => candidate.workspaceMode === 'reference_only')!,
+                                destinationChoice: 'existingSession', entryRef, display: { scopeLabel: 'Example repository', locator: { v: 1 } },
+                                sourceInstance: { source: entryRef.source, sourceInstanceId: '11111111-1111-4111-8111-111111111111' },
+                                presentation: { label: 'Example issue' },
+                            }, options),
+                            onSettled: execution => execution,
+                        } }] }]} />
+                </PluginUiPresentationHostProviderInternal>
+            </PluginUiProvider></ModalProvider>);
+            const trigger = mounted.querySelector<HTMLElement>('[aria-label="Ask options"]')!;
+            await act(async () => { dispatchPointerPress(trigger); await waitForPopoverCommit(); });
+            const row = document.querySelector<HTMLElement>('[data-testid="dropdown-option-find-session"]')!;
+            expect(row).not.toBeNull();
+            expect(trigger.getAttribute('aria-expanded')).toBe('true');
+            await act(async () => { dispatchPointerPress(row); await waitForPopoverCommit(); });
+            await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Release checks'));
+            const candidate = document.querySelector<HTMLElement>(`[data-testid="transcript-send-to-session-option-${sessionId}"]`)!;
+            expect(candidate?.closest('[role="dialog"]')).toBeTruthy();
+            expect(trigger.getAttribute('aria-expanded')).toBe('false');
+            expect(effect).not.toHaveBeenCalled();
+            await act(async () => { dispatchPointerPress(candidate); });
+            const confirm = await vi.waitFor(() => {
+                const node = document.querySelector<HTMLElement>('[data-testid="app-shell-confirmation-confirm"]');
+                expect(node?.closest('[role="dialog"]')?.textContent).toContain('Send to this Session?');
+                if (!node) throw new Error('The host Send confirmation was not rendered');
+                return node;
+            });
+            expect(effect).not.toHaveBeenCalled();
+            await act(async () => { dispatchPointerPress(confirm); });
+            await vi.waitFor(() => expect(effect).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ v: 1 })));
+            expect(trigger.getAttribute('aria-expanded')).toBe('false');
+        } finally {
+            signal.abort();
+            controls.dispose();
+            owner.dispose();
+            await act(async () => storage.setState({ isDataReady: before.isDataReady, sessions: before.sessions,
+                sessionListRowsByServerId: before.sessionListRowsByServerId, sessionListIndexByServerId: before.sessionListIndexByServerId }));
+        }
+    });
+
     it.each([Menu, Dropdown, ContextMenu])('opens public submenus with Right and returns with Left before selecting a leaf (%s)', async (component) => {
         const onSelect = vi.fn();
         const trigger = await renderDropdown(<SubmenuHarness component={component} onSelect={onSelect} />, 'plugin-submenu');

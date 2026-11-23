@@ -301,7 +301,7 @@ describe('resolveTriageListShellState', () => {
     expect(readTriageListFailureLine(state.failure).recovery).toBe('retry');
     expect(state.failure.sources[0]?.needsConnectionChange).toBe(false);
   });
-  it('carries a paced source reset to the list line and suppresses retry until then', () => {
+  it('carries a paced source reset from list health to the list line', () => {
     const retryNotBeforeMs = Date.now() + 60_000;
     const state = resolveTriageListShellState(snapshot({ window: window({ lanes: [{
       sourceInstanceId: INSTANCE, source: SOURCE, exhausted: false,
@@ -309,14 +309,8 @@ describe('resolveTriageListShellState', () => {
     }] }) }));
     if (state.kind !== 'window' || state.failure === null) throw new Error('Expected named source health');
     const paced = readTriageListFailureLine(state.failure);
-    expect(paced).toMatchObject({ pacedUntilMs: retryNotBeforeMs, recovery: null });
+    expect(paced.label).toContain('asked us to wait · next read');
     expect(paced.label).not.toContain('could not be read');
-    const clock = vi.spyOn(Date, 'now').mockReturnValue(retryNotBeforeMs);
-    try {
-      expect(readTriageListFailureLine(state.failure).recovery).toBe('retry');
-    } finally {
-      clock.mockRestore();
-    }
   });
 
   it('says a paced source as one sentence with its subject and reset, beside rows or not (N12)', () => {
@@ -325,7 +319,7 @@ describe('resolveTriageListShellState', () => {
     for (const retainedRows of [false, true]) {
       const { label } = readTriageListFailureLine({ kind: 'sources', sources: [source],
         ...(retainedRows ? { retainedRows: true as const } : {}) }, undefined, 'en-US');
-      expect(label).toMatch(/^Sentry · Example Org asked us to slow down until [^.]+\.$/u);
+      expect(label).toMatch(/^Sentry · Example Org asked us to wait · next read .+$/u);
     }
   });
 
@@ -335,9 +329,22 @@ describe('resolveTriageListShellState', () => {
       { sourceInstanceId: 'sentry', displayName: 'Sentry', reason: 'Asked us to slow down.', retryNotBeforeMs },
       { sourceInstanceId: 'forge', displayName: 'GitHub', reason: 'Needs a connection.', needsConnectionChange: true },
     ] });
-    expect(line).toMatchObject({ pacedUntilMs: retryNotBeforeMs, recovery: 'manageSources' });
+    expect(line.recovery).toBe('manageSources');
     expect(line.label).toContain('Sentry');
     expect(line.label).toContain('GitHub');
+  });
+
+  it('pairs each paced connection with its own reset', () => {
+    const now = Date.now();
+    const first = now + 120_000;
+    const second = now + 300_000;
+    const time = (at: number) => new Intl.DateTimeFormat('en-GB', { hour: 'numeric', minute: '2-digit' }).format(at);
+    const line = readTriageListFailureLine({ kind: 'sources', sources: [
+      { sourceInstanceId: 'first', displayName: 'Sentry EU', reason: '', retryNotBeforeMs: first },
+      { sourceInstanceId: 'second', displayName: 'Sentry US', reason: '', retryNotBeforeMs: second },
+    ] }, undefined, 'en-GB');
+    expect(line.label).toContain(`Sentry EU asked us to wait · next read ${time(first)}`);
+    expect(line.label).toContain(`Sentry US asked us to wait · next read ${time(second)}`);
   });
 
   it('preserves the provider refusal code as well as its readable failure class', () => {

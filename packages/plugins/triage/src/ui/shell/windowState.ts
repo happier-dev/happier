@@ -82,6 +82,7 @@ export type TriageListSourceFailureV1 = Readonly<{
    */
   lineReason?: string;
   retryable?: boolean;
+  rateLimited?: true;
   /** The provider's own deadline before which a read is refused (a rate limit), when it sent one. */
   retryNotBeforeMs?: number;
   /**
@@ -197,6 +198,7 @@ export function projectTriageSourceHealthFailureV1(entry: TriageSourceHealthV1):
     reason: listReadFailureMessage(failure.code, failure.detail ?? SOURCE_FAILURE_COPY_V1[failure.class]),
     code: failure.code,
     ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
+    ...(failure.class === 'rateLimit' ? { rateLimited: true as const } : {}),
     ...(failure.retryNotBeforeMs === undefined ? {} : { retryNotBeforeMs: failure.retryNotBeforeMs }),
     ...(failure.detail === undefined ? {} : { lineReason: listReadFailureMessage(failure.code, SOURCE_FAILURE_COPY_V1[failure.class]) }),
     needsConnectionChange: failure.class === 'authentication' || failure.class === 'permission',
@@ -384,13 +386,6 @@ function withRetryAt(reason: string, source: Pick<TriageListSourceFailureV1, 're
   return `${reason} ${readRetryAtSentence(text, locale ?? 'en', source.retryNotBeforeMs)}`;
 }
 
-/** The one deadline a shared throttle reason can name: the latest, and only when every source sent one. */
-function latestRetryDeadline(sources: readonly TriageListSourceFailureV1[]): Pick<TriageListSourceFailureV1, 'retryNotBeforeMs'> {
-  const deadlines = sources.map((source) => source.retryNotBeforeMs);
-  return deadlines.every((ms): ms is number => ms !== undefined) && deadlines.length > 0
-    ? { retryNotBeforeMs: Math.max(...deadlines) } : {};
-}
-
 /**
  * "Try again at <time>." as one translated sentence, so each locale places the time and punctuation itself. The time
  * is the clock every Happier time reads in: today's time alone, another day's date and time, never the year.
@@ -443,31 +438,32 @@ export function readTriageSourceFailureRowV1(
 export type TriageListFailureLineV1 = Readonly<{
   label: string;
   recovery: 'retry' | 'manageSources' | null;
-  pacedUntilMs?: number;
 }>;
+
+function isPacedSource(source: TriageListSourceFailureV1): boolean {
+  return source.rateLimited === true || source.retryNotBeforeMs !== undefined;
+}
 
 export function readTriageListFailureLine(
   failure: TriageListShellFailureV1,
   text: TriageTextResolverV1 = ENGLISH_TEXT,
   locale?: string,
 ): TriageListFailureLineV1 {
-  const paced = failure.sources.flatMap(source => source.retryNotBeforeMs === undefined
-    ? [] : [{ displayName: source.displayName, deadlineMs: source.retryNotBeforeMs }]);
+  const paced = failure.sources.filter(isPacedSource);
   if (paced.length === 0) return readUnpacedListFailureLine(failure, text, locale);
 
   const nowMs = Date.now();
-  const pacedUntilMs = Math.min(...paced.map(source => source.deadlineMs));
-  const names = createTriageNameListFormatter(locale)(paced.map(source => source.displayName));
-  const pacedLabel = text('plugins.triage.surface.failure.pacedUntil', '{names} asked us to slow down until {time}.')
-    .replace('{names}', names).replace('{time}', formatHappierAsOfTime(pacedUntilMs, nowMs, locale ?? 'en'));
-  const otherSources = failure.sources.filter(source => source.retryNotBeforeMs === undefined);
+  const pacedLabel = paced.map(source => source.retryNotBeforeMs === undefined
+    ? `${source.displayName} · ${resolveSourceFailureReason(text, SOURCE_FAILURE_COPY_V1.rateLimit)}`
+    : text('plugins.triage.surface.failure.pacedUntil', '{names} asked us to wait · next read {time}')
+      .replace('{names}', source.displayName).replace('{time}', formatHappierAsOfTime(source.retryNotBeforeMs, nowMs, locale ?? 'en')))
+    .join('\n');
+  const otherSources = failure.sources.filter(source => !isPacedSource(source));
   const otherLine = otherSources.length === 0 ? null
     : readUnpacedListFailureLine({ ...failure, sources: otherSources }, text, locale);
-  const eligibility = evaluateRefreshEligibility({ nowMs, retryNotBeforeMs: pacedUntilMs });
   return Object.freeze({
-    label: otherLine === null ? pacedLabel : `${pacedLabel} ${otherLine.label}`,
-    pacedUntilMs,
-    recovery: otherLine?.recovery ?? (eligibility.kind === 'blocked' ? null : 'retry'),
+    label: otherLine === null ? pacedLabel : `${pacedLabel}\n${otherLine.label}`,
+    recovery: otherLine?.recovery ?? 'retry',
   });
 }
 
@@ -507,7 +503,7 @@ function readUnpacedListFailureLine(
     ? text('plugins.triage.surface.failure.unreachableSuffix', 'could not be reached')
     : text('plugins.triage.surface.failure.suffix', 'could not be read')}`;
   return Object.freeze({
-    label: `${title}. ${text('plugins.triage.surface.failure.retained', 'Their entries may be missing or out of date.')}${oneReason && !unreachable ? ` ${withRetryAt(resolveSourceFailureReason(text, lineReason(first!)), latestRetryDeadline(failure.sources), text, locale)}` : ''}`,
+    label: `${title}. ${text('plugins.triage.surface.failure.retained', 'Their entries may be missing or out of date.')}${oneReason && !unreachable ? ` ${resolveSourceFailureReason(text, lineReason(first!))}` : ''}`,
     recovery: needsConnectionChange ? 'manageSources' : 'retry',
   });
 }
@@ -674,9 +670,9 @@ export function resolveTriageListShellState(
       wholeScanFailure?.sources ?? []);
     const readingSources = viewHealth.body.coverage === 'partial'
       && (snapshot.pending !== 'idle' || snapshot.sourceAdmissionPending === true);
-    // An explicit Machine refusal can be shown as soon as it arrives, even if other reads are pending.
+    // Machine refusals and provider pacing are actionable while sibling reads are pending.
     const visibleFailures = readingSources
-      ? viewHealth.selectedFailures.filter(source => source.machineUnreachable === true)
+      ? viewHealth.selectedFailures.filter(source => source.machineUnreachable === true || isPacedSource(source))
       : viewHealth.selectedFailures;
     const failedIds = new Set(visibleFailures.map(source => source.sourceInstanceId));
     const retainedRows = failedIds.size > 0 && window.rows.some(row => row.observations.some(observation =>

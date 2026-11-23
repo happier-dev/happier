@@ -204,15 +204,14 @@ describe('entry existing Session handoff', () => {
         expect(notice).not.toHaveProperty('failureCode');
     });
 
-    it('says it is sending to the picked Session, never that it starts one (N13)', async () => {
+    it('leaves the picked Session quiet while the host awaits confirmation (N13)', async () => {
         const f = fixture();
         const session = { serverId: 'home-b', sessionId: 'same-session' };
         await f.controller.getSnapshot().prepareAction({ ...f.request, destinationChoice: 'existingSession' },
             { signal: new AbortController().signal }, session);
         const phase = f.controller.getSnapshot().phase;
-        expect(phase).toMatchObject({ kind: 'starting', session });
-        expect(describeTriageEntrySessionPhaseV1(phase, { sessionName: 'Checkout fix' })?.label).toBe('Sending to Checkout fix…');
-        expect(describeTriageEntrySessionPhaseV1(phase)?.label).toBe('Sending to the selected Session…');
+        expect(phase).toEqual({ kind: 'choosing' });
+        expect(describeTriageEntrySessionPhaseV1(phase, { sessionName: 'Checkout fix' })).toBeNull();
         // A new Session's start keeps its own words.
         expect(describeTriageEntrySessionPhaseV1({ kind: 'starting' })?.label).toBe('Starting a session for this entry…');
     });

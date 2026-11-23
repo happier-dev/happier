@@ -21,14 +21,16 @@ type Translate = ReturnType<typeof usePluginTranslation>;
  * The PR Overview's Review region: the latest skip Triage recorded for the observed head, then the admitted
  * Review it superseded, if any. An unbound PR opens no Review reader and draws nothing.
  */
-export function GithubHappierReviewSummary({ reviewId, reviewSkip }: Readonly<{
+export function GithubHappierReviewSummary({ reviewId, reviewSkip, draft }: Readonly<{
   reviewId?: string;
   reviewSkip?: GithubReviewSkipV1;
+  draft?: boolean;
 }>): React.ReactElement | null {
-  if (reviewId === undefined && reviewSkip === undefined) return null;
+  const skip = reviewSkip?.reason === 'draft' && draft !== true ? undefined : reviewSkip;
+  if (reviewId === undefined && skip === undefined) return null;
   return (
     <>
-      {reviewSkip === undefined ? null : <SkippedReviewSummary skip={reviewSkip} />}
+      {skip === undefined ? null : <SkippedReviewSummary skip={skip} />}
       {reviewId === undefined ? null : <AdmittedReviewSummary key={reviewId} reviewId={reviewId} />}
     </>
   );

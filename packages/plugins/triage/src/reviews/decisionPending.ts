@@ -16,7 +16,7 @@ const reviewRead: PluginUiResourceProjection<ReviewRead> = {
  * not offered at all, T2); otherwise its `needsYou` (a finding to decide, or a verdict they were asked for, the Inbox
  * byline's fact family) puts the decision first; else the fix may lead.
  */
-export type TriageReviewEntryWorkV1 = 'nothingToFix' | 'decide' | 'fix';
+export type TriageReviewEntryWorkV1 = 'unresolved' | 'nothingToFix' | 'decide' | 'fix';
 
 const workOf = (snapshot: PluginUiResourceProjectionSnapshot<ReviewRead>): TriageReviewEntryWorkV1 | undefined => {
   const read = snapshot.value;
@@ -26,8 +26,7 @@ const workOf = (snapshot: PluginUiResourceProjectionSnapshot<ReviewRead>): Triag
 };
 
 /**
- * The Review entry's work, `null` for any other entry. Until the read lands a Review is taken to wait, so the agent
- * action draws quiet from first paint rather than filling and then quieting.
+ * The Review entry's work, `null` for any other entry. Fix needs findings from the Review's own read.
  */
 export function useReviewEntryWorkV1(
   reviewId: string | undefined,
@@ -38,5 +37,5 @@ export function useReviewEntryWorkV1(
     workOf,
     { enabled: reviewId !== undefined },
   ).value;
-  return reviewId === undefined ? null : work ?? 'decide';
+  return reviewId === undefined ? null : work ?? 'unresolved';
 }

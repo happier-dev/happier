@@ -115,8 +115,8 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
           body: 'Sends this entry and the action’s instructions to the Session below. Its agent picks them up there; no new Session starts.',
           confirmLabel: 'Send',
           inputFields: [
-            { path: 'handoff.task', title: 'Action' },
-            { path: 'handoff.sessionChoice.session', title: 'Session' },
+            { path: 'sendPresentation.actionLabel', title: 'Action' },
+            { path: 'sendPresentation.sessionTitle', title: 'Session' },
             { path: 'recipientStopNotice', title: 'Session status' },
           ],
         },

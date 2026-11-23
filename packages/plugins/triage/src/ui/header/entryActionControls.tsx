@@ -21,7 +21,7 @@ import type {
   TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
 import type { TriageDetailPrimaryWriteV1 } from '@happier-dev/triage-sources/ui';
-import { TRIAGE_DEFAULT_FIX_ACTION_ID_V1, TRIAGE_DEFAULT_INVESTIGATE_ACTION_ID_V1 } from '@happier-dev/triage-protocol/v1';
+import { isReviewTriageEntryRefV1, TRIAGE_DEFAULT_FIX_ACTION_ID_V1, TRIAGE_DEFAULT_INVESTIGATE_ACTION_ID_V1 } from '@happier-dev/triage-protocol/v1';
 
 import {
   applyTriageActionLaunchModeV1,
@@ -38,6 +38,7 @@ import { useTriageEntrySessionStartChoices } from './useEntrySessionStart.js';
 import { TRIAGE_TASKS_OPEN_CREATE_ACTION_LOCAL_ID_V1, type TriageTaskDraftV1 } from '../../actions/tasksProtocol.js';
 import { TriageMountedUiResultV1Schema } from '../../actions/mountedUiProtocol.js';
 import { ActionFailureDetails } from '../ActionFailureDetails.js';
+import { useReviewEntryWorkV1 } from '../../reviews/decisionPending.js';
 
 /**
  * The Triage common header's action controls (`core/SESSIONS.md` §1,
@@ -108,17 +109,6 @@ export type TriageEntryActionControlsPropsV1 = Readonly<{
   reviewPreparation: TriageReviewPreparationV1;
   /** Whether the reader opened this entry (their own pull request asks for Fix, someone else's for Review). */
   viewerIsAuthor: boolean;
-  /**
-   * The entry asks the reader to decide in its own body before an agent works on it (a Review whose findings still
-   * wait): the agent action keeps its place and press but draws quiet, since the body's way to decide is the page's
-   * one primary (Reviews: implementing leads only once every finding is decided).
-   */
-  decisionFirst?: boolean;
-  /**
-   * The entry has nothing an agent could fix (a Review with no findings): a fix is not offered at all, in the row or
-   * its ⋯, rather than drawn quiet (offer only what the entry can complete, T2).
-   */
-  nothingToFix?: boolean;
   /**
    * More things this entry can do that are not the one primary action: the header's More menu lists them after the
    * entry's other actions (a walkthrough, orchestration). Rows of the shared menu, never controls or a form.
@@ -331,11 +321,14 @@ export function TriageEntryActionControls(
   const [bandNeed, setBandNeed] = React.useState<number | null>(null);
   const bandControlsWidth = React.useRef(0);
   const makeTask = useTriageMakeTask(props.taskDraft);
-  const nothingToFix = props.nothingToFix === true;
+  const reviewWork = useReviewEntryWorkV1(target.kind === 'entry' && isReviewTriageEntryRefV1(target.entryRef)
+    ? target.entryRef.entryId : undefined);
+  const decisionFirst = reviewWork !== null && reviewWork !== 'fix';
+  const fixAvailable = reviewWork !== 'unresolved' && reviewWork !== 'nothingToFix';
   const offered = React.useMemo(() => {
     const planned = planTriageOfferedActionsV1(actions, workflowSubject);
-    return nothingToFix ? planned.filter((action) => readTriageActionIntentV1(action) !== 'fix') : planned;
-  }, [actions, workflowSubject, nothingToFix]);
+    return fixAvailable ? planned : planned.filter((action) => readTriageActionIntentV1(action) !== 'fix');
+  }, [actions, workflowSubject, fixAvailable]);
   const [refusal, setRefusal] = React.useState<TriageEntryActionRefusalV1 | null>(null);
   // Merge's alternatives join this row's one ⋯ rather than a second ⋯ beside Merge.
   const mergeChoices = useTriageMergeChoicesV1(props.sourceWrite, props.sourceLabel);
@@ -496,7 +489,7 @@ export function TriageEntryActionControls(
       entryRef={entryRef}
       sourceInstanceId={sourceInstanceId}
       blocked={isTriageActionBlockedV1(action, reviewPreparation)}
-      primary={action.actionId === primaryActionId && props.decisionFirst !== true}
+      primary={action.actionId === primaryActionId && !decisionFirst}
       withoutRepository={props.withoutRepository === true}
       singleLine={compact && action === primary}
       {...(glyph === undefined ? {} : { glyph })}
@@ -652,7 +645,7 @@ export function TriageEntryActionControls(
           title={startWithLabel ?? primaryWords}
           actionName={primaryWords}
           launchMode={readTriageActionLaunchModeV1(primary)}
-          {...(props.decisionFirst === true ? { emphasis: 'secondary' as const } : {})}
+          {...(decisionFirst ? { emphasis: 'secondary' as const } : {})}
           {...(startUnavailable === undefined ? {} : { startUnavailableReason: startUnavailable })}
           compact={compact}
           pending={startPending}

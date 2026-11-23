@@ -53,15 +53,19 @@ export function useTriageEntrySessionStartChoices(
     const host = usePluginHostApi() as unknown as TriageEntrySessionStartChoicesHostV1;
     const targetKey = [input.action?.profileId, input.action?.workspaceMode, input.repository?.kind,
         input.repository?.deployment, input.repository?.repository].map((part) => String(part ?? '')).join('\u001f');
-    const [defaultTarget, setDefaultTarget] = React.useState<TriageEntrySessionStartTargetV1>(
+    const [settledDefaultTarget, setDefaultTarget] = React.useState<TriageEntrySessionStartTargetV1>(
         () => LAST_DEFAULT_TARGETS.get(targetKey) ?? { status: 'idle' });
     const [recentSessions, setRecentSessions] = React.useState<TriageRecentSessionsV1>({ status: 'idle' });
     const profileId = input.action?.profileId;
+    const preferredAgentLabel = useSurfaceContext().preferredAgent?.label;
+    const hasAccountPreferredAgent = profileId === null && preferredAgentLabel !== undefined;
+    const defaultTarget: TriageEntrySessionStartTargetV1 = hasAccountPreferredAgent ? { status: 'idle' } : settledDefaultTarget;
     const workspaceMode = input.action?.workspaceMode;
     const kind = input.repository?.kind;
     const deployment = input.repository?.deployment;
     const repository = input.repository?.repository;
     React.useEffect(() => {
+        if (hasAccountPreferredAgent) return;
         if (profileId === undefined || workspaceMode === undefined) { setDefaultTarget({ status: 'idle' }); return; }
         const lifetime = new AbortController();
         const lastKnown = LAST_DEFAULT_TARGETS.get(targetKey);
@@ -78,7 +82,7 @@ export function useTriageEntrySessionStartChoices(
             setDefaultTarget(result);
         });
         return () => lifetime.abort();
-    }, [host, profileId, workspaceMode, kind, deployment, repository, targetKey]);
+    }, [host, profileId, workspaceMode, kind, deployment, repository, targetKey, hasAccountPreferredAgent]);
     React.useEffect(() => {
         if (!input.menuOpen) { setRecentSessions({ status: 'idle' }); return; }
         const lifetime = new AbortController();
@@ -91,7 +95,6 @@ export function useTriageEntrySessionStartChoices(
     }, [host, input.menuOpen, workspaceMode, kind, deployment, repository]);
     // An action without a profile starts with the Account's preferred Agent, which the host names in the surface
     // context from first paint (the same target the catalog read later resolves as its default): no "Fix" that grows.
-    const preferredAgentLabel = useSurfaceContext().preferredAgent?.label;
     // Not read yet (idle on the first frame, then loading): the settled agent for this action's profile holds the label.
     const settlingAgentLabel = defaultTarget.status === 'loading' || (defaultTarget.status === 'idle' && profileId !== undefined)
         ? (profileId === null ? preferredAgentLabel : undefined) ?? LAST_DEFAULT_AGENT_LABELS.get(agentLabelKey(profileId))

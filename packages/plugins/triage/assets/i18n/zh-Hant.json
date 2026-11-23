@@ -1045,11 +1045,11 @@
   "plugins.triage.tasks.where.more": "顯示更多位置",
   "plugins.triage.tasks.where.recent": "最近",
   "plugins.triage.tasks.where.lastUsed": "上次使用",
-  "plugins.triage.surface.session.sendingTo": "正在傳送至 {session}…",
+  "plugins.triage.surface.session.stoppedByPerson": "{session} 已由使用者停止。",
   "plugins.triage.surface.session.sentTo": "已傳送至 {session}。",
   "plugins.triage.surface.session.heldIn": "正在 {session} 中等待，直到它可以接收你的訊息。",
   "plugins.triage.surface.session.resumeFailedIn": "無法送達 {session}：它未能恢復。待它執行後再傳送一次。",
   "plugins.triage.surface.session.turnFailedIn": "{session} 中的對話輪次失敗。請先檢查它，再重新傳送。",
   "plugins.triage.surface.session.selectedSessionName": "所選工作階段",
-  "plugins.triage.surface.failure.pacedUntil": "{names} 要求我們放慢速度，直到 {time}。"
+  "plugins.triage.surface.failure.pacedUntil": "{names} 要求我們等待 · 下次讀取時間 {time}"
 }

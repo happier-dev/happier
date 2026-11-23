@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';
+import { executeSentryScanPage } from '../../../sentry/src/scan/scanIssuesPage.js';
 import { matchWorkspaceRoutePatterns } from '../../../../../apps/ui/sources/components/appShell/workspace/workspaceRouteMatch.js';
 import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
 import { createPluginClientTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
@@ -526,6 +527,7 @@ function createHarness(options: Readonly<{
     firstInitialScan?: Promise<void>;
     /** The second connection's reads fail (a transient provider error), so it is the one Manage sources flags. */
     firstInstanceFails?: boolean;
+    firstScanFailure?: () => Promise<TriageSourceFailureV1>;
     secondInstanceFails?: boolean;
     otherSourceEntry?: boolean;
     deferLinkedEntry?: boolean;
@@ -594,6 +596,7 @@ function createHarness(options: Readonly<{
         if (input.page.kind === 'initial') initialScanInstanceIds.push(input.instance.instance.sourceInstanceId);
         if (input.instance.instance.sourceInstanceId === INSTANCE && input.page.kind === 'initial') {
             await options.firstInitialScan;
+            if (options.firstScanFailure !== undefined) return { kind: 'failed', failure: await options.firstScanFailure() };
         }
         if (input.instance.instance.sourceInstanceId === SECOND_INSTANCE && input.page.kind === 'initial'
             && options.secondInitialScan !== undefined) {
@@ -940,6 +943,7 @@ async function mountShell(
         secondInitialScan?: Promise<void>;
         firstInitialScan?: Promise<void>;
         firstInstanceFails?: boolean;
+        firstScanFailure?: () => Promise<TriageSourceFailureV1>;
         secondInstanceFails?: boolean;
         /** Read configured sources from the harness's Account Collections, as a live Account-backed mount does. */
         accountData?: boolean;
@@ -964,6 +968,7 @@ async function mountShell(
         hostTarget?: { ready: boolean; pending?: boolean; executionReady?: boolean };
         automaticDemandOnly?: boolean;
         onAggregateRead?: () => void;
+        rosterFailure?: () => PluginError | undefined;
         refusedHostReads?: Set<string>;
         detailFailure?: PluginError;
         mountedActionFailure?: 'reject' | 'unavailable';
@@ -991,6 +996,7 @@ async function mountShell(
         ...(options.sourceOverviewProbe ? { nativeRoutingToken: 'example/repository' } : {}),
         ...(options.secondInstance === undefined ? {} : { secondInstance: options.secondInstance }),
         ...(options.firstInstanceFails === undefined ? {} : { firstInstanceFails: options.firstInstanceFails }),
+        ...(options.firstScanFailure === undefined ? {} : { firstScanFailure: options.firstScanFailure }),
         ...(options.secondInstanceFails === undefined ? {} : { secondInstanceFails: options.secondInstanceFails }),
         ...(options.secondInstanceObservesEntry === undefined
             ? {}
@@ -1167,6 +1173,10 @@ async function mountShell(
                     });
                     if (action === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1) {
                         options.onAggregateRead?.();
+                        if (TriageListEntriesInputV1Schema.parse(input).limit === 0) {
+                            const failure = options.rosterFailure?.();
+                            if (failure !== undefined) throw failure;
+                        }
                         if (options.hostTarget?.ready === false) throw new PluginError({
                             code: 'unavailable', retryable: true,
                             diagnostics: [{ code: 'plugin_mounted_caller_unavailable', severity: 'error' }],
@@ -2430,6 +2440,35 @@ describe('opening a row into the source detail', () => {
         }
         await vi.waitFor(() => expect(document.body.textContent).toContain('2 sources need attention.'));
         expect(document.body.textContent).not.toMatch(/could not be (read|reached)|Reading your sources/);
+    });
+
+    it('shows a provider 429 reset while a sibling source is still reading', async () => {
+        const delayed = Promise.withResolvers<void>();
+        const nowMs = Date.now();
+        const resetSeconds = Math.ceil(nowMs / 1_000) + 120;
+        const shell = await mountShell({ activeSurface: true, automaticDemandOnly: true, otherSourceEntry: true,
+            secondInstance: true, secondInitialScan: delayed.promise, firstScanFailure: async () => {
+                const result = await executeSentryScanPage({ nowMs, organizationSlug: 'example-org',
+                    configured: { deploymentOrigin: 'https://us.sentry.io', organizationId: '7701' },
+                    page: { kind: 'initial', scanLimit: 10 },
+                    client: {
+                        request: async () => ({ kind: 'response', response: {
+                            status: 429, headers: { 'x-sentry-rate-limit-reset': String(resetSeconds) }, bodyText: '{}',
+                        } }),
+                        updateIssue: async () => { throw new Error('unexpected Sentry write'); },
+                    },
+                });
+                if (result.kind !== 'failed') throw new Error('Expected Sentry to stop on HTTP 429');
+                return result.failure;
+            } });
+        try {
+            await expect(shell.findByRole('button', { name: 'Another source matching entry' })).resolves.toBeDefined();
+            await vi.waitFor(() => expect(document.body.textContent).toContain('Example account asked us to wait · next read'));
+            expect(document.body.textContent).toContain('Reading your sources');
+            await expect(shell.queryByRole('button', { name: 'Retry' })).resolves.toBeUndefined();
+        } finally {
+            await act(async () => { delayed.resolve(); });
+        }
     });
 
     it('says each connection’s own health on its Manage sources row, with its fix at the row’s end', async () => {
@@ -3892,6 +3931,22 @@ describe('opening a row into the source detail', () => {
         expect(currentHarness?.getEntryIds).toEqual([entryId]);
         expect(currentHarness?.exactReads).toHaveLength(1);
         expect(currentHarness?.readDetailInstanceIds).toEqual([]);
+    });
+
+    it('settles a cold routed detail when its roster fails and opens it after Retry', async () => {
+        const entryRef = { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' };
+        const subPath = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1, selection: entryRef });
+        let failed = true;
+        const shell = await mountShell({ subPath, activeSurface: true, automaticDemandOnly: true,
+            noScannedEntries: true, rosterFailure: () => failed
+                ? new PluginError({ code: 'unavailable', retryable: true }) : undefined });
+
+        await expect(shell.getByText('These details could not be read')).resolves.toBeDefined();
+        expect(currentHarness?.exactReads).toEqual([]);
+        failed = false;
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Retry' })); });
+        await expect(shell.getByText(DETAIL_BODY_TEXT)).resolves.toBeDefined();
+        expect(currentHarness?.exactReads).toEqual([{ v: 1, entryRef, sourceInstanceId: INSTANCE, includeTaskFields: true }]);
     });
 
     it('reads a cold route through its admitted connection before list scans settle', async () => {

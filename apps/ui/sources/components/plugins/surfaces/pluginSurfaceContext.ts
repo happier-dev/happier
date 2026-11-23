@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import type {
     PluginSurfaceTarget,
     PluginUiPlatform,
@@ -21,7 +22,9 @@ import {
     type AccountEncryptionModeReadinessUnavailable,
 } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { useLocalSetting } from '@/sync/store/settingsReadHooks';
+import { useLocalSetting, useSetting } from '@/sync/store/settingsReadHooks';
+import { useAcpCatalog } from '@/sync/store/useAcpCatalog';
+import { getAcpCatalogSnapshot } from '@/sync/store/settings/acpCatalogSnapshot';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import type { PluginSurfaceTargetKind } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
@@ -32,9 +35,13 @@ import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/
 import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePreferredBackendTarget';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
-import { readLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
+import { readLastUsedBackendSelection, useLastUsedBackendSelectionForScope, type LastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
+import { readAccountSettingsForScope, readAccountSettingsPersistenceMutationToken,
+    subscribeAccountSettingsPersistenceMutations } from '@/sync/domains/state/accountSettingsPersistence';
+import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { readProjectRepositoryIdentityV1, type ProjectScmContextSnapshotV1, type ProjectSurfaceTargetV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
-import { useActiveServerAccountScopeLifetime, useSessionProjectScmSummarySnapshot } from '@/sync/domains/state/storage';
+import { storage, useActiveServerAccountScopeLifetime, useSessionProjectScmSummarySnapshot } from '@/sync/domains/state/storage';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -364,20 +371,48 @@ export function usePluginSurfaceEnvironment(
     ]);
 }
 
-/**
- * The Agent a new Session starts with for this Account, as the New Session default owner resolves it
- * (`resolvePreferredBackendTarget` over the remembered selection, the same call `agents.backends.list` makes for its
- * `defaultTargetKey`), named by the Agent catalog's static title. No daemon read: a plugin control names it from first
- * paint, and the catalog read confirms the same Agent later.
- */
-function readPluginSurfacePreferredAgent(scope: ActiveServerAccountScopeLifetime['scope'] | null): NonNullable<SurfaceContext['preferredAgent']> | null {
-    const target = resolvePreferredBackendTarget({ ...readLastUsedBackendSelection(scope) });
-    if (target === null) return null;
+type PreferredAgent = NonNullable<SurfaceContext['preferredAgent']>;
+type PreferredAgentLifetime = Pick<ActiveServerAccountScopeLifetime, 'scope' | 'isCurrent'> | null | undefined;
+
+function projectPreferredAgent(selection: LastUsedBackendSelection, backendEnabledByTargetKey: Record<string, boolean> | null | undefined,
+    acpCatalogSnapshot?: AcpCatalogSnapshotV1): PreferredAgent | null {
+    const entries = getResolvedBackendCatalogEntries({
+        enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey }),
+        backendEnabledByTargetKey,
+        acpCatalogSnapshot,
+        collapseConfiguredBackendProviderSentinels: true,
+    });
+    const target = resolvePreferredBackendTarget({ ...selection, availableBackendTargets: entries.map(entry => entry.backendTarget) });
     const targetKey = buildBackendTargetKeyV2(target);
-    const entry = getResolvedBackendCatalogEntries({ enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey: undefined }) })
-        .find(candidate => buildBackendTargetKeyV2(candidate.backendTarget) === targetKey);
+    const entry = entries.find(candidate => candidate.backendTargetKey === targetKey);
     const label = entry?.title.trim();
     return label ? Object.freeze({ targetKey, label }) : null;
+}
+
+function readBackendEnablement(scope: ActiveServerAccountScopeLifetime['scope']) {
+    const { settingsScope: focusedScope, settings: focusedSettings } = storage.getState();
+    return readAccountSettingsForScope({ scope, focusedScope, focusedSettings }).backendEnabledByTargetKey;
+}
+
+/** Consume the same Account catalog and remembered selection as New Session. */
+export function usePluginSurfacePreferredAgent(lifetime: PreferredAgentLifetime): PreferredAgent | null {
+    const scope = lifetime?.isCurrent() === true ? lifetime.scope : null;
+    const focusedScope = useAccountSettingsScope();
+    const focusedEnablement = useSetting('backendEnabledByTargetKey');
+    const backgroundScope = areAccountSettingsScopesEqual(scope, focusedScope) ? null : scope;
+    const subscribe = React.useCallback((listener: () => void) => backgroundScope
+        ? subscribeAccountSettingsPersistenceMutations(changed => {
+            if (areAccountSettingsScopesEqual(changed, backgroundScope)) listener();
+        }) : () => {}, [backgroundScope]);
+    const read = React.useCallback(() => backgroundScope ? readAccountSettingsPersistenceMutationToken(backgroundScope) : null,
+        [backgroundScope]);
+    const backgroundVersion = React.useSyncExternalStore(subscribe, read, read);
+    const enablement = React.useMemo(() => backgroundScope ? readBackendEnablement(backgroundScope) : focusedEnablement,
+        [backgroundScope, backgroundVersion, focusedEnablement]);
+    const { snapshot } = useAcpCatalog(scope);
+    const selection = useLastUsedBackendSelectionForScope(scope, scope !== null);
+    return React.useMemo(() => scope ? projectPreferredAgent(selection, enablement, snapshot?.catalog) : null,
+        [scope, selection, enablement, snapshot?.catalog]);
 }
 
 /**
@@ -393,7 +428,8 @@ export function createPluginSurfaceContext(input: Readonly<{
     /** Resolved by the Account-lifetime-bound host admission path. */
     accountEncryptionMode: SurfaceContext['accountEncryptionMode'];
     /** The physical mount's admitted lifetime, never the globally focused Account. */
-    accountLifetime?: Pick<ActiveServerAccountScopeLifetime, 'scope' | 'isCurrent'> | null;
+    accountLifetime?: PreferredAgentLifetime;
+    preferredAgent?: PreferredAgent | null;
     environment: PluginSurfaceEnvironment;
     translations: Readonly<Record<string, string>>;
     /** Exact target-scoped snapshot; an admitted empty `points` array is valid. */
@@ -403,17 +439,20 @@ export function createPluginSurfaceContext(input: Readonly<{
     machineExecutionReady?: SurfaceContext['machineExecutionReady'];
     requesterExecutionReady?: SurfaceContext['requesterExecutionReady'];
 }>): SurfaceContext {
+    const scope = input.accountLifetime?.isCurrent() === true ? input.accountLifetime.scope : null;
     return freezeOwnedContext({
         ...(input.mountId === undefined ? {} : { mountId: input.mountId }),
         mount: input.mount,
         target: input.target,
-        ...(input.accountLifetime?.isCurrent() === true ? { accountScope: input.accountLifetime.scope } : {}),
+        ...(scope ? { accountScope: scope } : {}),
         ...(input.mount.kind === 'destination' && input.mount.container === 'appPage'
             ? { page: Object.freeze({ columnVisible: input.environment.columnVisible,
                 ...(input.environment.pageNavigation ? { navigation: input.environment.pageNavigation } : {}) }) }
             : {}),
         ...(input.environment.openedFrom ? { openedFrom: input.environment.openedFrom } : {}),
-        preferredAgent: readPluginSurfacePreferredAgent(input.accountLifetime?.isCurrent() === true ? input.accountLifetime.scope : null),
+        preferredAgent: !scope ? null : input.preferredAgent === undefined
+            ? projectPreferredAgent(readLastUsedBackendSelection(scope), readBackendEnablement(scope), getAcpCatalogSnapshot(scope)?.catalog)
+            : input.preferredAgent,
         accountEncryptionMode: input.accountEncryptionMode,
         platform: input.environment.platform,
         locale: input.environment.locale,

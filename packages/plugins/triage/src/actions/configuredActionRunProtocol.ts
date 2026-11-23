@@ -113,11 +113,16 @@ type ConfiguredReviewResumeSchema = ReturnType<typeof defineProtocolObject<{
     instructions: typeof TriagePullRequestReviewInstructionsV1Schema;
 }, { readonly policy: 'closed' }>>;
 const recipientStopNotice = defineProtocolLiteral(TRIAGE_RECIPIENT_STOP_NOTICE);
+const sendPresentation = defineProtocolObject({
+    actionLabel: text,
+    sessionTitle: text,
+}, { policy: 'closed' });
 
 type ConfiguredActionInputMembers = {
     v: ReturnType<typeof defineProtocolLiteral<1>>;
     handoff: typeof TriageSessionHandoffInputV1Schema;
     recipientStopNotice: ReturnType<typeof recipientStopNotice.optional>;
+    sendPresentation: ReturnType<typeof sendPresentation.optional>;
     singleIntent: ReturnType<typeof singleIntent.optional>;
     drafts: ReturnType<ReturnType<typeof defineProtocolArray<typeof TriageStartEntrySessionSettledDraftV1Schema>>['optional']>;
     reviewChoices: ReturnType<typeof TriagePullRequestReviewChoiceV1Schema.optional>;
@@ -129,6 +134,7 @@ export const TriageRunConfiguredActionInputV1Schema: ConfiguredActionInputSchema
     v: defineProtocolLiteral(1), handoff: TriageSessionHandoffInputV1Schema,
     /** Presentation only, for the mounted Send confirmation. */
     recipientStopNotice: recipientStopNotice.optional(),
+    sendPresentation: sendPresentation.optional(),
     singleIntent: singleIntent.optional(),
     /** Shared destination uses one draft; per-entry destinations carry drafts in entry order. */
     drafts: defineProtocolArray(TriageStartEntrySessionSettledDraftV1Schema).optional(),

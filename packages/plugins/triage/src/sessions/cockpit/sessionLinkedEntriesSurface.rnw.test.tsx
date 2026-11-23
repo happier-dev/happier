@@ -342,7 +342,9 @@ async function mountCockpit(
             adapter: createCockpitAdapter(accountReachable ? harness.client : null, sourceScope ?? statusFixture?.scope),
             handlers: {
                 confirm: async () => true,
-                presentActionFailure: async ({ failure }) => { navigationFailures.push(failure); return { reason: 'Cannot open', nextStep: 'Try again', technicalDetails: [
+                presentActionFailure: async ({ failure }) => { navigationFailures.push(failure); return {
+                    reason: failure.errorCode === 'credential_unavailable' ? 'This connection needs a credential.' : 'Cannot open',
+                    nextStep: 'Try again', technicalDetails: [
                     { key: 'code', label: 'Code', value: failure.errorCode },
                     { key: 'requestId', label: 'Request ID', value: failure.requestId ?? '' },
                 ] }; },
@@ -921,6 +923,43 @@ describe('the Session tab, round 2', () => {
 });
 
 describe('the mounted Session cockpit', () => {
+    it('recovers a failed cold linked entry through the cockpit Refresh', async () => {
+        const scope = createTriageEphemeralSharedScopeFixture();
+        const link = linkRow();
+        const entryRef = link.entryRef;
+        const observation = testkitObservation({ entryRef, outcome: {
+            kind: 'present', locator: { v: 1, displayPath: link.displayPathAtLink },
+            snapshot: testkitSnapshot({ title: 'Recovered linked pull request' }), viewer: { involvement: [] },
+        } });
+        const links = [{ entryRef, sourceInstanceId: observation.sourceInstanceId, sessionId: SESSION_ID,
+            linkedAtMs: link.linkedAtMs, displayPath: link.displayPathAtLink }];
+        const harness = createDataHarness({ snapshot: { status: 'ready', rows: [], hasMore: false } });
+        let fail = true;
+        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID }, null, true, null,
+            undefined, true, undefined, async () => ({ kind: 'partial', links }), () => scope, false, false,
+            renderSessionLinkedEntriesSurface, undefined, async () => {
+                if (fail) throw new Error('The provider is temporarily unavailable.');
+                const { entryRef, ...value } = observation;
+                return { kind: 'observed', entryRef, observation: value };
+            });
+        await vi.waitFor(() => expect(actionCalls.some(call => call.action === TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1)).toBe(true));
+        await expect(fixture.getByText(link.displayPathAtLink)).resolves.toBeDefined();
+        fail = false;
+        await act(async () => { await fixture.press(await fixture.findByRole('button', { name: 'Refresh' })); });
+        await vi.waitFor(async () => { await expect(fixture.getByText('Recovered linked pull request')).resolves.toBeDefined(); });
+    });
+
+    it('shows the typed relation read refusal with one inline Details', async () => {
+        const harness = createDataHarness({ snapshot: { status: 'ready', rows: [], hasMore: false } });
+        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID }, null, true, null,
+            undefined, true, undefined, async () => { throw new PluginError({ code: 'credential_unavailable', retryable: true }); });
+        await expect(fixture.getByText('This connection needs a credential.')).resolves.toBeDefined();
+        expect(await fixture.queryAllByRole('button', { name: 'Details' })).toHaveLength(1);
+        await act(async () => { await fixture.press(await fixture.findByRole('button', { name: 'Details' })); });
+        await expect(fixture.getByText('credential_unavailable')).resolves.toBeDefined();
+        expect(navigationFailures).toContainEqual(expect.objectContaining({ errorCode: 'credential_unavailable' }));
+    });
+
     it.each([false, true])('opens linked rows without extra exact reads when already acquired: %s', async (warm) => {
         const scope = createTriageEphemeralSharedScopeFixture();
         const refs = ['42', '56'].map(entryId => ({ ...linkRow().entryRef, entryId }));
@@ -992,8 +1031,8 @@ describe('the mounted Session cockpit', () => {
                     details: { requestId: 'whole-read-request-1' } });
             });
         await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Details' })); });
-        await expect(fixture.getByText('session_relations_unavailable')).resolves.toBeDefined();
-        await expect(fixture.getByText('whole-read-request-1')).resolves.toBeDefined();
+        expect(document.body.textContent).toContain('session_relations_unavailable');
+        expect(document.body.textContent).toContain('whole-read-request-1');
     });
     it('keeps readable links beside per-source diagnostic details through a failed refresh', async () => {
         const harness = createDataHarness({ snapshot: { status: 'ready', rows: [], hasMore: false } });
@@ -1374,8 +1413,8 @@ describe('the mounted Session cockpit', () => {
 
         const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID });
 
-        await expect(fixture.getByText('Linked entries could not be read')).resolves
-            .toEqual({ content: 'Linked entries could not be read' });
+        await expect(fixture.getByRole('button', { name: 'Details' })).resolves.toBeDefined();
+        await expect(fixture.queryByText('Keep this session’s PRs and issues at hand')).resolves.toBeUndefined();
         expect(harness.gets).toEqual([]);
     });
 

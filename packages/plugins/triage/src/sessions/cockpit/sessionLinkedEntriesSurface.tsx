@@ -49,6 +49,8 @@ import { applyTriageSessionPullRequestStatus } from './linkedEntrySummary.js';
 import { useLinkedPullRequestStatus, type LinkedPullRequestStatusRead } from './useLinkedPullRequestStatus.js';
 import { PullRequestStatusFacts } from '../pullRequestGlance/PullRequestGlance.js';
 import { PullRequestFailureDetails } from '../pullRequestGlance/PullRequestReadFailure.js';
+import { ActionFailureDetails } from '../../ui/ActionFailureDetails.js';
+import { TriageFailureLineAction } from '../../ui/shell/sourceFailure.js';
 
 /**
  * The Session-targeted linked-entries surface.
@@ -411,6 +413,7 @@ function UnavailableLinkSources(props: Readonly<{
 }>): React.ReactElement {
     const text = usePluginTranslation();
     const refresh = { label: text('plugins.triage.surface.refresh', 'Refresh'), onPress: props.onRefresh };
+    if (props.notice.error !== undefined) return <LinkReadFailure notice={props.notice} onRefresh={props.onRefresh} />;
     const reasons = props.notice.sources.length === 0
         ? [text('plugins.triage.sessionLinks.unavailable', 'Linked entries could not be read')]
         : props.notice.sources.map((source) => sourceProblemText(text, source));
@@ -424,15 +427,22 @@ function UnavailableLinkSources(props: Readonly<{
                         requestId={props.notice.sources[index]?.diagnostic?.requestId} />
                 </Stack>
             ))}
-            <LinkReadFailureDetails notice={props.notice} />
         </Stack>
     );
 }
 
-function LinkReadFailureDetails({ notice }: Readonly<{ notice: TriageSessionLinkedEntriesNoticeV1 }>): React.ReactElement | null {
+function LinkReadFailure({ notice, onRefresh }: Readonly<{
+    notice: TriageSessionLinkedEntriesNoticeV1; onRefresh: () => void;
+}>): React.ReactElement {
+    const text = usePluginTranslation();
     const error = notice.error;
-    const requestId = readPluginErrorRequestIdV1(error);
-    return <PullRequestFailureDetails codes={[error?.code, ...(error?.diagnostics ?? [])]} requestId={requestId} />;
+    return <ActionFailureDetails code={error?.code} message={error?.message} details={error?.details}
+        requestId={readPluginErrorRequestIdV1(error)} inline={{
+            fallback: text('plugins.triage.sessionLinks.unavailable', 'Linked entries could not be read'),
+            diagnostics: error?.diagnostics,
+            action: error?.retryable === false ? undefined
+                : <TriageFailureLineAction label={text('plugins.triage.surface.refresh', 'Refresh')} onPress={onRefresh} />,
+        }} />;
 }
 
 /**
@@ -594,17 +604,16 @@ function TriageSessionLinkedEntriesPanel(
     const text = usePluginTranslation();
     const host = usePluginHostApi();
     const { spacing } = usePluginTheme();
-    const { view, refresh, loadMore } = useTriageSessionLinkedEntries(props.sessionId, true);
+    const { view, refresh, refreshRevision, loadMore } = useTriageSessionLinkedEntries(props.sessionId, true);
     const { targetedContributions } = useSurfaceContext();
     const mounted = React.useRef(true);
     const [loadingMore, setLoadingMore] = React.useState(false);
     const [expandedKey, setExpandedKey] = React.useState<string | null>(null);
-    const [refreshRevision, setRefreshRevision] = React.useState(0);
     React.useEffect(() => {
         mounted.current = true;
         return () => { mounted.current = false; };
     }, []);
-    const onRefresh = React.useCallback(() => { setRefreshRevision((revision) => revision + 1); void refresh(); }, [refresh]);
+    const onRefresh = React.useCallback(() => { void refresh(); }, [refresh]);
     const onToggle = React.useCallback((key: string) => {
         setExpandedKey((current) => (current === key ? null : key));
     }, []);
@@ -666,7 +675,7 @@ function TriageSessionLinkedEntriesPanel(
         return (
             <Screen safeArea>
                 {header}
-                <ErrorState
+                {view.notice.error !== undefined ? <LinkReadFailure notice={view.notice} onRefresh={onRefresh} /> : <ErrorState
                     kind="unavailable"
                     title={text(
                         'plugins.triage.sessionLinks.unavailable',
@@ -682,11 +691,10 @@ function TriageSessionLinkedEntriesPanel(
                             onPress={onRefresh}
                         />
                     )}
-                />
+                />}
                 {view.notice.sources.map((source, index) => <PullRequestFailureDetails key={index}
                     title={`${text('plugins.triage.surface.detail.tab.details', 'Details')}: ${source.label}`}
                     codes={[source.diagnostic?.code]} requestId={source.diagnostic?.requestId} />)}
-                <LinkReadFailureDetails notice={view.notice} />
             </Screen>
         );
     }
