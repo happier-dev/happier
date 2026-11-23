@@ -14,6 +14,25 @@ execution_target_accepts_resource_class() {
   esac
 }
 
+execution_target_auto_host_memory_floor_kib() {
+  if [ "${command_mode-}" != auto ] || [ -n "${explicit_target_number-}" ]; then
+    printf 0
+    return
+  fi
+  # One explicit native test can retain the validation class when it uses a subprocess.
+  if heavyweight_focused_test_class "$policy_heavyClass" || [ "$policy_heavyClass" = native-source-test ] ||
+    { [ "$policy_heavyClass" = validation ] && [ "$policy_nativeTest" = 1 ] && [ -n "${policy_nativeTestPath-}" ]; }; then
+    printf 0
+    return
+  fi
+  if heavyweight_host_memory_floor_class "$heavyweight_placement_class" ||
+    { [ "$heavyweight_placement_class" = validation ] && [ "$policy_testRunner" = 1 ]; }; then
+    value_for_target auto_host_memory_floor_kib "$1"
+  else
+    printf 0
+  fi
+}
+
 execution_target_is_excluded() {
   case " ${HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS-} " in
     *" $1 "*) return 0 ;;

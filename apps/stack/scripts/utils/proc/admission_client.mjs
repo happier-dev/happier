@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
 import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
-import { readProcessJobScopeCpuUsageUsec, readProcessJobScopeWorkingSetKiB } from './admission_memory.mjs';
+import { readLinuxHostAvailableMemoryKiB, readProcessJobScopeCpuUsageUsec, readProcessJobScopeWorkingSetKiB } from './admission_memory.mjs';
 import { brokerAddress } from './admission_socket.mjs';
 import { ADMISSION_CPU_WORKER_FLAGS, SOURCE_WEB_EXPORT_ADMISSION_CLASS, resolveAdmissionCpuCost, resolveAdmissionDiskClass } from '../dev_targets/command_resources.mjs';
 
@@ -225,9 +225,11 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
     const gateArrival = className?.startsWith('gate-') ? Number(env.HAPPIER_COMMIT_GATE_ARRIVED_AT) : NaN;
     const arrivedAt = Number.isSafeInteger(gateArrival) && gateArrival > 0
       ? Math.min(now, gateArrival) : now;
+    const autoHostMemoryFloorKiB = Number(env.HAPPIER_ADMISSION_AUTO_HOST_MEMORY_FLOOR_KIB ?? 0);
     const request = { kind: 'acquire', className: resolveAdmissionDiskClass(className), resourceClass: className, floorKiB,
       ...(durationClass && Number.isFinite(p99DurationMs) && p99DurationMs > 0 ? { durationClass, p99DurationMs } : {}),
       cpuCost,
+      ...(autoHostMemoryFloorKiB > 0 ? { autoHostMemoryFloorKiB } : {}),
       pid: process.pid, arrivedAt,
       repoDir, cacheBaseDir, noWait, locks, projects, judgment, acceptsDeclarationStall: true, acceptsInheritedGrant: true,
       ...(typeof entry === 'string' && typeof component === 'string' ? { component, entry } : {}),
@@ -662,7 +664,9 @@ export async function runAdmissionClient(argv = process.argv.slice(2)) {
     else {
       const selected = options.includes('--active-count') ? sample.activeCount
         : options.includes('--waiting-count') ? sample.waitingCount
-          : options.includes('--unreserved-memory') ? sample.unreservedMemoryKiB : JSON.stringify(sample);
+          : options.includes('--unreserved-memory') ? sample.unreservedMemoryKiB
+            : JSON.stringify(options.includes('--sample') && !value('class')
+              ? { ...sample, hostAvailableMemoryKiB: readLinuxHostAvailableMemoryKiB() } : sample);
       process.stdout.write(String(selected) + '\n');
     }
     return;

@@ -96,11 +96,15 @@ export function readProcessJobScopeCpuUsageUsec(pid, read = readFileSync) {
   } catch { return null; }
 }
 
+export function readLinuxHostAvailableMemoryKiB(memory = readFileSync('/proc/meminfo', 'utf8')) {
+  return Number(/^MemAvailable:\s+(\d+)/m.exec(memory)?.[1]);
+}
+
 export function readLinuxAdmissionMemory({ waitingResidentMemoryKiB = 0, waitingSliceResidentMemoryKiB = 0 } = {}) {
   const memory = readFileSync('/proc/meminfo', 'utf8');
   const totalMemoryKiB = Number(/^MemTotal:\s+(\d+)/m.exec(memory)?.[1]);
-  const availableMemoryKiB = Math.min(totalMemoryKiB,
-    Number(/^MemAvailable:\s+(\d+)/m.exec(memory)?.[1]) + waitingResidentMemoryKiB);
+  const hostAvailableMemoryKiB = readLinuxHostAvailableMemoryKiB(memory);
+  const availableMemoryKiB = Math.min(totalMemoryKiB, hostAvailableMemoryKiB + waitingResidentMemoryKiB);
   const uid = process.getuid();
   const cgroup = `/sys/fs/cgroup${jobsSlice(uid)}`;
   const readLimit = name => {
@@ -113,7 +117,7 @@ export function readLinuxAdmissionMemory({ waitingResidentMemoryKiB = 0, waiting
     }
   };
   const limit = Math.min(readLimit('memory.high'), readLimit('memory.max'));
-  if (limit === Infinity) return { availableMemoryKiB, totalMemoryKiB };
+  if (limit === Infinity) return { availableMemoryKiB, totalMemoryKiB, hostAvailableMemoryKiB };
   // memory.high is the kernel's existing throttle boundary, not a new budget.
   // A finite limit requires its usage observation; never fall back to the host
   // when that observation is unavailable.
@@ -127,6 +131,6 @@ export function readLinuxAdmissionMemory({ waitingResidentMemoryKiB = 0, waiting
   const activeFile = Number(/^active_file\s+(\d+)/m.exec(stat)?.[1] ?? 0);
   const reclaimableSlab = Number(/^slab_reclaimable\s+(\d+)/m.exec(stat)?.[1] ?? 0);
   const workingSet = Math.max(0, current - inactiveFile - activeFile - reclaimableSlab - waitingSliceResidentMemoryKiB * 1024);
-  return { totalMemoryKiB: Math.min(totalMemoryKiB, Math.floor(limit / 1024)),
+  return { hostAvailableMemoryKiB, totalMemoryKiB: Math.min(totalMemoryKiB, Math.floor(limit / 1024)),
     availableMemoryKiB: Math.min(availableMemoryKiB, Math.max(0, Math.floor((limit - workingSet) / 1024))) };
 }

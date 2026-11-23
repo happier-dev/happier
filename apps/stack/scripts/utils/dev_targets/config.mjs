@@ -197,6 +197,10 @@ function normalizeTarget(raw, index, version) {
       || !Object.hasOwn(HEAVYWEIGHT_COMMAND_RESOURCES, resourceClass)))) {
     throw new Error(`[dev-targets] target ${name}: autoResourceClasses must list known admission resource classes`);
   }
+  const autoHostMemoryFloorKiB = raw.autoHostMemoryFloorKiB;
+  if (autoHostMemoryFloorKiB !== undefined && (!Number.isSafeInteger(autoHostMemoryFloorKiB) || autoHostMemoryFloorKiB < 0)) {
+    throw new Error(`[dev-targets] target ${name}: autoHostMemoryFloorKiB must be a non-negative integer`);
+  }
   const remoteServerPortRaw = raw.remoteServerPort;
   const remoteServerPort =
     remoteServerPortRaw == null || String(remoteServerPortRaw).trim() === ''
@@ -220,6 +224,7 @@ function normalizeTarget(raw, index, version) {
     cliHomeDir,
     ...(remotePath.length ? { remotePath } : {}),
     ...(autoResourceClasses !== undefined ? { autoResourceClasses } : {}),
+    ...(autoHostMemoryFloorKiB !== undefined ? { autoHostMemoryFloorKiB } : {}),
     remoteServerPort,
   };
 }

@@ -39,6 +39,7 @@ heavyweight_cpu_cores() {
   printf '%s' "$heavyweight_cpu_cost"
 }
 heavyweight_focused_test_class() { case "$1" in focused-validation|focused-validation-ui|focused-validation-cli) return 0 ;; *) return 1 ;; esac; }
+heavyweight_host_memory_floor_class() { case "$1" in source-bundle|source-web-export|package-dist|runtime-build|compilation|gate-package-typecheck|gate-declaration-comparison|gate-final-recheck|compilation-ui|compilation-ui-tsrs|compilation-cli|compilation-server) return 0 ;; *) return 1 ;; esac; }
 heavyweight_memory_floor_kib() {
   case "$1" in
     source-reload) heavyweight_policy_floor='7864320' ;;

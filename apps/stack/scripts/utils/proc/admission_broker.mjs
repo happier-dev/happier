@@ -603,12 +603,16 @@ export function createAdmissionBroker({ root,
       cpuCores: pledged ? Math.min(minimumCpuCores(head), headPledge.cpuCores) : 0,
     };
   }
+  function hostMemoryFloorFits(item) {
+    return (sample.hostAvailableMemoryKiB ?? 0) >= (item.autoHostMemoryFloorKiB ?? 0);
+  }
   function canReserveHead(item, memoryWithinBoundKiB, now, pressure = cpu.pressure) {
     const minimumFloorKiB = item.floorOptions?.at(-1).floorKiB ?? item.floorKiB;
     const aged = now - item.arrivedAt >= HEAD_RESERVATION_DELAY_MS;
     // Keep the waiter's age and earned pledge while its floor cannot fit in
     // time. Non-admitted pressure cannot be recovered by releasing broker slots.
-    return !item.slot && !item.blocked && !item.socket.destroyed && minimumFloorKiB <= sample.achievableMemoryKiB
+    return !item.slot && !item.blocked && !item.socket.destroyed && hostMemoryFloorFits(item)
+      && minimumFloorKiB <= sample.achievableMemoryKiB
       && (!aged || minimumFloorKiB <= memoryWithinBoundKiB) && minimumCpuCores(item) <= totalCpuCores - pressure;
   }
   function status(observation = cpu) {
@@ -764,7 +768,8 @@ export function createAdmissionBroker({ root,
     serial = serial.then(async () => { if (!closing) await run(); }).catch(error => {
       recordFailure(error);
       // A failed observation cannot authorize work from a stale capacity fact.
-      sample = { ...sample, availableMemoryKiB: 0, creditedResidentMemoryKiB: 0, achievableMemoryKiB: 0, unreservedMemoryKiB: 0 };
+      sample = { ...sample, hostAvailableMemoryKiB: 0, availableMemoryKiB: 0,
+        creditedResidentMemoryKiB: 0, achievableMemoryKiB: 0, unreservedMemoryKiB: 0 };
       // The failed pass does not decide the fate of unrelated waiters. Keep
       // their order, watchers and existing catch-up so the next pass can decide.
     }).then(publishQueuePositions).then(publishAdmissionStatus);
@@ -1064,7 +1069,7 @@ export function createAdmissionBroker({ root,
   // counting live CPU reservations, and carry ownership in the slot address.
   function cpuPressureHead(now) {
     if (cpu.pressure === 0) return;
-    const head = waiting.find(item => !item.slot && !item.blocked && !item.socket.destroyed
+    const head = waiting.find(item => !item.slot && !item.blocked && !item.socket.destroyed && hostMemoryFloorFits(item)
       && (item.floorOptions?.at(-1).floorKiB ?? item.floorKiB) <= sample.totalMemoryKiB
       && minimumCpuCores(item) <= totalCpuCores);
     if (head && (slots.size === 0 || overdue(head, now))) return head;
@@ -1106,7 +1111,7 @@ export function createAdmissionBroker({ root,
       && minimumCpuCores(pressureHead) > availableCpuCores;
     const pledgingHead = waiting.find(item => canReserveHead(item, budget.memoryWithinBoundKiB, now));
     const reservation = headReservation(pledgingHead);
-    const capacityHead = waiting.find(item => !item.slot && !item.blocked && !item.socket.destroyed
+    const capacityHead = waiting.find(item => !item.slot && !item.blocked && !item.socket.destroyed && hostMemoryFloorFits(item)
       && (item.floorOptions?.at(-1).floorKiB ?? item.floorKiB) <= sample.totalMemoryKiB
       && minimumCpuCores(item) <= totalCpuCores);
     // Coordination 2026-11-13 11:22Z: source bundles (including stack reloads)
@@ -1142,6 +1147,12 @@ export function createAdmissionBroker({ root,
       }
       if (minimumCpuCores(item) > totalCpuCores) {
         refuse(item, 'HSTACK_CPU_CAPACITY');
+        continue;
+      }
+      if (!hostMemoryFloorFits(item)) {
+        item.waitingForMemory = true;
+        item.waitingForCpu = false;
+        if (item.noWait) refuse(item, 'HSTACK_MEMORY_BUSY');
         continue;
       }
       if (backfillBlockedBy) {
@@ -1428,6 +1439,8 @@ export function createAdmissionBroker({ root,
       if (!validCpuRequest(request) || !validDuration(request)
         || request.kind !== 'acquire' || item || !Number.isSafeInteger(request.floorKiB) || request.floorKiB <= 0
         || (request.arrivedAt !== undefined && (!Number.isSafeInteger(request.arrivedAt) || request.arrivedAt < 0))
+        || (request.autoHostMemoryFloorKiB !== undefined
+          && (!Number.isSafeInteger(request.autoHostMemoryFloorKiB) || request.autoHostMemoryFloorKiB < 0))
         || !Number.isSafeInteger(request.pid) || request.pid <= 1 || typeof request.className !== 'string'
         || (request.resourceClass !== undefined && typeof request.resourceClass !== 'string')
         || (request.component !== undefined && typeof request.component !== 'string')

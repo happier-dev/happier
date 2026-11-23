@@ -3501,6 +3501,49 @@ for (const dispatcher of ['native', 'javascript']) {
   });
 }
 
+test('AUTO gates browser and heavy work while keeping focused validation eligible below the host memory floor', async t => {
+  const gibKiB = 1024 * 1024;
+  const fixture = await memoryRoutingFixture(t, {
+    availableKiB: 14 * gibKiB, totalKiB: 128 * gibKiB,
+    roomyAvailableKiB: 30 * gibKiB, roomyTotalKiB: 128 * gibKiB,
+  });
+  delete fixture.invocation.env.CI;
+  for (const target of fixture.config.targets) target.autoHostMemoryFloorKiB = 25 * gibKiB;
+  await writeFile(fixture.configPath, JSON.stringify(fixture.config));
+  await writeNativeProjectionFixture(join(fixture.stackDir, 'dev-target-exec-v1.sh'),
+    renderNativeExecutionProjection(fixture.config, { repoRoot }));
+
+  for (const args of [
+    ['vitest', 'run'],
+    ['node', 'scripts/workspaces/runTypeScriptCli.mjs', '-p', 'apps/cli/tsconfig.source.json'],
+  ]) {
+    const routed = spawnSync('/bin/sh', [launcher, '--', ...args], fixture.invocation);
+    assert.equal(routed.status, 0, routed.stderr);
+    assert.equal(routed.stdout, 'remote:roomy\n', args.join(' '));
+  }
+
+  const focused = spawnSync('/bin/sh', [launcher, '--', 'node', '--test',
+    'apps/stack/scripts/preferred_execution_launcher.test.mjs'], fixture.invocation);
+  assert.equal(focused.status, 0, focused.stderr);
+  assert.equal(focused.stdout, 'remote:starved\n', focused.stderr);
+
+  const producer = join(fixture.root, 'stacks', 'producer');
+  await mkdir(producer, { recursive: true });
+  await writeFile(join(producer, 'dev-targets.json'), JSON.stringify(fixture.config));
+  const selected = await resolveControlledQaBrowserTarget({
+    stackName: 'qa', sourceDir: repoRoot,
+    env: { ...fixture.invocation.env, HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'producer',
+      HAPPIER_STACK_QA_BROWSER_TARGETS: 'starved,roomy' },
+  }, { runCaptureResult: async (_command, args) => {
+    const starved = args.includes('--target=starved');
+    const host = { platform: 'linux', arch: 'x64', remote: true,
+      hostAvailableMemoryKiB: (starved ? 14 : 30) * gibKiB,
+      unreservedMemoryKiB: (starved ? 14 : 8) * gibKiB };
+    return { ok: true, out: 'HSTACK_QA_HOST=' + JSON.stringify(host) };
+  }, logger: { warn() {} } });
+  assert.equal(selected.target.name, 'roomy');
+});
+
 test('memory-aware cache ranks heavyweight work using a trivial command reachable result', async (t) => {
   const { invocation, stackDir } = await memoryRoutingFixture(t);
   const trivial = spawnSync('/bin/sh', [launcher, '--', 'probe-command'], invocation);

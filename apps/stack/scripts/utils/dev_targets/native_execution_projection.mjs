@@ -57,6 +57,7 @@ export function resolveCommandRepositoryConfig(config, { repoRoot, executorRepoR
     const commandTarget = targets.get(target.name);
     targets.set(target.name, { ...target,
       autoResourceClasses: commandTarget ? commandTarget.autoResourceClasses : target.autoResourceClasses,
+      autoHostMemoryFloorKiB: commandTarget ? commandTarget.autoHostMemoryFloorKiB : target.autoHostMemoryFloorKiB,
       // Linked worktrees share a Git-based Stack identity and can inherit the
       // parent checkout's service configuration. Never reuse its destination.
       repoDir: posix.join(posix.dirname(target.repoDir), name),
@@ -110,6 +111,7 @@ export function renderNativeExecutionProjection(config, { repoRoot = '', executo
       assignment(`${prefix}_remote_path`, target.remotePath?.join(':') ?? ''),
       assignment(`${prefix}_automatic`, selectedNames.has(target.name) ? '1' : '0'),
       assignment(`${prefix}_auto_resource_classes`, target.autoResourceClasses?.join(' ') ?? '*'),
+      assignment(`${prefix}_auto_host_memory_floor_kib`, String(target.autoHostMemoryFloorKiB ?? 0)),
     );
   });
   return `${lines.join('\n')}\n`;

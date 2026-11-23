@@ -255,6 +255,11 @@ async function selectControlledTarget({ loaded, config, qa, retained, authorityL
       }
       const candidate = { target, runtimeTarget: { platform: host.platform, arch: host.arch } };
       if (!selectMostAvailableMemory) return candidate;
+      if (target.autoHostMemoryFloorKiB > 0
+        && !(host.hostAvailableMemoryKiB >= target.autoHostMemoryFloorKiB)) {
+        logger.warn?.(`[dev-targets] QA browser host ${target.name} below the configured ${target.autoHostMemoryFloorKiB} KiB available-memory floor`);
+        continue;
+      }
       if (!best || host.unreservedMemoryKiB > best.unreservedMemoryKiB) best = { ...candidate, unreservedMemoryKiB: host.unreservedMemoryKiB };
     } catch (error) {
       const message = error === probeError ? error.message : redactFailureDiagnostic(error instanceof Error ? error.message : String(error), env);
