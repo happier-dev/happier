@@ -916,7 +916,8 @@ const SharedSecretPage = React.memo(function SharedSecretPage(props: Readonly<{
             ) : null}
 
             {canDelete ? (
-                // The irreversible action closes the page, its consequence said once beneath it.
+                // The irreversible action closes the page. Its consequence is said once, by the confirmation it opens;
+                // beneath it stands only why it is unavailable (a denied action says why).
                 <ItemGroup surface="none">
                     <View style={stylesheet.exit}>
                         <RoundButton
@@ -927,9 +928,7 @@ const SharedSecretPage = React.memo(function SharedSecretPage(props: Readonly<{
                             disabled={props.disabled || inUse}
                             onPress={() => props.onDelete?.(entry)}
                         />
-                        <Text style={stylesheet.exitNote}>
-                            {inUse ? t('secretsSettings.deleteInUseNote') : shared ? t('secretsSettings.deleteNoteShared') : t('secretsSettings.deleteNote')}
-                        </Text>
+                        {inUse ? <Text style={stylesheet.exitNote}>{t('secretsSettings.deleteInUseNote')}</Text> : null}
                     </View>
                 </ItemGroup>
             ) : null}

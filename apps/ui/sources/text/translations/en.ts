@@ -1804,7 +1804,7 @@ const enApprovals = {
   cannotRunLegacy: "This request was saved by an earlier version of Happier, so it can’t be approved. Deny it, or ask for it again.",
   cannotRunTitle: "Can't be approved",
   cannotRunNoMachine: "This request has no machine recorded to run it on, so it can't be approved. Deny it, or ask for it again from the session that needs it.",
-  irreversibleNote: "This can't be undone.",
+  irreversibleNote: 'This can’t be undone.',
   irreversibleFact: "Can't be undone",
   dismiss: "Dismiss",
   dismissHint: "Closes the request without approving or denying it.",
@@ -15162,7 +15162,7 @@ const enWorkspaceSync = {
     destinationNeedsPreparation:
       'The destination folder needs preparation before syncing can start.',
     gitPreparationFailed:
-      'Happier could not prepare this Git workspace. Review the destination and try again.',
+      'One of these folders isn’t a Git repository, so its version-controlled files can’t sync. Choose All files under Advanced, then try again.',
     authorizationExpired:
       'Workspace authorization expired. Start the operation again.',
     rootNoLongerAuthorized:

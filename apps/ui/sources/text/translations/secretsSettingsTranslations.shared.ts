@@ -110,7 +110,6 @@ export const en = {
     sharingReferenceDescription: ({ provider }: { provider: string }) => `They get this reference, not its value: each person reads it from ${provider} with their own sign-in, so only people with access to that vault can use it.`,
     sharingNote: "Their devices hold their own copy. Stopping blocks new copies, but can't take back one they already have.",
     deleteSecret: "Delete secret",
-    deleteNote: "Deleting removes it for good. Anything still using it has to switch to another secret first.",
     deleteNoteShared: "Deleting removes it for good, for everyone you shared it with. Anything still using it has to switch to another secret first.",
     usedByTitle: "Used by",
     usedByEmpty: "Not used yet",

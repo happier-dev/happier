@@ -105,6 +105,23 @@ describe('Project header page descriptors', () => {
         expect((writes[0] as { orderedIds: string[] }).orderedIds.slice(0, 3)).toEqual(['code', 'overview', 'changes']);
     });
 
+    it('offers no in-strip Organize on a touch-first screen, where its tabs cannot be dragged; Customize tabs reorders there (DESIGN-ACCEPT-144 N1)', async () => {
+        vi.stubGlobal('navigator', { maxTouchPoints: 1 });
+        try {
+            const pages = resolveProjectPageCatalog({ target: { kind: 'project', workspaceRefId: 'project', serverId: 'home' } });
+            const screen = await renderScreen(<ProjectShellHeader projectName="Project" checkout={null}
+                pages={pages.slice(0, 3)} activePage="overview" onSelectPage={() => {}} onNewSession={null} menuActions={[]}
+                onCustomizeTabs={() => {}}
+                placement={{ items: pages, preferences: { orderedIds: ['overview', 'code', 'changes'], placements: {} },
+                    scope: { serverId: 'home', accountId: 'account' }, onChange: () => {} }} />);
+            expect(screen.findHostByTestId('project-shell-header.pages.reorder.organize')).toBeNull();
+            expect(screen.root.findAllByType(EntityFlatReorderList)).toHaveLength(0);
+            await screen.unmount();
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
     it('announces the authored disabled explanation instead of interpreting it as a diagnostic code', async () => {
         const placement = createPluginPagePlacementFixture({ pluginId: 'external.tools', localId: 'builds', title: 'Builds' });
         const pages = resolveProjectPageCatalog({ target: { kind: 'project', workspaceRefId: 'project', serverId: 'home' },

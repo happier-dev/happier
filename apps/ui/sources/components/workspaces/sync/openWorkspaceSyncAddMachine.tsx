@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { View } from 'react-native';
 import type { WorkspaceSyncPersistentModeV1, WorkspaceSyncDestinationIntentV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { evaluateSessionHandoffWorkspaceTransferSourcePathSafety } from '@happier-dev/protocol/sessions/control/handoff/workspaceTransferSourcePathSafety';
 import { OpenProjectRefusalV1Schema, OpenProjectResultV1Schema, type OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
@@ -16,6 +15,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { SurfaceStateCard, type SurfaceStateKind } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { CustomModalInjectedProps } from '@/modal';
+import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import { Modal } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
@@ -421,9 +421,9 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
         }
     }, [binding, blockedReason, busy, confirmAndApprove, contentSelection, destinationIntent, existing, hub, includeIgnoredMode, inspectRequired, materializedSource, mode, patternsDraft, pendingApprovalId, phase, placement, props, resolvedPath, selectedMachine]);
 
+    // The shared short-card footer: a phone sheet's two actions share its footer, and closing is never primary.
     const footer = React.useMemo(() => (
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
-            <RoundButton display="inverted" title={t(phase === 'linked' ? 'common.done' : 'common.cancel')} onPress={props.onClose} />
+        <ModalCardFooterActions cancel={{ onPress: props.onClose, ...(phase === 'linked' ? { title: t('common.done') } : {}) }}>
             <RoundButton
                 testID="workspace-sync-add-machine-submit"
                 title={replacement ? t('workspaceSync.replace.action') : existing ? t('workspaceSync.diagnostics.title') : pendingApprovalId ? t('sessionHandoff.targetApproval.title') : t('settings.addMachine')}
@@ -431,7 +431,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
                 disabled={Boolean(blockedReason) || busy || phase === 'linked' || inspectRequired}
                 accessibilityHint={blockedReason ?? undefined}
             />
-        </View>
+        </ModalCardFooterActions>
     ), [blockedReason, busy, existing, inspectRequired, pendingApprovalId, phase, props.onClose, submit]);
     const chrome = React.useMemo(() => ({
         kind: 'card',
@@ -439,17 +439,24 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
         subtitle: t('workspaceSync.title'),
         testID: 'workspace-sync-add-machine-modal',
         dimensions: { width: HAPPIER_PAGE_METRICS.dialogWidthPx.wide, maxHeightRatio: 0.92 },
+        // A phone takes the sheet within thumb reach; at every width the header and the footer's primary action stay
+        // in view while the form scrolls between them, and the card keeps the height the person acted on, so a
+        // refusal arriving after submit does not move the form under them.
+        phonePresentation: 'sheet',
+        scrollHost: 'bounded',
         footer,
     } as const), [footer, replacement]);
     useModalCardChrome(props.setChrome, chrome);
 
     return (
         <ItemList presentation="grouped" keyboardAware style={{ paddingTop: 0 }}>
+            {/* The source's Machine sits beneath its folder: beside it, a phone cut both, and two Machines of one name
+                could not be told apart (the label carries the distinguishing suffix). */}
             {hub ? <Item
                 title={t('workspaceSync.endpoint.source', {
                     label: formatPathRelativeToHome(hub.rootPath, sourceRoots?.homeDir),
                 })}
-                detail={hubMachineLabel}
+                subtitle={hubMachineLabel}
                 mode="info"
             /> : null}
             {replacement ? <Item title={t('settingsSession.handoff.targetBootstrap.title')} subtitle={replacement.beta.workspaceRef?.rootPath} mode="info" /> : <WorkspaceActivationDestinationFields
