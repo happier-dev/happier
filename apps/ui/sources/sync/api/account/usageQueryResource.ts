@@ -2744,11 +2744,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         // take the previous progress as a successful terminal answer.
                         throw failure;
                     }
-                    // Malformed wire settles as a typed Resource error. Publishing a
-                    // progress value here would let a one-shot Action return an empty
-                    // successful result before it sees the rejected wire.
-                    // Other retainable failures settle their pending sources in place.
-                    if (code !== 'usage_query_result_invalid' && !options?.signal?.aborted && sharedContext.accountLifetime.isCurrent()) {
+                    // Settle retained facts for the mounted view before rejecting the read.
+                    if (!options?.signal?.aborted && sharedContext.accountLifetime.isCurrent()) {
                         await Promise.resolve(progressContent).catch(() => undefined);
                         const shown = entry.getSnapshot().value;
                         const batch = shown ? decodeUsageQueryResource(shown) : undefined;
@@ -2757,7 +2754,15 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                             const settled: UsageQueryBatchResult = { ...batch, results: batch.results.map(slice => !slice.pending ? slice : {
                                 ...slice, pending: false, sources: slice.sources.map(source => isUsageQuerySourceOutstanding(slice.requestedQuery, source)
                                     ? { ...source, status: 'error' as const, errorCode } : source) }) };
-                            options?.onProgress?.(keepContent(createUsageQueryResourceContent(settled), settled));
+                            const content = createUsageQueryResourceContent(settled);
+                            if (code === 'usage_query_result_invalid') {
+                                // A malformed answer cannot admit the displayed fallback
+                                // for an Action. Preserve its decoded references for viewers.
+                                decodedValues.set(content, { value: settled });
+                            } else {
+                                keepContent(content, settled);
+                            }
+                            options?.onProgress?.(content);
                         }
                     }
                     throw failure;
