@@ -452,11 +452,11 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
             // How to connect Gatus waits one press away, as the shared disclosure row with its caret, its body as
             // copyable code (PAGE-ACCEPT-176 R11-D2, R13-D9).
             h(CountedDisclosureItem, { key: 'gatus-how', testID: 'health-setup-gatus-how',
-                title: t(`${K}.monitor.gatusHow`, 'How to connect Gatus'), expanded: gatusHowOpen, onExpandedChange: setGatusHowOpen },
-                h(Stack, { gap: 'small' },
+                title: t(`${K}.monitor.gatusHow`, 'How to connect Gatus'), expanded: gatusHowOpen, onExpandedChange: setGatusHowOpen,
+                children: h(Stack, { gap: 'small' },
                     h(Text, { tone: 'secondary', value: t(`${K}.monitor.gatusTemplateLead`,
                         'In Gatus, add a custom alert that sends POST with Content-Type application/json and this body:') }),
-                    h(CodeBlock, { code: GATUS_BODY, language: 'json', selectable: true }))),
+                    h(CodeBlock, { code: GATUS_BODY, language: 'json', selectable: true })) }),
         ]),
         cadence[1]!,
     ] : draft.kind === 'tcp' ? [
