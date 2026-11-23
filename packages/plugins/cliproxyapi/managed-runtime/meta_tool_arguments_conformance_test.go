@@ -12,19 +12,20 @@ import (
 	"testing"
 )
 
-func TestManagedMetaResponsesPreservesNativeToolArguments(t *testing.T) {
+func TestManagedMetaResponsesNormalizesNativeToolArguments(t *testing.T) {
 	for _, fixture := range []struct {
-		name, arguments string
-		terminalOnly    bool
-		nonStreaming    bool
-		numbers         []projectedNumber
+		name, arguments, want string
+		terminalOnly          bool
+		nonStreaming          bool
+		numbers               []projectedNumber
 	}{
-		{"integer with projection off", `{"session_id":44069,"yield_time_ms":30000}`, false, false, nil},
-		{"fragmented mixed spellings", `{"session_id":44069,"yield_time_ms":30000.0,"text":"PRIVATE_STRING_ARGUMENT","numeric_string":"123456","empty":null}`, false, false,
-			[]projectedNumber{{"/session_id", "integer"}, {"/yield_time_ms", "decimal-with-fraction"}}},
-		{"nested numbers in terminal response", `{"session_id":44069,"yield_time_ms":30000,"nested":[true,{"a/b~c":-1.25e2},5e-2]}`, true, false,
+		{"normalized with projection off", `{"session_id":44069,"yield_time_ms":30000.0}`, `{"session_id":44069,"yield_time_ms":30000}`, false, false, nil},
+		{"fragmented mixed spellings", `{"session_id":44069.0, "yield_time_ms":30000.0,"max_output_tokens":30000.5,"number":30000.0,"nested":{"yield_time_ms":30000.0},"text":"PRIVATE_STRING_ARGUMENT","numeric_string":"123456","empty":null}`,
+			`{"session_id":44069, "yield_time_ms":30000,"max_output_tokens":30000.5,"number":30000.0,"nested":{"yield_time_ms":30000.0},"text":"PRIVATE_STRING_ARGUMENT","numeric_string":"123456","empty":null}`, false, false,
+			[]projectedNumber{{"/max_output_tokens", "decimal-with-fraction"}, {"/nested/yield_time_ms", "decimal-with-fraction"}, {"/number", "decimal-with-fraction"}, {"/session_id", "decimal-with-fraction"}, {"/yield_time_ms", "decimal-with-fraction"}}},
+		{"nested numbers in terminal response", `{"session_id":44069,"yield_time_ms":30000,"nested":[true,{"a/b~c":-1.25e2},5e-2]}`, "", true, false,
 			[]projectedNumber{{"/nested/1/a~1b~0c", "decimal-with-fraction"}, {"/nested/2", "exponent"}, {"/session_id", "integer"}, {"/yield_time_ms", "integer"}}},
-		{"non-streaming downstream response", `{"session_id":44069,"yield_time_ms":30000.0}`, true, true,
+		{"non-streaming downstream response", `{"session_id":44069,"yield_time_ms":30000.0}`, `{"session_id":44069,"yield_time_ms":30000}`, true, true,
 			[]projectedNumber{{"/session_id", "integer"}, {"/yield_time_ms", "decimal-with-fraction"}}},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
@@ -48,7 +49,9 @@ func TestManagedMetaResponsesPreservesNativeToolArguments(t *testing.T) {
 					return nil, fmt.Errorf("Meta fixture received an invalid request")
 				}
 				for _, tool := range body.Tools {
-					if tool.Name == "write_stdin" && tool.Parameters.Properties["session_id"].Type == "integer" && tool.Parameters.Properties["yield_time_ms"].Type == "integer" {
+					if tool.Name == "write_stdin" && tool.Parameters.Properties["session_id"].Type == "integer" && tool.Parameters.Properties["yield_time_ms"].Type == "integer" &&
+						tool.Parameters.Properties["max_output_tokens"].Type == "integer" &&
+						tool.Parameters.Properties["number"].Type == "number" {
 						return metaToolArgumentsFixtureResponse(request, fixture.arguments, fixture.terminalOnly), nil
 					}
 				}
@@ -62,7 +65,7 @@ func TestManagedMetaResponsesPreservesNativeToolArguments(t *testing.T) {
 			defer stopGateway(t, cancel, result)
 			_ = awaitManagedHealthIdentity(t, cfg)
 
-			body := strings.NewReader(fmt.Sprintf(`{"model":"muse-spark-1.3","stream":%t,"input":"poll the command","tools":[{"type":"function","name":"write_stdin","parameters":{"type":"object","properties":{"session_id":{"type":"number"},"yield_time_ms":{"type":"number"}}}}]}`, !fixture.nonStreaming))
+			body := strings.NewReader(fmt.Sprintf(`{"model":"muse-spark-1.3","stream":%t,"input":"poll the command","tools":[{"type":"function","name":"write_stdin","parameters":{"type":"object","properties":{"session_id":{"type":"number"},"yield_time_ms":{"type":"number"},"max_output_tokens":{"type":"number"},"number":{"type":"number"}}}}]}`, !fixture.nonStreaming))
 			request, err := http.NewRequest(http.MethodPost, fmt.Sprintf("http://%s:%d/v1/responses", cfg.Host, cfg.Port), body)
 			if err != nil {
 				t.Fatal(err)
@@ -79,22 +82,33 @@ func TestManagedMetaResponsesPreservesNativeToolArguments(t *testing.T) {
 				t.Fatalf("native Responses stream status = %d", response.StatusCode)
 			}
 			payload := readResponse(t, response)
+			want := fixture.want
+			if want == "" {
+				want = fixture.arguments
+			}
 			if fixture.nonStreaming {
 				var completed struct{ Output []struct{ Arguments string } }
-				if json.Unmarshal([]byte(payload), &completed) != nil || len(completed.Output) != 1 || completed.Output[0].Arguments != fixture.arguments {
+				if json.Unmarshal([]byte(payload), &completed) != nil || len(completed.Output) != 1 || completed.Output[0].Arguments != want {
 					t.Fatal("arguments changed in the non-streaming Responses body")
 				}
 			} else {
-				assertNativeToolArguments(t, payload, fixture.arguments, fixture.terminalOnly)
+				assertNativeToolArguments(t, payload, want, fixture.terminalOnly)
 			}
-			assertResponsesNumberProjection(t, cfg, fixture.numbers, fixture.terminalOnly, fixture.nonStreaming)
+			downstreamNumbers := append([]projectedNumber(nil), fixture.numbers...)
+			for i := range downstreamNumbers {
+				number := &downstreamNumbers[i]
+				if (number.Path == "/session_id" || number.Path == "/yield_time_ms") && fixture.want != "" {
+					number.Class = "integer"
+				}
+			}
+			assertResponsesNumberProjection(t, cfg, fixture.numbers, downstreamNumbers, fixture.terminalOnly, fixture.nonStreaming)
 		})
 	}
 }
 
 type projectedNumber struct{ Path, Class string }
 
-func assertResponsesNumberProjection(t *testing.T, cfg Config, numbers []projectedNumber, terminalOnly, nonStreaming bool) {
+func assertResponsesNumberProjection(t *testing.T, cfg Config, numbers, downstreamNumbers []projectedNumber, terminalOnly, nonStreaming bool) {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(cfg.RuntimeDir, wireProjectionFile))
 	if numbers == nil {
@@ -136,9 +150,12 @@ func assertResponsesNumberProjection(t *testing.T, cfg Config, numbers []project
 			{"response.output_item.done", 0, numbers},
 		}, want...)
 	}
-	egress := want
+	egress := make([]observation, 0, len(want))
+	for _, event := range want {
+		egress = append(egress, observation{event.Event, event.OutputIndex, downstreamNumbers})
+	}
 	if nonStreaming {
-		egress = []observation{{"response", 0, numbers}}
+		egress = []observation{{"response", 0, downstreamNumbers}}
 	}
 	for _, side := range []struct {
 		name string

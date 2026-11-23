@@ -2756,6 +2756,13 @@ deltas and completion snapshots have separate observations. The projection
 omits argument values and keeps CommercialMode enabled. Capture the file while
 the instance is live and clear the selector after the replay.
 
+On the managed Muse HTTP Responses route, the 0.3 development wrapper uses the
+function schema sent upstream to emit whole-number values within the native
+64-bit integer range as integer JSON tokens for top-level parameters declared
+as `integer`. This applies to streamed argument fragments and completion
+payloads. A decimal at ingress can therefore appear as an integer at egress
+even when the two sides represent the same value.
+
 For native Codex Responses clients, the development managed codec presents MCP
 namespace children, including deferred tool-search catalogs, as ordinary
 `mcp__<server>__<tool>` functions on the Codex-wire upstream route. It translates continuation calls and explicit tool selection to

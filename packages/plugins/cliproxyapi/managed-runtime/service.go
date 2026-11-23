@@ -115,9 +115,7 @@ func newGateway(
 			func() bool { return managedModelsRegistered(config) },
 		),
 	}
-	if config.WireProjection {
-		middleware = append(middleware, managedWireProjection(config.RuntimeDir))
-	}
+	middleware = append(middleware, managedWireMiddleware(config.RuntimeDir, config.WireProjection))
 	service, err := cliproxy.NewBuilder().
 		WithConfig(upstreamConfig).
 		WithHooks(cliproxy.Hooks{OnBeforeStart: func(*sdkconfig.Config) {

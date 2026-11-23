@@ -53,19 +53,31 @@ type wireBlock struct {
 	TextLength *int   `json:"textLength,omitempty"`
 }
 
-func managedWireProjection(runtimeDir string) gin.HandlerFunc {
+func managedWireMiddleware(runtimeDir string, project bool) gin.HandlerFunc {
 	path := filepath.Join(runtimeDir, wireProjectionFile)
 	messages := surfaceRoutes[SurfaceAnthropicMessages][0]
 	responses := surfaceRoutes[SurfaceOpenAIResponses][0]
 	return func(c *gin.Context) {
 		route := Route{Method: c.Request.Method, Path: c.FullPath()}
-		if route != messages && route != responses {
+		if route != responses && (!project || route != messages) {
 			c.Next()
 			return
 		}
 		record := wireRequest{Method: route.Method, Path: route.Path, Upstream: []*wireStream{}, responses: route == responses}
-		ctx := httptransport.WithDecorator(c.Request.Context(), record.observeTransport)
+		ctx := httptransport.WithDecorator(c.Request.Context(), func(next http.RoundTripper) http.RoundTripper {
+			if project {
+				next = record.observeTransport(next)
+			}
+			if record.responses {
+				next = normalizeMuseResponseIntegers(next)
+			}
+			return next
+		})
 		c.Request = c.Request.WithContext(ctx)
+		if !project {
+			c.Next()
+			return
+		}
 		writer := &wireResponseWriter{
 			ResponseWriter: c.Writer,
 			frames:         wireFrames{stream: &record.Downstream, responses: record.responses},
