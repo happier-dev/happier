@@ -10,6 +10,7 @@ import { updatePersonalProjectContextV1 } from '@happier-dev/protocol/projects/p
 import type { readProjectAccountRows, createProjectAccountSnapshotMutation, mutateProjectAccountOrganization, mutateProjectAccountRows, OpenedProjectAccountRowMutationRequest, ProjectAccountRowsSelection } from '@/workspaces/projectAccountRows';
 import type { readProjectLastOpenedMemoryMap } from '@/workspaces/projectLastOpenedMemory';
 import { buildProjectLastOpenedMemoryKeyV1 } from '@happier-dev/protocol/account/authoringMemory';
+import { isMachineReachableV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { projectProjectListV1 } from '@happier-dev/protocol/workspaces';
 import { projectUsageOptionFacts } from '@happier-dev/protocol/usage/usageFilterOptions';
 import { setProjectVisibilityV1 } from '@happier-dev/protocol/projects/projectVisibilityV1';
@@ -434,11 +435,13 @@ export function createCliProjectActionDeps(
           : { token: authority.credentials.token }), serverHttpBaseUrl: todoHomeBaseUrl, signal: context?.signal }); }
         catch { context?.signal?.throwIfAborted(); machines = null; }
         await admitted.assertCurrent();
+        const nowMs = Date.now();
         const items = projected.items.map(({ ref, ...item }) => {
-          const machine = machines?.find(candidate => candidate.id === ref.machineId);
+          const machine = item.machineId === undefined ? undefined : machines?.find(candidate => candidate.id === item.machineId);
           return { ...item,
             reachable: item.machineId === undefined || machines === null
-              ? null : Boolean(machine?.active && machine.revokedAt === null && machine.replacedByMachineId === null),
+              ? null : Boolean(machine && machine.revokedAt === null && machine.replacedByMachineId === null
+                && isMachineReachableV1({ machine, nowMs })),
             ...(ref.repositoryIdentity ? { forge: ref.repositoryIdentity } : {}), worktrees: [] };
         });
         return { items, truncated: projected.truncated, coverage: projected.coverage };

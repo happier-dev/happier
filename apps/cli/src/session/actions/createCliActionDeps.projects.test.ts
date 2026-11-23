@@ -27,6 +27,7 @@ import { projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountR
 import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { DEFAULT_MACHINE_ONLINE_GRACE_MS, type MachinePresenceV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 
 let accountFixtureSequence = 0;
 afterEach(() => { vi.restoreAllMocks(); accountFixtureSequence += 1; });
@@ -149,6 +150,7 @@ function accountBoundary(options?: Readonly<{
   memoryRows?: readonly AuthoringMemoryRowV1[];
   promptStack?: ProjectAccountOrganizationV1['promptStack'];
   relationships?: readonly WorkspaceSyncRelationshipV1[];
+  machinePresence?: MachinePresenceV1;
 }>) {
   const ref = (id: string, serverId = 'home-a', machineId = 'machine-a') => ({
     id, serverId, machineId, rootPath: `/work/${id}`, projectKey: id === 'second' ? 'first' : id, createdAtMs: 1,
@@ -169,7 +171,8 @@ function accountBoundary(options?: Readonly<{
     if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
     if (url.endsWith('/v1/account/authoring-memory')) return { status: 200, data: { rows: options?.memoryRows ?? [] } };
     if (url.endsWith('/v1/machines')) return { status: 200, data: [
-      { id: 'machine-a', active: true, kind: 'persistent', revokedAt: null, replacedByMachineId: null },
+      { id: 'machine-a', active: true, kind: 'persistent', revokedAt: null, replacedByMachineId: null,
+        ...options?.machinePresence },
       { id: 'machine-b', active: false, kind: 'persistent', revokedAt: null, replacedByMachineId: null },
     ] };
     throw new Error(`unexpected_get:${url}`);
@@ -281,13 +284,23 @@ describe('projects.list through the real CLI Account composition', () => {
       }, reachable: null }),
       expect.objectContaining({ workspaceAddress: {
         workspaceId: 'visible', serverId: key.serverId, machineId: 'machine-a', rootPath: '/work/visible',
-      }, machineId: 'machine-a' }),
+      }, machineId: 'machine-a', reachable: true }),
     ]) } });
     if (listed.ok) {
       const managed = (listed.result as { items: { workspaceAddress: { workspaceId: string } }[] }).items
         .find(item => item.workspaceAddress.workspaceId === key.id);
       expect(managed).not.toHaveProperty('machineId');
     }
+  });
+
+  it.each([
+    { active: true, ageMs: DEFAULT_MACHINE_ONLINE_GRACE_MS + 1, reachable: false },
+    { active: false, ageMs: 0, reachable: true },
+  ])('reports reachability from legacy Home heartbeat facts (active=$active)', async ({ active, ageMs, reachable }) => {
+    accountBoundary({ machinePresence: { active, activeAt: Date.now() - ageMs } });
+
+    expect(await executor().execute('projects.list', {}, { surface: 'cli', bypassApprovals: true }))
+      .toMatchObject({ ok: true, result: { items: [{ machineId: 'machine-a', reachable }] } });
   });
 
   it('includes Session-only Projects only when includeUnlisted is admitted', async () => {
