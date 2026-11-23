@@ -680,8 +680,11 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
         }
         const result = terminal.result;
         if (reboot && result.status === 'unsupported' && result.reason === 'platform_unsupported') return refused('platform_unsupported');
-        if (result.status === 'checked') return request.kind === 'check' && settled.code === 0 && 'plan' in result
-            ? { outcome: 'checked', plan: result.plan } : { outcome: 'outcome_unknown' };
+        if (result.status === 'checked') {
+            if (request.kind === 'check' && exitedCleanly && 'plan' in result) return { outcome: 'checked', plan: result.plan };
+            return nativeRefused(rememberNativeFailure('native_protocol_invalid', undefined, undefined,
+                'Update or repair the elevated Machine helper, then retry the native Setup check.', { phase: 'check' }));
+        }
         if (result.comparison && (result.comparison.fields.length || result.comparison.targetChanged))
             logger.warnLocalFile('[machine-elevation] native CHECK/APPLY comparison', {
                 operationId: input.operationId, status: result.status, ...result.comparison,

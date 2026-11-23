@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { MachineElevatedResultV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 import { MachineSetupEffectPlanV1Schema } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { logger } from '@/ui/logger';
-import { runElevatedEffect, runElevatedMachineSetupIntent, type MachineElevationSpawn, type MachineElevationDependencies } from './runElevatedEffect';
+import { checkElevatedMachineSetupPlanResult, runElevatedEffect, runElevatedMachineSetupIntent, type MachineElevationSpawn, type MachineElevationDependencies } from './runElevatedEffect';
 
 import { machineSetup } from '@happier-dev/cli-common';
 import type { MachineRecipeStepV1 } from '@happier-dev/protocol';
@@ -21,6 +21,7 @@ it.each([
     ['private reason', 'native_effect_failed', undefined],
     ['failed apply', 'native_effect_failed', 'required_fact_unavailable'],
     ['partial native apply', 'native_effect_failed', 'native_effect_failed'],
+    ['unclean exit after check', 'native_protocol_invalid', undefined],
     ['unclean exit after apply', 'native_protocol_invalid', undefined],
     ['applied observation unavailable', 'native_check_unavailable', 'required_fact_unavailable'],
 ] as const)('retains %s native failure once without private helper output', async (scenario, reasonCode, reason) => {
@@ -43,9 +44,9 @@ it.each([
             stdout.write('{"type":"ready"}\n');
             await iterator.next();
             if (scenario === 'malformed') stdout.write('private helper output /private/native/path token=secret\n');
-            else if (scenario === 'unavailable' || scenario === 'unsupported') {
+            else if (scenario === 'unclean exit after check' || scenario === 'unavailable' || scenario === 'unsupported') {
                 const plan = MachineSetupEffectPlanV1Schema.parse({ v: 1, basis, steps,
-                    nativeFacts: [{ stepId: 'prepare', status: scenario, reason, facts: {} }], planDigest: 'a'.repeat(64) });
+                    nativeFacts: [{ stepId: 'prepare', status: scenario === 'unclean exit after check' ? 'drifted' : scenario, reason, facts: {} }], planDigest: 'a'.repeat(64) });
                 stdout.write(JSON.stringify({ type: 'result', result: { status: 'checked', plan } }) + '\n');
             } else if (scenario === 'failed apply' || scenario === 'partial native apply'
                 || scenario === 'unclean exit after apply' || scenario === 'applied observation unavailable') {
@@ -66,7 +67,8 @@ it.each([
         return { stdin, stdout, stderr, settled, terminate: async () => { close(); } };
     };
     let observations = 0;
-    const result = await runElevatedMachineSetupIntent({ machineId: 'machine', operationId: 'request-id', basis, steps }, {
+    const run = scenario === 'unclean exit after check' ? checkElevatedMachineSetupPlanResult : runElevatedMachineSetupIntent;
+    const result = await run({ machineId: 'machine', operationId: 'request-id', basis, steps }, {
         installationId: 'installation', installedCli: '/managed/happier', spawn,
         readPolicy: async () => ({ version: 1, mode: 'preauthorized' }), verifyCurrent: async () => true,
         observe: async () => {
@@ -85,7 +87,8 @@ it.each([
     const expected = scenario === 'unclean exit after apply' || scenario === 'applied observation unavailable'
         ? { outcome: 'outcome_unknown', failure: { ...failure, phase: 'apply', remedy: expect.any(String),
             ...(scenario === 'applied observation unavailable' ? { requiredFact: 'nativeSetupObservation' } : {}) } }
-        : { outcome: 'not_applied', reasonCode, failure };
+        : { outcome: 'not_applied', reasonCode, failure: scenario === 'unclean exit after check'
+            ? { ...failure, phase: 'check', remedy: expect.any(String) } : failure };
     expect(result).toEqual(expected);
     expect(MachineElevatedResultV1Schema.parse(result)).toEqual(expected);
     const retained = log.mock.calls.filter(([message]) => message === '[machine-elevation] settled');
