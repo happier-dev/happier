@@ -34,6 +34,8 @@ import type {
   ResolvedContributionRegistry,
 } from '@/plugins/projection/registry/types';
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
+import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
+import { logger } from '@/ui/logger';
 import { contributedActionFailureResult } from './contributedActionFailure';
 import type { PluginActionSurface } from '@/plugins/runtime/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -201,28 +203,29 @@ async function resolveCurrentTargetApprovalReplayPlacement(
  * real materialization too, it remains an additional post-activation fence;
  * no caller may synthesize one for a cold bundled contributor.
  */
-async function isExpectedPluginCurrent(params: Readonly<{
+async function readExpectedPluginMismatch(params: Readonly<{
   runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null;
   pluginId: string;
   expectedOccurrenceId: string;
   expectedMaterializationId?: string;
   requireMaterialization: boolean;
-}>): Promise<boolean> {
-  if (!params.runtimeRegistry) return false;
+}>): Promise<Readonly<{ currentOccurrenceId: string | null | undefined }> | null> {
+  if (!params.runtimeRegistry) return { currentOccurrenceId: undefined };
   try {
     const currentOccurrenceId = params.runtimeRegistry.readPluginOccurrenceId?.(params.pluginId);
     if (currentOccurrenceId !== params.expectedOccurrenceId) {
-      return false;
+      return { currentOccurrenceId };
     }
     if (!params.requireMaterialization || params.expectedMaterializationId === undefined) {
-      return true;
+      return null;
     }
     const currentMaterialization = params.runtimeRegistry
       .resolveCurrentPluginMaterializationRef?.(params.pluginId);
     return currentMaterialization?.pluginId === params.pluginId
-      && currentMaterialization.materializationId === params.expectedMaterializationId;
+      && currentMaterialization.materializationId === params.expectedMaterializationId
+      ? null : { currentOccurrenceId };
   } catch {
-    return false;
+    return { currentOccurrenceId: undefined };
   }
 }
 
@@ -290,7 +293,6 @@ function matchesAdmittedTargetedOperation(
 
 async function activateOwningPluginForAction(params: Readonly<{
   registry: PluginActionExecutionRegistry;
-  contributes: ResolvedContributionRegistry;
   action: ResolvedActionContribution;
 }>): Promise<PluginActionExecutorResult | null> {
   if (!isExecutablePluginRuntimeRegistry(params.registry)) {
@@ -305,15 +307,26 @@ async function activateOwningPluginForAction(params: Readonly<{
     family: 'actions',
     localId: params.action.definition.id,
   }]);
-  const activationFailure = params.registry.targetActivationFacts?.find((fact) => (
+  const activationFailure = readActionActivationFailure(params.registry, pluginId, params.action.definition.id);
+  return activationFailure ? projectActionActivationFailure(activationFailure) : null;
+}
+
+function readActionActivationFailure(
+  registry: ResolvedExecutablePluginRuntimeRegistry,
+  pluginId: string,
+  localId: string,
+  occurrenceId?: string,
+): PluginCompatibilityDiagnostic | undefined {
+  return registry.targetActivationFacts?.find((fact) => (
     fact.pluginId === pluginId && fact.status === 'unavailable'
+    && (occurrenceId === undefined || fact.occurrenceId === occurrenceId)
     && fact.required.some((registration) => (
-      registration.family === 'actions' && registration.localId === params.action.definition.id
+      registration.family === 'actions' && registration.localId === localId
     ))
   ))?.diagnostics[0];
-  if (!activationFailure) {
-    return null;
-  }
+}
+
+function projectActionActivationFailure(activationFailure: PluginCompatibilityDiagnostic): PluginActionExecutorResult {
   const diagnostic = readPluginActionFailureAuthorPayload(activationFailure.details);
   const cause = readPluginModuleFailureCause(activationFailure.details);
   return actionHandlerNotStartedFailure(
@@ -624,7 +637,7 @@ export async function executeContributedAction(params: Readonly<{
   if (clientTarget) {
     const currentOccurrenceId = runtimeRegistry?.readPluginOccurrenceId?.(pluginId);
     const contributorOccurrenceId = expectedContributorOccurrenceId ?? currentOccurrenceId;
-    if (!contributorOccurrenceId || !await isExpectedPluginCurrent({
+    if (!contributorOccurrenceId || await readExpectedPluginMismatch({
       runtimeRegistry, pluginId, expectedOccurrenceId: contributorOccurrenceId,
       ...(expectedContributorMaterializationId === undefined ? {} : {
         expectedMaterializationId: expectedContributorMaterializationId,
@@ -670,23 +683,37 @@ export async function executeContributedAction(params: Readonly<{
     // Occurrence admission precedes activation: a retired handle must not
     // activate its replacement or be reported as a missing handler.
     const checkAdmittedCurrentness = async (): Promise<PluginActionExecutorResult | null> => {
-      if (expectedContributorOccurrenceId !== undefined
-        && !(await isExpectedPluginCurrent({
+      if (expectedContributorOccurrenceId !== undefined) {
+        const mismatch = await readExpectedPluginMismatch({
           runtimeRegistry,
           pluginId,
           expectedOccurrenceId: expectedContributorOccurrenceId,
           expectedMaterializationId: expectedContributorMaterializationId,
           requireMaterialization: true,
-        }))) {
-        return admittedContributorOccurrenceRetired();
+        });
+        if (mismatch) {
+          // Terminal activation can remove the occurrence from the serving
+          // registry while retaining its exact failure in the lifecycle fact.
+          const failure = mismatch.currentOccurrenceId === null
+            ? readActionActivationFailure(runtimeRegistry, pluginId, action.definition.id, expectedContributorOccurrenceId)
+            : undefined;
+          logger.warnLocalFile('Plugin Action contributor occurrence refused', {
+            pluginId, localId: action.definition.id,
+            requestId: params.approvalContext?.actionRequestId ?? params.context.actionRequestId,
+            expectedOccurrenceId: expectedContributorOccurrenceId,
+            currentOccurrenceId: mismatch.currentOccurrenceId,
+            code: failure?.code ?? 'plugin_action_generation_retired',
+          });
+          return failure ? projectActionActivationFailure(failure) : admittedContributorOccurrenceRetired();
+        }
       }
       if (admittedTargetedOperation !== undefined
-        && !(await isExpectedPluginCurrent({
+        && await readExpectedPluginMismatch({
           runtimeRegistry,
           pluginId: admittedTargetedOperation.target.pluginId,
           expectedOccurrenceId: admittedTargetedOperation.target.occurrenceId,
           requireMaterialization: false,
-        }))) {
+        })) {
         return admittedTargetOccurrenceRetired();
       }
       return null;
@@ -700,7 +727,6 @@ export async function executeContributedAction(params: Readonly<{
       try {
         activationFailure = await activateOwningPluginForAction({
           registry: runtimeRegistry,
-          contributes,
           action,
         });
       } catch (error) {

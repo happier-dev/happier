@@ -39,5 +39,15 @@ it('preserves missing Account execution artifacts when demand activation retires
             input: {}, expectedContributorOccurrenceId: occurrenceId, context: { surface: 'plugin' } }))
             .toMatchObject({ matched: true, result: { ok: false,
                 errorCode: 'plugin_account_execution_artifact_unavailable', actionHandlerInvocation: 'notStarted' } });
+        expect(registry.targetActivationFacts.find(fact => fact.pluginId === pluginId))
+            .toMatchObject({ occurrenceId, status: 'unavailable' });
+        expect(await executeContributedAction({ runtimeRegistry: registry, actionId: `${pluginId}/options`,
+            input: {}, expectedContributorOccurrenceId: occurrenceId, context: { surface: 'plugin' } }))
+            .toMatchObject({ matched: true, result: { ok: false,
+                errorCode: 'plugin_account_execution_artifact_unavailable', actionHandlerInvocation: 'notStarted' } });
+        expect(await executeContributedAction({ runtimeRegistry: registry, actionId: `${pluginId}/options`,
+            input: {}, expectedContributorOccurrenceId: `${occurrenceId}-stale`, context: { surface: 'plugin' } }))
+            .toMatchObject({ matched: true, result: { ok: false,
+                errorCode: 'plugin_action_generation_retired', actionHandlerInvocation: 'notStarted' } });
     } finally { await registry?.dispose(); restore(); await app.close(); }
 });
