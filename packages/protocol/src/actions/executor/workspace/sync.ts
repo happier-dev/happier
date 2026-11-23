@@ -3,6 +3,7 @@ import { isRpcMethodNotFoundError } from '../../../rpc/errors.js';
 import type { WorkspaceSyncConflictResolveActionInputV1Schema, WorkspaceSyncConflictsListActionInputV1Schema, WorkspaceSyncConflictInspectActionInputV1Schema, WorkspaceSyncRelationshipsListActionInputV1Schema, WorkspaceSyncRelationshipWriteActionInputV1Schema, WorkspaceSyncRelationshipDisableActionInputV1Schema, WorkspaceSyncRelationshipEnableActionInputV1Schema, WorkspaceSyncRelationshipFlushActionInputV1Schema, WorkspaceSyncRelationshipTerminateActionInputV1Schema } from '../../../sessions/control/handoff/workspaceSyncSchemas.js';
 import { completeActionResult } from '../resultProjection.js';
 import { normalizeId } from '../inputReading.js';
+import { forwardHandoffTargetReplacementApprovalV1 } from '../../../sessions/control/handoff/handoffTargetReplacementApprovalV1.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
 import type { z } from '../../../zodRuntimePolicy.js';
@@ -54,12 +55,10 @@ async function executeWorkspaceSync(inv: Parameters<typeof dispatchWorkspaceSync
             operationId,
             ...(normalizeId(ctx.serverIdentityId) ? { serverIdentityId: normalizeId(ctx.serverIdentityId) } : {}),
             ...(normalizeId(ctx.serverId) ? { serverId: normalizeId(ctx.serverId) } : {}),
-            ...(ctx.handoffTargetReplacementApproval && ctx.handoffTargetReplacementApprovalReceiptId
-              ? {
-                  targetReplacementApproval: ctx.handoffTargetReplacementApproval,
-                  targetReplacementApprovalReceiptId: ctx.handoffTargetReplacementApprovalReceiptId,
-                }
-              : {}),
+            ...forwardHandoffTargetReplacementApprovalV1({
+              targetReplacementApproval: ctx.handoffTargetReplacementApproval,
+              targetReplacementApprovalReceiptId: ctx.handoffTargetReplacementApprovalReceiptId,
+            }),
             context: ctx,
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           });

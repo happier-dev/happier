@@ -1,5 +1,5 @@
 import { WorkspaceSyncRelationshipWriteActionInputV1Schema, WorkspaceSyncRelationshipCreateRpcRequestV1Schema, type WorkspaceSyncRelationshipWriteActionInputV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
-import type { HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffTargetReplacementApprovalV1';
+import { forwardHandoffTargetReplacementApprovalV1, type HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffTargetReplacementApprovalV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { getStorage } from '@/sync/domains/state/storageStore';
@@ -51,12 +51,7 @@ export async function createWorkspaceSyncRelationshipOnController(
             v: 1,
             operationId: request.operationId,
             actionInput: input,
-            ...(request.targetReplacementApproval && request.targetReplacementApprovalReceiptId
-                ? {
-                    targetReplacementApproval: request.targetReplacementApproval,
-                    targetReplacementApprovalReceiptId: request.targetReplacementApprovalReceiptId,
-                }
-                : {}),
+            ...forwardHandoffTargetReplacementApprovalV1(request),
         }),
         ...(request.signal ? { signal: request.signal } : {}),
     });

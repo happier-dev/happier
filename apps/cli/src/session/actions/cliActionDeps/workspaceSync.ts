@@ -5,6 +5,7 @@ import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import { WorkspaceSyncRelationshipsListRpcResultV1Schema, WorkspaceSyncConflictPageV1Schema, WorkspaceSyncConflictInspectRpcResultV1Schema, WorkspaceSyncConflictResolutionResultV1Schema, WorkspaceSyncRelationshipIdV1Schema, WorkspaceSyncStatusV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { resolveWorkspaceSyncReadControllerV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { forwardHandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffTargetReplacementApprovalV1';
 import type { resolveWorkspaceRefById } from '@/workspaces/workspaceRefsV1';
 export function createCliWorkspaceSyncActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'serverIdentityId'>,
@@ -94,9 +95,7 @@ export function createCliWorkspaceSyncActionDeps(
           v: 1,
           operationId,
           actionInput: input,
-          ...(targetReplacementApproval && targetReplacementApprovalReceiptId
-            ? { targetReplacementApproval, targetReplacementApprovalReceiptId }
-            : {}),
+          ...forwardHandoffTargetReplacementApprovalV1({ targetReplacementApproval, targetReplacementApprovalReceiptId }),
         },
         context,
         effectActionId: 'replaceRelationshipId' in input ? 'workspace.sync.relationship.replace' : 'workspace.sync.relationship.create',

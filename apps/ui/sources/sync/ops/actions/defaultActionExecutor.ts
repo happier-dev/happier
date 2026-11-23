@@ -385,6 +385,7 @@ import {
   startSessionHandoff as startSessionHandoffOp,
 } from '@/sync/ops/sessionHandoffs';
 import { createWorkspaceSyncRelationshipOnController, observeWorkspaceSyncRelationshipCreationOnController } from '@/sync/ops/workspaceSyncRelationshipCreateRpc';
+import { forwardHandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffTargetReplacementApprovalV1';
 import { listWorkspaceSyncRelationshipsOnController } from '@/sync/ops/workspaceSyncRelationshipsListRpc';
 import { createUiWorkspaceSyncReadActionDeps } from './workspaceSyncReadActionDeps';
 import {
@@ -3335,9 +3336,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       input,
       operationId,
       serverId: serverId ?? null,
-      ...(targetReplacementApproval && targetReplacementApprovalReceiptId
-        ? { targetReplacementApproval, targetReplacementApprovalReceiptId }
-        : {}),
+      ...forwardHandoffTargetReplacementApprovalV1({ targetReplacementApproval, targetReplacementApprovalReceiptId }),
       ...(signal ? { signal } : {}),
     }),
 

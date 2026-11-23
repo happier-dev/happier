@@ -1,3 +1,4 @@
+import { forwardHandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffTargetReplacementApprovalV1';
 import { createWorkspaceSyncRelationshipsListFixture } from '@/dev/testkit/harness/workspaceSyncHarness';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
@@ -132,8 +133,7 @@ async function installSourceMachineActionReceiver() {
         workspaceSyncRelationshipCreate: ({ input, operationId, serverId, targetReplacementApproval, targetReplacementApprovalReceiptId, signal }) => {
             receivedCreates.push({ operationId, ...(targetReplacementApproval ? { targetReplacementApproval } : {}) });
             return createWorkspaceSyncRelationshipOnController({ input, operationId, serverId: serverId ?? null,
-                ...(targetReplacementApproval && targetReplacementApprovalReceiptId
-                    ? { targetReplacementApproval, targetReplacementApprovalReceiptId } : {}),
+                ...forwardHandoffTargetReplacementApprovalV1({ targetReplacementApproval, targetReplacementApprovalReceiptId }),
                 ...(signal ? { signal } : {}) });
         },
     }));

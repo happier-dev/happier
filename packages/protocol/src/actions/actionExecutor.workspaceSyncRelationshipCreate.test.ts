@@ -106,6 +106,10 @@ describe('workspace.sync.relationship.create Action', () => {
         : { ok: false, errorCode: 'action_interactive_review_required',
           details: { review: { preview: { handoffTargetReplacementApproval: { operationId: 'press-2' } } } } });
       expect(effects).toHaveLength(runs ? 1 : 0);
+      // A native confirmation has no stored receipt; its proof still travels to the SOURCE, which owns acceptance.
+      if (runs) expect(effects[0]).toMatchObject({ targetReplacementApproval: { operationId: 'press-1',
+        consequences: ['delete_target_only_files_during_exact_mirror'] } });
+      if (runs) expect(effects[0]).not.toHaveProperty('targetReplacementApprovalReceiptId');
     });
 
   it('binds exact-mirror replacement approval to the replacement Action and its exact old link', async () => {

@@ -52,3 +52,21 @@ export function sameHandoffTargetReplacementApproval(
     && left.rootFingerprint === right.rootFingerprint
     && left.operationId === right.operationId;
 }
+
+/**
+ * The one forwarding rule for a person's destination confirmation on its way
+ * to the SOURCE: the proof travels whenever the admitted invocation holds it,
+ * and a persisted receipt travels only with its proof. A native confirmation
+ * has no receipt. Acceptance stays with the SOURCE (native admission or the
+ * receipt) and the TARGET (placement, operation, consequences, folder).
+ */
+export function forwardHandoffTargetReplacementApprovalV1(held: Readonly<{
+  targetReplacementApproval?: HandoffTargetReplacementApprovalV1 | null | undefined;
+  targetReplacementApprovalReceiptId?: string | null | undefined;
+}>): Readonly<{ targetReplacementApproval?: HandoffTargetReplacementApprovalV1; targetReplacementApprovalReceiptId?: string }> {
+  const { targetReplacementApproval, targetReplacementApprovalReceiptId } = held;
+  if (!targetReplacementApproval) return {};
+  return targetReplacementApprovalReceiptId
+    ? { targetReplacementApproval, targetReplacementApprovalReceiptId }
+    : { targetReplacementApproval };
+}
