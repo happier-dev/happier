@@ -290,6 +290,8 @@ export type PortableHomeLinkTargetState =
     | Readonly<{ kind: 'acquiring' }>
     | Readonly<{
         kind: 'acquisition_failed';
+        /** Public address from the link; the Home has not proven its identity. */
+        canonicalServerUrl: string;
         reason: Extract<PortableHomeAcquisitionOutcome, { kind: 'rejected' }>['reason'];
         retry: () => void;
     }>;
@@ -362,7 +364,7 @@ export function usePortableHomeLinkTarget(
         const outcome = acquisition.outcome;
         return outcome.kind === 'acquired'
             ? { kind: 'resolved', serverId: outcome.serverId, target: outcome.target }
-            : { kind: 'acquisition_failed', reason: outcome.reason, retry };
+            : { kind: 'acquisition_failed', canonicalServerUrl: resolution.descriptor.canonicalServerUrl, reason: outcome.reason, retry };
     }, [acquisition, resolution, retry]);
 }
 

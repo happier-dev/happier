@@ -903,6 +903,7 @@ describe('TeamJoinScreen', () => {
         );
 
         await waitForTestId(rendered, 'team-join-unreachable-home');
+        expect(rendered.getTextContent()).toContain('https://fresh-home.example');
         // Only the unauthenticated identity probe was made; the bearer stayed here.
         for (const call of runtimeFetchMock.mock.calls) {
             expect(String(call[0])).not.toContain('/v1/team-invitations');

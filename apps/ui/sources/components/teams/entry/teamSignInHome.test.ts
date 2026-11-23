@@ -36,8 +36,8 @@ describe('resolveTeamSignInHome', () => {
         const retry = () => {};
         expect(resolveTeamSignInHome({
             carrier,
-            linkTarget: { kind: 'acquisition_failed', reason: 'unreachable', retry },
-        })).toEqual({ kind: 'acquisition_failed', reason: 'unreachable', retry });
+            linkTarget: { kind: 'acquisition_failed', canonicalServerUrl: 'https://unreachable-home.test', reason: 'unreachable', retry },
+        })).toEqual({ kind: 'acquisition_failed', canonicalServerUrl: 'https://unreachable-home.test', reason: 'unreachable', retry });
     });
 
     it('prefers the adopted profile when the carrier names a Home this device already has', () => {
