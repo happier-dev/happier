@@ -19,7 +19,7 @@ import { MachineProvisionersListResultV1Schema } from '@happier-dev/protocol/plu
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { MachinePresetActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { MachineSetupApplyInputV1Schema, MachineSetupCombinedPlanInputV1Schema, MachineSetupCombinedPlanResultV1Schema, MachineSetupPlanResultV1Schema,
-  machineSetupApplyTargetFromPlanV1, ManagedAdmissionOutputV1Schema, ManagedAcceptedV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+  machineSetupApplyTargetFromPlanV1, ManagedAdmissionOutputV1Schema, ManagedAcceptedV1Schema, ManagedGetOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityActionOutputSchemasV1 } from '@happier-dev/protocol/plugins/availability/actions';
 import { normalizePluginReleaseFactsV1 } from '@happier-dev/protocol/plugins/availability/v1';
@@ -79,6 +79,7 @@ import { registerExternalActionRoutes } from '../../../../server/sources/app/api
 import { machinesRoutes } from '../../../../server/sources/app/api/routes/machines/machinesRoutes';
 import { artifactsRoutes } from '../../../../server/sources/app/api/routes/artifacts/artifactsRoutes';
 import { admitManagedAcquire } from '../../../../server/sources/app/machines/managed/managedAcquire';
+import { storeOpaquePresetLaunch } from '../../../../server/sources/app/machines/managed/managedMachineProjection';
 import { registerPluginAvailabilityRoutes } from '../../../../server/sources/app/plugins/availability/routes';
 import { createReleaseLessDeclarationV1 } from '../../../../server/sources/app/plugins/availability/currentDeclaration';
 import { createExternalActionDaemonDispatcher } from '../../../../server/sources/app/api/socket/externalActionDispatcher';
@@ -91,7 +92,8 @@ import { startAutomationWorker } from '@/daemon/automation/automationWorker';
 import { getOrCreateServerIdentityId } from '../../../../server/sources/app/serverIdentity/serverIdentity';
 import { prepareRequesterAccountActionContext } from "../sessionEncryption/requesterAccountActionProjection";
 import { readRequesterAccountActionContext, type RequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
-import { executeExternalAction } from './executeExternalAction';
+import { executeExternalAction, type PrepareExternalActionRequesterAccountContext } from './executeExternalAction';
+import { createDaemonApprovalExecutionAuthorizationPreparer } from './approvalExecutionAuthorization';
 import { registerMachineAccessLossReceiver } from './registerMachineAccessLossReceiver';
 import { MACHINE_ACCESS_LOSS_SERVER_ORIGIN } from '@happier-dev/protocol/socketRpc';
 import { createDaemonExternalActionTargetResolver, createDaemonApprovalExecutionOriginCurrentness } from './daemonExternalActionTargetResolver';
@@ -100,6 +102,7 @@ import { prepareAccountSettingsV2Content } from '@/settings/accountSettings/upda
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { encrypt } from '@/api/encryption';
 import { createDaemonManagedMachineActionAdapter } from '../startup/managedMachineActionAdapter';
+import { createManagedPresetHydrator, openManagedPresetCarrier } from '@/machines/managed/presetHydration';
 import { fixture as nativeFixture } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
 import { createManagedProviderOperationAuthority } from '../connectedServices/purposeBindings/managedProviderOperationAuthority';
 import { createConnectedAccountPurposeBindingOwner } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
@@ -3460,16 +3463,22 @@ describe('managed catalog original Account transport', () => {
       collectionContracts: [], uiSlots: [], packageAssetArchive: release.packageAssetArchive } });
     await db.accountPluginIntent.create({ data: { accountId: account.id, pluginId: manifest.id,
       desiredVersion: manifest.version, enabled: true, writableCollections: [] } });
+    const machineContent = (installationPublicKey: Uint8Array) => {
+      const metadata = { host: 'Deferred power fixture', platform: 'linux', happyCliVersion: 'test',
+        homeDir: identityDirectory, happyHomeDir: identityDirectory,
+        installationPublicKey: encodeBase64(installationPublicKey, 'base64url') };
+      return mode === 'plain'
+        ? { metadata: encodePlainMachineStoredContent(metadata), dataEncryptionKey: Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') }
+        : { metadata: encodeBase64(encrypt(machineKey, 'dataKey', metadata)),
+          dataEncryptionKey: sealEncryptedDataKeyEnvelopeV1({ dataKey: machineKey, recipientPublicKey: publicKey, randomBytes: tweetnacl.randomBytes }) };
+    };
     await db.machine.create({ data: { id: controller.machineId, accountId: account.id, installationId: controller.installationId,
-      installationPublicKey: installation.publicKey, active: true, lastActiveAt: new Date(),
-      metadata: mode === 'plain' ? encodePlainMachineStoredContent({}) : 'opaque',
-      dataEncryptionKey: mode === 'plain' ? Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') : null,
+      installationPublicKey: installation.publicKey, active: true, lastActiveAt: new Date(), ...machineContent(installation.publicKey),
       operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } },
       operationProtocolCapabilitiesRevision: 1, pluginMaterializationRevision: BigInt(1) } });
     await db.machine.create({ data: { id: guestId, accountId: account.id, installationId: guestInstallationId,
       installationPublicKey: guestInstallation.publicKey, active: true, lastActiveAt: new Date(),
-      metadata: mode === 'plain' ? encodePlainMachineStoredContent({}) : 'opaque',
-      dataEncryptionKey: mode === 'plain' ? Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') : null } });
+      ...machineContent(guestInstallation.publicKey) } });
     await db.pluginMachineMaterialization.create({ data: { accountId: account.id, serverIdentityId: homeId,
       machineId: controller.machineId, materializationId: controller.installationId, pluginId: manifest.id,
       version: manifest.version, sourceClass: 'registryPackage', portableRelease: true,
@@ -3488,7 +3497,7 @@ describe('managed catalog original Account transport', () => {
     enableErrorHandlers(app); enableAuthentication(app);
     registerAccountEncryptionRoutes(app); registerAccountSettingsRoutes(app);
     registerPluginAvailabilityRoutes(app); machinesRoutes(app); artifactsRoutes(app);
-    registerAccountProfileRoute(app);
+    registerAccountProfileRoute(app); registerAutomationActionIndexRoutes(app);
     app.get('/v1/features/authenticated', { preHandler: app.authenticate }, async () => FeaturesResponseSchema.parse({ features: {},
       capabilities: { serverIdentity: { serverIdentityId: homeId } } }));
     app.get('/v1/features', async () => FeaturesResponseSchema.parse({ features: {},
@@ -3544,13 +3553,19 @@ describe('managed catalog original Account transport', () => {
             rpcAdmission: { context: context.machineAdmission, method, managedTarget, managedIdleDecision: decision },
           } }) };
       } });
+    const resolveOrigin = createCurrentMachineExecutionOriginContextResolver({ serverUrl,
+      resolveCurrentMachineId: () => controller.machineId });
     const native = createDaemonManagedMachineActionAdapter({ credentials: installedCredentials, machineId: controller.machineId,
       serverBaseUrl: serverUrl, serverId: configuration.activeServerId,
       installationIdentity: { installationId: controller.installationId, privateKey: installation.secretKey },
       managedProviderOperationAuthority: authority, observeActionExecution: operations.observeExecution,
-      resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({ serverUrl,
-        resolveCurrentMachineId: () => controller.machineId }),
+      resolveCurrentMachineExecutionOriginContext: resolveOrigin,
       acquireRuntimeRegistryLease: async () => ({ registry: provisioner.runtimeRegistry, source: 'active', durableRevision: 1, release: async () => {} }) });
+    const prepareRequesterContext: PrepareExternalActionRequesterAccountContext = input => prepareRequesterAccountActionContext({
+      authorization: input.authorization, purpose: input.purpose ?? { kind: 'external_action' },
+      machineId: controller.machineId, installationId: controller.installationId, installationPrivateKey: installation.secretKey,
+      serverId: configuration.activeServerId, serverIdentityId: homeId, serverHttpBaseUrl: serverUrl,
+      ownCredentials: installedCredentials, isCurrent: async () => true, createExecutor: daemonExecutor });
     const daemonExecutor = (admitted?: RequesterAccountActionContext) => createCliActionExecutorFromCredentials({
       credentials: installedCredentials, readCredentials: async () => installedCredentials,
       machineId: controller.machineId, serverId: configuration.activeServerId, serverApiUrl: serverUrl, serverIdentityId: homeId,
@@ -3558,6 +3573,10 @@ describe('managed catalog original Account transport', () => {
       machineActionDirectTargetTransport: { machineId: controller.machineId,
         invoke: (method, input, options) => controllerRpc.invokeLocal(method, input, options) },
       managedMachineAction: native,
+      prepareApprovalExecutionAuthorization: createDaemonApprovalExecutionAuthorizationPreparer({
+        machineId: controller.machineId, serverId: configuration.activeServerId, serverBaseUrl: serverUrl,
+        resolveCurrentMachineExecutionOriginContext: resolveOrigin, requesterAccountContext: admitted,
+        prepareRequesterAccountContext: prepareRequesterContext, daemonWorkSignal: new AbortController().signal }),
       actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1(admitted?.accountSettingsContext.settings.actionsSettingsV1 ?? policy),
         getAccountSettings: () => admitted?.accountSettingsContext.settings ?? AccountSettingsSchema.parse({ actionsSettingsV1: policy }) } });
     registerApprovalRpcHandlers({ rpcHandlerManager: controllerRpc, actionExecutor: daemonExecutor() });
@@ -3601,10 +3620,7 @@ describe('managed catalog original Account transport', () => {
         resolveTarget: createDaemonExternalActionTargetResolver({ credentials: installedCredentials }), executor: daemonExecutor(),
         resolveEncryption: async () => ({ serverIdentityId: homeId,
           material: { type: 'dataKey', machineKey } }),
-        prepareRequesterAccountContext: input => prepareRequesterAccountActionContext({ authorization: input.authorization,
-          purpose: { kind: 'external_action' }, machineId: controller.machineId, installationId: controller.installationId,
-          installationPrivateKey: installation.secretKey, serverId: configuration.activeServerId, serverIdentityId: homeId,
-          serverHttpBaseUrl: serverUrl, ownCredentials: installedCredentials, isCurrent: async () => true, createExecutor: daemonExecutor }),
+        prepareRequesterAccountContext: prepareRequesterContext,
       });
       return { ok: true, result: result.kind === 'response' ? createExternalActionDaemonDispatchResponse(result.prepared) : result };
     } }) });
@@ -3643,9 +3659,15 @@ describe('managed catalog original Account transport', () => {
           },
         } }));
       // The retained native resource is the OS boundary; no VM/process runs in this test.
+      if (!admitted.presetContent) throw new Error('Missing retained preset content');
+      const hydrator = createManagedPresetHydrator({ credentials, serverUrl });
+      const retained = await openManagedPresetCarrier(admitted, hydrator);
+      const presetContent = await hydrator.preparePresetContentReport(retained.machine, {
+        nativeResult: { kind: 'bound', resource: { contributionRef: launch.provider, schemaVersion: 1, value: {} } },
+      });
       await db.managedMachine.update({ where: { id: admitted.machine.id }, data: { allocation: 'bound', creationState: 'active',
-        enrolledMachineId: guestId,
-        resource: { contributionRef: launch.provider, schemaVersion: 1, value: {} } } });
+        enrolledMachineId: guestId, launch: storeOpaquePresetLaunch({ contentEncryptionMode: mode,
+          content: presetContent, recipients: admitted.presetContent.recipients }) } });
       let intentRevision = 0;
       for (const permitted of [true, false]) {
         const actorAccount = permitted ? account : await createAccount();
@@ -3707,11 +3729,12 @@ describe('managed catalog original Account transport', () => {
           } });
         }
         const observed = await executor.execute('machines.managed.get', { homeId, managedId: admitted.machine.id }, context);
-        expect(observed).toMatchObject({ ok: true, result: { desired: intent, desiredWhen: 'after-idle', intentRevision,
+        if (!observed.ok) throw new Error(JSON.stringify(observed));
+        const machine = await hydrator.openRead(ManagedGetOutputV1Schema.parse(observed.result));
+        expect(machine).toMatchObject({ desired: intent, desiredWhen: 'after-idle', intentRevision,
             observation: { availability: 'present', power: intent === 'stop' ? 'stopped' : 'suspended' },
-        } });
-        if (!observed.ok) throw new Error(observed.errorCode);
-        expect(ManagedMachineV1Schema.parse(observed.result).submittedNativeEffect).toBeUndefined();
+        });
+        expect(machine.submittedNativeEffect).toBeUndefined();
         expect(nativeIntents).toEqual([intent]);
       }
       expect(homeResponses.filter(response => response.path.endsWith('/admit-control') && response.status === 200)).toHaveLength(1);
