@@ -5,6 +5,8 @@ import { afterEach, expect, it, vi, onTestFinished } from 'vitest';
 import { FeaturesResponseSchema, SessionExecutionRunBrokerAuthorityResponseV1Schema } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ConnectedAccountSessionModelRefV2Schema } from '@happier-dev/protocol/providers/selection/v2';
+import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { SessionAutoFollowPreferencesResponseSchema, SESSION_FOLLOW_HTTP_PATHS_V1 } from '@happier-dev/protocol/sessions/follow/api';
 import { DEFAULT_SESSION_AUTO_FOLLOW_PREFERENCES_V1, DEFAULT_SESSION_FOLLOW_CREATION_POLICIES_V1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import { emptyPromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
@@ -12,6 +14,7 @@ import { PromptLibraryCatalogKeyV1Schema, PromptLibraryRowsListResponseV1Schema 
 import { configuration, reloadConfiguration } from '@/configuration';
 import { writeDaemonState } from '@/persistence';
 import { createInstalledProjectAgentDaemonFixture } from '@/daemon/testkit/installedProjectAgentDaemonFixture';
+import * as daemonControlHttp from '@/daemon/controlHttp';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { createAgentRuntimeDaemonServiceAuthorityPath, publishAgentRuntimeDaemonServiceAuthority,
   HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
@@ -41,15 +44,13 @@ import * as sessionRpcTransport from '@/session/transport/rpc/sessionRpc';
 import { logger } from '@/ui/logger';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
-const boundary = vi.hoisted(() => ({ control: null as unknown, app: null as unknown }));
-// The listener is an OS/network boundary; preserve the real daemon dispatcher.
+const boundary = vi.hoisted(() => ({ control: null as unknown }));
+// Capture the fixture's installed control services and start the real loopback router.
 vi.mock('@/daemon/controlServer', async original => {
   const actual = await original<typeof import('@/daemon/controlServer')>();
-  return { ...actual, startDaemonControlServer: async (input: Parameters<typeof actual.startDaemonControlServer>[0]) => {
+  return { ...actual, startDaemonControlServer: (input: Parameters<typeof actual.startDaemonControlServer>[0]) => {
     boundary.control = input;
-    const app = actual.createDaemonControlApp(input);
-    boundary.app = app;
-    return { port: 46312, stop: async () => { await app.close(); } };
+    return actual.startDaemonControlServer(input);
   } };
 });
 
@@ -64,6 +65,7 @@ it('answers an omitted-selection Run from a foreign recipient’s applied Team b
   const target = { kind: 'builtInAgent' as const, agentId };
   const teamSelection = { kind: 'team_credential_provider_model' as const, teamId: 'shared-team', resourceId: 'shared-resource',
     expectedResourceRevision: 3, deliveryMode: 'brokered' as const, agentTargetKey: `agent:${agentId}`, modelId: 'shared-model' };
+  const features = { status: 'ready' as const, features: FeaturesResponseSchema.parse({ features: { providers: { enabled: true } }, capabilities: {} }) };
   const runAuthority: unknown[] = [];
   const opens: unknown[] = [];
   const daemonFailures: unknown[] = [];
@@ -123,10 +125,15 @@ it('answers an omitted-selection Run from a foreign recipient’s applied Team b
         api.agents.register('agent', factory, { sessionRunnerFactory: { module: './agent.mjs', export: 'factory', runtimeApiVersion: 1 },
           providerBinding: { v: 1, adapterVersion: 1, prepare() { return { v: 1, materialization: 'spawnEnv' }; },
             materialize(input) { return { v: 1, kind: 'spawnEnv', env: [{ name: 'FOREIGN_TEAM_MODEL', value: input.binding.selection.model.id, source: 'provider' }] }; } } }); }`,
-    } }, undefined, { openTeamCredentialProviderBinding, machineAccess: { custodianAccountId: 'custodian', role: 'use' } });
+    } }, undefined, { openTeamCredentialProviderBinding, machineAccess: { custodianAccountId: 'custodian', role: 'use' },
+      resolveServerFeaturesSnapshot: () => features });
   const { f, daemon, sessionId, requester, tracked, retainedAgent, cwd } = fixture;
   const homeGet = vi.mocked(axios.get).getMockImplementation();
   if (!homeGet) throw new Error('Missing installed Home HTTP boundary');
+  const providerModelSelection = { agentTargetKey: teamSelection.agentTargetKey, modelId: teamSelection.modelId };
+  const acceptedTeamCredentialBinding = { v: 1 as const, slot: { kind: 'provider_model' as const },
+    resourceId: teamSelection.resourceId, expectedResourceRevision: teamSelection.expectedResourceRevision,
+    deliveryMode: teamSelection.deliveryMode, teamId: teamSelection.teamId, providerModelSelection };
   vi.mocked(axios.get).mockImplementation(async (url, options) => {
     const path = new URL(String(url)).pathname;
     if (path === SESSION_FOLLOW_HTTP_PATHS_V1.preferences) return { status: 200,
@@ -138,7 +145,11 @@ it('answers an omitted-selection Run from a foreign recipient’s applied Team b
         rows: PromptLibraryCatalogKeyV1Schema.options.map(key => ({ key, revision: 1,
           content: { t: 'plain', v: emptyPromptLibraryRecordV1(key) } })) }) };
     if (path === '/v1/account/entity-rows/mcp') return { status: 200, data: { status: 'absent' } };
-    return await homeGet(url, options);
+    const response = await homeGet(url, options);
+    if (path !== `/v2/sessions/${sessionId}` || response.status !== 200) return response;
+    const { session } = V2SessionByIdResponseSchema.parse(response.data);
+    return { ...response, data: { ...response.data,
+      session: { ...session, acceptedTeamCredentialBinding } } };
   });
   const originalTitle = process.title;
   process.title = join(f.directory, 'src', 'index.ts');
@@ -151,9 +162,8 @@ it('answers an omitted-selection Run from a foreign recipient’s applied Team b
     processCommandHash: hashProcessCommand(identity.command), snapshotIdentity: entrypoint.comparableId });
   Object.assign(tracked, { processStartTimeMs: fixture.runner.processStartTimeMs, processCommandHash: fixture.runner.processCommandHash,
     spawnOptions: { directory: cwd, backendTarget: target,
-      modelSelection: { v: 1, updatedAt: 1, ref: { agentTargetKey: teamSelection.agentTargetKey, modelId: teamSelection.modelId, providerConnectionId: null } },
-      teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: teamSelection.resourceId,
-        expectedResourceRevision: 3, deliveryMode: 'brokered', teamId: teamSelection.teamId }] } });
+      modelSelection: { v: 1, updatedAt: 1, ref: { ...providerModelSelection, providerConnectionId: null } },
+      teamCredentialBindings: [acceptedTeamCredentialBinding] } });
   const authorityPath = await createAgentRuntimeDaemonServiceAuthorityPath({ happyHomeDir: f.directory, publicReleaseRing: configuration.publicReleaseRing });
   tracked.agentRuntimeDaemonServiceAuthorityFilePath = authorityPath;
   await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, happySessionId: sessionId, startedBy: 'daemon',
@@ -166,25 +176,23 @@ it('answers an omitted-selection Run from a foreign recipient’s applied Team b
   writeDaemonState({ pid: process.pid, httpPort: daemon.controlPort, controlToken: daemon.controlToken,
     startedAt: Date.now(), startedWithCliVersion: '0.0.0' });
   vi.stubEnv(HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY, authorityPath);
-  const homeFetch = globalThis.fetch;
-  vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
-    const url = new URL(input instanceof Request ? input.url : String(input));
-    if (url.hostname !== '127.0.0.1' || Number(url.port) !== daemon.controlPort) return homeFetch(input, init);
-    const app = boundary.app as ReturnType<typeof import('@/daemon/controlServer').createDaemonControlApp>;
-    const response = await app.inject({ method: 'POST', url: url.pathname,
-      headers: Object.fromEntries(new Headers(init?.headers)), payload: String(init?.body ?? '{}') });
-    if (url.pathname === '/agent-runtime/session/services/v1') {
-      const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(String(init?.body)));
-      const body = response.json();
+  const readControlHttp = daemonControlHttp.readDaemonControlHttpResponse;
+  vi.spyOn(daemonControlHttp, 'readDaemonControlHttpResponse').mockImplementation(async input => {
+    const response = await readControlHttp(input);
+    if (input.httpPort === daemon.controlPort && input.path === '/agent-runtime/session/services/v1') {
+      const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(input.body);
+      const body = JSON.parse(response.body);
       if (!body.ok) daemonFailures.push({ operation: request.operation.kind, response: body });
     }
-    return new Response(response.body, { status: response.statusCode, headers: { 'content-type': 'application/json' } });
+    return response;
   });
   const source = await createRunnerAgentSessionRuntimeSource({ happyHomeDir: f.directory, publicReleaseRing: configuration.publicReleaseRing,
     authorityFilePath: authorityPath, expectedSessionId: sessionId });
   if (!source) throw new Error('Missing retained native source');
   onTestFinished(() => source.retire?.());
-  const metadata = createTestMetadata({ path: cwd, machineId: 'machine', runtimeDescriptorV1: { v: 1, agentId, agent: {} } });
+  const metadata = createTestMetadata({ path: cwd, machineId: 'machine', runtimeDescriptorV1: { v: 1, agentId, agent: {} },
+    mcpSelectionV1: { v: 1, managedServersEnabled: false, happierToolsEnabled: false,
+      forceIncludeServerIds: [], forceExcludeServerIds: [] } });
   let manager: ExecutionRunHostBridgeContract | undefined;
   const session = createMutableApiSessionClientFixture({ sessionId, metadata, overrides: {
     ...createSnapshotSessionPendingTransport('requester'),
@@ -218,17 +226,27 @@ it('answers an omitted-selection Run from a foreign recipient’s applied Team b
   const nativeParent = nativeRuntime as { prepareRunTeamCredentialProviderBinding: NonNullable<SessionRuntimeControls['prepareRunTeamCredentialProviderBinding']>;
     readAppliedTeamCredentialModel(): typeof teamSelection | null };
   expect(nativeParent.readAppliedTeamCredentialModel()).toEqual(teamSelection);
+  const connectedAccountSelection = ConnectedAccountSessionModelRefV2Schema.parse({
+    source: 'connected_account', agentTargetKey: teamSelection.agentTargetKey, modelId: teamSelection.modelId,
+    purpose: { consumer: { pluginId: 'acme.project-launch', localId: 'provider' }, purpose: 'model-inference' },
+    endpointTemplateId: 'responses',
+  });
+  let parentUsesConnectedAccount = false;
   const controls: Partial<SessionRuntimeControls> = {};
   applySessionRuntimeControls(controls, {
     prepareRunTeamCredentialProviderBinding: nativeParent.prepareRunTeamCredentialProviderBinding.bind(nativeParent),
     readPermissionHandler: () => permissions,
+    resolveAccountSettingsSnapshot: async () => requester.readAccountSettingsSnapshot(),
     readAppliedChildSelection: async () => {
+      if (parentUsesConnectedAccount) return {
+        status: 'applied', backendTarget: target, modelId: connectedAccountSelection.modelId,
+        modelSelection: connectedAccountSelection, connectedServices: null,
+      };
       const applied = nativeParent.readAppliedTeamCredentialModel();
       return applied ? { status: 'applied', backendTarget: target, modelId: applied.modelId,
         teamCredentialModel: applied, connectedServices: null } : { status: 'unavailable' };
     },
   });
-  const features = { status: 'ready' as const, features: FeaturesResponseSchema.parse({ features: { providers: { enabled: true } }, capabilities: {} }) };
   const registration = registerSessionClientRuntimeHandlers({ serverId: 'session-home', serverUrl: 'https://session-home.test',
     rpcHandlerManager: session.rpcHandlerManager, token: f.bootstrap.credentials.token, readOwnerAccountCredentials: async () => f.bootstrap.credentials,
     metadataPath: cwd, metadata, sessionId, session, getSessionMetadata: () => session.getMetadataSnapshot(), sessionRuntimeControls: controls,
@@ -244,9 +262,26 @@ it('answers an omitted-selection Run from a foreign recipient’s applied Team b
     expect(request.token).toBe(requester.bootstrap.credentials.token);
     return await session.rpcHandlerManager.handleRequest({ method: request.method, params: request.request, callerAuthority: 'present_user' });
   });
-  const started = await session.rpcHandlerManager.handleRequest({ method: `${sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_START}`,
-    callerAuthority: 'present_user', params: { intent: 'delegate', backendTarget: target, instructions: 'Answer using the inherited Team model.',
+  const startInherited = (instructions: string) => session.rpcHandlerManager.handleRequest({ method: `${sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_START}`,
+    callerAuthority: 'present_user', params: { intent: 'delegate', backendTarget: target, instructions,
       permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response' } });
+
+  // Supply a qualified readback through the same parent boundary. The requester
+  // runner must refuse a Connected Account route for which it has no launch service.
+  const nativeOpensBeforeRefusal = await readFile(join(cwd, 'foreign-native-opens.jsonl'), 'utf8');
+  parentUsesConnectedAccount = true;
+  const refused = ExecutionRunStartResponseSchema.parse(
+    await startInherited('Answer using the inherited Connected Account model.'),
+  );
+  await vi.waitFor(() => expect(manager?.getPublic(refused.runId)).toMatchObject({
+    status: 'failed',
+    resolvedSelection: { source: 'inherited', modelSelection: connectedAccountSelection },
+    error: { code: 'provider_authorization_changed' },
+  }));
+  expect(await readFile(join(cwd, 'foreign-native-opens.jsonl'), 'utf8')).toBe(nativeOpensBeforeRefusal);
+  parentUsesConnectedAccount = false;
+
+  const started = await startInherited('Answer using the inherited Team model.');
   expect(started, JSON.stringify({ started, daemonFailures })).toMatchObject({ runId: expect.any(String) });
   const run = ExecutionRunStartResponseSchema.parse(started);
   await vi.waitFor(() => expect(manager?.getPublic(run.runId), JSON.stringify(manager?.getPublic(run.runId))).toMatchObject({ status: 'succeeded' }), { timeout: 10_000 });
