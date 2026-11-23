@@ -70,7 +70,7 @@ import type { WorkflowStarterSessionTarget } from '@happier-dev/protocol/workflo
 import { applyWorkflowDefinitionEditsV1, countWorkflowStepsV1, setWorkflowDefaultField, setWorkflowStepExecutionField, walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { WorkflowDraftEditInputV1Schema, WorkflowMountedDraftV1Schema, type WorkflowDraftEditInputV1, type WorkflowDraftMutationResultV1 } from '@happier-dev/protocol/actions/workflowAuthoringAction';
 import type { WorkflowMountedDraftActions } from '@/sync/ops/actions/workflowAuthoringAction';
-import type { WorkflowActionCallerContext, WorkflowActionOperation } from '@/sync/domains/workflows/callWorkflowAction';
+import { callWorkflowAction, type WorkflowActionCallerContext, type WorkflowActionOperation } from '@/sync/domains/workflows/callWorkflowAction';
 import { resolveWorkflowStarter } from '@/sync/domains/workflows/resolveWorkflowStarter';
 import { EMPTY_WORKFLOW_ANNOUNCEMENT_STATE, selectWorkflowAnnouncement } from '../accessibility/workflowAnnouncementSelection';
 import { formatWorkflowAnnouncement } from '../accessibility/useWorkflowAnnouncements';
@@ -111,7 +111,7 @@ import { editWorkflowTriggerDraft, EMPTY_WORKFLOW_TRIGGER_DRAFT, projectWorkflow
 import { formatTriggerResultDecides } from '../triggers/formatTriggerSummary';
 import { useWorkflowEditorHistory, useWorkflowEditorHistoryLabels, workflowEditorSnapshotsEqual } from '../editor/useWorkflowEditorHistory';
 import { createWorkflowEditorReadable, useWorkflowEditorSelector, type WorkflowEditorDraftStore } from '../editor/workflowEditorDraftStore';
-import { saveMountedWorkflowDraft, saveWorkflowEditorDefinition, type PendingWorkflowDefinitionCreate } from '../editor/saveWorkflowEditorDefinition';
+import { parseMountedWorkflowDraftMutation, saveMountedWorkflowDraft, saveWorkflowEditorDefinition, type PendingWorkflowDefinitionCreate } from '../editor/saveWorkflowEditorDefinition';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { formatWorkflowWhereSummary } from '../editor/WorkflowProjectTargetControl';
 import { createExecutionRunStartContentChip } from '@/components/sessions/runs/launcher/executionRunStartChips';
@@ -836,24 +836,36 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         setSavedByAgent(false);
         return true;
     };
+    const presentDraftCommand = React.useCallback(async (
+        actionId: typeof WORKFLOW_AUTHORING_ACTION_ID['draftUndo' | 'draftRedo' | 'draftDiscard'],
+        title: string,
+    ): Promise<void> => {
+        const draftId = snapshotRef.current?.draft.draftId;
+        if (!accountLifetime?.isCurrent() || draftId === undefined) return;
+        const sourceIsCurrent = captureSourceGeneration();
+        const isCurrent = () => accountLifetime.isCurrent() && sourceIsCurrent();
+        try {
+            const outcome = await callWorkflowAction({ actionId, accountLifetime, input: { scope: accountLifetime.scope, draftId },
+                parseResult: parseMountedWorkflowDraftMutation });
+            if (!isCurrent() || !('status' in outcome) || outcome.status === 'applied' || outcome.status === 'unchanged') return;
+            const reason = outcome.status === 'refused' ? outcome.reason : 'workflow_draft_unavailable';
+            if (reason === 'cancelled') return;
+            void Modal.alert(title, reason === WorkflowTriggerSnapshotRestoreError.code ? t('workflows.editor.historyRestoreRequiresSetup')
+                : formatWorkflowProblemMessage(new WorkflowActionError({ message: reason, rawCode: reason })));
+        } catch (error) {
+            if (isCurrent()) void Modal.alert(title, formatWorkflowProblemMessage(error));
+        }
+    }, [accountLifetime, captureSourceGeneration]);
     const historyControls = React.useMemo((): typeof history.controls => {
         const controls = history.controls;
         return {
             get undoLabel() { return controls.undoLabel; },
             get redoLabel() { return controls.redoLabel; },
             ...(controls.subscribe === undefined ? {} : { subscribe: controls.subscribe }),
-            undo: () => {
-                try { controls.undo(); }
-                catch (error) { void Modal.alert(t('workflows.editor.undo'), error instanceof WorkflowTriggerSnapshotRestoreError
-                    ? t('workflows.editor.historyRestoreRequiresSetup') : formatWorkflowProblemMessage(error)); }
-            },
-            redo: () => {
-                try { controls.redo(); }
-                catch (error) { void Modal.alert(t('workflows.editor.redo'), error instanceof WorkflowTriggerSnapshotRestoreError
-                    ? t('workflows.editor.historyRestoreRequiresSetup') : formatWorkflowProblemMessage(error)); }
-            },
+            undo: () => presentDraftCommand(WORKFLOW_AUTHORING_ACTION_ID.draftUndo, t('workflows.editor.undo')),
+            redo: () => presentDraftCommand(WORKFLOW_AUTHORING_ACTION_ID.draftRedo, t('workflows.editor.redo')),
         };
-    }, [history.controls]);
+    }, [history.controls, presentDraftCommand]);
 
     // The controlled editor resolves no catalog of its own, so the Agent options
     // and every step prompt's reference scope come from this one host adapter —
@@ -1876,7 +1888,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         execute: async (actionId, input, signal, caller) => {
             if (signal?.aborted) return { status: 'refused', reason: 'cancelled' };
             if (actionId === WORKFLOW_AUTHORING_ACTION_ID.draftSave) return await handleSave(caller, false, { signal, operationProgress: caller?.operationProgress });
-            if (actionId === 'workflow.authoring.draft.discard') {
+            if (actionId === WORKFLOW_AUTHORING_ACTION_ID.draftDiscard) {
                 if (!canEditDefinition) return { status: 'refused', reason: 'workflow_draft_read_only' };
                 return saved !== null ? await handleDiscardChanges()
                     : await draftNavigation.requestLeaveAndWait() ? { status: 'applied' } : { status: 'refused', reason: 'cancelled' };
@@ -1884,15 +1896,15 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
             const current = snapshotRef.current;
             if (!current) return { status: 'unavailable' };
             const revision = history.getRevision();
-            if (actionId === 'workflow.authoring.draft.edit') {
+            if (actionId === WORKFLOW_AUTHORING_ACTION_ID.draftEdit) {
                 const parsed = WorkflowDraftEditInputV1Schema.safeParse(input);
                 if (!parsed.success) return { status: 'refused', reason: 'invalid_parameters' };
                 return editMountedDraft(parsed.data, t('workflows.editor.history.agent'));
             }
             if (!canEditDefinition) return { status: 'refused', reason: 'workflow_draft_read_only' };
             try {
-                if (actionId === 'workflow.authoring.draft.undo') history.controls.undo();
-                else if (actionId === 'workflow.authoring.draft.redo') history.controls.redo();
+                if (actionId === WORKFLOW_AUTHORING_ACTION_ID.draftUndo) history.controls.undo();
+                else if (actionId === WORKFLOW_AUTHORING_ACTION_ID.draftRedo) history.controls.redo();
                 else return { status: 'unavailable' };
             } catch (error) {
                 return { status: 'refused', reason: error instanceof WorkflowTriggerSnapshotRestoreError
@@ -1983,10 +1995,10 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         // Destructive operations close the menu, never open it (DESIGN-9 N46).
         if (saved === null && canEditDefinition) actions.push({ id: 'discard', title: t('common.discard'),
             testID: 'workflow-editor-menu-discard', disabled: savePending, destructive: true,
-            onSelect: draftNavigation.requestLeave });
+            onSelect: () => presentDraftCommand(WORKFLOW_AUTHORING_ACTION_ID.draftDiscard, t('common.discard')) });
         if (canEditDefinition && saved !== null && routeDraftDirty) actions.push({ id: 'discardChanges',
             title: t('common.discardChanges'), testID: 'workflow-editor-menu-discard-changes', disabled: savePending,
-            destructive: true, onSelect: () => { void handleDiscardChanges(); } });
+            destructive: true, onSelect: () => presentDraftCommand(WORKFLOW_AUTHORING_ACTION_ID.draftDiscard, t('common.discardChanges')) });
         if (canEditDefinition && saved !== null) {
             actions.push({
                 id: 'delete',
@@ -1998,8 +2010,8 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
             });
         }
         return actions;
-    }, [accountLifetime, activeAccountScope, accessResolved, canEditDefinition, detailsPaneAvailable, draftDuplicable, draftNavigation.requestLeave, editWithAgent,
-        handleDelete, handleDiscardChanges, handleDuplicate, mention, readShareName, routeDraftDirty, savePending, deletePending, saved]);
+    }, [accountLifetime, activeAccountScope, accessResolved, canEditDefinition, detailsPaneAvailable, draftDuplicable, editWithAgent,
+        handleDelete, handleDuplicate, mention, presentDraftCommand, readShareName, routeDraftDirty, savePending, deletePending, saved]);
 
     React.useEffect(() => {
         if (props.source.kind !== 'new' || props.source.requestImport !== true || importRequestedRef.current) return;

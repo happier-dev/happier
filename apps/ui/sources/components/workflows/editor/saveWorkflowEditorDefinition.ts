@@ -18,6 +18,11 @@ export type PendingWorkflowDefinitionCreate = Readonly<{
     description: string;
 }>;
 
+export function parseMountedWorkflowDraftMutation(value: unknown) {
+    const mutation = WorkflowDraftMutationResultV1Schema.safeParse(value);
+    return mutation.success ? mutation.data : ActionApprovalRequestCreatedResultSchema.parse(value);
+}
+
 export async function saveMountedWorkflowDraft(accountLifetime: ServerAccountScopeLifetime, draftId: string, operation?: WorkflowActionOperation) {
     const notices: ActionAutomationNoticeV1[] = [];
     const frontDoor = createFrontDoorActionExecute(undefined, {
@@ -28,10 +33,7 @@ export async function saveMountedWorkflowDraft(accountLifetime: ServerAccountSco
         withActionAutomationNoticesV1(await frontDoor(...args), notices), frontDoor);
     return await callWorkflowAction({ actionId: WORKFLOW_AUTHORING_ACTION_ID.draftSave,
         input: { scope: accountLifetime.scope, draftId }, accountLifetime, execute, ...operation,
-        parseResult: value => {
-            const mutation = WorkflowDraftMutationResultV1Schema.safeParse(value);
-            return mutation.success ? mutation.data : ActionApprovalRequestCreatedResultSchema.parse(value);
-        } });
+        parseResult: parseMountedWorkflowDraftMutation });
 }
 
 /** The editor and the in-place sentence retain the same create bytes until acknowledged. */

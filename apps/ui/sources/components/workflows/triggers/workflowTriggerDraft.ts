@@ -54,10 +54,11 @@ export type WorkflowTriggerKnownDefinitions = ReadonlyMap<AutomationTriggerId, R
 }>>;
 
 export class WorkflowTriggerSnapshotRestoreError extends Error {
-    readonly code = 'workflow_trigger_restore_requires_setup';
+    static readonly code = 'workflow_trigger_restore_requires_setup';
+    readonly code = WorkflowTriggerSnapshotRestoreError.code;
 
     constructor() {
-        super('workflow_trigger_restore_requires_setup');
+        super(WorkflowTriggerSnapshotRestoreError.code);
         this.name = 'WorkflowTriggerSnapshotRestoreError';
     }
 }

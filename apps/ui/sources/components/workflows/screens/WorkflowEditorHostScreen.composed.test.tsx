@@ -1081,6 +1081,61 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
 }
 
 describe('WorkflowEditorHostScreen composition', () => {
+    it.each([
+        ['undo', 'native'], ['undo', 'addressed'], ['redo', 'native'], ['redo', 'addressed'],
+    ] as const)('uses draft Action admission for %s from the %s entry', async (intent, entry) => {
+        const { WORKFLOW_AUTHORING_ACTION_ID } = await import('@happier-dev/protocol/actions/workflowAuthoringActionIds');
+        const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+        const actionId = intent === 'undo' ? WORKFLOW_AUTHORING_ACTION_ID.draftUndo : WORKFLOW_AUTHORING_ACTION_ID.draftRedo;
+        const boundary = await serveMountedDraftActionHome(undefined, true, undefined, {
+            actionsSettingsV1: { v: 1, actions: { [actionId]: { enabled: false } } },
+        });
+        await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        const originalName = readBodyProps()!.draftStore.get().name;
+        const editedName = 'Keep the history exactly where it is';
+        await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: editedName }));
+        const address = { scope: boundary.scope, draftId: readBodyProps()!.draftStore.get().draftId };
+        const context = { surface: 'ui' as const, serverId: address.scope.serverId, runtimeAccountId: address.scope.accountId };
+        const execute = createFrontDoorActionExecute();
+        if (intent === 'redo') {
+            await act(async () => {
+                expect(await execute(WORKFLOW_AUTHORING_ACTION_ID.draftUndo, address, context)).toMatchObject({
+                    ok: true, result: { status: 'applied' },
+                });
+            });
+        }
+        await act(async () => {
+            if (entry === 'native') await readBodyProps()!.history![intent]();
+            else expect(await execute(actionId, address, context)).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+        });
+        expect(readBodyProps()!.draftStore.get().name).toBe(intent === 'undo' ? editedName : originalName);
+    });
+
+    it.each(['native', 'addressed'] as const)('uses draft Action admission for discard from the %s entry', async entry => {
+        const { WORKFLOW_AUTHORING_ACTION_ID } = await import('@happier-dev/protocol/actions/workflowAuthoringActionIds');
+        const actionId = WORKFLOW_AUTHORING_ACTION_ID.draftDiscard;
+        const boundary = await serveMountedDraftActionHome(undefined, true, undefined, {
+            actionsSettingsV1: { v: 1, actions: { [actionId]: { enabled: false } } },
+        });
+        await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        const editedName = 'Keep changes after the refused discard';
+        await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: editedName }));
+        if (entry === 'native') {
+            const discard = readBodyProps()!.menuActions?.find(action => action.id === 'discardChanges');
+            expect(discard).toBeDefined();
+            await act(async () => { await discard!.onSelect(); });
+        } else {
+            const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+            const address = { scope: boundary.scope, draftId: readBodyProps()!.draftStore.get().draftId };
+            await act(async () => {
+                expect(await createFrontDoorActionExecute()(actionId, address, {
+                    surface: 'ui', serverId: address.scope.serverId, runtimeAccountId: address.scope.accountId,
+                })).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+            });
+        }
+        expect(readBodyProps()!.draftStore.get().name).toBe(editedName);
+    });
+
     it.each(['native Save', 'addressed Save'] as const)('uses draft Action admission for %s before persisting the document', async entry => {
         const { WORKFLOW_AUTHORING_ACTION_ID } = await import('@happier-dev/protocol/actions/workflowAuthoringActionIds');
         const boundary = await serveMountedDraftActionHome(undefined, true, undefined, {
@@ -3181,18 +3236,23 @@ describe('WorkflowEditorHostScreen composition', () => {
             await act(async () => { navigation!.openHref('/workflows/new'); });
             const draft = readBodyProps()!.draftStore.get();
             await act(async () => readBodyProps()!.onChange({ ...draft, name: 'Do not lose this' }));
+            let menuDiscard: Promise<unknown> | undefined;
             const leave = async () => {
                 if (exit === 'Previous') await screen.pressByTestIdAsync('app-shell-back');
-                else if (exit === 'menu Discard') await act(async () => readBodyProps()!.menuActions?.find(action => action.id === 'discard')?.onSelect());
+                else if (exit === 'menu Discard') await act(async () => {
+                    menuDiscard = Promise.resolve(readBodyProps()!.menuActions?.find(action => action.id === 'discard')?.onSelect());
+                });
                 else await act(async () => browser.go(-1));
             };
             await leave();
             expect(visibleModals().filter(modal => modal.type === 'alert')).toHaveLength(1);
             expect(location.pathname).toBe('/workflows/new');
             await pressAlertButton('cancel');
+            await menuDiscard;
             expect(readBodyProps()!.draftStore.get().name).toBe('Do not lose this');
             await leave();
             await pressAlertButton('destructive');
+            await menuDiscard;
             expect(decodeURIComponent(location.pathname)).toBe('/workflows/builtin:plan-with-a-panel');
             expect(entries.filter(entry => decodeURIComponent(entry.href) === '/workflows/builtin:plan-with-a-panel')).toHaveLength(1);
             expect(position).toBe(0);
@@ -3369,7 +3429,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         // Destructive operations close the menu: Discard changes, then Delete workflow.
         expect(ids.slice(-2)).toEqual(['discardChanges', 'delete']);
 
-        await act(async () => { void readBodyProps()!.menuActions?.find((action) => action.id === 'discardChanges')?.onSelect(); });
+        await act(async () => readBodyProps()!.menuActions?.find((action) => action.id === 'discardChanges')?.onSelect());
         expect(readConfirmation()).toBeUndefined();
         expect(readBodyProps()!.draftStore.get()).toEqual(saved);
         expect(readBodyProps()!.description).toBe('');
