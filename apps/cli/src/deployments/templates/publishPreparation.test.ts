@@ -15,7 +15,7 @@ import { readBundledPluginAvailabilityHttpFixture } from '@/plugins/testkit/bund
 
 afterEach(() => vi.restoreAllMocks());
 
-it.each(['happier-catalog', 'coolify-templates'] as const)('prepares an exact %s app through the public Publish read Action without applying it, preserving Project and Team defaults', async format => {
+it.each(['happier-catalog', 'coolify-templates', 'dokploy-templates'] as const)('prepares or returns review for an exact %s app through the public Publish read Action', async format => {
     const identity = await readOrCreateInstallationIdentity();
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
     const credentials = { token, encryption: null };
@@ -25,23 +25,28 @@ it.each(['happier-catalog', 'coolify-templates'] as const)('prepares an exact %s
             controllerMachineId: 'account-controller', retainPreviousDeployments: 7,
         } }), settingsVersion: 1, loadedAtMs: 1, scopeKey, settingsSecretsReadKeys: [] }, isCurrent: async () => true });
     const source: RegistrySourceDescriptorV1 = { id: 'apps', title: 'Apps', format, kinds: ['app'],
-        url: format === 'coolify-templates' ? 'https://github.com/publish-preparation/catalog' : 'https://apps.test/catalog.json',
+        url: format === 'coolify-templates' ? 'https://github.com/publish-preparation/catalog'
+            : format === 'dokploy-templates' ? 'https://apps.test/meta.json' : 'https://apps.test/catalog.json',
         enabled: true, addedAt: 1, origin: { kind: 'user' }, removable: true };
     const app = DeploymentTemplateV1Schema.parse({ schemaVersion: 1, title: 'App', compose: {
         document: 'services:\n  web:\n    image: nginx:1\n', profiles: [], services: ['web'] },
         variables: [{ key: 'PASSWORD', label: 'Password', valueKind: 'string', required: true, secret: true, sites: [] }],
         generatedSecrets: [], domains: [], volumes: [], firstRunSetup: true });
     const commit = 'c'.repeat(40);
+    const plausibleCompose = 'services:\n  plausible:\n    image: plausible/analytics:1\n    env_file: ./plausible.env\n';
     const catalog = format === 'coolify-templates' ? { app: { name: 'App', slogan: 'Status' } }
+        : format === 'dokploy-templates' ? [{ id: 'plausible', name: 'Plausible' }, { id: 'other', name: 'Other' }]
         : { schemaVersion: 1, apps: [{ itemId: 'app', app }] };
+    const bodyReads: string[] = [];
     const registry = createRegistryHostV1({ host: 'node', readSources: async () => [source], http: {
         getJson: async url => ({ ok: true, value: url.includes('/commits/') ? { sha: commit } : catalog, fetchedAt: 1 }),
-        getText: async () => ({ ok: true, value: app.compose.document, fetchedAt: 1 }),
+        getText: async url => {
+            bodyReads.push(new URL(url).pathname);
+            return { ok: true, value: format === 'dokploy-templates'
+                ? (url.endsWith('.toml') ? '' : plausibleCompose) : app.compose.document, fetchedAt: 1 };
+        },
         getBytes: async () => { throw new Error('No selected binary fetch'); },
     } });
-    const selected = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(await registry.execute('registries.items.read', {
-        sourceId: 'apps', kind: 'app', itemId: 'app' })).item;
-    if (selected.payload.kind !== 'app' || selected.payload.state !== 'ready') throw new Error('Expected ready app producer output');
     const { origin: _origin, removable: _removable, ...sourceRow } = source;
     const rows = PromptLibraryRowsListResponseV1Schema.parse({ status: 'listed', rows: PromptLibraryCatalogKeyV1Schema.options.map(key => ({
         key, revision: 1, content: key === 'registry-sources' ? { t: 'plain', v: { key,
@@ -56,6 +61,10 @@ it.each(['happier-catalog', 'coolify-templates'] as const)('prepares an exact %s
         if (format === 'coolify-templates') {
             expect(String(url)).toContain(`/publish-preparation/catalog/${commit}/templates/`);
             if (String(url).endsWith('/app.yaml')) return new Response(app.compose.document);
+        } else if (format === 'dokploy-templates' && String(url) !== source.url) {
+            if (String(url) === 'https://apps.test/blueprints/plausible/docker-compose.yml') return new Response(plausibleCompose);
+            if (String(url) === 'https://apps.test/blueprints/plausible/template.toml') return new Response('');
+            throw new Error(`Unexpected Dokploy fetch: ${String(url)}`);
         } else expect(String(url)).toBe(source.url);
         return new Response(JSON.stringify(catalog), { status: 200 });
     });
@@ -86,13 +95,36 @@ it.each(['happier-catalog', 'coolify-templates'] as const)('prepares an exact %s
         credentials, serverId: 'home', serverHttpBaseUrl: 'https://home.test',
         machineId: 'target', savedSecretOperationContext: operation,
         runtime: { async acquire() { throw new Error('Preparation may not acquire native custody'); } } });
-    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps });
-    const input = { serverId: 'home', machineId: 'target', installationId: identity.installationId,
-        projectSourceId: 'project', sourceRevision: 2,
-        templateRef: { sourceId: 'apps', itemId: 'app', version: selected.summary.version!, ref: selected.payload.ref } };
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
+        registryActionExecute: ({ actionId, input }) => registry.execute(actionId, input) });
     const context = { surface: 'cli' as const, authority: 'account_automation' as const, actionCaller: { kind: 'host' as const },
         serverId: 'home', runtimeAccountId: 'owner', actionRequestId: 'catalog-entry' };
+    const read = { sourceId: 'apps', kind: 'app' as const, itemId: format === 'dokploy-templates' ? 'plausible' : 'app' };
+    if (format === 'dokploy-templates') {
+        expect(await executor.execute('deployments.suggestions.catalog', {}, context)).toMatchObject({
+            ok: true, result: { apps: expect.arrayContaining([{ id: '["apps","plausible"]', sourceId: 'apps', itemId: 'plausible', title: 'Plausible' }]) },
+        });
+        expect(bodyReads).toEqual([]);
+    }
+    const selected = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(await registry.execute('registries.items.read', read)).item;
+    if (selected.payload.kind !== 'app' || !selected.summary.version) throw new Error('Expected pinned app producer output');
+    const input = { serverId: 'home', machineId: 'target', installationId: identity.installationId,
+        projectSourceId: 'project', sourceRevision: 2,
+        templateRef: { sourceId: read.sourceId, itemId: read.itemId, version: selected.summary.version, ref: selected.payload.ref } };
     const prepared = await executor.execute('deployments.publish.prepare', input, context);
+    if (format === 'dokploy-templates') {
+        expect(bodyReads.sort()).toEqual(['/blueprints/plausible/docker-compose.yml', '/blueprints/plausible/template.toml']);
+        expect(prepared).toMatchObject({ ok: false, errorCode: 'template_needs_review', details: {
+            diagnostics: [{ field: 'services.plausible.env_file', reason: 'sidecar_file_requires_review' }],
+            nextAction: { actionId: 'registries.items.read', input: { ...read, version: selected.summary.version } },
+        } });
+        expect(await executor.execute('deployments.publish.prepare', { ...input, templateRef: { ...input.templateRef,
+            ref: { kind: 'content', digest: `sha256:${'b'.repeat(64)}` } } }, context))
+            .toMatchObject({ ok: false, errorCode: 'template_changed' });
+        expect(mutations).toEqual([]);
+        return;
+    }
+    if (selected.payload.state !== 'ready') throw new Error('Expected ready app producer output');
     expect(prepared, JSON.stringify(prepared)).toMatchObject({ ok: true, result: {
         kind: 'prepared', template: selected.payload.app, creationDefaults: { values: { controllerMachineId: 'account-controller',
             buildMachineId: 'target', retainPreviousDeployments: 7 }, sources: { controllerMachineId: 'account', retainPreviousDeployments: 'account' } },

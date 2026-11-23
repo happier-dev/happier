@@ -152,6 +152,13 @@ rereads it once on the first follow-up after the Account's connected accounts
 change (a connect, a removal, or an account breaking or being reconnected); later
 follow-ups reuse it.
 
+Suggestion catalogs read app summaries without fetching template bodies. Choosing
+a catalog app reads the selected template and uses the registry's normalization
+result. If it needs review, the dialog shows the affected fields and opens the
+pinned Store listing for Review. Template preparation Actions return
+`template_needs_review` with field diagnostics and the pinned
+`registries.items.read` request in `details.nextAction`.
+
 Saving a token alongside a Saved Secret publishes the connected Account profile
 after the credential and resource commit together. Configure waits for that
 exact connection before loading provider choices. If the profile is unavailable

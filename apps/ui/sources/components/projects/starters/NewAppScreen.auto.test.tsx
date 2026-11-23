@@ -53,6 +53,7 @@ vi.mock(
 );
 
 const { createActionExecutor } = await import('@happier-dev/protocol/actions');
+const { createRegistryHostV1 } = await import('@happier-dev/protocol/registries');
 const { createActionExecutorBoundaryFixture } =
   await import('@/dev/testkit/fixtures/actionExecutorBoundary');
 const { createPlainPromptLibraryCatalogHomeFixture } =
@@ -412,21 +413,28 @@ it('a refused Stop keeps the run on screen with the refusal and Retry; it never 
   }
 });
 
-it('a catalog-app card continues in this dialog on Where for that app, not in the Store (journey-deploy F4 pure deploy)', async () => {
-  const digest = `sha256:${'a'.repeat(64)}`;
-  const summary = { sourceId: 'app', kind: 'app', itemId: 'plausible', title: 'Plausible', version: digest };
-  const reads: unknown[] = [];
-  suggestionBoundary({
-    registryActionExecute: async ({ actionId, input }) => {
-      if (actionId === 'registries.items.read') {
-        reads.push(input);
-        return { item: { summary, fetchedAt: 1, payload: { kind: 'app', state: 'ready', ref: { kind: 'content', digest },
-          app: { schemaVersion: 1, title: 'Plausible', compose: { document: 'services:\n  web:\n    image: plausible/analytics\n', profiles: [], services: ['web'] },
-            variables: [], generatedSecrets: [], domains: [], volumes: [] } } } };
-      }
-      const kind = (input as { kind: string }).kind;
-      return { pages: [{ sourceId: kind, status: { state: 'ok', fetchedAt: 1 }, nextCursor: null, items: kind === 'app' ? [summary] : [] }] };
+it.each(['ready', 'needs_review'] as const)('opens a Dokploy suggestion without body reads and handles the selected %s template', async (state) => {
+  const bodyReads: string[] = [];
+  const registry = createRegistryHostV1({
+    host: 'node',
+    readSources: async () => [{
+      id: 'app', title: 'Apps', format: 'dokploy-templates', kinds: ['app'], url: 'https://apps.test/meta.json',
+      enabled: true, addedAt: 1, origin: { kind: 'user' }, removable: true,
+    }],
+    http: {
+      getJson: async () => ({ ok: true, fetchedAt: 1, value: [{ id: 'plausible', name: 'Plausible' }, { id: 'other', name: 'Other' }] }),
+      getText: async (url) => {
+        const path = new URL(url).pathname;
+        bodyReads.push(path);
+        const compose = 'services:\n  plausible:\n    image: plausible/analytics:1\n';
+        return { ok: true, fetchedAt: 1, value: path.endsWith('.toml') ? '' : compose +
+          (state === 'needs_review' ? '    env_file: ./plausible.env\n' : '') };
+      },
+      getBytes: async () => { throw new Error('Unexpected byte acquisition'); },
     },
+  });
+  suggestionBoundary({
+    registryActionExecute: async ({ actionId, input }) => registry.execute(actionId, input),
     // An own server runs Compose and containers, so the stored catalog app fits it.
     deploymentSuggestionTargets: async () => ({ targets: [{ ...targets[0]!, accepts: ['static', 'compose', 'container'] }], stores: [] }),
     executionRunWait: async () => ({ ok: true, status: 'succeeded', result: terminal({ recommendations: [{
@@ -441,11 +449,27 @@ it('a catalog-app card continues in this dialog on Where for that app, not in th
     await act(async () => screen.changeTextByTestId('newApp.auto.description', 'A self-hosted analytics dashboard'));
     await screen.pressByTestIdAsync('newApp.auto.suggest');
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.useSetup')?.props.disabled).toBe(false));
+    expect(bodyReads).toEqual([]);
     await screen.pressByTestIdAsync('newApp.auto.useSetup');
-    await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.draft')).toBeTruthy());
-    expect(reads).toContainEqual(expect.objectContaining({ kind: 'app', sourceId: 'app', itemId: 'plausible' }));
-    expect(onClose, 'the dialog stays: Where runs inside it').not.toHaveBeenCalled();
-    expect(routerMock.spies.push, 'no detour through the Store listing').not.toHaveBeenCalled();
+    if (state === 'ready') {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.draft')).toBeTruthy());
+      expect(onClose).not.toHaveBeenCalled();
+      expect(routerMock.spies.push).not.toHaveBeenCalled();
+    } else {
+      const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+      const review = () => screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'newApp.deploy.catalogReview');
+      await waitForHomeGovernance(() => expect(review()).toBeTruthy());
+      expect(review()?.props.detail).toContain('services.plausible.env_file');
+      expect(review()?.props.diagnosticDetail).toContain('services.plausible.env_file · sidecar_file_requires_review');
+      expect(screen.findByTestId('project-deployments.draft')).toBeFalsy();
+      await screen.pressByTestIdAsync('newApp.deploy.catalogReview-action');
+      expect(onClose).toHaveBeenCalledOnce();
+      const href = routerMock.spies.push.mock.calls[0]?.[0] as { params: { selection: string } };
+      expect(JSON.parse(href.params.selection)).toEqual({
+        type: 'registryItem', kind: 'app', sourceId: 'app', itemId: 'plausible', version: expect.stringMatching(/^sha256:/),
+      });
+    }
+    expect(bodyReads.sort()).toEqual(['/blueprints/plausible/docker-compose.yml', '/blueprints/plausible/template.toml']);
     await screen.unmount();
   } finally {
     await standardCleanup();

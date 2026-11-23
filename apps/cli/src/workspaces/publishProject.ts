@@ -6,7 +6,7 @@ import {
   type DeploymentTemplateV1,
   type ActionExecutorContext,
 } from '@happier-dev/protocol';
-import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionExecuteFailure, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { OWN_SERVER_DEPLOYMENT_TARGET_V1, resolveDeploymentCreationDefaultsV1, resolvePublishTargetRecommendation } from '@happier-dev/deployments';
@@ -51,7 +51,7 @@ export function createPublishCatalogPreparation(host: Readonly<{
     } catch (error) {
       const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
         ? error.code : 'deployment_unavailable';
-      return code === 'deployment_unavailable'
+      return isActionExecuteFailure(error) || code === 'deployment_unavailable'
         ? projectDeploymentFailure(code, error, 'deployment.publish.prepare.selection') : failure(code);
     }
   };

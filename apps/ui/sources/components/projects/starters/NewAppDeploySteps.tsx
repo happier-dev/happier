@@ -12,6 +12,7 @@ import {
 } from '@/components/projects/deployments/DeploymentEnvironmentDraft';
 import { useDeploymentProjectChoice } from '@/components/projects/deployments/DeploymentProjectChoice';
 import { createDeploymentActions } from '@/components/projects/deployments/deploymentActions';
+import { buildStoreListingRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import {
   buildDeploymentEnvironmentHref,
   type DeploymentNewDefinitionKind,
@@ -210,7 +211,31 @@ function DefinitionDeploy(
  */
 function CatalogAppDeploy(props: BoundProps & Readonly<{ app: Readonly<{ sourceId: string; itemId: string }>; targetId: string | null }>) {
   const read = useRegistryItem({ kind: 'app', sourceId: props.app.sourceId, itemId: props.app.itemId }, true, { scope: props.lifetime.scope });
-  if (!read.item) {
+  const router = useRouter();
+  const item = read.item;
+  if (!read.stale && item?.payload.kind === 'app' && item.payload.state === 'needs_review') {
+    const { summary, payload } = item;
+    const { sourceId, itemId, version } = summary;
+    return <SurfaceStateCard
+      testID="newApp.deploy.catalogReview"
+      kind="warning"
+      layout="inline"
+      title={t('capabilities.store.appPage.reviewTitle')}
+      reason={t('capabilities.store.appPage.reviewDescription')}
+      detail={payload.diagnostics.map(({ field }) => field).join(', ')}
+      diagnosticCode={summary.problem?.code}
+      diagnosticDetail={payload.diagnostics.map(({ field, reason }) => `${field} · ${reason}`).join('\n')}
+      action={{
+        label: t('capabilities.store.appPage.review'),
+        onPress: () => {
+          if (!props.lifetime.isCurrent()) return;
+          props.onLeave();
+          router.push(buildStoreListingRoute({ type: 'registryItem', kind: 'app', sourceId, itemId, ...(version ? { version } : {}) }));
+        },
+      }}
+    />;
+  }
+  if (!read.item || read.stale) {
     return read.error && !read.loading
       // One line under the summary, as the start step's catalog outage reads; the read's own error stays behind Details.
       ? <SurfaceStateCard testID="newApp.deploy.catalogFailed" kind="error" size="line" title={t('capabilities.store.listing.failed')}
