@@ -356,6 +356,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                     sessionId={lifetimeSessionId}
                     sessionContext={sessionContext}
                     {...(savedSchedule ? { savedNextRunAt: props.set?.enabled ? readNextRunAt(row) : null } : {})}
+                    {...(isViewOnlySubjectTrigger(row.trigger, when, edited !== undefined) ? { viewOnlySubject: true } : {})}
                     {...(row.kind === 'saved' && props.set && row.trigger.kind === 'pluginEvent'
                         ? { eventEdit: { automationId: props.set.automationId, triggerId: row.triggerId } } : {})}
                     {...(props.onEditSeedApplied ? { onEditSeedApplied: props.onEditSeedApplied } : {})}
@@ -539,6 +540,16 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
             )}
         </View>
     );
+}
+
+/**
+ * A saved before-trigger on a chosen subject that the Home scoped to its author's own Actions: the author can only view
+ * that subject (R22). Until the Home has saved it (a new or edited trigger) nothing is known, so nothing is said.
+ */
+function isViewOnlySubjectTrigger(trigger: unknown, when: TriggerWhenValue | null, edited: boolean): boolean {
+    if (edited || when?.kind !== 'action' || when.phase !== 'before' || when.subject === undefined) return false;
+    // The Home grants reach to an author who can manage the subject; a saved `false` on a subject is view-only.
+    return typeof trigger === 'object' && trigger !== null && 'reachesOthers' in trigger && trigger.reachesOthers === false;
 }
 
 /**

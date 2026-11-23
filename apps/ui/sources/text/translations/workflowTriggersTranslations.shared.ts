@@ -468,6 +468,8 @@ export const en = {
         askNote: "A failed run turns the Action into an approval that shows its reason. It is approved or denied like any approval request; the agent that asked can’t approve its own.",
         startedFromHappier: "Runs before Actions started from Happier",
         startedFromHappierOwn: "Runs before your own Actions started from Happier",
+        viewOnlyReach: ({ subject }: { subject: string }) => `Runs only on your own Actions. You can view ${subject} but not manage it, so it doesn’t run on other people’s Actions.`,
+        viewOnlyReachUnnamed: "Runs only on your own Actions. You can view it but not manage it, so it doesn’t run on other people’s Actions.",
         decides: ({ action }: { action: string }) => `Decides “${action}”: when the run passes, it goes ahead; when it fails, it is refused and this reply is the reason.`,
         actionSentence: {
             beforeWait: ({ action }: { action: string }) => `Before “${action}”, wait for this workflow`,

@@ -121,12 +121,14 @@ export function TrackRow(
   props: Readonly<{
     label: string;
     trackKey: string;
+    /** What the row's choice means, beneath the whole row. */
+    note?: React.ReactNode;
     children: React.ReactNode;
   }>,
 ) {
   return (
     <View style={workflowEditorStyles.actionFieldRow}>
-      <WorkflowFieldPair label={props.label} trackKey={props.trackKey}>
+      <WorkflowFieldPair label={props.label} trackKey={props.trackKey} {...(props.note === undefined ? {} : { note: props.note })}>
         {props.children}
       </WorkflowFieldPair>
     </View>
@@ -161,6 +163,8 @@ export function WorkflowTriggerBlock(
     history?: React.ReactNode;
     /** A saved, unedited schedule's next occurrence, as its owner computed it. */
     savedNextRunAt?: number | null;
+    /** A saved before-trigger the Home scoped to its author's own Actions on a subject they can only view (R22). */
+    viewOnlySubject?: boolean;
     machineId: string | null;
     serverId: string | null;
     accountLifetime?: ServerAccountScopeLifetime | null;
@@ -321,6 +325,7 @@ export function WorkflowTriggerBlock(
           testID={props.testID}
           when={when}
           onSubjectNamed={isDeployFinishedTrigger(when) ? setNamedSubject : undefined}
+          viewOnlySubject={props.viewOnlySubject === true}
           workspaceRefId={props.workspaceRefId}
           machineId={props.machineId}
           serverId={props.serverId}
@@ -366,6 +371,8 @@ function ActionTrackRows(
     testID: string;
     when: ActionWhen;
     onSubjectNamed?: (subject: Readonly<{ key: string; label: string }> | null) => void;
+    /** The Home saved this before-trigger on a subject its author can only view: it runs on their own Actions (R22). */
+    viewOnlySubject?: boolean;
     machineId: string | null;
     serverId: string | null;
     workspaceRefId?: string;
@@ -374,6 +381,12 @@ function ActionTrackRows(
 ) {
   const { theme } = useUnistyles();
   const { when } = props;
+  const [subjectName, setSubjectName] = React.useState<string | null>(null);
+  const { onSubjectNamed } = props;
+  const nameSubject = React.useCallback((subject: Readonly<{ key: string; label: string }> | null) => {
+    setSubjectName(subject?.label ?? null);
+    onSubjectNamed?.(subject);
+  }, [onSubjectNamed]);
   const catalog = useWorkflowActionCatalog(
     { kind: 'machine', machineId: props.machineId, serverId: props.serverId },
     when.phase,
@@ -439,13 +452,19 @@ function ActionTrackRows(
         <TrackRow
           label={formatActionOperand(operand).label}
           trackKey={`${props.testID}-subject`}
+          {...(props.viewOnlySubject && when.subject !== undefined ? { note: (
+            <Text testID={`${props.testID}-subject-reach`} style={workflowEditorStyles.actionFieldNote}>
+              {subjectName === null ? t('workflows.triggers.card.viewOnlyReachUnnamed')
+                : t('workflows.triggers.card.viewOnlyReach', { subject: subjectName })}
+            </Text>
+          ) } : {})}
         >
           <View style={styles.selectBox}>
             <ActionSubjectSelect
               testID={`${props.testID}-subject`}
               operand={operand}
               subject={when.subject}
-              onSubjectNamed={props.onSubjectNamed}
+              onSubjectNamed={nameSubject}
               workspaceRefId={props.workspaceRefId}
               machineId={props.machineId}
               serverId={props.serverId}
