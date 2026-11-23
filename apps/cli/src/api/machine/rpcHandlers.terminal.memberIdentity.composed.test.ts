@@ -2,6 +2,7 @@ import axios from 'axios';
 import { access, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
+import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
@@ -577,8 +578,9 @@ describe.skipIf(process.platform !== 'linux')('installed host-composed member te
     'opens an admitted Manage member machine shell without an accepted Project through %s', async method => {
       const f = await fixture({ acceptedWorkspace: false });
       const input = { terminalKey: 'member-machine-shell' };
+      const daemonHome = homedir();
       expect(await f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_LIST, { machineShell: true }, f.accountId, false, undefined, 'manage'))
-        .toMatchObject({ ok: true, machineShell: { ok: true, cwd: f.member.workspaceRoot } });
+        .toMatchObject({ ok: true, machineShell: { ok: true, cwd: daemonHome } });
       const projectReads = () => vi.mocked(axios.post).mock.calls.filter(([url]) =>
         /\/project-rows\/(?:list|read)$/u.test(new URL(String(url)).pathname)).length;
       const beforeProjectReads = projectReads();
@@ -592,8 +594,9 @@ describe.skipIf(process.platform !== 'linux')('installed host-composed member te
       const terminalId = opened.terminalId;
       const manager = f.machine.getFiniteTerminalSessions();
       expect(manager?.getCustody(terminalId)).toMatchObject({ kind: 'machine', requesterAccountId: f.accountId,
-        machineId: f.machineId, installationId: f.installation.installationId, rootPath: f.member.workspaceRoot });
+        machineId: f.machineId, installationId: f.installation.installationId, rootPath: daemonHome });
       expect(manager?.getNativeExecutionIdentity?.(terminalId)).toBeNull();
+      expect(f.processes[0]?.params.options.cwd).toBe(daemonHome);
       expect(await f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_INPUT, { terminalId, data: 'use-machine-denied\n' },
         'member-a', false, undefined, 'use')).toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
       await expect(f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_INPUT, { terminalId, data: 'manage-machine-work\n' }, f.accountId, false, undefined, 'manage'))

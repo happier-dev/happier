@@ -5,6 +5,7 @@ import axios from 'axios';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken';
 import { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import { registerMachineTerminalRpcHandlers } from './rpcHandlers.terminal';
 import { authorizeMachineRpcRequest } from './machineRpcAuthorization';
@@ -26,7 +27,13 @@ import { readOwnSessionMachineWorkspace } from '@/session/machineControlLocality
 
 describe('machine shell RPC custody', () => {
   it.each(['sdk', 'restored'] as const)('retains a restored plugin credential refusal at both associated terminal launch receivers without native fallback (%s)', async errorMode => {
-    const f = await createInstalledFilesystemMachineFixture();
+    const accountId = 'requester';
+    const provenance = AuthTokenProvenanceSchema.parse({ v: 1, kind: 'terminal', authority: 'account_automation' });
+    const claims = Buffer.from(JSON.stringify({ sub: accountId, provenance })).toString('base64url');
+    // Home HTTP is substituted, but the installed receiver opens the saved Terminal credential itself.
+    const f = await createInstalledFilesystemMachineFixture({
+      accountId, credentials: { token: `e30.${claims}.signature`, encryption: null },
+    });
     await updateSettings(settings => ({ ...settings, servers: { ...settings.servers, [f.serverId]: {
       id: f.serverId, name: 'Terminal Home', serverUrl: f.serverHttpBaseUrl, webappUrl: f.serverHttpBaseUrl,
       createdAt: 1, updatedAt: 1, lastUsedAt: 1,
@@ -37,9 +44,11 @@ describe('machine shell RPC custody', () => {
     const consumer = { pluginId: 'example.github', localId: 'gh' };
     const service = { pluginId: 'example.github', localId: 'account' };
     const purpose = { consumer, purpose: 'cli' };
+    let materializations = 0;
     const account = createForegroundPurposeOwnerFixture({ consumer, service, purpose: 'cli',
       // A plugin integration can restore its public error across its RPC boundary.
       materializeAccount: async () => {
+        materializations++;
         const data = { code: 'github_cli_team_brokered_unavailable', message: 'Direct gh credentials are unavailable', retryable: false };
         throw errorMode === 'restored' ? restorePluginErrorFromWire({ name: 'PluginError', ...data })
           : new PluginError({ ...data, details: { reason: 'github_cli_team_brokered_unavailable' } });
@@ -73,7 +82,10 @@ describe('machine shell RPC custody', () => {
         accountReadRuntime: ingress => f.machine.resolveOwnSessionRuntime(ingress) } });
     try {
       for (const method of [RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_RESTART]) {
-        await expect(f.invoke(method, { terminalKey: 'refused', sessionId: 'refused-session' })).resolves.toMatchObject({
+        const before = materializations;
+        const result = await f.invoke(method, { terminalKey: 'refused', sessionId: 'refused-session' });
+        expect(materializations - before, `Credential materialization through ${method}`).toBe(1);
+        expect(result).toMatchObject({
           ok: false, errorCode: 'github_cli_team_brokered_unavailable',
           ...(errorMode === 'sdk' ? { details: { details: { reason: 'github_cli_team_brokered_unavailable' } } } : {}) });
       }
