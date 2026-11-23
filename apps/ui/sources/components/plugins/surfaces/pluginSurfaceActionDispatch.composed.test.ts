@@ -5552,7 +5552,7 @@ describe('client Action declared SessionTarget admission', () => {
                 artifactId: 'confidential-input-request', actionId: 'action.invoke' } });
             expect(requests).toHaveLength(1);
             expect(requests[0]).toMatchObject({ status: 'open', actionId: 'action.invoke',
-                executionOriginV1: { authority: 'present_user' },
+                executionOriginV1: { authority: placement === 'global daemon' ? 'account_automation' : 'present_user' },
                 actionArgs: { action: identity, input: sessionScoped ? { sessionId: 'selected-session' } : {} },
                 preview: { confidentialInputs: { kind: 'action_inputs', paths: ['input.token'] } } });
             expect(requests[0]!.actionArgs).not.toHaveProperty('input.token');
@@ -9714,12 +9714,30 @@ describe('plugin-surface action branch selection', () => {
         }));
     });
 
-    it('sends a mounted binding through the default daemon transport and omits it for unmounted dispatch', async () => {
+    it('sends a mounted binding through the default daemon transport and sends unmounted dispatch through Account Action admission', async () => {
+        const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+        const { ActionInvokeInputSchema } = await import('@happier-dev/protocol/actions/actionInvokeInput');
+        const home = await network.addHome('https://signed-dispatch.example.test', 'test-account', { serverIdentityId: 'srv_signed_dispatch' });
+        const executed = vi.fn();
+        const boundary = await createExternalActionAccountHttpBoundary({
+            serverUrl: home.serverUrl, serverIdentityId: 'srv_signed_dispatch', accountId: home.accountId,
+            machineId: 'machine-default', actionId: 'action.invoke', tokenEpoch: 0, requesterInvocation: 'optional',
+            execute: (value, context) => {
+                expect(context.target).toEqual({ kind: 'machine', machineId: 'machine-default' });
+                expect(context.invocation?.caller).toEqual({ kind: 'host' });
+                expect(context.envelope).not.toHaveProperty('pluginInvocation');
+                executed(ActionInvokeInputSchema.parse(value));
+                return { route: 'unmounted' };
+            },
+        });
+        network.setHttpResponder(async (url, init) => {
+            const request = new URL(String(url));
+            return await boundary.handle(request, init) ?? createEmptyAccountBootstrapHttpResponse(request.pathname, init);
+        });
         daemonRpc.mockReset();
         daemonRpc
             .mockResolvedValueOnce({ ok: true, result: { route: 'same' } })
-            .mockResolvedValueOnce({ ok: true, result: { route: 'cross' } })
-            .mockResolvedValueOnce({ ok: true, result: { route: 'unmounted' } });
+            .mockResolvedValueOnce({ ok: true, result: { route: 'cross' } });
 
         const caller = {
             pluginId: 'acme.preview',
@@ -9737,7 +9755,7 @@ describe('plugin-surface action branch selection', () => {
         } as const;
         const contributedAction = {
             machineId: 'machine-default',
-            serverId: 'server-default',
+            serverId: home.id,
         };
 
         await expect(dispatchPluginSurfaceAction({
@@ -9770,7 +9788,7 @@ describe('plugin-surface action branch selection', () => {
 
         expect(daemonRpc).toHaveBeenNthCalledWith(1, expect.objectContaining({
             machineId: 'machine-default',
-            serverId: 'server-default',
+            serverId: home.id,
             method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
             payload: {
                 machineId: 'machine-default',
@@ -9786,7 +9804,7 @@ describe('plugin-surface action branch selection', () => {
         }));
         expect(daemonRpc).toHaveBeenNthCalledWith(2, expect.objectContaining({
             machineId: 'machine-default',
-            serverId: 'server-default',
+            serverId: home.id,
             method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
             payload: {
                 machineId: 'machine-default',
@@ -9800,24 +9818,12 @@ describe('plugin-surface action branch selection', () => {
                 },
             },
         }));
-        expect(daemonRpc).toHaveBeenNthCalledWith(3, expect.objectContaining({
-            machineId: 'machine-default',
-            serverId: 'server-default',
-            method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
-            payload: {
-                machineId: 'machine-default',
-                expectedContributorOccurrenceId: 'occurrence-acme.preview',
-                qualifiedActionId: 'acme.preview/open-preview',
-                input: { route: 'unmounted' },
-                executionSurface: 'ui',
-            },
-        }));
-        const unmountedRequest = daemonRpc.mock.calls[2]?.[0] as
-            | Readonly<{ payload?: Readonly<Record<string, unknown>> }>
-            | undefined;
-        expect(unmountedRequest?.payload).not.toHaveProperty('mountedBinding');
-        expect(unmountedRequest?.payload).not.toHaveProperty('invocation');
-        expect(unmountedRequest?.payload).not.toHaveProperty('caller');
+        expect(daemonRpc).toHaveBeenCalledTimes(2);
+        expect(executed).toHaveBeenCalledExactlyOnceWith({
+            action: { pluginId: 'acme.preview', localId: 'open-preview' },
+            expectedContributorOccurrenceId: 'occurrence-acme.preview',
+            input: { route: 'unmounted' },
+        });
     });
 
     it('rejects a malformed contribution reference as a typed invalid payload', async () => {
