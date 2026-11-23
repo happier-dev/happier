@@ -1533,7 +1533,8 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
     try {
     let endpointArtifactsOwnedByAttachment = false;
     let stopTerminalHostForExplicitStop: (() => Promise<void>) | null = null;
-    let didPublishSessionModelsMetadata = false;
+    let attachedSessionForModelPublication: ApiSessionClient | null = null;
+    let publishSessionModelsOnAttach: ((session: ApiSessionClient) => void) | null = null;
     let userMessageHandlerReady = false;
     let currentPermissionMode: PermissionMode = options.permissionMode ?? 'default';
     let currentAgentModeId: string | null =
@@ -2021,6 +2022,9 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                     }
                 });
 
+                attachedSessionForModelPublication = session;
+                publishSessionModelsOnAttach?.(session);
+
                 if (timing.enabled) {
                     logger.debug(
                         timing.formatSummaryLine({
@@ -2183,25 +2187,24 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                                 readReasoningEffortState: () => ({ value: currentReasoningEffort, updatedAt: currentReasoningEffortUpdatedAt }),
                                 installedRuntimeCapabilities,
                             });
-                            const currentModelId = initialState.modelId;
                             if (initialState.reasoningEffortUpdatedAt >= currentReasoningEffortUpdatedAt) {
                                 currentReasoningEffort = initialState.reasoningEffort;
                                 currentReasoningEffortUpdatedAt = initialState.reasoningEffortUpdatedAt;
                             }
-                            if (!didPublishSessionModelsMetadata) {
-                                didPublishSessionModelsMetadata = true;
+                            // Local startup can reach readiness before attach. Only the real client can refresh metadata.
+                            publishSessionModelsOnAttach = (session) => {
                                 void publishClaudeSessionModelsMetadataBestEffort({
                                     reconcileModels: sessionInstance.reconcileSessionModels,
                                     cwd: workingDirectory,
                                     timeoutMs: resolveClaudeHelpProbeTimeoutMs(),
-                                    currentModelId,
+                                    currentModelId: currentModel ?? '',
                                     accountSettings: options.accountSettings ?? null,
-                                    session: artifacts.deferredSession as unknown as {
-                                        ensureMetadataSnapshot: (opts: Readonly<{ timeoutMs: number }>) => Promise<unknown>;
-                                        updateMetadata: (updater: (prev: Metadata) => Metadata) => Promise<void>;
-                                    },
+                                    session,
                                     probeInstalledRuntimeCapabilities: async () => installedRuntimeCapabilities,
                                 });
+                            };
+                            if (attachedSessionForModelPublication) {
+                                publishSessionModelsOnAttach(attachedSessionForModelPublication);
                             }
                             const readySessionId = artifacts.deferredSession.sessionId;
                             const readyMetadata = artifacts.deferredSession.getMetadataSnapshot?.() as Metadata | null | undefined;
