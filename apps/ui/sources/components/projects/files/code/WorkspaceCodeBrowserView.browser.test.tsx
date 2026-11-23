@@ -3,7 +3,8 @@ import { UniversalSearchRuntimeProvider } from '@/components/appShell/search/Uni
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { flushHookEffects, standardCleanup } from '@/dev/testkit';
+import type { ScmWorkspaceWatchResponse } from '@happier-dev/protocol/scm';
+import { createDeferred, flushHookEffects, standardCleanup } from '@/dev/testkit';
 import { createSessionFilesViewFixture, fileViewSnapshot, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from '@/components/sessions/files/views/sessionFilesViewTestkit';
 import type { WorkspaceCodeLocation } from './WorkspaceCodeBrowserView';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
@@ -246,6 +247,43 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
         await vi.waitFor(() => expect(fixture!.requests.filter(request => request.method === RPC_METHODS.SCM_HISTORY_ENTRIES).length).toBeGreaterThan(1));
         await flushHookEffects({ cycles: 10 });
         expect(screen.findHostByTestId('workspace-code-history-stale')).toBeNull();
+    });
+
+    it('shows a stopped managed workspace over kept Code rows when the source watch ends', async () => {
+        const rootPath = '/home/member/pushed-stop';
+        const serverUrl = 'https://managed-code-pushed-stop.test';
+        const serverId = `srv_${Buffer.from(serverUrl).toString('base64url')}`;
+        const workspace = { v: 2, kind: 'managed', serverId, workspaceId: 'guest-checkout', managedId: 'guest',
+            controller: { machineId: 'm1', installationId: 'test-installation' }, rootPath } as const;
+        const watch = createDeferred<ScmWorkspaceWatchResponse>();
+        fixture = await createSessionFilesViewFixture({ rootPath, serverUrl, rpc: request => {
+            if (request.method === RPC_METHODS.LIST_DIRECTORY) return { success: true, entries: [{ name: 'LICENSE', type: 'file' }] };
+            if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return { success: true, snapshot: fileViewSnapshot({ rootPath }) };
+            if (request.method === RPC_METHODS.SCM_WORKSPACE_WATCH) {
+                const payload = request.payload as { observationOnly?: true; sinceRevision?: number };
+                if (payload.observationOnly || payload.sinceRevision !== undefined) return watch.promise;
+                return { status: 'ready', revision: 1 };
+            }
+            return { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'Unavailable boundary operation' };
+        } });
+        const scope = { ...fixture.scope, workspace };
+        const screen = await fixture.render(<WorkspaceCodeBrowserView paneScopeId="code-pushed-stop" scope={scope}
+            rootLabel="Guest" location={{ path: '', kind: 'folder' }} onNavigate={() => {}} onOpenFile={() => {}} />);
+        await vi.waitFor(() => {
+            expect(screen.findByTestId('repository-tree-row-LICENSE')).toBeTruthy();
+            expect(fixture!.requests.some(request => request.method === RPC_METHODS.SCM_WORKSPACE_WATCH)).toBe(true);
+        });
+        expect(screen.findHostByTestId('repository-tree-stopped')).toBeNull();
+        const listingReads = () => fixture!.requests.filter(request => request.method === RPC_METHODS.LIST_DIRECTORY).length;
+        const initialListingReads = listingReads();
+        await act(async () => watch.resolve({ status: 'unavailable', reason: {
+            code: 'managed_power_required', message: 'Workspace is stopped',
+        } }));
+        await vi.waitFor(() => expect(fixture!.storage.getState().getWorkspaceScmSnapshotError(scope))
+            .toMatchObject({ errorCode: 'managed_power_required', nextAction: { kind: 'start_workspace' } }));
+        expect(listingReads()).toBe(initialListingReads);
+        expect(screen.findByTestId('repository-tree-row-LICENSE')).toBeTruthy();
+        expect(screen.findHostByTestId('repository-tree-stopped')).toBeTruthy();
     });
 
     it('keeps the latest commit it knew above the retained rows while its Machine is offline (lab project-offline)', async () => {

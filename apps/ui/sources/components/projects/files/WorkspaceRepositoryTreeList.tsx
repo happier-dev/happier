@@ -8,7 +8,7 @@ import type { useUnistyles } from 'react-native-unistyles';
 import { FilesystemBrowser } from '@/components/ui/filesystemBrowser/FilesystemBrowser';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
 import { buildRepositoryFileDragItem } from '@/components/appShell/workspace/workspaceEntitySource';
-import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, useWorkspaceScmSnapshotError } from '@/sync/domains/state/storage';
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
 import { FilesystemBrowserRow, type FilesystemBrowserRowActionsControl } from '@/components/ui/filesystemBrowser/FilesystemBrowserRow';
 import type { FilesystemBrowserRowRenderInput } from '@/components/ui/filesystemBrowser/filesystemBrowserTypes';
@@ -309,7 +309,12 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
     const rootLoading = changedOnly ? props.scmSnapshot == null : treeRootLoading || reconnecting || admissionPending;
     // A stopped workspace over rows the tree kept is said once above them, with Start (lab project-stopped), not as a
     // listing failure; with nothing kept, the root state below owns it.
-    const stoppedOverRows = !changedOnly && !reconnecting && treeRootError === MANAGED_POWER_REQUIRED && treeNodes.length > 0;
+    const hasRetainedRows = !changedOnly && !reconnecting && treeNodes.length > 0;
+    // The shared source watch can report the stop while the last successful listing is still on screen.
+    const sourceError = useWorkspaceScmSnapshotError(hasRetainedRows && props.directoryListing !== false && props.scope.workspace
+        ? props.scope : null);
+    const stoppedOverRows = hasRetainedRows && (treeRootError === MANAGED_POWER_REQUIRED
+        || sourceError?.nextAction?.kind === 'start_workspace');
     const rootError = changedOnly || reconnecting || stoppedOverRows || admissionPending ? null : treeRootError;
 
     const rootRefreshing = rootLoading && rootLoaded;
