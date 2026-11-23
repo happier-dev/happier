@@ -1083,7 +1083,7 @@ export function requiresRequesterAppReview(
   spec: Pick<ActionSpec, 'approvalPolicy'>,
   input: unknown,
   caller: Readonly<{ kind: string }> | undefined,
-  surface: keyof ActionSurfaces | undefined,
+  surface: keyof ActionSurfaces | null | undefined,
 ): boolean {
   if (surface !== 'agent' && surface !== 'mcp') return false;
   const review = spec.approvalPolicy?.requesterAppReview;
