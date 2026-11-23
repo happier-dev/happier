@@ -353,7 +353,7 @@ function storedInstances(): WidgetInstanceV1[] {
 /** Customize is a page state; the list that shows, hides and orders sections opens from its bar. */
 async function openSections(screen: Awaited<ReturnType<typeof renderHome>>) {
     await act(async () => { screen.pressByTestId('home-hub.customize'); });
-    await flushHookEffects({ cycles: 2 });
+    await vi.waitFor(() => expect(screen.findByTestId('home-hub.customizing.sections')).toBeTruthy());
     await act(async () => { screen.pressByTestId('home-hub.customizing.sections'); });
     await flushHookEffects({ cycles: 2 });
 }
@@ -546,8 +546,7 @@ describe('HomeHub', () => {
         try {
             await vi.waitFor(() => expect(reads).toBeGreaterThan(0));
             await act(async () => { screen.pressByTestId('home-hub.customize'); });
-            await flushHookEffects({ cycles: 2 });
-            expect(screen.findByTestId('home-hub.customizing.sections')).toBeTruthy();
+            await vi.waitFor(() => expect(screen.findByTestId('home-hub.customizing.sections')).toBeTruthy());
             settings.presented = false;
             await screen.rerender();
             const parkedReads = reads;
@@ -730,6 +729,7 @@ describe('HomeHub', () => {
     it('keeps the Home Look entry after selecting None and can reopen it to restore Planet', async () => {
         const screen = await renderHome();
         await screen.pressByTestIdAsync('look-chip');
+        await vi.waitFor(() => expect(screen.findByTestId('look-source:none')).toBeTruthy());
         await screen.pressByTestIdAsync('look-source:none');
         await act(async () => { await vi.waitFor(() => expect(storage.getState().settings.homeAtmosphere.source).toBe('none')); });
         expect(screen.findByTestId('home-hero')).toBeNull();
@@ -737,6 +737,7 @@ describe('HomeHub', () => {
         if (screen.findByTestId('look-panel')) await screen.pressByTestIdAsync('look-chip');
         expect(screen.findByTestId('look-chip')).toBeTruthy();
         await screen.pressByTestIdAsync('look-chip');
+        await vi.waitFor(() => expect(screen.findByTestId('look-source:planet')).toBeTruthy());
         await screen.pressByTestIdAsync('look-source:planet');
         await act(async () => { await vi.waitFor(() => expect(storage.getState().settings.homeAtmosphere.source).toBe('planet')); });
         expect(screen.findByTestId('home-hero')).toBeTruthy();
@@ -757,6 +758,7 @@ describe('HomeHub', () => {
         settings.layout = { order: ['automations', 'start'], hidden: [] };
         const screen = await renderHome();
         await screen.pressByTestIdAsync('look-chip');
+        await vi.waitFor(() => expect(screen.findByTestId('look-source:none')).toBeTruthy());
         await screen.pressByTestIdAsync('look-source:none');
         await act(async () => { await vi.waitFor(() => expect(storage.getState().settings.homeAtmosphere.source).toBe('none')); });
         expect(screen.findByTestId('home-hero')).toBeNull();

@@ -49,7 +49,6 @@ import { WidgetGroupMembershipArrivalView, useWidgetGroupMembershipArrivals } fr
 import { useHomeWidgetGroupOperations } from './layout/useHomeWidgetGroupOperations';
 
 import { HubCustomizeButton } from './header/HubCustomizeButton';
-import { HomeCustomizeBar } from './header/HomeCustomizeBar';
 import { EmptySlot } from '@/components/ui/empty/EmptySlot';
 import { VoiceBriefButton } from '@/components/voice/brief/VoiceBriefButton';
 import { retryableLazy } from '@/components/ui/performance/retryableLazy';
@@ -99,6 +98,10 @@ import { subscribeHomeCustomizeRequest } from './header/homeCustomizeRequest';
 import { AddNameSetupBlock } from '@/components/account/useAddNameSetupItem';
 import { resolveHomeMomentTarget } from './homeMomentTarget';
 import { useHomeHubGuidanceKind } from './useHomeHubGuidanceKind';
+
+const HomeCustomizeBar = retryableLazy(async () => ({
+    default: (await import('./header/HomeCustomizeBar')).HomeCustomizeBar,
+}));
 
 const VoiceBriefBlock = retryableLazy(async () => ({
     default: (await import('@/components/voice/brief/VoiceBrief')).VoiceBriefBlock,
@@ -671,7 +674,9 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     );
     const sections = (
         <>
-            {customizeOpen ? <HomeCustomizeBar onDone={closeCustomize} interactionBoundaryRef={contentRef} /> : null}
+            <React.Suspense fallback={null}>
+                {customizeOpen ? <HomeCustomizeBar onDone={closeCustomize} interactionBoundaryRef={contentRef} /> : null}
+            </React.Suspense>
             {/* The widgets' reads wait on the Home: one line says why, and the sections keep their room. A visible
                 column already says it above its own rows. */}
             {homeUnavailable && !columnSaysHome ? (

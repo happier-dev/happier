@@ -8,11 +8,8 @@ import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
 import { t } from '@/text';
 import type { AtmosphereSurface } from '../useAtmosphere';
-import {
-  useHomeAtmosphereEditor,
-  type AtmosphereEditor,
-} from './atmosphereEditor';
-import { LookPanel } from './LookPanel';
+import { retryableLazy } from '@/components/ui/performance/retryableLazy';
+import { useHomeAtmosphereEditor, type AtmosphereEditor } from './atmosphereEditor';
 
 const LOOK_CHIP_EDGES_PX = { leading: 3, trailing: 3, bottom: 4 } as const;
 
@@ -31,83 +28,87 @@ export type LookTarget =
       editor: AtmosphereEditor;
     }>;
 
-function LookContent(props: Readonly<{ target: LookTarget }>) {
-  return props.target.editor ? <LookPanel editor={props.target.editor} testID="look-panel" /> : <HomeLookContent />;
-}
+const LookPanel = retryableLazy(async () => ({
+  default: (await import('./LookPanel')).LookPanel,
+}));
 
-function HomeLookContent() {
-  const home = useHomeAtmosphereEditor();
-  return (
-    <LookPanel
-      editor={home}
-      field
-      testID="look-panel"
-    />
-  );
-}
+type LookPopoverAnchorProps = Readonly<{
+  open: boolean;
+  anchorRef: React.RefObject<View | null>;
+  onRequestClose: () => void;
+  interactionBoundaryRef?: React.RefObject<unknown>;
+  /** A public profile's Public data names its own anchored editor. */
+  accessibilityLabel?: string;
+}>;
 
-/**
- * The Look panel, opened from an anchor: a glass popover on desktop and the shared sheet on a phone.
- * Its content mounts only while open, so a closed chip holds no atmosphere or picture subscriptions.
- * A Look in another context (a public profile's draft) passes its own panel as children.
- */
+/** Look uses the shared anchored popover on desktop and the shared sheet on a phone. */
 export function LookPopover(
-  props: Readonly<{
-    open: boolean;
-    anchorRef: React.RefObject<View | null>;
-    onRequestClose: () => void;
-    interactionBoundaryRef?: React.RefObject<unknown>;
-    /** Another anchored editor in the same panel (a public profile's Public data) names itself. */
-    accessibilityLabel?: string;
-  } & ({ target: LookTarget; children?: undefined } | { target?: undefined; children: React.ReactNode })>,
+  props: LookPopoverAnchorProps
+    & ({ target: LookTarget; children?: undefined } | { target?: undefined; children: React.ReactNode }),
 ) {
   if (!props.open) return null;
-  const content = props.target ? <LookContent target={props.target} /> : props.children;
+  if (props.target && !props.target.editor) return <HomeLookPopover {...props} />;
+  const content = props.target
+    ? <LookPanel editor={props.target.editor} testID="look-panel" />
+    : props.children;
+  return <LookPopoverSurface {...props} content={content} />;
+}
+
+function HomeLookPopover(props: LookPopoverAnchorProps) {
+  // Bind the existing Settings writer while the panel code loads. The popover
+  // can still start its focus and entry motion with the panel present.
+  const editor = useHomeAtmosphereEditor();
+  return <LookPopoverSurface {...props} content={<LookPanel editor={editor} field testID="look-panel" />}
+    accessibilityLabel={props.accessibilityLabel ?? t('settingsAppearance.glassControls.homeLook')} />;
+}
+
+function LookPopoverSurface(props: LookPopoverAnchorProps & Readonly<{ content: React.ReactNode }>) {
   return (
-    <Popover
-      open
-      phonePresentation="sheet"
-      // On a phone Home changes above the sheet as each choice applies (lab Home look sheet).
-      sheetBackdrop="none"
-      accessibilityLabel={props.accessibilityLabel ?? (props.target && !props.target.editor
-        ? t('settingsAppearance.glassControls.homeLook') : t('settingsAppearance.glassControls.look'))}
-      anchorRef={props.anchorRef}
-      autoFocusOnOpen
-      placement="bottom"
-      gap={8}
-      edgePadding={{ horizontal: 8, vertical: 8 }}
-      portal={{
-        web: true,
-        native: true,
-        matchAnchorWidth: false,
-        anchorAlign: 'end',
-      }}
-      maxWidthCap={LOOK_POPOVER_WIDTH_PX}
-      maxHeightCap={LOOK_POPOVER_MAX_HEIGHT_PX}
-      onRequestClose={props.onRequestClose}
-      interactionBoundaryRef={props.interactionBoundaryRef}
-    >
-      {({ maxHeight, maxWidth, presentation }) =>
-        presentation === 'sheet' ? (
-          content
-        ) : (
-          <View testID="look-popover">
-            {/* A large anchored editor (Look, a profile's Details and Public data): the panel coat keeps its captions legible over a band. */}
-            <FloatingOverlay
-              maxHeight={Math.min(maxHeight, LOOK_POPOVER_MAX_HEIGHT_PX)}
-              edgeFades={{ top: true, bottom: true, size: 18 }}
-              surfaceChrome="theme"
-              keyboardShouldPersistTaps="always"
-              containerStyle={{
-                width: Math.min(maxWidth, LOOK_POPOVER_WIDTH_PX),
-              }}
-            >
-              {content}
-            </FloatingOverlay>
-          </View>
-        )
-      }
-    </Popover>
+    <React.Suspense fallback={null}>
+      <Popover
+        open
+        phonePresentation="sheet"
+        // On a phone Home changes above the sheet as each choice applies (lab Home look sheet).
+        sheetBackdrop="none"
+        accessibilityLabel={props.accessibilityLabel ?? t('settingsAppearance.glassControls.look')}
+        anchorRef={props.anchorRef}
+        autoFocusOnOpen
+        placement="bottom"
+        gap={8}
+        edgePadding={{ horizontal: 8, vertical: 8 }}
+        portal={{
+          web: true,
+          native: true,
+          matchAnchorWidth: false,
+          anchorAlign: 'end',
+        }}
+        maxWidthCap={LOOK_POPOVER_WIDTH_PX}
+        maxHeightCap={LOOK_POPOVER_MAX_HEIGHT_PX}
+        onRequestClose={props.onRequestClose}
+        interactionBoundaryRef={props.interactionBoundaryRef}
+      >
+        {({ maxHeight, maxWidth, presentation }) =>
+          presentation === 'sheet' ? (
+            props.content
+          ) : (
+            <View testID="look-popover">
+              {/* A large anchored editor (Look, a profile's Details and Public data): the panel coat keeps its captions legible over a band. */}
+              <FloatingOverlay
+                maxHeight={Math.min(maxHeight, LOOK_POPOVER_MAX_HEIGHT_PX)}
+                edgeFades={{ top: true, bottom: true, size: 18 }}
+                surfaceChrome="theme"
+                keyboardShouldPersistTaps="always"
+                containerStyle={{
+                  width: Math.min(maxWidth, LOOK_POPOVER_WIDTH_PX),
+                }}
+              >
+                {props.content}
+              </FloatingOverlay>
+            </View>
+          )
+        }
+      </Popover>
+    </React.Suspense>
   );
 }
 
@@ -149,12 +150,14 @@ export const LookChip = React.memo(function LookChip(
           onPress={() => setOpen(!open)}
         />
       </GlassSurface>
-      <LookPopover
-        target={props.target}
-        open={open}
-        anchorRef={anchorRef}
-        onRequestClose={close}
-      />
+      {open ? (
+        <LookPopover
+          target={props.target}
+          open
+          anchorRef={anchorRef}
+          onRequestClose={close}
+        />
+      ) : null}
     </View>
   );
 });
