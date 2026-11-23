@@ -108,6 +108,23 @@ function fixture(periodMs?: number, eventId = 'deployment-failed', kindWide = fa
         failNextObservation() { failNextObserve = true; }, setSafe(value: boolean) { safe = value; } };
 }
 
+it('only wakes receipt reconciliation on reconnect while a source is assigned', async () => {
+    const h = fixture();
+    const adapter = createDeploymentReceiptEventSourceAdapter(h.context.services.events.host, () => 1200, h.context);
+    const wake = vi.fn(async () => {});
+    const subscription = adapter.subscribeWake!(wake);
+    try {
+        await h.reconnect();
+        expect(wake).toHaveBeenCalledTimes(0);
+        await adapter.retire!({ context: h.context, definitions: [h.definition], revision: '1', isCurrent: async () => true });
+        await h.reconnect();
+        expect(wake).toHaveBeenCalledTimes(1);
+        await adapter.retire!({ context: h.context, definitions: [], revision: '2', isCurrent: async () => true });
+        await h.reconnect();
+        expect(wake).toHaveBeenCalledTimes(1);
+    } finally { subscription.dispose(); }
+});
+
 it.each(['failed', 'succeeded', 'cancelled', 'outcome_unknown'] as const)(
     'delivers native deployment %s completion without a configured Event trigger', async state => {
         const h = fixture();

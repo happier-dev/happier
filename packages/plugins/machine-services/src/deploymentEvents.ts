@@ -164,11 +164,20 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
     now: () => number = Date.now, completionContext?: PluginInvocationContext): PluginCheckpointedEventSourceAdapterV1<DeploymentReceiptEventSourceConfigV1, State> {
     const states = new Map<string, State>();
     let accountChanges: { dispose(): void } | undefined;
+    let reconnect: { dispose(): void } | undefined;
     let wakeSources: Parameters<NonNullable<PluginCheckpointedEventSourceAdapterV1<DeploymentReceiptEventSourceConfigV1, State>['subscribeWake']>>[0] | undefined;
-    const updateAccountSubscription = () => {
+    const updateSourceSubscriptions = () => {
+        if (states.size === 0 || !wakeSources) { reconnect?.dispose(); reconnect = undefined; }
+        else if (!reconnect) reconnect = host.subscribe({
+            eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' },
+        }, async event => {
+            if (event.payload.reason !== 'reconnect') return;
+            for (const state of states.values()) state.fullRead = true;
+            await wakeSources?.();
+        });
         const needed = [...states.values()].some(state => state.event === changedEvent);
-        if (!needed) { accountChanges?.dispose(); accountChanges = undefined; }
-        else if (!accountChanges && wakeSources) accountChanges = host.subscribe({
+        if (!needed || !wakeSources) { accountChanges?.dispose(); accountChanges = undefined; }
+        else if (!accountChanges) accountChanges = host.subscribe({
             eventId: '@happier/account/entities-invalidated', scope: { kind: 'account' },
         }, async event => {
             for (const entityId of event.payload.entityIds) {
@@ -198,7 +207,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
             states.set(definition.sourceInstanceId, state);
         }
         state.config = source;
-        updateAccountSubscription();
+        updateSourceSubscriptions();
         return state;
     };
     return {
@@ -407,12 +416,12 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                 if (source) { adopt(definition, source); current.add(definition.sourceInstanceId); }
             }
             for (const key of states.keys()) if (!current.has(key)) states.delete(key);
-            updateAccountSubscription();
+            updateSourceSubscriptions();
             return { complete: true };
         },
         subscribeWake(wake) {
             wakeSources = wake;
-            updateAccountSubscription();
+            updateSourceSubscriptions();
             const receipts = host.subscribe({ eventId: '@happier/deployment/receipt-invalidated', scope: { kind: 'account' } }, async event => {
                 const { completion, ...address } = event.payload;
                 const entry: PendingReceipt = { environmentId: address.environmentId, completion };
@@ -448,12 +457,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                     }));
                 }
             });
-            const reconnect = host.subscribe({ eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' } }, async event => {
-                if (event.payload.reason !== 'reconnect') return;
-                for (const state of states.values()) state.fullRead = true;
-                await wake();
-            });
-            return { dispose() { receipts.dispose(); reconnect.dispose(); accountChanges?.dispose(); accountChanges = undefined; wakeSources = undefined; } };
+            return { dispose() { receipts.dispose(); wakeSources = undefined; updateSourceSubscriptions(); } };
         },
     };
 }
