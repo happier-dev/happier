@@ -9265,11 +9265,11 @@ describe('plugin-surface action branch selection', () => {
                 approvalRequests.push(stored);
                 return { artifactId: `capture-approval-${approvalRequests.length}` };
             },
+            approvalsGet: async () => stored ?? null,
             approvalsUpdate: async ({ request }) => {
                 stored = ApprovalRequestV2Schema.parse(request);
                 return { ok: true as const };
             },
-            approvalsWaitForDecision: async () => ({ decision, request: stored! }),
             isApprovalExecutionOriginCurrent: async () => true,
         } satisfies Partial<ActionExecutorDeps>;
         const executor = createActionExecutor(createActionExecutorBoundaryFixture(deps));
@@ -9290,9 +9290,14 @@ describe('plugin-surface action branch selection', () => {
                     ...executeActionRequest({ action: 'capture.view', input: captureInput }),
                     requestId,
                 });
-                expect(response).toEqual(decision === 'reject'
-                    ? { code: 'unavailable', diagnostics: ['approval_rejected'] }
-                    : { admitted: true, ...captureInput });
+                const artifactId = `capture-approval-${approvalRequests.length}`;
+                expect(response).toEqual({ kind: 'approval_request_created', artifactId, actionId: 'capture.view' });
+                expect(stored).toMatchObject({ status: 'open', actionArgs: captureInput, approval: { flow: 'deferred' } });
+                expect(stored?.execution).toBeUndefined();
+                expect(await executor.execute('approval.request.decide', { artifactId, decision }, {
+                    surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home-1', runtimeAccountId: 'account-1',
+                })).toMatchObject(decision === 'reject' ? { ok: true, result: { status: 'rejected' } }
+                    : { ok: true, result: { status: 'executed', execution: { ok: true, result: { admitted: true, ...captureInput } } } });
             }
             expect(approvalRequests).toHaveLength(2);
             expect(approvalRequests.map(request => ApprovalRequestV2Schema.parse(request).executionOriginV1.requestId))
