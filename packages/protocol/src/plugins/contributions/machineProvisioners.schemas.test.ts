@@ -70,6 +70,23 @@ it('declares read-only workspace acquisition for a specific launch variant', () 
   }).success).toBe(false);
 });
 
+it('declares a saved Remote Host credential for a workspace attachment selector', () => {
+  const descriptor = nativeDurationManifest().contributes.machineProvisioners[0]!;
+  const launch = defineProtocolObject({
+    host: defineProtocolObject({ id: defineProtocolString(), port: defineProtocolNumber() }, { policy: 'closed' }),
+  }, { policy: 'closed' });
+  const workspaceAttachment = { when: { op: 'truthy', path: 'host.id' },
+    bootstrapCredential: { kind: 'remote-host-ssh', remoteHostIdPath: 'host.id' } };
+  const candidate = { ...descriptor, nativeDurationInput: undefined, launchSchema: launch.jsonSchema, workspaceAttachment,
+    bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put', stream: 'stream' } };
+  const schema = provisioners.MachineProvisionerContributionV1Schema;
+  expect(schema.parse(candidate).workspaceAttachment?.bootstrapCredential).toEqual(workspaceAttachment.bootstrapCredential);
+  for (const path of ['host.undeclared', 'host.port']) {
+    expect(schema.safeParse({ ...candidate, workspaceAttachment: { ...workspaceAttachment,
+      bootstrapCredential: { ...workspaceAttachment.bootstrapCredential, remoteHostIdPath: path } } }).success).toBe(false);
+  }
+});
+
 it('admits optional preparation declarations and resolves their three same-plugin roles', () => {
   const descriptor = nativeDurationManifest().contributes.machineProvisioners[0]!;
   const native = defineProtocolObject({ name: defineProtocolString() }, { policy: 'closed' }).jsonSchema;

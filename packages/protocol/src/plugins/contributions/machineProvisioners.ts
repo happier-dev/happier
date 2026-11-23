@@ -133,6 +133,8 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.stri
     when: InputPredicateSchema, optionsWhen: z.optional(InputPredicateSchema),
     /** Stable native resource fields for reusing an attachment in the same selected Account binding. */
     resourceIdentityPaths: z.optional(z.array(InputPathSchema).check(z.minLength(1), z.refine(paths => new Set(paths).size === paths.length))),
+    /** Daemon native transport may use the selected Account's existing Remote Host binding. */
+    bootstrapCredential: z.optional(z.strictObject({ kind: z.literal('remote-host-ssh'), remoteHostIdPath: InputPathSchema })),
   })),
   prerequisites: z.array(PluginDeclaredExecutableRefSchema),
   billing: BillingCapabilitiesV1Schema, retention: RetentionCapabilitiesV1Schema,
@@ -181,6 +183,11 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.stri
     !resolveDeclaredInputLeaves(descriptor.resourceSchema, path)?.every(leaf => leaf.type === 'string' || leaf.type === 'integer' || leaf.type === 'number'))) {
     context.addIssue({ code: 'custom', path: ['workspaceAttachment', 'resourceIdentityPaths'],
       message: 'Workspace attachment identity paths must name text or number fields of every resource arm.' });
+  }
+  const remoteHostIdPath = descriptor.workspaceAttachment?.bootstrapCredential?.remoteHostIdPath;
+  if (remoteHostIdPath && !resolveDeclaredInputLeaves(descriptor.launchSchema, remoteHostIdPath)?.every(leaf => leaf.type === 'string')) {
+    context.addIssue({ code: 'custom', path: ['workspaceAttachment', 'bootstrapCredential', 'remoteHostIdPath'],
+      message: 'Remote Host credentials require a declared string selector in launch choices.' });
   }
   if (descriptor.sessionPlacement?.when && readInputPredicatePaths(descriptor.sessionPlacement.when)
     .some(path => !resolveDeclaredInputLeaves(descriptor.launchSchema, path)?.length)) {

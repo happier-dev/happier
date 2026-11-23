@@ -28,7 +28,7 @@ export const binding = {
     actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', destroy: 'destroy' },
     bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file', stream: 'stream' },
     workspaceAttachment: { when: { op: 'truthy', path: 'remoteHostId' }, optionsWhen: { op: 'truthy', path: 'remoteHostId' },
-        resourceIdentityPaths: ['remoteHostId'] },
+        resourceIdentityPaths: ['remoteHostId'], bootstrapCredential: { kind: 'remote-host-ssh', remoteHostIdPath: 'remoteHostId' } },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 export function options({ remoteHostId }: ReturnType<typeof identity.parse>) {

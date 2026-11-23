@@ -1,4 +1,4 @@
-import { REMOTE_HOST_SSH_PROVISIONER } from '@happier-dev/cli-common/ssh';
+import { readInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
 import { resolveRetainedMachineProvisioner } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { createExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { projectManagedMachineRolePurposeBindingsV1, readManagedMachineRoleCredentialConfigurationsV1,
@@ -33,7 +33,7 @@ import type { AdmittedManagedProviderOperationExecutionRequest } from '@/plugins
 import { projectContributedActionFailure } from '@/plugins/runtime/invocation/actions/contributedActionFailure';
 import type { ManagedNativeCredentialInvocationBinding, PluginExternalActionContext } from '@/plugins/runtime/invocation/services/types';
 import { createPrivateBearerCredential } from '@/daemon/privateBearerFile';
-import { readMachineProvisionerAgentNativeSandboxSupportV1, type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { isMachineProvisionerWorkspaceAttachmentV1, readMachineProvisionerAgentNativeSandboxSupportV1, type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { createManagedNativeObservationWait } from './nativeObservationWait';
@@ -336,8 +336,10 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
     // reviewed facts neither select roles nor require Account catalog membership.
     const contribution = resolveRetainedMachineProvisioner(params.input.runtimeRegistry.contributes.machineProvisioners, machine.launch);
     if (!contribution) throw new ManagedMachineControllerError('provider_unavailable');
-    const remoteHostWorkspace = contribution.identity.pluginId === REMOTE_HOST_SSH_PROVISIONER.pluginId
-        && contribution.identity.localId === REMOTE_HOST_SSH_PROVISIONER.localId;
+    const attachmentCredential = contribution.definition.workspaceAttachment?.bootstrapCredential;
+    const remoteHostWorkspace = attachmentCredential?.kind === 'remote-host-ssh'
+        && isMachineProvisionerWorkspaceAttachmentV1(contribution.definition, machine.launch.choices)
+        ? attachmentCredential : undefined;
     const bootstrapCredentialKind = contribution.definition.bootstrapCredential?.kind
         ?? (contribution.definition.bootstrapTransport ? undefined : 'ssh');
     let retainedBootstrapCredential: Promise<BootstrapCredentialValue> | undefined;
@@ -455,8 +457,7 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
                     ...(remoteHostWorkspace && (role === 'exec' || role === 'putFile' || role === 'stream')
                         ? { readBootstrapCredential: async (registerRawForRedaction?: (value: string) => void) => {
                             assertBootstrapCredentialAccount(params, machine);
-                            const choices = machine.launch.choices;
-                            const remoteHostId = choices && typeof choices === 'object' && !Array.isArray(choices) ? choices.remoteHostId : undefined;
+                            const remoteHostId = readInputPath(machine.launch.choices, remoteHostWorkspace.remoteHostIdPath);
                             if (typeof remoteHostId !== 'string') throw new ManagedMachineControllerError('credential_unavailable');
                             const [{ createCliRemoteHostStore }, { runWithServerHttpBaseUrl }, { establishRemoteHostWorkspaceSshTrust }] = await Promise.all([
                                 import('@/settings/remoteHosts/remoteHostStore'), import('@/api/client/serverHttpBaseUrl'), import('./enrollmentSshTrust'),
