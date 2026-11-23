@@ -9295,7 +9295,11 @@ purpose-selection owner. A group conveys values, never access, and each child
 still passes exact-target, input and read-authority admission.
 Group input discovery uses the child that declares each follow-able field;
 child-owned and credential fields are not group inputs. The editor and saved-group
-Add pane send that child's definition to the ordinary options admission owner.
+Add pane send that child's definition to the ordinary options admission owner. In the
+group editor, an unbound field with a resolved surface value shows that value
+and its origin as placeholder text. Saving a group input persists only the
+explicit bindings. If the shared Action refuses a binding because a following
+widget’s inputs would become invalid, the editor names that widget.
 
 Home and widget areas render groups through one UI owner,
 `apps/ui/sources/components/widgets/group/**`: `WidgetGroupFrame` draws the

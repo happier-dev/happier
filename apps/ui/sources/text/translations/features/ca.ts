@@ -19049,6 +19049,8 @@ const widgetAddTranslations = { ca: {
         optionsFailed: 'No s’han pogut carregar les opcions',
         yoursFailed: 'No s’han pogut carregar els teus widgets',
         invalidValue: 'no trobat',
+        inheritedValue: ({ value, source }) => `${value} (${source})`,
+        groupChildInputsInvalid: ({ widget }) => `Revisa les entrades de ${widget} abans de desar el grup.`,
         inputsInvalid: 'Revisa les entrades d’aquest giny',
         inputsUnavailable: 'Una entrada seleccionada no està disponible',
         connectionNeeded: ({ field }) => `Connecta el teu ${field}`,

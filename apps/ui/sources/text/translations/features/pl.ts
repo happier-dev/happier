@@ -19059,6 +19059,8 @@ const widgetAddTranslations = { pl: {
         optionsFailed: 'Nie udało się wczytać opcji',
         yoursFailed: 'Nie udało się wczytać Twoich widżetów',
         invalidValue: 'nie znaleziono',
+        inheritedValue: ({ value, source }) => `${value} (${source})`,
+        groupChildInputsInvalid: ({ widget }) => `Sprawdź dane wejściowe widżetu ${widget} przed zapisaniem grupy.`,
         inputsInvalid: 'Sprawdź dane wejściowe tego widżetu',
         inputsUnavailable: 'Wybrane dane wejściowe są niedostępne',
         connectionNeeded: ({ field }) => `Połącz swoje ${field}`,

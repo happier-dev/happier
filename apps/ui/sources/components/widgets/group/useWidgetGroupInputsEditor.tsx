@@ -114,13 +114,25 @@ export function useWidgetGroupInputsEditor(
       scope,
       submit: (draft): Promise<WidgetSetupSubmitResult> =>
         runWidgetSetupCommand(
-          () => { setNotice(null); return setInputs!(draft.bindings); },
+          async () => {
+            setNotice(null);
+            const result = await setInputs!(draft.bindings);
+            if (result.ok || !result.details || typeof result.details !== 'object' || !('blockingChildId' in result.details)) return result;
+            const { blockingChildId } = result.details;
+            const blocked = group.children.find(({ instance }) => instance.id === blockingChildId);
+            if (!blocked) return result;
+            const descriptor = input.candidates.find(entry => entry &&
+              isSameWidgetDefinitionV1(widgetCandidateDefinitionV1(entry), blocked.instance.definition)) ?? null;
+            const widget = childTitle?.(blocked.instance.id) ?? resolveWidgetInstanceTitle(blocked.instance, descriptor);
+            return { ...result, message: t('widgetAdd.groupChildInputsInvalid', { widget }) };
+          },
           t('widgetAdd.saveFailed'),
         ),
     });
     return {
       ...setup,
       // Missing group overrides leave the widget's surface context in effect.
+      fields: setup.fields.map(entry => ({ ...entry, inheritUnbound: true })),
       initial: { bindings },
       title: t('widgetFrame.groupInputsTitle', { group: input.title }),
       hint: t('widgetFrame.groupInputsHint'),

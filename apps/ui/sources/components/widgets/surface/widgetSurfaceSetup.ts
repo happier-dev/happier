@@ -287,12 +287,18 @@ function proposeWidgetCandidateSetupDraft(candidate: WidgetCandidate, fields: re
 /** An acknowledged step result, or a write that resolves only after success and throws on refusal. */
 export type WidgetSetupCommandResult = void | WidgetSetupSubmitResult;
 
+function widgetSetupRefusal(error: unknown, fallback: string): WidgetSetupSubmitResult {
+    const details = error && typeof error === 'object' && 'details' in error ? error.details : undefined;
+    return { ok: false, message: resolveActionExecutionErrorMessage(error, fallback),
+        ...(details === undefined ? {} : { details }) };
+}
+
 export async function runWidgetSetupCommand(run: () => Promise<WidgetSetupCommandResult> | WidgetSetupCommandResult, failure: string): Promise<WidgetSetupSubmitResult> {
     try {
         const result = await run();
         return result ?? { ok: true };
     } catch (error) {
-        return { ok: false, message: resolveActionExecutionErrorMessage(error, failure) };
+        return widgetSetupRefusal(error, failure);
     }
 }
 
@@ -302,7 +308,7 @@ export async function runWidgetSetupCommand(run: () => Promise<WidgetSetupComman
  * controller has already said what happened in its own notice.
  */
 export async function runAcknowledgedWidgetSetupCommand(
-    run: () => Promise<Pick<SessionBoardCommandOutcome, 'kind'> | Readonly<{ kind: 'refused'; errorCode?: string }> | null | void> | void,
+    run: () => Promise<Pick<SessionBoardCommandOutcome, 'kind'> | Readonly<{ kind: 'refused'; errorCode?: string; details?: unknown }> | null | void> | void,
     failure: string,
 ): Promise<WidgetSetupSubmitResult> {
     try {
@@ -310,8 +316,8 @@ export async function runAcknowledgedWidgetSetupCommand(
         if (outcome && (outcome.kind === 'applied' || outcome.kind === 'approvalPending'))
             return { ok: true, ...(outcome.kind === 'approvalPending' ? { approvalPending: true } : {}) };
         // A returned typed refusal keeps its reason through the same presenter a thrown failure uses.
-        return { ok: false, message: outcome?.kind === 'refused' ? resolveActionExecutionErrorMessage(outcome, failure) : failure };
+        return widgetSetupRefusal(outcome, failure);
     } catch (error) {
-        return { ok: false, message: resolveActionExecutionErrorMessage(error, failure) };
+        return widgetSetupRefusal(error, failure);
     }
 }

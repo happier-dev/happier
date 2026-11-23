@@ -18910,6 +18910,8 @@ const widgetAddTranslations = { 'zh-Hant': {
         optionsFailed: '無法載入選項',
         yoursFailed: '無法載入你的小工具',
         invalidValue: '找不到',
+        inheritedValue: ({ value, source }) => `${value}（${source}）`,
+        groupChildInputsInvalid: ({ widget }) => `儲存群組前，請檢查 ${widget} 的輸入。`,
         inputsInvalid: '請檢查此小工具的輸入',
         inputsUnavailable: '所選輸入無法使用',
         connectionNeeded: ({ field }) => `連接你自己的${field}`,

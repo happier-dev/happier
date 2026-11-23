@@ -30,6 +30,7 @@ type CommandId = Extract<ActionId,
     | 'widgets.fragment.duplicate'
     | 'widgets.fragment.delete'
     | 'widgets.group.add'
+    | 'widgets.group.inputs.set'
     | 'widgets.definition.get'
     | 'widgets.definition.list'
     | 'widgets.definition.duplicate'

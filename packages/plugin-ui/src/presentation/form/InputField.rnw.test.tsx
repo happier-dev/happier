@@ -130,6 +130,27 @@ describe('one typed field decides how a fixed choice is drawn, for every form', 
       expect(trigger(view)?.getAttribute('aria-disabled')).toBe('true');
     } finally { view.unmount(); }
   });
+  it('uses standard placeholder ink for an inherited choice and value ink once it is set', async () => {
+    const options = [...two, { value: 'sessions', label: 'Sessions' }, { value: 'steers', label: 'Steers' }, { value: 'busy', label: 'Busy' }];
+    const render = (value: string | undefined, placeholder?: string) => <HappierInputField
+      field={{ ...metric, ...(placeholder ? { placeholder } : {}) }}
+      value={value} selection={value} options={options} frame="none" theme={theme}
+      onChange={() => {}} testID="metric" />;
+    const view = mountThroughReactNativeWeb(render(undefined));
+    const color = (label: string) => {
+      const node = [...view.container.querySelectorAll<HTMLElement>('[data-testid="metric.trigger"] *')]
+        .find(element => element.childElementCount === 0 && element.textContent === label);
+      expect(node).toBeDefined();
+      return window.getComputedStyle(node!).color;
+    };
+    try {
+      const placeholderColor = color('Choose…');
+      await view.render(render(undefined, 'Cost (This page)'));
+      expect(color('Cost (This page)')).toBe(placeholderColor);
+      await view.render(render('cost', 'Cost (This page)'));
+      expect(color('Cost')).not.toBe(placeholderColor);
+    } finally { view.unmount(); }
+  });
   it('keeps the declared all answer and explains why its empty inventory cannot be opened', async () => {
     const view = mountThroughReactNativeWeb(
       <HappierInputField

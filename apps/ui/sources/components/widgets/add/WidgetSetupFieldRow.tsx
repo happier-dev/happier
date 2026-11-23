@@ -228,12 +228,20 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
     const { theme } = useUnistyles();
     const presentationTheme = usePluginUiTheme(theme);
     const { entry, row } = props;
-    // A list input that declares no placeholder would draw as a blank block: say what to type in it.
-    const field = React.useMemo(() => (entry.field.widget === 'text_list' && entry.field.placeholder === undefined
-        ? { ...entry.field, placeholder: t(entry.field.listSeparator === 'newline' ? 'widgetAdd.listOnePerLine' : 'widgetAdd.listCommaSeparated') }
-        : entry.field), [entry.field]);
+    const follow = entry.follow;
+    const choices = entry.field.widget === 'select' || entry.field.widget === 'multiselect';
+    const inherited = (row.kind === 'needed' || choices) && entry.inheritUnbound && follow?.values.length === 1
+        ? t('widgetAdd.inheritedValue', { value: follow.values[0]!.label, source: follow.label })
+        : undefined;
+    const field = React.useMemo(() => {
+        if (inherited !== undefined) return { ...entry.field, placeholder: inherited };
+        // A list input that declares no placeholder would draw as a blank block: say what to type in it.
+        if (entry.field.widget === 'text_list' && entry.field.placeholder === undefined) {
+            return { ...entry.field, placeholder: t(entry.field.listSeparator === 'newline' ? 'widgetAdd.listOnePerLine' : 'widgetAdd.listCommaSeparated') };
+        }
+        return entry.field;
+    }, [entry.field, inherited]);
     const value = props.plainValue ?? (row.kind === 'follows' ? entry.follow?.values[0]?.value : undefined);
-    const choices = field.widget === 'select' || field.widget === 'multiselect';
     const selection = choices ? value : undefined;
     const choicesOptions = row.kind === 'choices' ? row.choices : props.options;
     const options = React.useMemo(() => choicesOptions.map((option, index) => ({
@@ -264,7 +272,7 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
     const stacked = props.phone || (presentation.kind === 'text' && presentation.multiline);
     // A source that settled with nothing to offer and nothing chosen: no choice field that cannot succeed, but what is
     // missing and, where the source names one, the place to make the first choice (DESIGN-1118-B M6).
-    if (field.optionsSourceId !== undefined && isNothingToChoose({ field, optionsStatus: props.optionsStatus,
+    if (!(row.kind === 'needed' && inherited !== undefined) && field.optionsSourceId !== undefined && isNothingToChoose({ field, optionsStatus: props.optionsStatus,
         optionCount: choicesOptions.length, value, follows: followsSurface(row) })) {
         return <NothingToChooseRow title={field.prompt ?? field.title} optionsSourceId={field.optionsSourceId}
             phone={props.phone} testID={props.testID} />;

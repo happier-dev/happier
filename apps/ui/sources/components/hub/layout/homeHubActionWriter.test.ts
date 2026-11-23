@@ -85,6 +85,32 @@ describe('Home mounted size Action adapter', () => {
         expect(store.getSnapshot().failedIntent).toBeUndefined();
         expect(store.getSnapshot().layout).toEqual(await owner.read());
     });
+    it('keeps the child refusal from the shared group Action and preserves the acknowledged Home layout', async () => {
+        const boundary = createWorkBoardArtifactBoundary({ v: 1, boards: [] });
+        const scope = { serverId: 'home', accountId: 'one' };
+        const transport = boundary.forAccount(scope.accountId);
+        const owner = createHomeHubArtifactPortV1(transport, { accountId: scope.accountId });
+        await owner.apply({ kind: 'widget_add', instance: { v: 1, id: 'daily', definition: { kind: 'installed',
+            surface: { pluginId: 'acme.usage', localId: 'daily' } }, bindings: { period: { kind: 'context', slot: 'period' } } } });
+        await owner.apply({ kind: 'group_create', groupId: 'summary', instanceIds: ['daily'] });
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ homeHubArtifacts: owner, widgetAccountScope: () => scope,
+            widgetInputs: createWidgetActionInputResolverV1({
+                readDescriptor: async () => ({
+                    inputs: { fields: [{ path: 'period', title: 'Period', widget: 'text', contextMode: 'follow' }] },
+                    inputSchema: { type: 'object', properties: { period: { type: 'string', enum: ['Today'] } } },
+                }), readContext: async () => ({}),
+                readViewerValues: async () => ({ values: {} }), validateValue: async () => ({ status: 'valid' }),
+            }),
+        }));
+        const settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'widgets.group.inputs.set': ['ui'] } });
+        const save = (period: string) => executeHomeHubLayoutIntent({ scope, transport,
+            intent: { kind: 'group_inputs', instanceId: 'summary', bindings: { period: { kind: 'value', value: period } } },
+            execute: (id, args, ctx) => executor.execute(id, args, { ...ctx, actionsSettings: settings }), onApprovalPending: () => {} });
+        const acknowledged = await save('Today');
+        await expect(save('Yesterday')).rejects.toMatchObject({ code: 'widget_inputs_invalid', details: { blockingChildId: 'daily' } });
+        expect(await owner.read()).toEqual(acknowledged);
+    });
+
     it('changes a Home copy\u2019s network access through the universal network Action, not a Home layout update', async () => {
         const boundary = createWorkBoardArtifactBoundary({ v: 1, boards: [] });
         const scope = { serverId: 'home', accountId: 'one' };

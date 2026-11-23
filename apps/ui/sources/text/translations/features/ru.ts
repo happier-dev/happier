@@ -19060,6 +19060,8 @@ const widgetAddTranslations = { ru: {
         optionsFailed: 'Не удалось загрузить варианты',
         yoursFailed: 'Не удалось загрузить ваши виджеты',
         invalidValue: 'не найдено',
+        inheritedValue: ({ value, source }) => `${value} (${source})`,
+        groupChildInputsInvalid: ({ widget }) => `Проверьте входные данные виджета «${widget}» перед сохранением группы.`,
         inputsInvalid: 'Проверьте входные данные этого виджета',
         inputsUnavailable: 'Выбранные входные данные недоступны',
         connectionNeeded: ({ field }) => `Подключите свой ${field}`,

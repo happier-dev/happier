@@ -36,7 +36,7 @@ export type WidgetAreaPort = Readonly<{
 type WidgetAreaWriteSettlement =
     | Readonly<{ kind: 'applied' }>
     /** `error` is the host's own sentence when it gave one beyond the code, so a refusal can say why. */
-    | Readonly<{ kind: 'refused'; errorCode: string; error?: string }>;
+    | Readonly<{ kind: 'refused'; errorCode: string; error?: string; details?: unknown }>;
 export type WidgetAreaWriteOutcome = WidgetAreaWriteSettlement
     | Readonly<{ kind: 'approvalPending'; artifactId: string; settled: Promise<WidgetAreaWriteSettlement> }>;
 
@@ -311,11 +311,13 @@ export function useWidgetAreaLayout<C extends WidgetSurfaceContext>(port: Widget
                     if (!mounted.current || binding.current !== capturedBinding || !lifetime.isCurrent())
                         return { kind: 'refused', errorCode: 'widget_area_scope_retired' };
                     void read();
-                    return terminal.ok ? { kind: 'applied' } : { kind: 'refused', errorCode: terminal.errorCode ?? 'widget_area_unavailable' };
+                    return terminal.ok ? { kind: 'applied' } : { kind: 'refused', errorCode: terminal.errorCode ?? 'widget_area_unavailable',
+                        ...(terminal.details === undefined ? {} : { details: terminal.details }) };
                 }).catch((): WidgetAreaWriteSettlement => ({ kind: 'refused', errorCode: 'widget_area_unavailable' }));
                 return { kind: 'approvalPending', artifactId: receipt.data.artifactId, settled };
             }
-            outcome = refused !== null ? { kind: 'refused', errorCode: refused, ...(reason ? { error: reason } : {}) }
+            outcome = !result.ok ? { kind: 'refused', errorCode: refused ?? 'widget_area_unavailable', ...(reason ? { error: reason } : {}),
+                ...(result.details === undefined ? {} : { details: result.details }) }
                 : receipt?.success ? { kind: 'refused', errorCode: 'widget_area_scope_retired' }
                 : { kind: 'applied' };
         } catch {

@@ -18910,6 +18910,8 @@ const widgetAddTranslations = { 'zh-Hans': {
         optionsFailed: '无法加载选项',
         yoursFailed: '无法加载你的小组件',
         invalidValue: '未找到',
+        inheritedValue: ({ value, source }) => `${value}（${source}）`,
+        groupChildInputsInvalid: ({ widget }) => `保存分组前，请检查 ${widget} 的输入。`,
         inputsInvalid: '请检查此小组件的输入',
         inputsUnavailable: '所选输入不可用',
         connectionNeeded: ({ field }) => `连接你自己的${field}`,

@@ -71,6 +71,8 @@ export type WidgetAddTranslation = Readonly<{
     yoursFailed: string;
     invalidValue: string;
     invalidReason: string;
+    inheritedValue: (params: Readonly<{ value: string; source: string }>) => string;
+    groupChildInputsInvalid: (params: Readonly<{ widget: string }>) => string;
     inputsInvalid: string;
     inputsUnavailable: string;
     connectionNeeded: (params: Readonly<{ field: string }>) => string;
@@ -218,6 +220,8 @@ export const widgetAddTranslationsEnglish = { en: {
         optionsFailed: 'Couldn’t load the choices',
         yoursFailed: 'Couldn’t load your widgets',
         invalidValue: 'not found',
+        inheritedValue: ({ value, source }) => `${value} (${source})`,
+        groupChildInputsInvalid: ({ widget }) => `Check the inputs for ${widget} before saving the group.`,
         inputsInvalid: 'Review this widget’s inputs',
         inputsUnavailable: 'A selected input is unavailable',
         connectionNeeded: ({ field }) => `Connect your ${field}`,

@@ -44,6 +44,8 @@ export type WidgetSetupContextOffer = Readonly<{
 export type WidgetSetupField = Readonly<{
     field: InputFieldHint;
     follow?: WidgetSetupContextOffer;
+    /** This setup leaves an unbound input to the surface. The offer is a placeholder, never a draft value. */
+    inheritUnbound?: true;
     /**
      * The value is each viewer's own (a connected account on a shared surface): every viewer reads
      * with their own connection for this purpose, so the step shows it and never asks for it.
@@ -72,7 +74,7 @@ export type WidgetSetupDraft = Readonly<{
     width?: WidgetGroupWidthV1;
 }>;
 
-export type WidgetSetupSubmitResult = Readonly<{ ok: true; approvalPending?: true }> | Readonly<{ ok: false; message: string }>;
+export type WidgetSetupSubmitResult = Readonly<{ ok: true; approvalPending?: true }> | Readonly<{ ok: false; message: string; details?: unknown }>;
 
 /** The one step a surface hands the add panel (or an Edit inputs / repair entry point). */
 export type WidgetSetup = Readonly<{

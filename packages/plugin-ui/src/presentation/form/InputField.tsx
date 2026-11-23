@@ -134,7 +134,8 @@ export function HappierInputField<Value>(props: HappierInputFieldProps<Value>): 
         onChange={props.onChange}
       />
     );
-  } else if (presentation.kind === 'select' && !allowsCustomValue && resolveHappierChoiceControl(presentation, props.options ?? []) === 'segmented') {
+  } else if (presentation.kind === 'select' && !allowsCustomValue && field.placeholder === undefined
+      && resolveHappierChoiceControl(presentation, props.options ?? []) === 'segmented') {
     // Two to four short choices: one segmented control, the same shape as every other few-way choice.
     const plan = planHappierSelectOptions<Value>({
       options: props.options ?? [],
@@ -179,7 +180,7 @@ export function HappierInputField<Value>(props: HappierInputFieldProps<Value>): 
         label={label}
         options={options}
         value={presentation.value}
-        placeholder={picker.affordance?.label}
+        placeholder={field.placeholder ?? picker.affordance?.label}
         {...(props.valueLabel === undefined ? {} : { reading: props.valueLabel })}
         // The host checks a picked value against the choices: while they load, or after their read
         // failed, Browse cannot succeed, so it waits (the failed line's Retry is the next step).
@@ -193,7 +194,7 @@ export function HappierInputField<Value>(props: HappierInputFieldProps<Value>): 
       <HappierChoiceField<Value>
         label={label}
         options={options}
-        value={presentation.value}
+        value={props.value === undefined && props.selection === undefined ? undefined : presentation.value}
         multiple={presentation.multiple}
         maxSelections={field.maxSelections}
         minimumSelections={presentation.multiple && field.required ? 1 : undefined}

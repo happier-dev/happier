@@ -18,22 +18,26 @@ export async function executeHomeHubLayoutIntent(input: Readonly<{
         serverId: input.scope.serverId, expectedAccountId: input.scope.accountId,
         signal: input.signal,
     } as const;
-    // A copy's size, removal and network access are its universal widget Actions (with their own policy); the rest is Home's layout.
+    // Widget-specific edits use their shared Actions, including the group save's child input admission.
     const intent = input.intent;
     const actionId = intent.kind === 'widget_size' ? 'widgets.item.size.set'
         : intent.kind === 'remove' ? 'widgets.item.remove'
-        : intent.kind === 'network' ? 'widgets.item.network.set' : 'home.hub.layout.update';
+        : intent.kind === 'network' ? 'widgets.item.network.set'
+        : intent.kind === 'group_inputs' ? 'widgets.group.inputs.set' : 'home.hub.layout.update';
     const ref = (instanceId: string) => ({ surface: { ...input.scope, owner: { kind: 'home' } }, instanceId });
     const actionInput = intent.kind === 'widget_size' ? { ref: ref(intent.instanceId), size: intent.size }
         : intent.kind === 'remove' ? { ref: ref(intent.instanceId) }
-        : intent.kind === 'network' ? { ref: ref(intent.instanceId), network: intent.network } : { intent };
+        : intent.kind === 'network' ? { ref: ref(intent.instanceId), network: intent.network }
+        : intent.kind === 'group_inputs' ? { ref: ref(intent.instanceId), bindings: intent.bindings } : { intent };
     const result = await resumeActionExecutionResult({
         result: await input.execute(actionId, actionInput, context), actionId, actionInput,
         scope: input.scope, signal: input.signal, onApprovalPending: input.onApprovalPending,
     });
     if (actionId !== 'home.hub.layout.update') {
         const outcome = classifyWidgetDefinitionCommandResult(actionId, result);
-        if (outcome.kind === 'refused') throw Object.assign(new Error(outcome.errorCode), { code: outcome.errorCode });
+        if (outcome.kind === 'refused') throw Object.assign(new Error(result.ok ? outcome.errorCode : result.error), {
+            code: outcome.errorCode, ...(outcome.details === undefined ? {} : { details: outcome.details }),
+        });
         // Universal mutation acknowledgement does not fabricate a native layout revision.
         try {
             return await createHomeHubArtifactPortV1(input.transport, { accountId: input.scope.accountId }).read();
