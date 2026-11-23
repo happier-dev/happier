@@ -223,6 +223,7 @@
   "plugins.triage.sessionLinks.status.reading": "Reading PR status…",
   "plugins.triage.sessionLinks.status.unavailable": "PR status is unavailable.",
   "plugins.triage.sessionLinks.status.partial": "Some status details could not be read.",
+  "plugins.triage.sessionLinks.status.sourceRequired": "Configure a source for more details.",
   "plugins.triage.sessionLinks.status.none": "No checks",
   "plugins.triage.sessionLinks.status.otherPassing": "{count} other passing",
   "plugins.triage.sessionLinks.status.passed": "Passed",

@@ -12,10 +12,10 @@ import {
     type TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
 
-import { TriageReadSourceSessionLinksResultV1Schema, type TriageReadSourceSessionLinksResultV1 } from '../actions/sessionLinksProtocol.js';
+import type { TriageReadSourceSessionLinksResultV1 } from '../actions/sessionLinksProtocol.js';
 import { TRIAGE_READ_PULL_REQUEST_STATUS_ACTION_LOCAL_ID_V1 } from '../actions/entryDetailProtocol.js';
 import type { TriageReobserveEntryActionInputV1 } from '../actions/reobserveEntryProtocol.js';
-import { TRIAGE_SESSION_LINKS_RESOURCE_LOCAL_ID_V1 } from './sessionLinksResource.js';
+import { decodeTriageSessionLinksResource, TRIAGE_SESSION_LINKS_RESOURCE_LOCAL_ID_V1 } from './sessionLinksResource.js';
 
 export { TRIAGE_SESSION_PULL_REQUEST_STATUS_RESOURCE_LOCAL_ID_V1 } from './sessionPullRequestResourceId.js';
 const relationResource = TRIAGE_SESSION_LINKS_RESOURCE_LOCAL_ID_V1;
@@ -277,7 +277,7 @@ async function read(state: State, options: PluginDynamicResourceInvocationOption
     if ((relationsDirty || state.relations === undefined || retryingObservation) && metadata.bindings.length > 0) {
         try {
             const result = await options.resources.read(relationResource, { signal: options.signal });
-            state.relations = TriageReadSourceSessionLinksResultV1Schema.parse(JSON.parse(new TextDecoder().decode(result.bytes)));
+            state.relations = decodeTriageSessionLinksResource(result.bytes);
             state.relationFailure = undefined;
         } catch (error) {
             if (options.signal.aborted) throw error;

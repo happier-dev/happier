@@ -1218,6 +1218,12 @@ and Request ID. A mounted read may also retain its existing issued envelope ID
 in successful execution metadata when the provider returned a typed failure.
 Neither projection creates an identity when no request was issued.
 
+In unreleased 0.3, the Session PRs & Issues pane also reads retained PR
+relationships from Channels for the mounted Session. A linked PR outside the
+configured repositories shows its repository and number and opens at the forge.
+Configured sources still determine the Account-wide and source-scoped lists
+and supply richer details when available.
+
 ### Error-source writes (0.3 development source)
 
 Sentry's [native write Actions](../packages/plugins/sentry/src/source/writeOperations.ts)

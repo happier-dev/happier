@@ -6,8 +6,8 @@ import { useTriageListWindow } from '../../ui/window/useTriageListWindow.js';
 import { deriveTriageDetailMountInstanceKey } from '../../ui/detail/mountKey.js';
 import { reobserveTriagePostMutationRow } from '../../ui/detail/postMutationReobservation.js';
 import { resolveTriageSourceDescriptorV1, resolveTriageSourceWorkflowSubjectV1 } from '../../ui/detail/sourceSurface.js';
-import type { TriageReadSourceSessionLinksResultV1, TriageSourceSessionLinksLaneV1 } from '../../actions/sessionLinksProtocol.js';
-import { TRIAGE_SESSION_LINKS_RESOURCE_LOCAL_ID_V1 } from '../sessionLinksResource.js';
+import type { TriageSourceSessionLinksLaneV1 } from '../../actions/sessionLinksProtocol.js';
+import { TRIAGE_SESSION_LINKS_RESOURCE_LOCAL_ID_V1, type decodeTriageSessionLinksResource } from '../sessionLinksResource.js';
 import { TRIAGE_SESSION_LINKS_RESOURCE_PROJECTION_V1 } from '../sessionLinksResourceProjection.js';
 import { projectTriageSessionLinkedEntries, type TriageSessionLinkedEntriesViewV1 } from './linkedEntryRows.js';
 import type { TriageSessionLinkedEntrySummaryBaselineV1 } from './linkedEntrySummary.js';
@@ -22,7 +22,7 @@ export type TriageSessionLinkedEntriesV1 = Readonly<{
 }>;
 
 const noMoreLinks = async (): Promise<void> => {};
-const selectRelationSnapshot = (snapshot: PluginUiResourceProjectionSnapshot<TriageReadSourceSessionLinksResultV1>) => snapshot;
+const selectRelationSnapshot = (snapshot: PluginUiResourceProjectionSnapshot<ReturnType<typeof decodeTriageSessionLinksResource>>) => snapshot;
 
 /**
  * The Session-scoped Resource is shared by the cockpit and its picker. Its
@@ -49,7 +49,8 @@ export function useTriageSessionLinkedEntries(sessionId: string, resolveEntries 
     );
     const admitted = React.useMemo(() => {
         if (resource.value === undefined) return null;
-        return resource.value.links.every(link => link.sessionId === sessionId) ? resource.value : null;
+        return resource.value.links.every(link => link.sessionId === sessionId)
+            && !resource.value.channels?.links.some(link => link.sessionId !== sessionId) ? resource.value : null;
     }, [resource.value, sessionId]);
     const readOwner = window.readOwner;
     const links = admitted?.links;
@@ -116,14 +117,20 @@ export function useTriageSessionLinkedEntries(sessionId: string, resolveEntries 
                     : openingReads.get(deriveTriageDetailMountInstanceKey(link.entryRef, link.sourceInstanceId))?.row);
             return row == null ? [] : [row];
         });
+        const sourceError = admitted?.sourceReadError;
         const projected = projectTriageSessionLinkedEntries({
             links: admitted?.links ?? [],
+            nativePullRequests: admitted?.channels?.links,
+            readFailureCodes: admitted?.channels?.failures?.map(failure => failure.code),
             status: resource.error !== undefined || (resource.value !== undefined && admitted === null) ? 'failed'
                 : admitted === null ? 'loading'
                     : resource.pending !== 'idle' ? 'loading'
-                        : admitted.kind === 'complete' ? 'ready' : admitted.kind,
+                        : admitted.kind === 'complete' ? (admitted.channels?.failures?.length ? 'partial' : 'ready') : admitted.kind,
             lanes: admitted?.lanes,
-            error: resource.error,
+            error: resource.error ?? (sourceError === undefined ? undefined : {
+                code: sourceError.code, message: sourceError.code, retryable: sourceError.retryable,
+                ...(sourceError.requestId === undefined ? {} : { details: { requestId: sourceError.requestId } }),
+            }),
             entries,
             workflowSubject: entryRef => resolveTriageSourceWorkflowSubjectV1(targetedContributions, entryRef),
             summaryBaseline: summaryScope.current.rows,

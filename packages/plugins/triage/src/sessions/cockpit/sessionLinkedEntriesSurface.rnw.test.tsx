@@ -39,6 +39,7 @@ import { TriageScmPullRequestCard } from '../../ui/scmPullRequestCard.js';
 import { projectTriageSessionLinkedEntrySummary } from './linkedEntrySummary.js';
 import { useTriageSessionLinkCandidates } from './useSessionLinkCandidates.js';
 import type { TriagePullRequestStatusV1 } from '@happier-dev/triage-protocol/v1';
+import { SESSION_PULL_REQUEST_RELATIONS_ACTION_ID_V1, type SessionPullRequestBindingResultV1 } from '@happier-dev/channels-protocol/v1';
 import { testkitEntryRef, testkitObservation, testkitSnapshot } from '../../corpus/testkit/observations.test-support.js';
 import { acquireTriageListWindow, refreshTriageListWindow, setTriageListWindowLens } from '../../ui/window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from '../../ui/window/ephemeralSharedScope.test-support.js';
@@ -286,6 +287,8 @@ async function mountCockpit(
     surface = renderSessionLinkedEntriesSurface,
     executeUnlink?: (input: unknown) => Promise<unknown>,
     readExactEntry?: (input: unknown) => Promise<unknown>,
+    readNativeRelations?: (input: unknown) => Promise<SessionPullRequestBindingResultV1>,
+    openExternalLink?: (url: string) => Promise<void>,
 ): Promise<PluginUiTestkit> {
     let fixture!: PluginUiTestkit;
     let resourceReady: ((digest: string) => void) | undefined;
@@ -371,7 +374,9 @@ async function mountCockpit(
                     const text = await TRIAGE_SESSION_LINKS_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
                         context: { kind: 'session', sessionId: 'sessionId' in target ? target.sessionId : SESSION_ID },
                         signal: new AbortController().signal,
-                        readAction: async () => ({ ok: true, result: await readRelations() }),
+                        readAction: async (action, input) => action.localId === SESSION_PULL_REQUEST_RELATIONS_ACTION_ID_V1
+                            ? { ok: true, result: await (readNativeRelations?.(input) ?? { kind: 'relations', links: [] }) }
+                            : { ok: true, result: await readRelations() },
                     }));
                     const bytes = typeof text === 'string' ? new TextEncoder().encode(text) : text;
                     const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
@@ -399,6 +404,7 @@ async function mountCockpit(
                     surfaceOpens.push({ view, ...(input === undefined ? {} : { input }), ...(subPath === undefined ? {} : { subPath }) });
                     if (openSurfaceError !== null) throw openSurfaceError;
                 },
+                ...(openExternalLink === undefined ? {} : { openExternalLink: async ({ url }) => { await openExternalLink(url); } }),
             },
         });
     });
@@ -923,6 +929,33 @@ describe('the Session tab, round 2', () => {
 });
 
 describe('the mounted Session cockpit', () => {
+    it.each([false, true])('shows a revision-two Channels PR outside the configured sources when the source read fails: %s', async sourceReadFails => {
+        const harness = createDataHarness({ snapshot: { status: 'ready', rows: [], hasMore: false } });
+        const readNativeRelations = vi.fn(async (input: unknown): Promise<SessionPullRequestBindingResultV1> => {
+            expect(input).toEqual({ kind: 'readRelations', credentialRef: null, sessionIds: [SESSION_ID] });
+            return { kind: 'relations', links: [{ sessionId: SESSION_ID, bindingId: 'native-pr', revision: 2,
+                repositoryId: '123', pullRequest: { repository: 'outside/source', number: 1 }, linkedAtMs: 10 }] };
+        });
+        const openExternalLink = vi.fn(async (_url: string) => {});
+        const readSourceLinks = async () => {
+            if (sourceReadFails) throw new PluginError({ code: 'source_read_refused', details: { requestId: 'source-read-1' } });
+            return { kind: 'complete', links: [] };
+        };
+        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID },
+            null, true, null, undefined, true, undefined, readSourceLinks, undefined, true, false,
+            renderSessionLinkedEntriesSurface, undefined, undefined, readNativeRelations, openExternalLink);
+        await expect(fixture.getByText('outside/source#1')).resolves.toBeDefined();
+        if (sourceReadFails) {
+            await openRow(fixture, 'Details');
+            expect(document.body.textContent).toContain('source_read_refused');
+            expect(document.body.textContent).toContain('source-read-1');
+        }
+        await openRow(fixture, 'outside/source#1');
+        await openRow(fixture, 'Open at source');
+        expect(openExternalLink).toHaveBeenCalledExactlyOnceWith('https://github.com/outside/source/pull/1');
+        expect(readNativeRelations).toHaveBeenCalledOnce();
+    });
+
     it('recovers a failed cold linked entry through the cockpit Refresh', async () => {
         const scope = createTriageEphemeralSharedScopeFixture();
         const link = linkRow();

@@ -9,6 +9,22 @@ const entryRef = testkitEntryRef();
 const link = { entryRef, sessionId: 'session-1', linkedAtMs: 42, displayPath: 'example/repository#42' };
 
 describe('the Session cockpit composed relationship projection', () => {
+    it('keeps one configured row for the same native PR and retains bindings outside the configured set', () => {
+        const configured = { ...link, sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID, locator: {
+            v: 1 as const, displayPath: link.displayPath, webUrl: 'https://github.com/example/repository/pull/42',
+        } };
+        const binding = { sessionId: link.sessionId, bindingId: 'native-pr', revision: 2,
+            repositoryId: '123', pullRequest: { repository: 'Example/Repository', number: 42 }, linkedAtMs: 30 };
+        const unconfigured = { ...binding, bindingId: 'other-pr', pullRequest: { ...binding.pullRequest, number: 43 } };
+        const input = { links: [configured], nativePullRequests: [binding, unconfigured], status: 'ready' as const };
+        const first = projectTriageSessionLinkedEntries(input);
+        expect(first).toMatchObject({ kind: 'linked', rows: [
+            { presentation: { kind: 'linked', entryRef: configured.entryRef } },
+            { presentation: { kind: 'nativePullRequest', displayPath: 'Example/Repository#43' } },
+        ] });
+        expect(projectTriageSessionLinkedEntries({ ...structuredClone(input), previous: first })).toBe(first);
+    });
+
     it('retains unchanged finding rows across relation refresh and derives only changed summaries', () => {
         const refs = Array.from({ length: 100 }, (_, index) => ({ ...entryRef, kindId: 'external-finding', entryId: String(index) }));
         const window = foldTriageListWindow({ observations: refs.map(ref => ({ entryRef: ref, sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID,

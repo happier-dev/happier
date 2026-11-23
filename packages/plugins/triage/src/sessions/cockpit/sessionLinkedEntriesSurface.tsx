@@ -89,6 +89,7 @@ function entryOf(row: LinkedRow): LinkedEntry | null {
 }
 
 function rowKind(row: LinkedRow, sources: SurfaceContext['targetedContributions']): 'pullRequest' | 'issue' | 'other' {
+    if (row.presentation.kind === 'nativePullRequest') return 'pullRequest';
     const entry = entryOf(row);
     if (entry !== null) return entry.kind === 'pullRequest' || entry.kind === 'issue' ? entry.kind : 'other';
     if (row.presentation.kind !== 'linked') return 'other';
@@ -98,6 +99,8 @@ function rowKind(row: LinkedRow, sources: SurfaceContext['targetedContributions'
 
 function rowTitle(row: LinkedRow, text: Translate): string {
     switch (row.presentation.kind) {
+        case 'nativePullRequest':
+            return row.presentation.displayPath;
         case 'linked':
             return row.presentation.entry?.title ?? row.presentation.displayPath;
         case 'reading':
@@ -112,7 +115,7 @@ function rowTitle(row: LinkedRow, text: Translate): string {
 /** The one glyph an entry wears (the PRs & Issues row owner), coloured by where its lifecycle is. */
 function entryMark(row: LinkedRow, sources: SurfaceContext['targetedContributions']): Readonly<{ name: IconName; tone: TextTone }> {
     const entry = entryOf(row);
-    const subject = entry?.kind ?? (row.presentation.kind === 'linked'
+    const subject = entry?.kind ?? (row.presentation.kind === 'nativePullRequest' ? 'pullRequest' : row.presentation.kind === 'linked'
         ? resolveTriageSourceWorkflowSubjectV1(sources, row.presentation.entryRef) : null);
     if (entry === null) return { name: readTriageEntryGlyphV1('active', subject), tone: 'secondary' };
     switch (entry.lifecycle) {
@@ -171,7 +174,7 @@ function LinkedRowFacts(props: Readonly<{ row: LinkedRow }>): React.ReactElement
     const entry = entryOf(props.row);
     const linkedAge = useAge(props.row.linkedAtMs > 0 ? props.row.linkedAtMs : null);
     const loud = loudFact(entry, text);
-    if (props.row.presentation.kind !== 'linked') return null;
+    if (props.row.presentation.kind !== 'linked' && props.row.presentation.kind !== 'nativePullRequest') return null;
     if (entry === null) {
         const kind = rowKind(props.row, targetedContributions);
         const noun = kind === 'pullRequest'
@@ -365,7 +368,8 @@ function LinkedEntryRow(props: Readonly<{
     const { targetedContributions } = useSurfaceContext();
     const mark = entryMark(row, targetedContributions);
     const title = rowTitle(row, text);
-    const linked = row.presentation.kind === 'linked';
+    const native = row.presentation.kind === 'nativePullRequest' ? row.presentation : null;
+    const linked = row.presentation.kind === 'linked' || native !== null;
     return (
         <List.Item
             testID={`triage-session-link:${row.key}`}
@@ -373,13 +377,15 @@ function LinkedEntryRow(props: Readonly<{
             titleNumberOfLines={1}
             accessibilityLabel={title}
             {...(entry === null ? {} : { accessibilityHint: [whereLabel(entry), entry.stateLabel].filter(Boolean).join(', ') })}
-            tone={row.presentation.kind === 'unreadable' ? 'warning' : row.presentation.kind === 'linked' ? 'neutral' : 'muted'}
+            tone={row.presentation.kind === 'unreadable' ? 'warning' : linked ? 'neutral' : 'muted'}
             busy={row.presentation.kind === 'reading'}
             icon={<Icon name={mark.name} size="small" tone={mark.tone} />}
             {...(linked ? {
                 onPress: () => { props.onToggle(row.key); },
                 expanded: props.expanded,
-                expandedContent: <LinkedRowPeek row={row} sessionId={props.sessionId} onRefresh={props.onRefresh} statusRead={statusRead} />,
+                expandedContent: native === null
+                    ? <LinkedRowPeek row={row} sessionId={props.sessionId} onRefresh={props.onRefresh} statusRead={statusRead} />
+                    : <NativePullRequestPeek url={native.url} />,
             } : {})}
             accessory={row.presentation.kind === 'unreadable' ? (
                 <Button
@@ -392,6 +398,18 @@ function LinkedEntryRow(props: Readonly<{
         >
             <LinkedRowFacts row={row} />
         </List.Item>
+    );
+}
+
+function NativePullRequestPeek({ url }: Readonly<{ url: string }>): React.ReactElement {
+    const host = usePluginHostApi();
+    const text = usePluginTranslation();
+    return (
+        <Stack gap="medium">
+            <FreshnessLine tone="neutral" reason={text('plugins.triage.sessionLinks.status.sourceRequired', 'Configure a source for more details.')} />
+            <Button variant="primary" title={text('plugins.triage.surface.detail.openAtSource', 'Open at source')}
+                onPress={() => { void host.openExternalLink(url).catch(error => { if (!isHostCancellation(error, undefined)) return presentTriageMountedUiActionFailure(host, error, text); }); }} />
+        </Stack>
     );
 }
 
@@ -427,6 +445,7 @@ function UnavailableLinkSources(props: Readonly<{
                         requestId={props.notice.sources[index]?.diagnostic?.requestId} />
                 </Stack>
             ))}
+            {props.notice.readFailureCodes === undefined ? null : <PullRequestFailureDetails codes={props.notice.readFailureCodes} />}
         </Stack>
     );
 }

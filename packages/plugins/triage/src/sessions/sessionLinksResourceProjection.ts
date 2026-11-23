@@ -1,7 +1,8 @@
 import type { PluginUiResourceProjection } from '@happier-dev/plugin-ui';
 
-import { TriageReadSourceSessionLinksResultV1Schema, normalizeTriageSourceSessionLinksCoverageV1, type TriageReadSourceSessionLinksResultV1 } from '../actions/sessionLinksProtocol.js';
+import type { TriageReadSourceSessionLinksResultV1 } from '../actions/sessionLinksProtocol.js';
 import { entryReferenceComponents } from '../corpus/identity/components.js';
+import { decodeTriageSessionLinksResource } from './sessionLinksResource.js';
 
 function retainRows<T>(rows: readonly T[], previous: readonly T[] | undefined, key: (row: T) => string): readonly T[] {
     if (previous === undefined) return rows;
@@ -55,11 +56,9 @@ function retainFailedLinks(result: TriageReadSourceSessionLinksResultV1, previou
 }
 
 /** One store-owned decode and keyed baseline for every mounted relation consumer. */
-export const TRIAGE_SESSION_LINKS_RESOURCE_PROJECTION_V1: PluginUiResourceProjection<TriageReadSourceSessionLinksResultV1> = {
+export const TRIAGE_SESSION_LINKS_RESOURCE_PROJECTION_V1: PluginUiResourceProjection<ReturnType<typeof decodeTriageSessionLinksResource>> = {
     decode(content, previous) {
-        const result = normalizeTriageSourceSessionLinksCoverageV1(TriageReadSourceSessionLinksResultV1Schema.parse(
-            JSON.parse(new TextDecoder().decode(content.bytes)),
-        ));
+        const result = decodeTriageSessionLinksResource(content.bytes);
         const links = retainRows(retainFailedLinks(result, previous), previous?.links, link => JSON.stringify([
             ...entryReferenceComponents(link.entryRef), link.sessionId, link.sourceInstanceId ?? null,
         ]));
@@ -69,9 +68,14 @@ export const TRIAGE_SESSION_LINKS_RESOURCE_PROJECTION_V1: PluginUiResourceProjec
         const configureSources = result.configureSources === undefined ? undefined
             : retainRows(result.configureSources, previous?.configureSources,
                 offer => JSON.stringify([offer.destination.pluginId, offer.destination.localId]));
-        if (previous !== undefined && result.kind === previous.kind && result.nextCursor === previous.nextCursor
+        const channels = JSON.stringify(result.channels) === JSON.stringify(previous?.channels) ? previous?.channels : result.channels;
+        const sourceReadError = JSON.stringify(result.sourceReadError) === JSON.stringify(previous?.sourceReadError)
+            ? previous?.sourceReadError : result.sourceReadError;
+        if (previous !== undefined && result.kind === previous.kind && result.nextCursor === previous.nextCursor && channels === previous.channels
+            && sourceReadError === previous.sourceReadError
             && links === previous.links && lanes === previous.lanes && configureSources === previous.configureSources) return previous;
-        return { ...result, links, ...(lanes === undefined ? {} : { lanes }),
+        return { ...result, links, ...(channels === undefined ? {} : { channels }), ...(lanes === undefined ? {} : { lanes }),
+            ...(sourceReadError === undefined ? {} : { sourceReadError }),
             ...(configureSources === undefined ? {} : { configureSources }) };
     },
 };

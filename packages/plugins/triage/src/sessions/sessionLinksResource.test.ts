@@ -1,6 +1,7 @@
 import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import { describe, expect, it, vi } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { SESSION_PULL_REQUEST_RELATIONS_ACTION_ID_V1 } from '@happier-dev/channels-protocol/v1';
 import type { PluginDynamicResourceInvocationOptionsV1 } from '@happier-dev/plugin-sdk/resources';
 
 import { testkitEntryRef } from '../corpus/testkit/observations.test-support.js';
@@ -12,17 +13,23 @@ describe('the Session relation Resource', () => {
         const result = TriageReadSourceSessionLinksResultV1Schema.parse({ kind: 'partial', links: [{
             entryRef: testkitEntryRef({ kindId: 'issue' }), sessionId: 'session-a', linkedAtMs: 1, displayPath: 'Issue #17',
         }], lanes: [] });
-        const readAction = vi.fn(async () => ({ ok: true as const, result }));
+        const readAction = vi.fn<PluginDynamicResourceInvocationOptionsV1['readAction']>(async action => ({ ok: true, result:
+            action.localId === SESSION_PULL_REQUEST_RELATIONS_ACTION_ID_V1 ? { kind: 'relations', links: [] } : result }));
         const options = createTestResourceInvocationContext({ context: { kind: 'session' as const, sessionId: 'session-a' }, signal: new AbortController().signal,
             readAction,
         }) satisfies PluginDynamicResourceInvocationOptionsV1;
         const bytes = await TRIAGE_SESSION_LINKS_RESOURCE_RUNTIME.read(options);
         expect(TriageReadSourceSessionLinksResultV1Schema.parse(JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes))))
             .toEqual(result);
-        expect(readAction).toHaveBeenCalledExactlyOnceWith(
+        expect(readAction).toHaveBeenCalledWith(
             { pluginId: 'happier.triage', localId: 'sessions/read-source-links-v1' },
             { v: 1, sessionId: 'session-a' }, { signal: options.signal },
         );
+        expect(readAction).toHaveBeenCalledWith(
+            { pluginId: 'happier.channels', localId: SESSION_PULL_REQUEST_RELATIONS_ACTION_ID_V1 },
+            { kind: 'readRelations', credentialRef: null, sessionIds: ['session-a'] }, { signal: options.signal },
+        );
+        expect(readAction).toHaveBeenCalledTimes(2);
     });
 
     it('refuses absent Session authority and unadmitted read answers instead of reporting an empty set', async () => {
@@ -85,30 +92,34 @@ describe('the Session relation Resource', () => {
         let settleCleanup: (() => void) | undefined;
         const cleanupGate = new Promise<void>(resolve => { settleCleanup = resolve; });
         const dispose = vi.fn(() => cleanupGate);
-        let dependencyChanged: (() => void) | undefined;
+        const dependenciesChanged: Array<() => void> = [];
         const options = createTestResourceInvocationContext({ context: { kind: 'session' as const, sessionId: 'session-a' }, signal: new AbortController().signal,
             readAction: async () => ({ ok: true as const, result: { kind: 'complete', links: [] } }),
             observeAction: async (_ref: unknown, _input: unknown, invalidate: () => void) => {
-                dependencyChanged = invalidate;
+                dependenciesChanged.push(invalidate);
                 return { dispose };
             },
         }) satisfies PluginDynamicResourceInvocationOptionsV1;
         const invalidate = vi.fn();
         const observation = await TRIAGE_SESSION_LINKS_RESOURCE_RUNTIME.observe(invalidate, options);
+        expect(dependenciesChanged).toHaveLength(2);
+        dependenciesChanged[1]?.();
+        expect(invalidate).toHaveBeenCalledOnce();
+        invalidate.mockClear();
         const cleanup = observation.dispose();
         expect(cleanup).toBeInstanceOf(Promise);
         expect(observation.dispose()).toBe(cleanup);
-        dependencyChanged?.();
+        for (const dependencyChanged of dependenciesChanged) dependencyChanged();
         expect(invalidate).not.toHaveBeenCalled();
         let cleaned = false;
         const settled = Promise.resolve(cleanup).then(() => { cleaned = true; });
-        await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce());
+        await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(2));
         await Promise.resolve();
         expect(cleaned).toBe(false);
         settleCleanup?.();
         await settled;
         expect(cleaned).toBe(true);
-        expect(dispose).toHaveBeenCalledOnce();
+        expect(dispose).toHaveBeenCalledTimes(2);
     });
 
     it('awaits rejected late cleanup after cancellation and retains an abort-started cleanup rejection', async () => {
