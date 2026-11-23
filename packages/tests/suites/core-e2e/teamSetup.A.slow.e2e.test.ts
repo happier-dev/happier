@@ -806,43 +806,50 @@ describe('TS.A.remove runs trusted teardown before removal and preserves failure
         execFileSync('git', ['-C', checkout, 'add', 'cleanup.sh']);
         execFileSync('git', ['-C', checkout, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test',
           'commit', '--quiet', '-m', 'Require a fresh cleanup review']);
-        const requestId = randomUUID();
-        let settled: string | undefined;
-        const pending = account.executeReviewed('scm.worktree.remove', removalInput,
-          { ...removalContext, actionRequestId: requestId, signal }).then(result => {
-          settled = result.ok ? 'succeeded' : result.errorCode;
-          return result;
-        }, error => {
-          settled = redactHarnessLogText(error instanceof Error ? error.message : String(error));
-          return undefined;
-        });
-        let operationId: string | undefined;
-        await waitFor(async () => {
-          if (settled) throw new Error(`Worktree removal settled before the teardown review (${settled})`);
-          const listed = await account.execute('action.operations.list', { ...machine.target,
-            requestIdentity: { actionId: 'scm.worktree.remove', requestId } });
-          if (!listed.ok) throw new Error(listed.errorCode);
-          const operations = ActionOperationListV1ResponseSchema.parse(listed.result).items;
-          expect(operations.length).toBeLessThanOrEqual(1);
-          const held = operations.find(operation => operation.setupReview);
-          if (!held) return false;
-          expect(held.setupReview).toMatchObject({ code: 'project_setup_consent_required' });
-          expect(held.setupReview?.reviewedEffectDigest).not.toBe(initialReview.digest);
-          operationId = held.operationId;
-          return true;
-        }, { failFast: true, context: 'fresh teardown review on the retained removal' });
-        expect(await account.executeAsPerson('action.operations.cancel', { ...machine.target, operationId }))
-          .toMatchObject({ ok: true, result: { kind: 'requested' } });
-        expect(await pending, settled).toMatchObject({ ok: false, errorCode: 'cancelled' });
-        await expect(access(checkout)).resolves.toBeUndefined();
-        await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' });
-        expect(await hasPortAssignment(checkout)).toBe(true);
-        // The person explicitly chooses the reviewed removal without cleanup.
-        expect(await account.executeReviewed('scm.worktree.remove', { ...removalInput, skipCleanup: true }, removalContext))
-          .toMatchObject({ ok: true, result: { success: true } });
-        await expect(access(checkout)).rejects.toMatchObject({ code: 'ENOENT' });
-        await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' });
-        await waitFor(async () => !await hasPortAssignment(checkout));
+        // Retain the signed-in reviewer before proposing removal, as the
+        // App does. The outer approval is answered before the native teardown
+        // can report the separate changed-effect review.
+        await account.withPersonActionClient(async execute => {
+          const requestId = randomUUID();
+          let settled: string | undefined;
+          const pending = account.executeReviewed('scm.worktree.remove', removalInput,
+            { ...removalContext, actionRequestId: requestId, signal }, execute).then(result => {
+            settled = result.ok ? 'succeeded' : result.errorCode;
+            return result;
+          }, error => {
+            settled = redactHarnessLogText(error instanceof Error ? error.message : String(error));
+            return undefined;
+          });
+          let operationId: string | undefined;
+          // The case lifetime bounds the App approval and subsequent native review.
+          await waitFor(async () => {
+            signal.throwIfAborted();
+            if (settled) throw new Error(`Worktree removal settled before the teardown review (${settled})`);
+            const listed = await account.execute('action.operations.list', { ...machine.target,
+              requestIdentity: { actionId: 'scm.worktree.remove', requestId } }, { signal });
+            if (!listed.ok) throw new Error(listed.errorCode);
+            const operations = ActionOperationListV1ResponseSchema.parse(listed.result).items;
+            expect(operations.length).toBeLessThanOrEqual(1);
+            const held = operations.find(operation => operation.setupReview);
+            if (!held) return false;
+            expect(held.setupReview).toMatchObject({ code: 'project_setup_consent_required' });
+            expect(held.setupReview?.reviewedEffectDigest).not.toBe(initialReview.digest);
+            operationId = held.operationId;
+            return true;
+          }, { failFast: true, timeoutMs: Infinity, context: 'fresh teardown review on the retained removal' });
+          expect(await execute('action.operations.cancel', { ...machine.target, operationId }))
+            .toMatchObject({ ok: true, result: { kind: 'requested' } });
+          expect(await pending, settled).toMatchObject({ ok: false, errorCode: 'cancelled' });
+          await expect(access(checkout)).resolves.toBeUndefined();
+          await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+          expect(await hasPortAssignment(checkout)).toBe(true);
+          // The person explicitly chooses the reviewed removal without cleanup.
+          expect(await account.executeReviewed('scm.worktree.remove', { ...removalInput, skipCleanup: true },
+            removalContext, execute)).toMatchObject({ ok: true, result: { success: true } });
+          await expect(access(checkout)).rejects.toMatchObject({ code: 'ENOENT' });
+          await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+          await waitFor(async () => !await hasPortAssignment(checkout));
+        }, { surface: 'coreAction' });
         continue;
       }
       if (outcome === 'retired' || outcome === 'deleted') {
