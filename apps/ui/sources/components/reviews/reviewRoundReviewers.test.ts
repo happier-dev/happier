@@ -5,7 +5,7 @@ import settledRound from '@/dev/testkit/fixtures/settledReviewRound.json';
 import historicalRound from '@/dev/testkit/fixtures/historicalReviewRound.json';
 import twoStepRound from '@/dev/testkit/fixtures/twoStepPartialReviewRound.json';
 import nativeModelReviewer from '@/dev/testkit/fixtures/nativeModelReviewReviewer.json';
-import { ReviewStartInputSchema, reviewReviewerDisplayNamesForStartV1 } from '@happier-dev/protocol/reviews/reviewStart';
+import { ReviewStartInputSchema, reviewReviewerIdentitiesForStartV1 } from '@happier-dev/protocol/reviews/reviewStart';
 import { projectReviewRoundReviewers, reviewRosterOf, reviewRoundReviewerName, reviewRoundReviewerOutcomeLabel, reviewRoundReviewerReasonWords,
   reviewRoundReviewerRowCount, reviewRoundUnfinishedReviewers } from './reviewRoundReviewers';
 
@@ -16,7 +16,8 @@ it('keeps an explicit native model reviewer identified by its Agent and mark acr
     { kind: 'verify', instructions: 'Verify.', reviewers: [nativeModelReviewer] },
   ] });
   const round = ReviewArtifactBodyV1Schema.parse(twoStepRound).rounds[0]!;
-  const named = { ...round, reviewerOutcomes: undefined, reviewerDisplayNames: reviewReviewerDisplayNamesForStartV1(input) };
+  // Current producer writes both fields, as captured on fresh mixed Review 760595ab (2026-11-23).
+  const named = { ...round, reviewerOutcomes: undefined, ...reviewReviewerIdentitiesForStartV1(input) };
   expect(projectReviewRoundReviewers(named, undefined).map(({ name, agentId }) => ({ name, agentId }))).toEqual([
     { name: 'Claude · step 1', agentId: 'claude' }, { name: 'Claude · step 2', agentId: 'claude' },
   ]);
@@ -24,7 +25,7 @@ it('keeps an explicit native model reviewer identified by its Agent and mark acr
   const other = ReviewStartInputSchema.parse({ reviewers: [{ ...nativeModelReviewer, launch: {
     ...nativeModelReviewer.launch, agentTarget: { kind: 'agent', identity: { pluginId: 'other.agent', localId: 'claude' } },
   } }], instructions: 'Review.' });
-  const otherNamed = { ...named, reviewerIds: ['step-1-reviewer-1'], reviewerDisplayNames: reviewReviewerDisplayNamesForStartV1(other) };
+  const otherNamed = { ...named, reviewerIds: ['step-1-reviewer-1'], ...reviewReviewerIdentitiesForStartV1(other) };
   expect(projectReviewRoundReviewers(otherNamed, undefined)[0]?.agentId).toBeNull();
 });
 

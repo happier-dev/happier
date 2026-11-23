@@ -107,7 +107,8 @@ function recordedReviewer(round: NamedRound, reviewerId: string): Readonly<{ bas
   const recordedAgentId = round.reviewerAgentIds?.[reviewerId];
   const identity = recordedAgentId ?? recorded;
   const agentId = identity ? resolveAgentIdFromFlavor(normalizeAgentCatalogId(identity)) : null;
-  return { base: recordedAgentId && recorded ? recorded : agentId ? resolveAgentCatalogTitle(agentId) : recorded, agentId };
+  const titled = recordedAgentId && recorded && recorded !== recordedAgentId;
+  return { base: titled ? recorded : agentId ? resolveAgentCatalogTitle(agentId) : recorded, agentId };
 }
 
 /**
