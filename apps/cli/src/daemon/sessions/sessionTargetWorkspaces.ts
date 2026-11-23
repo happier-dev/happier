@@ -239,7 +239,9 @@ export function resolveSessionTargetWorkspaceTransfer(sessionId: string): Readon
     return {
         workspace: entry.workspace,
         baseline: entry.baseline ?? null,
-        source: createHolderWorkspaceSource({ id: `${entry.target.id}:${sessionId}`, rootPath: entry.workspace.targetRoot,
-            holder: workspaceClient(entry), helperPath: entry.target.helperPath }),
+        get source() {
+            return createHolderWorkspaceSource({ id: `${entry.target.id}:${sessionId}`, rootPath: entry.workspace.targetRoot,
+                holder: workspaceClient(entry), helperPath: entry.target.helperPath });
+        },
     };
 }

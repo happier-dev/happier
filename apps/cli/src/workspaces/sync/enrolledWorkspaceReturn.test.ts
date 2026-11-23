@@ -12,12 +12,45 @@ import { createScmBackendRegistry } from '@/scm/registry';
 import { SESSION_WORKSPACE_RETURN_CAPTURE_CHILD_V1 } from '@happier-dev/protocol/actions/sessionWorkspaceReturnActionIdsV1';
 
 import { runWithScmAccountScope } from '@/scm/accountScope';
+import { registerSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
 
 function withAccount<Args extends readonly unknown[], Result>(effect: (...args: Args) => Result) {
   return (...args: Args): Result => runWithScmAccountScope('workspace-return-test-account', () => effect(...args));
 }
 const prepareEnrolledWorkspaceReturn = withAccount(unscopedPrepareEnrolledWorkspaceReturn);
 const applyManagedWorkspaceReturn = withAccount(unscopedApplyManagedWorkspaceReturn);
+
+it('keeps a return on the controller that holds the exact native copy and original workspace', async () => {
+  const controller = { machineId: 'controller', installationId: 'installation' };
+  const sourceWorkspace = { serverId: 'home', machineId: controller.machineId, workspaceId: 'host', rootPath: '/host/project' };
+  const targetWorkspace = { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'guest', rootPath: '/guest/project',
+    managedId: 'native-guest', controller };
+  const lifetime = new AbortController();
+  registerSessionTargetWorkspace({ sessionId: 'local-return', lifetime: lifetime.signal, primarySocketPath: '/guest/agent.sock',
+    workspace: { hostRoot: sourceWorkspace.rootPath, targetRoot: targetWorkspace.rootPath },
+    target: { id: targetWorkspace.managedId, lifetime: lifetime.signal, holderPath: '/holder', helperPath: '/helper',
+      socketDirectory: '/guest', exec: async () => { throw new Error('No guest command is needed to choose placement'); },
+      openChannel: () => { throw new Error('No guest channel is needed to choose placement'); } } });
+  const prepare = (workspaceRoot: string | null, source = sourceWorkspace) => prepareEnrolledWorkspaceReturnChildren({
+    sessionId: 'local-return', machineId: controller.machineId, activeServerDir: '/private/daemon', actionRequestId: 'return-request',
+    readRequesterWorkspaceScope: async () => ({ kind: 'available', homeDir: '/requester', workspaceRoot }),
+    metadata: { sessionCreationCorrespondenceV1: { v: 1,
+      sessionCreationTag: deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'created' }), recipe: {
+        execution: { machineId: controller.machineId, directory: { kind: 'path', path: targetWorkspace.rootPath } },
+        organization: { folderId: null, tagIds: [] }, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        modelSelection: null, profileId: null, requestedPermissionMode: null, agentModeId: null, configuration: null,
+        connectedServices: null, capabilitySelection: null, transcriptStorage: null, terminal: null,
+        agentSessionStartupInstructionsMarkerV1: null, checkout: null, projectFilesOrigin: { sourceWorkspace: source, targetWorkspace },
+      },
+    } },
+  });
+  try {
+    expect(await prepare(null)).toBeNull();
+    expect(await prepare('/requester/workspaces')).toMatchObject({ children: expect.any(Array) });
+    expect(await prepare(null, { ...sourceWorkspace, rootPath: '/host/another-project' }))
+      .toMatchObject({ children: expect.any(Array) });
+  } finally { lifetime.abort(); }
+});
 
 it.each([false, true])('declares original-root admission and requester-private return stage (native=%s)', async native => {
   const sourceWorkspace = { serverId: 'home', machineId: 'original', workspaceId: 'host', rootPath: '/host/project' };

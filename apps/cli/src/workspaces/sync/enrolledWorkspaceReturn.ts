@@ -13,7 +13,7 @@ import { buildWorkspaceSyncMaterializationOpenInputV1 } from '@happier-dev/proto
 import { createManagedSessionDirectories, predictManagedSessionCreationDirectory } from '@/session/creation/managedSessionDirectories';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import { readScmAccountScope } from '@/scm/accountScope';
-import { resolveSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
+import { resolveSessionTargetWorkspace, resolveSessionTargetWorkspaceTransfer } from '@/daemon/sessions/sessionTargetWorkspaces';
 import { selectWorkspaceSource, type WorkspaceTargetSourceResolver } from '@/workspaces/source/workspaceSource';
 import { invokeReviewedProjectOpen } from '@/workspaces/activation/invokeReviewedProjectOpen';
 import { prepareManagedWorkspaceReturnFromStage, projectManagedWorkspaceReturnFailure, readManagedWorkspaceReturnErrorDetails,
@@ -48,6 +48,14 @@ export async function prepareEnrolledWorkspaceReturnChildren(input: Readonly<{
     throw Object.assign(new Error('The requester workspace scope is unavailable'), {
       code: scope?.reason ?? 'requester_authority_unavailable',
     });
+  }
+  if (scope.workspaceRoot === null && origin.sourceWorkspace.kind !== 'managed'
+    && origin.targetWorkspace.kind === 'managed' && origin.targetWorkspace.controller.machineId === originalMachineId) {
+    const placement = resolveSessionTargetWorkspaceTransfer(input.sessionId)?.workspace;
+    if (placement?.hostRoot === origin.sourceWorkspace.rootPath && placement.targetRoot === origin.targetWorkspace.rootPath) {
+      // The local return handler captures the copy through the holder and reviews its registered original.
+      return null;
+    }
   }
   const sessionCreationTag = deriveSessionCreationTagV1({ callerCreationNamespace: 'workspace-return',
     creationKey: `${input.sessionId}:${input.actionRequestId}` });

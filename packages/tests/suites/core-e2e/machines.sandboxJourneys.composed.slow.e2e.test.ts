@@ -25,6 +25,7 @@ import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testki
 import { startDatabaseWorkbenchPostgres } from '../../src/testkit/process/databaseWorkbenchPostgres';
 import { repoRootDir } from '../../src/testkit/paths';
 import { createRunDirs } from '../../src/testkit/runDir';
+import { createTempDirHandle, type TempDirHandle } from '../../src/testkit/fs/tempDir';
 import { waitFor } from '../../src/testkit/timing';
 
 const run = createRunDirs({ runLabel: 'core' });
@@ -32,6 +33,7 @@ const testDir = run.testDir(`sandbox-journeys-${randomUUID()}`);
 const contribution = { pluginId: 'happier.devcontainer', localId: 'devcontainer' };
 const declarationClaimPath = PluginAvailabilityActionHttpPathsV1['account.plugins.availability.collectionWriters.claim'];
 let fixture: TeamSetupFFixture | undefined;
+let workspace: TempDirHandle | undefined;
 let database: Awaited<ReturnType<typeof startDatabaseWorkbenchPostgres>> | undefined;
 let account: Awaited<ReturnType<TeamSetupFFixture['createAccount']>>;
 let machine: Awaited<ReturnType<TeamSetupFFixture['enrollDaemon']>>;
@@ -57,17 +59,22 @@ beforeAll(async () => {
     requestBodyMaxBytes: SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1,
     captureRequestBody: request => request.method === 'POST' && request.path === declarationClaimPath });
   account = await fixture.createAccount('sandbox-owner');
-  machine = await fixture.enrollDaemon(account, { env: { HAPPIER_CLAUDE_PATH: fakeAgent } });
+  // The folder journeys exercise Project files with no surrounding Git repository.
+  workspace = await createTempDirHandle({ prefix: 'sandbox-journeys-workspace-' });
+  machine = await fixture.enrollDaemon(account, { workspaceDir: workspace.path, env: { HAPPIER_CLAUDE_PATH: fakeAgent } });
 }, 0);
 
 beforeEach(async () => {
   if (!fixture) throw new Error('Fixture not started');
   // One person keeps the same App Account lifetime throughout the journey.
   const { connectUiPersonActionClient } = await import('@happier-tests/ui-action-client');
-  ui = await connectUiPersonActionClient({ serverUrl: fixture.server.baseUrl, accountSecret: account.auth.accountSigningSeed });
+  const person = await connectUiPersonActionClient({ serverUrl: fixture.server.baseUrl, accountSecret: account.auth.accountSigningSeed });
+  ui = person;
   try {
-    const execution = await ui.executeConfirmed('machines.list', { serverId: fixture.serverId }, {
-      surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: ui.serverId,
+    await waitFor(() => person.isAccountReady() && person.isMachineControlReady(machine.target.machineId),
+      { timeoutMs: 60_000, context: 'App Account and enrolled controller ready' });
+    const execution = await person.executeConfirmed('machines.list', { serverId: fixture.serverId }, {
+      surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: person.serverId,
       serverIdentityId: fixture.serverId, actionRequestId: randomUUID(),
     });
     expect(execution, JSON.stringify(execution)).toMatchObject({ ok: true });
@@ -84,14 +91,14 @@ beforeEach(async () => {
     if (!row || typeof row !== 'object' || !('installationId' in row)
       || typeof row.installationId !== 'string' || !row.installationId) {
       throw new Error(`Enrolled Machine inventory mismatch: ${JSON.stringify({ listed,
-        expectedMachineId: machine.target.machineId, requestedServerId: fixture.serverId, uiServerId: ui.serverId,
+        expectedMachineId: machine.target.machineId, requestedServerId: fixture.serverId, uiServerId: person.serverId,
         expectedAccountId: readAccountIdFromToken(account.credentials.token),
       })}`);
     }
     controller = { machineId: machine.target.machineId, installationId: row.installationId };
-    await ui.waitForPluginAccountAvailability();
+    await person.waitForPluginAccountAvailability();
   } catch (error) {
-    await ui.close();
+    await person.close();
     ui = undefined;
     throw error;
   }
@@ -118,7 +125,10 @@ afterEach(async () => {
 afterAll(async () => {
   try {
     try { await fixture?.stop(); }
-    finally { await database?.stop(); }
+    finally {
+      try { await database?.stop(); }
+      finally { await workspace?.cleanup(); }
+    }
   }
   finally {
       const requests = fixture?.requestProxy?.entries() ?? [];
@@ -227,11 +237,11 @@ async function archiveSession(sessionId: string) {
   sessionIds.delete(sessionId);
 }
 
-async function spawn(directory: string) {
+async function spawn(directory: string, prompt = 'Observe the Project files and make the fixture edit.') {
   const created = SessionSpawnNewActionResultV1Schema.parse(await action('session.spawn_new', { executionTarget: machine.target,
     directory: { kind: 'path', path: directory }, terminal: { mode: 'plain' },
     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
-    initialInput: { text: 'Observe the Project files and make the fixture edit.' },
+    initialInput: { text: prompt },
     sessionPlacement: { kind: 'machine', target: machine.target, projectFiles: { kind: 'copy_once' } },
   }));
   expect(created, JSON.stringify(created)).toMatchObject({ type: 'success' });
@@ -255,16 +265,27 @@ it('MACH-J1 adds a Docker sandbox, copies uncommitted Project files and brings b
   execFileSync('git', ['commit', '-qm', 'baseline'], { cwd: project });
   const hostConfig = await readFile(join(project, '.git/config'), 'utf8');
   await writeFile(join(project, 'host-sentinel.txt'), 'uncommitted sentinel\n');
-  const sessionId = await spawn(project);
-  let preview: ReturnType<typeof SessionWorkspaceReturnPreviewV1Schema.parse> | undefined;
+  const receipt = `WAKE_J1_${randomUUID()}`;
+  const prompt = `Observe the Project files and make the fixture edit. Reply with ${receipt}.`;
+  const sessionId = await spawn(project, prompt);
   await waitFor(async () => {
-    preview = SessionWorkspaceReturnPreviewV1Schema.parse(await action('session.workspace.return.prepare', { sessionId,
-      machineId: machine.target.machineId }));
-    return preview.paths.some(path => path.path === 'agent-edit.txt');
-  }, { timeoutMs: 60_000, context: 'sandbox Agent observes uncommitted files and edits copied Project' });
-  expect(preview!.paths.map(path => path.path)).toEqual(expect.arrayContaining(['agent-observed.txt', 'agent-edit.txt']));
-  expect(preview!.paths.every(path => path.path !== '.git' && !path.path.startsWith('.git/'))).toBe(true);
-  const [managed] = await resources(preset.id);
+    const transcript = SessionTranscriptGetSemanticSuccessSchema.parse(
+      await action('session.transcript.get', { sessionId, roles: ['user', 'assistant'] }));
+    const sent = transcript.items.filter(item => item.role === 'user' && item.text?.includes(receipt));
+    const replies = transcript.items.filter(item => item.role === 'assistant' && item.text?.includes(receipt));
+    expect(sent.map(item => item.seq), 'first Send transcript sequences').toEqual([expect.any(Number)]);
+    expect(replies.map(item => item.seq), 'first reply transcript sequences').toEqual([expect.any(Number)]);
+    expect(replies[0]!.seq!).toBeGreaterThan(sent[0]!.seq!);
+    return true;
+  }, { timeoutMs: 60_000, context: 'first Send reaches the placed Agent exactly once and yields its reply' });
+  const preview = SessionWorkspaceReturnPreviewV1Schema.parse(await action('session.workspace.return.prepare', {
+    sessionId, machineId: machine.target.machineId,
+  }));
+  expect(preview.paths.map(path => path.path)).toEqual(expect.arrayContaining(['agent-observed.txt', 'agent-edit.txt']));
+  expect(preview.paths.every(path => path.path !== '.git' && !path.path.startsWith('.git/'))).toBe(true);
+  const managedResources = await resources(preset.id);
+  expect(managedResources).toHaveLength(1);
+  const [managed] = managedResources;
   expect(execFileSync('docker', ['exec', containerId(managed!.id), 'cat', '/tmp/journey-setup'], { encoding: 'utf8' }))
     .toBe('setup-complete');
   // This native Agent fixture needs no JavaScript runtime. Inspect executables,
@@ -275,7 +296,7 @@ it('MACH-J1 adds a Docker sandbox, copies uncommitted Project files and brings b
     expect.stringMatching(/(?:^|\/)(?:happier|happier-session-runner|ephemeralRunner|node|bun)(?:\.exe)?$/),
   ]));
   const applied = await action('session.workspace.return.apply', { sessionId, machineId: machine.target.machineId,
-    returnId: preview!.returnId, paths: ['agent-observed.txt', 'agent-edit.txt'] });
+    returnId: preview.returnId, paths: ['agent-observed.txt', 'agent-edit.txt'] });
   expect(applied).toMatchObject({ appliedPaths: expect.arrayContaining(['agent-observed.txt', 'agent-edit.txt']), conflicts: [] });
   expect(await readFile(join(project, 'agent-observed.txt'), 'utf8')).toBe('uncommitted sentinel\n');
   expect(await readFile(join(project, 'agent-edit.txt'), 'utf8')).toBe('edit from the sandbox agent\n');
