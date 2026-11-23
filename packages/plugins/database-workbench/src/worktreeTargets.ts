@@ -90,11 +90,12 @@ export function createWorktreeDatabaseTargets(): Readonly<{
         const decision = decideDatabaseAccessV1({ ...accessFacts(request.requester, agentAccess), operation: request.access });
         if (!decision.ok) throw new PluginError({ code: decision.refusal });
         if (source.kind === 'env_file') {
-            const value = await request.worktreeEnvironment?.readDotenv({
-                workspace: target.workspace, projectKey: target.projectKey, path: source.path, variable: source.variable,
-            });
-            if (!value) return unavailable();
-            return { target, agentAccess, readConnectionString: () => value };
+            return { target, agentAccess, async readConnectionString() {
+                const value = await request.worktreeEnvironment?.readDotenv({
+                    workspace: target.workspace, projectKey: target.projectKey, path: source.path, variable: source.variable,
+                });
+                return value || unavailable();
+            } };
         }
         if (!entry) return unavailable();
         return { target, agentAccess, async readConnectionString() {
@@ -158,7 +159,11 @@ export function createWorktreeDatabaseTargets(): Readonly<{
             return { targets, completeness: { complete: true } };
         },
         async admit(request) {
-            const { agentAccess } = await admitTarget(request);
+            const { agentAccess, target, readConnectionString } = await admitTarget(request);
+            // A held demand already owns its credential and validates its captured target.
+            if (target.source.kind === 'env_file' && request.input.subscriptionId === undefined) {
+                await readConnectionString();
+            }
             return { agentAccess, access: summarizeDatabaseAccessV1(accessFacts(request.requester, agentAccess)) };
         },
         async setAccess(request) {

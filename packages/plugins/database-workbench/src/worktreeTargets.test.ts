@@ -190,14 +190,20 @@ it('resolves a selected env file target without a running service', async () => 
     try {
         openSqliteDatabaseSync(dbPath).close();
         const targets = createWorktreeDatabaseTargets();
+        let dotenvReads = 0;
         const request = { identity, storage: emptyStorage, requester: 'person' as const, access: 'read' as const,
             input: { operation: 'describe' as const, target },
             // The daemon's private prepared input is a system boundary for the plugin.
-            worktreeEnvironment: { async readDotenv() { return pathToFileURL(dbPath).href; } } };
+            worktreeEnvironment: { async readDotenv() { dotenvReads++; return pathToFileURL(dbPath).href; } } };
         expect(await targets.admit(request)).toMatchObject({ agentAccess: 'readWriteAsk' });
         const resolved = await targets.resolve(request);
         try {
             expect(resolved.descriptor).toMatchObject({ engine: 'sqlite', target });
+            expect(dotenvReads).toBe(2);
+            const heldRead = { ...request, input: { ...request.input, subscriptionId: 'held-demand' } };
+            await expect(targets.admit(heldRead)).resolves.toMatchObject({ access: { canRead: true } });
+            await expect(targets.admit(heldRead)).resolves.toMatchObject({ access: { canRead: true } });
+            expect(dotenvReads).toBe(2);
         } finally { await resolved.connection.close(); }
     } finally { await rm(rootPath, { recursive: true, force: true }); }
 });
