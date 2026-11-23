@@ -10,7 +10,7 @@ import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
 import { HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT, MACHINE_SERVICES_PLUGIN_ID } from './healthSetup.js';
 import { HEALTH_RESULT_CHECKPOINT_PREFIX, healthResultProjectionSchema, healthResultProjectionIdentity, retainHealthResult } from './healthResultProjection.js';
 import { fitHealthResultCheckpoint } from './healthResultCheckpoint.js';
-import { isMonitorCheck, monitorDefinitions, monitorKinds, monitorObserved } from './monitorDefinitions.js';
+import { isMonitorCheck, monitorDefinitions, monitorKinds, monitorObserved, type MonitorKind } from './monitorDefinitions.js';
 export { HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT } from './healthSetup.js';
 import { healthTransitionCursorSchema as cursorSchema, healthTransitionCursorStoredSchema as cursorStoredSchema,
     createSavedHealthTransitionReader, savedHealthTransitionSourceSchema, type SavedHealthTransitionSource,
@@ -27,6 +27,7 @@ function createNativeHealthCheckSourceAdapter(now: () => number = Date.now,
     const live = new Map<string, { basis: string; source: HealthCheckSourceConfigV1;
         due: Map<string, number | null>; failures: Map<string, number>; pendingChecks: Set<string>; monitorResults: Map<string, string>;
         stored?: { version: number | 'absent'; value: Cursor } }>();
+    let syncSubscriptions: (() => void) | undefined;
     return {
         observeWhileAdmissionPending: true,
         decode(definition) {
@@ -44,6 +45,7 @@ function createNativeHealthCheckSourceAdapter(now: () => number = Date.now,
             if (state?.basis !== basis) {
                 state = { basis, source, due: new Map(), failures: new Map(), pendingChecks: new Set(), monitorResults: new Map() };
                 live.set(definition.sourceInstanceId, state);
+                syncSubscriptions?.();
             }
             const { due, failures, pendingChecks } = state;
             const retained = await storage.get(key, { signal: context.signal });
@@ -187,24 +189,30 @@ function createNativeHealthCheckSourceAdapter(now: () => number = Date.now,
                 && definition.observationTransport.kind === 'checkpointedPull'
                 && arePluginMachineMaterializationRefsEqual(own, definition.observationTransport.watcherMaterializationRef))
                 .map(definition => definition.sourceInstanceId));
+            const size = live.size;
             for (const sourceInstanceId of live.keys()) if (!current.has(sourceInstanceId)) live.delete(sourceInstanceId);
+            if (live.size !== size) syncSubscriptions?.();
             return { complete: true };
         },
         subscribeWake(wake) {
-            const monitorSubscriptions = pluginEvents ? monitorKinds.map(kind => pluginEvents.subscribe({
+            type Subscription = { dispose(): void };
+            const monitorSubscriptions = new Map<MonitorKind, Subscription>();
+            let receiptSubscription: Subscription | undefined;
+            let reconnectSubscription: Subscription | undefined;
+            const listenMonitor = (kind: MonitorKind) => pluginEvents?.subscribe({
                 pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: monitorDefinitions[kind].observedEventId,
             }, async event => {
                 const hint = monitorObserved.parse(event.payload);
                 const state = live.get(hint.sourceInstanceId);
-                const check = state?.source.checks.find(value => value.checkId === hint.checkId && isMonitorCheck(value));
+                const check = state?.source.checks.find(value => value.checkId === hint.checkId
+                    && isMonitorCheck(value) && value.kind.localId === kind);
                 const config = check?.config;
                 if (!state || !config || typeof config !== 'object' || Array.isArray(config)
                     || config.webhookEndpointId !== hint.webhookEndpointId) return;
                 state.pendingChecks.add(hint.checkId);
                 await wake(hint.sourceInstanceId);
-            })) : [];
-            if (!host) return { dispose() { for (const subscription of monitorSubscriptions) subscription.dispose(); } };
-            const receiptSubscription = host.subscribe({ eventId: '@happier/health-check/heartbeat-received', scope: { kind: 'account' } }, async event => {
+            });
+            const listenHeartbeat = () => host?.subscribe({ eventId: '@happier/health-check/heartbeat-received', scope: { kind: 'account' } }, async event => {
                 const receipt = event.payload;
                 const state = live.get(receipt.sourceInstanceId);
                 const check = state?.source.checks.find(value => value.checkId === receipt.checkId && value.kind.localId === 'heartbeat');
@@ -214,20 +222,47 @@ function createNativeHealthCheckSourceAdapter(now: () => number = Date.now,
                 state.pendingChecks.add(receipt.checkId);
                 await wake(receipt.sourceInstanceId);
             });
-            const reconnectSubscription = host.subscribe({ eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' } }, async event => {
+            const listenReconnect = () => host?.subscribe({ eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' } }, async event => {
                 if (!('reason' in event.payload) || event.payload.reason !== 'reconnect') return;
-                let pending = false;
+                if (event.payload.pluginIds && !event.payload.pluginIds.includes(MACHINE_SERVICES_PLUGIN_ID)) return;
                 for (const state of live.values()) {
                     for (const check of state.source.checks) {
-                        if (check.kind.localId !== 'heartbeat' && !isMonitorCheck(check)) continue;
-                        state.pendingChecks.add(check.checkId);
-                        pending = true;
+                        if (check.kind.localId === 'heartbeat' || isMonitorCheck(check)) state.pendingChecks.add(check.checkId);
                     }
                 }
-                if (pending) await wake();
+                await wake();
             });
-            return { dispose() { receiptSubscription.dispose(); reconnectSubscription.dispose();
-                for (const subscription of monitorSubscriptions) subscription.dispose(); } };
+            syncSubscriptions = () => {
+                const monitors = new Set<MonitorKind>();
+                let heartbeat = false;
+                for (const { source } of live.values()) {
+                    for (const check of source.checks) {
+                        if (isMonitorCheck(check)) monitors.add(check.kind.localId);
+                        else if (check.kind.localId === 'heartbeat') heartbeat = true;
+                    }
+                }
+                for (const kind of monitorKinds) {
+                    const subscription = monitorSubscriptions.get(kind);
+                    if (!monitors.has(kind)) {
+                        subscription?.dispose();
+                        monitorSubscriptions.delete(kind);
+                    } else if (!subscription) {
+                        const listening = listenMonitor(kind);
+                        if (listening) monitorSubscriptions.set(kind, listening);
+                    }
+                }
+                if (heartbeat) receiptSubscription ??= listenHeartbeat();
+                else { receiptSubscription?.dispose(); receiptSubscription = undefined; }
+                if (heartbeat || monitors.size > 0) reconnectSubscription ??= listenReconnect();
+                else { reconnectSubscription?.dispose(); reconnectSubscription = undefined; }
+            };
+            syncSubscriptions();
+            return { dispose() {
+                syncSubscriptions = undefined;
+                receiptSubscription?.dispose();
+                reconnectSubscription?.dispose();
+                for (const subscription of monitorSubscriptions.values()) subscription.dispose();
+            } };
         },
         retryAt({ definition, error, now: time }) {
             // Account KV deliberately exposes row contention to its author.

@@ -5,6 +5,7 @@ import { plugin } from './manifest.js';
 import { retainHealthResult, readHealthResultProjections } from './healthResultProjection.js';
 import { activate as activateAccount } from './accountRuntime.js';
 import { HEALTH_RESULTS_ACTION_ID } from './actionIds.js';
+import { createHealthCheckSourceAdapter } from './healthObserver.js';
 
 afterEach(() => vi.useRealTimers());
 
@@ -63,4 +64,16 @@ it('does not disclose a retained page after cancellation and keeps Account read 
     const failure = Object.assign(new Error('Account KV unavailable'), { code: 'account_data_unavailable' });
     await expect(readHealthResultProjections({ async list() { throw failure; } },
         { signal: new AbortController().signal })).rejects.toBe(failure);
+});
+
+it('opens no observation subscriptions until a health check needs their events', () => {
+    const host = { subscribe: vi.fn(() => ({ dispose() {} })) };
+    const pluginEvents = { subscribe: vi.fn(() => ({ dispose() {} })), publish: vi.fn() };
+    const adapter = createHealthCheckSourceAdapter(Date.now, host, pluginEvents);
+    const subscription = adapter.subscribeWake!(async () => {});
+    try {
+        expect([host.subscribe.mock.calls.length, pluginEvents.subscribe.mock.calls.length]).toEqual([0, 0]);
+    } finally {
+        subscription.dispose();
+    }
 });
