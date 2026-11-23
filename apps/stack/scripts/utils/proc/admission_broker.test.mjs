@@ -833,7 +833,7 @@ test('commit-gate jobs use cold admission charges and learn under their own clas
   const { resolveHeavyweightMemoryFloorKiB } = await import('../dev_targets/remote_commands.mjs');
   const gib = 1024 * 1024;
   for (const [className, diskClass, script, coldCores, coldGiB] of [
-    ['gate-entry-loads', 'validation', 'commitTreeEntryLoads.mjs', 3, 3],
+    ['gate-entry-loads', 'validation', 'commitTreeEntryLoads.mjs', 2, 3],
     ['gate-package-typecheck', 'compilation', 'commitPackageTypecheck.mjs', 6, 17],
     ['gate-declaration-comparison', 'compilation', 'commitGateTypecheck.mjs', 6, 17],
     ['gate-final-recheck', 'compilation', 'commitGateTypecheck.mjs', 6, 17],
@@ -869,7 +869,7 @@ test('commit-gate jobs use cold admission charges and learn under their own clas
 
       const next = await (await acquire(root, floorKiB, t, identity)).admit();
       assert.equal(next.admitted.floorKiB, 2.5 * gib);
-      assert.equal(next.admitted.cpuCores, 8);
+      assert.equal(next.admitted.cpuCores, className === 'gate-entry-loads' ? coldCores : 8);
     });
   }
 });
@@ -3627,5 +3627,33 @@ test('a retained compilation acquire uses the current cold floor', linux, async 
   assert.equal(sampled.activeCount, 1, 'the reconnecting waiter fits the successor’s available memory');
   const granted = await retained.admit();
   assert.equal(granted.reserved.floorKiB, 17 * gib);
+  await granted.release();
+});
+
+test('a waiting commit entry load keeps two CPU cores for the next gate grant', linux, async t => {
+  const { root } = await fixture(t, { cpuCores: 6 });
+  const cpu = await observedCpuRequests(root, [1, 2, 3]);
+  const first = await (await acquire(root, 1, t, cpu.get(3))).admit();
+  const second = await (await acquire(root, 1, t, cpu.get(2))).admit();
+  const gate = await acquire(root, 1, t, { resourceClass: 'gate-entry-loads',
+    cpuCost: HEAVYWEIGHT_COMMAND_RESOURCES['gate-entry-loads'].cpuCores });
+  await requestAdmissionSample(root);
+  const ordinary = await acquire(root, 1, t, { ...cpu.get(1), noWait: true });
+  const response = await ordinary.next();
+  assert.equal(response.reason, 'HSTACK_CPU_BUSY');
+  await first.release();
+  const granted = await gate.admit();
+  const small = await (await acquire(root, 1, t, cpu.get(1))).admit();
+  await small.release();
+  await granted.release();
+  await second.release();
+});
+
+test('commit entry uses its two charged cores under outside CPU pressure', linux, async t => {
+  const { root } = await fixture(t, { cpuCores: 6, readCpuPressure: () => 6 });
+  const gate = await acquire(root, 1, t, { resourceClass: 'gate-entry-loads',
+    cpuCost: HEAVYWEIGHT_COMMAND_RESOURCES['gate-entry-loads'].cpuCores });
+  const granted = await gate.admit();
+  assert.equal(granted.admitted.cpuCores, 2);
   await granted.release();
 });

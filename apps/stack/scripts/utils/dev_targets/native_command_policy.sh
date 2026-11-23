@@ -16,7 +16,7 @@ heavyweight_cpu_cores() {
     focused-validation-ui) heavyweight_cpu_cost=1 ;;
     focused-validation-cli) heavyweight_cpu_cost=1 ;;
     entry-loads) heavyweight_cpu_cost=3 ;;
-    gate-entry-loads) heavyweight_cpu_cost=3 ;;
+    gate-entry-loads) heavyweight_cpu_cost=2 ;;
     native-source-test) heavyweight_cpu_cost=1 ;;
     native-custody) heavyweight_cpu_cost=1 ;;
     source-asset) heavyweight_cpu_cost=1 ;;

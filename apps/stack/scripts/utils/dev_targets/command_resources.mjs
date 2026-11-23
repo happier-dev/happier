@@ -59,6 +59,7 @@ const COMPILATION_COLD_MEMORY_KIB = Math.ceil(11_364_896 * 1.5 / (1024 * 1024)) 
 const SINGLE_THREADED_TYPESCRIPT_CPU_CORES = 2;
 const TYPESCRIPT_CPU_CORES = 6;
 const ENTRY_LOAD_CPU_CORES = 3;
+const COMMIT_ENTRY_CPU_CORES = 2;
 export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // Finite daemon Plugin UI preparation uses the destination worker grant.
   // The cold core count also bounds the payload during broker succession.
@@ -86,7 +87,7 @@ export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // validation-floor-sizing-1104/measurements.json; round up without margin.
   'entry-loads': { memoryKiB: ENTRY_LOAD_MEMORY_KIB, cpuCores: ENTRY_LOAD_CPU_CORES, diskClass: 'validation' },
   // The gate uses the entry-load envelope and learns its exact-tree identity separately.
-  'gate-entry-loads': { memoryKiB: ENTRY_LOAD_MEMORY_KIB, cpuCores: ENTRY_LOAD_CPU_CORES, diskClass: 'validation' },
+  'gate-entry-loads': { memoryKiB: ENTRY_LOAD_MEMORY_KIB, cpuCores: COMMIT_ENTRY_CPU_CORES, diskClass: 'validation' },
   // Fresh Linux source-test processes peaked at 103,824 KiB;
   // SYSTEMIC-DELETE/step10-native-source-test-measurement.log. Only one
   // proven built-in/source-only file receives this class;

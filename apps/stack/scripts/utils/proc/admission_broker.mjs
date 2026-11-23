@@ -89,6 +89,9 @@ function preparationStepKey(item) {
   const paths = item.locks.map(lock => lock.path).sort();
   return JSON.stringify([item.resourceClass ?? item.className, paths.length ? paths : identityKey(item) ?? item.arrivalOrder]);
 }
+const COMMIT_ENTRY_CPU_SHARE = HEAVYWEIGHT_COMMAND_RESOURCES['gate-entry-loads'].cpuCores;
+const isCommitEntry = item => (item.resourceClass ?? item.className) === 'gate-entry-loads';
+
 function headPriorityRank(request) {
   const classPriority = HEAVYWEIGHT_COMMAND_RESOURCES[request.resourceClass ?? request.className]?.headPriority;
   if (classPriority !== undefined) return classPriority;
@@ -395,6 +398,7 @@ export function createAdmissionBroker({ root,
     const resourceClass = item.resourceClass ?? item.className;
     const workerGrant = usesElasticAdmissionWorkers(resourceClass);
     item.workerCeiling = workerCeiling(item);
+    if (isCommitEntry(item)) item.workerCeiling = Math.min(totalCpuCores, COMMIT_ENTRY_CPU_SHARE);
     const sourceWebExport = resourceClass === SOURCE_WEB_EXPORT_ADMISSION_CLASS;
     const ceiling = Math.min(totalCpuCores, item.workerCeiling,
       sourceWebExport ? SOURCE_WEB_EXPORT_MEMORY.parallelThreads : totalCpuCores);
@@ -1087,7 +1091,8 @@ export function createAdmissionBroker({ root,
     // A capacity-only wake is cheap. Before it can offer work, refresh memory
     // if the arrival or CPU-blocked request skipped its normal observation.
     if (!memoryObserved && (canRefreshForException || waiting.some(item => !item.slot && !item.blocked
-      && (item === newArrival || item.waitingForCpu) && minimumCpuCores(item) <= initialBudget.unreservedCpuCores))) {
+      && (item === newArrival || item.waitingForCpu)
+      && minimumCpuCores(item) <= initialBudget.unreservedCpuCores + (isCommitEntry(item) ? COMMIT_ENTRY_CPU_SHARE : 0)))) {
       await observe();
       cpu = readCpuForOffer();
       orderWaiting();
@@ -1103,7 +1108,7 @@ export function createAdmissionBroker({ root,
     let lendableKiB = 0;
     let headStartAt;
     const pressureHead = cpuPressureHead(now);
-    const hasExemption = hasCpuPressureExemption();
+    let hasExemption = hasCpuPressureExemption();
     // Once the aged head fits memory, the next CPU release belongs to it.
     // The host-bound backfill shortcut must also honor that order.
     const protectPressureHead = pressureHead && overdue(pressureHead, now)
@@ -1121,8 +1126,18 @@ export function createAdmissionBroker({ root,
       ? waiting.filter(item => item.className === 'source-bundle' && canReserveHead(item, budget.memoryWithinBoundKiB, now)
         && item.floorKiB <= Math.min(reservation.memoryKiB, availableMemoryKiB)
         && minimumCpuCores(item) <= availableCpuCores) : []);
-    const ordered = hostBoundFirst.size
+    const serviceOrder = hostBoundFirst.size
       ? [...hostBoundFirst, ...waiting.filter(item => !hostBoundFirst.has(item))] : [...waiting];
+    // Keep a small share for one memory-ready commit entry load while it
+    // waits for enough CPU for the normal grant. Never revoke live grants.
+    const commitEntry = [...slots.values()].some(isCommitEntry) ? undefined : serviceOrder.find(item =>
+      isCommitEntry(item) && !item.slot && !item.blocked && !item.socket.destroyed && !item.noWait
+      && hostMemoryFloorFits(item) && (item.floorOptions?.at(-1).floorKiB ?? item.floorKiB) <= availableMemoryKiB
+      && minimumCpuCores(item) <= totalCpuCores);
+    const commitEntryShare = item => commitEntry && item !== commitEntry && !commitEntry.slot
+      && !commitEntry.blocked && !commitEntry.socket.destroyed
+      ? Math.min(COMMIT_ENTRY_CPU_SHARE, minimumCpuCores(commitEntry)) : 0;
+    const ordered = commitEntry ? [commitEntry, ...serviceOrder.filter(item => item !== commitEntry)] : serviceOrder;
     const assignHead = item => {
       head = item;
       reserveHead(head);
@@ -1159,18 +1174,22 @@ export function createAdmissionBroker({ root,
         if (item.noWait) refuse(item, backfillBlockedBy);
         continue;
       }
-      const offerCpuCores = item === pressureHead && !hasExemption
-        ? Math.max(availableCpuCores, cpuCoresWithoutPressure) : availableCpuCores;
+      const share = commitEntryShare(item);
+      const ordinaryCpuCores = Math.max(0, availableCpuCores - share);
+      const offerCpuCores = !hasExemption && item === commitEntry
+        ? Math.min(cpuCoresWithoutPressure, availableCpuCores + COMMIT_ENTRY_CPU_SHARE)
+        : item === pressureHead && !hasExemption
+          ? Math.max(ordinaryCpuCores, cpuCoresWithoutPressure - share) : ordinaryCpuCores;
       const fittingFor = cpuCores => item.floorOptions?.find(option => option.floorKiB <= availableMemoryKiB
         && accountedCpuCores(item, option.workers) <= cpuCores);
-      const fitting = fittingFor(availableCpuCores)
-        ?? (offerCpuCores > availableCpuCores ? fittingFor(offerCpuCores) : undefined);
+      const fitting = fittingFor(ordinaryCpuCores)
+        ?? (offerCpuCores > ordinaryCpuCores ? fittingFor(offerCpuCores) : undefined);
       // A job projected to finish before the head can start may borrow the
       // head's pledged memory; its release returns it before it is needed.
       const borrowKiB = !item.floorOptions && headStartAt !== undefined
         && item.p99DurationMs > 0 && Date.now() + item.p99DurationMs <= headStartAt
         && item.floorKiB > availableMemoryKiB && item.floorKiB <= availableMemoryKiB + lendableKiB
-        && accountedCpuCores(item) <= availableCpuCores ? item.floorKiB - availableMemoryKiB : 0;
+        && accountedCpuCores(item) <= ordinaryCpuCores ? item.floorKiB - availableMemoryKiB : 0;
       // Announced to the waiter (its client logs it), so a backfill is visible in the run's log.
       const backfill = borrowKiB > 0 ? { borrowedKiB: borrowKiB, headStartInMs: Math.max(0, headStartAt - Date.now()) } : undefined;
       if (backfill) backfillCount += 1;
@@ -1195,7 +1214,7 @@ export function createAdmissionBroker({ root,
           if (resources.publicationBlocked) {
             item.blocked = true;
             item.resourceSnapshot = resources.snapshot;
-          } else {
+          } else if (item !== commitEntry || item === serviceOrder[0] && protectPressureHead) {
             if (!foundCapacityWaiter) {
               foundCapacityWaiter = true;
               if (pastLearnedDuration(item, now)) {
@@ -1222,6 +1241,7 @@ export function createAdmissionBroker({ root,
       if (!resources) continue;
       const slotId = randomUUID();
       const pressureExempt = cpuCores > availableCpuCores;
+      hasExemption ||= pressureExempt;
       const address = slotAddress(root, item.pid, floorKiB, slotId, cpuCores, pressureExempt);
       const key = identityKey(item);
       const slot = { address, pid: item.pid, className: item.className, resourceClass: item.resourceClass, projects: item.projects, floorKiB, cpuCores, workers: cpuCores, control: item.socket,
