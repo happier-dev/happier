@@ -13,7 +13,7 @@ import {
   FeaturesResponseSchema, type ActionsSettingsV1,
 } from '@happier-dev/protocol';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions';
-import { ExternalActionActionIdV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionActionIdV1Schema, projectExternalActionHttpError } from '@happier-dev/protocol/actions/externalActionApi';
 import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { UiActionDispatchRequestV1Schema } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { createClientActionReverseDispatcher } from '@/session/actions/clientActionReverseDispatch';
@@ -42,7 +42,10 @@ import type { Fastify } from '../../../../server/sources/app/api/types';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { stubUndiciFetch } from '@/testkit/http/stubUndiciFetch';
 import { createAccountEncryptionCurrentnessFixture, createSessionNotificationContextFixture, createCompactSessionListQueryResponseFixture, createSessionReadBatchResponseFixture } from '@/testkit/backends/sessionFixtures';
-import { createExternalActionAuthorizedRequestHeaders, prepareExternalActionRequesterAccountAuthorization, resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
+import { createExternalActionAuthorizedRequestHeaders, prepareExternalActionRequesterAccountAuthorizationResult, resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
+import { projectSessionActionIssuerRefusal } from '@/api/externalActionIssuerRefusal';
+import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { createSessionListActionDeps } from '@/session/actions/sessionListActionDependency';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { createSessionFollowSourceKeyPreparationAfterSet } from '@/agent/runtime/session/follow/createSessionFollowSourceKeyPreparationAfterSet';
@@ -313,8 +316,9 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
   const credentials = { token, encryption: null };
   const scopeKey = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => resolveAccountSettingsScopeKey(credentials));
   let rawSettings: Readonly<Record<string, unknown>> = {};
-  let authorizationStatus: 401 | 403 | 503 | undefined;
-  let cancelAuthorization: (() => void) | undefined;
+  let authorizationStatus: 401 | 403 | 409 | 503 | undefined;
+  let authorizationBody: unknown;
+  let onAuthorizationMint: (() => void) | undefined;
   let settingsVersion = 0;
   const publishSettings = () => setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse(rawSettings), rawSettings, scopeKey,
     settingsVersion: ++settingsVersion, loadedAtMs: 1, settingsSecretsReadKeys: [], promptLibraryCatalog: { status: 'loading' } });
@@ -326,8 +330,10 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
       expect(request.headers.authorization).toBe(`Bearer ${token}`);
     }
     if (request.url.endsWith('/execution-authorization') && authorizationStatus) {
-      cancelAuthorization?.();
-      return reply.code(authorizationStatus).send({ error: 'private-error-body' });
+      const status = authorizationStatus;
+      const body = authorizationBody ?? { error: 'private-error-body' };
+      onAuthorizationMint?.();
+      return reply.code(status).send(body);
     }
   });
   app.decorate('resolveCurrentSessionMachine', async () => storage.state.bound ? storage.state.machineId : null);
@@ -457,26 +463,33 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
     return { success: true, archivedAt: null };
   });
   const restore = installAxiosFastifyAdapter({ app, origin: serverHttpBaseUrl });
-  const prepare = async (operation: Pick<Operation, 'actionId' | 'input' | 'requestId'>,
-    sessionActionOrigin: Parameters<typeof prepareExternalActionRequesterAccountAuthorization>[0]['sessionActionOrigin']) => {
-    const target = { kind: 'machine' as const, machineId: storage.state.machineId };
-    const authorization = await prepareExternalActionRequesterAccountAuthorization({ ...operation,
+  const target = { kind: 'machine' as const, machineId: storage.state.machineId };
+  const prepareResult = (operation: Pick<Operation, 'actionId' | 'input' | 'requestId'>,
+    sessionActionOrigin: Parameters<typeof prepareExternalActionRequesterAccountAuthorizationResult>[0]['sessionActionOrigin'],
+    signal?: AbortSignal) => prepareExternalActionRequesterAccountAuthorizationResult({ ...operation,
       target, machineId: storage.state.machineId, sourceMachineId: storage.state.machineId,
       accountId: storage.account.id, accountEncryptionMode: 'plain', tokenEpochHint: 1, token,
       serverId, serverIdentityId: storage.state.homeId, serverHttpBaseUrl,
-      installationId: storage.state.installationId, privateKey: installation.secretKey, sessionActionOrigin });
-    if (!authorization) return null;
-    ExternalActionExecutionAuthorizationV1Schema.parse(authorization);
-    return { authorization, target };
+      installationId: storage.state.installationId, privateKey: installation.secretKey, sessionActionOrigin,
+      ...(signal ? { signal } : {}) });
+  const prepare = async (...args: Parameters<typeof prepareResult>) => {
+    const result = await prepareResult(...args);
+    if ('ok' in result) return null;
+    ExternalActionExecutionAuthorizationV1Schema.parse(result.authorization);
+    return { authorization: result.authorization, target };
   };
   let sessionActionRpcTransport: SessionActionRpcTransport | undefined;
   let resolveServerFeaturesSnapshot: Parameters<typeof createCliActionExecutor>[0]['resolveServerFeaturesSnapshot'];
   const execute = createDaemonSessionAccountActionExecutor({ serverId, serverHttpBaseUrl, token, credentials,
     ...(accountMachine ? { machineId: accountMachine.sessionMachineId } : {}),
     ...(accountRelease ? {} : { machineId: storage.state.machineId,
-      prepareExternalActionAuthorization: ({ operation, sessionActionOrigin }: Parameters<NonNullable<Parameters<typeof createDaemonSessionAccountActionExecutor>[0]['prepareExternalActionAuthorization']>>[0]) =>
+      prepareExternalActionAuthorization: async ({ operation, sessionActionOrigin, authority }: Parameters<NonNullable<Parameters<typeof createDaemonSessionAccountActionExecutor>[0]['prepareExternalActionAuthorization']>>[0]) => {
         // The production preparer leaves private client Actions on their existing Session channel.
-        ExternalActionActionIdV1Schema.safeParse(operation.actionId).success ? prepare(operation, sessionActionOrigin) : Promise.resolve(undefined) }),
+        if (!ExternalActionActionIdV1Schema.safeParse(operation.actionId).success) return undefined;
+        const result = await prepareResult(operation, sessionActionOrigin, authority.signal);
+        return 'ok' in result ? projectSessionActionIssuerRefusal(result, storage.state.machineId, authority.signal)
+          : { authorization: result.authorization, target };
+      } }),
     createExecutor: (_depth, _current, _post, options) => {
       const accountPorts = createAccountServerActionDeps({ token, credentials, serverId,
         serverIdentityId: storage.state.homeId, serverHttpBaseUrl,
@@ -515,8 +528,10 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
   return { credentials, app, observations, members, prepare, execute, operation, actionsSettingsProvider, lifecycleEffects, authoredAccount,
     setServerFeatureReader: (read: NonNullable<typeof resolveServerFeaturesSnapshot>) => { resolveServerFeaturesSnapshot = read; },
     setSessionActionRpcTransport: (transport: SessionActionRpcTransport) => { sessionActionRpcTransport = transport; },
-    failAuthorization: (status?: 401 | 403 | 503, cancel?: () => void) => {
-      authorizationStatus = status; cancelAuthorization = cancel;
+    failAuthorization: (status?: 401 | 403 | 409 | 503, onMint?: () => void, body?: unknown) => {
+      authorizationStatus = status;
+      onAuthorizationMint = onMint;
+      authorizationBody = body;
     },
     setActionsSettings: (actionsSettingsV1: ActionsSettingsV1) => { rawSettings = { actionsSettingsV1 }; publishSettings(); },
     setRawSettings: (value: Readonly<Record<string, unknown>>) => { rawSettings = value; publishSettings(); },
@@ -1572,19 +1587,64 @@ it('executes an authored Account Action through restricted Agent capability cust
 
 it.each([503, 401, 403] as const)('keeps Home mint availability distinct from authorization denial (%s), then recovers', async status => {
   const f = await fixture();
+  f.app.get(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, { preHandler: f.app.authenticate },
+    async () => ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }));
   f.markInactive();
   try {
     f.setActionsSettings(normalizeActionsSettingsV1({ v: 1, actions: { 'session.archive': { disabledSurfaces: [] } } }));
     f.failAuthorization(status);
     const outcome = await f.execute(f.operation('session.archive', { sessionId: childId }), { sessionId, isCurrent: async () => true });
     expect(outcome).toMatchObject(status === 503
-      ? { ok: false, errorCode: 'project_requester_home_unavailable' }
-      : { ok: false, errorCode: 'target_unavailable', details: { reason: 'external_authorization_refused' } });
+      ? { ok: false, errorCode: 'project_requester_home_unavailable',
+        failureCause: { nativeErrorReason: 'server_unreachable', httpStatus: null } }
+      : { ok: false, errorCode: 'invalid_token', details: { reason: 'external_authorization_refused',
+        phase: 'session.authorization.mint', requiredFact: 'home_minted_authorization' } });
     expect(ActionExecuteFailureSchema.parse(outcome)).toEqual(outcome);
     expect(f.lifecycleEffects).toEqual([]);
     f.failAuthorization();
-    expect(await f.execute(f.operation('session.archive', { sessionId: childId }), { sessionId, isCurrent: async () => true }))
-      .toMatchObject({ ok: true });
+    const recovered = await f.execute(f.operation('session.archive', { sessionId: childId }), { sessionId, isCurrent: async () => true });
+    expect(recovered, recovered.ok ? undefined : JSON.stringify({
+      errorCode: recovered.errorCode, failureCause: recovered.failureCause,
+    })).toMatchObject({ ok: true });
+  } finally { await f.close(); }
+});
+
+it.each([
+  { conflictFirst: false, expectedRequests: 1, scenario: 'settles an explicit Browser Session mint refusal after exactly one request' },
+  { conflictFirst: true, expectedRequests: 2, scenario: 'remints after a generic 409 without a typed Home refusal' },
+])('$scenario', async ({ conflictFirst, expectedRequests }) => {
+  const f = await fixture();
+  const controller = new AbortController();
+  const actionId = 'browser.recording.start';
+  const operation = f.operation(actionId, {
+    browserSessionId: 'browser-session', viewId: 'view', profileId: 'profile',
+    targetKind: 'externalUrl', adapterKind: 'chromiumSidecar', renderEngineKind: 'electronWebContentsView',
+    captureKind: 'cdpScreencast', fidelity: 'cdp', navigationGeneration: 1,
+    mimeType: 'video/webm', retentionClass: 'preSend',
+  });
+  const refusal = projectExternalActionHttpError('target_unavailable', operation.requestId);
+  const settings = normalizeActionsSettingsV1({ v: 1, actions: { [actionId]: { disabledSurfaces: [] } } });
+  const bridge = createActionToolExecutorBridge({
+    actionsSettings: settings,
+    executor: { execute: (id, input, context) =>
+      f.execute(f.operation(id, StrictJsonValueSchema.parse(input)), { sessionId,
+        ...(context.signal ? { signal: context.signal } : {}), isCurrent: async () => true }) },
+  });
+  let mints = 0;
+  try {
+    f.setActionsSettings(settings);
+    // Abort an unexpected extra mint so the regression can finish even with lifetime retries.
+    const onTypedMint = () => { if (++mints > expectedRequests) controller.abort(); };
+    if (conflictFirst) f.failAuthorization(409, () => {
+      mints++;
+      f.failAuthorization(409, onTypedMint, refusal.payload);
+    });
+    else f.failAuthorization(409, onTypedMint, refusal.payload);
+    const outcome = await bridge.executeActionByToolName('action_execute', { actionId, input: operation.input },
+      sessionId, { signal: controller.signal });
+    const mintPath = bindExternalActionExecutionAuthorizationHttpPathV1(actionId);
+    expect.soft(f.observations.filter(row => row.path === mintPath)).toHaveLength(expectedRequests);
+    expect(outcome).toMatchObject({ ok: false, errorCode: 'target_unavailable', requestId: operation.requestId });
   } finally { await f.close(); }
 });
 

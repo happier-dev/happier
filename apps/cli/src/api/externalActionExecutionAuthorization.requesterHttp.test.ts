@@ -1165,20 +1165,25 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     expect(post).toHaveBeenCalledTimes(2);
   });
 
-  it.each(['unsupported', 'transient'] as const)('settles a permanent Home mint refusal while retaining transient conflicts (%s)', async kind => {
+  it.each(['unsupported', 'target_unavailable', 'generic'] as const)('settles a typed Home mint refusal while retaining generic conflicts (%s)', async kind => {
     const failureCause = { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'unsupported_operation', httpStatus: null };
-    vi.spyOn(axios, 'post').mockResolvedValue({ status: 409, data: {
-      error: 'invalid_request', code: 'target_unavailable', requestId: envelope.requestId,
-      ...(kind === 'unsupported' ? { failureCause } : {}),
-    } });
+    vi.spyOn(axios, 'post').mockResolvedValue({
+      status: 409,
+      data: kind === 'generic' ? { error: 'generation_conflict' } : {
+        error: 'invalid_request', code: 'target_unavailable', requestId: envelope.requestId,
+        ...(kind === 'unsupported' ? { failureCause } : {}),
+      },
+    });
     const outcome = await executionAuthorizationOwner.mintExternalActionExecutionAuthorization({
       actionId: 'ui.current_context.read', envelope: { ...envelope, input: {} }, machineId: target.machineId,
       pat: accountToken, serverHttpBaseUrl: 'https://home.test',
     });
     if (kind === 'unsupported') {
       expect(outcome).toEqual({ ok: false, code: 'target_unavailable', requestId: envelope.requestId, failureCause });
+    } else if (kind === 'target_unavailable') {
+      expect(outcome).toEqual({ ok: false, code: 'target_unavailable', requestId: envelope.requestId });
     } else {
-      expect(outcome).toEqual({ ok: false, code: 'target_unavailable', requestId: envelope.requestId, retryable: true });
+      expect(outcome).toEqual({ ok: false, code: 'auth_unavailable', retryable: true });
     }
   });
 

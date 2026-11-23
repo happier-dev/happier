@@ -1,4 +1,4 @@
-import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { parseActionExecuteFailure, readActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PluginError, isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { SignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
@@ -64,12 +64,29 @@ export function projectRequesterHomeReadFailure(error: unknown): unknown {
   const unavailableActionRead = error !== null && typeof error === 'object'
     && 'ok' in error && error.ok === false
     && 'errorCode' in error && error.errorCode === 'server_unreachable';
-  if (unavailableActionRead || classifyServerEndpointError(error).retryable) {
-    return new PluginError({ code: 'project_requester_home_unavailable',
-      retryable: true,
-      message: 'Requester Home is temporarily unavailable. Retry when it is available.' });
+  const classification = classifyServerEndpointError(error);
+  if (unavailableActionRead || classification.retryable) {
+    const code = 'project_requester_home_unavailable';
+    return new PluginError({ code, retryable: true,
+      message: 'Requester Home is temporarily unavailable. Retry when it is available.',
+      failureCause: failure?.failureCause ?? {
+        phase: 'requester.home_read', errorClass: 'Error', errorCode: code,
+        httpStatus: classification.statusCode ?? null,
+        nativeErrorReason: unavailableActionRead && classification.kind === 'protocol_error'
+          ? 'server_unreachable' : classification.kind,
+      } });
   }
   return undefined;
+}
+
+/** Project the authored cause through the existing Action failure envelope. */
+export function readRequesterHomeActionFailure(error: unknown): (ActionExecuteFailure & Readonly<{
+  errorCode: 'project_requester_home_unavailable';
+}>) | undefined {
+  if (!isPluginError(error) || error.code !== 'project_requester_home_unavailable') return undefined;
+  const cause = error.data.failureCause;
+  return { ok: false, errorCode: error.code, error: error.code,
+    ...(cause === undefined ? {} : { failureCause: readActionFailureCauseV1(cause) }) };
 }
 
 export function rethrowRequesterHomeReadFailure(error: unknown): void {

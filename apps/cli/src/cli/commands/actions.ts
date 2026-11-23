@@ -634,6 +634,11 @@ export async function handleActionsCommand(
         ? { automationNotices: mapped.failure.automationNotices } : {}) }, { exitCode });
     else {
       console.error(fail(mapped.failure.errorMessage ?? mapped.failure.errorCode));
+      const cause = mapped.failure.failureCause;
+      if (mapped.failure.errorCode === 'project_requester_home_unavailable'
+        && cause && 'nativeErrorReason' in cause && cause.nativeErrorReason) {
+        console.error(`Requester Home: ${cause.nativeErrorReason}${cause.httpStatus === null ? '' : ` (HTTP ${cause.httpStatus})`}`);
+      }
       if ('candidates' in structured && Array.isArray(structured.candidates)) {
         console.error(`Candidates: ${structured.candidates.join(', ')}`);
       }

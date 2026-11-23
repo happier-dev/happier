@@ -16,6 +16,7 @@ import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/boot
 import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { afterEach, beforeEach, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
+import { rethrowRequesterHomeReadFailure } from '@/daemon/sessionEncryption/requesterCurrentness';
 import { ApprovalExecutionV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { createRpcCallError } from '@happier-dev/protocol/rpc/errors';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
@@ -174,7 +175,7 @@ it('prints a failed spawn with its typed Provider refusal through the real CLI A
   });
 });
 
-it.each(['native_refusal', 'raw_rpc'] as const)('prints %s failureCause and the owning effect fact after real approval settlement and public read', async transport => {
+it.each(['native_refusal', 'raw_rpc', 'requester_home', 'requester_home_text'] as const)('prints %s failureCause and the owning effect fact after real approval settlement and public read', async transport => {
   await withConfiguredDaemonTestHome({ prefix: 'cli-refusal-projection-' }, async () => {
   const sockets = await createRequesterCurrentnessSocketHarness();
   sockets.server.on('connection', socket => {
@@ -219,8 +220,10 @@ it.each(['native_refusal', 'raw_rpc'] as const)('prints %s failureCause and the 
     ['account.apiTokens.revoke']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) },
   } } });
   let executor: ReturnType<typeof createCliActionExecutor> | undefined;
+  const requesterHome = transport === 'requester_home' || transport === 'requester_home_text';
+  const json = transport !== 'requester_home_text';
   await handleActionsCommand(['invoke', 'account.apiTokens.revoke', '--input-json',
-    JSON.stringify({ tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d' }), '--yes', '--json'], {
+    JSON.stringify({ tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d' }), '--yes', ...(json ? ['--json'] : [])], {
     readCredentialsFn: async () => credentials,
     createExecutorFn: params => {
       executor = createCliActionExecutor({ ...params, token: credentials.token, credentials,
@@ -236,6 +239,9 @@ it.each(['native_refusal', 'raw_rpc'] as const)('prints %s failureCause and the 
         // Artifact HTTP and native RPC are the substituted external boundaries.
         accountServerActionDeps: {
     accountApiTokensRevokeAction: async () => {
+      if (requesterHome) {
+        rethrowRequesterHomeReadFailure({ code: 'ETIMEDOUT' });
+      }
       const response = await rpc.handleRequest({ method: 'machine:demo.effect', params: { privateOperand: 'never-copy' },
         callerInputAuthorization: JSON.parse('{"privateCredential":"never-copy"}') });
       if (!response || typeof response !== 'object' || !('error' in response) || typeof response.error !== 'string') {
@@ -251,18 +257,24 @@ it.each(['native_refusal', 'raw_rpc'] as const)('prints %s failureCause and the 
       return { ...executor, resolveSessionTarget: async () => { throw new Error('Unexpected Session lookup'); } };
     },
   });
-  const failureCause = { phase: 'rpc.admission.caller_input_authorization', errorClass: 'UnknownThrownValue',
-    errorCode: 'RPC_FORBIDDEN', httpStatus: null };
+  const errorCode = requesterHome ? 'project_requester_home_unavailable' : 'RPC_FORBIDDEN';
+  const failureCause = requesterHome
+    ? { nativeErrorReason: 'timeout', httpStatus: null }
+    : { phase: 'rpc.admission.caller_input_authorization', errorClass: 'UnknownThrownValue', errorCode, httpStatus: null };
   expect(effects).toBe(0);
   expect(notices.mock.calls.flat().join(' '), output).toContain('approval');
-  const effectAttempted = false;
+  const effect = requesterHome ? {} : { effectAttempted: false };
   expect(createdArtifactIds).toHaveLength(1);
   const artifactId = createdArtifactIds[0]!;
   if (!executor) throw new Error('CLI executor was not composed');
-  expect(JSON.parse(output), output).toMatchObject({ ok: false,
-    error: { code: 'RPC_FORBIDDEN', failureCause, effectAttempted } });
+  if (json) {
+    expect(JSON.parse(output), output).toMatchObject({ ok: false,
+      error: { code: errorCode, failureCause, ...effect } });
+  } else {
+    expect(notices.mock.calls.flat().join(' ')).toContain('timeout');
+  }
   expect(await executor.execute('approval.request.get', { artifactId }, { surface: 'cli', authority: 'present_user', serverId: 'home' }))
-    .toMatchObject({ ok: true, result: { request: { status: 'failed', execution: { ok: false, errorCode: 'RPC_FORBIDDEN', failureCause, effectAttempted } } } });
+    .toMatchObject({ ok: true, result: { request: { status: 'failed', execution: { ok: false, errorCode, failureCause, ...effect } } } });
   expect(output).not.toContain('never-copy');
   expect(process.exitCode).toBe(1);
   } finally { await sockets.close(); }

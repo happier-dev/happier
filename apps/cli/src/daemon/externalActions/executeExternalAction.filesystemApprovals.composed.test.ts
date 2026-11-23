@@ -888,11 +888,16 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
         return get(url, config);
       });
       const decided = await h.decide('approve');
+      const failureCause = { phase: 'requester.home_read', errorClass: 'Error',
+        errorCode: 'project_requester_home_unavailable', nativeErrorReason: 'server_error', httpStatus: 503 };
+      expect(profiles).toBeGreaterThanOrEqual(2);
       expect(decided).toMatchObject({ ok: true, result: { status: 'failed', execution: {
-        ok: false, errorCode: 'project_requester_home_unavailable',
+        ok: false, errorCode: 'project_requester_home_unavailable', failureCause,
       } } });
       const approval = await h.approval();
-      expect(approval).toMatchObject({ status: 'failed', execution: { errorCode: 'project_requester_home_unavailable' } });
+      expect(approval).toMatchObject({ status: 'failed', execution: {
+        errorCode: 'project_requester_home_unavailable', failureCause,
+      } });
       expect(getActionSpec('approval.request.decide').outputSchema!.safeParse(decided.ok ? decided.result : null).success).toBe(true);
       expect(service.snapshot().state).toBe('running');
       expect(h.copies()).toBe(0);
@@ -913,7 +918,7 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       const decided = await h.decide('approve');
       expect(decided, JSON.stringify(decided)).toMatchObject({ ok: false, errorCode: 'approval_execution_outcome_unknown',
         details: { reasonCode: 'project_requester_home_unavailable' },
-        failureCause: { errorCode: 'project_requester_home_unavailable' } });
+        failureCause: { errorCode: 'project_requester_home_unavailable', nativeErrorReason: 'server_error', httpStatus: 503 } });
       expect(await h.approval()).toMatchObject({ status: 'approved' });
       expect((await h.approval()).execution).toBeUndefined();
       expect(service.snapshot().state).toBe('running');

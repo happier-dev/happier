@@ -22,13 +22,14 @@ import { projectServiceMoveStatusInput, projectServiceMoveSnapshotInput, project
     projectServiceMoveInspectionInput, projectServiceMoveStartInput, projectServiceMoveChildRole } from './projectServiceMoveChildren';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
-import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
 
 type CanonicalChildAction = NonNullable<RuntimeActionExecuteArgs['executeCanonicalAction']>;
 
-function refusal(reasonCode: string, error?: string) {
-    return { status: 'refused' as const, reasonCode, ...(error ? { error } : {}) };
+function refusal(reasonCode: string, error?: string, failureCause?: ActionFailureCauseV1) {
+    return { status: 'refused' as const, reasonCode, ...(error ? { error } : {}),
+        ...(failureCause ? { failureCause } : {}) };
 }
 
 /** Production composition for the source-daemon relocation coordinator. */
@@ -88,7 +89,7 @@ export function createProjectServiceRelocationRoute(input: Readonly<{
             } catch (error) {
                 signal?.throwIfAborted();
                 const failure = await projectActionOperationFailure(error, 'workspace_sync_source_unavailable');
-                return refusal(failure.errorCode, failure.error);
+                return refusal(failure.errorCode, failure.error, failure.failureCause);
             }
         };
         const coordinator = createProjectServiceRelocation({
@@ -112,7 +113,7 @@ export function createProjectServiceRelocationRoute(input: Readonly<{
                             && ref.machineId === target.machineId && ref.id === target.workspaceId);
                         if (!workspace) return refusal('service_inputs_changed');
                         const result = await execute('localServices.launcher.snapshot', projectServiceMoveSnapshotInput(request, workspace));
-                        if (!result.ok) return refusal(result.errorCode ?? 'service_observation_unavailable');
+                        if (!result.ok) return refusal(result.errorCode ?? 'service_observation_unavailable', result.error, result.failureCause);
                         const snapshot = LocalServiceLauncherSnapshotV1Schema.parse(result.result);
                         if (snapshot.machineId !== target.machineId) return refusal('service_inputs_changed');
                         const observed = snapshot.targets.find(candidate => candidate.sourceClass?.kind === 'managed_service'
@@ -166,7 +167,7 @@ export function createProjectServiceRelocationRoute(input: Readonly<{
                 if (!execute) return refusal('project_worker_status_unavailable');
                 const result = await execute('projects.worker.status', projectServiceMoveStatusInput(request, destination.machineId));
                 signal?.throwIfAborted();
-                if (!result.ok) return refusal(result.errorCode ?? 'project_worker_status_unavailable', result.error);
+                if (!result.ok) return refusal(result.errorCode ?? 'project_worker_status_unavailable', result.error, result.failureCause);
                 const status = ProjectWorkerStatusResultV1Schema.safeParse(result.result);
                 return status.success && status.data.eligible
                     && status.data.candidate.machineId === destination.machineId
@@ -217,7 +218,7 @@ export function createProjectServiceRelocationRoute(input: Readonly<{
                 // Setup's owner consumes this Move's admitted decision without executing it.
                 const result = await execute('projects.inspect', inspectionInput);
                 signal?.throwIfAborted();
-                if (!result.ok) return refusal(result.errorCode ?? 'project_setup_review_unavailable');
+                if (!result.ok) return refusal(result.errorCode ?? 'project_setup_review_unavailable', result.error, result.failureCause);
                 const inspected = ProjectDefinitionInspectOutputSchema.safeParse(result.result);
                 if (!inspected.success || !inspected.data.setupReview) return refusal('project_setup_review_unavailable');
                 if (inspected.data.definition.document?.status === 'invalid') return refusal('invalid_manifest');

@@ -822,14 +822,17 @@ describe('executeExternalAction', () => {
         return;
       }
       if (rootUnavailable) {
-        expect(result).toEqual({ kind: 'invalid_request', errorCode: 'project_requester_home_unavailable', requestId: binding.requestId });
+        const failureCause = { nativeErrorReason: 'server_error', httpStatus: 503 };
+        expect(result).toMatchObject({ kind: 'invalid_request', errorCode: 'project_requester_home_unavailable',
+          requestId: binding.requestId, failureCause });
         if (result.kind !== 'invalid_request') throw new Error('expected_pre_open_refusal');
         expect(parseExternalActionDaemonDispatchResult(result)).toEqual(result);
-        const httpFailure = projectExternalActionHttpError(result.errorCode, result.requestId);
+        const httpFailure = projectExternalActionHttpError(result.errorCode, result.requestId,
+          undefined, undefined, undefined, undefined, result.failureCause);
         expect(httpFailure.statusCode).toBe(503);
         expect(classifyServerEndpointError({ response: { status: httpFailure.statusCode } }).retryable).toBe(true);
         expect(ExternalActionHttpErrorSchema.parse(httpFailure.payload)).toEqual({ error: 'invalid_request',
-          code: 'project_requester_home_unavailable', requestId: binding.requestId });
+          code: 'project_requester_home_unavailable', requestId: binding.requestId, failureCause: result.failureCause });
         return;
       }
       if (settingsFailure || rootFailure) {

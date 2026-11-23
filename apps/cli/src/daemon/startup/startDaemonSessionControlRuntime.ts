@@ -193,7 +193,7 @@ import { resolveRequesterSessionRuntimeDirectories } from '../sessionEncryption/
 import { assertRequesterSessionAccountContextCurrent, listRequesterSessionCredentialBindings } from "../sessionEncryption/requesterSessionCredentials";
 import { captureOrdinaryRequesterSessionAccountCustodyForHost, readOrdinaryRequesterSessionAccountCustodyForHost, readOrdinaryRequesterSessionAccountOperationContextForHost } from '../sessionEncryption/ordinaryRequesterSessionAccountCustody';
 import { resolveRequesterLaunchAdmissionFailure } from '../lifecycle/requesterWorkAttribution';
-import { captureRequesterCurrentnessRefusal, readRequesterHomeWithinActionLifetime, readRequesterSessionCustodyRefusalCode,
+import { captureRequesterCurrentnessRefusal, readRequesterHomeActionFailure, readRequesterHomeWithinActionLifetime, readRequesterSessionCustodyRefusalCode,
   type RequesterSessionCustodyRefusalCode } from '@/daemon/sessionEncryption/requesterCurrentness';
 import { buildRuntimeAuthUsageLimitRecoveryProjection } from '@/daemon/connectedServices/runtimeAuth/projection/connectedServiceRuntimeAuthRecoveryUsageLimitMetadata';
 import { checkRuntimeAuthUsageLimitRecovery } from '@/daemon/connectedServices/runtimeAuth/checkRuntimeAuthUsageLimitRecovery';
@@ -11980,8 +11980,8 @@ export async function startDaemonSessionControlRuntime(
           return await withSessionAccountHome(requesterRuntime, () => execute(operation, authority));
         } catch (error) {
           if (authority.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
-          if (isPluginError(error) && error.code === 'project_requester_home_unavailable')
-            return { ok: false, errorCode: error.code, error: error.code };
+          const homeFailure = readRequesterHomeActionFailure(error);
+          if (homeFailure) return homeFailure;
           const carriedFailure = readActionFailureEnvelope(error instanceof Error ? error.cause : error);
           if (carriedFailure) return carriedFailure;
           const phase = requesterResolved ? 'session_account.credentialed_factory' : 'session_account.requester_runtime';

@@ -6,7 +6,7 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ActionStartDiagnosticV1 } from '@happier-dev/protocol/actions/executor/actionStartDiagnostics';
 import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
-import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { readRequesterHomeActionFailure } from '@/daemon/sessionEncryption/requesterCurrentness';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { parseActionExecuteFailure, readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { PluginHttpTraceDiagnostic } from '@happier-dev/cli-common/plugins/http';
@@ -212,13 +212,12 @@ export function refuseExternalActionPhase(phase: string, machineId: string | und
   const typedFailure = parseActionExecuteFailure(error);
   const executionFailure: ExternalActionPhaseFailure['executionFailure'] = error instanceof SignedHomeAuthorizationHttpError
     ? { ...error.failure, errorCode: error.code }
-    : isPluginError(error) && error.code === 'project_requester_home_unavailable'
-    ? { ok: false, errorCode: error.code, error: error.code }
-    : typedFailure && (typedFailure.errorCode === 'credential_scope_denied' || typedFailure.errorCode === 'invalid_token')
+    : readRequesterHomeActionFailure(error)
+    ?? (typedFailure && (typedFailure.errorCode === 'credential_scope_denied' || typedFailure.errorCode === 'invalid_token')
       ? { ...typedFailure, errorCode: typedFailure.errorCode }
     : typedFailure?.errorCode === 'internal_error' && typedFailure.failureCause
       ? { ok: false, errorCode: 'internal_error', error: 'internal_error', failureCause: typedFailure.failureCause }
-      : undefined;
+      : undefined);
   const failure = { ok: false as const, phase, errorClass, message,
     ...(executionFailure ? { executionFailure } : {}) };
   // File-only: no terminal output or remote diagnostic payload. Logging cannot

@@ -1,3 +1,4 @@
+import { readRequesterHomeActionFailure } from '@/daemon/sessionEncryption/requesterCurrentness';
 import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import type { ApprovalRequestV2, TargetActionApprovalRequestV1 } from '@happier-dev/protocol';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -204,7 +205,7 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
         },
       });
       if (currentness.status === 'requester_home_unavailable') {
-        return targetActionReplayFailure('project_requester_home_unavailable');
+        return readRequesterHomeActionFailure(currentness.error) ?? targetActionReplayFailure('project_requester_home_unavailable');
       }
       if (currentness.status === 'read_failed') {
         return targetActionReplayFailure(currentness.failure.errorCode, currentness.failure.error);

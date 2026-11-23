@@ -1,4 +1,4 @@
-import { projectActionFailureCauseV1, type ActionExecuteResult, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, type ActionExecuteResult, type ActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { LocalServiceManagedServiceActionTargetV1Schema, type LocalServiceActionTargetV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import type { WorkspaceSyncPrepareBetweenRequestV1, WorkspaceSyncPrepareBetweenResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
@@ -15,7 +15,7 @@ import { isWorkspacePathWithin } from '@/daemon/local/services/inventory/provena
 import { projectActionOperationFailure } from '@/daemon/actionOperations/actionOperationFailure';
 
 type ManagedTarget = Extract<LocalServiceActionTargetV1, { kind: 'managed_service' }>;
-type Refusal = Readonly<{ status: 'refused'; reasonCode: string; error?: string }>;
+type Refusal = Readonly<{ status: 'refused'; reasonCode: string; error?: string; failureCause?: ActionFailureCauseV1 }>;
 
 /** Admitted native/Machine IO ports; no service custody or operation store lives here. */
 export interface ProjectServiceRelocationPorts {
@@ -40,7 +40,8 @@ export interface ProjectServiceRelocationPorts {
   >>;
 }
 
-async function failure(errorCode: string, error?: string): Promise<ActionExecuteResult> {
+async function failure(errorCode: string, error?: string, failureCause?: ActionFailureCauseV1): Promise<ActionExecuteResult> {
+  if (failureCause) return { ok: false, errorCode, error: error ?? errorCode, failureCause };
   if (error) return projectActionOperationFailure(Object.assign(new Error(error), { code: errorCode }), errorCode);
   return { ok: false, errorCode, error: errorCode };
 }
@@ -70,7 +71,7 @@ export function createProjectServiceRelocation(ports: ProjectServiceRelocationPo
     try {
       if (signal?.aborted) return failure('cancelled');
       const current = await ports.readService(input, signal);
-      if (current.status === 'refused') return failure(current.reasonCode, current.error);
+      if (current.status === 'refused') return failure(current.reasonCode, current.error, current.failureCause);
       if (current.execution === 'primary' && input.destination.kind === 'workers') return failure('primary_only');
       if (createCanonicalJsonSigningInput(current.currentTarget) !== createCanonicalJsonSigningInput(input.currentTarget)
         || current.instanceId !== input.currentTarget.managedServiceId
@@ -80,7 +81,7 @@ export function createProjectServiceRelocation(ports: ProjectServiceRelocationPo
       if (current.snapshot.state === 'stopped') return failure('service_already_stopped');
       if (!isLocalServiceStateRunningV1(current.snapshot.state)) return failure('service_not_running');
       const destination = await ports.resolveDestination(input, signal);
-      if (destination.status === 'refused') return failure(destination.reasonCode, destination.error);
+      if (destination.status === 'refused') return failure(destination.reasonCode, destination.error, destination.failureCause);
       const selected = destination.workspace;
       if (selected.machineId !== input.selectedTarget.machineId) {
         return failure('selected_target_changed');
@@ -96,7 +97,7 @@ export function createProjectServiceRelocation(ports: ProjectServiceRelocationPo
         declaration: current.currentTarget.declaration, currentTarget: current.currentTarget } });
       if (!sameTarget) {
         const setup = await ports.reviewDestinationSetup(input, selected, signal);
-        if (setup.status === 'refused') return failure(setup.reasonCode, setup.error);
+        if (setup.status === 'refused') return failure(setup.reasonCode, setup.error, setup.failureCause);
         if (signal?.aborted) return failure('cancelled');
       }
       // This compound producer owns set+Move. The desired placement must settle before
@@ -114,7 +115,7 @@ export function createProjectServiceRelocation(ports: ProjectServiceRelocationPo
       if (signal?.aborted) return failure('cancelled');
       // Re-read after destination admission: an await cannot lend stale stop authority.
       const beforeStop = await ports.readService(input, signal);
-      if (beforeStop.status === 'refused') return failure(beforeStop.reasonCode, beforeStop.error);
+      if (beforeStop.status === 'refused') return failure(beforeStop.reasonCode, beforeStop.error, beforeStop.failureCause);
       if (createCanonicalJsonSigningInput(beforeStop.currentTarget) !== createCanonicalJsonSigningInput(input.currentTarget)
         || beforeStop.instanceId !== current.instanceId
         || !isObservedWorkspaceTarget(beforeStop.currentTarget, beforeStop.workspace, input.workspace.serverId)

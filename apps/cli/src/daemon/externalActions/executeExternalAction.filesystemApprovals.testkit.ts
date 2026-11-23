@@ -26,7 +26,7 @@ import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { ApprovalRequestV2Schema, resolveApprovalExecutor } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeSchema, ExternalActionRequestEnvelopeV1Schema,
-  ExternalActionResponseEnvelopeV1Schema, projectExternalActionRunNowIdempotencyKeyV1, projectExternalActionApprovalDecisionAdmissionV1, type ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
+  ExternalActionResponseEnvelopeV1Schema, projectExternalActionHttpError, projectExternalActionRunNowIdempotencyKeyV1, projectExternalActionApprovalDecisionAdmissionV1, type ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
 import { ProjectAccountRowMutationRequestV1Schema, ProjectAccountRowV1Schema, ProjectAccountRowListResponseV1Schema,
   ProjectAccountRowReadRequestV1Schema, ProjectAccountRowReadResponseV1Schema,
   ProjectAccountRowMutationResponseV1Schema, buildProjectAccountRowPhysicalKeyV1, type ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
@@ -371,7 +371,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   let source: ProjectSourceV1 | null = { id: 'source', revision: 2, name: 'App', repository, audience: [], createdByAccountId: 'account' };
   const networkPaths: string[] = [];
   const rpcOutcomes: unknown[] = [];
-  let originalMoveIngress: ((request: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>) => Promise<unknown>) | undefined;
+  let originalMoveIngress: ((request: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>) => Promise<Awaited<ReturnType<typeof executeExternalAction>>>) | undefined;
   const homeRequest = (method: 'GET' | 'POST', path: string, body: unknown, headers: unknown) => {
     if (!home || !headers || typeof headers !== 'object') return null;
     // projectAccountRows spends the sealed own-UI Account credential for its exact-row read.
@@ -535,7 +535,11 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       if (!authorization || !('authentication' in authorization.binding)) throw new Error('Missing inspection Account admission');
       if (originalMoveIngress && request.machineId === ref.machineId
         && (requestedActionId === 'projects.service.relocate' || requestedActionId === 'approval.request.decide')) {
-        return { status: 200, data: await originalMoveIngress(request) };
+        const result = await originalMoveIngress(request);
+        if (result.kind === 'response') return { status: 200, data: result.response };
+        const refusal = projectExternalActionHttpError(result.errorCode, result.requestId, undefined, undefined,
+          undefined, undefined, result.failureCause, 'daemon');
+        return { status: refusal.statusCode, data: refusal.payload };
       }
       if (requestedActionId === 'projects.inspect' && worker && request.machineId === ref.machineId) {
         const principal = { accountId: 'account', authority: resolveExternalActionRootInvocationAuthority(authorization),
@@ -1709,7 +1713,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
               const rootAuthentication = root.binding.authentication;
               const sourceActionId = root.binding.actionId;
               if (sourceActionId !== 'projects.service.relocate' && sourceActionId !== 'approval.request.decide') throw new Error('Unexpected SOURCE ingress');
-              const result = await rpcInstallation.run(moveInstallation, () => executeExternalAction({ actionId: sourceActionId, envelope: request.envelope,
+              return await rpcInstallation.run(moveInstallation, () => executeExternalAction({ actionId: sourceActionId, envelope: request.envelope,
                 principal: { accountId: 'account', authority: resolveExternalActionRootInvocationAuthority(root), authentication: rootAuthentication },
                 ...(sourceActionId === 'approval.request.decide' ? { surface: 'ui' as const } : {}),
                 executionAuthorization: root, currentMachineId: ref.machineId, currentServerId: 'srv_n2',
@@ -1719,10 +1723,6 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
                   privateKey: moveKey, installationId: moveInstallation.installationId, serverHttpBaseUrl: params.serverHttpBaseUrl }),
                 prepareRequesterAccountContext: prepareSourceRequesterAccountContext,
               }));
-              if (result.kind !== 'response') throw Object.assign(new Error(result.errorCode), {
-                code: result.errorCode, failureCause: result.failureCause,
-              });
-              return result.response;
             };
             const app = createDaemonControlApp({ machineId: ref.machineId, controlToken: 'source-control',
               getChildren: () => [], stopSession: async () => ({ status: 'not_found' }),
@@ -1779,7 +1779,8 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
                     installationPublicKey: Buffer.from(moveInstallation.publicKey, 'base64url'), randomBytes: tweetnacl.randomBytes });
                   const response = await originalMoveIngress!(ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1,
                     machineId: ref.machineId, envelope: uiEnvelope, executionAuthorization }));
-                  const execution = (response as { execution: ActionExecuteResult }).execution;
+                  if (response.kind !== 'response' || response.response.v !== 1) throw new Error('Expected plain SOURCE Move response');
+                  const execution = response.response.execution;
                   personMoveExecutions.push(execution);
                   return execution;
                 };

@@ -6,11 +6,23 @@ import { expect, it, vi } from 'vitest';
 
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { resolveOfflineReconnectionBackoffDelayMs } from '@/api/offline/serverConnectionErrors';
-import { readRequesterHomeWithinActionLifetime } from './requesterCurrentness';
+import { projectRequesterHomeReadFailure, readRequesterHomeWithinActionLifetime } from './requesterCurrentness';
 import { prepareRequesterSessionBootstrap } from './requesterSessionCredentials';
 import { createActiveAccountSettingsConnectedAccountPurposeBindingStore } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { emptyConnectedAccountCatalogRecordV1 } from '@happier-dev/protocol/connect/connectedAccountCatalogV1';
 import { createAccountSettingsConnectedAccountSecrets } from '../connectedServices/qualifiedConnectedAccountDaemonPersistence';
+
+it.each([
+  [{ response: { status: 503 } }, 'server_error', 503],
+  [{ code: 'ETIMEDOUT' }, 'timeout', null],
+  [{ code: 'ECONNREFUSED' }, 'network', null],
+  [{ ok: false, errorCode: 'server_unreachable' }, 'server_unreachable', null],
+] as const)('retains the safe classification of a failed Home read (%j)', (error, reason, status) => {
+  expect(projectRequesterHomeReadFailure(error)).toMatchObject({
+    code: 'project_requester_home_unavailable', retryable: true,
+    data: { failureCause: { nativeErrorReason: reason, httpStatus: status } },
+  });
+});
 
 it('paces sustained unavailable preparation reads with the Home policy and cancels the pending wait', async () => {
   vi.useFakeTimers();

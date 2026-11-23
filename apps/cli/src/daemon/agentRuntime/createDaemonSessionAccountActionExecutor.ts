@@ -34,7 +34,6 @@ import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { ActionCurrentSessionScopeFailureDetailsV1Schema, type ActionCurrentSessionScopeFailureDetailsV1 } from '@happier-dev/protocol/actions/executor/sessionListAccess';
 import { createExternalActionStartDiagnosticRecorder, runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
-import { isPluginError } from '@happier-dev/plugin-sdk';
 import { DiscussionAgentPublisherResponseV1Schema, type DiscussionAgentPublisherRequestV1 } from '@happier-dev/protocol/discussions/api';
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
 import { bindDiscussionDraftReply } from '@/discussions/bindDiscussionDraftReply';
@@ -42,7 +41,7 @@ import { prepareDocDiscussionMutationV1 } from '@happier-dev/protocol/artifacts/
 import { prepareDocEditProposalInputV1 } from '@happier-dev/protocol/actions/executor/docCollaborationActions';
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { isDiscussionDocEditProposalContentV1, readDiscussionMentionedParticipantIdsV1 } from '@happier-dev/protocol/discussions/content';
-import { readRequesterHomeWithinActionLifetime } from '@/daemon/sessionEncryption/requesterCurrentness';
+import { readRequesterHomeActionFailure, readRequesterHomeWithinActionLifetime } from '@/daemon/sessionEncryption/requesterCurrentness';
 import { bindScmActionToSessionWorkspace } from '@/scm/actions/placement';
 import { requiresExplicitScmMachineTarget } from '@happier-dev/protocol/actions/actionSpecs';
 import { readContributedActionExecutionPlacement } from '@/session/actions/readContributedActionExecutionPlacement';
@@ -406,8 +405,8 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
     } catch (error) {
       logRefusal('external_authorization_preparation_failed');
       if (authority.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
-      if (isPluginError(error) && error.code === 'project_requester_home_unavailable')
-        return { ok: false, errorCode: error.code, error: error.code };
+      const homeFailure = readRequesterHomeActionFailure(error);
+      if (homeFailure) return homeFailure;
       throw error;
     }
     if (external === null) {

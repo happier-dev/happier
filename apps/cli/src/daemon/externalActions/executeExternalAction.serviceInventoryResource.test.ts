@@ -11,6 +11,7 @@ import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportD
 import { createDaemonHostResourceRead } from '@/rpc/handlers/daemonHostResourceRead';
 import { createDaemonExternalActionTargetResolver } from './daemonExternalActionTargetResolver';
 import { executeExternalAction } from './executeExternalAction';
+import { rethrowRequesterHomeReadFailure } from '@/daemon/sessionEncryption/requesterCurrentness';
 
 describe('credential-free shared service inventory Resource', () => {
   it.each(['plain', 'e2ee'] as const)('opens the same admitted %s codec for finite and Resource reads', async mode => {
@@ -30,7 +31,7 @@ describe('credential-free shared service inventory Resource', () => {
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
       machineServiceAction: async () => { ordinaryReads++; return snapshot; } });
     const resources = createDaemonHostResourceRead({ resolveActionExecutor: async () => executor, readAccountId: () => 'owner' });
-    const run = async (kind: 'finite' | 'resource' | 'mismatched-resource' | 'wrong-recipient' | 'refused-admission') => {
+    const run = async (kind: 'finite' | 'resource' | 'mismatched-resource' | 'wrong-recipient' | 'refused-admission' | 'unavailable-home') => {
       const binding = { serverIdentityId: 'srv_home', accountId: principal.accountId, authentication: principal.authentication,
         actionId: 'machines.services.list' as const, requestId: `${mode}-${kind}`, target };
       const operands = kind === 'finite' ? {} : { resourceContinuation: {
@@ -59,6 +60,7 @@ describe('credential-free shared service inventory Resource', () => {
         verifyExecutionAuthorization: async () => kind !== 'refused-admission', signal: new AbortController().signal,
         resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'owner-not-grantee', encryption: null } }),
         executor, invokeResource: async (method, params, context) => {
+          if (kind === 'unavailable-home') rethrowRequesterHomeReadFailure({ response: { status: 503 } });
           resourceCalls.push({ method, params, requester: context.callerInputAuthorization?.binding.accountId });
           const content = await resources.read(resource, target.machineId, context);
           return { ok: true, resource, contentType: 'application/json', digest: content.digest,
@@ -75,6 +77,10 @@ describe('credential-free shared service inventory Resource', () => {
     expect(await run('resource')).toMatchObject({ result: { kind: 'response' }, execution: { ok: true, result: resourceResponse } });
     expect(resourceCalls).toEqual([{ method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ,
       params: { machineId: target.machineId, resource }, requester: principal.accountId }]);
+    expect(await run('unavailable-home')).toMatchObject({ result: { kind: 'response' }, execution: {
+      ok: false, errorCode: 'project_requester_home_unavailable',
+      failureCause: { nativeErrorReason: 'server_error', httpStatus: 503 },
+    } });
     for (const kind of ['mismatched-resource', 'wrong-recipient', 'refused-admission'] as const) {
       expect(await run(kind)).toMatchObject({ result: { kind: 'invalid_request',
         errorCode: mode === 'e2ee' ? 'invalid_encrypted_envelope' : 'invalid_envelope' } });

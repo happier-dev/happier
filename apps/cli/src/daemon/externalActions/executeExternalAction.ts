@@ -1148,7 +1148,7 @@ async function executeExternalActionRequest(input: Readonly<{
   } catch (error) {
     trace('action_execution.threw');
     const requestId = envelope.data.requestId ?? admittedAuthorization?.binding.requestId ?? input.transportRequestId ?? randomUUID();
-    refuseExternalActionPhase('action_execution', input.currentMachineId, error, { actionId: actionId.data, requestId });
+    const phaseFailure = refuseExternalActionPhase('action_execution', input.currentMachineId, error, { actionId: actionId.data, requestId });
     // Policy preparation runs before protocol execution. Preserve its known
     // refusal without exposing a schema error's input, cause or message.
     const actionFailure = logsOperands.resourceContinuation && !context.signal?.aborted
@@ -1165,6 +1165,8 @@ async function executeExternalActionRequest(input: Readonly<{
         ok: false,
         errorCode,
         error: errorCode,
+        ...(errorCode === 'project_requester_home_unavailable' && phaseFailure.executionFailure?.failureCause
+          ? { failureCause: phaseFailure.executionFailure.failureCause } : {}),
       }),
     });
   }
