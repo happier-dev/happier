@@ -1595,10 +1595,17 @@ and never fall back to an unrestricted list. See
 - `GET /v2/sessions?cursor=cursor_v1_<id>&limit=...&changedSince=...`
 - `POST /v1/sessions` (create or load by `tag`)
   In 0.3 development, the External Sessions link can supply `externalSourceDates`
-  on the first layout-1 `machine_only` creation. The server uses the available
-  source dates for creation and meaningful activity. A completed historical
-  snapshot orders by its latest published source item date, falling back to the
-  Session creation date when the published items have no source dates.
+  on the first layout-1 `machine_only` creation. Initial activity uses the
+  source update time, then the source creation time, then the server’s current
+  time. Activity is capped at the current time. Creation uses the earlier of
+  source creation and initial activity, or initial activity when source
+  creation is missing. A dated replay returns the existing Session unchanged.
+  An undated rejoin records current activity for an inactive or archived Session
+  and unarchives it if needed. An undated rejoin of an active, unarchived
+  Session returns it unchanged.
+  A completed historical snapshot orders by its latest published source item
+  date, falling back to the Session creation date when the published items
+  have no source dates.
 - `POST /v1/machines/managed/actions/birth.get` (0.3 development) — closed
   `{ homeId, managedId }` request; returns `{ source }` with a unique Account-owned
   workflow Run, then a unique Session across active and archived Sessions, or null.
