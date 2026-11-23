@@ -14,6 +14,7 @@ import { createMachineFixture, createMachineMetadataFixture } from '@/dev/testki
 import { storage } from '@/sync/domains/state/storage';
 import { preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
 import machineCatalogCases from './ApprovalReviewFacts.machineCatalog.cases.json';
+import signInCases from './ApprovalReviewFacts.signIn.cases.json';
 import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';
 
 installApprovalCommonModuleMocks({ text: () => vi.importActual<typeof import('@/text')>('@/text') });
@@ -133,7 +134,11 @@ it('has schema-valid review cases for every Preset and Pool Action', () => {
     ]));
 });
 
-it.each(machineCatalogCases)('keeps $actionId free of technical operands and untranslated sentences', async ({ actionId, cases }) => {
+const zeroDefectCases: readonly { actionId: string; cases: readonly unknown[] }[] = [
+    ...machineCatalogCases, ...signInCases,
+];
+
+it.each(zeroDefectCases)('keeps $actionId free of technical operands and untranslated sentences', async ({ actionId, cases }) => {
     await preloadTranslations('fr');
     setPreferredLanguageFromSettings('fr');
     const serverId = await harness.addHome({ name: 'Review Home', serverUrl: 'https://catalog-review.test',

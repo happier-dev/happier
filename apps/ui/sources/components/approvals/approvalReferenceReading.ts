@@ -23,6 +23,12 @@ import { describeUnnamedApprovalSession, resolveApprovalHomeName, resolveApprova
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { readApprovalProfileDescriptor } from '@/sync/engine/settings/approvalProfileCatalog';
+import { useOpenedTeamCredentialDisplayNames } from '@/components/settings/teams/credentials/teamCredentialPrivateLabels';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { readSignInIdentityName } from '@/sync/store/home/governance/homeGovernanceSnapshots';
+import { createPrivateLabelClientForActionAccountContext } from '@/sync/ops/privateLabels/privateLabelClient';
+import { teamCredentialDisplayNameBinding } from '@/sync/ops/teams/teamCredentialLabels';
+import { readTeamCredentialResourceApprovalProjection, subscribeTeamsSnapshots } from '@/sync/store/teams/teamsSnapshots';
 import { approvalProfileDefaultNoneTitle } from './approvalProfileDefaultChoiceCopy';
 import { useScopedSharingRead } from '@/components/sharing/sharePrincipalNames';
 import { readMcpServerCatalogInContext } from '@/sync/api/account/apiMcpServerCatalog';
@@ -104,7 +110,12 @@ export async function readApprovalReferenceForConfirmation(reference: ApprovalRe
         workspace: reference.kind === 'workspace' ? readConfirmationWorkspace(reference.id, projects, scope, state) : null,
         discussionTitle: reference.kind === 'discussion' ? readDiscussionTitle({ serverId: account.serverId, discussionId: reference.id }) : null,
     };
-    sources.principalName = await readApprovalPrincipalName(reference, scope, signal, () => { account.assertCurrent(); return true; });
+    let principal: ApprovalReference | undefined = reference;
+    if (reference.kind === 'teamCredentialAudience') {
+        account.assertCurrent();
+        principal = credentialAudiencePrincipal(reference, readTeamCredentialResourceApprovalProjection(scope, reference.resourceId)?.teamId);
+    }
+    sources.principalName = await readApprovalPrincipalName(principal, scope, signal, () => { account.assertCurrent(); return true; });
     if (sources.principalName !== null) account.assertCurrent();
     if (reference.kind === 'approvalProfile' && reference.id !== null) {
         try {
@@ -117,6 +128,23 @@ export async function readApprovalReferenceForConfirmation(reference: ApprovalRe
     if (reference.kind === 'machinePreset' || reference.kind === 'machinePool') {
         sources.machineCatalogName = await readMachineCatalogReferenceName(reference, account, signal);
         account.assertCurrent();
+    }
+    if (reference.kind === 'teamCredentialResource') {
+        try {
+            sources.teamCredentialResourceName = await createPrivateLabelClientForActionAccountContext(account).open({
+                binding: teamCredentialDisplayNameBinding(reference.id),
+                label: readTeamCredentialResourceApprovalProjection(scope, reference.id)?.displayName ?? null,
+                readPolicy: { kind: 'team-resource' },
+                signal,
+            });
+        } catch {
+            // Unopened labels retain the same unavailable reading as missing projections.
+        }
+        account.assertCurrent();
+    }
+    if (reference.kind === 'signInConnection' || reference.kind === 'signInProvider') {
+        account.assertCurrent();
+        sources.signInIdentityName = readSignInIdentityName(scope, reference);
     }
     if (reference.kind === 'artifact' || reference.kind === 'skill') {
         sources.artifact = await account.fetchArtifact(reference.id, { signal });
@@ -243,7 +271,11 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
         .presentationsByKey[CONNECTED_ACCOUNT_KEY];
     // A Saved Secret reads by its name from the Account's catalog on its own Home; another Home's catalog is not read.
     const savedSecret = useSavedSecretCatalogName(reference?.kind === 'savedSecret' ? reference.id : null, ownHome ? viewer : null);
-    const principal = useApprovalPrincipalName(reference, approvalServerId);
+    const credentialAudience = reference?.kind === 'teamCredentialAudience' ? reference : null;
+    const credentialResourceId = credentialAudience?.resourceId ?? (reference?.kind === 'teamCredentialResource' ? reference.id : null);
+    const credentialProjection = useApprovalTeamCredentialResource(credentialResourceId, approvalServerId);
+    const principal = useApprovalPrincipalName(credentialAudience
+        ? credentialAudiencePrincipal(credentialAudience, credentialProjection.resource?.teamId) : reference, approvalServerId);
     const profileId = reference?.kind === 'approvalProfile' ? reference.id : null;
     const machineCatalogReference = reference?.kind === 'machinePreset' || reference?.kind === 'machinePool' ? reference : null;
     const lookupKey = machineCatalogReference ? JSON.stringify([machineCatalogReference.kind,
@@ -260,6 +292,12 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
         }
     });
     const discussion = useApprovalDiscussionTitle(reference, approvalServerId);
+    const teamCredentialResourceName = useApprovalTeamCredentialResourceName(
+        reference?.kind === 'teamCredentialResource' ? reference.id : null, credentialProjection);
+    const signInReference = reference?.kind === 'signInConnection' || reference?.kind === 'signInProvider' ? reference : null;
+    const signInBinding = useServerCredentialAccountScopeBinding(signInReference ? approvalServerId : null).binding;
+    const signInIdentityName = signInReference && signInBinding?.isCurrent()
+        ? readSignInIdentityName(signInBinding.scope, signInReference) : null;
     const homeLayout = useHomeHubLayoutReading(reference?.kind === 'homeLayoutItem' && ownHome);
     const homeSection = reference?.kind === 'homeLayoutItem' && ownHome
         ? homeLayout.sections.flatMap(section => section.kind === 'group' ? [section, ...section.children] : [section])
@@ -267,7 +305,7 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
     const homeLayoutItemName = homeSection ? homeSection.kind === 'group'
         ? describeWidgetGroupAmong(homeLayout.items, homeSection.group, homeChildTitle(homeLayout.sections))
         : homeHubSectionTitle(homeSection) : null;
-    return resolveApprovalReferenceReading(reference, literal, approvalServerId, { homeLayoutItemName,
+    return resolveApprovalReferenceReading(reference, literal, approvalServerId, { teamCredentialResourceName, signInIdentityName, homeLayoutItemName,
         homeLayoutItemResolving: reference?.kind === 'homeLayoutItem' && ownHome && homeLayout.status === 'loading', serverId, sessionReading, viewer, ownHome, artifact, machine, machineInventory, connectedAccount, savedSecret,
         managedMachine, managedEnrolledMachine, managedMachineLoading, sessionMachine, mcp, registries, project, projectCensusComplete, agents,
         providerConnection, providerManualModel, providerCatalogLoading, declarations, localizePluginText,
@@ -280,6 +318,38 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
 }
 
 const NO_DISCUSSION_IDS: readonly string[] = Object.freeze([]);
+
+function credentialAudiencePrincipal(
+    reference: Extract<ApprovalReference, { kind: 'teamCredentialAudience' }>,
+    teamId: string | undefined,
+): ApprovalReference | undefined {
+    if (!teamId) return undefined;
+    return reference.audience === 'group'
+        ? { kind: 'group', id: reference.id, teamId }
+        : { kind: 'teamMembership', id: reference.id, teamId };
+}
+
+function useApprovalTeamCredentialResource(resourceId: string | null, approvalServerId: string | null) {
+    const { binding } = useServerCredentialAccountScopeBinding(resourceId ? approvalServerId : null);
+    const scope = binding?.scope ?? null;
+    const subscribe = React.useCallback((listener: () => void) => scope && resourceId
+        ? subscribeTeamsSnapshots(listener) : () => {}, [scope, resourceId]);
+    const read = React.useCallback(() => binding?.isCurrent() && resourceId
+        ? readTeamCredentialResourceApprovalProjection(binding.scope, resourceId) : null, [binding, resourceId]);
+    const resource = React.useSyncExternalStore(subscribe, read, read);
+    return { scope, resource };
+}
+
+function useApprovalTeamCredentialResourceName(
+    resourceId: string | null,
+    { scope, resource }: ReturnType<typeof useApprovalTeamCredentialResource>,
+): string | null {
+    const label = resource?.displayName;
+    const resources = React.useMemo(() => resourceId && label ? [{ id: resourceId, displayName: label }] : [],
+        [resourceId, label]);
+    const opened = useOpenedTeamCredentialDisplayNames({ scope, resources });
+    return label && resourceId ? opened[resourceId] ?? null : null;
+}
 
 /** A Discussion reads by the title this Account can read, from the one shared Discussion repository. */
 function useApprovalDiscussionTitle(reference: ApprovalReference | undefined, approvalServerId: string | null): Readonly<{ title: string | null; resolving: boolean }> {
@@ -328,6 +398,8 @@ export function useManagedMachineName(serverId: string | null, managedId: string
 const CONNECTED_ACCOUNT_KEY = 'connectedAccount';
 
 type ApprovalReferenceSources = {
+    teamCredentialResourceName?: string | null;
+    signInIdentityName?: string | null;
     homeLayoutItemName?: string | null;
     homeLayoutItemResolving?: boolean;
     serverId: string | null;
@@ -375,6 +447,18 @@ function resolveApprovalReferenceReading(reference: ApprovalReference | undefine
         const name = sources.homeLayoutItemName;
         return { text: name ?? t(sources.homeLayoutItemResolving ? 'common.loading' : 'common.unavailable'),
             named: Boolean(name), ...(sources.homeLayoutItemResolving ? { resolving: true } : {}) };
+    }
+    if (reference?.kind === 'teamCredentialAudience') {
+        return { text: sources.principalName ?? t(sources.principalResolving ? 'common.loading' : 'common.unavailable'),
+            named: Boolean(sources.principalName), ...(sources.principalResolving ? { resolving: true } : {}) };
+    }
+    if (reference?.kind === 'teamCredentialResource') {
+        const name = sources.teamCredentialResourceName;
+        return { text: name ?? t('common.unavailable'), named: Boolean(name) };
+    }
+    if (reference?.kind === 'signInConnection' || reference?.kind === 'signInProvider') {
+        const name = sources.signInIdentityName;
+        return { text: name ?? t('common.unavailable'), named: Boolean(name) };
     }
     if (reference?.kind === 'machinePreset' || reference?.kind === 'machinePool') {
         const name = sources.machineCatalogName;

@@ -1,0 +1,1352 @@
+[
+  {
+    "actionId": "home.identity.connections.create",
+    "cases": [
+      {
+        "v": 1,
+        "providerInstanceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "externalReference": {
+          "v": 1,
+          "kind": "oidc"
+        },
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        }
+      },
+      {
+        "v": 1,
+        "providerInstanceId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "externalReference": {
+          "v": 1,
+          "kind": "oidc"
+        },
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        }
+      },
+      {
+        "v": 1,
+        "providerInstanceId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "externalReference": {
+          "v": 1,
+          "kind": "oidc"
+        },
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        }
+      },
+      {
+        "v": 1,
+        "providerInstanceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "externalReference": {
+          "v": 1,
+          "kind": "oidc"
+        },
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        }
+      },
+      {
+        "v": 1,
+        "providerInstanceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "externalReference": {
+          "v": 1,
+          "kind": "oidc"
+        },
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        }
+      },
+      {
+        "v": 1,
+        "providerInstanceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "externalReference": {
+          "v": 1,
+          "kind": "oidc"
+        },
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [],
+          "groupsAll": [
+            "Review sample"
+          ]
+        }
+      },
+      {
+        "v": 1,
+        "providerInstanceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "externalReference": {
+          "v": 1,
+          "kind": "oidc"
+        },
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": []
+        }
+      }
+    ]
+  },
+  {
+    "actionId": "home.identity.connections.settings.update",
+    "cases": [
+      {
+        "v": 1,
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        }
+      },
+      {
+        "v": 1,
+        "connectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "expectedRevision": 1,
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        }
+      },
+      {
+        "v": 1,
+        "connectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "expectedRevision": 1,
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        }
+      },
+      {
+        "v": 1,
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        }
+      },
+      {
+        "v": 1,
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        }
+      },
+      {
+        "v": 1,
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [],
+          "groupsAll": [
+            "Review sample"
+          ]
+        }
+      },
+      {
+        "v": 1,
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": []
+        }
+      },
+      {
+        "v": 1,
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "settings": {
+          "v": 1,
+          "kind": "workos_sso"
+        }
+      },
+      {
+        "v": 1,
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "settings": {
+          "v": 1,
+          "kind": "github_app_identity",
+          "organizationLogin": "Review sample"
+        }
+      }
+    ]
+  },
+  {
+    "actionId": "home.identity.connections.enable",
+    "cases": [
+      {
+        "v": 1,
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "connectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "connectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "expectedRevision": 1
+      }
+    ]
+  },
+  {
+    "actionId": "home.identity.connections.disable",
+    "cases": [
+      {
+        "v": 1,
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "connectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "connectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "expectedRevision": 1
+      }
+    ]
+  },
+  {
+    "actionId": "home.identity.connections.remove",
+    "cases": [
+      {
+        "v": 1,
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "connectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "connectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "expectedRevision": 1
+      }
+    ]
+  },
+  {
+    "actionId": "home.identity.connections.test.start",
+    "cases": [
+      {
+        "v": 1,
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "connectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "connectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "expectedRevision": 1
+      }
+    ]
+  },
+  {
+    "actionId": "home.identity.connections.test.consume",
+    "cases": [
+      {
+        "v": 1,
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "resultHandle": "Review sample"
+      },
+      {
+        "v": 1,
+        "connectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "resultHandle": "Review sample"
+      },
+      {
+        "v": 1,
+        "connectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "resultHandle": "Review sample"
+      }
+    ]
+  },
+  {
+    "actionId": "home.identity.workos.adminPortalLink.create",
+    "cases": [
+      {
+        "v": 1,
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "intent": "sso"
+      },
+      {
+        "v": 1,
+        "connectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "intent": "sso"
+      },
+      {
+        "v": 1,
+        "connectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "intent": "sso"
+      }
+    ]
+  },
+  {
+    "actionId": "home.identity.workos.reconcile",
+    "cases": [
+      {
+        "v": 1,
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "connectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "connectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "expectedRevision": 1
+      }
+    ]
+  },
+  {
+    "actionId": "home.identity.workos.connection.set",
+    "cases": [
+      {
+        "v": 1,
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "workosConnectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "connectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "expectedRevision": 1,
+        "workosConnectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "connectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "expectedRevision": 1,
+        "workosConnectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "workosConnectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "v": 1,
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "workosConnectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      }
+    ]
+  },
+  {
+    "actionId": "teams.identity.connections.create",
+    "cases": [
+      {
+        "v": 1,
+        "providerInstanceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "externalReference": {
+          "v": 1,
+          "kind": "oidc"
+        },
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        },
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "providerInstanceId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "externalReference": {
+          "v": 1,
+          "kind": "oidc"
+        },
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        },
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "providerInstanceId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "externalReference": {
+          "v": 1,
+          "kind": "oidc"
+        },
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        },
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "providerInstanceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "externalReference": {
+          "v": 1,
+          "kind": "oidc"
+        },
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        },
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "providerInstanceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "externalReference": {
+          "v": 1,
+          "kind": "oidc"
+        },
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        },
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "providerInstanceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "externalReference": {
+          "v": 1,
+          "kind": "oidc"
+        },
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [],
+          "groupsAll": [
+            "Review sample"
+          ]
+        },
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "providerInstanceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "externalReference": {
+          "v": 1,
+          "kind": "oidc"
+        },
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": []
+        },
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "providerInstanceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "externalReference": {
+          "v": 1,
+          "kind": "oidc"
+        },
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        },
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "v": 1,
+        "providerInstanceId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "externalReference": {
+          "v": 1,
+          "kind": "oidc"
+        },
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        },
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      }
+    ]
+  },
+  {
+    "actionId": "teams.identity.connections.settings.update",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "expectedRevision": 1,
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "expectedRevision": 1,
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": [
+            "Review sample"
+          ]
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [],
+          "groupsAll": [
+            "Review sample"
+          ]
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "settings": {
+          "v": 1,
+          "kind": "oidc",
+          "allowedUsers": [
+            "Review sample"
+          ],
+          "allowedEmailDomains": [
+            "Review sample"
+          ],
+          "groupsAny": [
+            "Review sample"
+          ],
+          "groupsAll": []
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "settings": {
+          "v": 1,
+          "kind": "workos_sso"
+        }
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "settings": {
+          "v": 1,
+          "kind": "github_app_identity",
+          "organizationLogin": "Review sample"
+        }
+      }
+    ]
+  },
+  {
+    "actionId": "teams.identity.connections.enable",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "expectedRevision": 1
+      }
+    ]
+  },
+  {
+    "actionId": "teams.identity.connections.disable",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "expectedRevision": 1
+      }
+    ]
+  },
+  {
+    "actionId": "teams.identity.connections.remove",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "expectedRevision": 1
+      }
+    ]
+  },
+  {
+    "actionId": "teams.identity.connections.test.start",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "expectedRevision": 1
+      }
+    ]
+  },
+  {
+    "actionId": "teams.identity.connections.test.consume",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "resultHandle": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "resultHandle": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "resultHandle": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "resultHandle": "Review sample"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "resultHandle": "Review sample"
+      }
+    ]
+  },
+  {
+    "actionId": "teams.identity.workos.adminPortalLink.create",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "intent": "sso"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "directorySourceId": "/workspace/project",
+        "intent": "sso"
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "directorySourceId": "/workspace/project",
+        "intent": "sso"
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "intent": "sso"
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "directorySourceId": "/workspace/project",
+        "intent": "sso"
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "intent": "sso"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "directorySourceId": "/workspace/project",
+        "intent": "sso"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "intent": "sso"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "directorySourceId": "/workspace/project",
+        "intent": "sso"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "intent": "sso"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "intent": "sso",
+        "directorySourceId": "/workspace/project"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "directorySourceId": "/workspace/project",
+        "intent": "dsync"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "intent": "dsync"
+      }
+    ]
+  },
+  {
+    "actionId": "teams.identity.workos.reconcile",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "expectedRevision": 1
+      }
+    ]
+  },
+  {
+    "actionId": "teams.identity.workos.connection.set",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "workosConnectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "workosConnectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "workosConnectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "expectedRevision": 1,
+        "workosConnectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "expectedRevision": 1,
+        "workosConnectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "workosConnectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022"
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1,
+        "workosConnectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77"
+      }
+    ]
+  },
+  {
+    "actionId": "home.identity.connections.remove.preview",
+    "cases": [
+      {
+        "v": 1,
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "connectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "connectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "expectedRevision": 1
+      }
+    ]
+  },
+  {
+    "actionId": "teams.identity.connections.remove.preview",
+    "cases": [
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "connectionId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "f20c797b-449f-4aa6-8b89-01fcfcaed022",
+        "expectedRevision": 1
+      },
+      {
+        "v": 1,
+        "teamId": "3d703df7-5a51-4be7-91ec-dc877ae861ab",
+        "connectionId": "67cffe92-bd4e-4b28-8512-706b1cc4ab77",
+        "expectedRevision": 1
+      }
+    ]
+  }
+]

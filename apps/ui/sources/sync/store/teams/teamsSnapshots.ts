@@ -563,6 +563,25 @@ export function readTeamCredentialResourceCatalogs(scope: ServerAccountScope): r
         && snapshot.scope.accountId === scope.accountId ? snapshot.data ?? [] : []);
 }
 
+/**
+ * An approval carries the Home-local resource ID without its Team address.
+ * Only projected labels in this viewer's retained rows can name it.
+ */
+export function readTeamCredentialResourceApprovalProjection(
+    scope: ServerAccountScope,
+    resourceId: string,
+): Pick<TeamCredentialResourceSummaryV1, 'teamId' | 'displayName'> | null {
+    const exact = [...credentialResources.values()].find(snapshot => snapshot.resourceId === resourceId
+        && credentialSnapshotMatches(snapshot, scope, snapshot.address));
+    if (exact?.error && isAuthoritativeScopedSnapshotRefusal(exact.error)) return null;
+    const list = [...credentialLists.values()].find(snapshot => credentialSnapshotMatches(snapshot, scope, snapshot.address)
+        && snapshot.data?.some(resource => resource.id === resourceId));
+    const address = exact?.address ?? list?.address;
+    return (address ? readTeamCredentialResource(scope, address, resourceId) : null)
+        ?? readTeamCredentialResourceCatalogs(scope).find(resource => resource.id === resourceId)
+        ?? null;
+}
+
 export function getTeamCredentialResourceSnapshot(
     scope: ServerAccountScope | null | undefined,
     address: TeamAddress | null | undefined,

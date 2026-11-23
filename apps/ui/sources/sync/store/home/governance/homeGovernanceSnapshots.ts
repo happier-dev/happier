@@ -123,6 +123,22 @@ export const managedIdentityProviderObservations = createManagedIdentityObservat
 export const managedGitHubAppsObservations = createManagedIdentityObservations<ManagedGitHubAppsListOutputV1>();
 export const identityConnectionObservations = createManagedIdentityObservations<IdentityConnectionObservation>();
 
+/** Identity labels come from the same captured Account and owner as the sign-in administration screens. */
+export function readSignInIdentityName(scope: ServerAccountScope, reference: Readonly<{
+    kind: 'signInConnection' | 'signInProvider';
+    id: string;
+    teamId: string | null;
+}>): string | null {
+    const key = managedIdentityQueryKey(scope, reference.teamId);
+    const connections = identityConnectionObservations.get(key);
+    if (reference.kind === 'signInConnection') {
+        return connections?.items.find(connection => connection.id === reference.id)?.provider.displayName ?? null;
+    }
+    return managedIdentityProviderObservations.get(key)?.items.find(provider => provider.id === reference.id)?.displayName
+        ?? connections?.eligibleProviders.find(provider => provider.providerId === reference.id)?.displayName
+        ?? null;
+}
+
 function notify(): void {
     for (const listener of [...listeners]) {
         try {

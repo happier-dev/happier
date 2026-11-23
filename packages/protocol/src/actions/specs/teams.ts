@@ -1,7 +1,7 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import type { z } from '../../zodRuntimePolicy.js';
 
-import type { TeamIdentityActionIdV1 } from '../../teams/actionsV1.js';
+import { TEAM_IDENTITY_ACTION_IDS_V1, type TeamIdentityActionIdV1 } from '../../teams/identity/actionIds.js';
 import type { TeamDirectoryActionIdV1 } from '../../teams/directory/v1.js';
 import type { TeamExternalGroupBindingActionIdV1 } from '../../teams/externalGroupBindings/v1.js';
 import {
@@ -91,6 +91,7 @@ import {
   type TeamCredentialHomeActionIdV1,
 } from '../../teams/credentials/actionsV1.js';
 import {
+  TEAM_CREDENTIAL_CREATE_ACTION_ID_V1,
   isTeamCredentialMcpActionIdV1,
   isTeamCredentialDeferredApprovalActionIdV1,
   isTeamCredentialDirectConfirmationActionIdV1,
@@ -176,6 +177,19 @@ type TeamProvisioningActionRowInput = Readonly<{
   approvalResultCustody?: PreNormalizedActionSpec['approvalResultCustody'];
 }>;
 
+const identityApprovalPresentation: NonNullable<PreNormalizedActionSpec['approvalPresentation']> = {
+  referenceForField: (path, value, input) => {
+    if (typeof value !== 'string' || !value.trim()) return undefined;
+    const kind = path === 'connectionId' ? 'signInConnection'
+      : path === 'providerInstanceId' ? 'signInProvider' : undefined;
+    if (!kind) return undefined;
+    const { teamId } = readRecord(input);
+    return { kind, id: value, teamId: typeof teamId === 'string' ? teamId : null };
+  },
+  technicalInputPaths: ['workosConnectionId', 'externalReference.organizationId', 'externalReference.connectionId',
+    'externalReference.installationId'],
+};
+
 type TeamProvisioningActionAuthority<
   TPresentUser extends boolean | undefined,
   TSideEffectClass extends TeamProvisioningActionRowInput['sideEffectClass'],
@@ -199,7 +213,8 @@ function teamProvisioningActionRow<const TInput extends TeamProvisioningActionRo
 function teamProvisioningActionRow<const TInput extends TeamProvisioningActionRowInput>(
   input: TInput,
 ): HomeDomainActionRow<TInput['id'], TInput['inputSchema'], TInput['outputSchema'], 'account_automation' | 'present_user'> {
-  const row = homeDomainActionRow({ ...input, agent: true, mcp: true });
+  const row = homeDomainActionRow({ ...input, agent: true, mcp: true,
+    ...(TEAM_IDENTITY_ACTION_IDS_V1.some(id => id === input.id) ? { approvalPresentation: identityApprovalPresentation } : {}) });
   const presentUser = input.presentUser ?? input.sideEffectClass !== 'read';
   if (!presentUser) return row;
   return {
@@ -230,6 +245,42 @@ function teamExternalGroupBindingActionRow<
   return homeDomainActionRow(input);
 }
 
+const membershipHistoryApprovalPresentation: NonNullable<PreNormalizedActionSpec['approvalPresentation']> = {
+  referenceForField: (path, value, input) => {
+    const teamId = readRecord(input).teamId;
+    if (typeof value !== 'string' || typeof teamId !== 'string') return;
+    if (path === 'target.teamMembershipId') return { kind: 'teamMembership', id: value, teamId };
+    if (path === 'target.teamGroupId') return { kind: 'group', id: value, teamId };
+  },
+  technicalInputPaths: ['clientId'],
+};
+
+function teamCredentialApprovalReferences(actionId: TeamCredentialHomeActionIdV1 | 'teams.credentials.usage.export'):
+  NonNullable<PreNormalizedActionSpec['approvalPresentation']> {
+  const createsResource = actionId === TEAM_CREDENTIAL_CREATE_ACTION_ID_V1;
+  return {
+    referenceForField: (path, value, input) => {
+      if (typeof value !== 'string' || !value.trim()) return;
+      if ((path === 'resourceId' && !createsResource) || path === 'query.resourceId') {
+        return { kind: 'teamCredentialResource', id: value, unavailableWithoutName: true };
+      }
+      if (path === 'source.connectionId' || path === 'replacement.source.connectionId') {
+        return { kind: 'providerConnection', id: value };
+      }
+      const operand = path.split('.').at(-1);
+      const audience = operand === 'teamGroupId' ? 'group' : operand === 'teamMembershipId' ? 'teamMembership' : null;
+      if (!audience) return;
+      const { teamId, resourceId } = readRecord(input);
+      if (createsResource && typeof teamId === 'string') {
+        return audience === 'group' ? { kind: 'group', id: value, teamId } : { kind: 'teamMembership', id: value, teamId };
+      }
+      if (typeof resourceId === 'string') return { kind: 'teamCredentialAudience', id: value, resourceId, audience };
+    },
+    clearInputPaths: ['allMembersAllowedRoutes'],
+    technicalInputPaths: ['cursor', 'query.cursor', ...(createsResource ? ['resourceId'] : [])],
+  };
+}
+
 function teamCredentialActionRow<TActionId extends TeamCredentialHomeActionIdV1>(input: Readonly<{
   id: TActionId;
   approval: PreNormalizedActionSpec['approval'];
@@ -248,9 +299,14 @@ function teamCredentialActionRow<TActionId extends TeamCredentialHomeActionIdV1>
       : input.id === 'teams.credentials.delete' ? { confirmVerb: { key: 'common.delete', fallback: 'Delete' }, irreversible: true as const } : {}),
     ...(isTeamCredentialDirectConfirmationActionIdV1(input.id)
       ? { approvalPolicy: { uiConfirmation: 'direct' as const } } : {}),
+    approvalPresentation: {
+      ...teamCredentialApprovalReferences(input.id),
+      ...(isTeamCredentialNativeDisclosureActionIdV1(input.id) ? {
+        summary: (value: unknown, context?: ApprovalPresentationContext) =>
+          teamCredentialNativeDisclosureApprovalSummary(input.id, value, context),
+      } : {}),
+    },
     ...(isTeamCredentialNativeDisclosureActionIdV1(input.id) ? {
-      approvalPresentation: { summary: (value: unknown, context?: ApprovalPresentationContext) =>
-        teamCredentialNativeDisclosureApprovalSummary(input.id, value, context) },
       approvalPolicy: {
       uiConfirmation: 'direct' as const,
       uiConfirmationForInput: (value: unknown) => teamCredentialMutationRequiresUiConfirmation(input.id, value),
@@ -420,6 +476,7 @@ function createTeamActionSpecs(): TeamActionSpecs {
     bindings: { mcpToolName: 'teams_credentials_usage_export' },
     inputSchema: TEAM_CREDENTIAL_ACTION_INPUT_SCHEMAS_V1['teams.credentials.usage.export'],
     outputSchema: TEAM_CREDENTIAL_ACTION_OUTPUT_SCHEMAS_V1['teams.credentials.usage.export'],
+    approvalPresentation: teamCredentialApprovalReferences('teams.credentials.usage.export'),
     inputHints: { fields: [approvalField('query', 'Usage query', { widget: 'json', required: true }),
       approvalField('breakdownRowCount', 'Selected ranked rows', { widget: 'number' })] },
   } as const satisfies PreNormalizedActionSpec,
@@ -429,6 +486,7 @@ function createTeamActionSpecs(): TeamActionSpecs {
     executionPlacement: 'client', requiredAuthority: 'account_automation', safety: 'safe', sideEffectClass: 'read',
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false }, placements: [],
     inputSchema: TeamMembershipHistoryInputV1Schema, outputSchema: TeamMembershipHistoryReadinessV1Schema,
+    approvalPresentation: membershipHistoryApprovalPresentation,
     approval: { flow: 'blocking', result: 'required' },
     inputHints: { fields: [TEAM_ID_FIELD, approvalField('target', 'Membership', { widget: 'json', required: true }),
       approvalField('recipientAccountId', 'Recipient Account', { required: true })] },
@@ -441,6 +499,7 @@ function createTeamActionSpecs(): TeamActionSpecs {
     executionPlacement: 'client', requiredAuthority: 'present_user', safety: 'danger', sideEffectClass: 'write',
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false }, placements: [],
     inputSchema: TeamMembershipHistoryInputV1Schema, outputSchema: TeamMembershipHistoryPreparationResultV1Schema,
+    approvalPresentation: membershipHistoryApprovalPresentation,
     approval: { flow: 'blocking', result: 'required' },
     inputHints: { fields: [TEAM_ID_FIELD, approvalField('target', 'Membership', { widget: 'json', required: true }),
       approvalField('recipientAccountId', 'Recipient Account', { required: true })] },
