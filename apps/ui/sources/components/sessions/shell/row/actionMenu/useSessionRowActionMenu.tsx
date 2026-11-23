@@ -16,6 +16,7 @@ import {
     SESSION_ACTION_PUT_UNDER_ID,
     SESSION_ACTION_COORDINATOR_MAKE_ID,
     SESSION_ACTION_COORDINATOR_EDIT_ID,
+    SESSION_ACTION_COORDINATOR_BOARD_ID,
     SESSION_ACTION_COORDINATOR_ANSWERS_ID,
     SESSION_ACTION_COORDINATOR_STOP_ID,
     SESSION_ACTION_MARK_READ_ID,
@@ -490,6 +491,7 @@ export function useSessionRowActionMenu(params: Readonly<{
             case SESSION_ACTION_COORDINATOR_EDIT_ID:
             case SESSION_ACTION_COORDINATOR_ANSWERS_ID:
             case SESSION_ACTION_COORDINATOR_STOP_ID:
+            case SESSION_ACTION_COORDINATOR_BOARD_ID:
                 await executeSessionAction({ actionId: itemId, target }).catch(showActionError);
                 return;
             default:

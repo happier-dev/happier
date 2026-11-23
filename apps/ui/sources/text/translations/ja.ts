@@ -1505,6 +1505,7 @@ export const ja: TranslationStructure = {
     menu: {
       make: "コーディネーターにする…",
       makeAlready: "すでにコーディネーターです",
+      openAsBoard: "ボードとして開く",
       edit: "フォロー対象を編集",
       editSubtitle: "ピープルペインを開きます",
       answers: "質問に答える",
@@ -9588,6 +9589,7 @@ localTailscale: {
           sendNow: "今すぐ送信",
           sendToAgentNow: "今すぐエージェントに送信",
           sendNowInterrupt: "今すぐ送信（中断）",
+          deliverAndResume: "届けて再開",
           retryDelivery: "再試行",
           openDraft: '下書きを開く',
           interruptAndRunNow: "中断して今すぐ実行",

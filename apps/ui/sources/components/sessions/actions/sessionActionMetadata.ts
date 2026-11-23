@@ -27,6 +27,7 @@ import {
     SESSION_ACTION_PUT_UNDER_ID,
     SESSION_ACTION_COORDINATOR_MAKE_ID,
     SESSION_ACTION_COORDINATOR_EDIT_ID,
+    SESSION_ACTION_COORDINATOR_BOARD_ID,
     SESSION_ACTION_COORDINATOR_ANSWERS_ID,
     SESSION_ACTION_COORDINATOR_STOP_ID,
     SESSION_ACTION_RENAME_ID,
@@ -93,6 +94,10 @@ const METADATA_BY_ACTION_ID: Readonly<Record<string, SessionActionMetadata>> = {
         titleKey: 'sessionCoordinator.menu.edit',
         subtitleKey: 'sessionCoordinator.menu.editSubtitle',
         icon: 'funnel-simple', group: 'work',
+    },
+    [SESSION_ACTION_COORDINATOR_BOARD_ID]: {
+        titleKey: 'sessionCoordinator.menu.openAsBoard',
+        icon: 'kanban', group: 'work',
     },
     [SESSION_ACTION_COORDINATOR_STOP_ID]: {
         titleKey: 'sessionCoordinator.menu.stop',

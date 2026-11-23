@@ -1537,6 +1537,7 @@ export const ru: TranslationStructure = {
     menu: {
       make: "Сделать координатором…",
       makeAlready: "Уже координатор",
+      openAsBoard: "Открыть как доску",
       edit: "Изменить, за чем следит",
       editSubtitle: "Открывает панель «Люди»",
       answers: "Отвечает на вопросы",
@@ -9738,6 +9739,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
           sendNow: "Отправить сейчас",
           sendToAgentNow: "Отправить агенту сейчас",
           sendNowInterrupt: "Отправить сейчас (прервать)",
+          deliverAndResume: "Доставить и возобновить",
           retryDelivery: "Повторить",
           openDraft: 'Открыть черновик',
           interruptAndRunNow: "Прервать и запустить сейчас",

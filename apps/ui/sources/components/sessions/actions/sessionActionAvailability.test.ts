@@ -103,7 +103,8 @@ describe('session action availability', () => {
         const managing = createSessionActionTarget({ session: createOwnedRawSession({ receivedRuleCount: 0, managedSessions: { total: 3 } } as Partial<Session>),
             serverId: 'home', isConnected: true });
         expect(listVisibleSessionActionIds({ target: managing, surface: 'sessionHeader' }).filter((id) => id.startsWith('ui.session.coordinator.')))
-            .toEqual(['ui.session.coordinator.make', 'ui.session.coordinator.edit', 'ui.session.coordinator.answers', 'ui.session.coordinator.stop']);
+            .toEqual(['ui.session.coordinator.make', 'ui.session.coordinator.edit', 'ui.session.coordinator.answers', 'ui.session.coordinator.stop',
+                'ui.session.coordinator.board']);
         // "Answers its workers' questions" is the coordinator's one toggle, on unless the session turned it off.
         expect(createSessionActionDropdownItem({ actionId: 'ui.session.coordinator.answers', target: managing, iconColor: '#000' }))
             .toMatchObject({ checked: true });

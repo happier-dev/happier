@@ -10813,6 +10813,7 @@ const enSession = {
       sendNow: 'Send now',
       sendToAgentNow: 'Send to agent now',
       sendNowInterrupt: 'Send now (interrupt)',
+      deliverAndResume: 'Deliver and resume',
       retryDelivery: 'Retry',
       openDraft: 'Open draft',
       interruptAndRunNow: 'Interrupt and run now',
@@ -24976,6 +24977,7 @@ export const en: TranslationStructure = {
         menu: {
             make: "Make coordinator…",
             makeAlready: "It already is one",
+            openAsBoard: "Open as Board",
             edit: "Edit what it follows",
             editSubtitle: "Opens its People pane",
             answers: "Answers questions",
@@ -25994,6 +25996,7 @@ type EnglishNamespaces27 = TranslationOverlay<
       readonly menu: {
         readonly make: string;
         readonly makeAlready: string;
+        readonly openAsBoard: string;
         readonly edit: string;
         readonly editSubtitle: string;
         readonly stop: string;

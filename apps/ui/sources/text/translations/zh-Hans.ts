@@ -1521,6 +1521,7 @@ export const zhHans: TranslationStructure = {
     menu: {
       make: "设为协调者…",
       makeAlready: "已经是协调者",
+      openAsBoard: "以看板打开",
       edit: "编辑关注内容",
       editSubtitle: "打开其“人员”面板",
       answers: "回答问题",
@@ -8966,6 +8967,7 @@ export const zhHans: TranslationStructure = {
           sendNow: "立即发送",
           sendToAgentNow: "立即发送给智能体",
           sendNowInterrupt: "立即发送（中断）",
+          deliverAndResume: "送达并继续",
           retryDelivery: "重试",
           openDraft: '打开草稿',
           interruptAndRunNow: "中断并立即运行",

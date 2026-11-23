@@ -46,7 +46,8 @@ export type SessionActionId =
     | 'ui.session.coordinator.make'
     | 'ui.session.coordinator.answers'
     | 'ui.session.coordinator.edit'
-    | 'ui.session.coordinator.stop';
+    | 'ui.session.coordinator.stop'
+    | 'ui.session.coordinator.board';
 
 /**
  * Whether this session can be kept in — or released from — Needs attention, and which way the

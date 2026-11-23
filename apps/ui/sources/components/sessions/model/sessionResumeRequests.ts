@@ -1,7 +1,13 @@
 import * as React from 'react';
 import type { CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
-export type SessionResumeRequestListener = (invocation?: CurrentUiContextCommandInvocation) => Promise<boolean>;
+/** A resume asked for by one held Pending original: the resume carries that exact input's id as its request. */
+export type SessionResumeRequestTarget = Readonly<{ heldOriginalLocalId: string }>;
+
+export type SessionResumeRequestListener = (
+    invocation?: CurrentUiContextCommandInvocation,
+    target?: SessionResumeRequestTarget,
+) => Promise<boolean>;
 
 /**
  * Resume listeners keyed by Session id, then by the exact Home that registered them.
@@ -68,6 +74,7 @@ export async function emitSessionResumeRequest(
     sessionId: string,
     serverId?: string | null,
     invocation?: CurrentUiContextCommandInvocation,
+    target?: SessionResumeRequestTarget,
 ): Promise<boolean> {
     const serverScope = normalizeServerScope(serverId);
     const listeners = readResumeListeners(sessionId, serverScope);
@@ -77,7 +84,7 @@ export async function emitSessionResumeRequest(
         );
     }
 
-    const results = await Promise.all(Array.from(listeners, (listener) => listener(invocation)));
+    const results = await Promise.all(Array.from(listeners, (listener) => target ? listener(invocation, target) : listener(invocation)));
     return results.every(Boolean);
 }
 

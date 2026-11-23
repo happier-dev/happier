@@ -34,6 +34,8 @@ export const SESSION_ACTION_COORDINATOR_ANSWERS_ID = 'ui.session.coordinator.ans
 export const SESSION_ACTION_COORDINATOR_EDIT_ID = 'ui.session.coordinator.edit';
 /** Stop coordinating: removes its rule follows through the Follow writer, with Undo. */
 export const SESSION_ACTION_COORDINATOR_STOP_ID = 'ui.session.coordinator.stop';
+/** Open as Board: the live filtered Board of this coordinator's Home and everything under it (C1 §6). */
+export const SESSION_ACTION_COORDINATOR_BOARD_ID = 'ui.session.coordinator.board';
 
 export function resolveManualReadStateFromSessionActionId(actionId: string): 'read' | 'unread' | null {
     if (actionId === SESSION_ACTION_MARK_READ_ID) return 'read';

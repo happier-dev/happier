@@ -1334,6 +1334,23 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         } finally { await screen.unmount(); }
     });
 
+    it('resumes a stopped session for the held original through the composer Resume, carrying its exact id once', async () => {
+        await stoppedSession();
+        resumeResponse = async () => ({ type: 'success', sessionId: 's1' });
+        const screen = await renderSessionView({ routeServerId: runtime.serverId });
+        try {
+            await publishDurablePendingState(durablePendingRow('held-input', 'enqueue'));
+            await act(async () => {
+                await expect(emitSessionResumeRequest('s1', runtime.serverId, undefined, { heldOriginalLocalId: 'held-input' })).resolves.toBe(true);
+            });
+            expect(resumeCalls()).toHaveLength(1);
+            expect(resumeCalls()[0]?.payload).toMatchObject({ sessionId: 's1',
+                executionAuthorization: { provenance: 'user_request', requestId: 'held-input' } });
+            expect(pendingWrites()).toHaveLength(0);
+            expect(modalMockState.current?.spies.alert).not.toHaveBeenCalled();
+        } finally { await screen.unmount(); }
+    });
+
     it('keeps the message queued and says why when resuming a stopped session fails', async () => {
         await stoppedSession();
         resumeResponse = async () => ({ type: 'error', errorCode: 'SPAWN_FAILED', errorMessage: 'The machine refused this session.' });

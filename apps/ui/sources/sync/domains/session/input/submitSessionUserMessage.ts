@@ -5,10 +5,7 @@ import { normalizeParticipantRecipientRoutingIdentityV1, withParticipantRecipien
 import { withSessionUserMessageDeliveryIntentMeta } from '@happier-dev/protocol/sessions/messages/sessionMessageMeta';
 import type { PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
-import {
-    readSessionAutoResumeRefusalV1,
-    resolveSessionAutoResumeAdmissionV1,
-} from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
+import { readSessionAutoResumeRefusalV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { core } from 'zod/mini';
 
 import { getPendingQueueWakeResumeOptions } from '@/sync/domains/pending/pendingQueueWake';
@@ -34,7 +31,7 @@ import type {
 import { SESSION_INPUT_TARGET_UPDATE_REQUIRED_ERROR_CODE } from './types';
 import { SESSION_INPUT_ACCOUNT_SCOPE_RETIRED_ERROR_CODE } from './types';
 import { recordSessionMessageDeliveryDecision } from './sessionMessageDeliveryTelemetry';
-import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { isSessionHeldByPersonStop } from '@/sync/domains/session/control/sessionStopHold';
 import {
     canSendUserMessageToSession,
     SESSION_MESSAGE_SEND_NOT_RESUMABLE_ERROR_CODE,
@@ -54,8 +51,7 @@ function isSubmitAccountLifetimeCurrent(opts: SubmitSessionUserMessageOptions): 
 
 /** Any message send resumes a stopped Session; the existing Resume admission decides and clears the hold. */
 function isSendCrossingStopHold(opts: SubmitSessionUserMessageOptions): boolean {
-    return resolveSessionAutoResumeAdmissionV1({ metadata: readSessionOwnerMetadataView(opts.session),
-        archivedAt: opts.session.archivedAt, machineAvailable: true, authorityAvailable: true }) === 'held_by_person';
+    return isSessionHeldByPersonStop(opts.session);
 }
 
 async function blockPendingInputAfterWakeFailure(

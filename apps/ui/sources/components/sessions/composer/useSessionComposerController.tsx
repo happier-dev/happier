@@ -4486,7 +4486,7 @@ export function useSessionComposerController({
 
     // Handle resuming an inactive session
     const handleResumeSession = React.useCallback(async (opts?: { silent?: boolean; approvedNewDirectoryCreation?: boolean;
-        invocation?: CurrentUiContextCommandInvocation }): Promise<boolean> => {
+        invocation?: CurrentUiContextCommandInvocation; heldOriginalLocalId?: string }): Promise<boolean> => {
         const silent = opts?.silent === true;
         const resumeMachineId = reachableMachineTarget?.machineId ?? ownerMetadata?.machineId ?? null;
         const resumeDirectory = reachableMachineTarget?.basePath ?? ownerMetadata?.path ?? null;
@@ -4563,8 +4563,11 @@ export function useSessionComposerController({
                     approvedNewDirectoryCreation: true,
                 } : {}),
             };
+            // A held Pending original's resume is that input's own request: its id is the resume's request id,
+            // which the resume owner carries as the user-request execution authorization.
             const result = await (opts?.invocation ? opts.invocation.execute(resumeActions, 'session.open', input)
-                : resumeActions.execute('session.open', input));
+                : resumeActions.execute('session.open', input,
+                    opts?.heldOriginalLocalId ? { actionRequestId: opts.heldOriginalLocalId } : undefined));
 
             if (!result.ok) {
                 const presentation = resolveResumeFailurePresentation({ errorCode: result.errorCode, errorMessage: result.error, details: result.details },
@@ -4638,7 +4641,8 @@ export function useSessionComposerController({
 
     useSessionResumeRequestListener(
         sessionId,
-        React.useCallback(invocation => handleResumeSession({ invocation }), [handleResumeSession]),
+        React.useCallback((invocation, target) => handleResumeSession({ invocation, heldOriginalLocalId: target?.heldOriginalLocalId }),
+            [handleResumeSession]),
         sessionRouteServerId,
     );
 

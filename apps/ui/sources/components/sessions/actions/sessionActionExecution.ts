@@ -22,6 +22,8 @@ import { sessionOrganizationActions } from '@/sync/ops/sessionOrganization/sessi
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
 import { router } from 'expo-router';
+import { createFilteredBoardRoute } from '@/components/boards/boardsRoutes';
+import { resolveSessionCoordinatorMenuControls } from './sessionActionAvailability';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -65,6 +67,7 @@ import {
     SESSION_ACTION_PUT_UNDER_ID,
     SESSION_ACTION_COORDINATOR_MAKE_ID,
     SESSION_ACTION_COORDINATOR_EDIT_ID,
+    SESSION_ACTION_COORDINATOR_BOARD_ID,
     SESSION_ACTION_COORDINATOR_ANSWERS_ID,
     SESSION_ACTION_COORDINATOR_STOP_ID,
     SESSION_ACTION_RESUME_ID,
@@ -468,6 +471,13 @@ export async function executeSessionAction(params: Readonly<{
                 query: { ...serializeSessionPaneUrlState({ rightTabId: 'collaboration' }), collaborationFocus: 'following' },
             }) as Parameters<typeof router.push>[0]);
             return;
+        case SESSION_ACTION_COORDINATOR_BOARD_ID: {
+            // The coordinator projection already owns this filter; the Boards route owns its view.
+            const controls = resolveSessionCoordinatorMenuControls(params.target);
+            if (!controls) throwUnsupportedSingleTargetAction();
+            router.push(createFilteredBoardRoute(controls.openAsBoard.filter) as Parameters<typeof router.push>[0]);
+            return;
+        }
         case SESSION_ACTION_COORDINATOR_ANSWERS_ID: {
             if (!targetAddress) throwUnsupportedSingleTargetAction();
             const setAnswers = params.context?.operations?.setSessionAnswersWorkerQuestions ?? roleActions.setSessionAnswersWorkerQuestions;

@@ -7744,6 +7744,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     sendNow: '立即傳送',
                     sendToAgentNow: '立即傳送給代理',
                     sendNowInterrupt: '立即傳送（中斷）',
+                    deliverAndResume: '傳送並繼續',
                     retryDelivery: '重試',
                     openDraft: '開啟草稿',
                     interruptAndRunNow: '中斷並立即執行',

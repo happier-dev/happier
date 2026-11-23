@@ -20,6 +20,7 @@ import {
     SESSION_ACTION_PUT_UNDER_ID,
     SESSION_ACTION_COORDINATOR_MAKE_ID,
     SESSION_ACTION_COORDINATOR_EDIT_ID,
+    SESSION_ACTION_COORDINATOR_BOARD_ID,
     SESSION_ACTION_COORDINATOR_ANSWERS_ID,
     SESSION_ACTION_COORDINATOR_STOP_ID,
     SESSION_ACTION_PIN_ID,
@@ -157,6 +158,7 @@ export function listVisibleSessionActionIds(params: Readonly<{
         if (coordinator?.coordinator === true) {
             ids.push(SESSION_ACTION_COORDINATOR_EDIT_ID, SESSION_ACTION_COORDINATOR_ANSWERS_ID);
             if (coordinator.stop !== 'unavailable') ids.push(SESSION_ACTION_COORDINATOR_STOP_ID);
+            ids.push(SESSION_ACTION_COORDINATOR_BOARD_ID);
         }
     }
 

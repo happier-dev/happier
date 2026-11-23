@@ -11,6 +11,8 @@ import { t } from '@/text';
 import { resolvePendingMessagesPresentationByRecipient } from './pendingMessageVisualState';
 import { installPendingMessagesCommonModuleMocks } from './pendingMessagesTestHelpers';
 import { resolvePendingQueueHeadMaxHeightPx } from './pendingQueueContentClipping';
+import { writeSessionExplicitStopV1ToMetadata } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
+import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 /** `transcriptMarkdownTextStyle.lineHeight` in the test theme. */
 const LINE_PX = 24;
@@ -149,6 +151,7 @@ installPendingMessagesCommonModuleMocks({
 
 // Install the suite's boundary fixtures before import, and charge cold transforms to collection.
 const { PendingMessagesTranscriptBlock: PendingMessagesTranscriptBlockComponent } = await import('./PendingMessagesTranscriptBlock');
+const { useSessionResumeRequestListener } = await import('@/components/sessions/model/sessionResumeRequests');
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -498,6 +501,65 @@ describe('PendingMessagesTranscriptBlock', () => {
         }));
         await hoverPendingMessageRow(screen, 'held');
         expect(screen.findByTestId('pendingMessages.sendNow:held')).toBeTruthy();
+    });
+
+    describe('held original on a person-stopped Session', () => {
+        const heldOriginal = { id: 'pending-held', localId: 'held-original', text: 'Pick this back up', createdAt: 0, updatedAt: 0,
+            source: 'server_pending' as const, pendingDeliveryStatus: 'server_queued' as const, rawRecord: {} };
+        function personStoppedSession(access: ReturnType<typeof createSessionAccessFixture>) {
+            return { active: false, presence: 'offline', thinking: false, access,
+                metadata: writeSessionExplicitStopV1ToMetadata({ path: '/repo' },
+                    { v: 1, cause: 'explicit_stop', requestId: 'person-stop', requestedAtMs: 1 }) };
+        }
+        async function renderHeld(resume: (...args: unknown[]) => Promise<boolean>) {
+            const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+            function ComposerResumeOwner() {
+                useSessionResumeRequestListener('s1', resume as never, 'home-a');
+                return null;
+            }
+            return await renderScreen(React.createElement(React.Fragment, null,
+                React.createElement(ComposerResumeOwner),
+                React.createElement(PendingMessagesTranscriptBlock, { sessionId: 's1', pendingMessages: [heldOriginal], discardedMessages: [] })));
+        }
+
+        it.each([
+            { who: 'the owner', access: createSessionAccessFixture('owner') },
+            { who: 'a guest with send access', access: createSessionAccessFixture('edit') },
+        ])('offers Deliver and resume to $who and asks the resume owner once for the exact original', async ({ access }) => {
+            sessionValue = personStoppedSession(access);
+            const resume = vi.fn(async () => true);
+            const screen = await renderHeld(resume);
+            await hoverPendingMessageRow(screen, 'pending-held');
+            expect(screen.findByTestId('pendingMessages.sendNow:pending-held')).toBeNull();
+            await screen.pressByTestIdAsync('pendingMessages.deliverAndResume:pending-held');
+            expect(resume).toHaveBeenCalledOnce();
+            expect(resume).toHaveBeenCalledWith(undefined, { heldOriginalLocalId: 'held-original' });
+            expect(executeDefaultAction).not.toHaveBeenCalled();
+            expect(sendPendingMessageNow).not.toHaveBeenCalled();
+            await screen.unmount();
+        });
+
+        it('offers no delivery control to a viewer without send access', async () => {
+            sessionValue = personStoppedSession(createSessionAccessFixture('view'));
+            const resume = vi.fn(async () => true);
+            const screen = await renderHeld(resume);
+            await hoverPendingMessageRow(screen, 'pending-held');
+            expect(screen.findByTestId('pendingMessages.deliverAndResume:pending-held')).toBeNull();
+            expect(screen.findByTestId('pendingMessages.sendNow:pending-held')).toBeNull();
+            expect(resume).not.toHaveBeenCalled();
+            await screen.unmount();
+        });
+
+        it('says why when no resume owner can take the request', async () => {
+            sessionValue = personStoppedSession(createSessionAccessFixture('edit'));
+            const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+            const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+                sessionId: 's1', pendingMessages: [heldOriginal], discardedMessages: [] }));
+            await hoverPendingMessageRow(screen, 'pending-held');
+            await screen.pressByTestIdAsync('pendingMessages.deliverAndResume:pending-held');
+            expect(modalAlert).toHaveBeenCalledOnce();
+            await screen.unmount();
+        });
     });
 
     it('keeps the interruption warning for send-now during an active turn', async () => {
@@ -1762,6 +1824,7 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         expect(screen.findByTestId('pendingMessages.nonSteerableNotice')).toBeTruthy();
         expect(screen.findByTestId('pendingMessages.steerBlockedTerminalDraftNotice')).toBeTruthy();
+        expect(screen.findByTestId('pendingMessages.clearTerminalComposer')).toBeFalsy();
     });
 
     it('offers to clear the terminal composer for active-turn terminal draft blockage', async () => {

@@ -14,6 +14,8 @@ import { useSession, useSetting } from '@/sync/domains/state/storage';
 import { isSessionMachineAccessRemoved } from '@/components/sessions/access/sessionMachineAccessRemoved';
 import { sync } from '@/sync/sync';
 import { canSteerUserMessageNow, supportsInFlightSteerUserMessage } from '@/sync/domains/session/control/submitMode';
+import { isSessionHeldByPersonStop } from '@/sync/domains/session/control/sessionStopHold';
+import { emitSessionResumeRequest } from '@/components/sessions/model/sessionResumeRequests';
 import { derivePendingMessagesRuntimePresentation, getPendingMaterializingKey, getPendingMessageSendPresentation, sendPendingMessageWithIntent } from './pendingMessageSendActions';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { Modal } from '@/modal';
@@ -314,6 +316,11 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             : settingsDefaults.sessionPendingQueueDeliveryTiming;
     const pendingQueueRuntimeReachable = session ? isSessionRuntimeRunning(session) : false;
     const { sendNowActionLabel } = getPendingMessageSendPresentation(session);
+    // On a Session a person stopped, a held original is delivered by resuming the Session for it: the composer's
+    // Resume owner takes the exact original, so "Send now" is not a second way to do the same thing here.
+    // Anyone who may send to the Session may wake it (owner ruling 2026-11-23); nobody else is offered it.
+    const deliversByResume = session != null && session.active !== true && isSessionHeldByPersonStop(session);
+    const canDeliverByResume = deliversByResume && session?.access?.capabilities.submitAgentInput === true;
     const pendingQueueForegroundState = runtimeWorking
         ? (canSteerNow ? 'active_steerable' : 'active_unsteerable')
         : 'ready';
@@ -527,6 +534,17 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         }));
     }, [props.sessionId, exactPendingQueueOwner, session, runPendingDeliveryAction, pendingRecoveryExecutor, accountActorViewerScope]);
     const handleSteerNow = React.useCallback((message: PendingMessage) => handlePendingSend(message, 'steer_now'), [handlePendingSend]);
+    const handleDeliverAndResume = React.useCallback(async (message: PendingMessage) => {
+        await runPendingDeliveryAction(message, async () => {
+            try {
+                await emitSessionResumeRequest(props.sessionId, exactSessionAddress?.serverId, undefined,
+                    { heldOriginalLocalId: getPendingMaterializingKey(message) });
+            } catch {
+                // No mounted composer can resume this Session here: say so instead of a silent press.
+                Modal.alert(t('common.error'), t('session.resumeFailed'));
+            }
+        });
+    }, [exactSessionAddress?.serverId, props.sessionId, runPendingDeliveryAction]);
     const handleSendNow = React.useCallback((message: PendingMessage) => handlePendingSend(message, 'interrupt_and_send'), [handlePendingSend]);
 
     const handleRequeueDiscarded = React.useCallback(async (pendingId: string) => {
@@ -753,7 +771,15 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 	            if (canSteerNow && canUseDirectDeliveryActions) {
 	                items.push({ id: 'steerNow', title: t('session.pendingMessages.actions.steerNow'), icon: <Icon name="navigation-arrow" size={16} color={theme.colors.text.secondary} /> });
 	            }
-	            if (canUseDirectDeliveryActions) {
+	            if (canUseDirectDeliveryActions && canDeliverByResume) {
+	                items.push({
+	                    id: 'deliverAndResume',
+	                    testID: `pendingMessages.menu.deliverAndResume:${message.id}`,
+	                    title: t('session.pendingMessages.actions.deliverAndResume'),
+	                    icon: <Icon name="paper-plane" size={16} color={theme.colors.text.secondary} />,
+	                    disabled: deliveryActionBusy,
+	                });
+	            } else if (canUseDirectDeliveryActions && !deliversByResume) {
 	                items.push({
 	                    id: 'sendNow',
 	                    title: sendNowActionLabel,
@@ -796,6 +822,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                     }
                     if (itemId === 'steerNow') await handleSteerNow(message);
                     if (itemId === 'sendNow') await handleSendNow(message);
+                    if (itemId === 'deliverAndResume') await handleDeliverAndResume(message);
                 }}
                 popoverAnchor={menuAnchor}
                 placement="auto-vertical"
@@ -1036,7 +1063,15 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     	                                        onPress={() => handleSteerNow(message)}
     	                                    />
     	                                ) : null}
-    	                                {canUseDirectDeliveryActions ? (
+                                    {canUseDirectDeliveryActions && canDeliverByResume ? (
+                                        <IconAction
+                                            testID={`pendingMessages.deliverAndResume:${message.id}`}
+                                            accessibilityLabel={t('session.pendingMessages.actions.deliverAndResume')}
+                                            icon="paper-plane"
+                                            onPress={() => handleDeliverAndResume(message)}
+                                            disabled={deliveryActionBusy}
+                                        />
+                                    ) : canUseDirectDeliveryActions && !deliversByResume ? (
     	                                    <IconAction
     	                                        testID={`pendingMessages.sendNow:${message.id}`}
     	                                        accessibilityLabel={sendNowActionLabel}
@@ -1120,6 +1155,9 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         handleSendAsNew,
         handleSendNow,
         handleSteerNow,
+        handleDeliverAndResume,
+        canDeliverByResume,
+        deliversByResume,
         hasProviderDeliveryInFlight,
         blockedPendingExcerpt,
         isWeb,

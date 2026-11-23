@@ -20,6 +20,7 @@ import {
     SESSION_ACTION_UNARCHIVE_ID,
 } from './sessionActionIds';
 import { executeSessionAction } from './sessionActionExecution';
+import { readFilteredBoardRoute } from '@/components/boards/boardsRoutes';
 import { readPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import * as React from 'react';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
@@ -134,6 +135,20 @@ describe('executeSessionAction', () => {
         expect(route.searchParams.get('serverId')).toBe('server_1');
         expect(route.searchParams.get('right')).toBe('collaboration');
         expect(route.searchParams.get('collaborationFocus')).toBe('following');
+    });
+    it('opens the coordinator as a live Board filtered to its Home and everything under it', async () => {
+        const { router } = await import('expo-router');
+        const push = vi.mocked(router.push);
+        push.mockClear();
+        await executeSessionAction({ actionId: 'ui.session.coordinator.board', target: createTarget() });
+        const route = new URL(String(push.mock.calls[0]?.[0]), 'https://happier.test');
+        expect(route.pathname).toBe('/boards');
+        expect(readFilteredBoardRoute(route.searchParams.get('filter'))).toMatchObject({
+            homeServerIds: ['server_1'], underSessionId: 'session_1' });
+        push.mockClear();
+        await executeSessionAction({ actionId: 'ui.session.coordinator.board', target: { ...createTarget(), serverId: null } })
+            .catch(() => undefined);
+        expect(push).not.toHaveBeenCalled();
     });
     it('opens Follow for the captured Home and preserves archived state without permitting unqualified or disabled targets', async () => {
         const opened: Array<{ address: { serverId: string; sessionId: string }; archived: boolean }> = [];
