@@ -207,6 +207,31 @@ export function isManagedRetainedControlInvocation(actionId: string, _input: unk
     || isManagedPowerOrDeleteActionIdV1(actionId);
 }
 
+/** Managed Actions with a retained or native effect; the others read. */
+export function isManagedEffectActionIdV1(actionId: string): boolean {
+  return actionId === MANAGED_ACQUIRE_ACTION_ID_V1 || actionId === 'machines.managed.credentials.install'
+    || isMachineSetupOperationActionIdV1(actionId) || actionId === 'machines.managed.setup.skip'
+    || actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 || actionId === 'machines.managed.cancel'
+    || MANAGED_CONTROL_ACTION_IDS_V1.some(control => control === actionId);
+}
+
+/** Managed Actions the Account host executes; the others run on the selected Machine. */
+export function isManagedAccountPlacedActionIdV1(actionId: string): boolean {
+  return actionId === 'machines.provisioners.list' || actionId === 'machines.provisioners.check'
+    || actionId === 'machines.provisioners.options' || actionId === MANAGED_ACQUIRE_ACTION_ID_V1
+    || actionId === 'machines.managed.list' || actionId === 'machines.managed.get' || actionId === 'machines.managed.birth.get'
+    || actionId === MANAGED_REFERENCES_GET_ACTION_ID_V1 || isManagedCreationMutationActionIdV1(actionId)
+    || isManagedPowerOrDeleteActionIdV1(actionId) || isManagedResizeActionIdV1(actionId) || actionId === 'machines.managed.inspect'
+    || actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 || actionId === MANAGED_RETIRE_ACTION_ID_V1;
+}
+
+/** Managed Actions a person confirms directly in the UI; other effects follow the approval policy. */
+export function isManagedDirectConfirmationActionIdV1(actionId: string): boolean {
+  return actionId === MANAGED_ACQUIRE_ACTION_ID_V1 || actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1
+    || actionId === MANAGED_POWER_SET_ACTION_ID_V1 || actionId === 'machines.managed.retention.update'
+    || actionId === 'machines.managed.controller.update' || actionId === 'machines.managed.setup.skip';
+}
+
 /** Reviewed combined setup reads retain the parent root, never a generic child permission. */
 export function isMachineSetupPlanRpcChildV1(input: Readonly<{
   rootActionId?: string; effectActionId?: string; method?: string;

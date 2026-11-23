@@ -14570,9 +14570,11 @@ guests; Can use on a controller supplies no guest authority. Cyclic controller
 references propagate only existing Manage authority. The ordinary Machine
 permission graph owns guest access for Session, terminal, service and Action
 admission. Native resource custody is separate: `managedRole.ts` caps a guest's
-own role at Use for the managed-resource projection. Only controller Manage or
-controller-less custody supplies resource Manage, required for native lifecycle
-control and unredacted custodian credential/bootstrap selectors. Granting admin
+own role at Use for the managed-resource projection. Only the custodian (who,
+for a controlled row, is the controller's owner by admission) or controller
+Manage supplies resource Manage, required for native lifecycle control,
+unredacted credential/bootstrap selectors and every managed target, including a
+session-bound sandbox. Being the row's creator does not reduce that role. Granting admin
 on a guest does not delegate the custodian's billed resource.
 Delegated power, resize and delete use the existing per-invocation controller
 codec. Home still authorizes the exact action, managed resource and receiving

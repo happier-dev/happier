@@ -42,7 +42,7 @@ import { ManagedConfigurationFactsV1ReadSchema } from '@happier-dev/protocol/mac
 import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { GuestCliIdentityV1Schema } from '@happier-dev/protocol/features/payload/capabilities/guestCliIdentityV1';
 import { resolveEffectiveMachineAccessForMachinesInTx } from '@/app/machines/machineAccess';
-import { inheritManagedControllerRole, resolveManagedMachineRole } from './managedRole';
+import { resolveManagedMachineRole, resolveManagedMachineRoles, type ManagedMachineRoles } from './managedRole';
 import type { MachineAccessRoleV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 export { resolveManagedMachineRole } from './managedRole';
 import { readMachineAudienceAccountIdsForMachinesInTx } from '@/app/machines/machineRecipientWork';
@@ -55,18 +55,15 @@ export function hasPossibleManagedNativeResource(row: Pick<StoredManagedMachine,
     return row.allocation !== 'unsubmitted' && row.allocation !== 'confirmed-absent';
 }
 
-/** Acquire once; native resource power and guest activity have distinct existing authorities. */
-export async function resolveManagedMachineRolesInTx(tx: Tx, row: Pick<StoredManagedMachine, 'custodianAccountId' | 'controllerMachineId' | 'enrolledMachineId'>, actorAccountId: string): Promise<Readonly<{
-    resourceRole: MachineAccessRoleV1 | null; guestActivityRole: MachineAccessRoleV1 | null;
-}>> {
+/** Acquire the role facts once; the custodian needs no read. */
+export async function resolveManagedMachineRolesInTx(tx: Tx, row: Pick<StoredManagedMachine, 'custodianAccountId' | 'controllerMachineId' | 'enrolledMachineId'>, actorAccountId: string): Promise<ManagedMachineRoles> {
+    if (row.custodianAccountId === actorAccountId) return resolveManagedMachineRoles(row, actorAccountId);
     const access = await resolveEffectiveMachineAccessForMachinesInTx(tx, {
         machineIds: [row.controllerMachineId, row.enrolledMachineId].filter((id): id is string => id !== null), accountIds: [actorAccountId],
     });
-    const guestRole = row.enrolledMachineId ? access.get(row.enrolledMachineId)?.get(actorAccountId) ?? null : null;
-    const resourceRole = resolveManagedMachineRole(row, actorAccountId,
+    return resolveManagedMachineRoles(row, actorAccountId,
         row.controllerMachineId ? access.get(row.controllerMachineId)?.get(actorAccountId) ?? null : null,
-        guestRole);
-    return { resourceRole, guestActivityRole: inheritManagedControllerRole(resourceRole, guestRole) };
+        row.enrolledMachineId ? access.get(row.enrolledMachineId)?.get(actorAccountId) ?? null : null);
 }
 
 export async function resolveManagedMachineRoleInTx(tx: Tx, row: Pick<StoredManagedMachine, 'custodianAccountId' | 'controllerMachineId' | 'enrolledMachineId'>, actorAccountId: string) {

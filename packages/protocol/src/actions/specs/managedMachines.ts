@@ -11,7 +11,6 @@ import { MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '../../machines/managed/mach
 import { EPHEMERAL_RUNNER_ACTION_IDS_V1, EPHEMERAL_RUNNER_ACTION_TRANSPORTS_V1, EphemeralRunnerActionInputSchemasV1, EphemeralRunnerActionOutputSchemasV1, type EphemeralRunnerActionIdV1 } from '../../ephemeralRunner/actionsV1.js';
 import {
   MANAGED_MACHINE_ACTION_IDS_V1,
-  MANAGED_CONTROL_ACTION_IDS_V1,
   ManagedMachineActionInputSchemasV1,
   ManagedMachineActionOutputSchemasV1,
   managedMachineActionEndpointPathV1,
@@ -23,7 +22,7 @@ import { readMachineProvisionerActionRolesV1 } from '../../plugins/contributions
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { MANAGED_MACHINE_INPUT_FIELDS } from './machineInputHints.js';
 import { managedAcquireApprovalPresentation } from './managedAcquireApproval.js';
-import { isManagedResizeActionIdV1, MANAGED_EXEC_ACTION_ID_V1 } from '../../machines/managed/actionIdsV1.js';
+import { isManagedAccountPlacedActionIdV1, isManagedDirectConfirmationActionIdV1, isManagedEffectActionIdV1, isManagedResizeActionIdV1, MANAGED_EXEC_ACTION_ID_V1 } from '../../machines/managed/actionIdsV1.js';
 
 const titles: Record<ManagedMachineActionIdV1, string> = {
   'machines.provisioners.list': 'List machine provisioners',
@@ -95,17 +94,8 @@ function createManagedMachineActionSpecs() {
     outputSchema: ManagedMachineActionOutputSchemasV1[actionId],
     operation: { version: 1, visibility: 'activity', progress: 'indeterminate', cancellation: 'supported', presentation: { onStart: 'current' } },
   };
-  const effect = actionId === 'machines.managed.acquire'
-    || actionId === 'machines.managed.credentials.install'
-    || actionId === 'machines.setup.apply' || actionId === 'machines.setup.remove' || actionId === 'machines.setup.updates.apply' || actionId === MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1 || actionId === 'machines.managed.setup.skip'
-    || actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.cancel'
-    || MANAGED_CONTROL_ACTION_IDS_V1.some(control => control === actionId);
-  const account = actionId === 'machines.provisioners.list'
-    || actionId === 'machines.provisioners.check' || actionId === 'machines.provisioners.options' || actionId === 'machines.managed.acquire'
-    || actionId === 'machines.managed.list' || actionId === 'machines.managed.get' || actionId === 'machines.managed.birth.get'
-    || actionId === 'machines.managed.cancel' || actionId === 'machines.managed.references.get' || actionId === 'machines.managed.setup.skip'
-    || actionId === 'machines.managed.power.set' || isManagedResizeActionIdV1(actionId) || actionId === 'machines.managed.inspect'
-    || actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.delete' || actionId === 'machines.managed.retire';
+  const effect = isManagedEffectActionIdV1(actionId);
+  const account = isManagedAccountPlacedActionIdV1(actionId);
   return {
     id: actionId, approval: { result: 'required' }, originalExecution: { terminalRoot: 'allowed' },
     ...(isMachineSetupPlanOrApplyActionIdV1(actionId) || isMachineSetupCombinedActionIdV1(actionId) ? { deploymentPreparationScope: declareDeploymentPreparationScopeV1('setup') } : {}),
@@ -135,15 +125,12 @@ function createManagedMachineActionSpecs() {
         ...(input.agentStart ? [{ action: 'session.spawn_new' as const, role: 'session.spawn_new' }] : []),
       ];
     } } : {}),
-    ...(actionId === 'machines.managed.acquire' || actionId === 'machines.managed.bootstrap.retry'
-      || actionId === 'machines.managed.power.set'
-      || actionId === 'machines.managed.retention.update' || actionId === 'machines.managed.controller.update'
-      || actionId === 'machines.managed.setup.skip'
+    ...(isManagedDirectConfirmationActionIdV1(actionId)
       ? { approvalPolicy: { uiConfirmation: 'direct' as const } }
       : effect ? { approvalPolicy: { uiConfirmation: 'policy' as const } } : {}),
     title: titles[actionId],
     ...(actionId === 'machines.managed.acquire' ? { approvalPresentation: managedAcquireApprovalPresentation } : {}),
-    ...(actionId === 'machines.setup.apply' || actionId === 'machines.setup.remove' || actionId === 'machines.setup.updates.apply' || actionId === MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1 ? { approvalScope: 'machine' as const } : {}),
+    ...(isMachineSetupOperationActionIdV1(actionId) ? { approvalScope: 'machine' as const } : {}),
     ...({
       'machines.managed.bootstrap.retry': { confirmVerb: { key: 'common.retry', fallback: 'Retry' } },
       // Its own words, not "Cancel": the dialog's dismiss button already says Cancel.

@@ -171,17 +171,16 @@ export async function admitsManagedTargetInTx(tx: Tx, row: StoredManagedMachine,
     target: ManagedTargetRequesterV1, purpose?: 'exec'): Promise<boolean> {
     if (row.archivedAt || row.creationState !== 'active') return false;
     const { requesterAccountId, committedSessionId } = target;
-    if (row.custodianAccountId === requesterAccountId) return true;
-    if (purpose === 'exec') {
-        return (await resolveManagedMachineRolesInTx(tx, row, requesterAccountId)).guestActivityRole === 'manage';
-    }
+    const roles = await resolveManagedMachineRolesInTx(tx, row, requesterAccountId);
+    if (purpose === 'exec') return roles.guestActivityRole === 'manage';
+    if (roles.resourceRole === 'manage') return true;
     const admission = readManagedAdmissionState(row.admittedInput);
     if (admission.acquisitionMode === 'resource-bound') {
         if (!committedSessionId || !isManagedMachineCreator(row, requesterAccountId)) return false;
         return Boolean(await tx.session.findFirst({ where: { id: committedSessionId, accountId: requesterAccountId,
             managedCreationId: row.id, archivedAt: null }, select: { id: true } }));
     }
-    return Boolean(await resolveManagedMachineRoleInTx(tx, row, requesterAccountId));
+    return roles.resourceRole !== null;
 }
 /** Creation recovery/cancellation does not grant native power or controller management. */
 export async function requireManagedCreationAccessInTx(tx: Tx,
@@ -202,7 +201,7 @@ export async function getManagedMachine(params: Readonly<{ actorAccountId: strin
             } } });
             if (!row) throw new ManagedMachineError('managed_not_found');
             const root = readManagedAdmissionState(row.admittedInput).continuation?.workflowRoot;
-            const isCustodian = row.custodianAccountId === params.actorAccountId;
+            const manages = (await resolveManagedMachineRolesInTx(tx, row, params.actorAccountId)).resourceRole === 'manage';
             // Reservation custody and replay of the original Workflow request have distinct authority.
             let retainedWorkflowRoot: typeof root;
             if (root?.binding.accountId === params.actorAccountId && root.binding.serverIdentityId === input.homeId) {
@@ -219,7 +218,7 @@ export async function getManagedMachine(params: Readonly<{ actorAccountId: strin
                     }
                 }
             }
-            if (!isCustodian && !retainedWorkflowRoot) throw new ManagedMachineError('managed_not_found');
+            if (!manages && !retainedWorkflowRoot) throw new ManagedMachineError('managed_not_found');
             return { ...await projectManagedMachineReadForActorInTx(tx, row, params.actorAccountId),
                 ...(retainedWorkflowRoot ? { retainedWorkflowRoot } : {}) };
         }
@@ -234,11 +233,10 @@ export async function getManagedMachine(params: Readonly<{ actorAccountId: strin
 /** Private native custody and public creator results share one actor-aware projection. */
 export async function projectManagedMachineForActorInTx(tx: Tx, row: StoredManagedMachine, actorAccountId: string, admittedRole?: 'manage'): Promise<ManagedMachineV1> {
     const machine = projectManagedMachine(row);
-    if (row.custodianAccountId === actorAccountId) return machine;
     const roles = await resolveManagedMachineRolesInTx(tx, row, actorAccountId);
     const role = roles.guestActivityRole;
     const creator = isManagedMachineCreator(row, actorAccountId);
-    const viewerMachine = !creator && (admittedRole ?? roles.resourceRole) === 'manage'
+    const viewerMachine = (admittedRole ?? roles.resourceRole) === 'manage'
         ? machine : redactManagedMachineCredentialReferences(machine);
     const projected = role ? { ...viewerMachine, guestActivityRole: role } : viewerMachine;
     if ((!creator && role !== 'manage') || !row.controllerMachineId || !row.controllerInstallationId) return projected;
@@ -246,7 +244,7 @@ export async function projectManagedMachineForActorInTx(tx: Tx, row: StoredManag
         kind: true, accountId: true, installationId: true, installationPublicKey: true, revokedAt: true, replacedByMachineId: true,
     } });
     const controllerAccess = projectManagedControllerAccess(controller, { installationId: row.controllerInstallationId });
-    return { ...redactManagedMachineCredentialReferences(machine), ...(controllerAccess ? { controllerAccess } : {}) };
+    return { ...projected, ...(controllerAccess ? { controllerAccess } : {}) };
 }
 /**
  * Account reads of an opaque preset never disclose the audience.  The stored
@@ -318,9 +316,7 @@ export async function listManagedMachines(params: Readonly<{ actorAccountId: str
                 }
             }
             const machine = projectManagedMachine(row);
-            const projected = row.custodianAccountId !== params.actorAccountId
-                && (isManagedMachineCreator(row, params.actorAccountId) || role(row) !== 'manage')
-                ? redactManagedMachineCredentialReferences(machine) : machine;
+            const projected = role(row) === 'manage' ? machine : redactManagedMachineCredentialReferences(machine);
             return projectManagedMachineReadForActor(row, projected, params.actorAccountId);
         }) };
     });
