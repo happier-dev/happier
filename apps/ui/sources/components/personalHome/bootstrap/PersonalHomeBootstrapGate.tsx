@@ -205,11 +205,14 @@ export function PersonalHomeBootstrapGate(props: PersonalHomeBootstrapGateProps)
     const existingRuntimeNeedsSignIn = controller.snapshot.detail?.code === 'existing_runtime_credentials';
     const onReady = props.onReady;
     const completedProfile = controller.facts?.completedPersonalHomeProfile;
+    const readyForHandoff = firstRun
+        ? controller.snapshot.homeReady && completedProfile != null
+        : controller.snapshot.phase === 'ready' && !controller.isOperating;
     React.useEffect(() => {
-        if (enabled && controller.snapshot.phase === 'ready' && !controller.isOperating && (!firstRun || completedProfile)) {
+        if (enabled && readyForHandoff) {
             onReady?.(completedProfile ?? undefined);
         }
-    }, [completedProfile, enabled, controller.snapshot.phase, controller.isOperating, firstRun, onReady]);
+    }, [completedProfile, enabled, readyForHandoff, onReady]);
     const onSignInToExistingRuntime = props.onSignInToExistingRuntime;
     const handleUseExisting = React.useCallback(() => {
         if (existingRuntimeNeedsSignIn && onSignInToExistingRuntime) {
@@ -261,13 +264,11 @@ export function PersonalHomeBootstrapGate(props: PersonalHomeBootstrapGateProps)
             : {}),
     };
     // Recovery after Home readiness stays secondary; pre-ready setup belongs only to Home content.
-    const showPostShellPending = enabled && !firstRun
+    const showPostShell = enabled && !gating && controller.snapshot.homeReady && !controller.snapshot.shouldGateShell;
+    const showPostShellPending = showPostShell
         && controller.error == null
-        && controller.isOperating && controller.snapshot.homeReady && controller.snapshot.shouldGateShell === false;
-    const showPostShellRecovery = enabled && !firstRun
-        && controller.error != null
-        && controller.snapshot.homeReady
-        && controller.snapshot.shouldGateShell === false;
+        && controller.isOperating;
+    const showPostShellRecovery = showPostShell && controller.error != null;
     return (
         <PersonalHomeBootReadinessContext.Provider value={!enabled ? BOOT_BYPASSED : controller.snapshot.homeReady ? BOOT_READY : BOOT_STARTING}>
             <PersonalHomeBootstrapPresentationContext.Provider value={{ gating, firstArrival, setupProps, setupSurface: props.setupSurface }}>

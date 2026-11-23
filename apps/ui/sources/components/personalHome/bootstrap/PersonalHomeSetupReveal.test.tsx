@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 
 import { PersonalHomeBootstrapContent, PersonalHomeBootstrapGate, usePersonalHomeBootReadiness } from './PersonalHomeBootstrapGate';
+import { PersonalHomeBootstrapAdmission } from './PersonalHomeBootstrapAdmission';
+import { useFirstRunPersonalHome, useRequestPersonalHomeBootstrap } from './personalHomeBootstrapRequest';
 import type { PersonalHomeFacts } from './personalHomeBootstrapTypes';
 
 const reducedMotionSpy = vi.hoisted(() => vi.fn(() => false));
@@ -105,6 +107,49 @@ async function renderBootstrapThroughHomeReady() {
 }
 
 describe('Personal Home shell reveal', () => {
+    it('hands the verified Personal Home back to first-run Welcome while its computer is still being prepared', async () => {
+        let facts = pendingFacts;
+        let finishComputer!: () => void;
+        const prepareComputer = () => new Promise<void>(resolve => {
+            finishComputer = () => {
+                facts = { ...homeReadyFacts, daemon: { ...homeReadyFacts.daemon!, servesPersonalHome: true } };
+                resolve();
+            };
+        });
+        const readFacts = async () => facts;
+        const operations = {
+            'ensure-home-ready': async () => { facts = { ...homeReadyFacts, daemon: null }; },
+            'prepare-computer': prepareComputer,
+        };
+        const Runtime: React.ComponentProps<typeof PersonalHomeBootstrapAdmission>['runtime'] = ({ children, onSettled, requested }) => (
+            <PersonalHomeBootstrapGate isDesktopHost isDesktopMainWindow readFacts={readFacts} operations={operations}
+                onReady={requested ? onSettled : undefined}>
+                {children}
+            </PersonalHomeBootstrapGate>
+        );
+        function Welcome() {
+            const request = useRequestPersonalHomeBootstrap();
+            const prepared = useFirstRunPersonalHome()?.profile;
+            return <PersonalHomeBootstrapContent>
+                <View testID={prepared ? 'welcome-to-prepared-home' : 'welcome-pick-home'} />
+                <button data-testid="request-personal-home" onClick={() => request?.('first-run')} />
+            </PersonalHomeBootstrapContent>;
+        }
+        const screen = await renderScreen(
+            <PersonalHomeBootstrapAdmission admission="offer" runtime={Runtime}><Welcome /></PersonalHomeBootstrapAdmission>,
+        );
+
+        await screen.pressByTestIdAsync('request-personal-home');
+        await flushHookEffects({ cycles: 6, turns: 3 });
+
+        // The device task can be waiting for consent. The verified Home can already continue.
+        expect(finishComputer).toBeTypeOf('function');
+        expect(screen.findByTestId('welcome-to-prepared-home')).not.toBeNull();
+        expect(screen.findByTestId('personal-home-setup-surface')).toBeNull();
+        expect(screen.findByTestId('personal-home-bootstrap-backdrop')?.props.pointerEvents).toBe('auto');
+        await act(async () => { finishComputer(); });
+    });
+
     it('does not report local-Home startup on a non-desktop host', async () => {
         const screen = await renderScreen(
             <PersonalHomeBootstrapGate isDesktopHost={false} isDesktopMainWindow={false}>
