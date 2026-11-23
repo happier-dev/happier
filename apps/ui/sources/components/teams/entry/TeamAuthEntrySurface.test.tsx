@@ -249,7 +249,7 @@ describe('TeamAuthEntrySurface', () => {
 
     afterEach(() => standardCleanup());
 
-    it('renders a scoped Team identity and keeps the exact Home target on action selection', async () => {
+    it('renders a wrapping Team identity and keeps the exact Home target on action selection', async () => {
         const onSelectAction = vi.fn();
         const screen = await renderScreen(
             <TeamAuthEntrySurface
@@ -269,7 +269,7 @@ describe('TeamAuthEntrySurface', () => {
         const heading = screen.findByTestId('team-auth-entry-heading');
         expect(heading?.props.role).toBe('heading');
         expect(heading?.props.accessibilityLabel).toContain('A very long Team name');
-        expect(heading?.props.numberOfLines).toBe(2);
+        expect(heading?.props.numberOfLines).toBeUndefined();
         expect(screen.findByTestId('team-auth-entry-logo')?.props.accessibilityElementsHidden).toBe(true);
         expect(screen.findAllByTestId('team-auth-entry-account-label')).toHaveLength(0);
 

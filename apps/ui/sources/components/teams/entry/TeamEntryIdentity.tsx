@@ -69,7 +69,6 @@ export function TeamEntryIdentity(props: Readonly<{
                     testID={`${testIDPrefix}-heading`}
                     accessibilityRole="header"
                     accessibilityLabel={heading}
-                    numberOfLines={2}
                     role="heading"
                     style={styles.heading}
                 >
