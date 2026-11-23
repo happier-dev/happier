@@ -58,5 +58,5 @@ export async function prepareWorkflowNativeTrigger(
     const trigger = watcher ? buildPluginEventAutomationTriggerInput({
         eligibleEvents, draft: setup.draft.draft, watcherOrigin: watcher.origin,
     }) : null;
-    return trigger ? { trigger, payloadSchema: seed.payloadSchema } : null;
+    return trigger ? { trigger: { ...trigger, subject: seed.subject }, payloadSchema: seed.payloadSchema } : null;
 }

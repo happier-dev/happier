@@ -199,6 +199,7 @@ describe('workflowEventFacts', () => {
       const fact = { ...machine, event, sourceRevision: 999_999 };
       const seed = readWorkflowEventDraftSeed(fact, { serverId: 'home', events });
       expect(seed).toMatchObject({ setupRequired: true, trigger: null,
+        subject: { kind: 'machine', serverId: 'home', machineId: 'm1' },
         eventSeed: { eventRef: { pluginId: 'happier.machine.services', localId: `machine-${event}` },
           setupInput: { v: 1, serverId: 'home', machineId: 'm1' } },
         payloadSchema: events.find(row => row.eventRef.localId === `machine-${event}`)?.payloadSchema,

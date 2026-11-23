@@ -1,4 +1,5 @@
 import type { Dispatch, SetStateAction } from 'react';
+import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import type { AutomationSessionLifecycleSubjectV1 } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import type { AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import { deriveAutomationOccurrenceKeyV1, type AutomationTriggerOccurrenceEvidenceV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
@@ -169,6 +170,7 @@ export function readWorkflowEventDraftSeed(
   fact: Parameters<typeof readWorkflowEventTrigger>[0],
   catalog: Readonly<{ serverId: string | null; events: readonly Pick<WorkflowTriggerEventOption, 'eventRef' | 'automation' | 'payloadSchema'>[] }>,
 ): Readonly<{ setupRequired: true; trigger: null;
+    subject: Extract<AutomationSubjectV1, { kind: 'machine' }>;
     eventSeed: NonNullable<WorkflowDefinitionDraftSeed['eventSeed']>; payloadSchema?: WorkflowDefinitionDraftSeed['payloadSchema'] }>
   | Readonly<{ setupRequired: false; trigger: AutomationTriggerDefinitionInput }>
   | null {
@@ -183,6 +185,7 @@ export function readWorkflowEventDraftSeed(
   if (matching.length !== 1) return null;
   const event = matching[0];
   return { setupRequired: true, trigger: null, payloadSchema: event.payloadSchema,
+    subject: { kind: 'machine', serverId: catalog.serverId, machineId: fact.machineId },
     eventSeed: { eventRef: event.eventRef,
       setupInput: { v: 1, serverId: catalog.serverId, machineId: fact.machineId } } };
 }
