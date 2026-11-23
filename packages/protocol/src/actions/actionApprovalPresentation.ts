@@ -34,7 +34,7 @@ import { ReachPlaceV1Schema } from '../reach/reachPlaceV1.js';
 import { ReachRuleDraftV1Schema } from '../reach/reachRuleV1.js';
 import { ReachRulesChangeV1Schema } from '../reach/reachRulesChangeV1.js';
 import { PrincipalRefV1Schema } from '../teams/principal.js';
-import { TEAM_POLICY_SET_ACTION_ID_V1 } from '../teams/actionIdsV1.js';
+import { TEAM_GROUP_UPDATE_ACTION_ID_V1, TEAM_POLICY_SET_ACTION_ID_V1 } from '../teams/actionIdsV1.js';
 import {
   PluginChangePendingReviewResultSchema,
   type PluginChangePendingReviewResult,
@@ -237,10 +237,18 @@ const SESSION_REFERENCE_KEYS = new Set([
   'underSessionId', 'parentSessionId', 'originSessionId',
 ]);
 
+const PRINCIPAL_OPERAND_REFERENCES = new Map<string, 'account' | 'team'>([
+  ['initialOwnerAccountId', 'account'],
+  ['recipientAccountId', 'account'],
+  ['primaryTeamId', 'team'],
+]);
+
 /** A declared reference key read by its name: a session, a Home, an Account or a Discussion. */
 function describeApprovalKeyReference(key: string | undefined, value: unknown): ApprovalActionReference | undefined {
   if (typeof value !== 'string' || !value.trim() || key === undefined) return undefined;
   if (SESSION_REFERENCE_KEYS.has(key)) return { kind: 'session', id: value.trim() };
+  const principal = PRINCIPAL_OPERAND_REFERENCES.get(key);
+  if (principal) return { kind: principal, id: value.trim() };
   if (key === 'serverId') return { kind: 'home', id: value.trim() };
   if (key === 'accountId') return { kind: 'account', id: value.trim() };
   if (key === 'discussionId') return { kind: 'discussion', id: value.trim() };
@@ -1090,6 +1098,15 @@ export function describeApprovalActionFields(input: Readonly<{
         rows.push({ kind: 'unrepresentable', path: field.path, title: field.title, reason });
       }
     }
+    if (values.length === 1 && values[0] === null) {
+      const choice = field.path === 'primaryTeamId' ? { label: 'Private', labelKey: 'session.access.private' }
+        : field.path === 'description' && (input.actionId === 'teams.update' || input.actionId === TEAM_GROUP_UPDATE_ACTION_ID_V1)
+          ? { label: '—', labelKey: 'common.none' } : undefined;
+      if (choice) {
+        rows.push({ kind: 'value', path: field.path, title: field.title, value: 'null', selectedOptions: [choice] });
+        continue;
+      }
+    }
     if (value === null) continue;
     const reference = reachPlace ? describeApprovalPlaceReference(values[0]) : describeApprovalReference(input.actionId, field, values, presentationInput, review?.referenceForField);
     // A typed value that reads as one word or path ("Directory  /repo") needs no entries under it.
@@ -1168,6 +1185,7 @@ export function describeApprovalActionFields(input: Readonly<{
       })) } : {}),
       ...(reference ? { reference } : {}),
       ...(values.length === 1 && typeof values[0] === 'boolean' ? { valueFormat: 'boolean' as const }
+        : reference && PRINCIPAL_OPERAND_REFERENCES.has(field.path) ? { valueFormat: 'unavailable' as const }
         : codePaths.includes(field.path) ? { valueFormat: 'code' as const }
         // An epoch moment (`expiresAt`) reads as a date and time; the exact literal stays in `value`.
         : values.length === 1 && isApprovalTimestamp(field.path.split('.').at(-1), values[0]) ? { valueFormat: 'timestamp' as const } : {}),

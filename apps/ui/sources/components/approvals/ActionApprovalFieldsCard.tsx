@@ -254,7 +254,8 @@ function toSharedFieldRow(row: ApprovalFieldRow, serverId: string | null, exactR
             ...(entry.reference ? { source: { reference: entry.reference, serverId, exactRead: false } } : {}),
         })) };
     }
-    return { kind: 'value', key: row.path, label: row.title, value: literalApprovalValue(row),
+    const label = row.path === 'primaryTeamId' ? t('session.access.context') : row.title;
+    return { kind: 'value', key: row.path, label, value: literalApprovalValue(row),
         ...(row.reference ? { source: { reference: row.reference, serverId, exactRead } } : {}) };
 }
 
