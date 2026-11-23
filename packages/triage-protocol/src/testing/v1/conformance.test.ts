@@ -9,6 +9,7 @@ import {
     TriageListInstancesResultV1Schema,
     TriageScanInputV1Schema,
     TriageGetInputV1Schema,
+    TriageDetailSurfaceInputV1Schema,
     TriageListScopeUnitsResultV1Schema,
 } from '../../v1/index.js';
 import {
@@ -161,6 +162,24 @@ describe('Triage sources V1 contribution conformance', () => {
         const scan = TriageScanInputV1Schema.parse({ ...fixture.scanInput, instance: configured });
         const get = TriageGetInputV1Schema.parse({ ...fixture.getInput, instance: scan.instance });
         expect(get.instance.binding).toEqual({ purpose: fixture.descriptor.purpose, source: 'accountData' });
+    });
+
+    it('preserves the host-projected Review skip in a source detail input', () => {
+        const { reviewRevision } = fixture.detailInput.observation.snapshot;
+        if (reviewRevision === undefined) throw new Error('Expected the fixture to describe an exact PR revision');
+        const reviewSkip = {
+            headSha: reviewRevision.headSha,
+            reason: 'authorKind',
+            rules: { baseRevision: reviewRevision.baseSha, authorKinds: ['human'], provenance: { authorKinds: 'baseCommit' } },
+            occurrence: { authorKind: 'bot' },
+            automationId: 'review-automation',
+        };
+        const input = TriageDetailSurfaceInputV1Schema.parse(JSON.parse(JSON.stringify({
+            ...fixture.detailInput,
+            reviewSkip,
+        })));
+        expect(input.reviewSkip).toEqual(reviewSkip);
+        expect(input.linkedSessions).toEqual(fixture.detailInput.linkedSessions);
     });
 
     it('admits optional source-owned Session relationship roles with their declared danger levels', () => {

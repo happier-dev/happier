@@ -9525,7 +9525,11 @@ Feature-specific caller contracts belong in their public feature package. For PR
 
 Source contributors use that same public entry point for source failure and
 pacing outcomes, detail-tab and detail-input schemas, and Review skip facts.
-A skip fact explains the source's skipped Review outcome. The
+The optional `reviewSkip` on `TriageDetailSurfaceInputV1` reports a skipped
+Review for the observed PR head, with the applied reason, rule provenance, and
+occurrence facts. Source renderers can display it directly. The [source author
+fixture](../packages/triage-protocol/src/testing/v1/conformance.test.ts) exercises
+the detail envelope and source Action registration. The
 [Triage handoff contract](triage-sources.md#configured-session-actions-03-development)
 covers the Send operands and receipts.
 
