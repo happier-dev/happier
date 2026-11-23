@@ -145,7 +145,6 @@ export function WizardCardLayout(props: WizardCardLayoutProps) {
     // scrim can cover the full viewport. Use `showScrim=false` as the signal that an outer BaseModal
     // owns the backdrop and fullscreen positioning.
     const shouldUseWebFixedOverlay = Platform.OS === 'web' && props.showScrim !== false && isFocused;
-    const portalRetryCountRef = React.useRef(0);
     const webBackdropStyle = Platform.OS === 'web' && !wantsFullscreen && shouldUseWebFixedOverlay
         ? (createBackdropWebStyle({
             backgroundColor: theme.colors.overlay.scrimWizard,
@@ -249,19 +248,6 @@ export function WizardCardLayout(props: WizardCardLayoutProps) {
             void preloadReactDOM()
                 .then(() => bumpPortalRetryNonce())
                 .catch(() => {});
-        }
-
-        // Retry a few times post-mount. Some web runtimes (SSR/hydration, early init) can render before the
-        // DOM/portal target is ready, causing the first `createPortal(...)` attempt to fail.
-        //
-        // Schedule retries with a timer/frame to avoid tight re-render loops if portal creation keeps failing.
-        const retryBudget = 8;
-        if (portalRetryCountRef.current >= retryBudget) return;
-        portalRetryCountRef.current += 1;
-
-        if (typeof setTimeout === 'function') {
-            const timer = setTimeout(() => bumpPortalRetryNonce(), 0);
-            return () => clearTimeout(timer);
         }
     }, [shouldPortalWeb, webPortal]);
 

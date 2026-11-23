@@ -9,10 +9,6 @@ vi.mock('react-native', async () => {
         useWindowDimensions: () => ({ width: 0, height: 0 }),
     });
 });
-vi.mock('react-native-safe-area-context', () => ({
-    useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
-}));
-
 function flattenStyleProp(styleProp: unknown): Record<string, unknown> {
     const mergeInto = (out: Record<string, unknown>, value: unknown) => {
         if (!value) return;

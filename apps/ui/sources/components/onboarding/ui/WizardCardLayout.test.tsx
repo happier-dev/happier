@@ -1,7 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
 import { ModalBoundaryProvider } from '@/modal/context/ModalBoundaryContext';
 
@@ -10,7 +10,7 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock();
 });
 
-const createPortalMock = vi.hoisted(() => vi.fn((node: any) => node));
+const createPortalMock = vi.hoisted(() => vi.fn((node: React.ReactNode, _target: Element | DocumentFragment) => node));
 const reactDomReadyState = vi.hoisted(() => ({ value: true }));
 const navigationFocusState = vi.hoisted(() => ({ isFocused: true }));
 const preloadReactDomMock = vi.hoisted(() => vi.fn(async () => {
@@ -36,11 +36,6 @@ vi.mock('@react-navigation/native', async () => {
         useIsFocused: () => navigationFocusState.isFocused,
     };
 });
-
-vi.mock('react-native-safe-area-context', () => ({
-    SafeAreaProvider: ({ children }: { children: React.ReactNode }) => children,
-    useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
-}));
 
 function flattenStyleProp(styleProp: unknown): Record<string, unknown> {
     const mergeInto = (out: Record<string, unknown>, value: unknown) => {
@@ -174,56 +169,43 @@ describe('WizardCardLayout', () => {
         expect(asFiniteNumber(flattenedCard.zIndex)).toBeGreaterThan(asFiniteNumber(flattenedScrim.zIndex));
     });
 
-    it('retries the web portal after mount so the wizard can portal to document.body even if document is unavailable during the first render', async () => {
+    it('renders inline until ReactDOM preload moves the wizard into the body portal without scheduling timers', async () => {
         const { WizardCardLayout } = await import('./WizardCardLayout');
-        const previousDocument = (globalThis as any).document;
-        try {
-            vi.useFakeTimers();
-            createPortalMock.mockReset();
+        const body = { nodeType: 1 };
+        const preload = createDeferred<void>();
+        vi.stubGlobal('document', { body });
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        const scheduleTimeout = vi.spyOn(globalThis, 'setTimeout');
+        createPortalMock.mockClear();
+        reactDomReadyState.value = false;
+        preloadReactDomMock.mockClear();
+        preloadReactDomMock.mockImplementationOnce(async () => {
+            await preload.promise;
+            reactDomReadyState.value = true;
+            return { createPortal: createPortalMock };
+        });
 
+        try {
             const screen = await renderScreen(React.createElement(WizardCardLayout, {
                 testID: 'wizard-card',
                 children: React.createElement('View', { testID: 'wizard-child' }),
             }));
 
-            expect(createPortalMock).toHaveBeenCalledTimes(0);
+            expect(screen.findByTestId('wizard-card-card')).toBeTruthy();
+            expect(createPortalMock).not.toHaveBeenCalled();
+            expect(preloadReactDomMock).toHaveBeenCalledTimes(1);
 
-            // Simulate the DOM appearing after the initial render, so the portal retry can succeed.
-            (globalThis as any).document = { body: { nodeType: 1 } } as any;
+            preload.resolve(undefined);
+            await flushHookEffects();
 
-            await flushHookEffects({ cycles: 2, turns: 2, runAllTimers: true });
-
-            expect(createPortalMock).toHaveBeenCalled();
+            expect(createPortalMock).toHaveBeenCalledWith(expect.anything(), body);
+            expect(screen.findByTestId('wizard-card-card')).toBeTruthy();
+            expect(scheduleTimeout).not.toHaveBeenCalled();
         } finally {
-            (globalThis as any).document = previousDocument;
+            scheduleTimeout.mockRestore();
             vi.useRealTimers();
-        }
-    });
-
-    it('preloads react-dom on web so the wizard can portal even when require() is unavailable at first render', async () => {
-        const { WizardCardLayout } = await import('./WizardCardLayout');
-        const previousDocument = (globalThis as any).document;
-        try {
-            vi.useFakeTimers();
-            createPortalMock.mockReset();
-            preloadReactDomMock.mockClear();
-            reactDomReadyState.value = false;
-
-            (globalThis as any).document = { body: { nodeType: 1 } } as any;
-
-            await renderScreen(React.createElement(WizardCardLayout, {
-                testID: 'wizard-card',
-                children: React.createElement('View', { testID: 'wizard-child' }),
-            }));
-
-            await flushHookEffects({ cycles: 3, turns: 3, runAllTimers: true });
-
-            expect(preloadReactDomMock).toHaveBeenCalled();
-            expect(createPortalMock).toHaveBeenCalled();
-        } finally {
-            (globalThis as any).document = previousDocument;
+            vi.unstubAllGlobals();
             reactDomReadyState.value = true;
-            vi.useRealTimers();
         }
     });
 
