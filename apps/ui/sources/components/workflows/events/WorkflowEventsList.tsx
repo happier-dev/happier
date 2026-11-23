@@ -205,19 +205,18 @@ export const WorkflowEventsRows = React.memo(function WorkflowEventsRows(
     active: props.active && areServerAccountScopesEqual(props.scope, lifetime?.scope),
   });
   if (keys.length === 0) {
+    // With no retained page, the listening line presents the failure and its Retry.
+    if (feed.keys.length === 0 && (feed.status === 'failed' || feed.status === 'offline'
+      || (feed.retained === null && feed.historyError !== null))) return null;
     // Listening with the retained page not read yet is still loading: "nothing yet" is said only once the
     // feed has its first page (DESIGN-ACCEPT-1 D9: a remounted feed read as empty while its page was in flight).
     if (
       feed.status === 'connecting' ||
       (feed.status === 'live' && feed.retained === null) ||
-      (feed.listeningSince === null &&
-        feed.status !== 'failed' &&
-        feed.status !== 'offline')
+      (feed.listeningSince === null && feed.status !== 'failed' && feed.status !== 'offline')
     ) {
       return <CollectionSkeletonRows count={5} />;
     }
-    // A failed or paused feed with nothing held: the listening line already says why, with its Retry (one cause, one line).
-    if (feed.keys.length === 0 && (feed.status === 'failed' || feed.status === 'offline')) return null;
     return (
       <View style={collectionListStyles.stateLine}>
         <EmptyState

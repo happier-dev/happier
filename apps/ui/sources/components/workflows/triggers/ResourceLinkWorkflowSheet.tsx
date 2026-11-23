@@ -370,8 +370,8 @@ export function ResourceLinkWorkflowSheet(
                 testID="resource-link-review"
                 size="line"
                 kind="error"
-                title={t('workflows.triggers.link.reviewFailed')}
-                action={{ label: t('common.retry'), onPress: link.retryReview }}
+                title={link.issue.message}
+                action={link.issue.retryable ? { label: t('common.retry'), onPress: link.retryReview } : undefined}
               />
             ) : null}
             {!link.issue && (link.loading || (sharing && !recipientsIdentified)) ? (

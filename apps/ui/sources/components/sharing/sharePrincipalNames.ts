@@ -86,15 +86,16 @@ export function useScopedSharingRead<T>(
   key: string | null,
   serverId: string | null,
   read: (scope: ServerAccountScope, signal: AbortSignal, isCurrent: () => boolean) => Promise<T>,
-): Readonly<{ value: T | null; resolving: boolean }> {
+): Readonly<{ value: T | null; resolving: boolean; failure: { error: unknown } | null; retry(): void }> {
   const { binding, resolution } = useServerCredentialAccountScopeBinding(key === null ? null : serverId);
   // A reader captures the current operands, but only their stable key starts a new read.
   const currentRead = React.useRef(read);
   currentRead.current = read;
-  const request = React.useMemo(() => ({ binding, key }), [binding, key]);
+  const [attempt, retry] = React.useReducer((value: number) => value + 1, 0);
+  const request = React.useMemo(() => ({ binding, key, attempt }), [binding, key, attempt]);
   const [reading, setReading] = React.useState<Readonly<{
     request: typeof request;
-    value: T | null;
+    result: { value: T } | { error: unknown };
   }> | null>(null);
   React.useEffect(() => {
     if (!binding || key === null) return;
@@ -106,12 +107,10 @@ export function useScopedSharingRead<T>(
       binding.isCurrent,
     ).then((value) => {
       if (!abort.signal.aborted && binding.isCurrent())
-        setReading({ request, value });
-    }, () => {
-      // Optional name reads settle unavailable; retiring a row only withdraws
-      // its interest and must not leave a rejected promise or publish old data.
+        setReading({ request, result: { value } });
+    }, (error: unknown) => {
       if (!abort.signal.aborted && binding.isCurrent())
-        setReading({ request, value: null });
+        setReading({ request, result: { error } });
     });
     return () => {
       abort.abort();
@@ -120,7 +119,9 @@ export function useScopedSharingRead<T>(
   }, [binding, key, request]);
   const current = reading?.request === request && binding?.isCurrent() ? reading : null;
   return {
-    value: current?.value ?? null,
+    value: current && 'value' in current.result ? current.result.value : null,
+    failure: current && 'error' in current.result ? current.result : null,
+    retry,
     resolving:
       key !== null &&
       (resolution.kind === 'resolving' ||

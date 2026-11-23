@@ -1006,7 +1006,7 @@ describe('Account Workflow Library and settings', () => {
         } finally { await hook.unmount(); }
     });
 
-    it('links a private Session after its owner roster establishes an empty audience', async () => {
+    it.each(['available', 'read failure', 'disabled'] as const)('settles the Session Link roster when sharing is %s', async mode => {
         const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
         const { SessionAccessGrantsListResponseV1Schema } = await import('@happier-dev/protocol/sessions/access/sessionAccessOperationsV1');
@@ -1018,8 +1018,10 @@ describe('Account Workflow Library and settings', () => {
         const sessionId = 'owned-private-session';
         const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/rootLayoutTestkit');
         const { tryWriteServerEnabledBitInPlace } = await import('@happier-dev/protocol/features/serverEnabledBit');
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
         const features = createRootLayoutFeaturesResponse();
-        expect(tryWriteServerEnabledBitInPlace(features, 'sharing.session', true)).toBe(true);
+        expect(tryWriteServerEnabledBitInPlace(features, 'sharing.session', mode !== 'disabled')).toBe(true);
+        primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
         home.answer(serverId, '/v1/features', { body: features });
         home.answer(serverId, '/v1/features/authenticated', { body: features });
         const roster = createDeferred<void>();
@@ -1031,8 +1033,10 @@ describe('Account Workflow Library and settings', () => {
             ownerMetadataView: { path: '/repo', host: 'test', homeDir: '/home/test', machineId: project.machineId, flavor: 'claude' } });
         storage.getState().applySessions([session]);
         home.answer(serverId, `GET /v2/sessions/${sessionId}`, { body: createPlainSessionByIdResponseFixture(session) });
+        let rosterUnavailable = mode === 'read failure';
         home.answer(serverId, `POST ${rosterPath}`, { select: async () => {
             await roster.promise;
+            if (rosterUnavailable) return { status: 503, body: { error: 'session_access_request_failed' } };
             return { body: SessionAccessGrantsListResponseV1Schema.parse({
                 visibility: 'complete', owner: { kind: 'account', accountId: 'account-a', firstName: null, lastName: null,
                     username: 'owner', avatarUrl: null }, primaryTeamId: null, grants: [],
@@ -1053,11 +1057,33 @@ describe('Account Workflow Library and settings', () => {
             expect(home.requests.filter(request => request.path === rosterPath)).toEqual([]);
             await act(async () => hook.getCurrent().link.setDraft({ workflow: definitionId, lifetimeSession: { sessionId },
                 trigger: { kind: 'action', enabled: true, phase: 'after', actionIds: ['session.roles.add'] } }));
+            if (mode === 'disabled') {
+                await waitForHomeGovernance(() => expect(hook.getCurrent().link).toMatchObject({
+                    loading: false, issue: { code: 'session_access_sharing_unavailable', retryable: false },
+                }));
+                await act(async () => expect(await hook.getCurrent().link.submit('accept')).toMatchObject({
+                    ok: false, phase: 'sharing', error: { code: 'session_access_sharing_unavailable' },
+                }));
+                expect(home.requests.filter(request => request.path === rosterPath || request.path === grantPath)).toEqual([]);
+                expect(rows).toHaveLength(0);
+                return;
+            }
             expect(hook.getCurrent().link.loading).toBe(true);
             expect(hook.getCurrent().link.missingAudience).toBeUndefined();
             await act(async () => expect(await hook.getCurrent().link.submit('accept')).toMatchObject({ ok: false, phase: 'sharing' }));
             expect(rows).toHaveLength(0);
             await act(async () => roster.resolve());
+            if (mode === 'read failure') {
+                await waitForHomeGovernance(() => expect(hook.getCurrent().link).toMatchObject({
+                    loading: false, issue: { code: 'session_access_request_failed', retryable: true },
+                }));
+                await act(async () => expect(await hook.getCurrent().link.submit('accept')).toMatchObject({
+                    ok: false, phase: 'sharing', error: { code: 'session_access_request_failed' },
+                }));
+                expect(rows).toHaveLength(0);
+                rosterUnavailable = false;
+                await act(async () => hook.getCurrent().link.retryReview());
+            }
             await waitForHomeGovernance(() => expect(hook.getCurrent().link.missingAudience).toEqual([]));
             expect(home.requests.some(request => request.path === grantPath)).toBe(false);
             await act(async () => {
@@ -1066,7 +1092,7 @@ describe('Account Workflow Library and settings', () => {
                 expect(result).toMatchObject({ ok: true, shared: [] });
             });
             expect(rows).toHaveLength(1);
-            expect(home.requests.filter(request => request.path === rosterPath)).toHaveLength(1);
+            expect(home.requests.filter(request => request.path === rosterPath)).toHaveLength(mode === 'read failure' ? 2 : 1);
             expect(home.requests.some(request => request.path === grantPath && request.method !== 'GET')).toBe(false);
         } finally { roster.resolve(); await hook.unmount(); }
     });

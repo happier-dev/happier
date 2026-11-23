@@ -9,15 +9,16 @@ import { parseWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/wo
 import { presentDocumentShareFailure, useDocumentShareController } from '@/components/sharing/documents/useDocumentShareController';
 import type { DocumentAudienceShareResult } from '@/components/sharing/documents/useDocumentShareController';
 import { projectSessionAccessAudience } from '@/components/sessions/access/projectSessionAccessEditorSnapshot';
+import { presentSessionAccessFailure } from '@/components/sessions/access/presentSessionAccessFailure';
 import { useScopedSharingRead } from '@/components/sharing/sharePrincipalNames';
-import { createSessionAccessClient } from '@/sync/api/session/sessionAccessApi';
+import { createSessionAccessClient, SessionAccessApiError } from '@/sync/api/session/sessionAccessApi';
 import { useMachineShareController } from '@/components/sharing/machines/useMachineShareController';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import type { addWorkflowTrigger, WorkflowTriggerWriteResult } from '@/sync/domains/workflows/workflowTriggerActions';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
-import { useSessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
+import { useSessionCollaborationAvailabilityState } from '@/hooks/session/useSessionCollaborationAvailability';
 import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
@@ -28,6 +29,7 @@ import { useWorkflowTriggerSets } from './useWorkflowTriggerSets';
 import { useSessionWorkflowContext, type SessionWorkflowContextRead } from './useSessionWorkflowContext';
 import { createSessionWorkflowSentenceIntent, type SessionWorkflowSentenceOptions, type WorkflowSentenceEditorIntent } from '../authoring/workflowSentenceAuthoring';
 import { useWorkflowActionCatalog } from '../presentation/useWorkflowActionCatalog';
+import { describeWorkflowOperationProblem } from '../presentation/workflowProblemPresentation';
 import { useWorkflowTriggerEventOptions } from './useWorkflowTriggerEventOptions';
 import { buildActionWorkflowTriggerStartOptions, buildResourceWorkflowTriggerStartOptions, type ResourceWorkflowTriggerStartOption, type WorkflowLinkTriggerStartOption } from './workflowTriggerStarts';
 
@@ -267,11 +269,11 @@ function useWorkflowLinkController(input: Readonly<{
     const workflow = linkDraft ? parseWorkflowDefinitionRefV1(linkDraft.workflow) : null;
     const sessionId = demanded && binding && workflow?.kind === 'artifact' && sourceAudience === undefined
         && subject?.kind === 'session' ? subject.sessionId : null;
-    const sessionAvailability = useSessionCollaborationAvailability(sessionId ? binding?.scope.serverId ?? '' : '');
+    const sessionAvailability = useSessionCollaborationAvailabilityState(sessionId ? binding?.scope.serverId ?? '' : '');
     const sessionAudience = useScopedSharingRead(sessionAvailability === 'available' ? sessionId : null,
         binding?.scope.serverId ?? null, async (scope, signal, isCurrent) => {
         if (!sessionId || !binding?.isCurrent() || !areServerAccountScopesEqual(binding.scope, scope)) return undefined;
-        const snapshot = await createSessionAccessClient({ sessionId, scope, signal, availability: sessionAvailability,
+        const snapshot = await createSessionAccessClient({ sessionId, scope, signal, availability: 'available',
             isCurrent: () => isCurrent() && binding.isCurrent() }).list();
         return projectSessionAccessAudience(snapshot, scope.accountId);
     });
@@ -285,6 +287,23 @@ function useWorkflowLinkController(input: Readonly<{
     const review = useDocumentShareController(demanded && binding && workflow?.kind === 'artifact'
         && audience && audience.length > 0 ? { scope: binding.scope, artifactId: workflow.artifactId,
             requestedAudience: audience } : null);
+    const sourceSharing = machineSubject ? machineSharing : profileSubject ? profileSharing : null;
+    const sessionIssue = React.useMemo(() => {
+        if (sessionAudience.failure) return presentSessionAccessFailure(sessionAudience.failure.error);
+        if (sessionId !== null && sessionAvailability === 'unavailable') {
+            return presentSessionAccessFailure(new SessionAccessApiError('session_access_sharing_unavailable'));
+        }
+        return undefined;
+    }, [sessionAudience.failure, sessionId, sessionAvailability]);
+    const sourceLoading = (linkDraft !== null && sourceSharing?.loading === true)
+        || (sessionId !== null && (sessionAvailability === 'loading' || sessionAudience.resolving));
+    const sourceIssue = sourceSharing?.issue ?? sessionIssue
+        ?? (needsAudience && audience === undefined && !sourceLoading
+            ? { code: 'source_unavailable', message: describeWorkflowOperationProblem('source_unavailable').message, retryable: false }
+            : undefined);
+    const reviewIssue = sourceIssue ?? review.issue;
+    const reviewLoading = sourceLoading || review.loading;
+    const retryReview = sourceSharing?.issue ? sourceSharing.retryContent : sessionIssue ? sessionAudience.retry : review.retryContent;
     const submitLink = React.useCallback(async (decision: 'accept' | 'decline'): Promise<ResourceAutomationLinkResult> => {
         if (decision === 'decline') return { ok: false, phase: 'declined', shared: [] };
         // Catalog Workflows have no Artifact grant roster; their ordinary trigger admission
@@ -294,6 +313,7 @@ function useWorkflowLinkController(input: Readonly<{
         const scopeChanged = () => ({ ok: false as const, phase: 'sharing' as const, shared: NO_SHARED_AUDIENCE,
             error: presentDocumentShareFailure('action_account_scope_changed') });
         if (!isCurrent()) return scopeChanged();
+        if (reviewIssue) return { ok: false, phase: 'sharing', shared: NO_SHARED_AUDIENCE, error: reviewIssue };
         const sharing: DocumentAudienceShareResult = needsAudience && audience?.length !== 0
             ? await review.shareMissingAudience() : { ok: true, shared: NO_SHARED_AUDIENCE };
         if (!sharing.ok) return { ...sharing, phase: 'sharing' };
@@ -305,14 +325,9 @@ function useWorkflowLinkController(input: Readonly<{
         } catch (error) {
             return { ok: false, phase: 'link', shared: sharing.shared, error };
         }
-    }, [linkDraft, needsAudience, audience, review.shareMissingAudience, editor.add, project, binding]);
+    }, [linkDraft, needsAudience, audience, reviewIssue, review.shareMissingAudience, editor.add, project, binding]);
     const missingAudience = workflow && (!needsAudience || audience?.length === 0) ? NO_SHARED_AUDIENCE : review.missingAudience;
     const audienceNames = machineSubject ? machineSharing.audienceNames : undefined;
-    const sourceSharing = machineSubject ? machineSharing : profileSubject ? profileSharing : null;
-    const reviewIssue = sourceSharing?.issue ?? review.issue;
-    const reviewLoading = review.loading || (linkDraft !== null && Boolean(sourceSharing?.loading))
-        || (needsAudience && audience === undefined);
-    const retryReview = sourceSharing?.issue ? sourceSharing.retryContent : review.retryContent;
     const link = React.useMemo<ResourceAutomationsSectionRead['link']>(() => ({ whenOptions, whenStatus, draft: linkDraft, setDraft,
         missingAudience, audienceNames, issue: reviewIssue, loading: reviewLoading,
         retryReview, retryWhen, submit: submitLink }),

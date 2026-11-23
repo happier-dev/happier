@@ -181,6 +181,43 @@ it("names a Session's turn by its Agent and carries the Agent's mark (lab events
     title: t('workflows.events.agentTurnStarted', { agent: resolveAgentCatalogTitle('claude') }) });
 });
 
+it('settles the first Events history failure and recovers to an empty feed on Retry', async () => {
+  const { WorkflowEventsListening, WorkflowEventsRows, useWorkflowEventsFeed } = await import('./WorkflowEventsList');
+  const { CollectionSkeletonRows } = await import('@/components/ui/lists/collection/CollectionList');
+  const { SurfaceFreshnessLine } = await import('@/components/ui/surfaces/SurfaceFreshnessLine');
+  const history = createDeferred<void>();
+  let failing = true;
+  workflowResponse = async actionId => {
+    expect(actionId).toBe('workflow.run.list');
+    await history.promise;
+    if (failing) throw new Error('Events history request unavailable');
+    return { ok: true, result: { runs: [], metadataByRunId: {}, projection: 'membership' } };
+  };
+  function Events() {
+    const { feed, scope } = useWorkflowEventsFeed(true);
+    return <>
+      <WorkflowEventsListening status={feed.status} listeningSince={feed.listeningSince} historyError={feed.historyError}
+        onRetry={feed.retry} testID="test-events-listening" />
+      <WorkflowEventsRows feed={feed} scope={scope} filter="all" selectedKey={null} onSelect={() => {}}
+        surface="plane" active testID="test-events" />
+    </>;
+  }
+  const screen = await renderScreen(<Events />);
+  try {
+    expect(screen.findAllByType(CollectionSkeletonRows)).toHaveLength(1);
+    await act(async () => history.resolve());
+    const warning = () => screen.findAllByType(SurfaceFreshnessLine)
+      .find(line => line.props.testID === 'test-events-listening:history-failed');
+    await vi.waitFor(() => expect(warning()).toBeDefined());
+    expect(screen.findAllByType(CollectionSkeletonRows)).toHaveLength(0);
+    expect(screen.findByTestId('test-events:empty')).toBeNull();
+    failing = false;
+    await act(async () => { await warning()!.props.action.onPress(); });
+    await vi.waitFor(() => expect(screen.findByTestId('test-events:empty')).not.toBeNull());
+    expect(warning()).toBeUndefined();
+  } finally { history.resolve(); await screen.unmount(); }
+});
+
 it('names unselected Events Sessions in one display batch and deduplicates repeated occurrences', async () => {
   const lifetime = captureActiveServerAccountScopeLifetime()!;
   const { createPlainSessionWithDisplayRecordFixture } = await import('@/dev/testkit/fixtures/sessionDisplayFixtures');
