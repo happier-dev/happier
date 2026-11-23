@@ -1,4 +1,12 @@
 {
+  "plugins.triage.review.relationNotRecorded": "Review gestartet. Die Verknüpfung wurde nicht gespeichert.",
+  "plugins.triage.surface.detail.entryIdentity": "Eintragsdetails",
+  "plugins.triage.surface.detail.numberedIdentity": "{kind} Nr. {number}",
+  "plugins.triage.surface.session.sessionCandidatesUnavailable": "Die Sitzungen für diese Aktion konnten nicht gelesen werden.",
+  "plugins.triage.surface.session.sessionCandidatesEmpty": "Für diese Aktion sind keine geeigneten Sitzungen verfügbar.",
+  "plugins.triage.surface.sources.attention.one": "1 Quelle erfordert Aufmerksamkeit.",
+  "plugins.triage.surface.sources.attention.other": "{count} Quellen erfordern Aufmerksamkeit.",
+  "plugins.triage.surface.sourcesUnreachable.reason": "Happier konnte für diese Quellen keinen Rechner erreichen.",
   "plugins.triage.sourceFailure.posthog/not-found": "Die Quelle konnte diesen Eintrag nicht finden.",
   "plugins.triage.reviews.unavailable": "Dieses Review konnte nicht geöffnet werden",
   "plugins.triage.tasks.review.partial": "Die Aufgabe wurde erstellt, aber ihr Review-Link ist nicht bestätigt. Repariere den Link, ohne eine weitere Aufgabe zu erstellen.",

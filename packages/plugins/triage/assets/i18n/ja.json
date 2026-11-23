@@ -1,4 +1,12 @@
 {
+  "plugins.triage.review.relationNotRecorded": "レビューを開始しました。関連付けは記録されていません。",
+  "plugins.triage.surface.detail.entryIdentity": "項目の詳細",
+  "plugins.triage.surface.detail.numberedIdentity": "{kind} #{number}",
+  "plugins.triage.surface.session.sessionCandidatesUnavailable": "この操作に使うセッションを読み込めませんでした。",
+  "plugins.triage.surface.session.sessionCandidatesEmpty": "この操作に使えるセッションはありません。",
+  "plugins.triage.surface.sources.attention.one": "対応が必要なソースが1件あります。",
+  "plugins.triage.surface.sources.attention.other": "対応が必要なソースが{count}件あります。",
+  "plugins.triage.surface.sourcesUnreachable.reason": "これらのソースを読み取るためのマシンにHappierが接続できませんでした。",
   "plugins.triage.sourceFailure.posthog/not-found": "ソースでこの項目が見つかりませんでした。",
   "plugins.triage.reviews.unavailable": "このレビューを開けませんでした",
   "plugins.triage.tasks.review.partial": "タスクは作成されましたが、レビューへのリンクは確認できていません。別のタスクを作成せずにリンクを修復してください。",

@@ -1,4 +1,12 @@
 {
+  "plugins.triage.review.relationNotRecorded": "Review started. Relation not recorded.",
+  "plugins.triage.surface.detail.entryIdentity": "Entry details",
+  "plugins.triage.surface.detail.numberedIdentity": "{kind} #{number}",
+  "plugins.triage.surface.session.sessionCandidatesUnavailable": "Could not read Sessions for this action.",
+  "plugins.triage.surface.session.sessionCandidatesEmpty": "No eligible Sessions are available for this action.",
+  "plugins.triage.surface.sources.attention.one": "1 source needs attention.",
+  "plugins.triage.surface.sources.attention.other": "{count} sources need attention.",
+  "plugins.triage.surface.sourcesUnreachable.reason": "Happier could not reach a machine for these sources.",
   "plugins.triage.sourceFailure.posthog/not-found": "Its source could not find this entry.",
   "plugins.triage.reviews.unavailable": "This Review could not be opened",
   "plugins.triage.tasks.review.partial": "The task was created, but its Review link is not confirmed. Repair the link without creating another task.",

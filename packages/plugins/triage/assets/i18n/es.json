@@ -1,4 +1,12 @@
 {
+  "plugins.triage.review.relationNotRecorded": "Se inició la revisión. No se registró el vínculo.",
+  "plugins.triage.surface.detail.entryIdentity": "Detalles de la entrada",
+  "plugins.triage.surface.detail.numberedIdentity": "{kind} n.º {number}",
+  "plugins.triage.surface.session.sessionCandidatesUnavailable": "No se pudieron consultar las sesiones para esta acción.",
+  "plugins.triage.surface.session.sessionCandidatesEmpty": "No hay ninguna sesión disponible que cumpla los requisitos para esta acción.",
+  "plugins.triage.surface.sources.attention.one": "1 fuente requiere atención.",
+  "plugins.triage.surface.sources.attention.other": "{count} fuentes requieren atención.",
+  "plugins.triage.surface.sourcesUnreachable.reason": "Happier no pudo conectarse a ninguna máquina para consultar estas fuentes.",
   "plugins.triage.sourceFailure.posthog/not-found": "La fuente no pudo encontrar esta entrada.",
   "plugins.triage.reviews.unavailable": "No se pudo abrir esta revisión",
   "plugins.triage.tasks.review.partial": "La tarea se creó, pero su enlace a la revisión no está confirmado. Repara el enlace sin crear otra tarea.",

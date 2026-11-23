@@ -1,4 +1,12 @@
 {
+  "plugins.triage.review.relationNotRecorded": "审查已开始。关联未记录。",
+  "plugins.triage.surface.detail.entryIdentity": "条目详情",
+  "plugins.triage.surface.detail.numberedIdentity": "{kind} #{number}",
+  "plugins.triage.surface.session.sessionCandidatesUnavailable": "无法读取此操作所需的会话。",
+  "plugins.triage.surface.session.sessionCandidatesEmpty": "没有可用于此操作的会话。",
+  "plugins.triage.surface.sources.attention.one": "有 1 个来源需要处理。",
+  "plugins.triage.surface.sources.attention.other": "有 {count} 个来源需要处理。",
+  "plugins.triage.surface.sourcesUnreachable.reason": "Happier 无法连接到用于读取这些来源的计算机。",
   "plugins.triage.sourceFailure.posthog/not-found": "来源中找不到此条目。",
   "plugins.triage.reviews.unavailable": "无法打开此评审",
   "plugins.triage.tasks.review.partial": "任务已创建，但其评审链接尚未确认。请修复链接，不要再创建一个任务。",

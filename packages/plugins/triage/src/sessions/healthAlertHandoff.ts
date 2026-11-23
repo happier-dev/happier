@@ -5,7 +5,6 @@ import type { PluginActionInputById, PluginActionResultById, PluginClientActionU
 import type { TriageActionResolutionHostV1 } from './actionResolution.js';
 import type { SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
 import { deploymentRevisionShortLabelV1 } from '@happier-dev/deployment-protocol/v1';
-import type { DeploymentReceiptFailureV1 } from '@happier-dev/deployment-protocol/v1';
 import { readDeploymentFailureRecoveryV1 } from '@happier-dev/deployment-protocol/v1';
 import {
     ProtocolArtifactGetOutputV1Schema,
@@ -137,7 +136,7 @@ async function readFailureSubject(
     let reference: { actionId: string; input: JsonReadInput; retained?: object };
     // The receipt's own title for the composer chip, as its page says it; unknown → the generic reference label.
     let receiptTitle: string | undefined;
-    let receiptFailure: DeploymentReceiptFailureV1 | undefined;
+    let receiptFailure: NonNullable<Extract<PluginActionResultById['deployments.receipts.get'], { ok: true }>['investigation']>['failure'];
     switch (subject.kind) {
         case 'workflowRun': {
             const address = { runId: subject.runId };

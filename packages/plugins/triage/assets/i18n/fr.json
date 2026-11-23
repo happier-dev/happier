@@ -1,4 +1,12 @@
 {
+  "plugins.triage.review.relationNotRecorded": "La revue a démarré. Le lien n’a pas été enregistré.",
+  "plugins.triage.surface.detail.entryIdentity": "Détails de l’élément",
+  "plugins.triage.surface.detail.numberedIdentity": "{kind} n° {number}",
+  "plugins.triage.surface.session.sessionCandidatesUnavailable": "Impossible de consulter les sessions pour cette action.",
+  "plugins.triage.surface.session.sessionCandidatesEmpty": "Aucune session admissible n’est disponible pour cette action.",
+  "plugins.triage.surface.sources.attention.one": "1 source nécessite votre attention.",
+  "plugins.triage.surface.sources.attention.other": "{count} sources nécessitent votre attention.",
+  "plugins.triage.surface.sourcesUnreachable.reason": "Happier n’a pu joindre aucune machine pour ces sources.",
   "plugins.triage.sourceFailure.posthog/not-found": "La source n’a pas trouvé cette entrée.",
   "plugins.triage.reviews.unavailable": "Impossible d’ouvrir cette revue",
   "plugins.triage.tasks.review.partial": "La tâche a été créée, mais son lien vers la revue n’est pas confirmé. Réparez le lien sans créer une autre tâche.",

@@ -1,4 +1,12 @@
 {
+  "plugins.triage.review.relationNotRecorded": "A revisão foi iniciada. O vínculo não foi registrado.",
+  "plugins.triage.surface.detail.entryIdentity": "Detalhes da entrada",
+  "plugins.triage.surface.detail.numberedIdentity": "{kind} n.º {number}",
+  "plugins.triage.surface.session.sessionCandidatesUnavailable": "Não foi possível consultar as sessões para esta ação.",
+  "plugins.triage.surface.session.sessionCandidatesEmpty": "Não há sessões elegíveis disponíveis para esta ação.",
+  "plugins.triage.surface.sources.attention.one": "1 fonte precisa de atenção.",
+  "plugins.triage.surface.sources.attention.other": "{count} fontes precisam de atenção.",
+  "plugins.triage.surface.sourcesUnreachable.reason": "O Happier não conseguiu acessar uma máquina para consultar estas fontes.",
   "plugins.triage.sourceFailure.posthog/not-found": "A fonte não conseguiu encontrar esta entrada.",
   "plugins.triage.reviews.unavailable": "Não foi possível abrir esta revisão",
   "plugins.triage.tasks.review.partial": "A tarefa foi criada, mas a ligação à revisão não está confirmada. Repare a ligação sem criar outra tarefa.",

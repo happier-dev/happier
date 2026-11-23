@@ -1,4 +1,12 @@
 {
+  "plugins.triage.review.relationNotRecorded": "審查已開始。關聯未記錄。",
+  "plugins.triage.surface.detail.entryIdentity": "項目詳細資料",
+  "plugins.triage.surface.detail.numberedIdentity": "{kind} #{number}",
+  "plugins.triage.surface.session.sessionCandidatesUnavailable": "無法讀取此操作所需的工作階段。",
+  "plugins.triage.surface.session.sessionCandidatesEmpty": "沒有可用於此操作的工作階段。",
+  "plugins.triage.surface.sources.attention.one": "有 1 個來源需要處理。",
+  "plugins.triage.surface.sources.attention.other": "有 {count} 個來源需要處理。",
+  "plugins.triage.surface.sourcesUnreachable.reason": "Happier 無法連線到用來讀取這些來源的電腦。",
   "plugins.triage.sourceFailure.posthog/not-found": "來源中找不到此項目。",
   "plugins.triage.reviews.unavailable": "無法開啟此審查",
   "plugins.triage.tasks.review.partial": "任務已建立，但其審查連結尚未確認。請修復連結，不要再建立一個任務。",

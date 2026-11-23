@@ -121,7 +121,7 @@ export const INTERNAL_TASK_ACTIONS_V1 = {
   [INTERNAL_TASK_READ_SESSION_LINKS_ACTION_ID_V1]: { ...read, title: 'Read Happier task work',
     description: 'Read accessible Happier task-to-Session links, for a task or Session set, preserving unavailable task coverage.',
     readOnly: true,
-    sessionTarget: { field: 'sessionIds.*', cardinality: 'many' },
+    sessionTarget: { field: 'sessionIds.*', cardinality: 'many' } as const,
     inputSchema: protocol.operations.readSessionLinks.declaration.input.schema, resultSchema: protocol.operations.readSessionLinks.declaration.resultSchema, run: readInternalTaskSessionLinks },
 };
 

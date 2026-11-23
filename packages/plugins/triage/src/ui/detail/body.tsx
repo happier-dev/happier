@@ -214,13 +214,13 @@ export function TriageDetailTabbedBody(props: Readonly<{
     return rest;
   }, [disclosure]);
   const publishEntryPanels = React.useCallback((panels: readonly string[] | null) => {
-    setEntryPanels(panels === null ? null : { instanceKey: entryKey, panels });
+    setEntryPanels(panels === null || entryKey === undefined ? null : { instanceKey: entryKey, panels });
   }, [entryKey]);
   const publishFixPanels = React.useCallback((panels: readonly string[] | null) => {
     setFixPanels(panels === null || fixKey === undefined ? null : { instanceKey: fixKey, panels });
   }, [fixKey]);
   const publishEntryFilesCount = React.useCallback((count: number | null) => {
-    setEntryFilesCount(previous => previous?.instanceKey === entryKey && previous.count === count ? previous : { instanceKey: entryKey, count });
+    setEntryFilesCount(previous => entryKey === undefined ? null : previous?.instanceKey === entryKey && previous.count === count ? previous : { instanceKey: entryKey, count });
   }, [entryKey]);
   const publishFixFilesCount = React.useCallback((count: number | null) => {
     setFixFilesCount(previous => fixKey === undefined ? null : previous?.instanceKey === fixKey && previous.count === count ? previous : { instanceKey: fixKey, count });

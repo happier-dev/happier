@@ -1,4 +1,12 @@
 {
+  "plugins.triage.review.relationNotRecorded": "Revisione avviata. Il collegamento non è stato registrato.",
+  "plugins.triage.surface.detail.entryIdentity": "Dettagli della voce",
+  "plugins.triage.surface.detail.numberedIdentity": "{kind} n. {number}",
+  "plugins.triage.surface.session.sessionCandidatesUnavailable": "Impossibile leggere le sessioni per questa azione.",
+  "plugins.triage.surface.session.sessionCandidatesEmpty": "Non ci sono sessioni idonee disponibili per questa azione.",
+  "plugins.triage.surface.sources.attention.one": "1 fonte richiede attenzione.",
+  "plugins.triage.surface.sources.attention.other": "{count} fonti richiedono attenzione.",
+  "plugins.triage.surface.sourcesUnreachable.reason": "Happier non è riuscito a raggiungere una macchina per queste fonti.",
   "plugins.triage.sourceFailure.posthog/not-found": "La fonte non ha trovato questa voce.",
   "plugins.triage.reviews.unavailable": "Impossibile aprire questa revisione",
   "plugins.triage.tasks.review.partial": "L’attività è stata creata, ma il collegamento alla revisione non è confermato. Ripara il collegamento senza creare un’altra attività.",

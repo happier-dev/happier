@@ -1,4 +1,12 @@
 {
+  "plugins.triage.review.relationNotRecorded": "La revisió ha començat. No s’ha registrat el vincle.",
+  "plugins.triage.surface.detail.entryIdentity": "Detalls de l’entrada",
+  "plugins.triage.surface.detail.numberedIdentity": "{kind} núm. {number}",
+  "plugins.triage.surface.session.sessionCandidatesUnavailable": "No s’han pogut consultar les sessions per a aquesta acció.",
+  "plugins.triage.surface.session.sessionCandidatesEmpty": "No hi ha cap sessió disponible que compleixi els requisits per a aquesta acció.",
+  "plugins.triage.surface.sources.attention.one": "1 font requereix atenció.",
+  "plugins.triage.surface.sources.attention.other": "{count} fonts requereixen atenció.",
+  "plugins.triage.surface.sourcesUnreachable.reason": "Happier no ha pogut connectar amb cap màquina per consultar aquestes fonts.",
   "plugins.triage.sourceFailure.posthog/not-found": "La font no ha pogut trobar aquesta entrada.",
   "plugins.triage.reviews.unavailable": "No s’ha pogut obrir aquesta revisió",
   "plugins.triage.tasks.review.partial": "La tasca s’ha creat, però el seu enllaç a la revisió no està confirmat. Repara l’enllaç sense crear una altra tasca.",

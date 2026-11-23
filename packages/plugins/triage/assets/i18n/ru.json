@@ -1,4 +1,12 @@
 {
+  "plugins.triage.review.relationNotRecorded": "Проверка началась. Связь не сохранена.",
+  "plugins.triage.surface.detail.entryIdentity": "Сведения о записи",
+  "plugins.triage.surface.detail.numberedIdentity": "{kind} № {number}",
+  "plugins.triage.surface.session.sessionCandidatesUnavailable": "Не удалось прочитать сеансы для этого действия.",
+  "plugins.triage.surface.session.sessionCandidatesEmpty": "Для этого действия нет доступных подходящих сеансов.",
+  "plugins.triage.surface.sources.attention.one": "1 источник требует внимания.",
+  "plugins.triage.surface.sources.attention.other": "Источников, требующих внимания: {count}.",
+  "plugins.triage.surface.sourcesUnreachable.reason": "Happier не удалось подключиться к машине для этих источников.",
   "plugins.triage.sourceFailure.posthog/not-found": "Источник не смог найти эту запись.",
   "plugins.triage.reviews.unavailable": "Не удалось открыть это ревью",
   "plugins.triage.tasks.review.partial": "Задача создана, но её связь с проверкой не подтверждена. Восстановите связь, не создавая ещё одну задачу.",

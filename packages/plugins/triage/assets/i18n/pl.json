@@ -1,4 +1,12 @@
 {
+  "plugins.triage.review.relationNotRecorded": "Rozpoczęto przegląd. Powiązanie nie zostało zapisane.",
+  "plugins.triage.surface.detail.entryIdentity": "Szczegóły wpisu",
+  "plugins.triage.surface.detail.numberedIdentity": "{kind} nr {number}",
+  "plugins.triage.surface.session.sessionCandidatesUnavailable": "Nie udało się odczytać sesji dla tego działania.",
+  "plugins.triage.surface.session.sessionCandidatesEmpty": "Brak dostępnych sesji odpowiednich dla tego działania.",
+  "plugins.triage.surface.sources.attention.one": "1 źródło wymaga uwagi.",
+  "plugins.triage.surface.sources.attention.other": "Liczba źródeł wymagających uwagi: {count}.",
+  "plugins.triage.surface.sourcesUnreachable.reason": "Happier nie mógł połączyć się z maszyną dla tych źródeł.",
   "plugins.triage.sourceFailure.posthog/not-found": "Źródło nie znalazło tego wpisu.",
   "plugins.triage.reviews.unavailable": "Nie udało się otworzyć tego przeglądu",
   "plugins.triage.tasks.review.partial": "Zadanie zostało utworzone, ale jego łącze do przeglądu nie jest potwierdzone. Napraw łącze bez tworzenia kolejnego zadania.",
