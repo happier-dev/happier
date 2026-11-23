@@ -15,15 +15,15 @@ import {
     type QualifiedConnectedAccountGroupSourceSnapshot,
 } from "@/app/api/routes/connect/qualifiedConnectedAccounts/groupRepository";
 
-import { projectConnectedAccountSourceResolution, projectConnectedPoolSourceResolution, projectProviderConnectionSourceResolution,
+import { projectConnectedAccountSourceResolution, projectConnectedPoolSourceResolution, projectProviderConnectionSourceResolution, readConnectedAccountSourceDirectExport,
     type TeamCredentialResourceSourceResolution } from './sourceResolution';
 export type { TeamCredentialResourceSourceResolution, TeamCredentialResourceSourceCurrentness } from './sourceResolution';
 
 
 function directContributionContractVersion(
-    source: Pick<QualifiedConnectedAccountSourceIdentity, "directExportContract" | "contributionContractVersion">,
+    source: Pick<QualifiedConnectedAccountSourceIdentity, "directExportContract" | "contributionContractVersion"> | null,
 ): string | null {
-    return source.directExportContract === null || source.contributionContractVersion === null
+    return source === null || source.directExportContract === null || source.contributionContractVersion === null
         ? null
         : computeCanonicalDomainSeparatedDigest(
             source.directExportContract,
@@ -195,6 +195,7 @@ export function projectTeamCredentialDirectSourceCurrentnesses(
             }) : connectedAccountSourceVersion, directExportSupport: 'supported' as const };
     };
     if (binding.kind === 'connected_account' && currentness.kind === 'connected_account') {
+        if (resolution.directExportSupport === 'unsupported') return [];
         return [projectAccount(currentness.identity, binding.target.account)].filter((value): value is NonNullable<typeof value> => value !== null);
     }
     if (binding.kind !== 'connected_pool' || currentness.kind !== 'connected_pool') return [];
@@ -228,9 +229,11 @@ export async function listTeamCredentialDirectSourceMembersInTx(
             ref: source.target.account,
         });
         if (!current || current.incarnation !== source.credentialIncarnation) return null;
+        const directExport = readConnectedAccountSourceDirectExport(source, current);
         if (
-            current.directExportContract === null
-            || current.contributionContractVersion === null
+            directExport === null
+            || directExport.directExportContract === null
+            || directExport.contributionContractVersion === null
         ) return [];
         return [{
             kind: "connected_account",
@@ -309,7 +312,7 @@ export async function resolveTeamCredentialSourceMemberCurrentnessInTx(
         if (computeTeamCredentialSourceMemberKeyV1(sourceMember) !== params.sourceMemberKey) {
             return { status: "unavailable", reason: "source_changed" };
         }
-        const contributionContractVersion = directContributionContractVersion(current);
+        const contributionContractVersion = directContributionContractVersion(readConnectedAccountSourceDirectExport(source, current));
         if (contributionContractVersion === null) {
             if (params.deliveryMode === 'brokered') return {
                 status: "current", sourceMember, sourceCredentialIncarnation: current.incarnation,

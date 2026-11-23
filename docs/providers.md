@@ -412,11 +412,13 @@ and Usage view. Sign-in supplies the selected team as a query parameter on
 hidden. Team member model access carries scope for inference only.
 
 A Team admin can select the qualified Gateway purpose for brokered model access.
-The broker uses the purpose on the saved Team source. Use a separate Gateway API
-key in Saved Secrets for an eligible direct share or a Sandbox requiring native
-credential delivery. The Team audience and source owners enforce export
-eligibility. Supported brokered guest placement exposes the existing local
-Session endpoint to the remote execution target.
+The broker uses the purpose on the saved Team source. The Team source owner
+returns `disclosure_not_allowed` for direct sharing of that Gateway purpose from
+either a signed-in Vercel Account or one connected with a pasted access token.
+Use a separate Gateway API key in Saved Secrets for an eligible direct share or
+a Sandbox requiring native credential delivery. Supported brokered guest
+placement exposes the existing local Session endpoint to the remote execution
+target.
 
 The [published development guide](../apps/docs/content/docs/agents/vercel-ai-gateway.mdx)
 covers setup and limitations. Real keyed and signed-in Agent turns, renewal,

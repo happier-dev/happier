@@ -362,7 +362,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
         expect(widened.json()).toEqual({ error: directExportFailure.code, message });
     });
 
-    it('pins a brokered Provider purpose to the custodian Account and advances its revision on replacement', async () => {
+    it.each(['oauth', 'token'] as const)('refuses direct Team sharing for a Vercel Gateway purpose using %s', async (authenticationModeId) => {
         const owner = await createAccount();
         const outsider = await createAccount();
         const team = await db.team.create({ data: { name: 'Brokered model purpose' } });
@@ -373,8 +373,16 @@ describe("Team credential resource routes (SQLite integration)", () => {
         const service = { pluginId: 'happier.machine.vercel', localId: 'vercel-account' };
         const account = { service, accountId: 'granted-team' };
         const created = await mutateQualifiedConnectedServiceCredential({
-            accountId: owner.id, ref: account, authenticationModeId: 'oauth', expectedCredentialRevision: null,
-            content: { t: 'plain', v: { accessToken: 'synthetic-credential' } }, metadata: { kind: 'oauth', scopes: [] },
+            accountId: owner.id, ref: account, authenticationModeId, expectedCredentialRevision: null,
+            ...(authenticationModeId === 'token' ? {
+                content: { t: 'plain', v: { token: 'synthetic-credential' } } as const,
+                metadata: { kind: 'token' } as const,
+                directExportContract: TEAM_CREDENTIAL_MANUAL_CONNECTED_ACCOUNT_DIRECT_CONTRACT_V1,
+                contributionContractVersion: 'test-contribution',
+            } : {
+                content: { t: 'plain', v: { accessToken: 'synthetic-credential' } } as const,
+                metadata: { kind: 'oauth' as const, scopes: [] },
+            }),
         });
         expect(created).toMatchObject({ status: 'written' });
         const credential = await db.serviceAccountToken.findFirstOrThrow({ where: { accountId: owner.id } });
@@ -392,9 +400,10 @@ describe("Team credential resource routes (SQLite integration)", () => {
             groupGrants: [], memberGrants: [], usageLimits: [] };
         for (const preferredAllowedModes of [['direct'], ['brokered', 'direct']]) {
             const refused = await post('/v1/teams/credential-resources/create', owner.id, {
-                ...draft, deliveryPolicy: { preferredAllowedModes },
+                ...draft, resourceId: `${resourceId}-${preferredAllowedModes.join('-')}`, deliveryPolicy: { preferredAllowedModes },
             });
-            expect.soft(refused.json(), refused.body).toEqual({ error: 'disclosure_not_allowed' });
+            expect.soft(refused.statusCode, refused.body).toBe(400);
+            expect.soft(refused.json()).toEqual({ error: 'disclosure_not_allowed' });
         }
         const foreign = await post('/v1/teams/credential-resources/create', outsider.id, draft);
         expect.soft(foreign.json(), foreign.body).toEqual({ error: 'source_replaced_or_missing' });
@@ -412,6 +421,14 @@ describe("Team credential resource routes (SQLite integration)", () => {
             resourceId, expectedRevision: revision, deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] },
         });
         expect(directUpdate.json()).toEqual({ error: 'disclosure_not_allowed' });
+        const sourceMemberKey = computeTeamCredentialSourceMemberKeyV1({
+            kind: 'connected_account', service, connectedAccountId: account.accountId,
+        });
+        const resolveMember = (deliveryMode: 'brokered' | 'direct') => inTx(tx => resolveTeamCredentialSourceMemberCurrentnessInTx(tx, {
+            custodianAccountId: owner.id, source: qualified, sourceMemberKey, deliveryMode,
+        }));
+        await expect(resolveMember('direct')).resolves.toEqual({ status: 'unavailable', reason: 'unsupported_direct_source' });
+        await expect(resolveMember('brokered')).resolves.toMatchObject({ status: 'current' });
 
         const replacement = await post('/v1/teams/credential-resources/update', owner.id, {
             resourceId, expectedRevision: revision, replacement: { custodian: { source,
@@ -425,7 +442,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
         });
         expect(stale.json()).toEqual({ error: 'resource_changed' });
         const retained = await post('/v1/teams/credential-resources/get', owner.id, { resourceId });
-        expect(retained.json().source).toEqual(source);
+        expect(retained.json()).toMatchObject({ source, directExportSupport: authenticationModeId === 'token' ? 'supported' : 'unsupported' });
     });
 
     it('refuses native Gateway sign-in before forwarding any native source request', async () => {

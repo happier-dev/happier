@@ -63,6 +63,15 @@ type ConnectedPoolSourceBinding = Extract<
     { kind: "connected_pool" }
 >;
 
+export function readConnectedAccountSourceDirectExport(
+    source: ConnectedAccountSourceBinding,
+    current: QualifiedConnectedAccountSourceIdentity,
+): Pick<QualifiedConnectedAccountSourceIdentity, 'directExportContract' | 'contributionContractVersion' | 'directExportFailure'> | null {
+    // A Provider purpose shares scoped inference through the broker. An Account
+    // export contract cannot authorize exporting its credential for that purpose.
+    return source.providerPurpose === undefined ? current : null;
+}
+
 export function projectConnectedAccountSourceResolution(
     source: ConnectedAccountSourceBinding,
     current: QualifiedConnectedAccountSourceIdentity | null,
@@ -71,14 +80,15 @@ export function projectConnectedAccountSourceResolution(
     if (current.incarnation !== source.credentialIncarnation) {
         return { status: "unavailable", reason: "source_changed" };
     }
+    const directExport = readConnectedAccountSourceDirectExport(source, current);
     return {
         status: "current",
         ...(current.status === "needs_reauth" ? { authenticationFailure: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired } : {}),
-        directExportSupport: current.directExportContract === null
-            || current.contributionContractVersion === null
+        directExportSupport: directExport === null || directExport.directExportContract === null
+            || directExport.contributionContractVersion === null
             ? "unsupported"
             : "supported",
-        ...(current.directExportFailure ? { directExportFailure: current.directExportFailure } : {}),
+        ...(directExport?.directExportFailure ? { directExportFailure: directExport.directExportFailure } : {}),
         requestPolicyCurrentness: { kind: "connected_account", identity: current },
         usageSourceMemberKey: computeTeamCredentialSourceMemberKeyV1({
             kind: "connected_account",
