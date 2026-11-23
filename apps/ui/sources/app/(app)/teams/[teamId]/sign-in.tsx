@@ -316,7 +316,9 @@ function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitat
                         teamId: selection.teamId,
                         accountSelection: recoveringIdentity ? 'another' : 'current',
                     } : undefined}
-                    onAuthenticated={() => resolvePostAuthLanding({ replace: router.replace, teamContinuation: returnTo })}
+                    onAuthenticated={() => resolvePostAuthLanding({
+                        replace: router.replaceAdmitted, teamContinuation: returnTo, revealHome: router.replace,
+                    })}
                     onBack={leaveMethod}
                 />
             </TeamAuthenticationStep>

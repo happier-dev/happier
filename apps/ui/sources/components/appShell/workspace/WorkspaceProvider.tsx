@@ -131,8 +131,6 @@ export function WorkspaceProvider(props: Readonly<{
     appResourceNavigationRef.current = appResourceNavigation;
     const findHandoff = findSeedContext?.fileFindSeedHandoff;
     const scopeKey = scope ? JSON.stringify([scope.serverId, scope.accountId]) : null;
-    // Auth can publish a new Account and restore its workspace after the public flow has navigated.
-    const admittedEntryHref = React.useRef<string | null>(null);
     // Browser history is authoritative even when readiness changes before Expo updates its mirror.
     // Expo's own location. The workspace may lead it on the same route pattern (see `mirror`).
     const expoHref = workspaceRouteHref(pathname, params);
@@ -283,10 +281,7 @@ export function WorkspaceProvider(props: Readonly<{
                 history: window.history,
                 getHref: () => `${window.location.pathname}${window.location.search}${window.location.hash}`,
                 mirror, createId: randomUUID,
-                accept: (href, entry, position) => {
-                    admittedEntryHref.current = null;
-                    return adapter.acceptUrl(href, entry, position);
-                },
+                accept: (href, entry, position) => adapter.acceptUrl(href, entry, position),
                 guard: guardTraversal,
                 needsGuard: (direction) => {
                     const state = latest.current.owner.getState();
@@ -350,13 +345,7 @@ export function WorkspaceProvider(props: Readonly<{
                 if (mounted.initialized) owner.dispatch(action);
                 else owner.restoreAction(action);
             },
-            transport: browser ? {
-                ...browser,
-                commit(href, entry, replace, position) {
-                    admittedEntryHref.current = null;
-                    browser.commit(href, entry, replace, position);
-                },
-            } : { commit: mirror },
+            transport: browser ?? { commit: mirror },
             createId: randomUUID, onChange: changed,
             resolveOpenHref: (href: string) => {
                 const facts = latest.current;
@@ -503,7 +492,7 @@ export function WorkspaceProvider(props: Readonly<{
         props.appWindow?.record.layoutId, nativeWindows?.kind, paneSubscription, requestAppWindowOpen, runtime, scopeKey]);
 
     React.useLayoutEffect(() => {
-        const entryHref = admittedEntryHref.current;
+        const entryHref = runtime.browser?.readAdmittedHref();
         if (!hostsRoute && !entryHref) {
             runtime.projectedHref = null;
             setMirrorLead(null);
@@ -531,7 +520,6 @@ export function WorkspaceProvider(props: Readonly<{
                 return;
             }
             if (routeHref !== projectedHref) {
-                admittedEntryHref.current = null;
                 runtime.projectedHref = null;
             }
         }
@@ -561,16 +549,6 @@ export function WorkspaceProvider(props: Readonly<{
         if (!runtime.browser) return;
         return bindWorkspaceBrowserHistory({
             acceptPopState: hostsRoute && owner.isReady ? runtime.browser.acceptPopState : undefined,
-            projectReplaceUrl(url) {
-                const entryHref = admittedEntryHref.current;
-                if (!entryHref || readBrowserHref() !== entryHref) return url;
-                const candidate = new URL(url, window.location.href);
-                if (candidate.origin !== window.location.origin) return url;
-                // Expo may publish a navigator's index as its child mounts. Its
-                // history state still belongs to Expo, while our admitted leaf owns the address.
-                const path = candidate.pathname;
-                return path === '/' || entryHref.split(/[?#]/)[0]!.startsWith(`${path}/`) ? entryHref : url;
-            },
         });
     }, [owner.isReady, hostsRoute, runtime]);
 
@@ -631,8 +609,7 @@ export function WorkspaceProvider(props: Readonly<{
     const openHref = React.useCallback((href: string, options?: WorkspaceOpenOptions) => {
         // This callback can arrive before React publishes the authenticated presentation.
         if (options?.admittedEntry && runtime.browser && resolveDestinationRefFromHref(latest.current.catalog, href)) {
-            admittedEntryHref.current = href;
-            runtime.browser.enterHref(href, true);
+            runtime.browser.enterHref(href, true, true);
             return true;
         }
         const canEnter = () => entry && latest.current.entry && latest.current.scopeKey === scopeKey
@@ -643,10 +620,8 @@ export function WorkspaceProvider(props: Readonly<{
             // admits that URL once ready, without lending it to Expo's index.
             runNavigation(() => {
                 if (!canEnter()) return;
-                if (!latest.current.owner.isReady) {
-                    admittedEntryHref.current = null;
-                    runtime.browser?.enterHref(href, options?.replace === true);
-                } else {
+                if (!latest.current.owner.isReady) runtime.browser?.enterHref(href, options?.replace === true);
+                else {
                     runtime.initialized = true;
                     runtime.adapter.openHref(href, options);
                 }

@@ -60,7 +60,7 @@ function Host({ exactHome = true }: { exactHome?: boolean }) {
             });
         }}
         {...(exactHome ? { reachExactHome: async () => await openAccountSecurityForHome({
-            serverId: TARGET.serverId!, router: { replace: boundary.replace }, refreshAuth: auth.refreshFromActiveServer,
+            serverId: TARGET.serverId!, router: { replaceAdmitted: boundary.replace }, refreshAuth: auth.refreshFromActiveServer,
             intent: ACCOUNT_SECURITY_EMAIL_PASSWORD_CONNECT_INTENT,
         }) } : {})}
         onClose={boundary.close}

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Platform } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { t } from '@/text';
 import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
 import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
@@ -64,7 +65,7 @@ export default function Restore() {
         ? buildApiTokenCreateResumePath(returnTo, createResume.draft, createResume.target)
         : returnTo;
     const landAfterRestore = () => resolvePostAuthLanding({
-        replace: completedReturnTo ? router.replace : router.dismissTo,
+        replace: completedReturnTo ? router.replaceAdmitted : router.dismissTo,
         returnTo: completedReturnTo,
     });
 

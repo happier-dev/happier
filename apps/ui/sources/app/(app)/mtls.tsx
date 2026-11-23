@@ -1,8 +1,10 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { TeamInvitationPostAuthContinuationV1Schema } from '@happier-dev/protocol/teams';
 
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { useAuth } from '@/auth/context/AuthContext';
 import { createAuthenticationFailure } from '@/auth/flows/authenticationFailure';
 import { authenticationErrorMessage } from '@/auth/flows/authenticationErrorMessage';
@@ -24,6 +26,8 @@ import { admitInternalRouteHref, tryAdmitInternalRouteHref } from '@/utils/path/
 export default function MtlsCallbackScreen() {
     const auth = useAuth();
     const params = useLocalSearchParams();
+    const destinationRouter = useRouter();
+    const replaceAdmitted = useEventCallback((href: Href) => destinationRouter.replaceAdmitted(href));
 
     React.useEffect(() => {
         let mounted = true;
@@ -198,11 +202,12 @@ export default function MtlsCallbackScreen() {
                             }, { expectedCredentialTokenDigest: pending.accountContinuation.credentialTokenDigest })) {
                                 throw new Error('Account Service credential custody changed');
                             }
-                            resolvePostAuthLanding({ replace: router.replace, continuation: admitInternalRouteHref(destination) });
+                            resolvePostAuthLanding({ replace: replaceAdmitted, continuation: admitInternalRouteHref(destination) });
                             return;
                         }
                         resolvePostAuthLanding({
-                            replace: router.replace,
+                            replace: replaceAdmitted,
+                            revealHome: router.replace,
                             teamContinuation: pending.teamContinuation ? teamSignInReturnPath({
                                 teamId: pending.teamContinuation.destination.teamId,
                                 carrier: pending.teamContinuation.homeServerIdentityId,
@@ -235,7 +240,7 @@ export default function MtlsCallbackScreen() {
             mounted = false;
             controller.abort();
         };
-    }, [auth, params.admissionReference, params.code]);
+    }, [auth, params.admissionReference, params.code, replaceAdmitted]);
 
     return (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>

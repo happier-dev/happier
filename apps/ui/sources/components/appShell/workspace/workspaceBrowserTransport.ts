@@ -5,13 +5,14 @@ import { BROWSER_HISTORY_NAVIGATION_CHANGED, readBrowserHistoryIndex, readBrowse
 
 let browserWindow: Window | null = null;
 let releaseBrowserHistoryNavigation: (() => void) | null = null;
+let admittedEntryHref: string | null = null;
 type WorkspaceBrowserHistoryBinding = Readonly<{
     acceptPopState?: (state: unknown, event: PopStateEvent) => boolean;
-    projectReplaceUrl: (url: string | URL) => string | URL;
 }>;
 let workspaceHistoryBinding: WorkspaceBrowserHistoryBinding | null = null;
 
 function onWorkspacePopState(event: PopStateEvent): void {
+    admittedEntryHref = null;
     if (workspaceHistoryBinding?.acceptPopState?.(event.state, event)) {
         event.stopImmediatePropagation();
         return;
@@ -20,16 +21,38 @@ function onWorkspacePopState(event: PopStateEvent): void {
     interceptUnsavedChangesBrowserPopState(event);
 }
 
+function projectAdmittedEntryUrl(target: Window, url: string | URL): string | URL {
+    const entryHref = admittedEntryHref;
+    const { location } = target;
+    if (!entryHref || location.pathname + location.search + location.hash !== entryHref) return url;
+    const candidate = new URL(url, location.href);
+    if (candidate.origin !== location.origin) return url;
+    // Expo can publish a navigator's index or serialize the same child query
+    // differently while the authenticated shell and its replacement are mounting.
+    const path = candidate.pathname;
+    const entry = new URL(entryHref, location.href);
+    if (path === '/' || entry.pathname.startsWith(`${path}/`)) return entryHref;
+    if (path !== entry.pathname) return url;
+    candidate.searchParams.sort();
+    entry.searchParams.sort();
+    return candidate.search === entry.search && candidate.hash === entry.hash ? entryHref : url;
+}
+
 /** App-entry bootstrap: one capture owner, before Expo evaluates its history mirror. */
 export function installWorkspaceBrowserHistory(): void {
     if (typeof window === 'undefined' || !window.history || typeof window.addEventListener !== 'function' || browserWindow === window) return;
     browserWindow?.removeEventListener('popstate', onWorkspacePopState, true);
     releaseBrowserHistoryNavigation?.();
     browserWindow = window;
+    admittedEntryHref = null;
     const target = window;
     releaseBrowserHistoryNavigation = trackBrowserHistoryNavigation(target.history,
-        () => target.dispatchEvent(new Event(BROWSER_HISTORY_NAVIGATION_CHANGED)),
-        url => workspaceHistoryBinding?.projectReplaceUrl(url) ?? url);
+        () => {
+            const { pathname, search, hash } = target.location;
+            if (admittedEntryHref !== null && pathname + search + hash !== admittedEntryHref) admittedEntryHref = null;
+            target.dispatchEvent(new Event(BROWSER_HISTORY_NAVIGATION_CHANGED));
+        },
+        url => projectAdmittedEntryUrl(target, url));
     window.addEventListener('popstate', onWorkspacePopState, true);
 }
 
@@ -64,8 +87,8 @@ export function createWorkspaceBrowserTransport(input: Readonly<{
     guard?: (direction: -1 | 1, proceed: () => void) => boolean | Promise<boolean>;
     needsGuard?: (direction: -1 | 1) => boolean;
 }>): WorkspaceUrlTransport & Readonly<{
-    /** Preserve an explicit public-flow destination before scoped layout hydration can bind a tab. */
-    enterHref: (href: string, replace: boolean) => void;
+    enterHref: (href: string, replace: boolean, admitted?: boolean) => void;
+    readAdmittedHref: () => string | null;
     acceptPopState: (state: unknown, event?: PopStateEvent) => boolean;
 }> {
     // Workspace positions address restored views; native positions measure traversal deltas.
@@ -87,7 +110,12 @@ export function createWorkspaceBrowserTransport(input: Readonly<{
         return id;
     };
     return {
-        enterHref(href, replace) {
+        readAdmittedHref() {
+            return admittedEntryHref;
+        },
+        enterHref(href, replace, admitted = false) {
+            // This exact public-flow address survives replacing the mounted workspace.
+            admittedEntryHref = admitted ? href : null;
             const id = writeHref(href, replace);
             // A replaced unbound URL must not retain the old tab's identity.
             entries.delete(id);
@@ -111,6 +139,7 @@ export function createWorkspaceBrowserTransport(input: Readonly<{
             }
         },
         commit(href, entry, replace, position) {
+            admittedEntryHref = null;
             const id = writeHref(href, replace);
             currentPosition = readBrowserHistoryIndex(input.history) ?? position;
             entries.set(id, { entry, position, browserPosition: currentPosition });

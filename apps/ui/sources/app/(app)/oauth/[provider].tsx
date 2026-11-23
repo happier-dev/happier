@@ -1,6 +1,8 @@
 import React from 'react';
 import { Platform, View } from 'react-native';
 import { useRouter, useLocalSearchParams, type Href } from 'expo-router';
+import { useRouter as useDestinationRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import * as WebBrowser from 'expo-web-browser';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
@@ -284,6 +286,8 @@ async function maybeActivateServerTarget(
 
 function OAuthProviderReturnBody() {
     const router = useRouter();
+    const destinationRouter = useDestinationRouter();
+    const replaceAdmitted = useEventCallback((href: Href) => destinationRouter.replaceAdmitted(href));
     const params = useLocalSearchParams() as any;
     const auth = useAuth();
     const { theme } = useUnistyles();
@@ -602,7 +606,7 @@ function OAuthProviderReturnBody() {
                                 }, { expectedCredentialTokenDigest: ctx.accountContinuation.credentialTokenDigest })) {
                                     throw new Error('Account Service credential custody changed');
                                 }
-                                resolvePostAuthLanding({ replace: router.replace, continuation: admitInternalRouteHref(destination) });
+                                resolvePostAuthLanding({ replace: replaceAdmitted, continuation: admitInternalRouteHref(destination) });
                                 return;
                             }
                             await maybeActivateServerTarget(ctx.serverUrl, ctx.serverId, auth.refreshFromActiveServer);
@@ -611,7 +615,8 @@ function OAuthProviderReturnBody() {
                                 intent: ctx.intent,
                             });
                             resolvePostAuthLanding({
-                                replace: router.replace,
+                                replace: replaceAdmitted,
+                                revealHome: router.replace,
                                 teamContinuation: ctx.teamContinuation ? teamSignInReturnPath({
                                     teamId: ctx.teamContinuation.destination.teamId,
                                     carrier: ctx.teamContinuation.homeServerIdentityId,
@@ -673,7 +678,7 @@ function OAuthProviderReturnBody() {
         })();
         fireAndForget(promise, { tag: 'OAuthProviderReturn.finalizeAuth' });
         return promise;
-    }, [auth, router, returnHomeAuthenticationRequired]);
+    }, [auth, replaceAdmitted, router, returnHomeAuthenticationRequired]);
 
     const submitUsername = React.useCallback(() => {
         const ctx = pendingAuthContextRef.current;
@@ -1062,7 +1067,7 @@ function OAuthProviderReturnBody() {
                         result.kind !== 'cancelled' || !result.accountCredentialCommitted
                     )) return;
                     if (result.kind === 'authenticated') {
-                        resolvePostAuthLanding({ replace: router.replace, continuation: admitInternalRouteHref(result.destination) });
+                        resolvePostAuthLanding({ replace: replaceAdmitted, continuation: admitInternalRouteHref(result.destination) });
                         return;
                     }
                     if (result.kind === 'cancelled') {
@@ -1721,6 +1726,7 @@ function OAuthProviderReturnBody() {
         };
 	    // Keep deps primitive so we don't dispose mid-flight due to param identity changes.
 	    }, [
+        replaceAdmitted,
         router,
         resolvedProviderId,
         resolvedFlow,
@@ -1987,7 +1993,9 @@ function OAuthProviderReturnBody() {
     // The recovery flow is its own signed-out step (it frames itself with the Home it signs in to).
     if (homeOAuthRetry) return (
         <HomeRecoveryAuthenticationFlow profileRef={homeOAuthRetry.profileRef} returnTo={homeOAuthRetry.returnTo}
-            retryOAuth={homeOAuthRetry} onAuthenticated={() => resolvePostAuthLanding({ replace: router.replace, returnTo: homeOAuthRetry.returnTo })}
+            retryOAuth={homeOAuthRetry} onAuthenticated={() => resolvePostAuthLanding({
+                replace: replaceAdmitted, returnTo: homeOAuthRetry.returnTo, revealHome: router.replace,
+            })}
             onBack={() => setHomeOAuthRetry(null)} />
     );
 

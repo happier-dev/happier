@@ -27,6 +27,7 @@ const EMPTY_SCREEN_OPTIONS: NativeStackNavigationOptions = {};
 
 type DestinationRouter = ReturnType<typeof useRouter> & {
     redirect: ReturnType<typeof useRouter>['replace'];
+    replaceAdmitted: ReturnType<typeof useRouter>['replace'];
     pushRetainingCurrent: ReturnType<typeof useRouter>['push'];
     retainCurrent: () => void;
 };
@@ -425,6 +426,7 @@ export function useDestinationRouter(): DestinationRouter {
             prefetch: () => {},
             ...navigation,
             redirect: navigation.redirect ?? navigation.replace,
+            replaceAdmitted: navigation.replace,
             pushRetainingCurrent: navigation.pushRetainingCurrent ?? unsupported,
             retainCurrent: navigation.retainCurrent ?? unsupported,
         };
@@ -437,13 +439,19 @@ function useWorkspaceOrExpoRouter() {
     const workspace = useWorkspaceRouterFacts();
     const router = useRouter();
     return React.useMemo(() => {
-        if (!workspace) return { ...router, redirect: router.replace, pushRetainingCurrent: router.push, retainCurrent: () => {} };
+        if (!workspace) return { ...router, redirect: router.replace, replaceAdmitted: router.replace, pushRetainingCurrent: router.push, retainCurrent: () => {} };
         const { active, openHref, navigationForTab, back, read } = workspace;
         const navigate: typeof router.push = (href, options) => {
             if (!openHref(resolveHref(href))) router.push(href, options);
         };
         const replace: typeof router.replace = (href, options) => {
             if (!openHref(resolveHref(href), { replace: true })) router.replace(href, options);
+        };
+        const replaceAdmitted: typeof router.replace = (href, options) => {
+            const current = read();
+            const resolved = resolveHref(href);
+            if (!current.active && resolved !== '/' && current.openHref(resolved, { replace: true, admittedEntry: true })) return;
+            if (!current.openHref(resolved, { replace: true })) router.replace(href, options);
         };
         const pushRetainingCurrent: typeof router.push = (href, options) => {
             const workspace = read();
@@ -461,7 +469,7 @@ function useWorkspaceOrExpoRouter() {
             if (!navigation.retainCurrent) throw new Error('The workspace navigation owner did not supply pane retention');
             navigation.retainCurrent();
         };
-        return { ...router, push: navigate, navigate, replace, redirect: replace, pushRetainingCurrent, retainCurrent,
+        return { ...router, push: navigate, navigate, replace, redirect: replace, replaceAdmitted, pushRetainingCurrent, retainCurrent,
             back: active ? back : router.back,
             canGoBack: active ? () => read().canGoBack === true : router.canGoBack };
     }, [router, workspace]);

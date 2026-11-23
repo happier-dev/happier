@@ -2,7 +2,6 @@ import * as React from 'react';
 import { useLocalSearchParams } from 'expo-router';
 import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { useWorkspaceRouterFacts } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 
 import { HomeRecoveryAuthenticationFlow } from '@/components/account/auth/HomeRecoveryAuthenticationFlow';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
@@ -30,7 +29,6 @@ function resolveForward(params: RouteParams): Readonly<{ pathname: string; param
  */
 export default function ServerConfigRoute() {
     const router = useRouter();
-    const workspace = useWorkspaceRouterFacts();
     const params = useLocalSearchParams<RouteParams>();
     const recovery = React.useMemo(() => parseServerSettingsRouteParams(params).recovery, [params]);
     const handledRef = React.useRef(false);
@@ -50,10 +48,9 @@ export default function ServerConfigRoute() {
         <HomeRecoveryAuthenticationFlow
             profileRef={recovery.profileRef}
             returnTo={recovery.returnTo}
-            onAuthenticated={() => resolvePostAuthLanding({ returnTo: recovery.returnTo, replace: href => {
-                if (typeof href === 'string' && href !== '/' && workspace?.read().openHref(href, { replace: true, admittedEntry: true })) return;
-                router.replace(href);
-            } })}
+            onAuthenticated={() => resolvePostAuthLanding({
+                returnTo: recovery.returnTo, replace: router.replaceAdmitted, revealHome: router.replace,
+            })}
             onBack={() => router.replace(recovery.returnTo as never)}
         />
     );

@@ -177,10 +177,10 @@ function RailActivationProbe() {
     return React.createElement('RailActivation', { activate });
 }
 
-function CapabilityArrivalProbe() {
+function CapabilityArrivalProbe({ passwordHref }: Readonly<{ passwordHref?: string }>) {
     const router = useDestinationRouter();
     return React.createElement('CapabilityArrival', {
-        open: () => router.replace('/settings/teams/home-a/team-1'),
+        open: () => passwordHref ? router.replaceAdmitted(passwordHref) : router.replace('/settings/teams/home-a/team-1'),
     });
 }
 
@@ -1906,12 +1906,19 @@ describe('consumed workspace navigation owner', () => {
         expect(navigation().state.tabs[tabId]).toBeUndefined();
     });
     it.each([
-        { ready: true, admittedRecovery: false },
-        { ready: false, admittedRecovery: false },
-        { ready: false, admittedRecovery: true },
-    ])('retains the exact Settings arrival while Expo mounts its parent ($ready, $admittedRecovery)', async ({ ready, admittedRecovery }) => {
+        { ready: true, kind: 'invitation' },
+        { ready: false, kind: 'invitation' },
+        { ready: false, kind: 'recovery' },
+        { ready: false, kind: 'source' },
+        { ready: false, kind: 'password' },
+        { ready: false, kind: 'password-shell-replacement' },
+    ])('retains the admitted destination while Expo mounts its parent ($kind, ready: $ready)', async ({ ready, kind }) => {
+        const source = kind === 'source';
+        const password = kind === 'password' || kind === 'password-shell-replacement';
+        const replacesShell = kind === 'password-shell-replacement';
+        const admittedRecovery = source || kind === 'recovery';
         boundary.platform = 'web';
-        boundary.pathname = admittedRecovery ? '/server' : '/join/invitation';
+        boundary.pathname = admittedRecovery ? '/server' : password ? '/auth/email/verify/disposable' : '/join/invitation';
         boundary.params = {};
         boundary.dataReady = ready;
         const location = {
@@ -1936,49 +1943,73 @@ describe('consumed workspace navigation owner', () => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
             externalSessions: false, inbox: false, workflows: false, friends: false,
         } });
-        // Public links have no shell, but an authenticated Account can explicitly
-        // enter one. This is the same presentation transition the invitation uses.
-        const element = (enabled: boolean) => <WorkspaceProvider enabled={enabled} entry={!enabled && !admittedRecovery} catalog={catalog}>
-            {navigation => <>{React.createElement('WorkspaceOwner', { navigation })}<CapabilityArrivalProbe /></>}
+        const passwordHref = '/settings/account/security?serverId=home-a&verificationToken=disposable';
+        const href = source ? '/projects/setup?source=source-a&target=FO9%20Home' :
+            admittedRecovery ? '/settings/appearance' : password ? passwordHref : '/settings/teams/home-a/team-1';
+        const leaf = new URL(href, location.origin);
+        const parentPath = source || password ? '/' : '/settings';
+        // The mail verification and saved Home routes have no public workspace
+        // entry until authentication admits their exact destination.
+        const element = (enabled: boolean) => <WorkspaceProvider enabled={enabled} entry={!enabled && kind === 'invitation'} catalog={catalog}>
+            {navigation => <>{React.createElement('WorkspaceOwner', { navigation })}<CapabilityArrivalProbe passwordHref={password ? passwordHref : undefined} /></>}
         </WorkspaceProvider>;
         const screen = await renderScreen(element(false));
         const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
         expect(navigation().active).toBe(false);
-        const href = admittedRecovery ? '/settings/appearance' : '/settings/teams/home-a/team-1';
         await act(async () => {
             if (admittedRecovery) expect(navigation().openHref(href, { replace: true, admittedEntry: true })).toBe(true);
             else screen.root.findByType('CapabilityArrival').props.open();
         });
+        if (password) {
+            // Expo mirrors the verification continuation before its root index
+            // renders. The authenticated destination should keep the address.
+            await act(async () => history.replaceState(history.state, '', href));
+        }
+        if (replacesShell) {
+            // Replacing the signed-out shell withdraws its workspace binding.
+            // Expo can publish the root before the authenticated shell takes over.
+            await screen.update(<></>);
+            await act(async () => history.replaceState(history.state, '', '/'));
+            expect(location.pathname + location.search).toBe(href);
+        }
         // The child route can acknowledge Expo's requested pathname before
         // Account restoration admits it. That acknowledgement must not release
         // the explicit destination to the parent's following index publication.
         if (!ready) {
-            boundary.pathname = href;
+            boundary.pathname = leaf.pathname;
             await screen.update(element(false));
         }
-        if (admittedRecovery) {
+        if (admittedRecovery || password) {
             // Once the shell has initialized, Expo can acknowledge the child before
             // Mounting Settings publishes its index over the same history entry.
-            boundary.pathname = '/settings';
+            boundary.pathname = parentPath;
             boundary.dataReady = true;
             await screen.update(element(true));
-            boundary.pathname = href;
+            boundary.pathname = leaf.pathname;
+            await screen.update(element(true));
+        }
+        if (source) {
+            // Expo acknowledges the same leaf with a different query encoding.
+            // Publishing that rewrite releases the pending intent to its index.
+            await act(async () => {
+                history.replaceState(history.state, '', `${leaf.pathname}?${leaf.searchParams.toString()}`);
+            });
             await screen.update(element(true));
         }
         // Expo's nested Settings navigator publishes its index while its child
         // mounts. Browser custody must retain the admitted destination.
         await act(async () => {
-            boundary.pathname = '/settings';
+            boundary.pathname = parentPath;
             history.replaceState(history.state, '', boundary.pathname);
             boundary.dataReady = true;
         });
         await screen.update(element(true));
         const state = navigation().state;
         const target = state.tabs[state.groups[state.focusedGroupId].activeTabId].target;
-        expect(hrefForDestinationRef(catalog, target)).toBe(href);
-        expect(location.pathname).toBe(href);
+        expect(hrefForDestinationRef(catalog, target)).toBe(source ? `${leaf.pathname}?${leaf.searchParams.toString()}` : href);
+        expect(location.pathname + location.search).toBe(href);
 
-        if (admittedRecovery) {
+        if (admittedRecovery || password) {
             expect(navigations).toEqual([href]);
             await act(async () => { expect(navigation().openHref('/settings', { replace: true })).toBe(true); });
             expect(location.pathname).toBe('/settings');

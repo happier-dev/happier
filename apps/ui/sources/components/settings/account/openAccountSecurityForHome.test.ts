@@ -27,7 +27,7 @@ it('refreshes the authenticated Account before opening Security when the exact H
         expect(replace).not.toHaveBeenCalled();
     });
 
-    await expect(openAccountSecurityForHome({ serverId, router: { replace }, refreshAuth,
+    await expect(openAccountSecurityForHome({ serverId, router: { replaceAdmitted: replace }, refreshAuth,
         intent: 'email_password_connect', verificationToken: 'verify-home-a' })).resolves.toBe(true);
 
     expect(refreshAuth).toHaveBeenCalledOnce();
@@ -40,7 +40,7 @@ it('keeps the current Home and does not navigate when the requested Home is unkn
     const serverId = getActiveServerSnapshot().serverId;
     const refreshAuth = vi.fn(async () => {});
     const replace = vi.fn();
-    await expect(openAccountSecurityForHome({ serverId: 'unknown-home', router: { replace }, refreshAuth })).resolves.toBe(false);
+    await expect(openAccountSecurityForHome({ serverId: 'unknown-home', router: { replaceAdmitted: replace }, refreshAuth })).resolves.toBe(false);
     expect(refreshAuth).not.toHaveBeenCalled();
     expect(replace).not.toHaveBeenCalled();
     expect(getActiveServerSnapshot().serverId).toBe(serverId);
