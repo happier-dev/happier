@@ -24,7 +24,7 @@ import { t } from '@/text';
 import type { HomeAdministrationContext } from '../governance/homeAdministrationContext';
 import { homeAdministrationServerSettingsPath } from '../governance/homeAdministrationRoutes';
 import { HomeDeploymentFixedNote } from '../governance/HomeDeploymentFixedNote';
-import { homeGovernanceFailureNotice } from '../governance/homeGovernanceLabels';
+import { HOME_IDENTITY_NETWORK_MODE_LABEL_KEYS, homeGovernanceFailureNotice } from '../governance/homeGovernanceLabels';
 import { HOME_SIGN_IN_PROVIDERS_SETTINGS } from './homeSignInProvidersSettings';
 
 /** The deployment key that permits private identity endpoints at all (the Home can only narrow it). */
@@ -236,12 +236,12 @@ export const HomePrivateEndpointsSection = React.memo(function HomePrivateEndpoi
                         options={[
                             {
                                 id: 'public_only',
-                                label: t('homeGovernance.signInProviders.privateEndpointsPublicOnlyShort'),
+                                label: t(HOME_IDENTITY_NETWORK_MODE_LABEL_KEYS.public_only),
                                 description: t('homeGovernance.signInProviders.privateEndpointsPublicOnlyHint'),
                             },
                             {
                                 id: 'private_allowlist',
-                                label: t('homeGovernance.signInProviders.privateEndpointsAllowlistShort'),
+                                label: t(HOME_IDENTITY_NETWORK_MODE_LABEL_KEYS.private_allowlist),
                                 description: t('homeGovernance.signInProviders.privateEndpointsAllowlistHint'),
                             },
                         ]}

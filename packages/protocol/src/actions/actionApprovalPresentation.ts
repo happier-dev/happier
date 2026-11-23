@@ -37,6 +37,7 @@ import { PrincipalRefV1Schema } from '../teams/principal.js';
 import { TeamUpdateInputV1Schema } from '../teams/team.js';
 import { TEAM_GROUP_UPDATE_ACTION_ID_V1, TEAM_POLICY_SET_ACTION_ID_V1 } from '../teams/actionIdsV1.js';
 import { HomeSettingsSetInputV1Schema } from '../home/governance/settings.js';
+import { HomeGovernancePolicySetInputV1Schema } from '../home/governance/policy.js';
 import { SERVER_CONFIG_REGISTRY_BASE } from '../serverConfig/registry.js';
 import {
   PluginChangePendingReviewResultSchema,
@@ -1067,14 +1068,23 @@ export function describeApprovalActionFields(input: Readonly<{
   const technicalPaths = spec.approvalPresentation?.technicalInputPaths ?? [];
   const codePaths = spec.approvalPresentation?.codeInputPaths ?? [];
   const structuredAnswerPath = STRUCTURED_ANSWER_FIELD_PATH_BY_ACTION_ID[input.actionId];
-  const rows: ApprovalActionFieldRow[] = [];
+  // Home policy forms flatten populated documents. A whole-document reset has
+  // no populated child field, so give the explicit null its own review row.
+  const clearedHomePolicyFields = spec.inputSchema === HomeGovernancePolicySetInputV1Schema
+    ? Object.keys(HomeGovernancePolicySetInputV1Schema.shape).filter(path =>
+      getApprovalFieldValues(presentationInput, path)[0] === null && actionInputFieldAcceptsNull(spec, path))
+    : [];
+  const rows: ApprovalActionFieldRow[] = clearedHomePolicyFields.map(path => ({
+    kind: 'value', path, title: humanizeApprovalKey(path), value: 'null',
+    selectedOptions: [{ label: 'Not set', labelKey: 'homeSettings.row.notSet' }],
+  }));
   let unrepresentable: ApprovalActionFieldsPresentation['unrepresentable'] = resolved.length === 0
     && (!isRecord(presentationInput) || Object.keys(presentationInput).length > 0
       || (isRecord(input.actionArgs) && Object.keys(input.actionArgs).length > 0))
     ? { path: '', reason: 'missing_required_context' } : null;
 
   for (const field of presented) {
-    if (shouldHideApprovalField(field.path, paths)) continue;
+    if (clearedHomePolicyFields.includes(field.path) || shouldHideApprovalField(field.path, paths)) continue;
     const values = getApprovalFieldValues(presentationInput, field.path);
     if (structuredAnswerPath !== undefined && field.path === structuredAnswerPath) {
       const projection = projectApprovalStructuredAnswers(values);

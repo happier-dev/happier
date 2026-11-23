@@ -3,6 +3,8 @@ import type {
     AccountStatusV1,
     HomeAdmissionModeV1,
     HomeAuthenticationPolicyV1,
+    HomeGovernancePolicyFieldV1,
+    HomeIdentityNetworkPolicyV1,
     HomeRoleV1,
     TeamCreationPolicyV1,
 } from '@happier-dev/protocol/home/governance';
@@ -17,6 +19,28 @@ import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
 import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+
+export const HOME_IDENTITY_NETWORK_MODE_LABEL_KEYS = {
+    public_only: 'homeGovernance.signInProviders.privateEndpointsPublicOnlyShort',
+    private_allowlist: 'homeGovernance.signInProviders.privateEndpointsAllowlistShort',
+} as const satisfies Record<HomeIdentityNetworkPolicyV1['mode'], string>;
+
+export function homeGovernancePolicyFieldLabel(field: HomeGovernancePolicyFieldV1): string {
+    switch (field) {
+        case 'teamCreationPolicy':
+            return t('homeGovernance.teamCreation');
+        case 'teamsVisibleToMembers':
+            return t('homeGovernance.teamsVisibleToMembers');
+        case 'authenticationPolicy':
+            return t('homeGovernance.signInTitle');
+        case 'teamProviderPolicy':
+            return t('homeGovernance.activity.fieldTeamProviders');
+        case 'identityNetworkPolicy':
+            return t('homeGovernance.privateEndpoints');
+        case 'sessionDefaults':
+            return t('settingsAgents.detailPage.sessionDefaultsTitle');
+    }
+}
 
 /**
  * The one place a Home-governance enum becomes words.

@@ -40,10 +40,10 @@ import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRe
 import { TEAM_POLICY_SET_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
 import { SessionHistoryAccessV1Schema, TeamPolicySetInputV1Schema, TeamRoleV1Schema } from '@happier-dev/protocol/teams';
 import { isSessionAccessActionId, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
-import { HomeAdmissionModeV1Schema, HomeAuthenticationPolicyV1Schema, HomeRoleV1Schema, TeamCreationPolicyV1Schema } from '@happier-dev/protocol/home/governance';
+import { HomeAdmissionModeV1Schema, HomeAuthenticationPolicyV1Schema, HomeGovernancePolicyFieldV1Schema, HomeRoleV1Schema, TeamCreationPolicyV1Schema } from '@happier-dev/protocol/home/governance';
 import { externalSharingLabel, historyLabel, sessionCreationLabel, teamAdmissionModeLabel } from '@/components/settings/teams/teamPolicyPresentation';
 import { teamRoleLabel } from '@/components/settings/teams/teamLabels';
-import { homeAdmissionModeLabel, homeRoleLabel, homeStoragePolicyLabel, teamCreationPolicyLabel } from '@/components/settings/home/governance/homeGovernanceLabels';
+import { HOME_IDENTITY_NETWORK_MODE_LABEL_KEYS, homeAdmissionModeLabel, homeGovernancePolicyFieldLabel, homeRoleLabel, homeStoragePolicyLabel, teamCreationPolicyLabel } from '@/components/settings/home/governance/homeGovernanceLabels';
 import { homeServerSettingTitle } from '@/components/settings/home/governance/homeServerSettingLabels';
 import { MachineGuardCeilingApprovalFields } from './MachineGuardCeilingApprovalFields';
 import { DiscussionReplyApprovalFields } from './DiscussionReplyApprovalFields';
@@ -294,7 +294,7 @@ function toSharedFieldRow(row: ApprovalFieldRow, serverId: string | null, exactR
             ...(entry.reference ? { source: { reference: entry.reference, serverId, exactRead: false } } : {}),
         })) };
     }
-    const label = row.path === 'primaryTeamId' ? t('session.access.context') : row.title;
+    const label = row.path === 'primaryTeamId' ? t('session.access.context') : readHomePolicyLabel(row, actionId) ?? row.title;
     const value = governance && isGovernancePrincipal(row.reference)
         ? t('common.unavailable') : readGovernanceChoice(row, actionId) ?? literalApprovalValue(row);
     return { kind: 'value', key: row.path, label, value,
@@ -304,6 +304,14 @@ function toSharedFieldRow(row: ApprovalFieldRow, serverId: string | null, exactR
 function isGovernancePrincipal(reference: ApprovalReference | undefined): boolean {
     return reference?.kind === 'account' || reference?.kind === 'team'
         || reference?.kind === 'group' || reference?.kind === 'teamMembership';
+}
+
+function readHomePolicyLabel(row: ApprovalValueRow, actionId: string | undefined): string | undefined {
+    if (!actionId?.startsWith('home.')) return;
+    if (row.path === 'identityNetworkPolicy.mode') return homeGovernancePolicyFieldLabel('identityNetworkPolicy');
+    if (row.value !== 'null' || row.selectedOptions?.[0]?.labelKey !== 'homeSettings.row.notSet') return;
+    const field = HomeGovernancePolicyFieldV1Schema.safeParse(row.path);
+    if (field.success) return homeGovernancePolicyFieldLabel(field.data);
 }
 
 function readGovernanceChoice(row: ApprovalValueRow, actionId: string | undefined): string | undefined {
@@ -319,6 +327,10 @@ function readGovernanceChoice(row: ApprovalValueRow, actionId: string | undefine
         }
     }
     if (actionId?.startsWith('home.')) {
+        if (row.path === 'identityNetworkPolicy.mode' && Object.hasOwn(HOME_IDENTITY_NETWORK_MODE_LABEL_KEYS, row.value)) {
+            const mode = row.value as keyof typeof HOME_IDENTITY_NETWORK_MODE_LABEL_KEYS;
+            return t(HOME_IDENTITY_NETWORK_MODE_LABEL_KEYS[mode]);
+        }
         if (row.path === 'homeRole') {
             const choice = HomeRoleV1Schema.safeParse(row.value);
             if (choice.success) return homeRoleLabel(choice.data);

@@ -17,6 +17,7 @@ import {
     homeAccountModeLabel,
     homeAccountStatusLabel,
     homeAdmissionModeLabel,
+    homeGovernancePolicyFieldLabel,
     homeRoleLabel,
     homeStoragePolicyLabel,
     teamCreationPolicyLabel,
@@ -71,23 +72,6 @@ function settingValue(key: string, value: unknown): string {
         return value ? t('homeGovernance.email.tls') : t('homeGovernance.email.starttls');
     }
     return genericValue(value);
-}
-
-function policyFieldLabel(field: HomeGovernancePolicyFieldV1): string {
-    switch (field) {
-        case 'teamCreationPolicy':
-            return t('homeGovernance.teamCreation');
-        case 'teamsVisibleToMembers':
-            return t('homeGovernance.teamsVisibleToMembers');
-        case 'authenticationPolicy':
-            return t('homeGovernance.signInTitle');
-        case 'teamProviderPolicy':
-            return t('homeGovernance.activity.fieldTeamProviders');
-        case 'identityNetworkPolicy':
-            return t('homeGovernance.privateEndpoints');
-        case 'sessionDefaults':
-            return t('settingsAgents.detailPage.sessionDefaultsTitle');
-    }
 }
 
 function policyValue(field: HomeGovernancePolicyFieldV1, value: unknown): string {
@@ -199,7 +183,7 @@ function describe(event: HomeAdministrationEventV1, viewer: string | null, names
                 changes: event.summary.changes.flatMap((change) => (change.field === 'authenticationPolicy'
                     ? authenticationPolicyLines(change.from, change.to, names.methodName)
                     : [{
-                        label: policyFieldLabel(change.field),
+                        label: homeGovernancePolicyFieldLabel(change.field),
                         from: policyValue(change.field, change.from),
                         to: policyValue(change.field, change.to),
                     }])),
