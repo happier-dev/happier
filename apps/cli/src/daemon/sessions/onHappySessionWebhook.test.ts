@@ -2045,6 +2045,47 @@ describe('createOnHappySessionWebhook', () => {
     expect(tracked.spawnStartupReadinessFailure).toBeUndefined();
   });
 
+  it('settles an existing runner spawn with the original marker I/O error code', async () => {
+    const tracked: TrackedSession = {
+      trackingKey: legacyPidSessionTrackingKey(794), pid: 794,
+      startedBy: 'daemon',
+      happySessionId: 'session-daemon-794',
+      acceptedSpawnMarkerGate: Promise.resolve(true),
+      agentRuntimeDaemonServiceAuthorityFilePath: '/tmp/runner-authority-marker-failure.json',
+    };
+    const trackedSessionsByKey = new Map([[tracked.trackingKey, tracked]]);
+    const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
+    const spawnResult = waitForSessionWebhook({
+      trackingKey: tracked.trackingKey, pid: tracked.pid, trackedSessionsByKey, spawnAwaiterByKey,
+      spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
+      timeoutErrorMessage: 'unexpected timeout',
+    });
+    const markerError = Object.assign(new Error('write failed at /private/marker.json'), { code: 'EIO' });
+    const report = createOnHappySessionWebhook({
+      trackedSessionsByKey, spawnAwaiterByKey,
+      getParentPidFn: () => null,
+      findHappyProcessByPidFn: async () => null,
+      readProcessIdentityByPidFn: async () => ({
+        pid: tracked.pid, processStartTimeMs: 1_717_171_717_794, command: '/usr/bin/happier-agent',
+      }),
+      // Inject an I/O failure at the marker filesystem boundary.
+      writeSessionMarkerFn: async () => { throw markerError; },
+    });
+
+    const acknowledgement = report('session-daemon-794', createMetadata(tracked.pid, 'daemon'));
+    const [result] = await Promise.all([spawnResult, acknowledgement.catch(() => undefined)]);
+    expect(result).toMatchObject({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+      errorDetail: {
+        kind: 'launch_error',
+        failureCause: { actionCause: { phase: 'session.marker_persistence', errorCode: 'EIO' } },
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain('/private/marker.json');
+    await expect(acknowledgement).rejects.toBe(markerError);
+  });
+
   it('fails the existing spawn readiness result when report-scoped canonical readiness rejects', async () => {
     const { logger } = await import('@/ui/logger');
     const tracked: TrackedSession = {

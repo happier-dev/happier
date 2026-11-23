@@ -6,6 +6,7 @@ import {
   projectSpawnValidationFailure,
 } from '@/session/shared/spawnSessionContract';
 import type { SessionCreationTerminalSpawnErrorDetail } from '@happier-dev/protocol';
+import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { SPAWN_SESSION_ERROR_DETAIL_KINDS } from '@happier-dev/protocol/spawnSession';
 import { logger } from '@/ui/logger';
 import { readStoredCredentials } from '@/persistence';
@@ -980,23 +981,19 @@ export function createOnHappySessionWebhook(params: Readonly<{
       }
       return work;
     };
-    let ordinaryMarkerPersistence: Promise<boolean> | null = null;
+    let ordinaryMarkerPersistence: Promise<void> | null = null;
     const startOrdinaryMarkerPersistence = (
       beforeStartupReadiness = false,
-    ): Promise<boolean> => {
+    ): Promise<void> => {
       if (ordinaryMarkerPersistence) return ordinaryMarkerPersistence;
       ordinaryMarkerPersistence = runReportMarkerPersistence(
         beforeStartupReadiness,
-      )
-        .then(() => true)
-        .catch(() => {
-          return false;
-        });
+      );
       if (trackedForPid && trackedForPid.startedBy !== 'daemon') {
         // Foreground authority promotion consumes this exact canonical write
         // rather than racing it or creating a second marker writer.
         trackedForPid.sessionMarkerPersistence =
-          ordinaryMarkerPersistence;
+          ordinaryMarkerPersistence.then(() => true, () => false);
       }
       return ordinaryMarkerPersistence;
     };
@@ -1011,7 +1008,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
       && !trackedForPid
         ?.persistWindowsTerminalAcceptedAgentMarker
     ) {
-      void startOrdinaryMarkerPersistence();
+      void startOrdinaryMarkerPersistence().catch(() => {});
     }
 
     const registerAcceptedCanonicalWorkspace = (): void => {
@@ -1027,7 +1024,9 @@ export function createOnHappySessionWebhook(params: Readonly<{
     }
     const reconcileTrackedDaemonCanonicalWebhook =
       async (): Promise<void> => {
+    let startupPhase = '';
     const reportStartupPhase = (phase: string): void => {
+      startupPhase = phase;
       logger.debug('[DAEMON RUN] Canonical Session startup phase', {
         sessionId, pid, phase,
       });
@@ -1160,11 +1159,8 @@ export function createOnHappySessionWebhook(params: Readonly<{
       } else if (
         trackedDaemonCanonicalSession
           .agentRuntimeDaemonServiceAuthorityFilePath
-        && !await startOrdinaryMarkerPersistence(true)
       ) {
-        throw new Error(
-          'Runner Agent canonical session marker is unavailable',
-        );
+        await startOrdinaryMarkerPersistence(true);
       }
       reportStartupPhase('marker_persistence.end');
       if (onTrackedSessionReady) {
@@ -1187,15 +1183,28 @@ export function createOnHappySessionWebhook(params: Readonly<{
         reportStartupPhase('authority_reconciliation.end');
       }
     } catch (error) {
-      logger.debug(
-        '[DAEMON RUN] Canonical Session startup readiness failed: '
-          + describeCanonicalStartupReadinessFailure(error),
-        error,
-      );
+      let errorDetail: DaemonSpawnStartupReadinessFailure['errorDetail'];
+      if (startupPhase === 'marker_persistence.begin') {
+        const failureCause = projectSessionRuntimeFailureCause(error, 'client_start', 'session.marker_persistence');
+        errorDetail = {
+          kind: 'launch_error',
+          code: 'session_marker_persistence_failed',
+          message: 'Runner Agent canonical session marker is unavailable',
+          failureCause,
+        };
+        logger.debug('[DAEMON RUN] Canonical Session marker persistence failed', { failureCause });
+      } else {
+        logger.debug(
+          '[DAEMON RUN] Canonical Session startup readiness failed: '
+            + describeCanonicalStartupReadinessFailure(error),
+          error,
+        );
+      }
       trackedDaemonCanonicalSession.spawnStartupReadinessFailure ??= {
         type: 'error',
         errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
         errorMessage: 'Session startup reconciliation failed',
+        ...(errorDetail ? { errorDetail } : {}),
       };
       startupReadinessGate?.resolve(false);
       await completeSpawnAwaiter();
@@ -1210,7 +1219,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
       !requiresCanonicalMarkerAdoption
       && !ordinaryMarkerPersistence
     ) {
-      void startOrdinaryMarkerPersistence();
+      void startOrdinaryMarkerPersistence().catch(() => {});
     }
     };
     const inFlightReconciliation =
