@@ -808,7 +808,10 @@ in `ProviderErrorV1.connectedAccountTarget`; saved-connection failures retain
 `connectionId`. The existing `review_connection` recovery opens that source's
 settings through its route owner, never through a synthetic model-group id.
 Connected Account settings currently use the active Home; cross-Home routing
-is a separate existing limitation.
+is a separate existing limitation. In 0.3 development, a Connected Services Action
+that loses its Home reply carries the request ID and the
+`connected_services.home_request` cause. The Home request owner logs the code,
+stage and ID. An unacknowledged mutation still reports `outcome_unknown`.
 Launch and turn wrappers use the same Action cause projector, including causes
 carried by `PluginError.data`; Provider errors retain those facts alongside their
 recovery code. Broker refusals keep the existing closed reason and optional

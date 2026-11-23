@@ -1,4 +1,5 @@
-import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 import axios from '@/api/client/credentialAxios';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -288,7 +289,12 @@ export function createCliConnectedServiceAction(params: Readonly<{
           });
           if (!failure) throw error;
           const code = failure === 'network' ? 'server_unreachable' : failure;
-          throw Object.assign(new Error(code), { code });
+          if (code === 'cancelled') throw Object.assign(new Error(code), { code });
+          const stage = 'connected_services.home_request';
+          const requestId = context.actionRequestId ?? randomUUID();
+          logger.warnLocalFile('[ConnectedServices] Action refused', JSON.stringify({ requestId, code, stage }));
+          throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code, requestId,
+            failureCause: projectActionFailureCauseV1(error, stage) });
         });
         if (response.status < 200 || response.status >= 300) {
           const code = response.data && typeof response.data === 'object' && 'error' in response.data && typeof response.data.error === 'string'

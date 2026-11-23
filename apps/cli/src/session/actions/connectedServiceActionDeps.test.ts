@@ -36,6 +36,7 @@ import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE
 import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import type { StoredCredentials } from '@/persistence';
 import { createCliConnectedServiceAction } from './connectedServiceActionDeps';
+import { logger } from '@/ui/logger';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
@@ -757,13 +758,22 @@ describe('native connected-service Action adapter', () => {
       resolveHeaders: () => ({ Authorization: 'Bearer boundary-token' }),
       callMachineAction: async () => { throw new Error('pool_creation_is_http'); },
     });
+    const requestId = 'pool-create-missing-ack';
+    const stage = 'connected_services.home_request';
+    const diagnostics = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
     try {
-      await expect(action({ actionId: 'connectedServices.pools.create',
+      const pending = action({ actionId: 'connectedServices.pools.create',
         input: { service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, group: { groupId: 'pool-boundary' } },
-        context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } },
-      })).rejects.toMatchObject({ code: 'outcome_unknown' });
+        context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, actionRequestId: requestId },
+      });
+      await expect(pending).rejects.toMatchObject({ code: 'outcome_unknown' });
       expect(accepted).toBe(true);
+      await expect(pending).rejects.toMatchObject({ requestId, failureCause: { phase: stage } });
+      expect(diagnostics.mock.calls.filter(([label]) => label === '[ConnectedServices] Action refused')).toEqual([
+        ['[ConnectedServices] Action refused', JSON.stringify({ requestId, code: 'outcome_unknown', stage })],
+      ]);
     } finally {
+      diagnostics.mockRestore();
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
