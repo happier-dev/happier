@@ -622,39 +622,41 @@ export function createConnectedAccountRequestAuthService(
         try {
             while (true) {
                 phase = 'binding_before';
-                const before = await resolveAuthorizedBinding(
+                const { binding, use, resolved } = await resolveAuthorizedBinding(
                     input.subject,
                     input.purpose,
                     lifetime.signal,
                 );
-                const beforeKey = leaseKey(before.resolved, before.use.materialization, input.subject);
                 phase = 'materialization';
                 const material = await getCachedOrFill(
                     input.subject,
-                    before.binding,
-                    before.resolved,
-                    before.use.materialization,
+                    binding,
+                    resolved,
+                    use.materialization,
                     lifetime.signal,
                 );
-                phase = 'binding_after';
-                const after = await resolveAuthorizedBinding(
-                    input.subject,
-                    input.purpose,
-                    lifetime.signal,
-                );
-                if (
-                    leaseKey(after.resolved, after.use.materialization, input.subject) !== beforeKey
-                    || !sameResolvedBinding(before.resolved, after.resolved)
-                ) {
-                    // Let containing-operation cancellation run even when the
-                    // binding authority can resolve entirely from local state.
-                    await startRequestAuthOperation(lifetime.signal, () => setImmediate());
-                    continue;
-                }
-                if (isExpired(material, nowMs())) {
-                    if (leases.get(beforeKey) === material) leases.delete(beforeKey);
-                    await startRequestAuthOperation(lifetime.signal, () => setImmediate());
-                    continue;
+                if (binding.target.kind === 'group') {
+                    // A Pool may select a different member while its credential is being filled.
+                    phase = 'binding_after';
+                    const after = await resolveAuthorizedBinding(input.subject, input.purpose, lifetime.signal);
+                    const key = leaseKey(resolved, use.materialization, input.subject);
+                    if (
+                        leaseKey(after.resolved, after.use.materialization, input.subject) !== key
+                        || !sameResolvedBinding(resolved, after.resolved)
+                    ) {
+                        await startRequestAuthOperation(lifetime.signal, () => setImmediate());
+                        continue;
+                    }
+                    if (isExpired(material, nowMs())) {
+                        if (leases.get(key) === material) leases.delete(key);
+                        await startRequestAuthOperation(lifetime.signal, () => setImmediate());
+                        continue;
+                    }
+                } else {
+                    lifetime.signal.throwIfAborted();
+                    if (!input.subject.isCurrent()) {
+                        throw new ConnectedAccountRequestAuthError('request_auth_not_active');
+                    }
                 }
 
                 input.subject.registerRedaction(Object.freeze([
@@ -669,9 +671,9 @@ export function createConnectedAccountRequestAuthService(
                     facts: { ...material.facts },
                     ...(material.expiresAt !== undefined ? { expiresAt: material.expiresAt } : {}),
                     credentialContext: {
-                        account: after.resolved.account,
-                        ...(after.resolved.group ? { group: after.resolved.group } : {}),
-                        credentialRevision: after.resolved.credentialRevision,
+                        account: resolved.account,
+                        ...(resolved.group ? { group: resolved.group } : {}),
+                        credentialRevision: resolved.credentialRevision,
                         failingAccessTokenFingerprint: materialFingerprint(material.headers),
                     },
                 };

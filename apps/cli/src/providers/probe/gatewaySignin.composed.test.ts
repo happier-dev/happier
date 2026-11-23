@@ -378,7 +378,7 @@ it.each(gatewaySigninScenarios)('launches the selected signed-in Gateway model f
       const forwardedTurns = 1 + subsequentTurns.length;
       expect(materializeAccount).toHaveBeenCalledTimes(1);
       expect(lookupRequestAuth).toHaveBeenCalledTimes(forwardedTurns);
-      expect(resolveCurrentBinding).toHaveBeenCalledTimes(2 * forwardedTurns);
+      expect(resolveCurrentBinding).toHaveBeenCalledTimes(forwardedTurns);
       expect(resolveSelection).toHaveBeenCalledTimes(1);
       expect(admissions).toHaveBeenCalledTimes(1);
 

@@ -211,11 +211,13 @@ describe('ConnectedAccountRequestAuthService', () => {
         });
     });
 
-    it('serves a steady-state hit with zero additional credential reads or refreshes', async () => {
+    it('authorizes a fixed Account once per request and reuses its credential', async () => {
         let reads = 0;
         let refreshes = 0;
+        const validateCurrent = vi.fn(async () => true);
+        const resolveCurrentBinding = vi.fn(() => resolved({ accountId: 'one', revision: revision1 }));
         const owner = createConnectedAccountRequestAuthService({
-            resolveCurrentBinding: () => resolved({ accountId: 'one', revision: revision1 }),
+            resolveCurrentBinding,
             materializeHeaders: async ({ resolved: { account } }) => {
                 reads += 1;
                 return { headers: { authorization: 'Bearer ' + (`token-${account.accountId}`) }, facts: {},  };
@@ -226,13 +228,17 @@ describe('ConnectedAccountRequestAuthService', () => {
             },
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
         });
-        const capability = subject(accountBinding());
+        const capability = { ...subject(accountBinding()), validateCurrent };
 
         const first = await owner.lookupRequestAuth({ subject: capability, purpose });
+        expect(validateCurrent).toHaveBeenCalledTimes(1);
+        expect(resolveCurrentBinding).toHaveBeenCalledTimes(1);
         const second = await owner.lookupRequestAuth({ subject: capability, purpose });
 
         expect(first.headers.authorization!.replace(/^Bearer /u, '')).toBe('token-one');
         expect(second.headers.authorization!.replace(/^Bearer /u, '')).toBe('token-one');
+        expect(validateCurrent).toHaveBeenCalledTimes(2);
+        expect(resolveCurrentBinding).toHaveBeenCalledTimes(2);
         expect(reads).toBe(1);
         expect(refreshes).toBe(0);
     });
@@ -357,7 +363,7 @@ describe('ConnectedAccountRequestAuthService', () => {
 
         expect(new Set(leases.map((lease) => lease.headers.authorization!.replace(/^Bearer /u, '')))).toEqual(new Set(['token-one']));
         expect(materializations).toBe(1);
-        expect(resolutions).toBeGreaterThanOrEqual(200);
+        expect(resolutions).toBe(lookups.length);
     });
 
     it('detaches a cancelled lookup waiter without cancelling the shared fill needed by another waiter', async () => {
@@ -914,16 +920,11 @@ describe('ConnectedAccountRequestAuthService', () => {
         expect(materializedRevisions).toEqual([revision1, revision2]);
     });
 
-    it('rechecks lease expiry after awaited currentness resolution before returning', async () => {
+    it('refills an expired fixed Account credential on the next request', async () => {
         let now = 0;
-        let resolutions = 0;
         let materializations = 0;
         const owner = createConnectedAccountRequestAuthService({
-            resolveCurrentBinding: () => {
-                resolutions += 1;
-                if (resolutions === 4) now = 10;
-                return resolved({ accountId: 'one', revision: revision1 });
-            },
+            resolveCurrentBinding: () => resolved({ accountId: 'one', revision: revision1 }),
             materializeHeaders: async () => {
                 materializations += 1;
                 return { headers: { authorization: 'Bearer ' + (`token-${materializations}`) }, facts: {}, expiresAt: materializations === 1 ? 10 : 20 };
@@ -936,6 +937,7 @@ describe('ConnectedAccountRequestAuthService', () => {
 
         expect((await owner.lookupRequestAuth({ subject: capability, purpose })).headers.authorization!.replace(/^Bearer /u, ''))
             .toBe('token-1');
+        now = 10;
         expect((await owner.lookupRequestAuth({ subject: capability, purpose })).headers.authorization!.replace(/^Bearer /u, ''))
             .toBe('token-2');
         expect(materializations).toBe(2);
