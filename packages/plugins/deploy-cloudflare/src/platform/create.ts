@@ -39,7 +39,8 @@ async function buildsWrite(io: DeploymentContext, accountId: string, path: strin
       throw new PluginError({ code: 'cloudflare_builds_configuration_edit_required', retryable: false,
         details: { phase: 'link', requiredPermission: workersBuildsEditPermission }, failureCause: cause, effectAttempted: true });
     }
-    if (method === 'PUT' && cause?.httpStatus === 404 && nativeErrorCode === '12000') {
+    if (method === 'PUT' && cause?.httpStatus === 404
+      && (nativeErrorCode === '12000' || nativeErrorCode === '8000008')) {
       throw new PluginError({ code: 'needsGitAccess', retryable: false,
         details: { phase: 'link', grantUrl: cloudflareGitGrantUrl('workers', accountId) }, failureCause: cause, effectAttempted: true });
     }

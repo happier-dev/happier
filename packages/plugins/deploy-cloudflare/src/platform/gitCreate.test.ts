@@ -109,6 +109,8 @@ it.each([
     details: { requiredPermission: 'Workers Builds Configuration (Edit)' } },
   { status: 404, nativeCode: 12000, code: 'needsGitAccess',
     details: { grantUrl: expect.stringContaining('dash.cloudflare.com') } },
+  { status: 404, nativeCode: 8000008, code: 'needsGitAccess',
+    details: { grantUrl: expect.stringContaining('dash.cloudflare.com') } },
 ])('surfaces the Builds repository connection refusal $code before creating a Worker', async ({ status, nativeCode, code, details }) => {
   const requests: HttpRequest[] = [];
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: {
