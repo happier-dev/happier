@@ -1333,6 +1333,14 @@ else throw new Error('fixture_unexpected_docker_command:' + JSON.stringify(args)
                 return [entry.slice(0, equals), entry.slice(equals + 1)];
             }));
         },
+        async readPrivateRelaySocketPath(hostname: string): Promise<string> {
+            const state = JSON.parse(await readFile(statePath, 'utf8')) as { privateRelays?: Readonly<Record<string, {
+                name: string; directory: string;
+            }>> };
+            const relay = Object.values(state.privateRelays ?? {}).find(row => row.name === hostname);
+            if (!relay) throw new Error('fixture_private_relay_missing');
+            return join(relay.directory, 'forward.sock');
+        },
         /** Post-detach native output, including one secret split across stdout/stderr. */
         async emitRuntimeLogFromEnvironment(service: string, name: string): Promise<void> {
             const state = JSON.parse(await readFile(statePath, 'utf8')) as { containers: readonly {

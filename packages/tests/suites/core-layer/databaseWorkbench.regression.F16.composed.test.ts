@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { createServer } from 'node:http';
+import { createServer, request as requestHttp } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { expect, it } from 'vitest';
 
 import { DeploymentActionOutputSchemasV1 } from '@happier-dev/protocol';
 import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
+import { TELEMETRY_EXPORT_ENVIRONMENT_KEYS_V1 } from '@happier-dev/deployments/telemetry';
 import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/automations/event-setup-result';
 import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1, DeploymentReceiptEventSetupV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { MachineInstallationIdentityV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
@@ -169,10 +171,14 @@ it('P7-F16 a deployment schedules one check whose firing compares the intervenin
       expectedPolicy: policy.policy, expectedMetadataVersion: policy.metadataVersion,
       policy: { active: [...policy.policy.active, DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1] },
     }, { presentUserConfirmation: { actionId: 'machines.roles.set' } })).toMatchObject({ ok: true });
+    const checkoutComposeDocument = (imageReference: string) => JSON.stringify({ services: { checkout: {
+      image: imageReference,
+      environment: Object.fromEntries(TELEMETRY_EXPORT_ENVIRONMENT_KEYS_V1.map(key => [key, null])),
+    } } });
     const created = await account.executeReviewed('deployments.environments.create', {
       serverId: fixture.serverId, projectSourceId: sourceId, requestKey: randomUUID(), name: 'F16 checkout',
       retainPreviousDeployments: 2, definition: { from: 'compose', profiles: [], services: ['checkout'],
-        document: JSON.stringify({ services: { checkout: { image: image.registryReference } } }) },
+        document: checkoutComposeDocument(image.registryReference) },
       protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
       controllerMachineId: machineId, buildMachineId: machineId,
     }, { ...onMachine, presentUserConfirmation: { actionId: 'deployments.environments.create' } });
@@ -200,6 +206,9 @@ it('P7-F16 a deployment schedules one check whose firing compares the intervenin
       const receipt = DeploymentActionOutputSchemasV1['deployments.deploy'].parse(result.result);
       if (!receipt.ok || !('deploymentId' in receipt)) throw new Error('F16 settled native deployment required');
       expect(receipt.state).toBe('succeeded');
+      const delivered = await docker.readRuntimeEnvironment('checkout');
+      expect(Boolean(delivered.OTEL_EXPORTER_OTLP_ENDPOINT && delivered.OTEL_EXPORTER_OTLP_HEADERS),
+        'The active checkout deployment must receive its declared collector endpoint and auth headers').toBe(true);
       return receipt.deploymentId;
     }
     const baselineId = await deploy();
@@ -246,12 +255,14 @@ it('P7-F16 a deployment schedules one check whose firing compares the intervenin
     }, onMachine);
     if (!setup.ok) throw new Error(`F16 Event setup refused (${setup.errorCode})`);
     const source = PluginEventAutomationSetupResultV1Schema.parse(setup.result);
-    // These are deliberately authored recipe preferences. A minute leaves the
-    // real third deployment time to settle before the second's once check fires.
-    const observationDelayMs = 60_000;
+    // The composed runner observed more than a minute between deploy requests.
+    // Leave room for the intervening deploy to settle before the first check.
+    const observationDelayMs = 120_000;
+    // The retained export cadence reached four seconds under runner load.
+    const windowMs = 10_000;
     const armed = await account.execute(WORKFLOW_TRIGGER_ADD_ACTION_ID, { workflow: definitionId, project,
       actionApproval: 'automatic', inputs: { configuration: { ...address, serviceName: 'checkout', workflow: definitionId,
-        project, windowMs: 1000, observationDelayMs, changePercent: 50,
+        project, windowMs, observationDelayMs, changePercent: 50,
         measure: { kind: 'route', routes: [{ method: 'POST', route: '/checkout' }], statistic: 'p95' } },
       diagnosis: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } } },
       trigger: { kind: 'pluginEvent', enabled: true, eventRef, sourceInstanceId: source.sourceInstanceId,
@@ -270,6 +281,99 @@ it('P7-F16 a deployment schedules one check whose firing compares the intervenin
       return sets[0]!;
     }
     const readTriggers = async () => (await readTriggerSet()).triggers;
+    // Substitute the app and HAProxy containers at the Docker boundary. The
+    // deployed hostname selects the real relay socket, which forwards the
+    // injected token and histogram through the ordinary collector receiver.
+    let slow = false;
+    let exporterVersion = 'exporter-fixture-version';
+    let previousRequestAt = Date.now();
+    const observeRequest = (until: number) => ({
+      resource: { attributes: [
+        { key: 'service.name', value: { stringValue: 'checkout' } },
+        { key: 'service.version', value: { stringValue: exporterVersion } },
+        { key: 'service.instance.id', value: { stringValue: 'checkout-one' } },
+      ] }, scopeMetrics: [{ scope: { name: 'f16-checkout-exporter', version: '1' }, metrics: [{
+        name: 'http.server.request.duration', unit: 's', histogram: { aggregationTemporality: 1, dataPoints: [{
+          startTimeUnixNano: String(BigInt(previousRequestAt) * 1_000_000n), timeUnixNano: String(BigInt(until) * 1_000_000n),
+          count: '1', explicitBounds: [0.01, 0.1], bucketCounts: slow ? ['0', '1', '0'] : ['1', '0', '0'],
+          attributes: [{ key: 'http.request.method', value: { stringValue: 'POST' } },
+            { key: 'http.route', value: { stringValue: '/checkout' } }],
+        }] },
+      }] }],
+    });
+    const samples: Array<{ until: number; metric: ReturnType<typeof observeRequest> }> = [];
+    const app = createServer((_request, response) => {
+      const until = Date.now();
+      if (until > previousRequestAt) {
+        samples.push({ until, metric: observeRequest(until) });
+        previousRequestAt = until;
+      }
+      response.end('checkout');
+    });
+    await new Promise<void>(resolve => app.listen(0, '127.0.0.1', resolve));
+    const traffic = new AbortController();
+    const endpoint = app.address();
+    if (!endpoint || typeof endpoint === 'string') throw new Error('F16 workload endpoint unavailable');
+    const trafficIntervalMs = 1_000;
+    const sending = (async () => {
+      while (!traffic.signal.aborted) {
+        try {
+          const result = await fetch(`http://127.0.0.1:${endpoint.port}/checkout`, { method: 'POST', signal: traffic.signal });
+          await result.arrayBuffer();
+        } catch (error) {
+          if (!traffic.signal.aborted) throw error;
+        }
+        await delay(trafficIntervalMs);
+      }
+    })();
+
+    let lastExportStatus: number | undefined;
+    let lastExportAt = 0;
+    const exporting = (async () => {
+      while (!traffic.signal.aborted) {
+        const batch = samples.slice();
+        if (batch.length) {
+          try {
+            const env = await docker.readRuntimeEnvironment('checkout');
+            const collector = new URL('/v1/metrics', env.OTEL_EXPORTER_OTLP_ENDPOINT);
+            const socketPath = await docker.readPrivateRelaySocketPath(collector.hostname);
+            const headers = Object.fromEntries((env.OTEL_EXPORTER_OTLP_HEADERS ?? '').split(',').filter(Boolean).map(header => {
+              const equals = header.indexOf('=');
+              return [header.slice(0, equals), decodeURIComponent(header.slice(equals + 1))];
+            }));
+            lastExportStatus = await new Promise<number>((resolve, reject) => {
+              const exporter = requestHttp({ socketPath, method: 'POST', path: collector.pathname, signal: traffic.signal,
+                headers: { ...headers, Host: collector.host, 'Content-Type': 'application/json' } }, exported => {
+                exported.once('error', reject);
+                exported.once('end', () => resolve(exported.statusCode ?? 502));
+                exported.resume();
+              });
+              exporter.once('error', reject);
+              exporter.end(JSON.stringify({ resourceMetrics: batch.map(sample => sample.metric) }));
+            });
+            // Retry rejected and ambiguous responses with unchanged point IDs.
+            // App requests continue to record their own intervals during export.
+            if (lastExportStatus === 200) {
+              samples.splice(0, batch.length);
+              lastExportAt = batch.at(-1)!.until;
+            }
+          } catch {
+            lastExportStatus = undefined;
+          }
+        }
+        await delay(trafficIntervalMs);
+      }
+    })();
+    stopWorkload = async () => {
+      traffic.abort();
+      try { await Promise.all([sending, exporting]); }
+      finally { await new Promise<void>((resolve, reject) => app.close(error => error ? reject(error) : resolve())); }
+    };
+    const readTrafficWindow = (since: number, context: string) => waitFor(() => {
+      expect(lastExportStatus).toBe(200);
+      return lastExportAt >= since + windowMs;
+    }, { context, timeoutMs: observationDelayMs });
+    await readTrafficWindow(Date.now(), 'F16 same-route baseline traffic');
     const armedId = await deploy();
     let schedulingRunId: string | undefined;
     await waitFor(async () => {
@@ -319,58 +423,13 @@ it('P7-F16 a deployment schedules one check whose firing compares the intervenin
     ]);
     console.info('P7-F16 receipt-derived native same-Workflow once trigger created');
 
-    // The fake Docker engine cannot execute an image. This HTTP app is its
-    // exporter boundary fixture: requests exercise one route, export genuine
-    // delta histograms with the deployment's native injected endpoint/token,
-    // and never call capture storage or any internal telemetry owner.
-    let slow = false;
-    let exporterVersion = 'exporter-fixture-version';
-    let previousExportAt = Date.now();
-    const app = createServer(async (_request, response) => {
-      try {
-        const env = await docker.readRuntimeEnvironment('checkout');
-        const now = Date.now();
-        const exported = await fetch(`${env.OTEL_EXPORTER_OTLP_ENDPOINT}/v1/metrics`, { method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...Object.fromEntries((env.OTEL_EXPORTER_OTLP_HEADERS ?? '').split(',').filter(Boolean).map(header => {
-            const equals = header.indexOf('='); return [header.slice(0, equals), decodeURIComponent(header.slice(equals + 1))];
-          })) }, body: JSON.stringify({ resourceMetrics: [{ resource: { attributes: [
-            { key: 'service.name', value: { stringValue: 'checkout' } },
-            { key: 'service.version', value: { stringValue: exporterVersion } },
-            { key: 'service.instance.id', value: { stringValue: 'checkout-one' } },
-          ] }, scopeMetrics: [{ scope: { name: 'f16-checkout-exporter', version: '1' }, metrics: [{
-            name: 'http.server.request.duration', unit: 's', histogram: { aggregationTemporality: 1, dataPoints: [{
-              startTimeUnixNano: String(BigInt(previousExportAt) * 1_000_000n), timeUnixNano: String(BigInt(now) * 1_000_000n),
-              count: '1', explicitBounds: [0.01, 0.1], bucketCounts: slow ? ['0', '1', '0'] : ['1', '0', '0'],
-              attributes: [{ key: 'http.request.method', value: { stringValue: 'POST' } },
-                { key: 'http.route', value: { stringValue: '/checkout' } }],
-            }] },
-          }] }] }] }) });
-        if (!exported.ok) throw new Error(`F16 exporter refused (${exported.status})`);
-        previousExportAt = now;
-        response.end('checkout');
-      } catch { response.statusCode = 500; response.end('export failed'); }
-    });
-    await new Promise<void>(resolve => app.listen(0, '127.0.0.1', resolve));
-    stopWorkload = () => new Promise<void>((resolve, reject) => app.close(error => error ? reject(error) : resolve()));
-    const endpoint = app.address();
-    if (!endpoint || typeof endpoint === 'string') throw new Error('F16 workload endpoint unavailable');
-    const exercise = async () => expect((await fetch(`http://127.0.0.1:${endpoint.port}/checkout`, { method: 'POST' })).status).toBe(200);
-    const fastSince = Date.now();
-    await waitFor(async () => { await exercise(); return Date.now() - fastSince > 1000; }, { context: 'F16 same-route baseline traffic' });
-    let deploymentSettled = false;
-    const deploying = deploy().finally(() => { deploymentSettled = true; });
-    await waitFor(async () => { await exercise(); return deploymentSettled; },
-      { timeoutMs: observationDelayMs, context: 'F16 baseline traffic continues while the intervening native deployment settles' });
-    const liveId = await deploying;
+    const liveId = await deploy();
     expect(new Set([baselineId, armedId, liveId]).size).toBe(3);
     slow = true;
-    await waitFor(async () => {
-      await exercise();
-      return (await readTriggers()).filter(row => row.kind === 'schedule').length === 2;
-    }, { context: 'F16 intervening deployment has its own single finite schedule' });
+    await waitFor(async () => (await readTriggers()).filter(row => row.kind === 'schedule').length === 2,
+      { context: 'F16 intervening deployment has its own single finite schedule' });
     let diagnosisSessionId: string | undefined;
     await waitFor(async () => {
-      await exercise();
       for (const candidate of await runs(saved.set.automationId)) {
         const history = await readInvocations(candidate.id);
         const comparison = history.invocationDetails?.find(row => row.progress.execution?.kind === 'action'
@@ -378,31 +437,28 @@ it('P7-F16 a deployment schedules one check whose firing compares the intervenin
         if (!comparison || candidate.origin.kind !== 'automation' || candidate.origin.cause?.kind !== 'trigger'
           || candidate.origin.cause.triggerId !== once.triggerId) continue;
         expect(candidate.origin.cause).toMatchObject({ triggerKind: 'schedule', evidence: { scheduledFor: scheduledAt } });
-        expect(comparison.progress.result).toMatchObject({ status: 'comparable', liveDeploymentId: liveId,
-          previousDeploymentId: armedId, changePercent: expect.any(Number) });
+        if (comparison.progress.result === undefined) continue;
+        const compared = regressionCompareResultSchema.parse(comparison.progress.result);
+        expect(compared, compared.status === 'inconclusive' ? compared.reasons.join(', ') : undefined)
+          .toMatchObject({ status: 'comparable', liveDeploymentId: liveId,
+            previousDeploymentId: armedId, changePercent: expect.any(Number) });
         const diagnosis = history.invocationDetails?.find(row => row.progress.execution?.kind === 'session');
         if (diagnosis?.progress.execution?.kind !== 'session') continue;
         diagnosisSessionId = diagnosis.progress.execution.sessionId;
         expect(candidate.state, JSON.stringify(candidate)).not.toBe('failed');
-        if (candidate.state === 'succeeded') {
-          const completed = await account.execute('workflow.run.get', { runId: candidate.id });
-          if (!completed.ok) throw new Error(`F16 completed Run read refused (${completed.errorCode})`);
-          const output = WorkflowActionOutputSchemasV1['workflow.run.get'].parse(completed.result);
-          expect(JSON.stringify(output.result)).toContain('FAKE_CLAUDE_OK_');
-        }
         return candidate.state === 'succeeded';
       }
       return false;
-    }, { timeoutMs: observationDelayMs + FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS,
+    }, { failFast: true, timeoutMs: observationDelayMs + FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS,
       context: 'F16 firing reads current history, compares retained traffic and completes a real diagnosis Session' });
+    if (!diagnosisSessionId) throw new Error('F16 diagnosis Session unavailable');
+    expect((await account.readSessionMetadata(diagnosisSessionId)).machineId).toBe(machineId);
+    await fixture.assertSessionAgentOutput(account, diagnosisSessionId);
     console.info('P7-F16 once trigger fired; comparison and diagnosis Session completed');
-    expect(diagnosisSessionId).toBeDefined();
-    expect((await account.readSessionMetadata(diagnosisSessionId!)).machineId).toBe(machineId);
     // The comparison/condition/Session branch must add no further schedule.
     expect((await readTriggers()).filter(row => row.kind === 'schedule')).toHaveLength(2);
 
     await waitFor(async () => {
-      await exercise();
       const schedules = (await readTriggers()).filter(row => row.kind === 'schedule');
       expect(schedules).toHaveLength(2);
       return schedules.every(row => row.remainingOccurrences === 0 && row.nextRunAt === null)
@@ -436,29 +492,24 @@ it('P7-F16 a deployment schedules one check whose firing compares the intervenin
       contentHeaderVersion: current.environment.contentHeaderVersion,
       contentBodyVersion: current.environment.contentBodyVersion,
       patch: { definition: { from: 'compose', profiles: [], services: ['checkout'],
-        document: JSON.stringify({ services: { checkout: { image: fixedImage.registryReference } } }) } },
+        document: checkoutComposeDocument(fixedImage.registryReference) } },
     }, { ...onMachine, presentUserConfirmation: { actionId: 'deployments.environments.update' } });
     expect(updated.ok, JSON.stringify(updated)).toBe(true);
-    let fixedDeploymentSettled = false;
-    const fixing = deploy().finally(() => { fixedDeploymentSettled = true; });
-    await waitFor(async () => { await exercise(); return fixedDeploymentSettled; },
-      { timeoutMs: observationDelayMs, context: 'F16 same slow workload continues until the fixed native version is serving' });
-    const fixedId = await fixing;
+    const fixedId = await deploy();
     expect(fixedId).not.toBe(liveId);
     expect(await docker.readRunningImageConfig('checkout')).toBe(fixedImage.configDigest);
     slow = false;
     exporterVersion = 'exporter-fixture-fixed';
-    const fixedSince = Date.now();
-    await waitFor(async () => { await exercise(); return Date.now() - fixedSince > 1000; },
-      { context: 'F16 same route exercises the fixed version for the authored comparison window' });
+    await readTrafficWindow(Date.now(), 'F16 same route exercises the fixed version for the authored comparison window');
     const recovered = await account.execute('action.invoke', { action: { pluginId: 'happier.telemetry',
       localId: databaseActionLocalIdV1(TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1) },
-      input: { ...address, serviceName: 'checkout', windowMs: 1000,
+      input: { ...address, serviceName: 'checkout', windowMs,
         measure: { kind: 'route', routes: [{ method: 'POST', route: '/checkout' }], statistic: 'p95' } },
     }, onMachine);
     if (!recovered.ok) throw new Error(`F16 recovery comparison refused (${recovered.errorCode})`);
     const recovery = regressionCompareResultSchema.parse(recovered.result);
-    expect(recovery).toMatchObject({ status: 'comparable', liveDeploymentId: fixedId, previousDeploymentId: liveId });
+    expect(recovery, recovery.status === 'inconclusive' ? recovery.reasons.join(', ') : undefined)
+      .toMatchObject({ status: 'comparable', liveDeploymentId: fixedId, previousDeploymentId: liveId });
     if (recovery.status !== 'comparable') throw new Error('F16 fixed-version comparison was inconclusive');
     expect(recovery.changePercent).not.toBeNull();
     expect(recovery.changePercent!).toBeLessThan(0);
@@ -471,5 +522,7 @@ it('P7-F16 a deployment schedules one check whose firing compares the intervenin
       expect.objectContaining({ remainingOccurrences: 0, nextRunAt: null }),
     ]);
     console.info('P7-F16 both once triggers spent; disarm and fixed deployment verified');
-  } finally { await stopWorkload?.(); await fixture.stop(); }
+  } finally {
+    try { await stopWorkload?.(); } finally { await fixture.stop(); }
+  }
 }, 0);
