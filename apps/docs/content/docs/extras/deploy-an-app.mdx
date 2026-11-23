@@ -266,11 +266,21 @@ sampling ratio. An app's authored collector configuration takes precedence at
 deployment. Telemetry reads and the Environment screens are still under
 development; this section does not certify the complete telemetry journey.
 
+### Verify backend exception capture
+
+Select **Exceptions**, redeploy, and report a controlled server-side failure with
+an OpenTelemetry `recordException` span event or a structured exception log.
+Include the app's service name, version and deployment environment in the
+OpenTelemetry resource attributes. In **PRs & Issues**, choose the Happier source
+and open the new issue. Select an occurrence to read the stack from the
+collector and check which version emitted it.
+
 ### Verify browser exception capture
 
 Select **Exceptions** in the Environment's telemetry setup and redeploy so the
-app receives its collector configuration. The **Add telemetry to this app**
-agent brief includes code for browser errors and unhandled promise rejections.
+app receives its collector configuration. In Database Workbench, the **Add
+telemetry to this app** agent brief includes code for browser errors and
+unhandled promise rejections.
 Adapt it to your framework and route reports through your app's own server or
 edge endpoint. Keep the collector credential in the server-side configuration.
 A static-only app needs a server or edge endpoint, or an existing error
@@ -282,6 +292,28 @@ The issue summary is stored with your Account, while the stack and raw occurrenc
 stay on the collector. Investigation of a minified stack needs the source map from
 the matching build. After deploying a fix, repeat the failing interaction and
 record which build and route you exercised.
+
+### Check an endpoint with a Key flow
+
+Enable **Metrics**, redeploy, and send traffic through a route your app
+instruments with OpenTelemetry. In the Environment's **Telemetry** tab, open
+the route's menu under **Endpoints** and choose **Add a check…**. The editor
+starts with the route and its collector. Name the check, set the measurement
+window and threshold, then review **Check every** and **Alert after** before
+saving.
+
+Open the saved check in **Monitoring** to see its latest result. No recorded
+traffic in the check's window means **Unknown**. A separate trend on the check
+page reads measurements retained by the collector.
+
+### View model usage from your apps
+
+Enable **App LLM cost**, redeploy, and emit OpenTelemetry GenAI model and token
+usage attributes from your app. In **Usage**, open **Sources** and choose
+**Your apps**, then narrow by app or **Environments**. This view shows app
+activity separately from agent activity. Estimated cost uses the model prices
+available to the signed-in viewer. Viewers sharing an Environment can see
+different estimates for the same token usage.
 
 ## 3. Add a Domain
 
