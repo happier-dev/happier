@@ -81,7 +81,9 @@ export type DaemonDatabaseWorkerLease = Readonly<{
 }>;
 
 export type DaemonDatabaseWorkerClient = Readonly<{
-    acquire(): Promise<DaemonDatabaseWorkerLease>;
+    acquire(options?: DaemonDatabaseWorkerRequestOptions): Promise<DaemonDatabaseWorkerLease>;
+    /** Closes the current connection and waits for process exit. The next acquire may reopen it. */
+    release(): Promise<void>;
     close(): Promise<void>;
 }>;
 
@@ -262,7 +264,7 @@ export function createDaemonDatabaseWorkerClient(filePath: string): DaemonDataba
         });
     };
 
-    const acquireSession = async (): Promise<WorkerSession> => {
+    const acquireSession = async (options?: DaemonDatabaseWorkerRequestOptions): Promise<WorkerSession> => {
         if (closed) {
             throw new PluginContextServiceError('daemon_database_closed', 'Plugin daemon database handle is closed');
         }
@@ -275,7 +277,7 @@ export function createDaemonDatabaseWorkerClient(filePath: string): DaemonDataba
             }
             const session = await createSession();
             try {
-                const opened = await request(session, { kind: 'open', filePath });
+                const opened = await request(session, { kind: 'open', filePath }, options);
                 if (opened.kind !== 'void') throw workerProtocolError();
                 return session;
             } catch (error) {
@@ -339,29 +341,34 @@ export function createDaemonDatabaseWorkerClient(filePath: string): DaemonDataba
         });
     };
 
+    const release = async (): Promise<void> => {
+        const pendingStart = starting;
+        if (pendingStart) await pendingStart.catch(() => undefined);
+        const session = active;
+        if (!session || session.retired) {
+            if (retiring) await retiring;
+            return;
+        }
+        try {
+            const result = await request(session, { kind: 'close' });
+            if (result.kind !== 'void') throw workerProtocolError();
+            session.child.stdin?.end();
+        } catch {
+            void retire(session, true);
+        }
+        await retire(session, false);
+    };
+
     return Object.freeze({
-        acquire: async () => leaseFor(await acquireSession()),
+        acquire: async (options) => leaseFor(await acquireSession(options)),
+        release,
         close: async () => {
             if (closed) {
                 if (retiring) await retiring;
                 return;
             }
             closed = true;
-            const pendingStart = starting;
-            if (pendingStart) await pendingStart.catch(() => undefined);
-            const session = active;
-            if (!session || session.retired) {
-                if (retiring) await retiring;
-                return;
-            }
-            try {
-                const result = await request(session, { kind: 'close' });
-                if (result.kind !== 'void') throw workerProtocolError();
-                session.child.stdin?.end();
-            } catch {
-                void retire(session, true);
-            }
-            await retire(session, false);
+            await release();
         },
     });
 }

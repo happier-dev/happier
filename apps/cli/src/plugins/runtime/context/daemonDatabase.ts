@@ -101,7 +101,7 @@ type DatabaseEntry = {
     readonly worker: DaemonDatabaseWorkerClient;
     tail: Promise<void>;
     initialized: Promise<void> | null;
-    pageBytes: number;
+    pageBytes: number | null;
     /** Connection-local SQLite policy is reapplied only when the child changes. */
     configuredWorkerSessionId: number | null;
     closed: boolean;
@@ -723,6 +723,8 @@ function aggregatePluginDatabaseBytes(
     let totalBytes = 0;
     const openFileNames = new Set<string>();
     for (const entry of entries) {
+        // Until preparation reads the page count, use the retained on-disk size.
+        if (entry.pageBytes === null) continue;
         totalBytes += entry.pageBytes;
         openFileNames.add(basename(entry.filePath));
     }
@@ -739,6 +741,7 @@ async function configureHostDatabase(
     limits: PluginDaemonDatabaseLimits,
     options?: DaemonDatabaseWorkerRequestOptions,
 ): Promise<void> {
+    if (entry.configuredWorkerSessionId === worker.sessionId) return;
     const pageSize = await readPragmaNumber(worker, 'PRAGMA page_size', 'page_size', false, options);
     const maximumPages = Math.floor(limits.maximumDatabaseBytes / pageSize);
     if (maximumPages < 1) {
@@ -752,18 +755,6 @@ async function configureHostDatabase(
     await worker.exec(`PRAGMA max_page_count=${maximumPages}`, options);
     entry.pageBytes = await assertDatabaseQuota(worker, limits, options);
     entry.configuredWorkerSessionId = worker.sessionId;
-}
-
-async function acquireConfiguredWorker(
-    entry: DatabaseEntry,
-    limits: PluginDaemonDatabaseLimits,
-    options?: DaemonDatabaseWorkerRequestOptions,
-): Promise<DaemonDatabaseWorkerLease> {
-    const worker = await entry.worker.acquire();
-    if (entry.configuredWorkerSessionId !== worker.sessionId) {
-        await configureHostDatabase(entry, worker, limits, options);
-    }
-    return worker;
 }
 
 function assertPluginDatabaseNamespace(pluginId: string): string {
@@ -1070,12 +1061,12 @@ async function withHostTransaction<T>(params: Readonly<{
     operationSignal?: AbortSignal;
     operation: (context: HostTransactionContext) => Promise<T>;
 }>): Promise<T> {
+    // The elapsed budget applies to the admitted SQL transaction. Opening a
+    // cold worker remains cancellable without charging process startup to SQL.
+    const worker = await params.entry.worker.acquire({
+        signal: composeDatabaseOperationSignal(params.signal, params.operationSignal),
+    });
     const deadline = createTransactionDeadline(params);
-    const worker = await acquireConfiguredWorker(
-        params.entry,
-        params.limits,
-        deadline.context.requestOptionsFor(),
-    );
     const context: HostTransactionContext = Object.freeze({
         worker,
         ...deadline.context,
@@ -1084,6 +1075,7 @@ async function withHostTransaction<T>(params: Readonly<{
     let committed = false;
     try {
         context.assertUsable();
+        await configureHostDatabase(params.entry, worker, params.limits, context.requestOptionsFor());
         await worker.exec('BEGIN IMMEDIATE', context.requestOptionsFor());
         began = true;
         // A plugin already over its plugin-wide budget must still be able to
@@ -1140,9 +1132,10 @@ function queueEntry<T>(params: Readonly<{
     }
     const preceding = params.entry.tail;
     let release!: () => void;
-    params.entry.tail = new Promise<void>((resolveRelease) => {
+    const tail = new Promise<void>((resolveRelease) => {
         release = resolveRelease;
     });
+    params.entry.tail = tail;
     return (async () => {
         try {
             await preceding;
@@ -1157,7 +1150,13 @@ function queueEntry<T>(params: Readonly<{
             }
             return await params.operation();
         } finally {
-            release();
+            try {
+                // A successor already in the queue can reuse the connection.
+                // A later arrival waits for this close before opening again.
+                if (params.entry.tail === tail) await params.entry.worker.release();
+            } finally {
+                release();
+            }
         }
     })();
 }
@@ -1376,11 +1375,8 @@ export function createPluginDaemonDatabaseOwner(params: Readonly<{
         if (totalBytes <= limits.maximumDatabaseBytes || totalBytes <= baselineBytes) return;
         fail('daemon_database_quota_exceeded', 'Plugin daemon databases exceed the aggregate byte budget');
     };
-    /**
-     * `ensurePluginDatabasePath` is asynchronous. Publish one pending open
-     * before awaiting it so concurrent callers cannot each create a native
-     * SQLite connection for the same logical database.
-     */
+    // Publish one pending entry before awaiting path validation so all callers
+    // share its initialization and operation queue.
     const openingEntries = new Map<string, Promise<DatabaseEntry>>();
     const preparedContracts = new Map<string, PreparedDatabaseContract>();
     let ownerClosed = false;
@@ -1408,23 +1404,16 @@ export function createPluginDaemonDatabaseOwner(params: Readonly<{
             paths: params.paths,
             localId,
         });
-        const entry: DatabaseEntry = {
+        return {
             localId,
             filePath,
             worker: createDaemonDatabaseWorkerClient(filePath),
             tail: Promise.resolve(),
             initialized: null,
-            pageBytes: 0,
+            pageBytes: null,
             configuredWorkerSessionId: null,
             closed: false,
         };
-        try {
-            await acquireConfiguredWorker(entry, limits);
-            return entry;
-        } catch (error) {
-            await entry.worker.close().catch(() => undefined);
-            throw error;
-        }
     };
 
     const readOrOpenEntry = (localId: string): Promise<DatabaseEntry> => {
@@ -1434,9 +1423,6 @@ export function createPluginDaemonDatabaseOwner(params: Readonly<{
         const opening = openingEntries.get(localId);
         if (opening) return opening;
 
-        // Opening is not growth: a retained file already counted against the
-        // budget from disk, and refusing the handle would strand the very data
-        // the plugin has to read and shrink. The commit gate owns the refusal.
         const created = createEntry(localId).then((entry) => {
             entries.set(localId, entry);
             invalidatePersistedCensus();
@@ -1457,7 +1443,8 @@ export function createPluginDaemonDatabaseOwner(params: Readonly<{
         options: NormalizedDatabaseOpenOptions,
         declaration: PluginDaemonDatabaseContributionV1,
     ): Promise<void> => {
-        const initialWorker = await acquireConfiguredWorker(entry, limits);
+        const initialWorker = await entry.worker.acquire();
+        await configureHostDatabase(entry, initialWorker, limits);
         const ledger = await readLedger(initialWorker);
         verifyLedgerPrefix({ ledger, declaration });
         const pending = options.migrations.slice(ledger.length);
@@ -1480,94 +1467,87 @@ export function createPluginDaemonDatabaseOwner(params: Readonly<{
             );
         }
         const incumbentFixture = incumbentContract?.incumbentQueryFixture;
-        await queueEntry({
+        await withHostTransaction({
             entry,
-            ownerSignal: params.signal,
+            limits,
+            readAggregateBytes,
+            assertQuota,
+            signal: params.signal,
             isOccurrenceCurrent: params.isOccurrenceCurrent,
-            assertOwnerUsable: () => assertOwnerUsable(options.signal),
             ...(options.signal ? { operationSignal: options.signal } : {}),
-            operation: async () => await withHostTransaction({
-                entry,
-                limits,
-                readAggregateBytes,
-                assertQuota,
-                signal: params.signal,
-                isOccurrenceCurrent: params.isOccurrenceCurrent,
-                ...(options.signal ? { operationSignal: options.signal } : {}),
-                operation: async (context) => {
-                    await ensureLedger(context.worker, context.requestOptionsFor());
-                    const migrationTransaction = createTransactionHandle({
+            operation: async (context) => {
+                await ensureLedger(context.worker, context.requestOptionsFor());
+                const migrationTransaction = createTransactionHandle({
+                    entry,
+                    limits,
+                    worker: context.worker,
+                    requestOptionsFor: context.requestOptionsFor,
+                    assertHostTransactionUsable: context.assertUsable,
+                    mode: 'migration',
+                });
+                try {
+                    await databaseOperationContext.run(new Set([entry]), async () => {
+                        for (const migration of pending) {
+                            await migration.up(migrationTransaction);
+                            migrationTransaction.assertCommittable();
+                            assertOwnerUsable(options.signal);
+                            await runStatement(
+                                context.worker,
+                                `INSERT INTO ${LEDGER_TABLE} (version, id) VALUES (?, ?)`,
+                                [migration.version, migration.id],
+                                context.requestOptionsFor(),
+                            );
+                            entry.pageBytes = await assertDatabaseQuota(
+                                context.worker,
+                                limits,
+                                context.requestOptionsFor(),
+                            );
+                        }
+                    });
+                } catch (error) {
+                    if (error instanceof PluginContextServiceError) throw error;
+                    throw new PluginContextServiceError(
+                        'daemon_database_migration_failed',
+                        error instanceof Error ? error.message : 'Daemon database migration failed',
+                    );
+                } finally {
+                    migrationTransaction.end();
+                }
+                if (incumbentFixture) {
+                    const fixtureTransaction = createTransactionHandle({
                         entry,
                         limits,
                         worker: context.worker,
                         requestOptionsFor: context.requestOptionsFor,
                         assertHostTransactionUsable: context.assertUsable,
-                        mode: 'migration',
+                        mode: 'fixture',
                     });
                     try {
                         await databaseOperationContext.run(new Set([entry]), async () => {
-                            for (const migration of pending) {
-                                await migration.up(migrationTransaction);
-                                migrationTransaction.assertCommittable();
-                                assertOwnerUsable(options.signal);
-                                await runStatement(
-                                    context.worker,
-                                    `INSERT INTO ${LEDGER_TABLE} (version, id) VALUES (?, ?)`,
-                                    [migration.version, migration.id],
-                                    context.requestOptionsFor(),
-                                );
-                                entry.pageBytes = await assertDatabaseQuota(
-                                    context.worker,
-                                    limits,
-                                    context.requestOptionsFor(),
-                                );
-                            }
+                            await incumbentFixture.run(fixtureTransaction);
                         });
                     } catch (error) {
-                        if (error instanceof PluginContextServiceError) throw error;
+                        if (
+                            error instanceof PluginContextServiceError
+                            && (
+                                error.code === 'plugin_generation_stale'
+                                || error.code === 'daemon_database_cancelled'
+                                || error.code === 'daemon_database_timeout'
+                            )
+                        ) {
+                            throw error;
+                        }
                         throw new PluginContextServiceError(
-                            'daemon_database_migration_failed',
-                            error instanceof Error ? error.message : 'Daemon database migration failed',
+                            'daemon_database_migration_requires_future_contract',
+                            error instanceof Error
+                                ? error.message
+                                : 'The prior-generation daemon database query fixture failed',
                         );
                     } finally {
-                        migrationTransaction.end();
+                        fixtureTransaction.end();
                     }
-                    if (incumbentFixture) {
-                        const fixtureTransaction = createTransactionHandle({
-                            entry,
-                            limits,
-                            worker: context.worker,
-                            requestOptionsFor: context.requestOptionsFor,
-                            assertHostTransactionUsable: context.assertUsable,
-                            mode: 'fixture',
-                        });
-                        try {
-                            await databaseOperationContext.run(new Set([entry]), async () => {
-                                await incumbentFixture.run(fixtureTransaction);
-                            });
-                        } catch (error) {
-                            if (
-                                error instanceof PluginContextServiceError
-                                && (
-                                    error.code === 'plugin_generation_stale'
-                                    || error.code === 'daemon_database_cancelled'
-                                    || error.code === 'daemon_database_timeout'
-                                )
-                            ) {
-                                throw error;
-                            }
-                            throw new PluginContextServiceError(
-                                'daemon_database_migration_requires_future_contract',
-                                error instanceof Error
-                                    ? error.message
-                                    : 'The prior-generation daemon database query fixture failed',
-                            );
-                        } finally {
-                            fixtureTransaction.end();
-                        }
-                    }
-                },
-            }),
+                }
+            },
         });
         preparedContracts.set(entry.localId, Object.freeze({
             id: entry.localId,
@@ -1597,7 +1577,14 @@ export function createPluginDaemonDatabaseOwner(params: Readonly<{
             const entry = await readOrOpenEntry(localId);
             assertOwnerUsable(options.signal);
             if (!entry.initialized) {
-                entry.initialized = prepareEntry(entry, normalizedOptions, declaration).catch(async (error) => {
+                entry.initialized = queueEntry({
+                    entry,
+                    ownerSignal: params.signal,
+                    isOccurrenceCurrent: params.isOccurrenceCurrent,
+                    assertOwnerUsable: () => assertOwnerUsable(options.signal),
+                    ...(options.signal ? { operationSignal: options.signal } : {}),
+                    operation: async () => await prepareEntry(entry, normalizedOptions, declaration),
+                }).catch(async (error) => {
                     if (entries.get(localId) === entry) {
                         entries.delete(localId);
                         invalidatePersistedCensus();
@@ -1614,10 +1601,8 @@ export function createPluginDaemonDatabaseOwner(params: Readonly<{
     });
 
     const closeOpenEntries = async (): Promise<void> => {
-        // A caller may already be awaiting path validation when quiescence or
-        // retirement starts. Wait for that one shared open before selecting
-        // entries to close, otherwise the connection could be published after
-        // the close pass and remain an OS-level handle leak.
+        // Include entries whose path validation was already in flight when
+        // quiescence or retirement started before waiting for their queues.
         await Promise.allSettled([...openingEntries.values()]);
         const entriesToClose = [...entries.values()];
         await Promise.all(entriesToClose.map(async (entry) => await entry.tail));

@@ -20,6 +20,10 @@ import { createStablePluginStorageService } from './storage';
 import { createLogRetentionOwner } from '@/utils/logs/logRetention';
 
 const observedWorkerResponses = vi.hoisted((): unknown[] => []);
+const observedWorkers = vi.hoisted(() => ({
+    started: 0,
+    live: new Set<import('node:child_process').ChildProcess>(),
+}));
 
 vi.mock('@/utils/spawnHappyCLI', async () => {
     const [{ spawn }, { createRequire }, { dirname, join }, { pathToFileURL }] = await Promise.all([
@@ -54,6 +58,12 @@ vi.mock('@/utils/spawnHappyCLI', async () => {
                     ...process.env,
                     TSX_TSCONFIG_PATH: join(process.cwd(), 'tsconfig.json'),
                 },
+            });
+            observedWorkers.started += 1;
+            observedWorkers.live.add(child);
+            child.once('exit', () => observedWorkers.live.delete(child));
+            child.once('error', () => {
+                if (child.pid === undefined) observedWorkers.live.delete(child);
             });
             let buffered = '';
             child.stdout?.on('data', (chunk: Buffer) => {
@@ -91,6 +101,10 @@ function observedRowsResponseCount(): number {
         return (response.result as Readonly<{ kind?: unknown }>).kind === 'rows';
     }).length;
 }
+
+// These scenarios issue a series of separate transactions, each launching
+// a real source-mode child. Keep the harness budget separate from SQL limits.
+const sequentialWorkerTestTimeoutMs = 120_000;
 
 describe('plugin daemon database owner', () => {
     it('prepares an empty database below the disk alert percentage and enforces growth at the byte budget', async () => {
@@ -198,7 +212,7 @@ describe('plugin daemon database owner', () => {
             unsubscribeChanged(); unsubscribeLastPage(); unsubscribeUnchanged();
             await host.close(); await rm(home, { recursive: true, force: true });
         }
-    });
+    }, sequentialWorkerTestTimeoutMs);
 
     it('expires declared telemetry in bounded chunks only on the existing log-retention pass', async () => {
         const happyHomeDir = await makeHappyHome();
@@ -251,7 +265,7 @@ describe('plugin daemon database owner', () => {
             await host.close();
             await rm(happyHomeDir, { recursive: true, force: true });
         }
-    });
+    }, sequentialWorkerTestTimeoutMs);
 
     it('stops at row and encoded-byte result overages before evaluating later SQLite rows', async () => {
         const happyHomeDir = await makeHappyHome();
@@ -543,7 +557,7 @@ describe('plugin daemon database owner', () => {
         }
     }, 120_000);
 
-    it('prepares every declared database deterministically, binds it through storage.daemon, and closes it at retirement', async () => {
+    it('drains preparation workers, binds without a worker, and reopens durable data on demand', async () => {
         const happyHomeDir = await makeHappyHome();
         const paths = resolvePluginStorePaths({ happyHomeDir });
         const controller = new AbortController();
@@ -610,6 +624,7 @@ describe('plugin daemon database owner', () => {
                 runtime,
             });
             expect(migrationOrder).toEqual(['alpha', 'beta']);
+            expect(observedWorkers.live.size).toBe(0);
             expect(host.readCapability('acme.indexer')).toEqual({
                 status: 'available',
                 protocolMaximumDatabaseBytes: limits.maximumDatabaseBytes,
@@ -627,11 +642,26 @@ describe('plugin daemon database owner', () => {
             await storage.daemon.set('retained-key', 'retained-value');
             await expect(storage.daemon.get('retained-key')).resolves.toBe('retained-value');
 
+            const preparedStarts = observedWorkers.started;
             const database = await storage.daemon.database('alpha', runtime.alpha);
-            await database.execute('INSERT INTO entries (value) VALUES (?)', ['retained']);
+            expect(observedWorkers.started).toBe(preparedStarts);
+            expect(observedWorkers.live.size).toBe(0);
+
+            await database.transaction(async (transaction) => {
+                expect(observedWorkers.started - preparedStarts).toBe(1);
+                expect(observedWorkers.live.size).toBe(1);
+                await transaction.execute('INSERT INTO entries (value) VALUES (?)', ['retained']);
+                await expect(transaction.query('SELECT value FROM entries')).resolves.toEqual([
+                    { value: 'retained' },
+                ]);
+            });
+            expect(observedWorkers.live.size).toBe(0);
+
             await expect(database.query('SELECT value FROM entries')).resolves.toEqual([
                 { value: 'retained' },
             ]);
+            expect(observedWorkers.started - preparedStarts).toBe(2);
+            expect(observedWorkers.live.size).toBe(0);
 
             await host.close();
             await expect(database.query('SELECT value FROM entries')).rejects.toMatchObject({
@@ -1109,7 +1139,7 @@ describe('plugin daemon database owner', () => {
             await owner.close();
             await rm(happyHomeDir, { recursive: true, force: true });
         }
-    });
+    }, sequentialWorkerTestTimeoutMs);
 
     it('rejects a later open that tries to reinterpret an already prepared static declaration', async () => {
         const happyHomeDir = await makeHappyHome();
@@ -1581,7 +1611,8 @@ describe('plugin daemon database owner', () => {
             }],
         });
         let migrationRuns = 0;
-        const open = async () => await owner.storage.database('main', {
+        const open = async (signal?: AbortSignal) => await owner.storage.database('main', {
+            ...(signal ? { signal } : {}),
             migrations: [{
                 version: 1,
                 id: 'create-records',
@@ -1598,6 +1629,13 @@ describe('plugin daemon database owner', () => {
             },
         });
         try {
+            const initialStarts = observedWorkers.started;
+            const controller = new AbortController();
+            const cancelledOpen = open(controller.signal);
+            controller.abort();
+            await expect(cancelledOpen).rejects.toMatchObject({ code: 'daemon_database_cancelled' });
+            expect(observedWorkers.started).toBe(initialStarts);
+
             const databases = await Promise.all([
                 open(),
                 open(),
@@ -1606,6 +1644,8 @@ describe('plugin daemon database owner', () => {
             ]);
 
             expect(migrationRuns).toBe(1);
+            expect(observedWorkers.started - initialStarts).toBe(1);
+            expect(observedWorkers.live.size).toBe(0);
             let releaseFirstTransaction!: () => void;
             const firstTransactionGate = new Promise<void>((resolveGate) => {
                 releaseFirstTransaction = resolveGate;
@@ -1632,6 +1672,8 @@ describe('plugin daemon database owner', () => {
             releaseFirstTransaction();
             await expect(firstTransaction).resolves.toBeUndefined();
             await expect(secondTransaction).resolves.toBeUndefined();
+            expect(observedWorkers.started - initialStarts).toBe(2);
+            expect(observedWorkers.live.size).toBe(0);
             await expect(databases[3]!.query('SELECT value FROM records ORDER BY value')).resolves.toEqual([
                 { value: 'first' },
                 { value: 'second' },

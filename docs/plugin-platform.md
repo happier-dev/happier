@@ -3290,6 +3290,13 @@ including `backgroundServices` itself and UI. Availability reports the bindings
 actually supplied; a missing binding yields a typed unavailable service. This is
 process placement for trusted plugin code, not a sandbox.
 
+In 0.3 development, the daemon prepares declared databases and releases each
+SQLite child when its preparation queue drains. A role can hold the prepared
+database binding without keeping a process or SQLite connection open. The host
+opens a child on admitted SQL work, can reuse it for already queued operations on
+that database, and closes it when the queue drains. The database file and its
+prepared migration contract survive that close.
+
 In 0.3 development, a `daemonDatabases` declaration may include
 `retention: [{ table, timeColumn }]`. The declared ordinary SQLite tables retain
 their unshadowed `rowid`; each time column stores epoch milliseconds. The existing
