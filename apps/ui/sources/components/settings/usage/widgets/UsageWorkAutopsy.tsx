@@ -219,15 +219,15 @@ export function UsageWorkAutopsy(
   // With one recorded turn the largest turn is the Session itself, so it is not said a second time.
   const largest = ordinals.size > 1 && ranked[0]?.amount != null && ranked[0].amount > 0 && ranked[0].turnId !== null ? ranked[0] : null;
   const largestShare = largest && amount ? Math.round((largest.amount! / amount) * 100) : null;
-  // The hero qualifies the Session total; only mixed token provenance needs exact detail on a turn.
-  const mixedTurnTokens = metric === 'tokens'
-    && turns.some(turn => turn.turnId !== null && turn.tokensFromParts)
-    && turns.some(turn => turn.turnId !== null && turn.amount !== null && !turn.tokensFromParts);
   // The no-turn row is a row title: it opens with a capital like "Turn 1".
   const missingTurn = t('usage.board.work.reason_missing_turn');
   const missingTurnTitle = `${missingTurn.charAt(0).toLocaleUpperCase()}${missingTurn.slice(1)}`;
   // A long Session leads with its largest turns; the rest fold behind the Usage show-all footer (R135 item 3).
   const shownTurns = leadingUsageRows(ranked, turnsExpanded);
+  // The hero qualifies the total. Mixed visible groups, including the no-turn subtotal, qualify their own derived amounts.
+  const mixedTurnTokens = metric === 'tokens'
+    && shownTurns.rows.some(turn => turn.amount !== null && turn.tokensFromParts)
+    && shownTurns.rows.some(turn => turn.amount !== null && !turn.tokensFromParts);
   // Phases keep their witnessed order and the Session's whole extent; a long Session leads with its first ones (sweep 1110 item 16).
   const shownPhases = leadingUsageRows(intervals, phasesExpanded);
   // What every turn shares is said once in the summary, not on each row.
@@ -370,7 +370,7 @@ export function UsageWorkAutopsy(
               turn.turnId === null ? missingTurnTitle : turnLabel(turn.turnId),
               turn.amount,
               turn.moneyBasis,
-              mixedTurnTokens && turn.turnId !== null && turn.tokensFromParts ? t('usage.board.page.tokensFromParts') : undefined,
+              mixedTurnTokens && turn.tokensFromParts ? t('usage.board.page.tokensFromParts') : undefined,
             ))}
             columns={[
               { label: t('usage.board.work.turn') },

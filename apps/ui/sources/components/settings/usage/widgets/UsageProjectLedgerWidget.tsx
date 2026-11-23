@@ -27,6 +27,7 @@ import { useUsageWork } from './useUsageWork';
 import { resolveUsageWorkProviderDisplay } from './UsageWorkProviderMark';
 import type {
   UsageWorkBranchRow,
+  UsageWorkIdentities,
   UsageWorkProjectRow,
   UsageWorkUnallocatedReason,
 } from './usageWorkPresentation';
@@ -198,15 +199,29 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
     { label: t('usage.board.work.linesKept') },
     { label: t('usage.board.work.linkedPrs') },
   ];
-  const projectIdentityNames = (row: UsageWorkProjectRow, testID: string) => {
-    // The disclosure lists the full witnessed set, independently of the strip's current width.
-    const names = [
-      ...row.agentIds.map(id => usageAgentTitle(id)),
-      ...row.providers.map(provider => resolveUsageWorkProviderDisplay(provider, props.serverId).label),
-    ];
-    return names.length === 0 ? null : (
-      <Text style={[styles.reasonLabel, caption]} testID={`${testID}.identities`}>{names.join(' · ')}</Text>
-    );
+  // Details name the full set witnessed for their own row, independently of the fitted strip.
+  const identityNames = (row: UsageWorkIdentities) => [
+    ...row.agentIds.map(id => usageAgentTitle(id)),
+    ...row.providers.map(provider => resolveUsageWorkProviderDisplay(provider, props.serverId).label),
+  ].join(' · ');
+  const identityLine = (row: UsageWorkIdentities, testID: string) => {
+    const names = identityNames(row);
+    return names ? <Text style={[styles.reasonLabel, caption]} testID={`${testID}.identities`}>{names}</Text> : null;
+  };
+  const withIdentityDatum = (
+    row: UsageWorkIdentities & Pick<UsageWorkProjectRow, 'amount' | 'moneyBasis'>,
+    label: string,
+    exact: ReturnType<typeof datum>,
+  ) => {
+    const names = identityNames(row);
+    if (!names) return exact;
+    const value = exact?.value ?? format(row.amount, row.moneyBasis);
+    return {
+      label,
+      value,
+      subtitle: [exact?.subtitle, names].filter(Boolean).join(' · '),
+      accessibilityLabel: `${label}: ${value} · ${names}`,
+    };
   };
   const projectDetail = (row: UsageWorkProjectRow, testID: string) => (
     <>
@@ -228,7 +243,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
           </Text>
         </HappierPressable>
       ) : null}
-      {projectIdentityNames(row, testID)}
+      {identityLine(row, testID)}
       {row.outcomes.length > 0 ? (
         <View style={styles.group}>
           <UsageWorkSectionTitle quiet>{t('usage.board.work.linkedPrs')}</UsageWorkSectionTitle>
@@ -270,7 +285,10 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
                 state: usageWorkPullRequestState(outcome.outcome.pullRequest),
               }),
             ])}
-            rowDatums={row.outcomes.map(outcome => datum(usageWorkPullRequestTitle(outcome.outcome.pullRequest), outcome.amount, outcome.moneyBasis))}
+            rowDatums={row.outcomes.map(outcome => {
+              const label = usageWorkPullRequestTitle(outcome.outcome.pullRequest);
+              return withIdentityDatum(outcome, label, datum(label, outcome.amount, outcome.moneyBasis));
+            })}
           />
         </View>
       ) : null}
@@ -298,7 +316,8 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
             ))}
             columns={branchColumns}
             rows={row.branches.map((branch) => branchCells(branch, false))}
-            rowDatums={row.branches.map(branchDatum)}
+            rowDatums={row.branches.map(branch =>
+              withIdentityDatum(branch, usageWorkBranchName(branch.branch.branch.ref), branchDatum(branch)))}
           />
         </View>
       ) : null}
@@ -429,6 +448,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
                   testID={testID}
                   detail={() => (
                     <>
+                      {identityLine(row, testID)}
                       {row.commits.length > 0 ? (
                         <View style={styles.group}>
                           <UsageWorkSectionTitle quiet>

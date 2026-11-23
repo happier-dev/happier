@@ -4,7 +4,7 @@ import { formatUsageCost } from '@/utils/format/usageNumbers';
 import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
-import { act } from 'react-test-renderer';
+import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook as renderBareHook, renderScreen as renderBareScreen, standardCleanup } from '@/dev/testkit';
 import { createMountedCurrentUiContextWrapper } from '@/dev/testkit/harness/mountedCurrentUiContext';
@@ -44,6 +44,7 @@ import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/u
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { UsageProjectLedgerWidget } from './UsageProjectLedgerWidget';
 import { UsageWorkProviderMark } from './UsageWorkProviderMark';
+import { UsageWorkMarks } from './UsageWorkParts';
 import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
 import { UsageSessionValueWidget } from './UsageSessionValueWidget';
 import { UsageHumanLoopWidget } from './UsageHumanLoopWidget';
@@ -348,6 +349,11 @@ describe('Work and Coach widget bodies', () => {
       expect(hook.getCurrent().cell(null, null)).toBe(t('usage.board.page.notMeasuredYet'));
     } finally { await hook.unmount(); }
   });
+  const layoutIdentityStrip = async (strip: ReactTestInstance | null, width: number) => {
+    const layout = strip?.findAll(node => typeof node.props.onLayout === 'function')[0];
+    if (!layout) throw new Error('Expected a fitted mark strip');
+    await act(() => { layout.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width, height: 16 } } }); });
+  };
   it('keeps all hidden identities recoverable in a narrow Project row’s disclosure', async () => {
     const agentIds = ['claude', 'codex', 'muse', 'pi', ...Array.from({ length: 12 }, (_, index) => `a-fixture-agent-${index}`)];
     const sessionlessProvider = 'provider.project-only';
@@ -361,8 +367,7 @@ describe('Work and Coach widget bodies', () => {
       <UsageProjectLedgerWidget {...props} query={normalizeUsageQuery({ ...query, metric: 'tokens' })}
         slice={{ ...slice, work }} id="usage_project_ledger" testID="ledger" />
     </UsageChartInteractions>);
-    const strip = () => screen.findByTestId('ledger.marks');
-    const layout = async (width: number) => act(() => { strip().props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width, height: 16 } } }); });
+    const layout = (width: number) => layoutIdentityStrip(screen.findByTestId('ledger.marks'), width);
     const displayed = () => screen.findAllByType(UsageAgentMark);
     await layout(160);
     expect(displayed().length).toBeGreaterThan(0);
@@ -383,6 +388,71 @@ describe('Work and Coach widget bodies', () => {
     expect(screen.findAllByType(UsageWorkProviderMark)).toHaveLength(1);
     expect(screen.getTextContent()).not.toContain('+');
   });
+  it.each(['linked PR', 'nested branch', 'standalone branch'] as const)(
+    'recovers each fitted mark from the %s’s own detail',
+    async kind => {
+      // The PR and both branches share a Session but have disjoint sets. The parent also has a Session-less mark.
+      const groups = ['pr', 'branch-a', 'branch-b'].map(turnId => ({
+        turnId,
+        agents: Array.from({ length: 10 }, (_, index) => `agent-${turnId}-${index}`),
+        provider: `provider.${turnId}`,
+      }));
+      const projectOnly = 'provider.project-only';
+      const rows: UsageWorkContribution[] = [
+        ...groups.flatMap(group => group.agents.map((agentId, index) => ({
+          ...contribution(agentId, 's1', group.turnId),
+          agentId,
+          ...(index === 0 ? { providerId: group.provider, providerConnectionId: 'connection' } : {}),
+        }))),
+        { ...contribution('project-only', 'unused', null), sessionId: null, agentId: null,
+          providerId: projectOnly, providerConnectionId: 'connection' },
+      ];
+      const branchEvidence = groups.slice(1).map((group, index) => ({
+        sessionId: 's1', turnId: group.turnId, repositoryKey: 'repo',
+        checkpointRef: `checkpoint/s1/${group.turnId}`, checkpointCommitSha: 'a'.repeat(40),
+        commitSha: 'd'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed' as const,
+        branch: { ref: `refs/heads/${group.turnId}`, headSha: String(index + 1).repeat(40) },
+      }));
+      const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({
+        contributions: rows, evidence: [evidence('s1', 'pr', 2493)], branchEvidence,
+      }));
+      const screen = await renderScreen(<UsageChartInteractions>
+        <UsageProjectLedgerWidget {...props} query={normalizeUsageQuery({ ...query, metric: 'tokens' })}
+          slice={{ ...slice, work }} id="usage_project_ledger" testID="ledger" />
+      </UsageChartInteractions>);
+      if (kind !== 'standalone branch') await screen.pressByTestIdAsync('ledger.project.p1.toggle');
+      const tableId = kind === 'linked PR' ? 'ledger.project.p1.prs'
+        : kind === 'nested branch' ? 'ledger.project.p1.branches' : 'ledger.branches';
+      const table = screen.findAllByType(HappierDataRows).find(node => node.props.testID === tableId);
+      if (!table) throw new Error(`Expected ${tableId}`);
+      const witnesses = kind === 'linked PR' ? groups.slice(0, 1) : groups.slice(1);
+      for (const [index, group] of witnesses.entries()) {
+        const row = screen.findByTestId(`${tableId}-row-${index}`);
+        if (!row) throw new Error(`Expected ${tableId} row ${index}`);
+        const strip = row.findByType(UsageWorkMarks);
+        await layoutIdentityStrip(strip, 160);
+        const visible = strip.findAllByType(UsageAgentMark).length + strip.findAllByType(UsageWorkProviderMark).length;
+        const hidden = group.agents.length + 1 - visible;
+        expect(hidden).toBeGreaterThan(0);
+        expect(strip.findAll(node => node.props.children === t('usage.board.work.moreMarks', { count: hidden })).length).toBeGreaterThan(0);
+
+        const names = [...group.agents.map(id => usageAgentTitle(id)), group.provider];
+        if (kind === 'standalone branch') {
+          const key = table.props.rowIds?.[index];
+          await screen.pressByTestIdAsync(`ledger.branch.${key}.toggle`);
+          const identityLine = screen.findByTestId(`ledger.branch.${key}.identities`);
+          expect.soft(identityLine?.props.children).toBe(names.join(' · '));
+        } else {
+          const exact = row.findAllByType(ChartDatum).find(node => node.props.testID === `${tableId}-datum-${index}`);
+          expect.soft(exact?.props.datum.subtitle ?? '').toContain(names.join(' · '));
+          expect.soft(exact?.props.datum.accessibilityLabel ?? '').toContain(names.join(' · '));
+          for (const unrelated of [...groups.filter(other => other !== group).map(other => other.provider), projectOnly]) {
+            expect.soft(exact?.props.datum.subtitle ?? '').not.toContain(unrelated);
+          }
+        }
+      }
+    },
+  );
   it('never falls back to raw opaque Project or Session ids', async () => {
     const opaque = 'a'.repeat(64);
     const rows = [contribution('opaque', 'private-session-identifier', null)].map(row => ({ ...row, projectKey: opaque }));
@@ -1091,13 +1161,15 @@ describe('Work and Coach widget bodies', () => {
     expect(screen.getTextContent()).toContain('$4.57');
   });
   it.each([
-    { kind: 'mixed', fromParts: [false, true], exactDerived: true },
-    { kind: 'all reported', fromParts: [false, false], exactDerived: false },
-    { kind: 'all derived', fromParts: [true, true], exactDerived: false },
-  ])('keeps precise turn provenance in the exact detail only when $kind', async ({ fromParts, exactDerived }) => {
+    { kind: 'mixed recorded turns', fromParts: [false, true], secondTurn: 't2', exactDerived: 1 },
+    { kind: 'all reported', fromParts: [false, false], secondTurn: 't2', exactDerived: null },
+    { kind: 'all derived', fromParts: [true, true], secondTurn: 't2', exactDerived: null },
+    { kind: 'reported turn and derived no-turn subtotal', fromParts: [false, true], secondTurn: null, exactDerived: 1 },
+    { kind: 'derived turn and reported no-turn subtotal', fromParts: [true, false], secondTurn: null, exactDerived: 0 },
+  ])('keeps precise turn provenance in the exact detail for $kind', async ({ fromParts, secondTurn, exactDerived }) => {
     const sessionQuery = normalizeUsageQuery({ ...query, session: 's1', metric: 'tokens' });
     const rows = [10, 7].map((amount, index) => ({
-      ...contribution(`turn-${index}`, 's1', `t${index + 1}`),
+      ...contribution(`turn-${index}`, 's1', index === 0 ? 't1' : secondTurn),
       tokens: { input: amount - 1, output: 1, reasoning: null, cacheRead: null, cacheWrite: null,
         total: fromParts[index] ? null : amount },
     }));
@@ -1114,18 +1186,44 @@ describe('Work and Coach widget bodies', () => {
     expect(hero?.props.value).toBe(17);
     expect(Boolean(hero?.props.caption.includes(qualifier))).toBe(fromParts.some(Boolean));
     const table = screen.findAllByType(HappierDataRows).find(node => node.props.testID === 'value.autopsy.turns')!;
-    expect(table.props.rows.map((row: readonly unknown[]) => row[1])).toEqual([10, 7]);
+    const noTurn = t('usage.board.work.reason_missing_turn');
+    const labels = [t('usage.board.work.turnNumber', { number: 1 }),
+      secondTurn === null ? noTurn.charAt(0).toLocaleUpperCase() + noTurn.slice(1) : t('usage.board.work.turnNumber', { number: 2 })];
+    expect(table.props.rows.map((row: readonly unknown[]) => row.slice(0, 2))).toEqual([[labels[0], 10], [labels[1], 7]]);
     expect(JSON.stringify(table.props.rows)).not.toContain(qualifier);
     const datums = screen.findAllByType(ChartDatum)
       .filter(node => String(node.props.testID).startsWith('value.autopsy.turns-datum-')).map(node => node.props.datum);
     const qualified = datums.filter(datum => datum.subtitle?.includes(qualifier));
-    if (exactDerived) {
+    if (exactDerived !== null) {
       expect(qualified).toEqual([expect.objectContaining({
-        label: t('usage.board.work.turnNumber', { number: 2 }),
-        value: `7 ${t('usage.board.page.tokensUnit')}`,
+        label: labels[exactDerived],
+        value: `${[10, 7][exactDerived]} ${t('usage.board.page.tokensUnit')}`,
         accessibilityLabel: expect.stringContaining(qualifier),
       })]);
     } else expect(qualified).toEqual([]);
+  });
+  it('qualifies derived turn details only when the reported group is shown alongside them', async () => {
+    const sessionQuery = normalizeUsageQuery({ ...query, session: 's1', metric: 'tokens' });
+    const rows = Array.from({ length: 9 }, (_, index) => ({
+      ...contribution(`turn-${index}`, 's1', `t${index}`),
+      observedAtMs: index + 1,
+      tokens: {
+        input: index === 8 ? 1 : 9, output: 1, reasoning: null, cacheRead: null, cacheWrite: null,
+        total: index === 8 ? 2 : null,
+      },
+    }));
+    const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] }));
+    const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery}
+      slice={{ ...slice, shownQuery: sessionQuery, work,
+        accounting: { ...slice.accounting!, contributions: rows } }}
+      id="usage_session_value" testID="value" />);
+    const qualified = () => screen.findAllByType(ChartDatum).filter(node =>
+      String(node.props.testID).startsWith('value.autopsy.turns-datum-')
+      && node.props.datum.subtitle?.includes(t('usage.board.page.tokensFromParts')));
+    expect(qualified()).toHaveLength(0);
+    await screen.pressByTestIdAsync('value.autopsy.turns.more.toggle');
+    expect(qualified()).toHaveLength(8);
+    expect(qualified().every(node => node.props.datum.label !== t('usage.board.work.turnNumber', { number: 9 }))).toBe(true);
   });
   it('formats witnessed Autopsy git moments in the preferred language without changing their instants', async () => {
     const previous = getPreferredLanguage();
