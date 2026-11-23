@@ -80,6 +80,7 @@ export type WorkspaceSyncOwnedLocalAgent = Readonly<{
   stop(): Promise<void>;
 }>;
 type ActiveWorkspaceSyncIngress = {
+  role: 'alpha' | 'beta';
   stream: Duplex;
   stop: () => Promise<void>;
   cleanupAttempt: Promise<void> | null;
@@ -999,10 +1000,12 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
   }
   private trackOwnedIngress(
     id: string,
+    role: 'alpha' | 'beta',
     owned: WorkspaceSyncOwnedLocalAgent,
   ): Duplex {
     const entries = this.activeIngress.get(id) ?? new Set();
     const entry: ActiveWorkspaceSyncIngress = {
+      role,
       stream: owned.stream,
       stop: owned.stop,
       cleanupAttempt: null,
@@ -2929,7 +2932,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
         ? this.definitions.get(operationId)
         : this.copyOperations.get(operationId);
       if (!this.shuttingDown && current === operation && !this.ownershipLost.has(operationId)) {
-        return this.trackOwnedIngress(operationId, owned);
+        return this.trackOwnedIngress(operationId, role, owned);
       }
       owned.stream.destroy();
       await owned.stop();
@@ -2939,6 +2942,13 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
         { code: ownershipLost ? 'workspace_root_ownership_lost' : 'relationship_not_owned' },
       );
     };
+    // A data stream can close before its worker releases ingress custody.
+    const closing = [...this.activeIngress.get(operationId) ?? []].filter(entry =>
+      entry.role === role && entry.stream.destroyed);
+    if (closing.length > 0) {
+      await Promise.all(closing.map(entry => this.settleOwnedIngress(operationId, entry)));
+      input.signal?.throwIfAborted();
+    }
     if (isManagedWorkspaceRefV2(endpoint) && executionMachineId(endpoint) === this.localMachineId) {
       if (!this.openManagedAgent) throw Object.assign(new Error('Native workspace agent is unavailable'), { code: 'agent_unavailable' });
       return await retainIfStillOwned(await this.openManagedAgent({ operationId, role, workspaceRefId: endpointRefId,

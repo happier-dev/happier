@@ -3148,6 +3148,53 @@ describe('WorkspaceSyncController', () => {
     await rm(localRoot, { recursive: true, force: true });
   });
 
+  it('reopens an endpoint after its closed carrier releases native ingress', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'workspace-sync-ingress-reopen-'));
+    const canonicalRoot = await realpath(root);
+    let releaseIngress!: () => void;
+    const released = new Promise<void>(resolve => { releaseIngress = resolve; });
+    let occupied = false;
+    const controller = new WorkspaceSyncController({
+      adapter: completeAdapter(),
+      lifecycle: lifecycle(),
+      rootOwnershipManager: rootOwnership(),
+      localMachineId: 'm1',
+      resolveWorkspaceRef: id => id === 'a'
+        ? { machineId: 'm1', rootPath: canonicalRoot }
+        : { machineId: 'm2', rootPath: '/remote/b' },
+      openPrivateLocalWorkspaceAgentStream: async () => {
+        // The native worker owns ingress until stopping its previous agent finishes.
+        if (occupied) throw Object.assign(new Error('Native ingress is still active'), { code: 'peer_unavailable' });
+        occupied = true;
+        return {
+          stream: new PassThrough(),
+          stop: async () => {
+            await released;
+            occupied = false;
+          },
+        };
+      },
+    });
+    const endpointId = deriveWorkspaceSyncEndpointId('r1', 'alpha');
+    try {
+      await controller.ensure(definition);
+      const first = await controller.openExternalStream({ endpointId });
+      await expect(controller.openExternalStream({ endpointId })).rejects.toMatchObject({ code: 'peer_unavailable' });
+      first.destroy();
+      await once(first, 'close');
+      // The private-worker opener can run in this turn. Its old agent is still stopping.
+      const stopFinished = new Promise<void>(resolve => setImmediate(resolve)).then(releaseIngress);
+      await Promise.all([
+        expect(controller.openExternalStream({ endpointId })).resolves.toBeInstanceOf(PassThrough),
+        stopFinished,
+      ]);
+    } finally {
+      releaseIngress();
+      await controller.shutdown();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('surfaces persistent local agent cleanup failure and keeps it retryable across shutdown attempts', async () => {
     const localRoot = await mkdtemp(join(tmpdir(), 'workspace-sync-local-agent-persistent-'));
     const canonicalLocalRoot = await realpath(localRoot);
