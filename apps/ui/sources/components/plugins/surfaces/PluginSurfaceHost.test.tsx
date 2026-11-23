@@ -134,9 +134,10 @@ import { PluginCollectionGetResultV1Schema } from '@happier-dev/protocol/plugins
 import type { PluginUiHostApi, RenderContext, SurfaceContext } from '@happier-dev/plugin-sdk/ui';
 import { selectTargetedContributionSurface } from '@happier-dev/plugin-sdk/ui';
 import { createPluginUiHostApiClient } from '@happier-dev/plugin-sdk/ui/client';
-import type {
-    CurrentUiContextMountPublication,
-    CurrentUiContextMountPublisher,
+import {
+    CurrentUiContextBridge,
+    type CurrentUiContextMountPublication,
+    type CurrentUiContextMountPublisher,
 } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import type { CurrentUiContextMountedEnrichment } from '@/components/appShell/currentUiContext/currentUiContextModel';
 import type { PluginUiPrivatePresentationHost } from './pluginUiPrivatePresentationHost';
@@ -285,8 +286,6 @@ const {
     reactNativeSurfaceRuntime,
     surfaceEnvironment,
     pluginSurfaceDiagnosticLog,
-    currentUiContextMountPublisher,
-    currentUiContextMountLifecycle,
 } = vi.hoisted(() => ({
     reactNativeSurfaceProps: [] as unknown[],
     reactNativeSurfaceRuntime: {
@@ -310,12 +309,6 @@ const {
         theme: null as unknown,
     },
     pluginSurfaceDiagnosticLog: vi.fn(),
-    currentUiContextMountPublisher: {
-        value: null as CurrentUiContextMountPublisher | null,
-    },
-    currentUiContextMountLifecycle: {
-        active: true,
-    },
 }));
 const pluginSurfaceConnectivity = {
     endpointStatus: 'online' as 'online' | 'offline',
@@ -1766,18 +1759,6 @@ vi.mock('@/components/plugins/reactNative/PluginReactNativeSurface', async (impo
     };
 });
 
-vi.mock('@/components/appShell/currentUiContext/CurrentUiContextProvider', async (importOriginal) => {
-    const original = await importOriginal<typeof import('@/components/appShell/currentUiContext/CurrentUiContextProvider')>();
-    return {
-        ...original,
-        // The real AppShell provider owns its one record separately. This host
-        // test supplies only its private mount-publication capability so the
-        // mounted controller and SDK transport remain real.
-        useCurrentUiContextMountPublisher: () => currentUiContextMountPublisher.value,
-        useCurrentUiContextMountLifecycleActive: () => currentUiContextMountLifecycle.active,
-    };
-});
-
 afterEach(async () => {
     vi.useRealTimers();
     standardCleanup();
@@ -1835,8 +1816,6 @@ afterEach(async () => {
     // every test its own, so an earlier test's contained artifact digest cannot
     // quarantine a later test's mount of the same fixture artifact.
     reactNativeSurfaceRuntime.watchdog = createPluginReactNativeWatchdog();
-    currentUiContextMountPublisher.value = null;
-    currentUiContextMountLifecycle.active = true;
     observedDeclarativeHostApis.length = 0;
     const { forgetPluginUiProjectionAdmissionSnapshots } = await import(
         '@/sync/domains/plugins/ui/projectionWarmCache'
@@ -11754,7 +11733,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         let nextCommandId = 0;
         const readCurrentRecord = (): PublishedRecord | null => currentRecord;
         const readCurrentPublication = (): CurrentUiContextMountPublication | null => currentPublication;
-        currentUiContextMountPublisher.value = Object.freeze({
+        const currentUiContextMountPublisher = Object.freeze({
             createMount: vi.fn(() => {
                 const owner = nextMountOwner;
                 nextMountOwner += 1;
@@ -11888,21 +11867,23 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         }).projection;
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const renderPlacement = (subPath: string, focusEligible = true) => (
-            <PluginSurfaceFocusEligibilityProvider active={focusEligible} currentUiContextActive={focusEligible}>
-                <PluginSurfacePlacementHost
-                    placement={appPagePlacement}
-                    machineId="machine_1"
-                    serverId="server_1"
-                    pluginUiProjection={projection}
-                    platform="web"
-                    subPath={subPath}
-                    reactNativeLoaderBackend={{
-                        backendId: 'commonJs',
-                        available: true,
-                        loadInstalledBundle: vi.fn(async () => () => null),
-                    }}
-                />
-            </PluginSurfaceFocusEligibilityProvider>
+            <CurrentUiContextBridge publisher={currentUiContextMountPublisher} reader={null}>
+                <PluginSurfaceFocusEligibilityProvider active={focusEligible} currentUiContextActive={focusEligible}>
+                    <PluginSurfacePlacementHost
+                        placement={appPagePlacement}
+                        machineId="machine_1"
+                        serverId="server_1"
+                        pluginUiProjection={projection}
+                        platform="web"
+                        subPath={subPath}
+                        reactNativeLoaderBackend={{
+                            backendId: 'commonJs',
+                            available: true,
+                            loadInstalledBundle: vi.fn(async () => () => null),
+                        }}
+                    />
+                </PluginSurfaceFocusEligibilityProvider>
+            </CurrentUiContextBridge>
         );
         const readLatestContext = (subPath: string): RenderContext => {
             const context = renderContexts.filter((entry) => entry.subPath === subPath).at(-1);
@@ -11913,7 +11894,8 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
         try {
             screen = await renderScreen(renderPlacement('issues/a'), { flushOptions: { cycles: 0 } });
-            await vi.waitFor(() => expect(renderContexts.some((entry) => entry.subPath === 'issues/a')).toBe(true));
+            await vi.waitFor(() => expect(renderContexts.some((entry) => entry.subPath === 'issues/a'),
+                screen && surfaceFixtureDiagnostics(screen, 'acme.browser')).toBe(true));
             const contextA = readLatestContext('issues/a');
             expect(contextA.hostApi.version().methods).toContain('publishCurrentUiContext');
             await vi.waitFor(() => expect(readCurrentRecord()?.entityLabel).toBe('Issue A'));
@@ -11956,7 +11938,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         const observedActivities: boolean[] = [];
         let publicationClear = vi.fn();
         const publications: CurrentUiContextMountPublication[] = [];
-        currentUiContextMountPublisher.value = Object.freeze({
+        const currentUiContextMountPublisher = Object.freeze({
             createMount: vi.fn(() => {
                 // A publication is one mount's disposable capability. A prior
                 // establishment mount cannot dispose the succeeding mount's
@@ -12041,21 +12023,23 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             loadInstalledBundle: vi.fn(async () => () => null),
         });
         const renderPlacement = (focusEligible = true, presented = focusEligible) => (
-            <PluginSurfaceFocusEligibilityProvider
-                active={focusEligible}
-                currentUiContextActive={focusEligible}
-                presentationActive={presented}
-            >
-                <PluginSurfacePlacementHost
-                    placement={appPagePlacement}
-                    machineId="machine_1"
-                    serverId="server_1"
-                    pluginUiProjection={projection}
-                    platform="web"
-                    subPath="issues/a"
-                    reactNativeLoaderBackend={loaderBackend}
-                />
-            </PluginSurfaceFocusEligibilityProvider>
+            <CurrentUiContextBridge publisher={currentUiContextMountPublisher} reader={null}>
+                <PluginSurfaceFocusEligibilityProvider
+                    active={focusEligible}
+                    currentUiContextActive={focusEligible}
+                    presentationActive={presented}
+                >
+                    <PluginSurfacePlacementHost
+                        placement={appPagePlacement}
+                        machineId="machine_1"
+                        serverId="server_1"
+                        pluginUiProjection={projection}
+                        platform="web"
+                        subPath="issues/a"
+                        reactNativeLoaderBackend={loaderBackend}
+                    />
+                </PluginSurfaceFocusEligibilityProvider>
+            </CurrentUiContextBridge>
         );
 
         let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
@@ -12066,8 +12050,9 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             // replacing the initial controller. Observe the settled public Host API
             // before counting lifecycle replays on that mounted controller.
             await vi.waitFor(() => expect(
-                (reactNativeSurfaceProps.at(-1) as { renderContext: RenderContext })
-                    .renderContext.hostApi.version().methods,
+                (reactNativeSurfaceProps.at(-1) as { renderContext: RenderContext } | undefined)
+                    ?.renderContext.hostApi.version().methods ?? [],
+                screen && surfaceFixtureDiagnostics(screen, 'acme.browser'),
             ).toContain('readComposer'));
             const initialPublishLabels = [...publishLabels];
             expect(initialPublishLabels.length).toBeGreaterThan(0);
@@ -12101,17 +12086,25 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             await flushHookEffects();
             const foregroundPublishLabels = [...publishLabels];
 
-            currentUiContextMountLifecycle.active = false;
-            await screen.update(renderPlacement(false));
+            await act(async () => {
+                surfaceEnvironment.platform = 'ios';
+                surfaceEnvironment.appState = 'background';
+                for (const listener of surfaceEnvironment.appStateListeners) listener(surfaceEnvironment.appState);
+                await screen!.update(renderPlacement(false));
+            });
             expect(publicationClear).not.toHaveBeenCalled();
             expect(publishLabels).toEqual(foregroundPublishLabels);
             expect(typeof observedActivities.at(-1)).toBe('boolean');
 
-            currentUiContextMountLifecycle.active = true;
-            await screen.update(renderPlacement(true));
+            await act(async () => {
+                surfaceEnvironment.appState = 'active';
+                for (const listener of surfaceEnvironment.appStateListeners) listener(surfaceEnvironment.appState);
+                await screen!.update(renderPlacement(true));
+            });
             await vi.waitFor(() => expect(publishLabels).toEqual([...foregroundPublishLabels, 'Issue A']));
             expect(typeof observedActivities.at(-1)).toBe('boolean');
             expect(publicationClear).not.toHaveBeenCalled();
+            surfaceEnvironment.platform = 'web';
             await screen.update(renderPlacement(false, true));
             expect(observedActivities.at(-1)).toBe(true);
             await screen.update(renderPlacement(false, false));
@@ -13309,7 +13302,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         let currentUiOwner: number | null = null;
         let currentUiEntityLabel: string | undefined;
         let nextCurrentUiOwner = 0;
-        currentUiContextMountPublisher.value = Object.freeze({
+        const currentUiContextMountPublisher = Object.freeze({
             createMount: () => {
                 const owner = nextCurrentUiOwner;
                 nextCurrentUiOwner += 1;
@@ -13553,27 +13546,33 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         });
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const renderParent = (nestedTargetedSurface?: React.ReactNode) => (
-            <PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
-                <PluginSurfacePlacementHost
-                    placement={browserReactNativePlacementFor(mountedTarget.occurrenceId)}
-                    resourceBrowserTarget={target}
-                    machineId="machine_1"
-                    serverId="server_1"
-                    sessionId="session_1"
-                    pluginUiProjection={projection}
-                    platform="web"
-                    reactNativeLoaderBackend={{
-                        backendId: 'commonJs',
-                        available: true,
-                        loadInstalledBundle: vi.fn(async () => () => null),
-                    }}
-                />
-                {nestedTargetedSurface}
-            </PluginSurfaceFocusEligibilityProvider>
+            <CurrentUiContextBridge publisher={currentUiContextMountPublisher} reader={null}>
+                <PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
+                    <PluginSurfacePlacementHost
+                        placement={browserReactNativePlacementFor(mountedTarget.occurrenceId)}
+                        resourceBrowserTarget={target}
+                        machineId="machine_1"
+                        serverId="server_1"
+                        sessionId="session_1"
+                        pluginUiProjection={projection}
+                        platform="web"
+                        reactNativeLoaderBackend={{
+                            backendId: 'commonJs',
+                            available: true,
+                            loadInstalledBundle: vi.fn(async () => () => null),
+                        }}
+                    />
+                    {nestedTargetedSurface}
+                </PluginSurfaceFocusEligibilityProvider>
+            </CurrentUiContextBridge>
         );
         const parent = await renderScreen(renderParent(), { flushOptions: { cycles: 0 } });
         await vi.waitFor(() => expect(reactNativeSurfaceProps).not.toHaveLength(0));
-        await vi.waitFor(() => expect(currentUiEntityLabel).toBe('Parent issue'));
+        await vi.waitFor(() => expect(currentUiEntityLabel, JSON.stringify({
+            attemptedLabels: currentUiPublishAttempts,
+            methods: (reactNativeSurfaceProps.at(-1) as { renderContext: RenderContext } | undefined)
+                ?.renderContext.hostApi.version().methods,
+        })).toBe('Parent issue'));
         const parentProps = reactNativeSurfaceProps.at(-1) as {
             privateHostBindings?: { presentationHost?: PluginUiPrivatePresentationHost };
         };
