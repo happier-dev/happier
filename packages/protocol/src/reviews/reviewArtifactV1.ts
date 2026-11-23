@@ -10,7 +10,7 @@ import {
 } from './reviewPublicationEvidence.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { SessionRuntimeIssueSourceV1Schema } from '../sessions/control/runtimeIssueV1.js';
-import { PluginContributionProtocolIdV1Schema } from '../plugins/contributionIdentity.js';
+import { parseQualifiedPluginContributionKey } from '../plugins/contributionIdentity.js';
 import { ExternalActionTargetV1Schema } from '../actions/externalActionApi.js';
 import { ScmComparisonCaptureInputSchema } from '../scm/diffSummary.js';
 import type { ReviewRoundBindingV1 } from './reviewRoundBindingV1.js';
@@ -75,11 +75,12 @@ const ReviewRoundReviewerQualityV1Schema = lazyZodSchema(() => z.strictObject({
   reviewerId: z.string().check(z.minLength(1)),
   displayName: z.optional(z.string().check(z.minLength(1))), ...ReviewQualityV1Schema.shape,
 }));
+const ReviewerAgentIdSchema = z.string().check(z.refine(value => parseQualifiedPluginContributionKey(value) !== null));
 /** One admitted reviewer's settled result. Canonical once written; older rounds have none and read as aggregate only. */
 export const ReviewRoundReviewerOutcomeV1Schema = lazyZodSchema(() => z.strictObject({
   reviewerId: z.string().check(z.minLength(1)),
   displayName: z.optional(z.string().check(z.minLength(1))),
-  agentId: z.optional(asProtocolZod(PluginContributionProtocolIdV1Schema)),
+  agentId: z.optional(ReviewerAgentIdSchema),
   outcome: z.enum(['completed', 'partial', 'failed', 'cancelled']),
   runId: z.optional(z.string().check(z.minLength(1))),
   startedAt: z.optional(z.number().check(z.int(), z.nonnegative())),
@@ -100,7 +101,7 @@ export const ReviewArtifactBodyV1Schema = z.strictObject({ v: z.literal(1), roun
   state: ReviewRoundStateV1Schema, startedAt: z.number(), finishedAt: z.nullable(z.number()),
   reviewerIds: z.array(z.string()), runs: z.array(ReviewRunReferenceV1Schema),
   reviewerDisplayNames: z.optional(z.record(z.string(), z.string().check(z.minLength(1)))),
-  reviewerAgentIds: z.optional(z.record(z.string(), asProtocolZod(PluginContributionProtocolIdV1Schema))),
+  reviewerAgentIds: z.optional(z.record(z.string(), ReviewerAgentIdSchema)),
   reviewerQuality: z.optional(z.array(ReviewRoundReviewerQualityV1Schema)),
   medianQualityScore: z.optional(z.number().check(z.minimum(1), z.maximum(5))),
   reviewerOutcomes: z.optional(z.array(ReviewRoundReviewerOutcomeV1Schema)),

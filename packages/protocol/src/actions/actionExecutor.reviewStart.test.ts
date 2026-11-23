@@ -73,8 +73,10 @@ const workflowStartContext: AgentStartContextV1 = {
 };
 
 describe('createActionExecutor (review.start)', () => {
-  it.each(['Session title', 'Agent label'] as const)('persists an existing Session reviewer identity from its %s', async nameSource => {
+  it.each(['Session title', 'Agent label', 'long qualified identity'] as const)('persists an existing Session reviewer identity from its %s', async nameSource => {
     const records = createInMemoryReviewRecordPortV1();
+    const localId = nameSource === 'long qualified identity' ? 'r'.repeat(250) : 'reviewer';
+    const agentId = `review.plugin/${localId}`;
     let reviewId = '';
     const reads: { sessionId: string; serverId?: string | null }[] = [];
     const catalogs: (string | undefined)[] = [];
@@ -84,14 +86,14 @@ describe('createActionExecutor (review.start)', () => {
       sessionStatusGet: async ({ sessionId, serverId }) => {
         reads.push({ sessionId, serverId });
         return { session: { id: sessionId, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
-          encryption: null, machineId: 'reviewer-machine', ...(nameSource === 'Session title' ? { title: 'Security double-check' } : {}) },
-          agentTarget: { kind: 'agent', identity: { pluginId: 'review.plugin', localId: 'reviewer' } } };
+          encryption: null, machineId: 'reviewer-machine', ...(nameSource !== 'Agent label' ? { title: 'Security double-check' } : {}) },
+          agentTarget: { kind: 'agent', identity: { pluginId: 'review.plugin', localId } } };
       },
       agentsBackendsList: async ({ machineId }) => { catalogs.push(machineId); return { items: [
         { targetKey: 'other/reviewer', label: 'Wrong Agent', enabled: true,
-          identity: { pluginId: 'other.plugin', localId: 'reviewer' } },
+          identity: { pluginId: 'other.plugin', localId } },
         { targetKey: 'review/reviewer', label: 'Custom reviewer', enabled: true,
-          identity: { pluginId: 'review.plugin', localId: 'reviewer' } },
+          identity: { pluginId: 'review.plugin', localId } },
       ] }; },
       workflowAction: async invocation => {
         const request = WorkflowRunStartRequestV1Schema.parse(invocation.input);
@@ -106,17 +108,17 @@ describe('createActionExecutor (review.start)', () => {
         { kind: 'review', instructions: 'Double-check.', reviewers: [sessionReviewer] }],
     }, { surface: 'ui', serverId: 'home', defaultSessionId: 'source', defaultSessionMachineId: 'machine-1' });
     expect(result).toMatchObject({ ok: false, errorCode: 'content_unavailable' });
-    const name = nameSource === 'Session title' ? 'Security double-check' : 'Custom reviewer';
+    const name = nameSource !== 'Agent label' ? 'Security double-check' : 'Custom reviewer';
     expect(reviewId).not.toBe('');
     const round = (await records.read(reviewId))?.rounds[0];
     expect(round?.reviewerDisplayNames).toMatchObject({ 'step-1-reviewer-1': name, 'step-2-reviewer-1': name });
-    expect(round?.reviewerAgentIds).toEqual({ 'step-1-reviewer-1': 'review.plugin/reviewer', 'step-2-reviewer-1': 'review.plugin/reviewer' });
+    expect(round?.reviewerAgentIds).toEqual({ 'step-1-reviewer-1': agentId, 'step-2-reviewer-1': agentId });
     expect(round?.reviewerOutcomes).toEqual(expect.arrayContaining([
-      expect.objectContaining({ reviewerId: 'step-1-reviewer-1', displayName: name, agentId: 'review.plugin/reviewer' }),
-      expect.objectContaining({ reviewerId: 'step-2-reviewer-1', displayName: name, agentId: 'review.plugin/reviewer' }),
+      expect.objectContaining({ reviewerId: 'step-1-reviewer-1', displayName: name, agentId }),
+      expect.objectContaining({ reviewerId: 'step-2-reviewer-1', displayName: name, agentId }),
     ]));
     expect(reads).toEqual([{ sessionId: 'reviewer-session', serverId: 'reviewer-home' }]);
-    expect(catalogs).toEqual(nameSource === 'Session title' ? [] : ['reviewer-machine']);
+    expect(catalogs).toEqual(nameSource !== 'Agent label' ? [] : ['reviewer-machine']);
   });
   it('retains host role custody for native review starts without a child-depth stamp', async () => {
     const context: AgentStartContextV1 = { ...workflowStartContext, caller: { kind: 'host' }, roles: {} };
