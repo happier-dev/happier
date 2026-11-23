@@ -3713,6 +3713,8 @@ const artifactsBrowserTranslations = { de: {
                 descriptionNamed: ({ title }) => `Dateien in ${title}`,
                 say: ({ size, count }) => `${size} in ${count} Dateien.`,
                 sayBody: 'Jede Datei bleibt bei ihrer Nachricht.',
+                sayVisible: ({ title }) => `Zählt nur die Dateien, die du in ${title} sehen kannst.`,
+                sayVisibleUnnamed: 'Zählt nur die Dateien, die du in dieser Diskussion sehen kannst.',
                 ofAccount: 'Von deinem Konto',
                 ofAccountFigure: ({ total }) => `von ${total}`,
                 byline: ({ author, date }) => `${author} · ${date}`,

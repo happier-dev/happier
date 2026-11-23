@@ -119,9 +119,6 @@ const KIND_ICONS: Readonly<Record<AccountStorageKindId, IconName>> = {
   teamLogos: 'users',
 };
 
-/** Image kinds sit outside the owner's total, so they name their size in the legend but take no part of the bar. */
-const IMAGE_KIND_IDS: ReadonlySet<string> = new Set(['profilePictures', 'avatars', 'teamLogos']);
-
 const formatBytes = (bytes: number) =>
   formatHappierDataBytes(bytes, { kind: 'storage' });
 
@@ -149,7 +146,7 @@ export function AccountStorageView(props: Readonly<{ initialFilter: AccountStora
   // A Discussion file's name and where it lives are in its message: one exact read for the page's messages, never one
   // per file or per Discussion, and no Discussion is opened for it.
   const scope = useActiveServerAccountScope();
-  const exact = useDiscussionStorageExactMessages(scope, read.items, true);
+  const exact = useDiscussionStorageExactMessages(scope, read.items);
   const authorLabel = useDiscussionStorageAuthorLabel(scope);
   const accountId = scope?.accountId ?? null;
   const files = React.useMemo(() => ({
@@ -409,8 +406,9 @@ function AccountCapacityRow(
         kind.bytes)),
     [marks, kinds],
   );
+  // The owner's total sums every measured kind, images included; only a kind whose size is not recorded stays off the bar.
   const bar = React.useMemo(
-    () => legend.filter((segment) => segment.value !== null && !IMAGE_KIND_IDS.has(segment.id)),
+    () => legend.filter((segment) => segment.value !== null),
     [legend],
   );
   if (inventory === null) {

@@ -81,6 +81,8 @@ export function DiscussionStorageView(props: Readonly<{
     presentation: 'pane' | 'page';
     /** The Discussion's title, for the page's Back; `null` while this device has not loaded it. */
     discussionTitle?: string | null;
+    /** The viewer takes part in the Discussion without owning it: the scoped total counts only the files they can see. */
+    participant?: boolean;
     /** The read failed and nothing is kept: the sentence says so and offers Try again. */
     onRetry?: (() => void) | null;
     /** Reads the owner's next page; `null` when it has none. */
@@ -142,7 +144,10 @@ export function DiscussionStorageView(props: Readonly<{
                     lead={size === null ? null : props.fileCount === null || props.fileCount === undefined
                         ? t('artifacts.browser.storageView.say.stored', { size })
                         : t('artifacts.browser.storageView.discussion.say', { size, count: String(props.fileCount) })}
-                    text={t('artifacts.browser.storageView.discussion.sayBody')} />
+                    // A participant's total is what they can see, not the Discussion's whole: the body says so.
+                    text={props.participant !== true ? t('artifacts.browser.storageView.discussion.sayBody')
+                        : props.discussionTitle ? t('artifacts.browser.storageView.discussion.sayVisible', { title: props.discussionTitle })
+                            : t('artifacts.browser.storageView.discussion.sayVisibleUnnamed')} />
             )}
             {props.presentation === 'pane' && props.accountTotalBytes !== null ? (
                 <ItemGroup>

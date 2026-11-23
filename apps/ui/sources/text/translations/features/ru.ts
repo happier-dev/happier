@@ -3704,6 +3704,8 @@ const artifactsBrowserTranslations = { ru: {
                 descriptionNamed: ({ title }) => `Файлы в обсуждении ${title}`,
                 say: ({ size, count }) => `${size} в файлах: ${count}.`,
                 sayBody: 'Каждый файл остаётся со своим сообщением.',
+                sayVisible: ({ title }) => `Учитываются только файлы, которые вы видите в обсуждении ${title}.`,
+                sayVisibleUnnamed: 'Учитываются только файлы, которые вы видите в этом обсуждении.',
                 ofAccount: 'От вашего аккаунта',
                 ofAccountFigure: ({ total }) => `из ${total}`,
                 byline: ({ author, date }) => `${author} · ${date}`,

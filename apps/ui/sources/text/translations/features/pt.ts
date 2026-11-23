@@ -3694,6 +3694,8 @@ const artifactsBrowserTranslations = { pt: {
                 descriptionNamed: ({ title }) => `Arquivos de ${title}`,
                 say: ({ size, count }) => `${size} em ${count} arquivos.`,
                 sayBody: 'Cada arquivo fica com a sua mensagem.',
+                sayVisible: ({ title }) => `Conta só os arquivos que você pode ver em ${title}.`,
+                sayVisibleUnnamed: 'Conta só os arquivos que você pode ver nesta discussão.',
                 ofAccount: 'Da sua conta',
                 ofAccountFigure: ({ total }) => `de ${total}`,
                 byline: ({ author, date }) => `${author} · ${date}`,

@@ -314,6 +314,9 @@ export type ArtifactsBrowserTranslations = Readonly<{
             descriptionNamed: (params: Readonly<{ title: string }>) => string;
             say: (params: Readonly<{ size: string; count: string }>) => string;
             sayBody: string;
+            /** A participant's pane: the scoped total counts only the files on messages they can read. */
+            sayVisible: (params: Readonly<{ title: string }>) => string;
+            sayVisibleUnnamed: string;
             ofAccount: string;
             ofAccountFigure: (params: Readonly<{ total: string }>) => string;
             byline: (params: Readonly<{ author: string; date: string }>) => string;
@@ -718,6 +721,8 @@ export const artifactsBrowserTranslationsEnglish = { en: {
                 descriptionNamed: ({ title }) => `Files in ${title}`,
                 say: ({ size, count }) => `${size} in ${count} files.`,
                 sayBody: 'Each file stays with its message.',
+                sayVisible: ({ title }) => `Counts only the files you can see in ${title}.`,
+                sayVisibleUnnamed: 'Counts only the files you can see in this Discussion.',
                 ofAccount: 'Of your Account',
                 ofAccountFigure: ({ total }) => `of ${total}`,
                 byline: ({ author, date }) => `${author} · ${date}`,

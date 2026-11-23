@@ -225,9 +225,33 @@ const COUNTED_KINDS: NonNullable<StorageInventoryV1['kinds']> = {
   profilePictures: { storedSizeBytes: null, itemCount: 1 },
 };
 
+/** Only images stored, each measured (the server's total sums them like any other kind). */
+const IMAGE_ONLY: StorageInventoryV1 = {
+  totalBytes: 3_500_000, artifactLimitBytes: null, unmeasuredKinds: [],
+  byKind: { artifacts: 0, pluginArtifacts: 0, discussionAttachments: 0, accountPets: 0, pluginCollections: 0 },
+  kinds: {
+    profilePictures: { storedSizeBytes: 1_500_000, itemCount: 1 },
+    avatars: { storedSizeBytes: 1_200_000, itemCount: 3 },
+    teamLogos: { storedSizeBytes: 800_000, itemCount: 1 },
+  },
+};
+/** Artifacts and two measured image kinds, and Avatars whose size the Home did not record. */
+const MIXED_IMAGES: StorageInventoryV1 = {
+  totalBytes: 2_600_000, artifactLimitBytes: null, unmeasuredKinds: ['avatars'],
+  byKind: { artifacts: 2_000_000, pluginArtifacts: 0, discussionAttachments: 0, accountPets: 0, pluginCollections: 0 },
+  kinds: {
+    artifacts: { storedSizeBytes: 2_000_000, itemCount: 2 },
+    profilePictures: { storedSizeBytes: 400_000, itemCount: 1 },
+    avatars: { storedSizeBytes: null, itemCount: 2 },
+    teamLogos: { storedSizeBytes: 200_000, itemCount: 1 },
+  },
+};
+
 async function serve(limit: number | null, options: Readonly<{
   counts?: boolean;
   pages?: readonly [readonly unknown[], readonly unknown[]];
+  /** The read's summary in place of the default Account's. */
+  summary?: StorageInventoryV1;
 }> = {}) {
   inventoryReads = [];
   artifactListReads = 0;
@@ -253,7 +277,7 @@ async function serve(limit: number | null, options: Readonly<{
       if (request.path === '/v1/artifacts/storage/usage') {
         inventoryReads.push(request.url);
         const next = request.url.searchParams.get('cursor') === 'page-2';
-        return Response.json({ ...inventory(limit), ...(options.counts ? { kinds: COUNTED_KINDS } : {}),
+        return Response.json({ ...(options.summary ?? { ...inventory(limit), ...(options.counts ? { kinds: COUNTED_KINDS } : {}) }),
           page: next ? { items: second } : { items: first, nextCursor: 'page-2' } });
       }
       if (request.path === '/v1/discussions/messages/read' && request.method === 'POST') {
@@ -462,6 +486,47 @@ describe('Settings › Storage (storage-view lab scenes 1–4)', () => {
     } finally {
       await disconnect();
     }
+  });
+
+  /** The Account row's bar and legend parts, by kind, as the row hands them to the shared composition strip. */
+  async function accountParts(summary: StorageInventoryV1) {
+    const disconnect = await serve(null, { summary, pages: [[], []] });
+    try {
+      const screen = await renderScreen(<AppPaneProvider><StorageSettingsRoute /></AppPaneProvider>);
+      try {
+        await vi.waitFor(() => expect(textOf(screen.findHostByTestId('storage:account-figure'))).toContain(storage(summary.totalBytes)));
+        const strip = (variant: 'bar' | 'legend') => {
+          const row = screen.findAll((node) => node.props.testID === 'storage:account').at(0);
+          const node = row?.findAll((candidate) => candidate.props.variant === variant && Array.isArray(candidate.props.segments)).at(0);
+          if (!node) throw new Error(`No Account ${variant}`);
+          return new Map((node.props.segments as Array<{ id: string; value: number | null; color: string }>)
+            .map((segment) => [segment.id, segment] as const));
+        };
+        return { bar: strip('bar'), legend: strip('legend') };
+      } finally {
+        await screen.unmount();
+      }
+    } finally {
+      await disconnect();
+    }
+  }
+
+  it('draws measured images on the Account bar: an Account holding only images shows its bytes as parts, never an empty bar', async () => {
+    const { bar, legend } = await accountParts(IMAGE_ONLY);
+    expect([...bar.keys()].sort()).toEqual(['avatars', 'profilePictures', 'teamLogos']);
+    expect(bar.get('profilePictures')?.value).toBe(1_500_000);
+    expect(bar.get('avatars')?.value).toBe(1_200_000);
+    expect(bar.get('teamLogos')?.value).toBe(800_000);
+    // Each part takes its kind's mark from the one storage owner, the same on the bar and in its legend.
+    for (const [id, segment] of bar) expect(segment.color).toBe(legend.get(id)?.color);
+  });
+
+  it('keeps a kind whose size is not recorded off the Account bar, while the measured kinds beside it stay on', async () => {
+    const { bar, legend } = await accountParts(MIXED_IMAGES);
+    expect([...bar.keys()].sort()).toEqual(['artifacts', 'profilePictures', 'teamLogos']);
+    expect(bar.get('profilePictures')?.value).toBe(400_000);
+    // The legend still names the unmeasured kind, with no amount.
+    expect(legend.get('avatars')?.value).toBeNull();
   });
 
   it("counts each kind's items for the whole inventory on its chip and in its row, whatever page or filter is shown", async () => {

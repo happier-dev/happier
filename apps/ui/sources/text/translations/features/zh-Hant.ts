@@ -3604,6 +3604,8 @@ const artifactsBrowserTranslations = { 'zh-Hant': {
                 descriptionNamed: ({ title }) => `${title} 中的檔案`,
                 say: ({ size, count }) => `${count} 個檔案，共 ${size}。`,
                 sayBody: '每個檔案都保留在其訊息中。',
+                sayVisible: ({ title }) => `只計入你在 ${title} 中能看到的檔案。`,
+                sayVisibleUnnamed: '只計入你在此討論中能看到的檔案。',
                 ofAccount: '佔你的帳戶',
                 ofAccountFigure: ({ total }) => `/ ${total}`,
                 byline: ({ author, date }) => `${author} · ${date}`,

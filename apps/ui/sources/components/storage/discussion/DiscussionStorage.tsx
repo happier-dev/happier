@@ -28,8 +28,9 @@ import {
 } from './discussionStorageMessages';
 
 /**
- * The open Discussion as its Details tab (or the phone page) knows it: names come from its loaded messages. `messages`
- * is `null` when this device has not loaded the Discussion; the page's exact message read names its files then.
+ * The open Discussion as its Details tab (or the phone page) knows it: names come from its loaded messages, and the
+ * page's exact message read names files on messages it does not hold. `messages` is `null` when this device has not
+ * loaded the Discussion.
  */
 export type DiscussionStorageSource = Readonly<{
     scope: ServerAccountScope;
@@ -94,7 +95,8 @@ export function DiscussionStorageRow(props: Readonly<{ read: StorageInventoryRea
 /** The Discussion's Storage in the Details pane: its scoped read (shared with the row) and the Account's total for the share. */
 export function DiscussionStoragePane(props: Readonly<{ source: DiscussionStorageSource; read: StorageInventoryRead }>): React.ReactElement {
     if (props.source.ownerAccountId !== props.source.scope.accountId) {
-        return <DiscussionStorage source={props.source} read={props.read} presentation="pane"
+        // A participant sees only the files on messages they can read; their pane says whose total it is.
+        return <DiscussionStorage source={props.source} read={props.read} presentation="pane" participant
             accountTotalBytes={null} onChanged={props.read.retry} />;
     }
     return <OwnedDiscussionStoragePane {...props} />;
@@ -115,13 +117,17 @@ function DiscussionStorage(props: Readonly<{
     source: DiscussionStorageSource;
     read: StorageInventoryRead;
     presentation: 'pane' | 'page';
+    participant?: boolean;
     accountTotalBytes: number | null;
     onChanged: () => void;
 }>): React.ReactElement {
     const router = useRouter();
     const { source, read } = props;
-    // A Discussion this device holds names its files from its loaded messages; otherwise one exact read per page does.
-    const exact = useDiscussionStorageExactMessages(source.scope, read.items, source.messages === null);
+    // The loaded thread names the files on its messages; one exact read per page names the rest (older messages
+    // outside its window, or every file when this device has not loaded the Discussion).
+    const held = React.useMemo(() => new Set((source.messages ?? []).map((message) =>
+        discussionStorageMessageKey(source.discussionId, message.id))), [source.discussionId, source.messages]);
+    const exact = useDiscussionStorageExactMessages(source.scope, read.items, held);
     const files = React.useMemo(() => projectDiscussionStorageFiles(read.items, source.messages, source.authorLabel, exact),
         [exact, read.items, source.authorLabel, source.messages]);
     const title = source.title ?? readExactTitle(exact, source.discussionId);
@@ -146,7 +152,7 @@ function DiscussionStorage(props: Readonly<{
     return (
         <DiscussionStorageView totalBytes={read.inventory?.totalBytes ?? null} accountTotalBytes={props.accountTotalBytes}
             fileCount={read.inventory?.kinds?.discussionAttachments?.itemCount ?? null}
-            files={files} presentation={props.presentation} discussionTitle={title} onRetry={failed ? read.retry : null} onMore={read.more}
+            files={files} presentation={props.presentation} discussionTitle={title} participant={props.participant === true} onRetry={failed ? read.retry : null} onMore={read.more}
             loadingMore={read.loadingMore} busy={removal.busy} onShowInMessage={showInMessage} onRemove={remove} />
     );
 }

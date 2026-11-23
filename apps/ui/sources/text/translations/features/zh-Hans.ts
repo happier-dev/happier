@@ -3603,6 +3603,8 @@ const artifactsBrowserTranslations = { 'zh-Hans': {
                 descriptionNamed: ({ title }) => `${title} 中的文件`,
                 say: ({ size, count }) => `${count} 个文件，共 ${size}。`,
                 sayBody: '每个文件都保留在其消息中。',
+                sayVisible: ({ title }) => `只计入你在 ${title} 中能看到的文件。`,
+                sayVisibleUnnamed: '只计入你在此讨论中能看到的文件。',
                 ofAccount: '占你的账户',
                 ofAccountFigure: ({ total }) => `/ ${total}`,
                 byline: ({ author, date }) => `${author} · ${date}`,

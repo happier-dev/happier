@@ -183,11 +183,11 @@ const MESSAGES = [
 ];
 
 /** The same messages as the Home stores them in a plain Discussion, for its exact message read. */
-const WIRE_MESSAGES = MESSAGES.map((message, index) => ({
+const toWire = (message: (typeof MESSAGES)[number], seq: number) => ({
   ...message,
   discussionId: DISCUSSION,
   localId: null,
-  seq: index + 1,
+  seq,
   accountActor: {
     v: 1 as const,
     accountId: message.authorAccountId,
@@ -196,7 +196,11 @@ const WIRE_MESSAGES = MESSAGES.map((message, index) => ({
   producerV1: null,
   content: { t: 'plain' as const, v: message.content },
   mentionedAccountIds: [],
-}));
+});
+// The open thread's window starts at seq 2; the older message below it is seq 1.
+const WIRE_MESSAGES = MESSAGES.map((message, index) => toWire(message, index + 2));
+/** An older message, outside the window the open thread has loaded, that carries the second page's file. */
+const OFF_WINDOW_MESSAGE = toWire(fileMessage('message-9', 'mika', ORPHAN, 'load-test-results.csv', 3.6 * MB), 1);
 
 let scopedReads: URL[] = [];
 let accountReads = 0;
@@ -204,7 +208,8 @@ let removals: string[] = [];
 /** Every exact message read (`POST /v1/discussions/messages/read`), with the pairs it asked for. */
 let exactReads: Array<ReadonlyArray<Readonly<{ discussionId: string; messageId: string }>>> = [];
 
-async function serve() {
+async function serve(options: Readonly<{ offWindowReadable?: boolean }> = {}) {
+  const readable = options.offWindowReadable ? [...WIRE_MESSAGES, OFF_WINDOW_MESSAGE] : WIRE_MESSAGES;
   scopedReads = [];
   accountReads = 0;
   removals = [];
@@ -251,8 +256,8 @@ async function serve() {
       if (request.path === '/v1/discussions/messages/read' && request.method === 'POST') {
         const asked = (request.body as { messages: Array<{ discussionId: string; messageId: string }> }).messages;
         exactReads.push(asked);
-        // `message-9` is not readable by this viewer: the Home leaves it out.
-        const messages = WIRE_MESSAGES.filter((message) => asked.some((pair) => pair.discussionId === DISCUSSION && pair.messageId === message.id));
+        // Unless the case makes it readable, `message-9` is not readable by this viewer: the Home leaves it out.
+        const messages = readable.filter((message) => asked.some((pair) => pair.discussionId === DISCUSSION && pair.messageId === message.id));
         return Response.json({ discussions: messages.length === 0 ? [] : [{ discussionId: DISCUSSION,
           titleContent: { t: 'plain', v: { v: 1, title: 'Checkout bug triage' } },
           keyContext: { encryptionMode: 'plain', keyReadiness: true, dataEncryptionKey: null }, messages }] });
@@ -351,7 +356,7 @@ function source(ownerAccountId = ACCOUNT): DiscussionStorageSource {
 
 describe('Storage from a Discussion’s Details (storage-view lab scene 5 A)', () => {
   it('shows the Discussion’s stored size in Details and opens its files in the pane, one scoped read per page', async () => {
-    const disconnect = await serve();
+    const disconnect = await serve({ offWindowReadable: true });
     let header: ReturnType<typeof usePublishedPaneHeaderContent> = null;
     try {
       const screen = await renderScreen(
@@ -415,9 +420,15 @@ describe('Storage from a Discussion’s Details (storage-view lab scene 5 A)', (
         expect(textOf(screen.findHostByTestId('storage:discussion:say'))).toContain(
           `artifacts.browser.storageView.discussion.say(size=${storage(77.6 * MB)},count=3)`,
         );
+        // The owner's share row says whose total it is; the sentence keeps its ordinary body.
+        expect(textOf(screen.findHostByTestId('storage:discussion:say'))).not.toContain(
+          'artifacts.browser.storageView.discussion.sayVisible',
+        );
         // Remove is offered only where the server admits it.
         expect(rowMenus(screen).get(VIDEO)).not.toContain('remove');
         expect(rowMenus(screen).get(TRACE)).toContain('remove');
+        // Every message on this page is already in the open thread: no message read.
+        expect(exactReads).toHaveLength(0);
 
         await act(async () => {
           invokeTestInstanceHandler(
@@ -432,13 +443,16 @@ describe('Storage from a Discussion’s Details (storage-view lab scene 5 A)', (
         );
         expect(scopedReads).toHaveLength(2);
         expect(scopedReads[1]!.searchParams.get('cursor')).toBe('page-2');
-        expect(
-          textOf(screen.findHostByTestId(`storage:discussion:file:${ORPHAN}`)),
-        ).toContain(
-          'artifacts.browser.storageView.items.titles.discussionAttachments',
+        // The next page's file lives in an older message the open thread has not loaded: one batched read asks for
+        // only that message, and the row takes the file's real name and sender from it.
+        await vi.waitFor(() =>
+          expect(
+            textOf(screen.findHostByTestId(`storage:discussion:file:${ORPHAN}`)),
+          ).toContain('load-test-results.csv'),
         );
-        // The open Discussion names its files from the messages it already holds: no message read of its own.
-        expect(exactReads).toHaveLength(0);
+        expect(textOf(screen.findHostByTestId(`storage:discussion:file:${ORPHAN}`))).toContain('Mika Tanaka');
+        expect(exactReads).toEqual([[{ discussionId: DISCUSSION, messageId: 'message-9' }]]);
+        expect(scopedReads).toHaveLength(2);
         expect(rowMenus(screen).get(ORPHAN)).not.toContain('remove');
 
         const traceMenu = screen
@@ -497,6 +511,13 @@ describe('Storage from a Discussion’s Details (storage-view lab scene 5 A)', (
           expect(textOf(screen.findHostByTestId('storage:discussion'))).toContain(storage(77.6 * MB)),
         );
         expect(screen.findHostByTestId('storage:discussion:share-figure')).toBeNull();
+        // A participant's total counts only the files on messages they can read: the pane says whose total it is.
+        expect(textOf(screen.findHostByTestId('storage:discussion:say'))).toContain(
+          'artifacts.browser.storageView.discussion.sayVisible(title=Checkout bug triage)',
+        );
+        expect(textOf(screen.findHostByTestId('storage:discussion:say'))).not.toContain(
+          'artifacts.browser.storageView.discussion.sayBody',
+        );
         expect(accountReads).toBe(0);
         expect(scopedReads).toHaveLength(1);
       } finally {

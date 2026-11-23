@@ -59,33 +59,33 @@ export function readDiscussionAttachmentName(
 
 const NO_MESSAGES: ReadonlyMap<string, DiscussionStorageExactMessage | null> =
   new Map();
+const NO_HELD: ReadonlySet<string> = new Set();
 const PAIR_SEPARATOR = '\u0001';
 
 /**
- * The messages that name a storage page's Discussion files, for a surface that has not loaded those Discussions:
- * at most ONE exact read (`createDiscussionClient().exactMessages`) per page, for the page's distinct message pairs it
- * has not asked about yet, however many files or Discussions the page holds. Titles and messages are opened on this
- * device by the Discussions API owner. `enabled: false` (a Discussion already loaded here) reads nothing.
+ * The messages that name a storage page's Discussion files: at most ONE exact read
+ * (`createDiscussionClient().exactMessages`) per page, for the page's distinct message pairs this surface neither
+ * holds nor has asked about yet, however many files or Discussions the page holds. `held` is the surface's own
+ * loaded messages by `discussionStorageMessageKey` (an open Discussion's thread window); a page whose every pair is
+ * held reads nothing. Titles and messages are opened on this device by the Discussions API owner.
  */
 export function useDiscussionStorageExactMessages(
   scope: ServerAccountScope | null,
   items: readonly StorageInventoryItemV1[],
-  enabled: boolean,
+  held: ReadonlySet<string> = NO_HELD,
 ): DiscussionStorageExactMessages {
   const pairsKey = React.useMemo(() => {
-    if (!enabled) return '';
     const keys = new Set<string>();
     for (const item of items) {
-      if (item.location.kind === 'discussion')
-        keys.add(
-          discussionStorageMessageKey(
-            item.location.discussionId,
-            item.location.messageId,
-          ),
-        );
+      if (item.location.kind !== 'discussion') continue;
+      const key = discussionStorageMessageKey(
+        item.location.discussionId,
+        item.location.messageId,
+      );
+      if (!held.has(key)) keys.add(key);
     }
     return [...keys].join(PAIR_SEPARATOR);
-  }, [enabled, items]);
+  }, [held, items]);
   const [settled, setSettled] = React.useState<
     Readonly<{
       scope: ServerAccountScope | null;

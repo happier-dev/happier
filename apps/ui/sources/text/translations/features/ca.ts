@@ -3700,6 +3700,8 @@ const artifactsBrowserTranslations = { ca: {
                 descriptionNamed: ({ title }) => `Fitxers de ${title}`,
                 say: ({ size, count }) => `${size} en ${count} fitxers.`,
                 sayBody: 'Cada fitxer es queda amb el seu missatge.',
+                sayVisible: ({ title }) => `Només compta els fitxers que pots veure a ${title}.`,
+                sayVisibleUnnamed: 'Només compta els fitxers que pots veure en aquesta discussió.',
                 ofAccount: 'Del teu compte',
                 ofAccountFigure: ({ total }) => `de ${total}`,
                 byline: ({ author, date }) => `${author} · ${date}`,
