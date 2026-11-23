@@ -989,7 +989,7 @@ describe('the registered formal Review transition', () => {
             expectedHeadSha: TESTKIT_OBSERVED_REVISION.headSha,
             ruleOccurrence: { baseRef: 'feature/relay-v2', author: { kind: 'human' }, draft: false },
         }));
-        expect(result).toMatchObject({ status: 'unavailable', reason: 'sourceUnavailable' });
+        expect(result).toMatchObject({ status: 'unavailable', reason: 'contributor_unavailable' });
         expect(await readReviewOutcome({ collections: h.collections, entryRef: reviewTarget.entryRef })).toEqual({});
     });
 

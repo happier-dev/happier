@@ -1,4 +1,4 @@
-import { selectCurrentTargetedContribution, type JsonValue, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { selectCurrentTargetedContribution, type JsonValue, type PluginInvocationContext, type TargetedContributionSelectionUnavailableReason } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { pluginJsonValuesEqual, projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { produceScmPullRequestReviewScope, type ScmPullRequestReviewScopeV1 } from '@happier-dev/plugin-sdk/reviews';
@@ -71,7 +71,7 @@ export async function readCurrentPrepareReviewWorkspace(
     request: TriageReviewWorkspaceRequestV1,
     selected: TriageStartEntrySessionInputV1['prepareReviewWorkspaceSelection'],
     context: PluginInvocationContext,
-): Promise<TriageReviewWorkspacePreparationDepsV1 | undefined> {
+): Promise<TriageReviewWorkspacePreparationDepsV1 | TargetedContributionSelectionUnavailableReason | undefined> {
     if (selected === undefined || !selectedPrepareInputMatchesRequest(selected, request)) {
         return undefined;
     }
@@ -83,7 +83,7 @@ export async function readCurrentPrepareReviewWorkspace(
         operationRole: 'prepareReviewWorkspace',
         ...(context.signal === undefined ? {} : { signal: context.signal }),
     });
-    if (current.kind !== 'selected') return undefined;
+    if (current.kind !== 'selected') return current.reason;
     const contribution = current.contribution;
     if (contribution.contributor.pluginId !== request.entryRef.source.pluginId
         || contribution.contributor.contributionId !== request.entryRef.source.localId) {
@@ -306,6 +306,7 @@ export function createTriagePreparePullRequestReviewActionHandler(): ActionHandl
         const request = { ...input.request, ...preparation };
         if (request.observed.headSha !== input.expectedHeadSha) return { v: 1, status: 'refused', reason: 'revisionMismatch' };
         const deps = await readCurrentPrepareReviewWorkspace(input.request, input.prepareReviewWorkspaceSelection, context);
+        if (typeof deps === 'string') return { v: 1, status: 'unavailable', reason: deps };
         if (deps === undefined) return { v: 1, status: 'unavailable', reason: 'sourceUnavailable' };
         const preparedWorkspace = await prepareEntryReviewWorkspace(deps, request);
         if (preparedWorkspace.kind !== 'prepared') return {

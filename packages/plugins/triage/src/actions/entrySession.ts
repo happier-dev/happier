@@ -577,7 +577,7 @@ export function createTriageStartEntrySessionActionHandler(): ActionHandler<
                 }
                 return result;
             },
-            ...(prepareReviewWorkspace === undefined ? {} : { prepareReviewWorkspace }),
+            ...(prepareReviewWorkspace === undefined || typeof prepareReviewWorkspace === 'string' ? {} : { prepareReviewWorkspace }),
             ...(context.signal ? { signal: context.signal } : {}),
         });
     };
