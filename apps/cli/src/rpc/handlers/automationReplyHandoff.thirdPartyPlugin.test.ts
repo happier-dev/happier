@@ -209,7 +209,7 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
 
     // Rejoin must fetch the current envelope, never reuse the key from an earlier delivery.
     transportMocks.post.mockResolvedValueOnce({ data: { ...keyCensus, callerDataEncryptionKey: null } });
-    await expect(handler(dispatch)).resolves.toEqual({ kind: 'settled', settlement: { kind: 'blocked' }, accountCurrentness: witness });
+    await expect(handler(dispatch)).resolves.toEqual({ kind: 'settled', settlement: { kind: 'blocked', code: 'waiting_for_keys' }, accountCurrentness: witness });
     for (const changedIdentity of [
       { runId: '33333333-3333-4333-8333-333333333333' },
       { ownerAccountId: 'another-account' },

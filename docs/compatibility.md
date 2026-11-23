@@ -8665,6 +8665,15 @@ permission. The existing Automation Run-detail route may carry a canonical
 historical recipe payload for that custody. Channels reply-handoff retry remains
 the existing same-Run mutation, not a second Workflow executor or execution retry.
 
+In unreleased 0.3, the private daemon reply-handoff settlement can include a
+closed, content-free blocked code. Current servers still read earlier responses
+that carry only the settlement kind. Load matching daemon and server sources for
+the extended response because older strict readers treat it as an invalid
+response and retry the same handoff. The existing Run history carries known
+refusals and its detail presents them beside Reply handoff. Channels delivery
+custody remains the owner after admission. The direct Workflow result projection
+supplies text for text, decision and JSON-string results.
+
 The retired `/automations/[id]` and `/automations/edit?id=` routes only resolve
 the existing direct Automation read, then open the bound workflow's trigger
 section or the Account trigger popover in Workflows. A deleted row lands in

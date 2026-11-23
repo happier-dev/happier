@@ -1,3 +1,5 @@
+import { AUTOMATION_REPLY_HANDOFF_BLOCKED_EVENT_TYPE } from '@happier-dev/protocol/automations/event';
+import { describeWorkflowReplyHandoffProblem } from '../presentation/workflowProblemPresentation';
 import * as React from 'react';
 import { View } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -724,7 +726,7 @@ export function WorkflowOccurrenceRunContent(props: Readonly<{
 type OccurrenceDetail = ReturnType<typeof useWorkflowOccurrenceRunDetail>;
 
 function WorkflowOccurrenceDeliveryItems({ detail }: Readonly<{ detail: OccurrenceDetail }>): React.ReactElement | null {
-    const { run, retryingReplyHandoff, redeliveringResult, handleRetryReplyHandoff, handleDeliverResultAgain } = detail;
+    const { run, currentDetail, retryingReplyHandoff, redeliveringResult, handleRetryReplyHandoff, handleDeliverResultAgain } = detail;
     if (run === null) return null;
     const unknownDate = t('automations.detail.unknownDate');
     // Retry exists only for a block an external change can still repair. When
@@ -735,6 +737,9 @@ function WorkflowOccurrenceDeliveryItems({ detail }: Readonly<{ detail: Occurren
     const replyHandoffUnrecoverable = run?.replyHandoffState === 'blocked'
         && 'replyHandoffRecoverable' in run
         && run.replyHandoffRecoverable === false;
+    const blockedCode = run.replyHandoffState === 'blocked'
+        ? currentDetail?.detail.events.findLast(event => event.type === AUTOMATION_REPLY_HANDOFF_BLOCKED_EVENT_TYPE)?.errorCode ?? null
+        : null;
     return <>
                             {replyHandoffUnrecoverable ? (
                                 <Item
@@ -747,9 +752,12 @@ function WorkflowOccurrenceDeliveryItems({ detail }: Readonly<{ detail: Occurren
                             ) : null}
                             {run.replyHandoffState !== 'none' ? (
                                 <Item
+                                    testID="automation-run-reply-handoff"
                                     title={t('automations.detail.runMeta.replyHandoffTitle')}
                                     detail={automationRunReplyHandoffStateLabels[run.replyHandoffState]()}
                                     subtitle={joinRunFactLines([
+                                        describeWorkflowReplyHandoffProblem(blockedCode),
+                                        blockedCode === null ? null : t('automations.detail.runMeta.error', { message: blockedCode }),
                                         run.replyHandoffAttempt > 0
                                             ? t('automations.detail.runMeta.replyHandoffAttempt', {
                                                 attempt: run.replyHandoffAttempt,

@@ -5,6 +5,7 @@ import { openAutomationConversationReplyContextStoredEnvelopeV1, openAutomationR
 import { sameAutomationAccountContentIdentityV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import type { AccountEncryptionCurrentnessResponse, AccountScopedCryptoMaterialSnapshotV1, AutomationAccountCurrentnessWitnessV1, AutomationConversationReplyContextCorrespondenceV1, AutomationReplyHandoffDispatchResultV1, AutomationReplyHandoffSettlementV1, AutomationRunResultCorrespondenceV1 } from '@happier-dev/protocol';
 import { openWorkflowFinalResultStoredEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import { projectWorkflowFinalResultDeliverableTextV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { resolveWorkflowRunDataKeyV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
 import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import type { WorkflowRunRecipientCensusResponseV1 } from '@happier-dev/protocol/workflows';
@@ -97,7 +98,7 @@ function projectSettlement(
         case 'retired': return { kind: 'accepted' };
         case 'suppressed': return { kind: 'suppressed' };
         case 'retry': return { kind: 'retry', retryAfterMs: result.retryAfterMs };
-        case 'blocked': return { kind: 'blocked' };
+        case 'blocked': return { kind: 'blocked', code: result.code };
     }
 }
 
@@ -249,9 +250,10 @@ export function registerAutomationReplyHandoffRpcHandler(
                     envelope: request.handoff.resultEnvelope,
                 });
                 if (opened.kind !== 'available') return { kind: 'unavailable' as const, causeCode: opened.kind };
-                return opened.content.result.kind === 'text'
-                    ? { kind: 'available' as const, result: { v: 1 as const, kind: 'text' as const, text: opened.content.result.value } }
-                    : { kind: 'unavailable' as const, causeCode: 'contractInvalid' };
+                const text = projectWorkflowFinalResultDeliverableTextV1(opened.content);
+                return text === null
+                    ? { kind: 'unavailable' as const, causeCode: 'contractInvalid' }
+                    : { kind: 'available' as const, result: { v: 1 as const, kind: 'text' as const, text } };
             })()
             : (() => {
                 const opened = openAutomationRunResultStoredEnvelopeV1({
@@ -307,15 +309,14 @@ export function registerAutomationReplyHandoffRpcHandler(
                     accountCurrentness: encryptionAfterOpenFailure.witness,
                 });
             }
-            if (resultContent.kind !== 'available') {
-                reportFailure('resultOpen', { code: resultContent.causeCode });
-            } else if (contextContent.kind !== 'available') {
-                reportFailure('replyContextOpen', { code: contextContent.kind });
-            } else {
-                reportFailure('replyContextCorrespondence', { code: 'targetMismatch' });
-            }
+            const failure = resultContent.kind !== 'available'
+                ? { phase: 'resultOpen', code: resultContent.causeCode }
+                : contextContent.kind !== 'available'
+                    ? { phase: 'replyContextOpen', code: contextContent.kind }
+                    : { phase: 'replyContextCorrespondence', code: 'targetMismatch' as const };
+            reportFailure(failure.phase, { code: failure.code });
             return settled({
-                settlement: { kind: 'blocked' },
+                settlement: { kind: 'blocked', code: failure.code },
                 accountCurrentness: encryptionAfterOpenFailure.witness,
             });
         }
@@ -439,9 +440,8 @@ export function registerAutomationReplyHandoffRpcHandler(
                 });
             }
 
-            // Custody ids, suppression reasons and provider detail stay with
-            // the Channels Action that produced them. The server only needs
-            // the coarse settlement plus the post-effect Account witness.
+            // The settlement carries the public refusal code and Account
+            // witness. The invoked Action retains its private custody details.
             if (actionResult.data.kind === 'blocked') {
                 reportFailure('resultDelivery', { code: actionResult.data.code });
             }

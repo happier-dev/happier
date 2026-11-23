@@ -692,6 +692,19 @@ describe('canonical Run page occurrence target', () => {
         expect(storage.getState().workflowRunsById[workflowRunStoreKey(row.id)].automation?.replyHandoffState).toBe('ready');
     });
 
+    it('shows the reply refusal on the existing handoff row without changing the Run result', async () => {
+        const screen = await respond(run({ state: 'succeeded', replyHandoffState: 'blocked', replyHandoffAttempt: 1 }), {
+            events: [
+                { at: 10, type: 'reply_handoff_blocked', machineId: null, errorCode: 'targetMismatch', executionAttempt: null, outcome: null, reason: null },
+                { at: 11, type: 'reply_handoff_blocked', machineId: null, errorCode: 'actionUnavailable', executionAttempt: null, outcome: null, reason: null },
+            ],
+        });
+        const row = screen.findByProps({ testID: 'automation-run-reply-handoff' });
+        expect(row.props.subtitle).toContain('pluginRuntime.actionUnavailable');
+        expect(row.props.subtitle).toContain('Error: actionUnavailable');
+        expect(row.props.subtitle).not.toContain('targetMismatch');
+    });
+
     it('does not offer recovery that the server cannot dispatch', async () => {
         const screen = await respond(run({ state: 'succeeded', replyHandoffState: 'blocked' }), { replyHandoffRecoverable: false });
         expect(screen.findAllByProps({ testID: 'automation-run-retry-reply-handoff' })).toHaveLength(0);

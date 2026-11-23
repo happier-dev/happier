@@ -2,6 +2,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 
 import type { AutomationReplyHandoffDispatchRequestV1 } from "@happier-dev/protocol";
 
+import { toAutomationRunV3DetailApiDto } from "./automationApiProjection";
+import { getAutomationRun } from "./automationCrudService";
 import { db } from "@/storage/db";
 import { createDatabaseIntegrationHarness } from "@/testkit/databaseIntegrationHarness";
 import { observePrismaRequests } from "@/testkit/observeSqliteRequests";
@@ -480,6 +482,15 @@ describe("Automation reply handoff worker", () => {
             where: { id: RUN_ID },
             select: { replyHandoffState: true, replyHandoffDueAt: true },
         })).resolves.toEqual({ replyHandoffState: "blocked", replyHandoffDueAt: null });
+        const run = await getAutomationRun({ accountId: ACCOUNT_ID, automationId: AUTOMATION_ID, runId: RUN_ID });
+        expect(run).not.toBeNull();
+        expect(toAutomationRunV3DetailApiDto(run!, "plain")).toMatchObject({
+            state: "succeeded",
+            replyHandoffState: "blocked",
+            events: expect.arrayContaining([
+                expect.objectContaining({ type: "reply_handoff_blocked", errorCode: "actionUnavailable" }),
+            ]),
+        });
     });
 
     it("blocks a stable pre-effect invalid dispatch request instead of retrying immutable claim bytes", async () => {

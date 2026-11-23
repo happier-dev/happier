@@ -1,6 +1,17 @@
+import { createAutomationReplyHandoffDaemonDispatcher } from "@/app/api/socket/automationReplyHandoffDispatcher";
+import { readWorkflowRunRecipientCensusInTx } from "@/app/workflows/workflowRunAccess";
+import { inTx } from "@/storage/inTx";
+import { sealWorkflowFinalResultStoredEnvelopeV1 } from "@happier-dev/protocol/workflows/workflowStoredContentV1";
 import { createHash, randomUUID } from "node:crypto";
+import { once } from "node:events";
+import { createServer } from "node:http";
+import { Server, type Socket } from "socket.io";
+import { io as connect } from "socket.io-client";
+import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from "@happier-dev/protocol/socketRpc";
+import { buildRpcMethodRoom } from "@/app/api/socket/rpc/rpcMethodRoom";
+import { registerSocketRoomDiscovery } from "@/app/api/socket/socketRoomDiscovery";
 
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import tweetnacl from "tweetnacl";
 import { PluginMachineExecutionRoutingV1Schema } from "@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1";
 
@@ -2458,7 +2469,7 @@ describe("Channels first-party provider Automation Event composition", () => {
         }
     }, 120_000);
 
-    it("rejoins the same Conversation handoff after repeated lost custody responses without redispatching an unknown provider outcome", async () => {
+    it.each(["legacy", "workflow-v2"] as const)("rejoins %s Conversation custody after lost responses without a second send", async (recipeKind) => {
         const scenario = await loadScenario("telegram");
         const keyPair = await seedComposedProviderFixture(scenario);
         await seedChannelsCoreReleaseFixture();
@@ -2639,6 +2650,28 @@ describe("Channels first-party provider Automation Event composition", () => {
             select: { replyHandoffState: true },
         })).resolves.toMatchObject({ replyHandoffState: "ready" });
 
+        const replyText = "Response-loss custody reply";
+        if (recipeKind === "workflow-v2") {
+            // Use the persisted final-result shape emitted when an Action's
+            // selected JSON field is a string.
+            await db.automationRun.update({
+                where: { id: conversationRunIdResolved },
+                data: {
+                    workflowCustodyState: "settled",
+                    resultEnvelope: JSON.stringify(sealWorkflowFinalResultStoredEnvelopeV1({
+                        mode: "plain",
+                        binding: { v: 1, purpose: "final_result", accountId: ACCOUNT_ID, runId: conversationRunIdResolved },
+                        finalResult: {
+                            kind: "happier.workflow-final-result.v1",
+                            result: { kind: "json", value: replyText },
+                            producerInvocation: { recordId: "read-fixture" },
+                        },
+                    })),
+                    resultEnvelopeBytes: null,
+                },
+            });
+        }
+
         const custodyModules = await Promise.all([
             import(/* @vite-ignore */ new URL(
                 "../../../../cli/src/rpc/handlers/automationReplyHandoff.ts",
@@ -2683,6 +2716,10 @@ describe("Channels first-party provider Automation Event composition", () => {
                 resolveInstallationId: async () => MACHINE_INSTALLATION_ID,
                 resolveAccountEncryptionCurrentness: readComposedAccountCurrentness,
                 resolveAccountEncryptionMaterial: async () => null,
+                workflowRunStorage: {
+                    execute: async ({ runId }: { runId: string }) => inTx(tx =>
+                        readWorkflowRunRecipientCensusInTx(tx, { actorAccountId: ACCOUNT_ID, runId })),
+                },
                 acquireRuntimeLease: acquireComposedChannelsRuntimeLease,
                 executeContributedAction: async (invocation: Readonly<{
                     input: unknown;
@@ -2710,33 +2747,54 @@ describe("Channels first-party provider Automation Event composition", () => {
         const dispatchHandler = handlers.get(AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1);
         if (dispatchHandler === undefined) throw new Error("composed handoff receiver was not registered");
 
-        // Real daemon/Channels custody admission completes before the transport
-        // loses two answers. Only that RPC boundary is replaced here.
+        const http = createServer();
+        const io = new Server(http, { transports: ["websocket"], serveClient: false });
+        registerSocketRoomDiscovery(io);
+        onTestFinished(async () => { await io.close(); });
+        http.listen(0, "127.0.0.1");
+        await once(http, "listening");
+        const address = http.address();
+        if (!address || typeof address === "string") throw new Error("Missing handoff socket listener");
+
+        const accepted = once(io, "connection");
+        const daemon = connect(`http://127.0.0.1:${address.port}`, {
+            transports: ["websocket"], reconnection: false, forceNew: true,
+        });
+        onTestFinished(() => { daemon.disconnect(); });
+        await once(daemon, "connect");
+        const [target] = await accepted as [Socket];
+        target.data = { userId: ACCOUNT_ID, clientType: "machine-scoped", machineId: MACHINE_ID };
+        const method = `${MACHINE_ID}:${AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1}`;
+        await target.join(buildRpcMethodRoom({ userId: ACCOUNT_ID, method }));
+
         let dispatchCalls = 0;
-        const dispatch = async (request: unknown) => {
+        let daemonSettlement: unknown;
+        let daemonDiagnostics: unknown;
+        const loseResponses = recipeKind === "legacy" ? 2 : 0;
+        daemon.on(SOCKET_RPC_EVENTS.REQUEST, async (request: SocketRpcRequestPayload, ack: (response: unknown) => void) => {
             dispatchCalls += 1;
-            const result = await dispatchHandler(request, {
+            const context = {
                 signal: new AbortController().signal,
-            }) as AutomationReplyHandoffDispatchResultV1;
-            if (dispatchCalls <= 2) {
-                expect(result).toMatchObject({ kind: "settled", settlement: { kind: "accepted" } });
-                return { kind: "unavailable", code: "contractInvalid" } as const;
-            }
-            return result;
-        };
+                reportOperationDiagnostics: (diagnostic: unknown) => { daemonDiagnostics = diagnostic; },
+            };
+            daemonSettlement = await dispatchHandler(request.params, context);
+            ack(dispatchCalls <= loseResponses ? null : daemonSettlement);
+        });
+        const dispatch = createAutomationReplyHandoffDaemonDispatcher({ io });
         const firstPass = await runAutomationReplyHandoffWorkerPass({
             now: () => new Date(),
             dispatch,
         });
         expect(firstPass).toMatchObject({ claimed: true, settled: true });
         expect(dispatchCalls).toBe(1);
+        expect(daemonSettlement, JSON.stringify(daemonDiagnostics)).toMatchObject({ kind: "settled", settlement: { kind: "accepted" } });
         // The custody row is durable even though its settlement never arrived.
         const custodyAfterLoss = [...deliveries.rows.values()].filter((row) => row.deleted !== true);
         expect(custodyAfterLoss).toHaveLength(1);
         await expect(db.automationRun.findUniqueOrThrow({
             where: { id: conversationRunIdResolved },
             select: { replyHandoffState: true, replyHandoffAttempt: true },
-        })).resolves.toMatchObject({ replyHandoffState: "ready", replyHandoffAttempt: 1 });
+        })).resolves.toMatchObject({ replyHandoffState: loseResponses ? "ready" : "accepted", replyHandoffAttempt: 1 });
 
         const outward = await import(/* @vite-ignore */ new URL(
             "../../../../../packages/plugins/channels/src/outwardDelivery.ts",
@@ -2759,17 +2817,31 @@ describe("Channels first-party provider Automation Event composition", () => {
         if (original.obligation.content === null) throw new Error("Ready custody lost its content");
         const obligation = { ...original.obligation, content: original.obligation.content };
         let providerCalls = 0;
-        const deliver = async () => {
+        const providerState = recipeKind === "legacy" ? "outcomeUnknown" : "delivered";
+        const deliver: Parameters<typeof outward.deliverConversationOutwardDelivery>[0]["deliver"] = async ({ obligation }) => {
             providerCalls += 1;
-            return { kind: "outcomeUnknown" } as const;
+            expect(obligation).toMatchObject({
+                endpoint: scenario.endpoint,
+                content: { text: replyText },
+                replyContext: { replyToMessageId: "9" },
+            });
+            return { kind: providerState, providerMessageIds: ["10"] } as const;
         };
         const delivery = { store, obligation, signal, deliver,
             now: Date.now,
             authority: outward.createConversationOutwardDeliveryCollectionAuthority({ stateCollection }) };
         expect(await outward.deliverConversationOutwardDelivery({ ...delivery,
             retainedRecord: original, attemptId: "provider-unknown" }))
-            .toMatchObject({ kind: "settled", custody: { state: "outcomeUnknown" } });
+            .toMatchObject({ kind: "settled", custody: { state: providerState } });
         expect(providerCalls).toBe(1);
+
+        if (!loseResponses) {
+            expect(await runAutomationReplyHandoffWorkerPass({
+                now: () => new Date(Date.now() + 60_000), dispatch,
+            })).toEqual({ claimed: false, settled: false });
+            expect(dispatchCalls).toBe(1);
+            return;
+        }
 
         // The retry re-leases the SAME handoff id; the deterministic custody
         // writer rejoins the existing row instead of creating a second one.
@@ -2801,7 +2873,7 @@ describe("Channels first-party provider Automation Event composition", () => {
         expect(rejoinedCustody).toHaveLength(1);
         expect(rejoinedCustody[0]!.rowId).toBe(custodyAfterLoss[0]!.rowId);
         expect((rejoinedCustody[0]!.value.payload as JsonRecord)).toMatchObject({
-            state: "outcomeUnknown",
+            state: providerState,
             deliveryKey: `automation:${handoffId}`,
             source: {
                 kind: "automationResult",
@@ -2814,7 +2886,7 @@ describe("Channels first-party provider Automation Event composition", () => {
         if (retained.kind !== "rejoined") throw new Error("Missing retained Channels custody");
         expect(await outward.deliverConversationOutwardDelivery({ ...delivery,
             retainedRecord: retained.record, attemptId: "must-not-redeliver" }))
-            .toMatchObject({ kind: "settled", custody: { state: "outcomeUnknown" } });
+            .toMatchObject({ kind: "settled", custody: { state: providerState } });
         expect(providerCalls).toBe(1);
     }, 120_000);
 });

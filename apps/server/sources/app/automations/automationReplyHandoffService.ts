@@ -1,6 +1,6 @@
 import { decodeStoredText } from '@/storage/storedContent';
 import { AutomationAccountCurrentnessWitnessV1Schema, sameAutomationAccountContentIdentityV1, type AutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
-import { AutomationReplyHandoffSettlementV1Schema, type AutomationReplyHandoffSettlementV1 } from '@happier-dev/protocol/automations/event';
+import { AUTOMATION_REPLY_HANDOFF_BLOCKED_EVENT_TYPE, AutomationReplyHandoffSettlementV1Schema, type AutomationReplyHandoffBlockedCodeV1, type AutomationReplyHandoffSettlementV1 } from '@happier-dev/protocol/automations/event';
 import { nextAutomationReplyHandoffIdForRunV1 } from '@happier-dev/protocol/automations/automationReplyHandoffIdentityV1';
 import { type AutomationRunCause } from '@happier-dev/protocol/automations/run-cause';
 import type { Prisma } from "@prisma/client";
@@ -404,9 +404,23 @@ export async function settleAutomationReplyHandoffsForRevokedMachineTx(params: R
             run
             && (run.replyHandoffState === "suppressed" || run.replyHandoffState === "blocked")
         ) {
+            if (run.replyHandoffState === "blocked") {
+                await recordBlockedHandoffTx(params.tx, run.id, now, "targetUnavailable");
+            }
             await publishAutomationRunMutationTx(params.tx, run);
         }
     }
+}
+
+async function recordBlockedHandoffTx(
+    tx: Tx,
+    runId: string,
+    now: Date,
+    errorCode: AutomationReplyHandoffBlockedCodeV1,
+): Promise<void> {
+    await tx.automationRunEvent.create({
+        data: { runId, ts: now, type: AUTOMATION_REPLY_HANDOFF_BLOCKED_EVENT_TYPE, payload: { errorCode } },
+    });
 }
 
 async function blockInvalidCandidateTx(
@@ -424,6 +438,7 @@ async function blockInvalidCandidateTx(
         },
     });
     if (blocked.count !== 1) return;
+    await recordBlockedHandoffTx(tx, candidate.id, now, "immutableHandoffInvalid");
 
     const run = await fetchAutomationRunItemTx(tx, candidate.id);
     if (run) await publishAutomationRunMutationTx(tx, run);
@@ -873,6 +888,9 @@ export async function settleAutomationReplyHandoff(params: Readonly<{
             });
         }
 
+        if (outcome.data.kind === "blocked" && outcome.data.code !== undefined) {
+            await recordBlockedHandoffTx(tx, candidate.id, params.now, outcome.data.code);
+        }
         const run = await fetchAutomationRunItemTx(tx, candidate.id);
         if (!run) return { applied: false };
         await publishAutomationRunMutationTx(tx, run);

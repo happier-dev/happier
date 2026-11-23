@@ -140,6 +140,7 @@ import {
   AutomationConversationScopedTriggerRefV1Schema,
   AutomationNonnegativeSafeIntegerV1Schema as NONNEGATIVE_SAFE_INTEGER_SCHEMA,
   AutomationResultDeliveryActionRefV1Schema,
+  AutomationResultDeliveryBlockedCodeV1Schema,
   AutomationResultDeliveryInputV1JsonSchema,
   AutomationResultDeliveryInputV1Schema,
   AutomationResultDeliveryResultV1JsonSchema,
@@ -1267,12 +1268,22 @@ export type AutomationReplyHandoffDispatchRequestV1 = z.infer<
   typeof AutomationReplyHandoffDispatchRequestV1Schema
 >;
 
-/**
- * The only settlement detail the ciphertext-blind server can act on. Action
- * custody ids, suppression reasons, block codes, and provider detail never
- * leave the target daemon: Channels owns that custody record, and the server
- * settles the frozen handoff from this typed projection alone.
- */
+/** An existing Run history event, emitted only when the handoff becomes blocked. */
+export const AUTOMATION_REPLY_HANDOFF_BLOCKED_EVENT_TYPE = 'reply_handoff_blocked';
+
+export const AutomationReplyHandoffBlockedCodeV1Schema = lazyZodSchema(() => z.union([
+  AutomationResultDeliveryBlockedCodeV1Schema,
+  z.enum([
+    'invalidRequest', 'targetMismatch', 'actionUnavailable', 'contractInvalid',
+    'immutableHandoffInvalid', 'targetUnavailable',
+    'history_not_readable', 'encryption_setup_required', 'waiting_for_keys',
+    'materialUnavailable', 'payloadInvalid', 'contentInvalid', 'modeMismatch',
+    'bindingMismatch', 'legacyUnsupported',
+  ]),
+]));
+export type AutomationReplyHandoffBlockedCodeV1 = z.infer<typeof AutomationReplyHandoffBlockedCodeV1Schema>;
+
+/** Content-free settlement, including the bounded code for a definite refusal. */
 export const AutomationReplyHandoffSettlementV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('accepted') }),
   z.strictObject({ kind: z.literal('suppressed') }),
@@ -1282,7 +1293,11 @@ export const AutomationReplyHandoffSettlementV1Schema = lazyZodSchema(() => z.di
     kind: z.literal('retry'),
     retryAfterMs: NONNEGATIVE_SAFE_INTEGER_SCHEMA.check(zMini.maximum(MAX_AUTOMATION_SOURCE_RETRY_AFTER_MS)),
   }),
-  z.strictObject({ kind: z.literal('blocked') }),
+  z.strictObject({
+    kind: z.literal('blocked'),
+    // Earlier development daemons send only the settlement kind.
+    code: z.optional(AutomationReplyHandoffBlockedCodeV1Schema),
+  }),
 ]));
 export type AutomationReplyHandoffSettlementV1 = z.infer<
   typeof AutomationReplyHandoffSettlementV1Schema

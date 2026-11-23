@@ -248,6 +248,9 @@ export const AutomationResultDeliveryInputV1Schema = lazyZodSchema(() => z.stric
 }));
 export type AutomationResultDeliveryInputV1 = z.infer<typeof AutomationResultDeliveryInputV1Schema>;
 
+const AUTOMATION_RESULT_DELIVERY_BLOCKED_CODES = ['contractIncompatible', 'invalidCustodyRequest', 'unauthorizedCaller'] as const;
+export const AutomationResultDeliveryBlockedCodeV1Schema = lazyZodSchema(() => z.enum(AUTOMATION_RESULT_DELIVERY_BLOCKED_CODES));
+
 export const AutomationResultDeliveryResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('accepted'), custodyId: asProtocolZod(AutomationIdV1Schema) }),
   z.strictObject({ kind: z.literal('retired') }),
@@ -257,7 +260,7 @@ export const AutomationResultDeliveryResultV1Schema = lazyZodSchema(() => z.disc
     retryAfterMs: AutomationNonnegativeSafeIntegerV1Schema.check(z.maximum(MAX_AUTOMATION_SOURCE_RETRY_AFTER_MS)),
     code: z.enum(['temporarilyUnavailable', 'outcomeUnknown']),
   }),
-  z.strictObject({ kind: z.literal('blocked'), code: z.enum(['contractIncompatible', 'invalidCustodyRequest', 'unauthorizedCaller']) }),
+  z.strictObject({ kind: z.literal('blocked'), code: AutomationResultDeliveryBlockedCodeV1Schema }),
 ]));
 export type AutomationResultDeliveryResultV1 = z.infer<typeof AutomationResultDeliveryResultV1Schema>;
 
@@ -358,7 +361,7 @@ export const AutomationResultDeliveryResultV1JsonSchema: PluginJsonSchemaV2 = {
       additionalProperties: false,
       properties: {
         kind: { type: 'string', const: 'blocked' },
-        code: { type: 'string', enum: ['contractIncompatible', 'invalidCustodyRequest', 'unauthorizedCaller'] },
+        code: { type: 'string', enum: [...AUTOMATION_RESULT_DELIVERY_BLOCKED_CODES] },
       },
       required: ['kind', 'code'],
     },

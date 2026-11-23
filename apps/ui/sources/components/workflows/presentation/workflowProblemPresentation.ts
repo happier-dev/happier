@@ -1,3 +1,4 @@
+import { AutomationReplyHandoffBlockedCodeV1Schema } from '@happier-dev/protocol/automations/event';
 import type {
     WorkflowOperationErrorCodeV1,
     WorkflowTargetUnavailableReasonV1,
@@ -373,4 +374,38 @@ export function resolveWorkflowsUnavailablePresentation(): WorkflowProblemPresen
         repairLabel: null,
         accessibilitySemantics: 'status',
     };
+}
+
+/** Present the closed reply refusal without reclassifying its recovery eligibility. */
+export function describeWorkflowReplyHandoffProblem(code: string | null): string | null {
+    const refusal = AutomationReplyHandoffBlockedCodeV1Schema.safeParse(code);
+    if (!refusal.success) return null;
+    switch (refusal.data) {
+        case 'history_not_readable':
+        case 'encryption_setup_required':
+        case 'waiting_for_keys':
+            return describeWorkflowOperationProblem(refusal.data).message;
+        case 'actionUnavailable':
+            return t('pluginRuntime.actionUnavailable');
+        case 'targetMismatch':
+            return t('pluginRuntime.actionStale');
+        case 'targetUnavailable':
+            return describeWorkflowOperationProblem('target_unavailable').message;
+        case 'invalidRequest':
+        case 'invalidCustodyRequest':
+            return t('pluginRuntime.invalidParameters');
+        case 'unauthorizedCaller':
+            return t('session.startFailure.cause.permission_denied');
+        case 'contractIncompatible':
+        case 'contractInvalid':
+            return t('automations.detail.runMeta.replyHandoffUnrecoverableTitle');
+        case 'immutableHandoffInvalid':
+        case 'materialUnavailable':
+        case 'payloadInvalid':
+        case 'contentInvalid':
+        case 'modeMismatch':
+        case 'bindingMismatch':
+        case 'legacyUnsupported':
+            return t('workflows.contentUnavailable');
+    }
 }

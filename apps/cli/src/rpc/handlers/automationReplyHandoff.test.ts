@@ -659,7 +659,7 @@ describe('registerAutomationReplyHandoffRpcHandler', () => {
       });
       await expect(handler(testCase.request)).resolves.toEqual({
         kind: 'settled',
-        settlement: { kind: 'blocked' },
+        settlement: { kind: 'blocked', code: expect.any(String) },
         accountCurrentness: {
           mode: testCase.currentnessSequence[0]!.mode,
           version: testCase.currentnessSequence[0]!.version,
@@ -721,7 +721,7 @@ describe('registerAutomationReplyHandoffRpcHandler', () => {
       },
     }, { signal: new AbortController().signal, reportOperationDiagnostics })).resolves.toEqual({
       kind: 'settled',
-      settlement: { kind: 'blocked' },
+      settlement: { kind: 'blocked', code: 'targetMismatch' },
       accountCurrentness: { mode: 'plain', version: 7, contentKeyFingerprint: null },
     });
     expect(executeContributedAction).not.toHaveBeenCalled();
@@ -874,7 +874,7 @@ describe('registerAutomationReplyHandoffRpcHandler', () => {
 
     await expect(handler(request, { signal: new AbortController().signal, reportOperationDiagnostics })).resolves.toEqual({
       kind: 'settled',
-      settlement: { kind: 'blocked' },
+      settlement: { kind: 'blocked', code: 'invalidCustodyRequest' },
       accountCurrentness: { mode: 'plain', version: 7, contentKeyFingerprint: null },
     });
     expect(reportOperationDiagnostics).toHaveBeenCalledWith({

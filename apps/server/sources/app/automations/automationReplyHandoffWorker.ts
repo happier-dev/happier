@@ -143,7 +143,7 @@ export async function runAutomationReplyHandoffWorkerPass(params: Readonly<{
         const settlement = await settleAutomationReplyHandoff({
             claim,
             now: params.now(),
-            outcome: { kind: "blocked" },
+            outcome: { kind: "blocked", code: "invalidRequest" },
         });
         return { claimed: true, settled: settlement.applied };
     }
@@ -181,7 +181,7 @@ export async function runAutomationReplyHandoffWorkerPass(params: Readonly<{
                     // Rejoin the same custody; the settlement owner retains
                     // its existing lease boundary without a guessed cadence.
                     ? { kind: "retry" }
-                    : { kind: "blocked" },
+                    : { kind: "blocked", code: result.data.code },
         })
         : await settleAutomationReplyHandoff({
             claim,
