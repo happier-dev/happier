@@ -259,6 +259,27 @@ it('names unselected Events Sessions in one display batch and deduplicates repea
   });
   expect(batches).toEqual([sessionIds]);
   expect(exactReads).toEqual([]);
+
+  const title = 'Named after the first turn';
+  sessions[0] = createPlainSessionWithDisplayRecordFixture({
+    id: sessionIds[0], metadataVersion: sessions[0]!.metadataVersion + 1,
+    metadata: { path: '/repo', host: 'fixture', flavor: 'claude', name: title },
+  });
+  const { sync } = await import('@/sync/sync');
+  await act(async () => {
+    await sync.consumeSessionRealtimeUpdateForHome({
+      serverId: lifetime.scope.serverId, credentials: connection!.credentials,
+      encryption: null, isCurrent: () => lifetime.isCurrent(),
+      update: { id: 'title-push', seq: 42, createdAt: now + 1,
+        body: { t: 'update-session', id: sessions[0]!.id, metadataDocument: 'omitted',
+          metadataVersion: sessions[0]!.metadataVersion, metadataLayoutVersion: sessions[0]!.metadataLayoutVersion } },
+    });
+  });
+  await vi.waitFor(() => expect(screen.getTextContent().split(title)).toHaveLength(3));
+  expect(screen.getTextContent()).not.toContain('Inspected worktree 0');
+  expect(screen.getTextContent()).toContain('Inspected worktree 1');
+  expect(batches).toEqual([sessionIds, [sessionIds[0]]]);
+  expect(exactReads).toEqual([]);
 });
 
 it('keeps one checked subject when moving between Session, Machine and Project rows', async () => {

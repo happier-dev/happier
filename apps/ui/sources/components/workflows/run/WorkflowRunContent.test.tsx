@@ -3627,6 +3627,39 @@ describe('WorkflowRunContent', () => {
     await rendered.unmount();
   });
 
+  it.each([1440, 390])('gives a private Workflow content failure a readable reason at width %i', async (width) => {
+    viewport.window = { width, height: 900 };
+    const invocation = createWorkflowInvocationIndexFixture({ id: 'failed', lifecycle: 'failed' });
+    const nativeMessage = 'workflow_definition_content_unavailable';
+    const progress = WorkflowProgressEnvelopeV1Schema.parse({
+      kind: 'happier.workflow-progress.v1',
+      invocationPath: { blockId: 'analyze', scope: [] },
+      blockKind: 'step',
+      attempt: '0',
+      logicalInvocationRecordId: invocation.id,
+      reason: { code: 'content_unavailable', message: nativeMessage },
+    });
+    const desktop = width === 1440;
+    const screen = await renderContent({
+      run: createWorkflowRunSummaryFixture({ state: 'failed' }),
+      invocations: [invocation],
+      selectedInvocationId: desktop ? invocation.id : null,
+      selectedInvocationProgress: desktop ? progress : undefined,
+      invocationProgressById: new Map([[invocation.id, progress]]),
+      firstFailedInvocationId: invocation.id,
+      firstFailedInvocationResolution: 'resolved',
+    });
+    try {
+      const reason = desktop
+        ? screen.findAllByType(Item).find(item => item.props.testID === 'workflow-run-recovery-cause')?.props.title
+        : screen.findByTestId('workflow-run-failure-reason')?.props.children;
+      expect.soft(reason).toContain('workflows.contentUnavailable');
+      expect(screen.getTextContent()).not.toContain(nativeMessage);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it("keeps a failed step's cause in its open card, its code under Technical details, and completed steps quiet", async () => {
     const recordedStorageMessage = 'The Run store could not be written.';
     const retryFreshAgent = vi.fn();

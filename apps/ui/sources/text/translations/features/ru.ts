@@ -20429,6 +20429,12 @@ const ru: WorkflowTriggersCopy = {
         chooseAction: "Выберите действие",
         noActions: "Здесь нет действий, которые могут запустить процесс",
         actionsLoading: "Загрузка действий…",
+        sessionScope: {
+            any: { title: "Любой сеанс", description: "Все сеансы на личной главной странице" },
+            session: { title: "Этот сеанс", description: "Сеанс, который вы привязываете через «Продолжить»" },
+            project: { title: "Любой сеанс в проекте", description: "Все сеансы в выбранном проекте" },
+            machine: { title: "Любой сеанс на машине", description: "Все сеансы на выбранной машине" },
+        },
         subjectKinds: {
             session: { label: "Сессия", this: "Эта сессия", any: "Любая сессия" },
             project: { label: "Проект", this: "Этот проект", any: "Любой проект" },

@@ -20279,6 +20279,12 @@ const zhHans: WorkflowTriggersCopy = {
         chooseAction: "选择操作",
         noActions: "这里没有可启动工作流的操作",
         actionsLoading: "正在加载操作…",
+        sessionScope: {
+            any: { title: "任意会话", description: "个人主页上的所有会话" },
+            session: { title: "此会话", description: "通过会话的“继续”控件关联的会话" },
+            project: { title: "某个项目中的任意会话", description: "所选项目中的所有会话" },
+            machine: { title: "某台机器上的任意会话", description: "所选机器上的所有会话" },
+        },
         subjectKinds: {
             session: { label: "会话", this: "此会话", any: "任意会话" },
             project: { label: "项目", this: "此项目", any: "任意项目" },

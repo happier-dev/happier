@@ -108,6 +108,27 @@ describe('Action trigger catalog read presentation', () => {
         } finally { await screen.unmount(); }
     });
 
+    it('explains each Session scope in the mounted trigger menu', async () => {
+        const screen = await renderScreen(<WorkflowTriggerBlock testID="habit" title="Habit"
+            when={{ kind: 'turnEnds', subject: { kind: 'session', serverId, sessionId: 'source-session' } }}
+            enabled incomplete={false} startOptions={[]} onSelectStart={() => {}} onChangeWhen={() => {}}
+            onRemove={() => {}} machineId={null} serverId={serverId} />);
+        try {
+            const scope = screen.findAllByType(ValueFieldSelect).find(node => node.props.testID === 'habit-session');
+            expect(scope?.props.selectedId).toBe('scope-session');
+            expect(scope?.props.items).toEqual([
+                expect.objectContaining({ id: 'any-session', title: 'workflows.triggers.card.sessionScope.any.title',
+                    subtitle: 'workflows.triggers.card.sessionScope.any.description', icon: expect.anything() }),
+                expect.objectContaining({ id: 'scope-session', title: 'workflows.triggers.card.sessionScope.session.title',
+                    subtitle: 'workflows.triggers.card.sessionScope.session.description', icon: expect.anything() }),
+                expect.objectContaining({ id: 'scope-project', title: 'workflows.triggers.card.sessionScope.project.title',
+                    subtitle: 'workflows.triggers.card.sessionScope.project.description', icon: expect.anything() }),
+                expect.objectContaining({ id: 'scope-machine', title: 'workflows.triggers.card.sessionScope.machine.title',
+                    subtitle: 'workflows.triggers.card.sessionScope.machine.description', icon: expect.anything() }),
+            ]);
+        } finally { await screen.unmount(); }
+    });
+
     it('authors an all-Session changed-files habit through the shared lifecycle filter controls', async () => {
         const changes: import('./sessionTriggerForm').TriggerWhenValue[] = [];
         let restoreFilter = () => {};

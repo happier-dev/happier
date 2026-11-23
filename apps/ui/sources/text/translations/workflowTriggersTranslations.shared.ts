@@ -443,6 +443,12 @@ export const en = {
         chooseAction: "Choose an Action",
         noActions: "No Actions here can start a workflow",
         actionsLoading: "Loading Actions…",
+        sessionScope: {
+            any: { title: "Any session", description: "Every session on Personal Home" },
+            session: { title: "This session", description: "The one you attach it to, from its Keep going control" },
+            project: { title: "Any in a project", description: "Every session in the project you choose" },
+            machine: { title: "Any on a machine", description: "Every session on the Machine you choose" },
+        },
         subjectKinds: {
             session: { label: "Session", this: "This session", any: "Any session" },
             project: { label: "Project", this: "This project", any: "Any project" },

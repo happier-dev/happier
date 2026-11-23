@@ -33,6 +33,8 @@ export const ValueFieldSelect = React.memo(function ValueFieldSelect(props: Read
     label: string;
     items: ReadonlyArray<ValueFieldSelectItem>;
     selectedId: string | null;
+    /** The selected value's name when a menu row represents a category of values. */
+    selectedLabel?: string;
     /** `selection` carries where the choice was made, for what opens from it (the Connect sheet). */
     onSelect: (id: string, selection?: DropdownMenuSelection) => void;
     disabled?: boolean;
@@ -78,7 +80,7 @@ export const ValueFieldSelect = React.memo(function ValueFieldSelect(props: Read
     })), [props.items, props.selectedId, props.testID]);
     const selected = props.items.find((item) => item.id === props.selectedId)
         ?? (props.placeholder === undefined ? props.items[0] ?? null : null);
-    const selectedTitle = selected?.title ?? props.placeholder ?? '';
+    const selectedTitle = props.selectedLabel ?? selected?.title ?? props.placeholder ?? '';
     return (
         <DropdownMenu
             testID={props.testID}

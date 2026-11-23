@@ -992,12 +992,18 @@ function SessionEventTrackRows(
   const selectedId = browse === null
     ? when.subject ? `scope-${when.subject.kind}` : any
     : sourceSessionId ?? chosenKey;
+  const scopeMarks = {
+    session: 'chat-circle-dots', project: 'folder', machine: 'laptop', any: 'users',
+  } as const satisfies Record<AutomationSessionLifecycleSubjectV1['kind'] | 'any', React.ComponentProps<typeof Icon>['name']>;
+  const scopeItem = (kind: keyof typeof scopeMarks, id: string): ValueFieldSelectItem => ({
+    id,
+    title: t(`workflows.triggers.card.sessionScope.${kind}.title`),
+    subtitle: t(`workflows.triggers.card.sessionScope.${kind}.description`),
+    icon: <Icon name={scopeMarks[kind]} />,
+  });
   const items: ValueFieldSelectItem[] = browse === null ? [
-    { id: any, title: t('workflows.triggers.card.subjectKinds.session.any') },
-    ...AUTOMATION_SESSION_LIFECYCLE_SUBJECT_KINDS_V1.map(kind => ({
-      id: `scope-${kind}`, title: kind === when.subject?.kind
-        ? selectedTitle : t(`workflows.triggers.card.subjectKinds.${kind}.label`),
-    })),
+    scopeItem('any', any),
+    ...AUTOMATION_SESSION_LIFECYCLE_SUBJECT_KINDS_V1.map(kind => scopeItem(kind, `scope-${kind}`)),
   ] : [
     { id: back, title: t('common.back') },
     ...(browse === 'session'
@@ -1060,7 +1066,7 @@ function SessionEventTrackRows(
             label={t('workflows.triggers.card.source')}
             items={items}
             selectedId={selectedId}
-            placeholder={selectedTitle}
+            selectedLabel={selectedTitle}
             onOpenChange={open => { if (!open) setBrowse(null); }}
             keepsOpen={id => id === back || id === retry || id === WORKFLOW_SESSION_RETRY_ITEM_ID
               || AUTOMATION_SESSION_LIFECYCLE_SUBJECT_KINDS_V1.some(kind => id === `scope-${kind}`)}

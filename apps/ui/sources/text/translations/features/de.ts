@@ -19898,6 +19898,12 @@ const de: WorkflowTriggersCopy = {
         chooseAction: "Aktion wählen",
         noActions: "Keine Aktion hier kann einen Workflow starten",
         actionsLoading: "Aktionen werden geladen…",
+        sessionScope: {
+            any: { title: "Beliebige Sitzung", description: "Jede Sitzung im persönlichen Home" },
+            session: { title: "Diese Sitzung", description: "Die Sitzung, die du über „Weitermachen“ verknüpfst" },
+            project: { title: "Beliebige in einem Projekt", description: "Jede Sitzung im ausgewählten Projekt" },
+            machine: { title: "Beliebige auf einem Rechner", description: "Jede Sitzung auf dem ausgewählten Rechner" },
+        },
         subjectKinds: {
             session: { label: "Sitzung", this: "Diese Sitzung", any: "Jede Sitzung" },
             project: { label: "Projekt", this: "Dieses Projekt", any: "Jedes Projekt" },

@@ -16,6 +16,7 @@ import type { TranslationKeyNoParams } from '@/text/i18n';
 import { t } from '@/text';
 import { formatAutomationRunCauseLabel } from '@/components/automations/list/automationListFormatting';
 import { formatWorkflowConversationProblem } from '@/components/workflows/presentation/workflowProblemPresentation';
+import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import type { WorkflowInvocationStructureEntry } from './workflowInvocationStructure';
 import { findWorkflowBlock, findWorkflowBlockListRef, getWorkflowBlockList } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
@@ -341,7 +342,14 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
             // The recorded code says the Machine didn't answer; its known name says which one, offline or back since.
             ?? (params.machine !== undefined && isMachineUnreachableFailureCode(params.progress.reason.code)
                 ? t('workflows.recovery.machineUnreachable', { machine: params.machine.name }) : null)
-            ?? resolveActionExecutionErrorMessage({ code: params.progress.reason.code }, reportedMessage || params.progress.reason.code)
+            ?? (resolveActionExecutionErrorMessage({ code: params.progress.reason.code }, '')
+                || presentActionFailureOutcome({
+                    error: reportedMessage ?? undefined,
+                    errorCode: params.progress.reason.failureCause?.errorCode ?? params.progress.reason.code,
+                    failureCause: params.progress.reason.failureCause,
+                    details: params.progress.reason.details,
+                }, 'workflowCheck').reason
+                || reportedMessage || params.progress.reason.code)
         : null;
     const failureCause: WorkflowInvocationRecoveryPresentation['failureCause'] = failed && params.progress?.reason
         ? { kind: 'reported_failure', blockKind: params.progress.blockKind, code: params.progress.reason.code,

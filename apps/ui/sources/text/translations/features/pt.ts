@@ -20390,6 +20390,12 @@ const pt: WorkflowTriggersCopy = {
         chooseAction: "Escolha uma ação",
         noActions: "Nenhuma ação aqui pode iniciar um fluxo",
         actionsLoading: "Carregando ações…",
+        sessionScope: {
+            any: { title: "Qualquer sessão", description: "Todas as sessões no Início pessoal" },
+            session: { title: "Esta sessão", description: "A sessão que você vincula pelo controle “Continuar”" },
+            project: { title: "Qualquer uma em um projeto", description: "Todas as sessões do projeto escolhido" },
+            machine: { title: "Qualquer uma em uma máquina", description: "Todas as sessões da máquina escolhida" },
+        },
         subjectKinds: {
             session: { label: "Sessão", this: "Esta sessão", any: "Qualquer sessão" },
             project: { label: "Projeto", this: "Este projeto", any: "Qualquer projeto" },

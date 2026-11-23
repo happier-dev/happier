@@ -1694,7 +1694,8 @@ export async function handleUpdateContainer(params: {
         }) > 0;
         if (metadataObservationAdvances) {
             markSessionStateHydrationDeferred?.(updateData.body.id);
-            if (projection && isCacheOnlySessionHydrationAnchorActive(updateData.body.id, sourceServerId)) {
+            if (projection && (isSessionListRowVisible(updateData.body.id, sourceServerId)
+                || isCacheOnlySessionHydrationAnchorActive(updateData.body.id, sourceServerId))) {
                 hydrateSessionById?.(updateData.body.id, 'socket-update-owner-metadata');
             }
         }

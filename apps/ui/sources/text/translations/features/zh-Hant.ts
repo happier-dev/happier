@@ -20279,6 +20279,12 @@ const zhHant: WorkflowTriggersCopy = {
         chooseAction: "選擇動作",
         noActions: "這裡沒有可啟動工作流程的動作",
         actionsLoading: "正在載入動作…",
+        sessionScope: {
+            any: { title: "任意工作階段", description: "個人首頁上的所有工作階段" },
+            session: { title: "此工作階段", description: "透過工作階段的「繼續」控制項連結的工作階段" },
+            project: { title: "某個專案中的任意工作階段", description: "所選專案中的所有工作階段" },
+            machine: { title: "某台機器上的任意工作階段", description: "所選機器上的所有工作階段" },
+        },
         subjectKinds: {
             session: { label: "工作階段", this: "此工作階段", any: "任一工作階段" },
             project: { label: "專案", this: "此專案", any: "任一專案" },

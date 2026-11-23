@@ -20339,6 +20339,12 @@ const ja: WorkflowTriggersCopy = {
         chooseAction: "アクションを選択",
         noActions: "ここにはワークフローを開始できるアクションがありません",
         actionsLoading: "アクションを読み込み中…",
+        sessionScope: {
+            any: { title: "すべてのセッション", description: "パーソナルホームのすべてのセッション" },
+            session: { title: "このセッション", description: "「続ける」操作から関連付けたセッション" },
+            project: { title: "プロジェクト内のすべて", description: "選んだプロジェクトのすべてのセッション" },
+            machine: { title: "マシン上のすべて", description: "選んだマシンのすべてのセッション" },
+        },
         subjectKinds: {
             session: { label: "セッション", this: "このセッション", any: "すべてのセッション" },
             project: { label: "プロジェクト", this: "このプロジェクト", any: "すべてのプロジェクト" },

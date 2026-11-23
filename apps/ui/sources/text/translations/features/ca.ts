@@ -20418,6 +20418,12 @@ const ca: WorkflowTriggersCopy = {
         chooseAction: "Tria una acció",
         noActions: "Cap acció d’aquí pot iniciar un flux",
         actionsLoading: "Carregant accions…",
+        sessionScope: {
+            any: { title: "Qualsevol sessió", description: "Totes les sessions a la Llar personal" },
+            session: { title: "Aquesta sessió", description: "La que hi vincules des del seu control «Continua»" },
+            project: { title: "Qualsevol en un projecte", description: "Totes les sessions del projecte que triïs" },
+            machine: { title: "Qualsevol en una màquina", description: "Totes les sessions de la màquina que triïs" },
+        },
         subjectKinds: {
             session: { label: "Sessió", this: "Aquesta sessió", any: "Qualsevol sessió" },
             project: { label: "Projecte", this: "Aquest projecte", any: "Qualsevol projecte" },
