@@ -300,8 +300,10 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
                 </ItemList>
             </RetainedPanelSurface>
             <RetainedPanelSurface isActive={eventsShown} hiddenMode="activity" testID="workflows-column:events">
-                <WorkflowsColumnEventsRows feed={events.feed} scope={events.scope} filter={events.filter} surface={props.surface}
-                    active={presented && eventsShown} />
+                <ItemList presentation="grouped" style={styles.definitionsList}>
+                    <WorkflowsColumnEventsRows feed={events.feed} scope={events.scope} filter={events.filter} surface={props.surface}
+                        active={presented && eventsShown} />
+                </ItemList>
             </RetainedPanelSurface>
         </>}
     />;

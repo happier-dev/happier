@@ -803,6 +803,35 @@ describe('WorkflowsColumn', () => {
         await screen.unmount();
     });
 
+    it('builds Events row bodies only near the Workflows column viewport', async () => {
+        const answer = executeMock.getMockImplementation()!;
+        const runs = Array.from({ length: 240 }, (_, index) => {
+            const finishedAt = new Date(Date.now() - index * 1_000).toISOString();
+            return createWorkflowRunSummaryFixture({ id: `viewport-run-${index}`, ownerAccountId: 'account-a',
+                state: 'succeeded', finishedAt, updatedAt: finishedAt });
+        });
+        executeMock.mockImplementation((actionId: string, input: Record<string, unknown>) => {
+            if (actionId === 'workflow.run.list' && input.projection === 'membership') {
+                return Promise.resolve({ ok: true, result: { runs, metadataByRunId: {}, projection: 'membership' } });
+            }
+            return answer(actionId, input);
+        });
+        const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
+        try {
+            await screen.pressByTestIdAsync('workflows-column:view:events');
+            const mounted = (part: 'window' | 'row') => new Set(screen.findAll(node => typeof node.type === 'string'
+                && String(node.props.testID ?? '').startsWith(`workflows-column:events:${part}:`))
+                .map(node => String(node.props.testID)));
+            await vi.waitFor(() => expect(mounted('window').size).toBe(runs.length));
+            const rows = [...mounted('row')];
+            expect(rows.length).toBeLessThan(runs.length);
+            expect(rows.some(id => id.includes('"viewport-run-0"'))).toBe(true);
+            expect(rows.some(id => id.includes('"viewport-run-239"'))).toBe(false);
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('re-renders only the changed Library row when one saved workflow changes', async () => {
         const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
         const answer = executeMock.getMockImplementation()!;
