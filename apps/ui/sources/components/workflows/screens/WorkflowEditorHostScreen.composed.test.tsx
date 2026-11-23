@@ -1346,6 +1346,54 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(boundary.automationCreates).toHaveLength(0);
     });
 
+    it('adds and selectively undoes an exact Session start in a mounted draft with saved Deploy triggers', async () => {
+        const { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionIdsV1');
+        const { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1 } = await import('@happier-dev/protocol/automations/automationSessionLifecycle');
+        const { readWorkflowEventWhen } = await import('../events/workflowEventFacts');
+        const boundary = await serveMountedDraftActionHome();
+        const project = { machineId: 'machine-a', directory: '/repo' };
+        const actionIds = [DEPLOYMENT_DEPLOY_ACTION_ID_V1];
+        const turnEvents = [...AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1.turnEnds];
+        const triggers = [
+            { kind: 'action', enabled: true, phase: 'after', actionIds,
+                filter: { v: 1, all: [{ op: 'eq', field: '/outcome', value: 'failed' }] } },
+            { kind: 'action', enabled: true, phase: 'before', mode: 'wait', actionIds,
+                subject: { kind: 'environment', serverId: boundary.scope.serverId, environmentId: 'deploy-environment' } },
+            { kind: 'sessionLifecycle', enabled: true, events: turnEvents, policy: { kind: 'nextMatches', count: 3 },
+                subject: { kind: 'machine', serverId: boundary.scope.serverId, machineId: project.machineId } },
+            { kind: 'sessionLifecycle', enabled: true, events: turnEvents, policy: { kind: 'everyMatch' } },
+        ] satisfies Parameters<typeof addDirectTrigger>[0]['trigger'][];
+        for (const trigger of triggers) {
+            await addDirectTrigger({ workflow: SAVED_TRIGGER_WORKFLOW_ID, project, trigger });
+        }
+        await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        const draft = () => readBodyProps()!.mountedDraftActions!.getSnapshot()!;
+        await vi.waitFor(() => expect(draft().settings.triggers.rows).toHaveLength(triggers.length));
+        const saved = draft().settings.triggers.rows;
+        expect(saved.map(row => row.identity.triggerId)).toEqual(triggers.map(() => expect.any(String)));
+        const writesBefore = boundary.requests.filter(({ path, method }) => path.startsWith('/v3/automations')
+            && path !== '/v3/automations/query' && method !== 'GET');
+
+        const subject = { kind: 'session', serverId: boundary.scope.serverId, sessionId: 'fresh-owned-session' } as const;
+        const when = readWorkflowEventWhen({ kind: 'session', key: 'session-start', sessionId: subject.sessionId,
+            event: 'started', sourceRevision: 1, occurredAt: 10, coverage: 'live' }, { subject, label: 'Fresh owned Session' });
+        if (when === null) throw new Error('Expected a Session start');
+        let clientId: string | undefined;
+        await act(async () => { clientId = await readBodyProps()!.onAddTriggerWhen!(when); });
+        expect(clientId, 'Session-start Companion Add must accept the current mounted draft').toEqual(expect.any(String));
+        expect(draft().settings.triggers.rows).toEqual([...saved, expect.objectContaining({
+            identity: { clientId }, trigger: { kind: 'sessionLifecycle', enabled: true, subject,
+                events: ['sessionStarted'], policy: { kind: 'everyMatch' } },
+        })]);
+        expect(readBodyProps()!.canUndoAddedTrigger?.(clientId!)).toBe(true);
+        await act(async () => { await readBodyProps()!.onUndoAddedTrigger!(clientId!); });
+        expect(draft().settings.triggers.rows).toEqual(saved);
+        expect(draft().dirty).toBe(false);
+        expect(boundary.requests.filter(({ path, method }) => path.startsWith('/v3/automations')
+            && path !== '/v3/automations/query' && method !== 'GET')).toEqual(writesBefore);
+        expect(boundary.updates).toHaveLength(0);
+    });
+
     // QA-B E12: Live events' Added reads the editor's triggers, so Undo offers Add again and Redo shows Added.
     it('answers whether a Live events add is still a trigger across Undo and Redo', async () => {
         await serveMountedDraftActionHome();
