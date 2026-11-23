@@ -1,7 +1,9 @@
 import { readFile, stat } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { MachineProvisionerNativeExecResultV1Schema, MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { prepareManagedWorkspaceAttachment } from '@happier-dev/cli-common/machines/managed';
+import { ManagedMachineControllerError, prepareManagedWorkspaceAttachment } from '@happier-dev/cli-common/machines/managed';
+import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
@@ -10,7 +12,10 @@ import { acquire, binding, options, PLUGIN } from './manifest.js';
 import { putSshFile } from './transport.js';
 
 describe('F6 SSH attachment', () => {
-    it.each(['Linux', 'Windows_NT'])('probes the selected existing SSH resource before returning an attachment (%s)', async os => {
+    it.each([
+        { os: 'Linux', outcome: 'returns the selected SSH guest and its home' },
+        { os: 'Windows_NT', outcome: 'returns typed unsupported platform instead of action_failed' },
+    ])('$outcome ($os)', async ({ os }) => {
         expect(parsePluginManifest(PLUGIN.manifest)).toMatchObject({ ok: true });
         const handlers = new Map<string, ActionHandler>();
         await PLUGIN.activate({ actions: { register(id: string, handler: ActionHandler) {
@@ -59,7 +64,10 @@ describe('F6 SSH attachment', () => {
                 platform: { os: 'linux', home: '/home/guest' },
             });
         } else {
-            await expect(result).rejects.toMatchObject({ code: 'session_holder_unavailable' });
+            const actionResult = ManagedMachineControllerError.withActionFailure(MANAGED_ACQUIRE_ACTION_ID_V1, () => result)
+                .catch(error => normalizeActionExecutorThrownError(error, MANAGED_ACQUIRE_ACTION_ID_V1));
+            await expect(actionResult).resolves.toMatchObject({ errorCode: 'session_holder_unavailable',
+                error: 'This guest platform does not support a Session holder.' });
         }
         expect(probes).toBe(1);
     });

@@ -2,6 +2,7 @@ import { RPC_METHODS } from '../../rpc/methods.js';
 import { createRpcCallError, readRpcErrorCode } from '../../rpc/errors.js';
 import { parseCapabilitiesInvokeResponse } from '../../capabilities/invokeResponse.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
+import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '../../machines/managed/actionIdsV1.js';
 import { readActionOperationTaskQuestionV1 } from '../operations/taskQuestionV1.js';
 import { ACTION_OPERATION_TASK_RESPOND_ACTION_ID_V1 } from '../operations/actionIdsV1.js';
 import { TERMINAL_STREAM_MAX_READ_BYTES, TerminalStreamReadRequestSchema, TerminalStreamReadResponseSchema,
@@ -68,12 +69,21 @@ export async function executeActionOperationActionV1(args: Readonly<{
       }));
       if (!found.success || found.data.kind !== 'found') return failure('action_operation_unavailable');
       const operation = found.data.operation;
-      const question = readActionOperationTaskQuestionV1(operation);
       const domain = operation.domainRef;
       if (operation.operationId !== answerInput.operationId || operation.scope.machineId !== machineId
         || operation.scope.accountId !== args.context.expectedAccountId
-        || (domain?.kind === 'machineSetup' || domain?.kind === 'machineReboot') && domain.serverId !== serverId
-        || question?.id !== answerInput.taskId || !sameStrictJsonValue(question.prompt, answerInput.prompt)) {
+        || (domain?.kind === 'machineSetup' || domain?.kind === 'machineReboot') && domain.serverId !== serverId) {
+        return failure('action_operation_unavailable');
+      }
+      const question = readActionOperationTaskQuestionV1(operation);
+      if (!question && operation.actionId === MANAGED_ACQUIRE_ACTION_ID_V1 && 'trusted' in answerInput.answer
+        && (domain?.kind === 'systemTask' && domain.id === answerInput.taskId && !domain.prompt
+          || domain?.kind === 'managedMachine' && operation.state === 'succeeded')) {
+        // An Inbox answer can retire the trust question while the chooser still displays it.
+        // Acknowledge the retired question so the caller can read the same operation's result.
+        return { kind: 'answered' };
+      }
+      if (question?.id !== answerInput.taskId || !sameStrictJsonValue(question.prompt, answerInput.prompt)) {
         return failure('action_operation_unavailable');
       }
       const response = parseCapabilitiesInvokeResponse(await call(RPC_METHODS.CAPABILITIES_INVOKE, {

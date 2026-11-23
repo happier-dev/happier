@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '../../machines/managed/actionIdsV1.js';
 import { ActionIdSchema } from '../actionIds.js';
 import { getActionSpec } from '../actionSpecs.js';
 import { projectApprovalReviewInput } from '../actionApprovalPresentation.js';
@@ -50,6 +51,47 @@ describe('private operation task answer', () => {
       taskId: question.taskId, expectedPromptKind: prompt.kind, answer: { password: 'one-use-private-password' },
     } }]);
     expect(JSON.stringify(result)).not.toContain('one-use-private-password');
+  });
+
+  it('lets the chooser read its SSH attachment after an Inbox answer instead of rejecting or resending the stale question', async () => {
+    const attachAddress = { ...address, operationId: 'attach' };
+    const trustPrompt = { kind: 'ssh.trustHost', host: 'guest', keyType: 'ssh-ed25519', fingerprint: 'SHA256:fixture',
+      existingFingerprint: null, message: 'Trust this host?' };
+    const task = { kind: 'systemTask', id: 'trust-task', taskKind: 'remote.ssh.bootstrapMachine.v1' };
+    const pending = ActionOperationSnapshotV1Schema.parse({
+      ...operation, operationId: attachAddress.operationId, actionId: MANAGED_ACQUIRE_ACTION_ID_V1,
+      domainRef: { ...task, prompt: trustPrompt },
+    });
+    const attachment = { managedId: 'guest', operation: { operationId: attachAddress.operationId } };
+    const preparing = ActionOperationSnapshotV1Schema.parse({ ...pending, revision: 3, domainRef: task });
+    const settled = ActionOperationSnapshotV1Schema.parse({ ...pending, revision: 4, state: 'succeeded', settledAt: 3,
+      domainRef: { kind: 'managedMachine', id: attachment.managedId }, result: attachment });
+
+    let current = pending;
+    const transport: ActionOperationMachineTransportV1 = async request => {
+      if (request.method === 'actionOperation.get.v2') return { kind: 'found', operation: current };
+      expect(current).toEqual(pending);
+      current = preparing;
+      return { ok: true, result: null };
+    };
+    const respond = () => executeActionOperationActionV1({
+      actionId: 'action.operations.task.respond', context: { surface: 'ui', expectedAccountId: 'account' }, transport,
+      input: getActionSpec('action.operations.task.respond').inputSchema.parse({
+        ...attachAddress, taskId: task.id, prompt: trustPrompt, answer: { trusted: true },
+      }),
+    });
+
+    const observed = await executeActionOperationActionV1({
+      actionId: 'action.operations.get', input: { ...attachAddress, waitForTerminal: true, includeManagedPrompt: true }, transport,
+    });
+    expect(observed).toMatchObject({ kind: 'found', operation: pending });
+    expect(await respond()).toEqual({ kind: 'answered' }); // Inbox
+    expect(await respond()).toEqual({ kind: 'answered' }); // Chooser's previously displayed question
+    current = settled;
+    expect(await respond()).toEqual({ kind: 'answered' }); // Chooser resumes after Home admission
+    expect(await executeActionOperationActionV1({
+      actionId: 'action.operations.get', input: { ...attachAddress, waitForTerminal: true }, transport,
+    })).toMatchObject({ kind: 'found', operation: { state: 'succeeded', result: attachment } });
   });
 
   it('refuses stale, settled and cross-account or machine questions before disclosing the answer', async () => {

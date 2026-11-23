@@ -7,6 +7,7 @@ import { encodeBase64, decodeBase64 } from '@happier-dev/protocol/crypto/base64'
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { SystemTaskExecutionError } from '../../systemTasks/runSystemTask.js';
 import { AcquireResultV1Schema, type ManagedBootstrapCarrierV1, type ManagedGuestPlatformV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { safeBashSingleQuote } from '../../ssh/shellQuote.js';
 import { REMOTE_SHA256_FILE_FUNCTION } from '../../ssh/shellSha256.js';
@@ -146,7 +147,12 @@ export async function prepareManagedWorkspaceAttachment(input: Readonly<{
         || result.resource.schemaVersion !== launch.schemaVersion) throw new ManagedMachineControllerError('resource_mismatch');
     const { resource } = result;
     const io = createManagedNativeBootstrapIO({ resource }, invoke);
-    const platform = await probeManagedNativeGuestPlatform(request => io.exec({ ...request, allowWake: false }), signal, 'session-holder');
+    const platform = await probeManagedNativeGuestPlatform(request => io.exec({ ...request, allowWake: false }), signal, 'session-holder')
+        .catch((error: unknown) => {
+            if (!(error instanceof SystemTaskExecutionError) || error.code !== 'session_holder_unavailable') throw error;
+            throw ManagedMachineControllerError.fromActionFailure({ ok: false, errorCode: error.code, error: error.message },
+                MANAGED_ACQUIRE_ACTION_ID_V1);
+        });
     signal?.throwIfAborted();
     return { resource, platform };
 }
