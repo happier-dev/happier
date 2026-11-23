@@ -8,17 +8,20 @@ function resolveDesktopHref(url: string): string | Promise<string | null> | null
     try { parsed = new URL(url); } catch { return null; }
     if (!isAcceptedHappierUrlProtocol(parsed.protocol)) return null;
     const href = resolveNativeAppLinkHref(url);
+    if (href && /^\/mtls(?:[?#]|$)/.test(href)) {
+        return admitAuthenticationReturn(href, 'mtls', parsed.searchParams);
+    }
     const providerPath = href?.match(/^\/oauth\/([^/?#]+)(?:[?#]|$)/)?.[1];
     if (!href || !providerPath || parsed.searchParams.get('flow') !== 'auth') return href;
-    return admitOAuthReturn(href, providerPath, parsed.searchParams);
+    return admitAuthenticationReturn(href, providerPath, parsed.searchParams);
 }
 
 /** Keep cancelled or superseded browser returns from taking over the current sign-in UI. */
-async function admitOAuthReturn(href: string, providerPath: string, params: URLSearchParams): Promise<string | null> {
+async function admitAuthenticationReturn(href: string, providerPath: string, params: URLSearchParams): Promise<string | null> {
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
     const provider = decodeURIComponent(providerPath).toLowerCase();
     const attempt = params.get('desktopAttemptId') ?? undefined;
-    if (params.get('purpose') === 'account_directory') {
+    if (provider !== 'mtls' && params.get('purpose') === 'account_directory') {
         const endpoint = params.get('endpointUrl');
         const serverIdentityId = params.get('endpointServerIdentityId');
         if (!endpoint || !serverIdentityId) return attempt === undefined ? href : null;
@@ -44,7 +47,7 @@ function startDesktopLinkDelivery(navigate: (href: string) => void) {
             else if (href) void href.then((admitted) => {
                 if (admitted && !disposed) navigate(admitted);
             }).catch(() => {
-                console.error('Desktop OAuth return could not be admitted');
+                console.error('Desktop authentication return could not be admitted');
             });
         }
     };

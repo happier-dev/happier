@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Platform } from 'react-native';
 
 import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import type { WelcomeAuthenticationMethod } from '@/components/onboarding/preAuth/composeWelcomeEntryModel';
 import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
 import { executeHomeAuthentication } from './executeHomeAuthentication';
@@ -91,7 +93,7 @@ describe('executeHomeAuthentication native mTLS', () => {
                 teamId: 'team-1',
                 admission: { kind: 'team_invitation', token: 'invitation-secret' },
             }),
-        }));
+        }), expect.any(Function));
         for (const [, init] of boundary.request.mock.calls) {
             expect(new Headers(init?.headers).has('authorization')).toBe(false);
         }
@@ -147,5 +149,51 @@ describe('executeHomeAuthentication native mTLS', () => {
         );
         expect(onExternalAuthStarted).toHaveBeenCalledOnce();
         expect(onAuthenticated).not.toHaveBeenCalled();
+    });
+
+    it('hands Home certificate sign-in to the system browser in the installed Tauri app', async () => {
+        const os = Object.getOwnPropertyDescriptor(Platform, 'OS');
+        const openBrowser = vi.fn().mockResolvedValue(undefined);
+        const onExternalAuthStarted = vi.fn();
+        const onBrowserHandoff = vi.fn<(handoff: { cancel: () => Promise<void> }) => void>();
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke: openBrowser });
+        const storage = installLocalStorageMock();
+        const locks = installWebLockManagerMock();
+        try {
+            await executeHomeAuthentication({
+                request,
+                loginWithCredentials: vi.fn(),
+                returnTo: '/setup/wizard',
+                onExternalAuthStarted,
+                onBrowserHandoff,
+            });
+
+            expect(boundary.request).not.toHaveBeenCalled();
+            const pending = await TokenStorage.readPendingExternalAuthStateForServerUrl(
+                credentialTarget.serverUrl, { serverId: credentialTarget.serverId },
+            );
+            expect(pending).toEqual({
+                value: { provider: 'mtls', ...credentialTarget, returnTo: '/setup/wizard', desktopAttemptId: expect.any(String) },
+                serverMismatch: false,
+            });
+            const openCall = openBrowser.mock.calls.find(([command]) => command === 'plugin:opener|open_url');
+            const start = new URL(openCall?.[1]?.url);
+            expect(start.origin + start.pathname).toBe('https://edge.example.test/v1/auth/mtls/start');
+            const callback = new URL(start.searchParams.get('returnTo') ?? '');
+            expect(callback.protocol + callback.pathname).toBe('happier:/mtls');
+            expect(callback.searchParams.get('desktopAttemptId')).toBe(pending.value?.desktopAttemptId);
+            expect(onExternalAuthStarted).toHaveBeenCalledOnce();
+            expect(onBrowserHandoff).toHaveBeenCalledOnce();
+            await onBrowserHandoff.mock.calls[0][0].cancel();
+            expect((await TokenStorage.readPendingExternalAuthStateForServerUrl(
+                credentialTarget.serverUrl, { serverId: credentialTarget.serverId },
+            )).value).toBeNull();
+        } finally {
+            locks.restore();
+            storage.restore();
+            if (os) Object.defineProperty(Platform, 'OS', os);
+            vi.unstubAllGlobals();
+        }
     });
 });

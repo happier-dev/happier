@@ -5,7 +5,7 @@ import type { AuthCredentialLifecycleResult, AuthCredentialPersistenceOptions } 
 import { authGetTokenAtEndpoint } from '@/auth/flows/getToken';
 import { createHomeOAuthRequestContext, createTeamOAuthRequestContext } from '@/auth/providers/homeExternalAuthTarget';
 import { getAuthProvider } from '@/auth/providers/registry';
-import { describeOAuthProvider } from '@/components/account/auth/homeAuthenticationActionPresentation';
+import { describeHomeAuthenticationAction, describeOAuthProvider } from '@/components/account/auth/homeAuthenticationActionPresentation';
 import type { ExternalAuthStartInput, TeamOAuthRequestContext, TeamOAuthStart } from '@/auth/providers/types';
 import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
 import { type AccountHomeAuthenticationContinuation, type AuthCredentials, type PendingExternalAuth, TokenStorage } from '@/auth/storage/tokenStorage';
@@ -23,6 +23,7 @@ import { guardAccountEncryptionFirstKeyCredentialMutation } from '@/sync/ops/acc
 import { createServerFetchAtEndpoint } from '@/sync/http/client';
 import { formatOperationFailedDebugMessage } from '@/utils/errors/formatOperationFailedDebugMessage';
 import { HappyError } from '@/utils/errors/errors';
+import { desktopHostKind } from '@/utils/platform/desktopHost';
 import { resolveAppUrlScheme } from '@/utils/url/appScheme';
 import { t } from '@/text';
 
@@ -460,14 +461,20 @@ async function runExecutableHomeAuthentication(options: ExecuteHomeAuthenticatio
     }
 
     try {
-        if (Platform.OS !== 'web') {
-            const callbackUrl = `${resolveAppUrlScheme()}:///mtls`;
+        const desktopHomeCertificate = !options.teamAdmission && desktopHostKind() === 'tauri';
+        if (Platform.OS !== 'web' || desktopHomeCertificate) {
+            const callbackUrl = new URL(`${resolveAppUrlScheme()}:///mtls`);
             try {
                 if (options.signal?.aborted) throw new Error('Home authentication cancelled');
                 if (!options.teamAdmission) {
+                    const desktopAttemptId = desktopHomeCertificate
+                        ? encodeHex(await getRandomBytesAsync(16))
+                        : undefined;
+                    if (desktopAttemptId) callbackUrl.searchParams.set('desktopAttemptId', desktopAttemptId);
                     const pending = {
                         provider: 'mtls',
                         ...callbackTarget,
+                        ...(desktopAttemptId ? { desktopAttemptId } : {}),
                         returnTo: options.accountContinuation?.returnTo ?? options.returnTo,
                         ...(options.accountContinuation ? { accountContinuation: options.accountContinuation } : {}),
                     };
@@ -475,13 +482,23 @@ async function runExecutableHomeAuthentication(options: ExecuteHomeAuthenticatio
                         throw new Error('Failed to persist pending mTLS authentication');
                     }
                     const legacyStartUrl = resolveNativeMtlsStartUrl(
-                        `/v1/auth/mtls/start?returnTo=${encodeURIComponent(callbackUrl)}`,
+                        `/v1/auth/mtls/start?returnTo=${encodeURIComponent(callbackUrl.href)}`,
                         callbackTarget.serverUrl,
                     );
                     if (!legacyStartUrl) throw new Error('Invalid mTLS start URL');
                     if (options.signal?.aborted) throw new Error('Home authentication cancelled');
-                    await openExternalAuthenticationUrl(legacyStartUrl);
+                    const handoff = await openExternalAuthenticationUrl(legacyStartUrl, desktopAttemptId);
                     if (options.signal?.aborted) return;
+                    if (desktopHomeCertificate && handoff === 'system_browser') {
+                        const presentation = describeHomeAuthenticationAction({ execution: { kind: 'mtls' }, providerName: '' });
+                        options.onBrowserHandoff?.({
+                            providerName: request.method.presentation?.displayName ?? presentation.title,
+                            badgeIconName: presentation.iconName,
+                            cancel: async () => {
+                                await TokenStorage.clearPendingExternalAuth({ ...callbackTarget, removeExact: pending }).catch(() => false);
+                            },
+                        });
+                    }
                     await options.onExternalAuthStarted?.();
                     return;
                 }
@@ -495,7 +512,7 @@ async function runExecutableHomeAuthentication(options: ExecuteHomeAuthenticatio
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        returnTo: callbackUrl,
+                        returnTo: callbackUrl.href,
                         teamId: options.teamAdmission.teamId,
                         ...(options.teamAdmission.invitationToken
                             ? { admission: { kind: 'team_invitation' as const, token: options.teamAdmission.invitationToken } }

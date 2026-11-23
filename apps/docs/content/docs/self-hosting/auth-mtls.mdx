@@ -132,7 +132,7 @@ Notes:
 - `HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_FINGERPRINT_HEADER` (default `x-happier-client-cert-sha256`)
 - `HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_ISSUER_HEADER` (default `x-happier-client-cert-issuer`)
 
-### Native app handoff (mobile)
+### Native app handoff
 
 - `HAPPIER_FEATURE_AUTH_MTLS__RETURN_TO_ALLOW_PREFIXES` (CSV; defaults to `happier://` and `HAPPIER_WEBAPP_URL`)
 - `HAPPIER_FEATURE_AUTH_MTLS__CLAIM_TTL_SECONDS` (default `60`)
@@ -141,6 +141,7 @@ Notes:
 
 - For `http://` / `https://` entries, Happier validates `returnTo` by **origin** (scheme + host + port), with an optional path-prefix constraint if you include a path in the allowlist entry. This prevents “prefix” open-redirect bypasses like `https://app.example.com.evil.com/...`.
 - For deep links, use a scheme prefix like `happier://` (or a more specific prefix like `happier:///mtls`).
+- In the 0.3 Tauri desktop app, choosing certificate sign-in for a Home opens the system browser. The app shows a wait step and completes sign-in when the browser returns through the registered app scheme.
 
 ### Auto-redirect (skip the connection screen)
 
