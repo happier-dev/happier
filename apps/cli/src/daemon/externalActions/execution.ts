@@ -174,6 +174,7 @@ serverId: string;
 serverBaseUrl: string;
 runtimeActionExecute?: RuntimeActionExecute;
 acquireServiceExportForward?: import('@/deployments/targets/ownServer/ownServerDeploymentHostRuntime').OwnServerDeploymentRuntimeHostInput['acquireServiceExportForward'];
+listActionFormConnectedAccountOptions?: import('@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime').DaemonConnectedAccountPurposeBindingRuntime['listActionFormConnectedAccountOptions'];
 managedProviderOperationAuthority?: import('@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority').ManagedProviderOperationAuthority;
 readManagedMachinePolicyCurrent?: Parameters<typeof createDaemonManagedMachineActionAdapter>[0]['readPolicyCurrent'];
 executeTeamCredentialBrokerAction?: import('@/daemon/connectedServices/purposeBindings/teamDirectMaterialAdmission').ExecuteTeamCredentialBrokerAction;
@@ -657,6 +658,7 @@ resolveServerFeaturesSnapshot?: () =>
           return runtime && ingress ? { runtime, ingress } : null;
         },
         acquirePluginRuntimeRegistryLease: acquireDaemonPluginRuntimeRegistryLease,
+        listActionFormConnectedAccountOptions: params.listActionFormConnectedAccountOptions,
         executeSourceReadAction: (action, input, context) => executeScmSourceReadForRequester(executor, action, input, context),
         executePreparedPendingDeploy: (input, context) => executor.execute('deployments.deploy', input, context),
         ...(apiMachineForSessions ? { runActionOperation: request => apiMachineForSessions.runActionOperation({

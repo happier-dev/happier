@@ -2637,6 +2637,7 @@ export async function startDaemon(
       materializeSessionProcessEnvironment,
     } = await startDaemonSessionControlRuntime({
       acquireServiceExportForward,
+      listActionFormConnectedAccountOptions: connectedAccountPurposeBindingRuntime.listActionFormConnectedAccountOptions,
       agentIsolation,
       observeSessionScopeExit: async tracked => {
         const result = await sessionCeiling?.observeRunnerExit(tracked);

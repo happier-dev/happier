@@ -65,6 +65,9 @@ export const moveToRepositoryCopy = {
 export const previewEditorCopy = {
   addFact: 'Deployment value',
   configure: 'Configure previews',
+  watcherConnect: 'Connect GitHub',
+  watcherAccount: 'GitHub account',
+  watcherUnavailable: 'Could not read the accounts for this repository. Turn on Previews to try again.',
   nativeTemplate: 'Database template',
   nativeEmpty: 'Start empty',
   nativeEmptyBody: 'Each preview starts with a fresh database. No production data is copied; seed it separately.',

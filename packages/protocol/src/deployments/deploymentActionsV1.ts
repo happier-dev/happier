@@ -30,6 +30,7 @@ import { DeploymentTargetVariablesReadResultV1Schema, DeploymentTargetVariablesS
 import { DeploymentCreationDefaultsV1Schema, ResolvedDeploymentCreationDefaultsV1Schema, DeploymentConfigurationDefaultsForV1Schema } from '../projects/deploymentCreationDefaultsV1.js';
 import { DeploymentControllerAvailabilityV1Schema } from './deploymentControllerAvailabilityV1.js';
 import { DeploymentPreviewForkEligibilityV1Schema } from './deploymentPreviewTemplateV1.js';
+import { ConnectedAccountActionFormSelectionV1Schema } from '../connect/connectedAccountPurposeBindings.js';
 import { EnvironmentVariableBindingInputV1Schema } from './storedAppInputV1.js';
 export * from './deploymentControllerAvailabilityV1.js';
 import { ActionExecuteFailureSchema, ActionFailureCauseV1Schema, type ActionExecuteFailure } from '../actions/actionExecutionResult.js';
@@ -256,10 +257,14 @@ export const DeploymentEnvironmentUpdateInputV1BaseSchema = lazyZodSchema(() => 
   patch: z.optional(DeploymentEnvironmentUpdatePatchV1Schema),
   /** First setup reads the same owner preparation for UI and agents; it writes no content. */
   mode: z.optional(z.literal('preview')),
+  /** Read the watcher choices, or submit one exact choice. Neither is Environment content. */
+  previewWatcher: z.optional(z.union([z.literal('options'), ConnectedAccountActionFormSelectionV1Schema])),
   defaultsFor: z.optional(DeploymentConfigurationDefaultsForV1Schema),
   creationDefaults: z.optional(DeploymentCreationDefaultsV1Schema),
 }));
-export const DeploymentEnvironmentUpdateInputV1Schema = lazyZodSchema(() => DeploymentEnvironmentUpdateInputV1BaseSchema.check(z.refine(input => input.mode === 'preview'
+export const DeploymentEnvironmentUpdateInputV1Schema = lazyZodSchema(() => DeploymentEnvironmentUpdateInputV1BaseSchema.check(z.refine(input => input.previewWatcher !== undefined
+  && (!input.patch?.previewTemplate?.enabled || (input.mode === 'preview') !== (input.previewWatcher === 'options'))
+  ? false : input.mode === 'preview'
   ? input.defaultsFor !== undefined && input.patch === undefined
     || input.defaultsFor === undefined && input.creationDefaults === undefined && input.patch?.previewTemplate != null
       && Object.keys(input.patch).every(key => key === 'previewTemplate' || key === 'buildMachineId')
@@ -509,6 +514,10 @@ export const DeploymentEnvironmentUpdateResultV1Schema = lazyZodSchema(() => z.u
     creationDefaults: z.optional(ResolvedDeploymentCreationDefaultsV1Schema),
     backupSourceChoices: z.optional(z.array(DeploymentBackupSourceV1Schema)),
     forkEligibility: z.optional(DeploymentPreviewForkEligibilityV1Schema),
+    previewWatcher: z.optional(z.strictObject({
+      service: asProtocolZod(PluginContributionIdentityV1Schema),
+      options: z.array(z.strictObject({ value: ConnectedAccountActionFormSelectionV1Schema, label: z.string() })),
+    })),
     previewEnrollment: z.optional(DeploymentPreviewEnrollmentV1Schema) }), DeploymentActionFailureV1Schema,
 ]));
 /** The preparing host returns its exact candidate for the Team Move sharing consumer. */

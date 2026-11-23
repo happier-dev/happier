@@ -81,7 +81,7 @@ const NO_MORE_BACKUP_ACTIONS: readonly never[] = Object.freeze([]);
 /** What a manager can change from Settings and Permissions, through the Action owner. */
 export type DeploymentEnvironmentEditing = Readonly<{
   actions: Pick<ReturnType<typeof createDeploymentActions>, 'setController' | 'updateEnvironment'>
-    & Partial<Pick<ReturnType<typeof createDeploymentActions>, 'inspectPlatformTarget' | 'moveToRepository' | 'prepareConfigurationDefaults' | 'preparePreviewForkPolicy' | 'setBindings'>>;
+    & Partial<Pick<ReturnType<typeof createDeploymentActions>, 'inspectPlatformTarget' | 'moveToRepository' | 'prepareConfigurationDefaults' | 'preparePreviewWatcher' | 'preparePreviewForkPolicy' | 'setBindings'>>;
   serverId: string;
   review: DeploymentReviewHandle;
   /** A settled change moved the Environment's revision: re-read it. */
@@ -536,12 +536,15 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
                 controller={props.controller}
                 demand={props.demand}
                 machineName={machineName}
-                onSave={editing ? (next) => {
-                  void change.press(() => editing.actions.updateEnvironment(detail.environment, { previewTemplate: next }), 'previews');
+                onSave={editing ? (next, account) => {
+                  void change.press(() => account
+                    ? editing.actions.updateEnvironment(detail.environment, { previewTemplate: next }, undefined, account)
+                    : editing.actions.updateEnvironment(detail.environment, { previewTemplate: next }), 'previews');
                 } : null}
                 saving={change.running}
                 inspect={editing?.actions.inspectPlatformTarget ?? null}
                 prepareDefaults={editing?.actions.prepareConfigurationDefaults ?? null}
+                prepareWatcher={editing?.actions.preparePreviewWatcher ?? null}
                 prepareForkPolicy={editing?.actions.preparePreviewForkPolicy ?? null}
                 onChooseMachine={props.onChangeMachine ?? props.onLink ?? null}
                 lifetime={props.lifetime ?? null}

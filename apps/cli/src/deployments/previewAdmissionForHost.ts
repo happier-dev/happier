@@ -1,4 +1,5 @@
 import { recordFailureCause } from '@/diagnostics/recordFailureCause';
+import type { ActionExecutorContext, DeploymentEnvironmentGetResultV1, DeploymentEnvironmentUpdateInputV1 } from '@happier-dev/protocol';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentEnvironmentContentV1, DeploymentEnvironmentHeaderV1 } from '@happier-dev/deployments/contracts/v1';
 import { normalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
@@ -32,6 +33,39 @@ export async function preparePreviewForkEligibilityForHost(input: Readonly<{
     } catch (error) {
         return recordFailureCause(error, 'deployment.preview.inventory', { kind: 'unavailable' as const, reason: 'inventory_unavailable' as const });
     }
+}
+
+type ForkUpdateInput = Pick<DeploymentEnvironmentUpdateInputV1, 'serverId' | 'patch'>;
+type ForkUpdateEnvironment = Pick<Extract<DeploymentEnvironmentGetResultV1, { ok: true }>, 'environment' | 'targetLinks'>;
+
+export function prepareProposedPreviewForkEligibilityForHost(input: ForkUpdateInput, current: ForkUpdateEnvironment,
+    runtimeTargetLinkId: string, list: Parameters<typeof preparePreviewForkEligibilityForHost>[1]) {
+    return preparePreviewForkEligibilityForHost({ serverId: input.serverId,
+        protection: input.patch?.protection ?? current.environment.protection,
+        buildMachineId: input.patch?.buildMachineId ?? current.environment.buildMachineId,
+        runtime: current.targetLinks.find(link => link.id === runtimeTargetLinkId) }, list);
+}
+
+const admittedForkEligibility = Symbol('admittedPreviewForkEligibility');
+type ForkUpdateContext = ActionExecutorContext & { [admittedForkEligibility]?: Readonly<{
+    environmentId: string; revision: number; eligibility: DeploymentPreviewForkEligibilityV1;
+}> };
+
+export function withAdmittedPreviewForkEligibilityForHost(context: ForkUpdateContext,
+    environment: Pick<DeploymentEnvironmentHeaderV1, 'id' | 'revision'>, eligibility: DeploymentPreviewForkEligibilityV1): ForkUpdateContext {
+    return { ...context, [admittedForkEligibility]: { environmentId: environment.id, revision: environment.revision, eligibility } };
+}
+
+export function readAdmittedPreviewForkEligibilityForHost(context: ForkUpdateContext,
+    environment: Pick<DeploymentEnvironmentHeaderV1, 'id' | 'revision'>) {
+    const admitted = context[admittedForkEligibility];
+    if (admitted?.environmentId === environment.id && admitted.revision === environment.revision) return admitted.eligibility;
+}
+
+export function refusePreviewForkEligibilityForHost(
+    forkEligibility: Exclude<DeploymentPreviewForkEligibilityV1, { kind: 'eligible' }>,
+) {
+    return { ok: false as const, errorCode: 'deployment_access_denied', error: 'deployment_access_denied', details: { forkEligibility } };
 }
 
 /** Private PR provenance is admitted on the controller, including E2EE Accounts.

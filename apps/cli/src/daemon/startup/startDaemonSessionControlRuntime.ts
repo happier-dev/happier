@@ -1147,6 +1147,7 @@ export async function startDaemonSessionControlRuntime(
     readMachineResourcesPolicy?: import('@/processes/toolIdleTimeouts').MachineResourcesPolicyReader;
     readSpawnFailureLimits?: import('@/processes/spawnFailure/classifySpawnFailure').SpawnFailureLimitsReader;
     readDoctorResourceVitals?: Parameters<typeof startDaemonControlServer>[0]['readDoctorResourceVitals'];
+    listActionFormConnectedAccountOptions?: import('@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime').DaemonConnectedAccountPurposeBindingRuntime['listActionFormConnectedAccountOptions'];
     checkRegistryUpdates?: () => Promise<void>;
     machineId: string;
     /**

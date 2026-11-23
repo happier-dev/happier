@@ -180,7 +180,8 @@ import { resolveDeploymentDefinitionRoleForHost, admitUseDeploymentDefinition, a
 import { createDeploymentRestartActionForHost } from './actions/restart';
 import { createDeploymentDataSizeActionForHost } from './actions/dataSize';
 import { isDeploymentDataSizeActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { admitPreviewEnvironmentForHost, preparePreviewForkEligibilityForHost } from './previewAdmissionForHost';
+import { admitPreviewEnvironmentForHost, prepareProposedPreviewForkEligibilityForHost,
+    refusePreviewForkEligibilityForHost } from './previewAdmissionForHost';
 
 type AdmittedTemplateSource = Readonly<{ id: string; revision: number }>;
 export type DaemonDeploymentPreparationRequest = Parameters<NonNullable<ActionExecutorDeps['prepareDeploymentAction']>>[0] & Readonly<{
@@ -253,6 +254,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
     runtime: OwnServerDeploymentRuntime;
     captureNativeSetup?: () => import('./targets/ownServer/ownServerDomainNative').DomainNativeSetupForHost;
     acquirePluginRuntimeRegistryLease?(): Promise<PluginRuntimeRegistryLease>;
+    listActionFormConnectedAccountOptions?: import('@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime').DaemonConnectedAccountPurposeBindingRuntime['listActionFormConnectedAccountOptions'];
     executeSourceReadAction?: import('@/scm/hostingProviders/resolveRefForHost').ExecuteScmSourceReadAction;
     /** The Machine's SCM backends for reviewed checkout work; absent uses the installed runtime. */
     scmRegistry?: import('@/scm/registry').ScmBackendRegistry;
@@ -1148,6 +1150,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
     const failureEnrollment = createPlatformFailureEnrollmentForHost({ ...host,
         readEnvironment: targetHostReaders.readEnvironment });
     const previewEnrollment = createPreviewEnrollmentForHost({ ...host,
+        listEnvironments: (input, context) => storage('deployments.environments.list', input, context),
         readEnvironment: request => readDeploymentEnvironmentForHost(request, {
             readMetadata: readEnvironmentMetadata, open, assertCurrent,
         }) });
@@ -2074,12 +2077,23 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     if (!selected.success) return failure('invalid_parameters');
                     const request = selected.data;
                     const detail = await readEnvironmentMetadata({ environmentId: request.environmentId, context });
-                    if (request.patch?.previewTemplate) {
+                    const proposed = request.patch?.previewTemplate;
+                    if (proposed) {
                         if (detail.environment.revision !== request.expectedRevision) return failure('deployment_conflict');
-                        const runtime = detail.targetLinks.find(link => link.id === request.patch!.previewTemplate!.runtimeTargetLinkId);
-                        const forkEligibility = await preparePreviewForkEligibilityForHost({ serverId: request.serverId,
-                            protection: detail.environment.protection,
-                            buildMachineId: request.patch.buildMachineId ?? detail.environment.buildMachineId, runtime },
+                        if (request.previewWatcher === 'options') {
+                            if (proposed.forkPreviews === 'approveEachCommit') {
+                                const eligibility = await prepareProposedPreviewForkEligibilityForHost(request, detail,
+                                    proposed.runtimeTargetLinkId, input => storage('deployments.environments.list', input, context));
+                                if (eligibility.kind !== 'eligible') return refusePreviewForkEligibilityForHost(eligibility);
+                            }
+                            if (detail.environment.controllerMachineId !== host.machineId) return failure('machine_unavailable');
+                            const options = await previewEnrollment.watchOptions(proposed, context);
+                            if (!options) return failure('source_unavailable');
+                            if ('ok' in options) return options;
+                            return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision, previewWatcher: options };
+                        }
+                        const forkEligibility = await prepareProposedPreviewForkEligibilityForHost(request, detail,
+                            proposed.runtimeTargetLinkId,
                             input => storage('deployments.environments.list', input, context));
                         return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision, forkEligibility };
                     }

@@ -218,7 +218,7 @@ function publicationArtifactId(digest: string): string {
 /** Ingress preparation retains the reviewed CAS and patch while replacing private references. */
 export function computeDeploymentEnvironmentUpdateMetadataDigestV1(input: Readonly<Record<string, unknown>>): string {
   const { contentArtifactId: _artifact, contentHeaderVersion: _header, contentBodyVersion: _body,
-    authoredInputDigest: _digest, preparedBindings: _bindings, ...metadata } = input;
+    authoredInputDigest: _digest, preparedBindings: _bindings, previewWatcher: _watcher, ...metadata } = input;
   let reviewedMetadata = metadata;
   // The full input digest binds this private operand. Home receives only the
   // prepared Artifact reference; every remaining reviewed patch leaf stays bound.

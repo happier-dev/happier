@@ -101,12 +101,13 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
         }
     }
     async function updateEnvironment(environment: DeploymentEnvironmentHeaderV1,
-        patch: NonNullable<DeploymentEnvironmentUpdateInputV1['patch']>, operation?: UiActionOperation) {
+        patch: NonNullable<DeploymentEnvironmentUpdateInputV1['patch']>, operation?: UiActionOperation,
+        previewWatcher?: Exclude<DeploymentEnvironmentUpdateInputV1['previewWatcher'], 'options'>) {
         assertCurrent();
         return DeploymentActionOutputSchemasV1['deployments.environments.update'].parse(await invoke('deployments.environments.update', {
             serverId: lifetime.scope.serverId, environmentId: environment.id, expectedRevision: environment.revision,
             contentArtifactId: environment.contentArtifactId, contentHeaderVersion: environment.contentHeaderVersion,
-            contentBodyVersion: environment.contentBodyVersion, patch,
+            contentBodyVersion: environment.contentBodyVersion, patch, ...(previewWatcher === undefined ? {} : { previewWatcher }),
         }, operation));
     }
     async function readBackupScheduleSets(environmentId: string) {
@@ -151,6 +152,19 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
             if (!result.creationDefaults) throw new HappyError('invalid_action_output', false);
             return { ...result.creationDefaults,
                 ...(result.backupSourceChoices !== undefined ? { backupSourceChoices: result.backupSourceChoices } : {}) };
+        },
+        async preparePreviewWatcher(environment: DeploymentEnvironmentHeaderV1,
+            previewTemplate: NonNullable<DeploymentEnvironmentContentV1['previewTemplate']>) {
+            assertCurrent();
+            const result = DeploymentActionOutputSchemasV1['deployments.environments.update'].parse(await invoke(
+                'deployments.environments.update', { serverId: lifetime.scope.serverId, environmentId: environment.id,
+                    expectedRevision: environment.revision, contentArtifactId: environment.contentArtifactId,
+                    contentHeaderVersion: environment.contentHeaderVersion, contentBodyVersion: environment.contentBodyVersion,
+                    mode: 'preview', previewWatcher: 'options', patch: { previewTemplate } }));
+            assertCurrent();
+            if (!result.ok) throw new HappyError(result.error, false, { details: result });
+            if (!result.previewWatcher) throw new HappyError('invalid_action_output', false);
+            return result.previewWatcher;
         },
         /** Ask the existing update admission to evaluate the proposed fork policy without saving it. */
         async preparePreviewForkPolicy(environment: DeploymentEnvironmentHeaderV1,

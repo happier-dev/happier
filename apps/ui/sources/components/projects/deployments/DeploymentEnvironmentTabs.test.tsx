@@ -1380,26 +1380,55 @@ describe('Environment → Settings: checks, backups, previews', () => {
     const { resolveActionsSettingsV1FromState } = await import('@/sync/domains/settings/actionsSettings');
     const { DeploymentActionInputSchemasV1 } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
     const { createPreviewEnrollmentForHost } = await import('../../../../../cli/src/deployments/previewEnrollment');
+    const { normalizePluginManifestV2 } = await import('../../../../../cli/src/plugins/manifest/normalize');
+    const { projectLoadedPluginContributes } = await import('../../../../../cli/src/plugins/projection/registry/fullProjection');
+    const { createResolvedContributionRegistry } = await import('../../../../../cli/src/plugins/projection/registry/createResolvedContributionRegistry');
+    const { createPluginRuntimeOccurrenceId } = await import('../../../../../cli/src/plugins/runtime/runtimeSlots');
+    const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/scm-github/src/manifest');
+    const { GITHUB_CONNECTED_ACCOUNT_SERVICE } = await import('../../../../../../packages/plugins/scm-github/src/observations/githubProviderContracts');
+    const manifest = normalizePluginManifestV2(PLUGIN_MANIFEST);
+    const contributes = createResolvedContributionRegistry({
+      ...projectLoadedPluginContributes({ loadResult: { loadedPlugins: [{ pluginId: manifest.id, manifest, pluginRootPath: '/github',
+        manifestPath: '/github/plugin.json', daemonEntryPath: '/github/daemon.js', devDaemonEntryPath: null,
+        sourceSpec: { kind: 'package', locator: manifest.id, trustPolicy: 'local_trusted', installPolicy: 'copy' } }], diagnosticsByPluginId: {} },
+      provenance: 'external' }),
+      occurrenceIdsByPluginId: { [manifest.id]: createPluginRuntimeOccurrenceId(manifest.id) },
+    });
+    const watcherAccount = { service: GITHUB_CONNECTED_ACCOUNT_SERVICE, accountId: 'fixture-github' };
+    let connected = false;
     // The controller's real enrollment owner prepares its workflow effects; the
     // Home HTTP/Artifact fixture below is the persistent storage boundary.
     const enrollment = createPreviewEnrollmentForHost({ serverId: homeId,
-      machineId: detail.environment.controllerMachineId, readEnvironment: async () => detail });
-    let preparations = 0;
+      machineId: detail.environment.controllerMachineId,
+      readEnvironment: async () => ({ ...detail, targetLinks: detail.targetLinks.map(row => row.targetLink) }),
+      listEnvironments: async () => ({ ok: true, items: [], nextCursor: null, coverage: 'complete' }),
+      acquirePluginRuntimeRegistryLease: async () => ({ registry: { contributes }, release: async () => {} }),
+      listActionFormConnectedAccountOptions: async () => connected ? [{ value: watcherAccount, label: 'Fixture GitHub' }] : [],
+    });
     let effects = 0;
     const admissions: Array<Readonly<{ input: unknown; requestId?: string; reviewDigest?: string }>> = [];
+    const { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } = await import('@happier-dev/protocol/automations/automationActionTriggerV1');
+    const { createUiActionAutomationPortV1 } = await import('@/sync/ops/actions/actionAutomations');
+    homes.answer(serverId, `GET ${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`, { body: { v: 1, rows: [] } });
     const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
+      actionAutomations: createUiActionAutomationPortV1(account),
       resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: detail.environment.id } }),
       prepareHostReviewedChildren: async ({ actionId, input, context }) => actionId === 'deployments.environments.update'
         ? enrollment.prepare(DeploymentActionInputSchemasV1[actionId].parse(input), context) : null,
-      deploymentAction: async (_actionId, raw) => {
+      deploymentAction: async (_actionId, raw, context) => {
         const input = DeploymentActionInputSchemasV1['deployments.environments.update'].parse(raw);
         if (input.mode === 'preview') {
-          preparations += 1;
+          if (input.previewWatcher === 'options' && input.patch?.previewTemplate) {
+            const watcher = await enrollment.watchOptions(input.patch.previewTemplate, context);
+            if (!watcher || 'ok' in watcher) return watcher ?? { ok: false, error: 'source_unavailable', errorCode: 'source_unavailable' };
+            return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision, previewWatcher: watcher };
+          }
           return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision,
             forkEligibility: { kind: 'eligible' } };
         }
         if (!input.patch?.previewTemplate) throw new Error('Expected reviewed Preview template update');
         expect(input.patch.previewTemplate).toEqual({ ...template, enabled: true });
+        expect(input.previewWatcher).toEqual(watcherAccount);
         const content = { ...detail.content, previewTemplate: input.patch.previewTemplate };
         const saved = await account.updateArtifactDocument({ artifactId: detail.environment.contentArtifactId,
           expectedRevision: { headerVersion: detail.environment.contentHeaderVersion, bodyVersion: detail.environment.contentBodyVersion },
@@ -1454,9 +1483,13 @@ describe('Environment → Settings: checks, backups, previews', () => {
     const id = 'project-deployments.environment.settings.previews.template';
     try {
       expect(await mounted.settle(`${id}.enabled`)).not.toBeNull();
-      await vi.waitFor(() => expect(preparations).toBe(1));
       expect(Modal.show).not.toHaveBeenCalled();
       expect(effects).toBe(0);
+      await mounted.screen.pressByTestIdAsync(`${id}.enabled`);
+      expect(await mounted.settle(`${id}.watcher.connect`), mounted.screen.getTextContent()).not.toBeNull();
+      expect(admissions).toEqual([]);
+      expect(effects).toBe(0);
+      connected = true;
       await mounted.screen.pressByTestIdAsync(`${id}.enabled`);
       expect(await mounted.settle('actions.confirmation-review.decision-approve')).not.toBeNull();
       await act(async () => {});
@@ -1894,6 +1927,11 @@ describe('Environment → Settings: checks, backups, previews', () => {
         const { DeploymentActionInputSchemasV1 } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
         const input = DeploymentActionInputSchemasV1['deployments.environments.update'].parse(raw);
         expect(input.mode).toBe('preview');
+        if (input.previewWatcher === 'options') {
+          const service = { pluginId: 'happier.scm.forge.github', localId: 'github' };
+          return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision,
+            previewWatcher: { service, options: [{ value: { service, accountId: 'fixture-github' }, label: 'Fixture GitHub' }] } };
+        }
         return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision,
           creationDefaults: { values: { retainPreviousDeployments: 1, previewDatabase: 'own' },
             sources: { retainPreviousDeployments: 'builtin', previewDatabase: 'account' } },

@@ -1050,7 +1050,25 @@ to remove it). The Environment content owner prepares the mode-aware internal
 Artifact and its existing Team audience, then publishes the final reference under
 the existing authored-input proof. Generic Artifact creation refuses this internal
 kind. The full input digest binds the template; the metadata digest preserves the
-remaining patch while the private operand is removed before Home storage.
+remaining patch while private operands, including the watcher selection, are
+removed before Home storage.
+
+Before enabling pull-request previews, connect a GitHub account that can read
+the Project's repository through Settings → Previews → Connect GitHub. The
+editor uses the same eligible Connected Account inventory as Deploy on push.
+It uses a sole connection automatically and lets you choose among several.
+The reviewed update binds the exact chosen account to the watcher setup Action.
+Account labels and references are available during setup. Credential material
+stays with the Connected Account owner.
+
+Agents can read options using `deployments.environments.update` with
+`mode: "preview"`, `previewWatcher: "options"` and the proposed enabled
+`patch.previewTemplate`. Include the chosen `previewWatcher.options[].value`
+as `previewWatcher` when submitting the reviewed update. A sole connected
+account can be inferred by the controller. An existing purpose binding can
+still supply the account when the caller omits a choice. No connected account
+refuses enablement before the Environment content is written. GitHub resolves
+repository access when the admitted watcher is set up.
 
 Preview Create materializes the template's explicit variable blueprints through
 the existing reviewed bindings continuation. Fork previews retain only explicit

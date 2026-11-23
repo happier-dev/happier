@@ -4,7 +4,7 @@ import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/con
 import type { DeploymentPreviewTemplateV1 } from '@happier-dev/protocol/deployments/deploymentPreviewTemplateV1';
 import { DeploymentEnvironmentUpdateResultV1Schema, type DeploymentEnvironmentUpdateInputV1, type DeploymentPreviewEnrollmentV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
-import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/automations/event-setup-result';
 import { WorkflowTriggerListResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
@@ -17,16 +17,21 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import type { z } from 'zod/mini';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
-import { resolveRegistryConnectedAccountActionCredentialPurposeAuthorization } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
+import { resolveRegistryConnectedAccountActionFormPurposeAuthorization } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
 import { isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAttribution';
+import type { DeploymentEnvironmentListInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { prepareProposedPreviewForkEligibilityForHost, withAdmittedPreviewForkEligibilityForHost } from './previewAdmissionForHost';
+import type { DaemonConnectedAccountPurposeBindingRuntime } from '@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
 
-type UpdateInput = Pick<DeploymentEnvironmentUpdateInputV1, 'environmentId' | 'mode' | 'patch'>;
+type UpdateInput = Pick<DeploymentEnvironmentUpdateInputV1, 'environmentId' | 'mode' | 'patch' | 'previewWatcher'>;
 type UpdateSuccess = Extract<z.infer<typeof DeploymentEnvironmentUpdateResultV1Schema>, { ok: true }>;
 const preparedEdit = Symbol('previewEnrollmentEdit');
 type PreparedContext = ActionExecutorContext & { [preparedEdit]?: Readonly<{
     environmentId: string; policy: DeploymentPreviewTemplateV1 | null;
     controllerMachineId: DeploymentEnvironmentDetailV1['environment']['controllerMachineId'];
 }> };
+type WatcherOptions = NonNullable<UpdateSuccess['previewWatcher']>;
+const refusal = (code: string): ActionExecuteFailure => ({ ok: false, errorCode: code, error: code });
 const SETUP_ROLE = 'preview.setup';
 const TRIGGER_ROLE = 'preview.enroll';
 const unavailable = (errorCode = 'source_unavailable'): DeploymentPreviewEnrollmentV1 => ({ status: 'unavailable', errorCode });
@@ -37,7 +42,7 @@ const refused = (result: Extract<ActionExecuteResult, { ok: false }>): Deploymen
 /** Preview enrollment reads Events, setup Actions, the purpose-binding owner and current materializations from the lease. */
 type PreviewEnrollmentLease = Readonly<{
     registry: Pick<PluginRuntimeRegistryLease['registry'], 'contributes' | 'resolveConnectedAccountPurposeBindingOwner'
-        | 'resolveCurrentPluginMaterializationRef'>;
+        | 'resolveCurrentPluginMaterializationRef' | 'resolveOptionalAccess'>;
     resolveCurrentPluginMaterializationRef?: PluginRuntimeRegistryLease['resolveCurrentPluginMaterializationRef'];
     release(): Promise<void>;
 }>;
@@ -52,7 +57,11 @@ function readReceiptEvent(lease: PreviewEnrollmentLease) {
 export function createPreviewEnrollmentForHost(host: Readonly<{
     serverId: string; machineId: string;
     acquirePluginRuntimeRegistryLease?(): Promise<PreviewEnrollmentLease>;
-    readEnvironment(input: Readonly<{ environmentId: string; context: ActionExecutorContext }>): Promise<Pick<DeploymentEnvironmentDetailV1, 'environment' | 'content'>>;
+    listActionFormConnectedAccountOptions?: DaemonConnectedAccountPurposeBindingRuntime['listActionFormConnectedAccountOptions'];
+    readEnvironment(input: Readonly<{ environmentId: string; context: ActionExecutorContext }>):
+        Promise<Parameters<typeof prepareProposedPreviewForkEligibilityForHost>[1] & Pick<DeploymentEnvironmentDetailV1, 'content'>>;
+    listEnvironments(input: DeploymentEnvironmentListInputV1,
+        context: ActionExecutorContext): Promise<unknown>;
 }>) {
     async function withEvents<T>(kind: string, run: (events: NonNullable<PluginRuntimeRegistryLease['registry']['contributes']['automationEligibleEvents']>, lease: PreviewEnrollmentLease) => Promise<T>) {
         if (!host.acquirePluginRuntimeRegistryLease) return null;
@@ -62,7 +71,49 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
                 item.event.automation.source.scmPullRequestLifecycle?.providerKind === kind), lease);
         } finally { await lease.release(); }
     }
+    type Event = NonNullable<PluginRuntimeRegistryLease['registry']['contributes']['automationEligibleEvents']>[number];
+
+    function readWatcherChoices(event: Event, lease: PreviewEnrollmentLease, context: ActionExecutorContext) {
+        // These are the same action-field authorizations and inventory as the Workflow Event editor.
+        const action = readResolvedActionContribution(lease.registry.contributes, event.setupAction.identity);
+        const mapping = action?.definition.connectedAccountPurposeBindings?.[0];
+        if (!mapping || action?.definition.connectedAccountPurposeBindings?.length !== 1) return null;
+        const authorization = resolveRegistryConnectedAccountActionFormPurposeAuthorization({
+            registry: lease.registry.contributes,
+            qualifiedActionId: buildQualifiedPluginContributionKey(event.setupAction.identity),
+            fieldPath: mapping.path,
+            resolveOptionalAccess: pluginId => lease.registry.resolveOptionalAccess?.(pluginId) ?? [],
+        });
+        const service = authorization?.serviceRefs[0];
+        if (!authorization || !service || authorization.serviceRefs.length !== 1) return null;
+        const requester = context.externalActionExecutionAuthorization?.binding;
+        if (requester && !isCustodianMachineAdmission({
+            actorAccountId: requester.accountId, custodianAccountId: requester.custodianAccountId,
+        })) return null;
+        const signal = context.signal ?? new AbortController().signal;
+        return { path: mapping.path, service,
+            async readBinding() {
+                const binding = await lease.registry.resolveConnectedAccountPurposeBindingOwner?.()?.getBinding({
+                    purpose: authorization.purpose, serviceRefs: authorization.serviceRefs, signal,
+                });
+                return binding?.account;
+            },
+            async list(): Promise<WatcherOptions['options']> {
+                const options = await host.listActionFormConnectedAccountOptions?.({ ...authorization, signal });
+                return (options ?? []).flatMap(option => 'nativeServicePath' in option ? [] : [option]);
+            },
+        };
+    }
+
     return {
+        async watchOptions(policy: DeploymentPreviewTemplateV1, context: ActionExecutorContext) {
+            return withEvents(policy.repository.kind, async (events, lease): Promise<WatcherOptions | ActionExecuteFailure> => {
+                if (events.length !== 1 || !events[0]) return refusal('source_unavailable');
+                const choices = readWatcherChoices(events[0], lease, context);
+                if (!choices) return refusal('credential_scope_denied');
+                return { service: choices.service, options: await choices.list() };
+            });
+        },
         async prepare(input: UpdateInput, context: ActionExecutorContext) {
             if (input.mode === 'preview') return null;
             const policy = input.patch?.previewTemplate;
@@ -71,12 +122,15 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
             const previous = environment.content.previewTemplate;
             if (!policy?.enabled && !previous?.enabled
                 && (!policy || !previous || sameScmHostingRepositoryIdentity(policy.repository, previous.repository))) return null;
+            const forkEligibility = policy?.enabled && policy.forkPreviews === 'approveEachCommit'
+                ? await prepareProposedPreviewForkEligibilityForHost({ serverId: host.serverId, patch: input.patch }, environment,
+                    policy.runtimeTargetLinkId, request => host.listEnvironments(request, context)) : undefined;
             // The existing prepared-context continuation retains the accepted private edit
             // when Artifact preparation removes it from the later storage operand.
             const prepareExecutionContext = async (context: ActionExecutorContext): Promise<ActionExecutorContext> => {
                 const prepared: PreparedContext = { ...context, [preparedEdit]: { environmentId: input.environmentId, policy,
                     controllerMachineId: environment.environment.controllerMachineId } };
-                return prepared;
+                return forkEligibility ? withAdmittedPreviewForkEligibilityForHost(prepared, environment.environment, forkEligibility) : prepared;
             };
             const children = [
                 { action: 'workflow.trigger.list' as const, role: TRIGGER_ROLE },
@@ -86,42 +140,38 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
             // Retained lifecycle sources may need the receipt sibling added after
             // an earlier partial enrollment, including while new previews are disabled.
             const enabledChildren = [...children, { action: 'workflow.trigger.add' as const, role: TRIGGER_ROLE }];
+            // The Environment write reports the existing fork refusal after review.
+            // No watcher is prepared for an ineligible placement.
+            if (forkEligibility && forkEligibility.kind !== 'eligible') return { children: enabledChildren, prepareExecutionContext };
             try {
                 return await withEvents(policy.repository.kind, async (events, lease) => {
-                    // A requester must never inherit the Machine custodian's Account selection.
-                    const requester = context.externalActionExecutionAuthorization?.binding;
-                    const purposeOwner = requester && !isCustodianMachineAdmission({
-                        actorAccountId: requester.accountId, custodianAccountId: requester.custodianAccountId,
-                    })
-                        ? undefined : lease.registry.resolveConnectedAccountPurposeBindingOwner?.();
-                    const setupChildren = [];
-                    for (const event of events) {
-                        let setupInput: Record<string, unknown> = { repository: policy.repository.repository };
-                        const action = readResolvedActionContribution(lease.registry.contributes, event.setupAction.identity);
-                        for (const mapping of action?.definition.connectedAccountPurposeBindings ?? []) {
-                            const authorization = resolveRegistryConnectedAccountActionCredentialPurposeAuthorization({
-                                registry: lease.registry.contributes,
-                                qualifiedActionId: buildQualifiedPluginContributionKey(event.setupAction.identity),
-                                fieldPath: mapping.path, requireSelect: false,
-                            });
-                            if (!authorization || !purposeOwner) continue;
-                            const binding = await purposeOwner.getBinding({ purpose: authorization.purpose,
-                                serviceRefs: authorization.serviceRefs,
-                                signal: context.signal ?? new AbortController().signal });
-                            if (binding) setupInput = writeInputPath(setupInput, mapping.path, binding.account);
-                        }
-                        setupChildren.push({ action: event.setupAction.identity, role: SETUP_ROLE,
-                            input: normalizeStrictJsonValue(setupInput) });
+                    if (events.length !== 1 || !events[0]) return policy.enabled
+                        ? refusal('source_unavailable') : { children: enabledChildren, prepareExecutionContext };
+                    const event = events[0];
+                    const choices = readWatcherChoices(event, lease, context);
+                    const requested = input.previewWatcher === 'options' ? undefined : input.previewWatcher;
+                    let account = requested === undefined ? await choices?.readBinding() : undefined;
+                    if (choices && !account) {
+                        const options = await choices.list();
+                        account = requested === undefined ? (options.length === 1 ? options[0]?.value : undefined)
+                            : options.find(option => sameStrictJsonValue(option.value, requested))?.value;
+                        if (!account && policy.enabled) return refusal(requested ? 'credential_scope_denied'
+                            : options.length === 0 ? 'connected_account_required' : 'preview_watcher_account_selection_required');
                     }
+                    if (!choices || !account) return policy.enabled
+                        ? refusal('credential_scope_denied') : { children: enabledChildren, prepareExecutionContext };
+                    const setupInput = writeInputPath({ repository: policy.repository.repository }, choices.path, account);
+                    const setupChildren = [{ action: event.setupAction.identity, role: SETUP_ROLE,
+                        input: normalizeStrictJsonValue(setupInput) }];
                     const receiptEvent = events.some(event => event.event.automation.source.scmPullRequestLifecycle?.previewStatusActionRef)
                         ? readReceiptEvent(lease) : undefined;
                     return { children: [
                         ...setupChildren,
                         ...(receiptEvent ? [{ action: receiptEvent.setupAction.identity, role: SETUP_ROLE }] : []), ...enabledChildren,
                     ], prepareExecutionContext };
-                }) ?? { children: enabledChildren, prepareExecutionContext };
+                }) ?? (policy.enabled ? refusal('source_unavailable') : { children: enabledChildren, prepareExecutionContext });
             } catch (error) {
-                // The existing listener set remains the fallback; the credential preparation cause is kept privately.
+                if (policy.enabled) return { ok: false as const, ...normalizeActionExecutorThrownError(error, 'deployment.preview.update_preparation') };
                 recordFailureCause(error, 'deployment.preview.update_preparation');
                 return { children: enabledChildren, prepareExecutionContext };
             }

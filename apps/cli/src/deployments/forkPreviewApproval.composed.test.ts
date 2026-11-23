@@ -423,6 +423,36 @@ it.each([false, true])('allows only the accepted exact-head Create to reach sour
     expect(mutations).toEqual(existing ? [] : ['POST /v1/deployments/environments']);
 });
 
+it('reports Production eligibility before trying to list watcher accounts', async () => {
+    const { executor, context, template, mutations, approvals } = fixture({
+        inventory: 'complete', productionPage: 2,
+    });
+    const environment = template.environment;
+    const result = await executor.execute('deployments.environments.update', { serverId: 'home', environmentId: environment.id,
+        expectedRevision: environment.revision, contentArtifactId: environment.contentArtifactId,
+        contentHeaderVersion: environment.contentHeaderVersion, contentBodyVersion: environment.contentBodyVersion,
+        mode: 'preview', previewWatcher: 'options', patch: { previewTemplate: template.content.previewTemplate } },
+    { ...context, surface: 'ui' });
+    expect(result).toMatchObject({ ok: false, errorCode: 'deployment_access_denied',
+        details: { forkEligibility: { kind: 'ineligible', reason: 'production_workload' } } });
+    expect(mutations).toEqual([]);
+    expect(approvals).toEqual([]);
+});
+
+it('refuses an eligible fork policy without a watcher Event before saving', async () => {
+    const { executor, context, template, mutations, approvals } = fixture({
+        inventory: 'complete', productionPage: 0,
+    });
+    const environment = template.environment;
+    const result = await executor.execute('deployments.environments.update', { serverId: 'home', environmentId: environment.id,
+        expectedRevision: environment.revision, contentArtifactId: environment.contentArtifactId,
+        contentHeaderVersion: environment.contentHeaderVersion, contentBodyVersion: environment.contentBodyVersion,
+        patch: { previewTemplate: template.content.previewTemplate } }, context);
+    expect(result).toMatchObject({ ok: false, errorCode: 'source_unavailable' });
+    expect(mutations).toEqual([]);
+    expect(approvals).toEqual([]);
+});
+
 it.each([
     { inventory: 'complete', productionPage: 0, kind: 'eligible' },
     { inventory: 'partial', productionPage: 0, kind: 'unavailable' },

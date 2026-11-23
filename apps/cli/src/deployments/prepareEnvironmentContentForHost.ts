@@ -16,7 +16,8 @@ import type { StoredCredentials } from '@/persistence';
 import { admitStoredComposeDefinition, normalizeStoredComposeDefinitionInput } from '@/workspaces/projectSetup/nativeComposeSource';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
-import { admitPreviewEnvironmentForHost, preparePreviewForkEligibilityForHost } from './previewAdmissionForHost';
+import { admitPreviewEnvironmentForHost, prepareProposedPreviewForkEligibilityForHost,
+    readAdmittedPreviewForkEligibilityForHost, refusePreviewForkEligibilityForHost } from './previewAdmissionForHost';
 import type { DeploymentEnvironmentListInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readDeploymentEnvironmentForHost } from './readEnvironmentForHost';
 import { createDeploymentArtifactForHost } from './createArtifactForHost';
@@ -176,13 +177,11 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                     preparedContent = { input: request.input, owner: loaded.environment.owner };
                 }
                 if (desiredPreviewTemplate?.enabled && desiredPreviewTemplate.forkPreviews === 'approveEachCommit') {
-                    const forkEligibility = await preparePreviewForkEligibilityForHost({ serverId: request.input.serverId,
-                        protection: request.input.patch?.protection ?? loaded.environment.protection,
-                        buildMachineId: request.input.patch?.buildMachineId ?? loaded.environment.buildMachineId,
-                        runtime: loaded.targetLinks.find(link => link.id === desiredPreviewTemplate.runtimeTargetLinkId) },
-                    input => host.listEnvironments ? host.listEnvironments(input, request.context) : Promise.resolve(null));
-                    if (forkEligibility.kind !== 'eligible') return { ok: false, errorCode: 'deployment_access_denied',
-                        error: 'deployment_access_denied', details: { forkEligibility } };
+                    const forkEligibility = readAdmittedPreviewForkEligibilityForHost(request.context, loaded.environment)
+                        ?? await prepareProposedPreviewForkEligibilityForHost(request.input, loaded,
+                            desiredPreviewTemplate.runtimeTargetLinkId,
+                            input => host.listEnvironments ? host.listEnvironments(input, request.context) : Promise.resolve(null));
+                    if (forkEligibility.kind !== 'eligible') return refusePreviewForkEligibilityForHost(forkEligibility);
                 }
                 // This check owns opened content in both Account modes. An E2EE
                 // server cannot inspect this private leaf on the client's behalf.
@@ -237,7 +236,8 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                     contentHeaderVersion: created.revision.headerVersion, contentBodyVersion: created.revision.bodyVersion };
             }
             if (preparedInput) {
-                return { input: { ...preparedInput, patch: storagePatch ?? {} },
+                const { previewWatcher: _watcher, ...storageInput } = preparedInput;
+                return { input: { ...storageInput, patch: storagePatch ?? {} },
                     ...(isDeploymentEnvironmentUpdateNativeAdmissionV1(native) ? { authoredInputDigest: native.inputDigest } : {}) };
             }
             return null;

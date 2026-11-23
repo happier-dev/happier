@@ -122,17 +122,23 @@ async function fixture(setupRefused = false, statusJourney = false) {
         if (update.patch.target !== undefined) current.target = update.patch.target;
         return { ok: true, result: { set: current, triggerId: 'preview' } };
     });
+    const connectedOptions: { value: { service: typeof GITHUB_CONNECTED_ACCOUNT_SERVICE; accountId: string }; label: string }[] = [
+        { value: { service: GITHUB_CONNECTED_ACCOUNT_SERVICE, accountId: 'available-account' }, label: 'Available account' },
+    ];
     const enrollment = createPreviewEnrollmentForHost({ serverId, machineId: 'controller',
-        readEnvironment: async () => environment,
+        readEnvironment: async () => ({ ...environment, targetLinks: environment.targetLinks.map(row => row.targetLink) }),
+        listEnvironments: async () => ({ ok: true, items: [], nextCursor: null, coverage: 'complete' }),
+        listActionFormConnectedAccountOptions: async () => connectedOptions,
         acquirePluginRuntimeRegistryLease: async () => ({ registry: { contributes,
             resolveConnectedAccountPurposeBindingOwner: () => selected.owner },
             resolveCurrentPluginMaterializationRef: pluginId => ({ pluginId, machineId: 'controller', materializationId: 'installed' }),
             release: async () => {} }) });
-    async function save(enabled: boolean | null, afterPrepare?: () => Promise<void>) {
-        const input = { environmentId: environment.environment.id,
+    async function save(enabled: boolean | null, afterPrepare?: () => Promise<void>, previewWatcher?: typeof connectedOptions[number]['value']) {
+        const input = { environmentId: environment.environment.id, previewWatcher,
             patch: { previewTemplate: enabled === null ? null : { ...environment.content.previewTemplate!, enabled } } };
         const plan = await enrollment.prepare(input, {});
-        if (!plan || 'ok' in plan) throw new Error('Expected reviewed child declarations');
+        if (plan && 'ok' in plan) return plan;
+        if (!plan) throw new Error('Expected reviewed child declarations');
         await afterPrepare?.();
         if (enabled === null) delete environment.content.previewTemplate;
         else environment.content.previewTemplate = input.patch.previewTemplate ?? undefined;
@@ -152,7 +158,7 @@ async function fixture(setupRefused = false, statusJourney = false) {
             target: { kind: 'account', account: { service: GITHUB_CONNECTED_ACCOUNT_SERVICE, accountId } } }] }));
     }
     const clearSetupAccount = () => selected.store.update(current => ({ ...current, bindings: [] }));
-    return { app, calls, responses, saved, environment, enrollment, save, selectSetupAccount, clearSetupAccount };
+    return { app, calls, responses, saved, environment, enrollment, save, selectSetupAccount, clearSetupAccount, connectedOptions };
 }
 
 it('leaves a read-only fork eligibility preview without future enrollment effects', async () => {
@@ -185,11 +191,14 @@ it.each([
         });
         const prepared = await f.enrollment.prepare({ environmentId: f.environment.environment.id,
             patch: { previewTemplate: f.environment.content.previewTemplate! } }, { externalActionExecutionAuthorization });
+        if (!expectedCredentialRef) {
+            expect(prepared).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+            expect(JSON.stringify(prepared)).not.toContain('machine-owner-github');
+            return;
+        }
         if (!prepared || 'ok' in prepared) throw new Error('Expected reviewed child declarations');
         const setupInput = prepared.children.flatMap(child => child.role === 'preview.setup' && 'input' in child && child.input ? [child.input] : [])[0];
-        expect(setupInput).toEqual({ repository: 'owner/app',
-            ...(expectedCredentialRef ? { credentialRef: expectedCredentialRef } : {}) });
-        if (!expectedCredentialRef) expect(JSON.stringify(prepared.children)).not.toContain('machine-owner-github');
+        expect(setupInput).toEqual({ repository: 'owner/app', credentialRef: expectedCredentialRef });
     } finally { await f.app.close(); }
 });
 
@@ -228,13 +237,44 @@ it('retains the purpose account selected before review when the default changes 
     } finally { await f.app.close(); }
 });
 
-it('keeps an available account unselected when the purpose owner has no default', async () => {
+it('admits a sole connected account without an existing purpose binding', async () => {
     const f = await fixture();
     try {
         await f.clearSetupAccount();
-        expect(await f.save(true)).toMatchObject({ ok: true,
-            previewEnrollment: { status: 'unavailable', errorCode: 'credential_scope_denied' } });
-        expect(f.saved).toEqual([]);
+        expect(await f.save(true)).toMatchObject({ ok: true, previewEnrollment: { status: 'enrolled' } });
+        expect(f.calls.find(call => call.actionId === 'action.invoke')?.input)
+            .toMatchObject({ input: { repository: 'owner/app', credentialRef: { accountId: 'available-account' } } });
+    } finally { await f.app.close(); }
+});
+
+it('requires a GitHub connection before saving an enabled preview template', async () => {
+    const f = await fixture();
+    try {
+        await f.clearSetupAccount();
+        f.connectedOptions.length = 0;
+        f.environment.content.previewTemplate!.enabled = false;
+        expect(await f.save(true)).toMatchObject({ ok: false, errorCode: 'connected_account_required' });
+        expect(f.environment.content.previewTemplate?.enabled).toBe(false);
+        expect(f.calls).toEqual([]);
+    } finally { await f.app.close(); }
+});
+
+it('requires a choice between multiple connected accounts and binds the exact choice to the review', async () => {
+    const f = await fixture();
+    try {
+        await f.clearSetupAccount();
+        const second = { service: GITHUB_CONNECTED_ACCOUNT_SERVICE, accountId: 'second' };
+        f.connectedOptions.push({ value: second, label: 'Second account' });
+        expect(await f.enrollment.watchOptions(f.environment.content.previewTemplate!, {}))
+            .toEqual({ service: GITHUB_CONNECTED_ACCOUNT_SERVICE, options: f.connectedOptions });
+        expect(await f.save(true)).toMatchObject({ ok: false, errorCode: 'preview_watcher_account_selection_required' });
+        expect(await f.save(true, undefined, { ...second, accountId: 'unlisted' }))
+            .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+        expect(f.calls).toEqual([]);
+        expect(await f.save(true, async () => { f.connectedOptions.reverse(); }, second))
+            .toMatchObject({ ok: true, previewEnrollment: { status: 'enrolled' } });
+        expect(f.calls.find(call => call.actionId === 'action.invoke')?.input)
+            .toMatchObject({ input: { credentialRef: second } });
     } finally { await f.app.close(); }
 });
 
@@ -317,7 +357,7 @@ it('publishes ready through the enrolled receipt Workflow and the registered For
     } finally { await plugin.dispose(); await f.app.close(); }
 });
 
-it('reaches enrollment from the public Environment update after private patch preparation', async () => {
+it('refuses an unavailable watcher through the public Environment update before writing the private patch', async () => {
     const { credentials, rows, writes } = createPlainAccountArtifactHttpBoundary();
     const environment = createDeploymentEnvironmentDetailV1();
     environment.environment.controllerMachineId = 'controller';
@@ -363,10 +403,9 @@ it('reaches enrollment from the public Environment update after private patch pr
         actionsSettings: setActionApprovalOverride({ settings: normalizeActionsSettingsV1(undefined), actionId,
             surface: 'ui', approvalRequired: false }),
     });
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { ok: true, previewEnrollment: { status: 'unavailable' } } });
-    expect(writes).toHaveBeenCalledTimes(1);
-    expect(stored).toHaveLength(1);
-    expect(stored[0]?.patch).toEqual({});
+    expect(result).toMatchObject({ ok: false, errorCode: 'source_unavailable' });
+    expect(writes).not.toHaveBeenCalled();
+    expect(stored).toEqual([]);
 });
 
 it('keeps the persisted save successful and visibly reports setup credential refusal', async () => {
