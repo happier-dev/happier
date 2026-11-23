@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { expect, onTestFinished, vi } from 'vitest';
 import { z } from 'zod/mini';
 import { createInstalledFilesystemMachineFixture } from '@/daemon/testkit/installedFilesystemMachineFixture';
-import { createAgentIsolationEffectsBoundary, createAgentIsolationMemberPreparationBoundary, runAgentIsolationMemberReadinessBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
+import { createAgentIsolationEffectsBoundary, createAgentIsolationMemberPreparationBoundary, runAgentIsolationMemberReadinessBoundary, readScopedRunAsLaunch } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
 import { buildAgentIsolationProvisioningSteps, deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
 import { writeAgentIsolationMemberBinding } from '@/daemon/agentIsolation/memberBindings';
 import { resolveAgentIsolationMemberCliRuntime } from '@/daemon/agentIsolation/memberCliRuntime';
@@ -266,7 +266,8 @@ export async function createNativeFilesystemMemberFixture(options: Readonly<{ re
   const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
   const foreignStatus = join(f.directory, 'native-process-status');
   if (options.foreignLauncher) await writeFile(foreignStatus, 'Uid:\t2401\t2401\t2401\t2401\n');
-  nativeOs.spawn = (command, args, spawnOptions) => {
+  nativeOs.spawn = (scopedCommand, scopedArgs, spawnOptions) => {
+    const { command, args } = readScopedRunAsLaunch(scopedCommand, scopedArgs);
     if (command !== 'sudo') return undefined;
     if (options.coldPolicy === 'reviewedMember') {
       // The OS worker cannot start before the real setup owner commits the

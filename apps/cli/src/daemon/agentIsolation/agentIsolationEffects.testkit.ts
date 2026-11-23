@@ -15,13 +15,24 @@ import { readAgentLaunchFrame } from './agentLaunchFrame';
 
 /** Virtual OS execution of the fixed member readiness frame. Native fixture
  * homes stand in for actual uid-owned homes; the readiness owner stays real. */
+/**
+ * The run-as launcher inside a host process scope (cgroup shell or systemd-run),
+ * which wraps native member launches since 1ba195eaf20 and 0419f286b8e when the
+ * host has one. Fixtures enter the scope as given and model the inner launcher.
+ */
+export function readScopedRunAsLaunch(command: string, args: readonly string[] = []): Readonly<{ command: string; args: readonly string[] }> {
+  const launcher = command === 'sudo' ? -1 : args.indexOf('sudo');
+  return launcher < 0 ? { command, args } : { command: 'sudo', args: args.slice(launcher + 1) };
+}
+
 export async function runAgentIsolationMemberReadinessBoundary(input: Readonly<{
   request: Parameters<AgentIsolationReadinessSystem['run']>;
   nativeHome?: Readonly<{ path: string; uid: number }>;
   sharedHome?: string;
   fail?: boolean;
 }>) {
-  const [command, args, options] = input.request;
+  const [scopedCommand, scopedArgs, options] = input.request;
+  const { command, args } = readScopedRunAsLaunch(scopedCommand, scopedArgs);
   if (command !== 'sudo' || args?.at(-1) !== 'agent-launch' || !options?.inputBytes || (!input.nativeHome && !input.sharedHome))
     return undefined;
   const frame = await readAgentLaunchFrame(Readable.from([options.inputBytes], { objectMode: false }), undefined, true);
@@ -159,8 +170,9 @@ export function createAgentIsolationMemberPreparationBoundary(input: Readonly<{
   let nextAllocatedUid = uid;
   let userObservations = 0, daemonInspections = 0, heldObservationAvailable = true, rootUid = uid;
   const permissionQueries: Readonly<{ command: string; args: readonly string[] }>[] = [];
-  const permissionSystem: AgentIsolationReadinessSystem = { run: async (command, args, options) => {
-    permissionQueries.push({ command, args: [...args ?? []] });
+  const permissionSystem: AgentIsolationReadinessSystem = { run: async (scopedCommand, scopedArgs, options) => {
+    const { command, args } = readScopedRunAsLaunch(scopedCommand, scopedArgs);
+    permissionQueries.push({ command, args: [...args] });
     if (command !== 'sudo' || JSON.stringify(args) !== JSON.stringify([
       '-n', '-u', derived.username, '--', '/opt/happier/cli/current/happier', 'agent-launch',
     ])) throw new Error('Unexpected member permission probe');
