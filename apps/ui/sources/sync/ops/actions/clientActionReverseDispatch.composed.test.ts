@@ -244,7 +244,9 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
       selection: { kind: 'named', name: 'qa-one' },
       choice: { kind: 'workers', destination: { kind: 'machine', machineId: worker.id } },
     };
-    const manifest = { version: 1, scripts: { 'qa-one': { source: { kind: 'command', command: 'echo qa-one' }, execution: 'portable' } } };
+    const manifest = { version: 1, scripts: {
+      'qa-one': { source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'qa-one' }, execution: 'portable' },
+    } };
     homes.answer(home, 'POST /v1/actions/projects.inspect', { select: raw => {
       const request = ExternalActionRequestEnvelopeV1Schema.parse(raw);
       return { body: { v: 1, actionId: 'projects.inspect', requestId: request.requestId, execution: { ok: true, result: {

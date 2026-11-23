@@ -3,6 +3,7 @@ import type { ActionExecutorContext } from '../actionExecutor.js';
 import type { ActionExecuteFailure } from '../actionExecutionResult.js';
 import { actionInputValidationFailure } from './actionInputValidation.js';
 import { isMissingActionSecretInputError, readMissingActionSecretInputPaths } from '../actionInputHintsRuntime.js';
+import { readProjectScriptCallerPlacementFailureV1 } from './projectActionPlacement.js';
 
 export function callerInputSchema(spec: ActionSpec, ctx: ActionExecutorContext) {
   if (ctx.surface === 'cli') {
@@ -46,6 +47,10 @@ export async function bindCallerInput(
       : undefined;
     const failure = actionInputValidationFailure(parsed.error);
     return timingIssue ? { ...failure, error: timingIssue.message } : failure;
+  }
+  if (spec.id === 'projects.script.run') {
+    const placementFailure = readProjectScriptCallerPlacementFailureV1(parsed.data);
+    if (placementFailure) return placementFailure;
   }
   const caller = ctx.actionCaller ?? { kind: 'host' as const };
   const apiBinding = ctx.surface === 'api'

@@ -5098,8 +5098,11 @@ The controller opens purpose-bound requester custody, reads that Account's
 current refs privately, and uses the incumbent relationship and root owners for
 the clean barrier. Preparation does not borrow the custodian's Account sign-in,
 publish the requester's graph as the daemon's graph, or authorize another Run.
-An Agent or MCP tool in the requester's Session can propose a named Script
-with one exact Worker Machine. The requester's answering App presents that
+An Agent or MCP tool in the requester's Session can propose a portable Script
+with `selection: { kind: 'named', name: '<declaration>' }` and one exact Worker
+Machine. Use the declaration name even when it wraps a detected Make target.
+A detected native selection with an explicit Worker returns `primary_only`
+before requesting Machine authorization. The requester's answering App presents that
 Script, source checkout and Worker for confirmation. Only the App's confirmed
 invocation can acquire a new Account root and submit the Run. The proposal
 carries no Machine root. An admitted Workflow keeps its accepted Machine.

@@ -545,13 +545,16 @@ describe('daemon Session Account authority', () => {
   });
 
   it.each([
-    undefined, 'mcp',
-  ] as const)('sends an exact Worker Script to the requester App without minting an origin Machine root (%s)', async surface => {
+    { surface: 'agent', selection: { kind: 'named', name: 'qa-one' }, expected: 'approval_canceled' },
+    { surface: 'mcp', selection: { kind: 'named', name: 'qa-one' }, expected: 'approval_canceled' },
+    { surface: 'agent', selection: { kind: 'native', source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'qa-one' } }, expected: 'primary_only' },
+    { surface: 'mcp', selection: { kind: 'native', source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'qa-one' } }, expected: 'primary_only' },
+  ] as const)('handles exact Worker $selection.kind Script on $surface without minting an origin Machine root', async ({ surface, selection, expected }) => {
     const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'alice' })).toString('base64url')}.signature`;
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { session: ownedSessionRecord({}, token) } });
     const input = {
       workspace: { serverId: 'alice-home', machineId: 'alice-machine', workspaceId: 'source', rootPath: '/source' },
-      selection: { kind: 'named', name: 'qa-one' },
+      selection,
       choice: { kind: 'workers', destination: { kind: 'machine', machineId: 'shared-worker' } },
     };
     const prepareExternalActionAuthorization = vi.fn(async () => ({
@@ -573,10 +576,14 @@ describe('daemon Session Account authority', () => {
         })),
       }),
     });
-    expect(await execute({ ...operation, actionId: 'projects.script.run', input, ...(surface ? { surface } : {}) },
+    expect(await execute({ ...operation, actionId: 'projects.script.run', input, surface },
       { sessionId: 'bob-session', isCurrent: async () => true }))
-      .toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+      .toMatchObject({ ok: false, errorCode: expected });
     expect(prepareExternalActionAuthorization).not.toHaveBeenCalled();
+    if (selection.kind === 'native') {
+      expect(deliveries).toEqual([]);
+      return;
+    }
     // The daemon projects both Agent and Session-scoped MCP as the authenticated Session agent.
     expect(deliveries).toMatchObject([{ method: RPC_METHODS.UI_ACTION_EXECUTE, principalAccountId: 'alice',
       request: { actionId: 'projects.script.run', input,

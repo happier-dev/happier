@@ -2,7 +2,7 @@ import { PROJECT_ACTION_INPUT_SCHEMAS_V1, ProjectWorkerNoAcceptanceFailureDetail
   type PROJECT_FINITE_ACTION_RPC_METHODS_V1, type ProjectWorkerNoAcceptanceFailureDetailsV1 } from '../projectActionFamily.js';
 import { ProjectDefinitionInspectOutputSchema } from '../projectDefinitionActionFamily.js';
 import { ProjectWorkerActionOutputSchemasV1 } from '../specs/projectWorkers.js';
-import { resolveProjectExecutionChoiceV1 } from '../../workspaces/projectWorkerPreferencesV1.js';
+import { isProjectExecutionPrimaryOnlyRefusalV1, resolveProjectExecutionChoiceV1 } from '../../workspaces/projectWorkerPreferencesV1.js';
 import { MachinePoolResolveResultV1Schema } from '../../machines/pools/v1.js';
 import { resolveProjectMemoryDemandV1 } from '../../workspaces/projectSetup/projectMemoryDemandV1.js';
 import type { ActionExecuteFailure, ActionExecuteResult } from '../actionExecutionResult.js';
@@ -16,6 +16,15 @@ export type ProjectPlacementActionExecutorV1 = (actionId: 'projects.inspect' | '
 
 function failure(errorCode: string, details?: unknown): ActionExecuteFailure {
   return { ok: false, errorCode, error: errorCode, ...(details === undefined ? {} : { details }) };
+}
+
+/** Detected targets have no portability declaration. Refuse before routing or signing an original Action. */
+export function readProjectScriptCallerPlacementFailureV1(input: unknown): ActionExecuteFailure | undefined {
+  const script = PROJECT_ACTION_INPUT_SCHEMAS_V1['projects.script.run'].safeParse(input);
+  if (script.success && script.data.selection.kind === 'native'
+    && isProjectExecutionPrimaryOnlyRefusalV1({ execution: 'primary', invocation: script.data.choice })) {
+    return failure('primary_only', { remedy: 'Select a named Project Script declared portable to run it on a Worker.' });
+  }
 }
 
 /** Addresses the incumbent finite Action using the same frontdoor's SOURCE reads

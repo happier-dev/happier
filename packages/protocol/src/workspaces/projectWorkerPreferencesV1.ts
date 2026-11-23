@@ -148,14 +148,22 @@ export type ProjectExecutionChoiceResolutionV1 = Readonly<{
   provenance: 'declaration' | 'invocation' | 'script' | 'workspace' | 'workflow' | 'default';
 }> | Readonly<{ status: 'refused'; reason: 'primary_only' | 'preferences_unavailable' | 'ad_hoc_disabled' | 'destination_missing' | 'override_requires_review' }>;
 
+type ProjectExecutionConstraintV1 = Readonly<{
+  execution: 'primary' | 'portable'; invocation?: ProjectExecutionChoiceV1;
+  sourceMachineId?: string; acceptedMachineId?: string; reviewedOverride?: boolean;
+}>;
+
+/** A primary-only selection cannot acquire a Worker by choosing one. */
+export function isProjectExecutionPrimaryOnlyRefusalV1(input: ProjectExecutionConstraintV1): boolean {
+  return input.execution === 'primary' && (input.invocation?.kind === 'workers'
+    || input.acceptedMachineId !== undefined && input.acceptedMachineId !== input.sourceMachineId && !input.reviewedOverride);
+}
+
 /** Placement precedence is advisory. Exact target acceptance and Action approval stay with their owners. */
-export function resolveProjectExecutionChoiceV1(input: Readonly<{
-  execution: 'primary' | 'portable'; scriptName?: string; adHoc?: boolean;
-  invocation?: ProjectExecutionChoiceV1; sourceMachineId?: string; acceptedMachineId?: string; reviewedOverride?: boolean;
-  preference: ProjectWorkerPreferenceAvailabilityV1;
+export function resolveProjectExecutionChoiceV1(input: ProjectExecutionConstraintV1 & Readonly<{
+  scriptName?: string; adHoc?: boolean; preference: ProjectWorkerPreferenceAvailabilityV1;
 }>): ProjectExecutionChoiceResolutionV1 {
-  if (input.execution === 'primary' && (input.invocation?.kind === 'workers'
-    || input.acceptedMachineId !== undefined && input.acceptedMachineId !== input.sourceMachineId && !input.reviewedOverride)) {
+  if (isProjectExecutionPrimaryOnlyRefusalV1(input)) {
     return { status: 'refused', reason: 'primary_only' };
   }
   if (input.preference.status !== 'ready' && input.preference.status !== 'absent') return { status: 'refused', reason: 'preferences_unavailable' };
