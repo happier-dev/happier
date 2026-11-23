@@ -1573,7 +1573,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     if (!materialized.ok) {
       if (materialized.error.code === 'target_unavailable' && 'reason' in materialized.error)
         args.context.recordActionStartDiagnostic?.({ phase: 'workflow_materialization', refusalReason: materialized.error.reason });
-      throw workflowError(materialized.error.code, materialized.error);
+      throw createActionExecuteFailureError({ ok: false, effectAttempted: false,
+        errorCode: materialized.error.code, error: materialized.error.code, details: materialized.error });
     }
     return { snapshot: materialized.snapshot, execute: async context => {
       args = { ...args, context };

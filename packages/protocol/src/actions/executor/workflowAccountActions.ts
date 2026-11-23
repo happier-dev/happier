@@ -114,6 +114,8 @@ export function normalizeWorkflowActionThrownError(error: unknown, diagnostic?: 
   } };
   const failure = WorkflowActionFailureV1Schema.safeParse({
     ok: false,
+    ...(thrown && 'effectAttempted' in thrown && typeof thrown.effectAttempted === 'boolean'
+      ? { effectAttempted: thrown.effectAttempted } : {}),
     errorCode: code,
     error: code === 'github_webhook_home_unreachable'
       ? 'GitHub cannot reach this Home. Make the Home reachable, deploy manually, or ask an agent to deploy.'

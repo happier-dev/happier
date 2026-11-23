@@ -10,7 +10,7 @@ import type { WorkflowMaterializedLeafV1 } from '../../workflows/workflowDefinit
 import { readWorkflowCurrentInvocationAncestryV1 } from '../../workflows/workflowInvocationMembersV1.js';
 import { createActionExecuteFailureError } from '../actionExecutionResult.js';
 import { readActionFailureEnvelope } from './actionFailureEnvelope.js';
-import { bindWorkflowActionFieldV1 } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
+import { bindWorkflowActionInputV1 } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
 import { readReviewSessionScopeAddressesV1 } from '../../reviews/reviewStart.js';
 
 type WorkflowActionInvocationContextV1 = Readonly<{
@@ -150,9 +150,9 @@ export async function resolveActionWorkflowSessionScopeV1(
       : identifier === context.serverIdentityId ? context.serverIdentityId : deps.resolveServerProfileScopeId?.(identifier));
   for (const binding of leaf.sessionAuthorityBindings ?? []) {
     const roster = binding.inputName === undefined && actionId === 'review.start' && structure.leaf.kind === 'action'
-      ? readReviewSessionScopeAddressesV1(Object.fromEntries(Object.entries(structure.leaf.input).map(([field, value]) =>
-        [field, bindWorkflowActionFieldV1(value, { inputs: structure.inputs, origin: 'origin' in opened.acceptedContext ? opened.acceptedContext.origin : undefined },
-          structure.leaf.id, 'run', structure.frame.item)]))) : null;
+      ? readReviewSessionScopeAddressesV1(bindWorkflowActionInputV1(structure.leaf.input,
+        { inputs: structure.inputs, origin: 'origin' in opened.acceptedContext ? opened.acceptedContext.origin : undefined },
+        structure.leaf.id, 'run', structure.frame.item, leaf.actionContract?.inputSchema)) : null;
     if (binding.inputName === undefined && !roster) return null;
     const value = binding.inputName === undefined ? undefined : structure.inputs[binding.inputName];
     if (binding.inputName !== undefined && value === undefined

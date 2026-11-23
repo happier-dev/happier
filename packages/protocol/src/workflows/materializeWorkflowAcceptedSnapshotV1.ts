@@ -27,7 +27,8 @@ import { WorkflowStepExecutionSelectionSchema, WORKFLOW_AGENT_STEP_ONLY_SELECTIO
   type WorkflowValidationIssue } from './workflowV1.js';
 import type { WorkflowAcceptedWorkspaceTargetV1 } from './workflowWorkspaceV1.js';
 import { collectWorkflowConditionValueReferences, readWorkflowValuePathV1, type WorkflowValueReference } from './workflowReferenceV1.js';
-import { listWorkflowActionFieldReferencesV1 } from './workflowActionTextV1.js';
+import { listWorkflowActionFieldReferencesV1, listWorkflowActionTextInputIndexesV1, readWorkflowActionFieldTextEncodingV1,
+  renderWorkflowActionTextV1, type WorkflowActionTextEncodingV1 } from './workflowActionTextV1.js';
 import { collectWorkflowLeavesV1 as leavesOf, deriveWorkflowDestinationsV1, readWorkflowLeafTargetSessionIdsV1 } from './workflowDestinationsV1.js';
 import type { WorkflowTargetUnavailableDetailsV1 } from './workflowProgressV1.js';
 import { normalizeExecutableParticipantSelectionV1 } from '../discussions/executableParticipants.js';
@@ -412,29 +413,45 @@ function boundValue(reference: WorkflowActionValueReferenceV1, context: Workflow
 
 /**
  * Execution and read projections bind authored Action operands through the same value owner.
- * Text with values inside resolves at run time, where the frozen contract decides its encoding.
+ * Text with deferred references resolves at run time. The admitted Session scope can also
+ * bind text whose values and frozen field encoding are already known.
  */
 export function bindWorkflowActionFieldV1(binding: WorkflowActionFieldBindingV1,
-  context: WorkflowBindingContext, blockId: string, purpose: 'run' | 'definition', item?: WorkflowBoundItem) {
-  if (binding.kind === 'text') return { kind: 'unresolved' } satisfies Unresolved;
+  context: WorkflowBindingContext, blockId: string, purpose: 'run' | 'definition', item?: WorkflowBoundItem,
+  textEncoding?: WorkflowActionTextEncodingV1) {
+  if (binding.kind === 'text') {
+    const unresolved = { kind: 'unresolved' } satisfies Unresolved;
+    if (textEncoding === undefined) return unresolved;
+    const values = new Map<number, JsonValue>();
+    for (const index of listWorkflowActionTextInputIndexesV1(binding.document)) {
+      const reference = binding.input[index];
+      if (reference === undefined) return unresolved;
+      const value = boundValue(reference, context, blockId, purpose, item);
+      if (hasUnresolvedValue(value)) return unresolved;
+      values.set(index, value);
+    }
+    const rendered = renderWorkflowActionTextV1(binding.document, textEncoding, index => values.get(index));
+    return rendered.ok ? rendered.value : unresolved;
+  }
   if (binding.kind === 'object') return Object.fromEntries(Object.entries(binding.fields)
     .map(([field, reference]) => [field, boundValue(reference, context, blockId, purpose, item)]));
   return binding.kind === 'list' ? binding.items.map(reference => boundValue(reference, context, blockId, purpose, item))
     : boundValue(binding, context, blockId, purpose, item);
 }
 
-function bindWorkflowActionInputV1(bindings: Readonly<Record<string, WorkflowActionFieldBindingV1>>,
-  context: WorkflowBindingContext, blockId: string, purpose: 'run' | 'definition', item?: WorkflowBoundItem) {
+export function bindWorkflowActionInputV1(bindings: Readonly<Record<string, WorkflowActionFieldBindingV1>>,
+  context: WorkflowBindingContext, blockId: string, purpose: 'run' | 'definition', item?: WorkflowBoundItem, inputSchema?: unknown) {
   return Object.fromEntries(Object.entries(bindings).map(([field, binding]) => [field,
-    bindWorkflowActionFieldV1(binding, context, blockId, purpose, item)]));
+    bindWorkflowActionFieldV1(binding, context, blockId, purpose, item,
+      inputSchema !== undefined && binding.kind === 'text' ? readWorkflowActionFieldTextEncodingV1(inputSchema, field) : undefined)]));
 }
 
 /** Read projections share execution's enumeration of already-bound loop items. */
 export function bindWorkflowLeafInputsV1(definition: WorkflowDefinitionV1,
   leaf: Readonly<{ id: string; input: Readonly<Record<string, WorkflowActionFieldBindingV1>> }>,
-  context: WorkflowBindingContext, purpose: 'run' | 'definition') {
+  context: WorkflowBindingContext, purpose: 'run' | 'definition', inputSchema?: unknown) {
   return (actionItemContexts(definition, leaf.id, context) ?? [undefined])
-    .map(item => bindWorkflowActionInputV1(leaf.input, context, leaf.id, purpose, item));
+    .map(item => bindWorkflowActionInputV1(leaf.input, context, leaf.id, purpose, item, inputSchema));
 }
 
 function hasUnresolvedValue(value: unknown): boolean {
@@ -1034,9 +1051,9 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
       if (leaf.kind === 'action' && leaf.actionId === 'review.start' && (purpose === 'run' || input.effects.admitSessionAuthority)) {
         const targets: NonNullable<WorkflowMaterializedLeafV1['sessionAuthorityBindings']>[number]['targets'] = [];
         for (const inputs of sourceInputs.get(sourceKey) ?? []) {
-          for (const fields of bindWorkflowLeafInputsV1(authored, leaf, { ...input.context, inputs }, purpose)) {
+          for (const fields of bindWorkflowLeafInputsV1(authored, leaf, { ...input.context, inputs }, purpose, sidecar.actionContract?.inputSchema)) {
             // An unselected optional branch or deferred roster confers no authority.
-            if (hasUnresolvedValue(fields.reviewers) || hasUnresolvedValue(fields.steps)) continue;
+            if (hasUnresolvedValue(fields.reviewers) || hasUnresolvedValue(fields.steps) || hasUnresolvedValue(fields.sourceSession)) continue;
             const addresses = readReviewSessionScopeAddressesV1(fields);
             if (!addresses) return invalidInput(leaf.id);
             for (const address of addresses) {

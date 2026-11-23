@@ -224,7 +224,7 @@ function storedRootInvocation(snapshot: ReturnType<typeof runSnapshot>, workspac
 }
 
 describe('shared Account workflow run owner', () => {
-  it.each(['typed', 'typed_wrong_session', 'builtin', 'literal', 'builtin_wrong_session', 'root_wrong_session',
+  it.each(['typed', 'typed_wrong_session', 'builtin', 'converge', 'converge_explicit_steps', 'literal', 'builtin_wrong_session', 'root_wrong_session',
     'literal_transcript', 'literal_transcript_source_only', 'literal_transcript_foreign_session', 'literal_transcript_foreign_home',
     'literal_source_without_transcript'] as const)(
     'retains the accepted Review Session scope in its child Workflow: %s', async scenario => {
@@ -240,6 +240,9 @@ describe('shared Account workflow run owner', () => {
           ...sourceSession, ...(scenario === 'literal_source_without_transcript' ? { sessionId: 'unread-source' } : {}),
         } } : {}) };
       const typed = scenario.startsWith('typed');
+      const converge = scenario.startsWith('converge');
+      const reviewed = { ...address, sessionId: 'reviewed-source' };
+      const steps = [{ kind: 'review' as const, reviewers: [reviewer], instructions: selection.instructions }];
       const builtin = !typed && !scenario.startsWith('literal');
       const authored = { version: 1, defaults: {}, inputs: typed ? [{ name: 'reviewSession', valueType: 'json', required: true,
         inputType: { hostType: 'session' } }] : [], blocks: [{ kind: 'action', id: 'review', actionId: 'review.start',
@@ -280,15 +283,23 @@ describe('shared Account workflow run owner', () => {
       } }), prepareWorkspace: async () => ({ ok: true, workspaceTarget: { project: {
         machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } } }),
         resolveAgentStartContext,
+        resolveDiscussionOrigin: async () => ({ discussion: { serverId: 'home', discussionId: 'discussion-1' },
+          messageId: 'question-1', throughSeq: 1 }),
         sessionList: async () => { throw new Error('accepted_scope_must_not_recheck_session_list'); },
         resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true,
           resolveSessionTarget: async value => ({ address: ActionSessionAddressV1Schema.parse(value), machineId: 'machine-a' }),
           readActionContract: async id => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(id)))) } }),
       });
       const rootInput = WorkflowRunStartRequestV1Schema.parse({ runId,
-        source: builtin ? { kind: 'catalog', workflow: 'builtin:repository-review' } : { kind: 'inline', definition: authored },
-        inputs: builtin ? { cwd: selection.cwd, reviewers: selection.reviewers, instructions: selection.instructions }
-          : typed ? { reviewSession: address } : {}, executionTarget: { kind: 'detached_run' } });
+        source: builtin ? { kind: 'catalog', workflow: converge ? 'builtin:review-and-converge' : 'builtin:repository-review' }
+          : { kind: 'inline', definition: authored },
+        inputs: converge ? { reviewSession: reviewed, reviewers: [reviewer], focus: selection.instructions,
+          ...(scenario === 'converge_explicit_steps' ? { steps } : {}) }
+          : builtin ? { cwd: selection.cwd, reviewers: selection.reviewers, instructions: selection.instructions }
+            : typed ? { reviewSession: address } : {},
+        ...(converge ? { origin: { kind: 'discussion', discussion: { serverId: 'home', discussionId: 'discussion-1' },
+          addressingMessageId: 'question-1' } } : {}),
+        executionTarget: { kind: converge ? 'session' : 'detached_run' } });
       const machineTarget = { kind: 'machine' as const, machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } };
       const rootContext: ActionExecutorContext = scenario === 'root_wrong_session'
         ? { surface: 'agent', authority: 'account_automation', serverId: 'home', defaultSessionId: 'origin-1',
@@ -312,6 +323,13 @@ describe('shared Account workflow run owner', () => {
         return opened.content;
       };
       const accepted = open(runId, snapshot);
+      const explicitSteps = scenario === 'converge_explicit_steps';
+      if (converge) {
+        expect(accepted.materializedLeaves.find(leaf => leaf.blockId === (explicitSteps ? 'review-steps' : 'review')))
+          .toMatchObject({ sessionAuthorityBindings: expect.arrayContaining([
+            { targets: [{ address, machineId: 'machine-a' }] },
+          ]) });
+      }
       const path = [rootId, ...(builtin ? [conditionId] : []), invocationId];
       for (const [position, id] of path.entries()) {
         const action = id === invocationId;
@@ -320,9 +338,9 @@ describe('shared Account workflow run owner', () => {
           createdAt: snapshot.run.createdAt, updatedAt: snapshot.run.updatedAt });
         const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
           blockKind: action ? 'action' : position ? 'if' : 'root',
-          invocationPath: { blockId: action ? 'review' : position ? 'review-composition' : '$root', scope: [] },
+          invocationPath: { blockId: action ? (explicitSteps ? 'review-steps' : 'review') : position ? 'review-composition' : '$root', scope: [] },
           attempt: '0', logicalInvocationRecordId: id,
-          ...(id === conditionId ? { container: { kind: 'if', selected: 'otherwise', nextBlockOrdinal: '0' } } : {}) });
+          ...(id === conditionId ? { container: { kind: 'if', selected: explicitSteps ? 'then' : 'otherwise', nextBlockOrdinal: '0' } } : {}) });
         rows.push({ index, contentEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
           mode: 'plain', binding: { v: 1, purpose: 'invocation_progress', accountId: 'account-1', runId,
             recordId: id, sequence: index.sequence, parentRecordId: index.parentRecordId, memberOrdinal: '0', attempt: '0' }, progress,
@@ -332,6 +350,8 @@ describe('shared Account workflow run owner', () => {
       const scopeReads: string[] = [];
       const transcriptReads: string[] = [];
       const executor = createActionExecutor({ resolveAgentStartContext, reviewRecords: () => records,
+        sessionStatusGet: async ({ sessionId }) => ({ session: { id: sessionId, title: 'Reviewer', createdAt: 1, updatedAt: 1,
+          active: true, activeAt: 1, encryption: null, path: '/repo', machineId: 'machine-a' } }),
         workflowAction: createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, runs: owner }),
         sessionTranscriptGet: async ({ sessionId }) => {
           transcriptReads.push(sessionId);
@@ -346,7 +366,9 @@ describe('shared Account workflow run owner', () => {
       });
       const wrongSelection = scenario.endsWith('wrong_session');
       const result = await executor.execute('review.start', wrongSelection ? { ...selection,
-        reviewers: [{ ...reviewer, session: { ...address, sessionId: 'unrelated-session' } }] } : { ...selection,
+        reviewers: [{ ...reviewer, session: { ...address, sessionId: 'unrelated-session' } }] } : {
+          ...(converge ? { sessionId: reviewed.sessionId, cwd: selection.cwd, scope: selection.scope, instructions: selection.instructions,
+            reviewers: selection.reviewers, steps, then: 'report' } : selection),
           ...(scenario === 'literal_transcript_foreign_session' ? { sourceSession: { ...sourceSession, sessionId: 'foreign-session' } } : {}),
           ...(scenario === 'literal_transcript_foreign_home' ? { sourceSession: { ...sourceSession, serverId: 'foreign-home' } } : {}) },
       { surface: 'agent', serverId: 'home', defaultSessionId: 'origin-1', callerPermissionMode: 'yolo',
@@ -357,7 +379,7 @@ describe('shared Account workflow run owner', () => {
         expect(transcriptReads).toEqual([]);
         expect(snapshots.size).toBe(1);
       } else if (wrongSelection) {
-        expect(result).toMatchObject({ ok: false, errorCode: 'subtree_denied', details: { blockId: 'step-1-reviewer-1' } });
+        expect(result).toMatchObject({ ok: false, errorCode: 'unsupported_action', details: { cause: 'action_scope_restricted' } });
         expect(snapshots.size).toBe(1);
       } else {
         expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
@@ -365,7 +387,7 @@ describe('shared Account workflow run owner', () => {
         expect(open(...child).materializedLeaves.find(leaf => leaf.blockId === 'step-1-reviewer-1'))
           .toMatchObject({ participantBindings: { selections: [{ participant: { kind: 'session', session: address } }] } });
       }
-      expect(scopeReads).toEqual(scenario === 'literal_transcript_source_only' ? [address.sessionId, sourceSession.sessionId] : [address.sessionId]);
+      expect(scopeReads).toEqual(converge ? [reviewed.sessionId, address.sessionId] : scenario === 'literal_transcript_source_only' ? [address.sessionId, sourceSession.sessionId] : [address.sessionId]);
       if (!transcript) expect(transcriptReads).toEqual([]);
       if (transcript && !scenario.includes('foreign')) {
         expect(transcriptReads).toEqual([sourceSession.sessionId]);

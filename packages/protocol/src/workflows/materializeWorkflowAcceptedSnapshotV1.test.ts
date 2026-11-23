@@ -13,6 +13,8 @@ import { compilePluginJsonSchema } from '../plugins/actions/jsonSchemaValidation
 import { LaunchProfileV2Schema } from '../profiles/v2/schema.js';
 import historicalReviewAndConvergeV1 from './fixtures/historicalReviewAndConvergeV1.json';
 import { PLAN_WITH_A_PANEL_WORKFLOW_V1 } from './builtins/planWithAPanel.js';
+import { REPOSITORY_REVIEW_WORKFLOW_V1 } from './builtins/repositoryReview.js';
+import { REVIEW_AND_CONVERGE_WORKFLOW_V1 } from './builtins/reviewAndConverge.js';
 import { bindWorkflowLeafInputsV1, materializeWorkflowAcceptedSnapshotV1, materializeWorkflowDefinitionAuthorityV1, readWorkflowAcceptedAgentStartLeavesV1, readWorkflowRunLeafStartRequestV1, type MaterializeWorkflowAcceptedSnapshotV1Input } from './materializeWorkflowAcceptedSnapshotV1.js';
 import { WorkflowDefinitionV1Schema } from './workflowV1.js';
 import { WorkflowAcceptedSnapshotV1Schema } from './workflowDefinitionV1.js';
@@ -432,6 +434,42 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
     })).toMatchObject({ ok: true, snapshot: { requiresMachineStartCapacity: kind === 'fresh',
       targetSessionIds: kind === 'fresh' ? [] : ['origin'] } });
   });
+
+  it.each(['default steps', 'explicit steps', 'repository review'] as const)(
+    'admits the selected Session reviewer for %s', async variant => {
+      const reviewer = { address: { serverId: 'home', sessionId: 'reviewer' }, machineId: 'machine' };
+      const reviewers = [{ kind: 'session' as const, session: reviewer.address }];
+      const focus = 'Find the arithmetic regression.';
+      const admittedSessions: string[] = [];
+      const effects: MaterializeWorkflowAcceptedSnapshotV1Input['effects'] = {
+        resolveTargetAvailability: available,
+        resolveSessionTarget: async value => sameStrictJsonValue(value, reviewer.address)
+          ? reviewer : resolveOriginSessionTarget(value),
+        admitSessionAuthority: async target => { admittedSessions.push(target.address.sessionId); return true; },
+        readActionContract: async actionId => {
+          const published = actionSpecToActionDefinitionV1(getActionSpec(actionId));
+          return { inputSchema: published.inputSchema, outputSchema: published.outputSchema ?? {} };
+        },
+      };
+      const repository = variant === 'repository review';
+      const selectedSteps = variant === 'explicit steps';
+      const accepted = await materialize({
+        definition: repository ? REPOSITORY_REVIEW_WORKFLOW_V1 : REVIEW_AND_CONVERGE_WORKFLOW_V1,
+        context: { ...context, origin: { kind: 'direct',
+          discussion: { discussion: { serverId: 'home', discussionId: 'discussion' }, messageId: 'request', throughSeq: 1 } },
+          inputs: repository ? { reviewers, cwd: '/project', instructions: focus } : {
+            reviewers, reviewSession: originSessionTarget.address, focus,
+            ...(selectedSteps ? { steps: [{ kind: 'review', reviewers, instructions: focus }] } : {}),
+          } },
+        effects,
+      });
+      expect(accepted).toMatchObject({ ok: true, snapshot: { materializedLeaves: expect.arrayContaining([
+        expect.objectContaining({ blockId: selectedSteps ? 'review-steps' : 'review',
+          sessionAuthorityBindings: expect.arrayContaining([{ targets: [reviewer] }]) }),
+      ]) } });
+      expect(new Set(admittedSessions)).toEqual(new Set(repository ? ['reviewer'] : ['origin', 'reviewer']));
+    },
+  );
 
   it('freezes the deduplicated destination sessions across structural and nested leaves', async () => {
     const target = { kind: 'existing_session', sessionId: 'destination', machineId: 'machine' };

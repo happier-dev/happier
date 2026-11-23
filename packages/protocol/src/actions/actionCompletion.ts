@@ -218,7 +218,8 @@ export function prepareActionCompletionV1(
   if (!executed.ok) {
     const details = StrictJsonValueSchema.safeParse(executed.details);
     return { kind: 'failed', errorCode: executed.errorCode, error: executed.error, ...(details.success ? { value: details.data } : {}),
-      ...(executed.failureCause === undefined ? {} : { failureCause: executed.failureCause }) };
+      ...(executed.failureCause === undefined ? {} : { failureCause: executed.failureCause }),
+      ...(declaration?.awaits === 'workflow_runs' && executed.effectAttempted === false ? { noRunsLaunched: true as const } : {}) };
   }
   const output = StrictJsonValueSchema.safeParse(executed.result);
   if (!output.success) return { kind: 'failed', errorCode: 'invalid_action_output' };

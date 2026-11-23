@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { ActionIdSchema, AutomationRunCauseSchema, createWorkflowAccountRunActionOwner, DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, ExecutionRunResultContractV1Schema, ResolvedRoleV1Schema, withExecutionRunStartFailureDetails, type WorkflowAccountRunActionDeps } from '@happier-dev/protocol';
+import { ActionIdSchema, ActionSessionAddressV1Schema, AutomationRunCauseSchema, createWorkflowAccountRunActionOwner, DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, ExecutionRunResultContractV1Schema, ResolvedRoleV1Schema, withExecutionRunStartFailureDetails, type WorkflowAccountRunActionDeps } from '@happier-dev/protocol';
 import { createInMemoryReviewRecordPortV1 } from '../../../../../packages/protocol/src/reviews/reviewArtifactV1.testkit';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends';
 import { validateExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
@@ -754,7 +754,7 @@ describe('workflow Action leaves', () => {
     expect(starts[1]).not.toHaveProperty('sessionConfigOptionOverrides');
   });
 
-  it('persists the accepted Review child Workflow before waiting and resumes without another admission', async () => {
+  it.each(['accepted', 'refused'] as const)('settles a composed Review by its child admission outcome (%s)', async outcome => {
     let childStorage: ReturnType<typeof createWorkflowRunStorageTestkit> | undefined;
     const storage: WorkflowAccountRunActionDeps['storage'] = { execute: async (operation, options) => {
       childStorage ??= createWorkflowRunStorageTestkit({ runId: String(operation.runId), machineId: workspace.machineId,
@@ -767,17 +767,22 @@ describe('workflow Action leaves', () => {
       normalizeAbsolutePath: path => path.startsWith('/') ? path : null,
       randomBytes: () => { throw new Error('Plain Account'); },
       resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true,
+        resolveSessionTarget: async value => ({ address: ActionSessionAddressV1Schema.parse(value), machineId: workspace.machineId }),
         readActionContract: async id => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(id)))) } }),
       prepareWorkspace: async () => ({ ok: true, workspaceTarget: { project: workspace } }),
     });
     const unusedDefinition = async (): Promise<never> => { throw new Error('Inline Review needs no saved definition'); };
-    const executor = createTestActionExecutor({ workflowAction: createWorkflowActionExecutor({
+    const executor = createTestActionExecutor({
+      sessionStatusGet: async ({ sessionId }) => ({ session: { id: sessionId, title: 'Reviewer', createdAt: 1, updatedAt: 1,
+        active: true, activeAt: 1, encryption: null, path: workspace.directory, machineId: workspace.machineId } }),
+      workflowAction: createWorkflowActionExecutor({
       isWorkflowFeatureEnabled: () => true,
       definitions: { list: unusedDefinition, get: unusedDefinition, create: unusedDefinition, update: unusedDefinition,
         edit: unusedDefinition, delete: unusedDefinition, importDocument: unusedDefinition, exportDocument: unusedDefinition },
       runs: childOwner,
     }) });
-    const reviewers = ['codex', 'claude', 'gemini'].map(engineId => ({ kind: 'engine', engineId }));
+    const reviewers = outcome === 'refused' ? [{ kind: 'session', session: { serverId: 'other-home', sessionId: 'outside-scope' } }]
+      : ['codex', 'claude', 'gemini'].map(engineId => ({ kind: 'engine', engineId }));
     const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'child-review', actionId: 'review.start', input: {
       target: { kind: 'literal', value: { kind: 'detached' } },
       scope: { kind: 'literal', value: 'repository' },
@@ -798,7 +803,7 @@ describe('workflow Action leaves', () => {
     const coordinator = createWorkflowCoordinator({ store: boundary,
       executeStep: async () => { throw new Error('Review child owns Agent execution'); },
       resolveWorkspace: async () => ({ ok: true, workspace }),
-      action: { executor, buildContext: async () => ({ surface: 'cli', externalActionTarget: {
+      action: { executor, buildContext: async () => ({ surface: 'cli', serverId: 'home', externalActionTarget: {
         kind: 'machine', machineId: workspace.machineId, project: { machineId: workspace.machineId, directory: workspace.directory } } }),
       observeRun: async () => { throw new Error('A Workflow child is not a native execution Run'); },
       observeWorkflow: async (target, context) => {
@@ -815,6 +820,14 @@ describe('workflow Action leaves', () => {
     const request = { runId: 'parent-review', definition: definition([leaf]),
       materializedLeaves: [{ ...frozen(leaf), actionInput }],
       inputs: {}, executionTarget, authorization };
+    if (outcome === 'refused') {
+      expect(await coordinator.run(request)).toMatchObject({ state: 'interrupted', reason: 'subtree_denied' });
+      expect(store.list().find(row => row.blockId === leaf.id)).toMatchObject({ lifecycle: 'failed', reason: 'subtree_denied' });
+      expect(await coordinator.run(request)).toMatchObject({ state: 'interrupted', reason: 'subtree_denied' });
+      expect(childStorage?.calls.filter(operation => operation.operation === 'admit') ?? []).toHaveLength(0);
+      expect(observations).toBe(0);
+      return;
+    }
     let interrupted = false;
     try { await coordinator.run(request); }
     catch (error) {
