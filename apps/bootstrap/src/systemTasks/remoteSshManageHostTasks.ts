@@ -1,10 +1,12 @@
 import {
   createRemoteSshPersonalHomeRelocationDestination,
   createOpenSshHappierJsonExecutor,
+  createOpenSshRemoteCliTransport,
   parseStrictPersonalHomeTaskFinalResult,
   type RelayRuntimeTaskParams,
   type SystemTaskSshConnectionConfig,
 } from '@happier-dev/cli-common/systemTasks';
+import { installRemoteCli } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import {
   type PersonalHomeRelocationDestinationOwner,
 } from '@happier-dev/cli-common/firstPartyRuntime';
@@ -21,7 +23,7 @@ import {
 import { redactSshText } from '../ssh/index.js';
 import { checkRelayRuntimeHealthDefault, controlRelayRuntimeDefault, installOrUpdateRelayRuntimeDefault, readRelayRuntimeStatusDefault } from './relayRuntimeTasks.js';
 import { normalizeBootstrapChannel, resolveDefaultKnownHostsPath } from './taskRuntime.js';
-import { installRemoteFirstPartyComponent, resolveRemoteInstalledFirstPartyBinaryPath } from './remoteFirstPartyPayloadInstaller.js';
+import { resolveRemoteInstalledFirstPartyBinaryPath } from './remoteFirstPartyPayloadInstaller.js';
 
 type RemoteSshAuth =
   | Readonly<{ mode: 'agent' }>
@@ -117,16 +119,23 @@ export async function installRemoteCliForManageHostDefault(params: Readonly<{
   auth: RemoteSshAuth;
   knownHostsMode: 'app' | 'system';
   channel: 'stable' | 'preview' | 'dev';
+  purpose?: 'personal-home';
   signal?: AbortSignal;
 }>): Promise<void> {
-  const ssh = buildRemoteSshConnection(params.ssh, params.auth);
-  const { releaseChannel } = normalizeBootstrapChannel(params.channel);
-  await installRemoteFirstPartyComponent({
-    componentId: 'happier-cli',
-    channel: releaseChannel === 'publicdev' ? 'dev' : releaseChannel,
-    ssh,
-    knownHostsMode: params.knownHostsMode,
-    ...(params.signal ? { signal: params.signal } : {}),
+  const { ssh, auth, channel, knownHostsMode, purpose, signal } = params;
+  const knownHosts = resolveKnownHostsConfig(ssh, knownHostsMode);
+  await installRemoteCli({
+    channel,
+    purpose,
+    signal,
+    transport: createOpenSshRemoteCliTransport({
+      ssh: buildRemoteSshConnection(ssh, auth),
+      auth,
+      channel,
+      knownHostsMode,
+      ...(knownHosts.mode === 'app' ? { knownHostsPath: knownHosts.path } : {}),
+      signal,
+    }),
   });
 }
 

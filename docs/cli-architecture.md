@@ -7664,6 +7664,10 @@ In 0.3 development, local and SSH Home relay stores, CLI commands and bootstrap
 tasks consume the cli-common relay-access selection owner. Native executables
 resolve in the addressed host's environment.
 
+SSH Personal Home setup and management use the installed remote CLI. The shared
+installer reads that binary's root help before invoking a Home command. If the
+selected release lacks the Home command, the task returns `remote_cli_update_required`.
+
 The retained `secureAccess.tailscale.v1` native codec shares its Protocol
 contract across bootstrap and UI. Current writers require an explicit Serve or
 Funnel method. Only the incoming 0.2 native-task reader translates an omitted

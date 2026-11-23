@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 
 import { ACCENT_HEX } from './presentation.js';
+import { stripAnsi } from './stripAnsi.js';
 
 export type HelpRow = Readonly<{
   label: string;
@@ -23,10 +24,6 @@ function normalizeText(value: unknown): string {
 
 function hasColor(chalkLike: ChalkLike): boolean {
   return chalkLike.level > 0;
-}
-
-function stripAnsi(value: string): string {
-  return value.replace(/\u001b\[[0-9;]*m/gu, '');
 }
 
 function resolveLabelWidth(rows: readonly HelpRow[], explicit?: number, columns?: number): number {

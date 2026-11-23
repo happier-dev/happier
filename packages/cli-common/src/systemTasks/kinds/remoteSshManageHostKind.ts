@@ -78,6 +78,7 @@ export type RemoteSshManageHostDeps = Readonly<{
     auth: RemoteSshAuth;
     knownHostsMode: 'app' | 'system';
     channel: 'stable' | 'preview' | 'dev';
+    purpose?: 'personal-home';
     signal?: AbortSignal;
   }>) => Promise<void>;
   runDaemonServiceCommand: (params: Readonly<{
@@ -467,7 +468,7 @@ export function createRemoteSshManageHostTaskKind(
           const runtimeChannel = parsed.relayRuntime.channel ?? 'stable';
           const runtimeMode = parsed.relayRuntime.mode ?? 'user';
           ctx.emit({ type: 'progress', stepId: 'remote.cli.install', message: 'Ensuring Happier CLI is installed' });
-          await deps.installRemoteCli({ ssh: parsed.ssh, auth, knownHostsMode, channel: parsed.channel, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+          await deps.installRemoteCli({ ssh: parsed.ssh, auth, knownHostsMode, channel: parsed.channel, purpose: 'personal-home', ...(ctx.signal ? { signal: ctx.signal } : {}) });
           const personalHome = await deps.runPersonalHomeRelocation({
             ssh: parsed.ssh,
             auth,
@@ -510,7 +511,7 @@ export function createRemoteSshManageHostTaskKind(
           const runtimeChannel = parsed.relayRuntime.channel ?? 'stable';
           const runtimeMode = parsed.relayRuntime.mode ?? 'user';
           ctx.emit({ type: 'progress', stepId: 'remote.cli.install', message: 'Ensuring Happier CLI is installed' });
-          await deps.installRemoteCli({ ssh: parsed.ssh, auth, knownHostsMode, channel: parsed.channel, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+          await deps.installRemoteCli({ ssh: parsed.ssh, auth, knownHostsMode, channel: parsed.channel, purpose: 'personal-home', ...(ctx.signal ? { signal: ctx.signal } : {}) });
           const replaceServices = parsed.replaceServices || await preflightRemoteBackgroundServiceReplacement({
             ctx,
             listServices: async () => unwrapRemoteCliJsonData(await deps.runPersonalHomeCommand!({
@@ -713,7 +714,7 @@ export function createRemoteSshManageHostTaskKind(
           };
 
           ctx.emit({ type: 'progress', stepId: 'remote.cli.install', message: 'Ensuring Happier CLI is installed' });
-          await deps.installRemoteCli({ ssh: parsed.ssh, auth, knownHostsMode, channel: parsed.channel, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+          await deps.installRemoteCli({ ssh: parsed.ssh, auth, knownHostsMode, channel: parsed.channel, purpose: 'personal-home', ...(ctx.signal ? { signal: ctx.signal } : {}) });
 
           if (parsed.action === 'personalHome.status') {
             return { action: parsed.action, personalHome: (await inspect()).data } satisfies SystemTaskJsonObject;
@@ -791,7 +792,7 @@ export function createRemoteSshManageHostTaskKind(
           const runtimeChannel = parsed.relayRuntime.channel ?? 'stable';
           const runtimeMode = parsed.relayRuntime.mode ?? 'user';
           ctx.emit({ type: 'progress', stepId: 'remote.cli.install', message: 'Ensuring Happier CLI is installed' });
-          await deps.installRemoteCli({ ssh: parsed.ssh, auth, knownHostsMode, channel: parsed.channel, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+          await deps.installRemoteCli({ ssh: parsed.ssh, auth, knownHostsMode, channel: parsed.channel, purpose: 'personal-home', ...(ctx.signal ? { signal: ctx.signal } : {}) });
           const inspection = parseRemotePersonalHomeInspection(await deps.runPersonalHomeCommand({
             ssh: parsed.ssh,
             auth,

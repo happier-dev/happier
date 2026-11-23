@@ -6,6 +6,36 @@ import { resolveFirstPartyComponentRelease } from '../../firstPartyRuntime/prepa
 import { installRemoteFirstPartyComponentPayload } from '../kinds/remoteFirstPartyPayloadInstaller.js';
 import { installRemoteCli } from './installRemoteCli.js';
 
+describe('personal Home SSH CLI admission', () => {
+  it.each([
+    ['released CLI', '  happier auth         Authenticate\n', false],
+    ['carrying CLI', '  \u001b[1mhappier home\u001b[22m         Create, connect devices to, and manage a Personal Home\n', true],
+    ['narrow terminal', '  happier home\n    Create, connect devices to, and manage a Personal Home\n', true],
+  ])('checks the installed command surface before handing off to %s', async (_name, stdout, supportsHome) => {
+    const commands: string[] = [];
+    const plan = {
+      channel: 'preview' as const,
+      purpose: 'personal-home' as const,
+      transport: {
+        install: async () => ({ binaryPath: '/home/qa user/.happier/cli-preview/current/happier' }),
+        exec: async ({ command }: { command: string }) => {
+          commands.push(command);
+          return { status: 0, stdout, stderr: '' };
+        },
+      },
+    };
+    const result = installRemoteCli(plan);
+    if (supportsHome) {
+      await expect(result).resolves.toBeUndefined();
+    } else {
+      await expect(result).rejects.toMatchObject({ code: 'remote_cli_update_required' });
+    }
+    expect(commands).toEqual([
+      "HAPPIER_PUBLIC_RELEASE_CHANNEL='preview' HAPPIER_RELEASE_RING='preview' '/home/qa user/.happier/cli-preview/current/happier' '--help'",
+    ]);
+  });
+});
+
 describe('SSH bootstrap CLI source', () => {
   afterEach(() => vi.unstubAllEnvs());
 

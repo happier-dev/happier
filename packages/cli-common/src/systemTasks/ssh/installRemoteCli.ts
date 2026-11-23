@@ -1,8 +1,9 @@
+import { stripAnsi } from '../../output/stripAnsi.js';
 import type { InteractiveSystemTaskContext } from '../interactiveTaskKinds.js';
 import type { RemoteBootstrapMachineParams } from '../kinds/remoteSshBootstrapMachineKind.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { prepareDedicatedDaemonBootstrap, type DedicatedDaemonBootstrapExec } from './dedicatedDaemonBootstrap.js';
-import { buildDedicatedDaemonAccountCommand, DEDICATED_DAEMON_INSTALL_HOME } from './remoteBootstrapCommandBuilder.js';
+import { buildDedicatedDaemonAccountCommand, buildRemoteHappierInvocationCommand, DEDICATED_DAEMON_INSTALL_HOME } from './remoteBootstrapCommandBuilder.js';
 import { buildEnsureCurrentUserLingerCommand, readCurrentUserLingerOutcome } from '../../machineSetup/userLinger.js';
 
 /** Installation placement is selected once here; platform adapters supply only IO. */
@@ -28,6 +29,7 @@ export type PrepareManagedDedicatedBootstrap = (input: Readonly<{
 /** The same admitted bootstrap and installer lifecycle serves every SSH transport. */
 export async function installRemoteCli(input: Readonly<{
   channel: 'stable' | 'preview' | 'dev';
+  purpose?: 'personal-home';
   signal?: AbortSignal;
   transport: RemoteCliInstallTransport;
   bootstrap?: Readonly<{
@@ -85,6 +87,18 @@ export async function installRemoteCli(input: Readonly<{
       remoteHomeDir: DEDICATED_DAEMON_INSTALL_HOME, daemonUsername: 'happier' as const,
     } : {}),
   });
+  if (input.purpose === 'personal-home') {
+    // Released CLIs can dispatch an unrecognized command as an Agent session.
+    // Root help exits before dispatch and lists the installed command surface.
+    const help = await transport.exec({
+      command: buildRemoteHappierInvocationCommand({ binaryPath: installed.binaryPath, channel: input.channel, args: ['--help'] }),
+      signal: input.signal,
+    });
+    if (help.status !== 0 || !/^[ \t]+happier home(?:[ \t]{2,}|[ \t]*\r?$)/mu.test(stripAnsi(help.stdout))) {
+      throw new SystemTaskExecutionError('remote_cli_update_required',
+        'The selected release does not support Personal Home commands on the SSH host. Update the remote Happier CLI and try again.');
+    }
+  }
   if (prepare) await prepare(installed.binaryPath);
   // The dedicated bootstrap enables linger for its own account. Any other enrolling
   // account's user service would stop when this SSH session ends without it.

@@ -745,8 +745,8 @@ export function createLiveRemoteSshManageHostTaskKind() {
         shellCommand: 'true', timeoutMs: 15_000, signal,
       });
     },
-    installRemoteCli: async ({ ssh, auth, knownHostsMode, channel, signal }) => await installRemoteCli({
-      channel, signal, transport: createLiveRemoteCliTransport({ ssh, auth: auth as SshAuth, knownHostsMode, channel, signal }),
+    installRemoteCli: async ({ ssh, auth, knownHostsMode, channel, purpose, signal }) => await installRemoteCli({
+      channel, purpose, signal, transport: createLiveRemoteCliTransport({ ssh, auth: auth as SshAuth, knownHostsMode, channel, signal }),
     }),
     runDaemonServiceCommand: async () => {
       throw new systemTasks.SystemTaskExecutionError('unsupported', 'Remote daemon management is not available through this coordinator yet.');
