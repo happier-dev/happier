@@ -7,6 +7,7 @@ import { resolveEffectiveUsageCostUsd } from "./resolveUsageCostMode";
 import { buildUsageResultProjection } from './buildUsageResultProjection';
 import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { buildUsagePricingPopulation, priceUsagePricingPopulation } from '@happier-dev/protocol/usage/usagePricingPopulation';
+import { UsageAnalyticsTokensSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
 function row(id: string, time: number, scope: string, total: number): ScopedUsageEventRow {
     return {
@@ -132,6 +133,17 @@ describe("resolveScopedUsageContributions", () => {
             measure(resolve([...shared, native(30, 3)], 'native'), 3);
             measure(resolve([...shared, exact(30, 2)]), 3);
             measure(resolve([...shared, exact(30, 2)], 'runtime'), 2);
+        });
+
+        it('keeps explicit thread totals and derived measurements in their published token shape', () => {
+            const reported = exact(10, 1);
+            const replay = exact(15, 1);
+            replay.metadata = reported.metadata;
+            replay.tokens = { ...replay.tokens, total: null };
+            const { totalContributions } = resolveScopedUsageContributions([reported, replay, native(20, 2)]);
+            expect(totalContributions.reduce((total, row) => total + (row.tokens.total ?? 0), 0)).toBe(240);
+            expect(totalContributions.map(row => UsageAnalyticsTokensSchema.safeParse(row.tokens).success))
+                .toEqual(totalContributions.map(() => true));
         });
 
         it('prices the known native token share when both sources omit totals', () => {

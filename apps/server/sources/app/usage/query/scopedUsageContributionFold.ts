@@ -232,7 +232,7 @@ function createSameSourceUsageIncrements() {
             const settledMeasurement = resolveUsageMeasuredTokens(row.tokens).total !== null;
             // A measured checkpoint settles the whole even when individual raw
             // parts stay pending for a later raw counter reading.
-            const measured = pendingMeasurement.total === null ? undefined
+            const measured: UsageAnalyticsTokens['measured'] = pendingMeasurement.total === null ? undefined
                 : { total: settledMeasurement ? 0 : pendingMeasurement.total, fromParts: true };
             state.pending = reset ? empty : { tokens: measured ? { ...unsettled, measured } : unsettled, cost: {
                 ...empty.cost,
@@ -521,8 +521,9 @@ function withThreadTokenIncrease(raw: UsageAnalyticsTokens, current: UsageAnalyt
     const level = resolveUsageMeasuredTokens(current);
     if (level.total === null) return raw;
     const covered = resolveUsageMeasuredTokens(coveredTokens);
+    if (!level.fromParts && !covered.fromParts) return raw;
     const total = subtractMeasuredUsageLevel(level.total, null, covered.total);
-    return { ...raw, measured: { total, fromParts: level.fromParts || covered.fromParts } };
+    return { ...raw, measured: { total, fromParts: true } };
 }
 
 function admitThreadUsageIncrement(row: UsageMeasurements, covered: UsageMeasurements): UsageMeasurements {
@@ -856,7 +857,8 @@ function foldNativeThread(rows: readonly ScopedUsageEventRow[], ranks: Map<strin
             const primary = outputCurrency === currency;
             const increase = admitThreadUsageIncrement(primary ? bound : { ...bound, tokens: createEmptyUsageTokens() }, covered);
             const tokens = trackMeasured ? increase.tokens : rawUsageTokens(increase.tokens);
-            const hasIncrease = retainsUncoveredMeasurement(increase, covered) || (tokens.measured?.total ?? 0) > 0;
+            const hasIncrease = retainsUncoveredMeasurement(increase, covered)
+                || trackMeasured && (increase.tokens.measured?.total ?? 0) > 0;
             admitted.add(increase);
             admittedMeasurement ||= hasIncrease;
             if (!(hasIncrease || primary && (keepDetail || row.contextUsedTokens != null || row.contextWindowTokens != null))) continue;
