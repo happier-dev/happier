@@ -32,7 +32,7 @@ export function PluginAutomationSubjectPicker(props: PluginAutomationSubjectPick
     const machineId = actionTarget?.kind === 'machine' ? actionTarget.machineId
         : props.target.kind === 'machine' ? props.target.machineId : checkout?.machineId ?? sessionMachineId;
     const plugin = props.kind.kind === 'plugin';
-    const demanded = open && props.disabled !== true && props.isCurrent();
+    const demanded = open && props.disabled !== true && props.isCurrent() && props.accountLifetime !== null;
     const projection = useDaemonMergedProjectionInputs({ accountLifetime: props.accountLifetime, machineId, serverId,
         sections: plugin ? pluginUiSections(props.kind.pluginId) : PLUGIN_UI_SECTIONS,
         enabled: demanded && plugin, retainInputsAcrossScopeChange: false, refreshKey });

@@ -7,6 +7,7 @@ import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { t } from '@/text';
 import { PluginAutomationSubjectPicker } from './PluginAutomationSubjectPicker';
 import { AutomationSubjectPicker } from '@happier-dev/plugin-ui/components';
 import { PluginUiPresentationHostProviderInternal } from '../../../../../../packages/plugin-ui/src/presentationHost/context';
@@ -96,4 +97,17 @@ it('retires closed demand and replaced targets, and never substitutes an Account
         expect(onChange).not.toHaveBeenCalled();
         await screen.unmount();
     } finally { account.dispose(); await home.dispose(); }
+});
+
+it('settles the plugin subject picker when a live Machine mount has no Account lifetime', async () => {
+    const screen = await renderScreen(<PluginAutomationSubjectPicker value={null}
+        kind={{ kind: 'plugin', pluginId: 'happier.github', subjectKindId: 'issue' }}
+        target={{ kind: 'machine', machineId: 'plugin-machine' }} accountLifetime={null}
+        isCurrent={() => true} onChange={vi.fn()} testID="target-picker" />);
+    try {
+        const menu = () => screen.findByType(DropdownMenu);
+        await act(async () => menu().props.onOpenChange(true));
+        expect(menu().props.items).toEqual([]);
+        expect(menu().props.emptyLabel).toBe(t('common.unavailable'));
+    } finally { await screen.unmount(); }
 });
