@@ -1746,7 +1746,6 @@ export class ConnectedServiceQuotasCoordinator {
               ...request,
               ...(!input.consumeRequest ? { providerLimitIds: input.automaticResetContext?.providerLimitIds ?? [] } : {}),
             }, onLateResult: status => {
-              if (status === 'unknown_after_timeout') return;
               lateResult = this.settledRecoveryCreditConsumeResult({ ...request, status });
               const stored = this.recoveryCreditConsumeResultsByKey.get(ledgerKey)?.result;
               if (stored?.receipt?.status === 'unknown_after_timeout') {
