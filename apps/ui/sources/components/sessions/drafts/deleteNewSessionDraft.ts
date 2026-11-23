@@ -13,6 +13,7 @@ import { t } from '@/text';
 type DeleteExecute = (
   actionId: 'session.draft.delete',
   input: Readonly<{ draftId: string }>,
+  operation: Readonly<{ retainEffectResult: true }>,
 ) => Promise<ActionExecuteResult>;
 
 function tell(message: string, failure?: unknown): void {
@@ -34,7 +35,7 @@ export async function deleteNewSessionDraft(
   let outcome: ActionExecuteResult;
   try {
     outcome = params.execute
-      ? await params.execute('session.draft.delete', { draftId: params.draftId })
+      ? await params.execute('session.draft.delete', { draftId: params.draftId }, { retainEffectResult: true })
       : { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
   } catch (error) {
     tell(resolveActionExecutionErrorMessage(error, fallback), error);

@@ -1191,7 +1191,10 @@ tombstone and attachment-cleanup path. A missing connected app fails the approva
 with `unavailable` / `noClient`; a rejected draft revision reports
 `session_draft_conflict`. A lost deletion response or failed cleanup reports
 `outcome_uncertain`: inspect the exact draft before requesting another deletion.
-Homes without draft synchronization retain local-only deletion.
+Homes without draft synchronization retain local-only deletion. An in-flight
+deletion keeps the Account and draft captured at invocation when the composer
+opens another draft, so the acknowledged tombstone also removes the original
+local copy.
 
 In unreleased 0.3 source, a standalone CLI's blocking Account Action with
 live-only private input retains that input in the original invocation. An

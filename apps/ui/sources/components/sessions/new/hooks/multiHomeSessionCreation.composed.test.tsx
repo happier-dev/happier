@@ -1528,7 +1528,7 @@ describe('multi-Home Session creation composition', () => {
             if (holdDeletion) {
                 let deletion!: Promise<void>;
                 await act(async () => { deletion = screen.findByType(NewSessionDraftComposerActions).props.onDelete(); });
-                await vi.waitFor(() => expect(mutations).toHaveLength(1));
+                await vi.waitFor(() => expect(mutations).toMatchObject([{ address, content: null }]));
                 await act(async () => {
                     rememberOrdinaryNewSessionDraftId(scope, replacementDraftId);
                     if (policy === 'retargeted') {
@@ -1536,8 +1536,12 @@ describe('multi-Home Session creation composition', () => {
                         routeBoundary.params = { draftId: replacementDraftId, draftOrigin: 'ordinary' };
                     }
                 });
-                if (policy === 'retargeted') await screen.update(element());
+                if (policy === 'retargeted') {
+                    await screen.update(element());
+                    await vi.waitFor(() => expect(composerText(screen.root.findByType(AgentInput))).toBe('Replacement composer'));
+                }
                 await act(async () => { heldDelete.resolve(); await deletion; });
+                expect(records.get(draftId)?.content).toBeNull();
                 expect(readOrdinaryNewSessionDraftId(scope)).toBe(replacementDraftId);
                 if (policy === 'retargeted') {
                     expect(routeBoundary.replace).not.toHaveBeenCalled();
