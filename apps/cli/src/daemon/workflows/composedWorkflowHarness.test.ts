@@ -1,7 +1,7 @@
 import { createSessionLiveWorkProducer } from '@/daemon/lifecycle/sessionLiveWorkProducer';
 import { createTestWorkflowCoordinator as createWorkflowCoordinator } from './workflowCoordinator.testkit';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import axios from 'axios';
 import { randomUUID } from 'node:crypto';
 import { SessionPullRequestUpdateV1Schema } from '@happier-dev/channels-protocol/v1';
+import { getAgentCliRuntimeSpec } from '@happier-dev/agents/cli/runtime';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import {
   admitAgentStartV1,
@@ -201,6 +202,7 @@ import { awaitTrackedRunnerAgentSessionOpen } from '@/daemon/agentRuntime/runner
 import { createWorkflowOriginContextInputPort } from '@/agent/runtime/session/contextOnly/workflowOriginInput';
 import * as cliSpawn from '@/utils/spawnHappyCLI';
 import { spawnRegularProcessAndWaitForWebhook } from '../spawn/spawnRegularProcessAndWaitForWebhook';
+import { deliverSessionTargetLaunch, projectSessionTargetLaunchFailure, type SessionTargetAgentCatalog } from '../spawn/prepareSessionTargetPlacement';
 import { waitForTerminalHostedSessionWebhook } from '../spawn/waitForTerminalHostedSessionWebhook';
 import { TmuxUtilities } from '@/integrations/tmux/TmuxUtilities';
 import { spawnWindowsHostedSessionAndWaitForWebhook } from '../spawn/spawnWindowsHostedSessionAndWaitForWebhook';
@@ -1094,11 +1096,72 @@ it.each(['success', 'failure', 'already-stopped', 'foreign-session', 'success-du
   }
 });
 
-it.each(['fresh', 'retained', 'rejoined', 'lost-claim', 'lost-claim-root', 'terminal-write-lost', 'terminal-expired', 'parent-write-lost', 'miswired', 'requester-home', 'requester-home-reconstructed', 'permanent-refusal', 'missing-requester-profile'] as const)('settles a proven cold startup failure through its original operation (%s)', async mode => {
+async function deliverMuseToSshGuest(download: 'missing' | 'wrong-location' | 'installed') {
+  const directory = await projectDirectory();
+  const home = join(directory, 'guest');
+  const tools = join(directory, 'bin');
+  const launcher = join(directory, 'host-muse');
+  await mkdir(join(home, '.local', 'bin'), { recursive: true });
+  await mkdir(tools);
+  await writeFile(launcher, '#!/bin/sh\n');
+  for (const tool of ['bash', 'mkdir']) await symlink(`/bin/${tool}`, join(tools, tool));
+  if (download !== 'missing') {
+    // Curl is the vendor download boundary. Use the declared recipe with a fixture installer.
+    const destination = download === 'installed' ? '.local/bin/muse' : 'muse';
+    await writeFile(join(tools, 'curl'), `#!/bin/sh
+/bin/cat <<'INSTALLER'
+printf '#!/bin/sh\\n' > "$HOME/${destination}"
+/bin/chmod +x "$HOME/${destination}"
+INSTALLER
+`, { mode: 0o755 });
+  }
+  const runtimeSpec = getAgentCliRuntimeSpec('muse');
+  if (!runtimeSpec) throw new Error('Missing bundled Muse CLI declaration');
+  const catalog = {
+    contributes: { agentDefinitionsById: new Map([['muse', { runtimeSpec }]]) },
+    acquireAgentCatalogEntry: async () => null,
+  } as unknown as SessionTargetAgentCatalog;
+  const cleanup: Array<() => Promise<void>> = [];
+  const exec = (command: string) => new Promise<{ status: number; stdout: string; stderr: string }>((resolve, reject) => {
+    // Match the managed target carrier: its command bytes run on stdin under sh -s.
+    const child = spawn('/bin/sh', ['-s'], { env: { PATH: tools }, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+    child.once('error', reject).once('close', status => resolve({ status: status ?? 1, stdout, stderr }));
+    child.stdin.on('error', reject).end(`${command}\n`);
+  });
+  try {
+    const launch = await deliverSessionTargetLaunch({
+      target: { id: 'managed:ssh-guest', home, platform: { os: 'linux', arch: 'x64', home },
+        holderPath: join(home, 'holder'), helperPath: join(home, 'helper'), exec,
+        putFile: async () => { throw new Error('The fixture has no credential files'); },
+        openChannel: () => { throw new Error('The fixture has no launch environment overrides'); } },
+      sessionKey: 'muse-launch', workspace: { hostRoot: join(directory, 'checkout'), targetRoot: home }, agentCommand: launcher,
+      runnerEnvironment: {}, materializedRoot: null, requestAuthMaterializedRoot: null, agent: { id: 'muse', catalog },
+      onSessionEnd: step => { cleanup.push(step); },
+    });
+    return launch.executables[launcher];
+  } finally {
+    for (const step of cleanup.reverse()) await step();
+  }
+}
+
+it.skipIf(process.platform === 'win32')('locates Muse installed by its declared recipe in the SSH guest', async () => {
+  expect(await deliverMuseToSshGuest('installed')).toMatch(/\/guest\/\.local\/bin\/muse$/u);
+});
+
+it.each(['fresh', 'retained', 'rejoined', 'lost-claim', 'lost-claim-root', 'terminal-write-lost', 'terminal-expired', 'parent-write-lost', 'miswired', 'requester-home', 'requester-home-reconstructed', 'permanent-refusal', 'missing-requester-profile',
+  ...(process.platform === 'win32' ? [] : ['ssh-missing-curl', 'ssh-missing-curl-recovered', 'ssh-wrong-location'] as const),
+] as const)('settles a proven cold startup failure through its original operation (%s)', async mode => {
+  const ssh = mode === 'ssh-missing-curl' || mode === 'ssh-missing-curl-recovered' || mode === 'ssh-wrong-location';
   const directory = await projectDirectory();
   const runId = '41414141-4141-4141-8141-414141414143';
   const transientHome = mode === 'requester-home' || mode === 'requester-home-reconstructed';
-  const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: { agentTarget, connectedServices: null },
+  const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {
+    agentTarget: ssh ? { kind: 'agent', identity: { pluginId: 'happier.agent.muse', localId: 'muse' } } : agentTarget,
+    connectedServices: null },
     blocks: transientHome ? [step('launch')] : [step('launch'), step('must-not-admit')] };
   const acceptedEnvelope = await sealDirectAccepted({ runId, definition, directory });
   const kit = createWorkflowRunStorageTestkit({ runId, machineId, origin: { kind: 'direct' }, acceptedEnvelope });
@@ -1106,7 +1169,11 @@ it.each(['fresh', 'retained', 'rejoined', 'lost-claim', 'lost-claim-root', 'term
   let nextOperation = 0;
   const operations = createHostActionOperationRuntime({ machineId, resolveAccountId: async () => accountId,
     generateOperationId: () => ++nextOperation === 1 ? 'failed-start' : 'replacement-start' });
-  const refusalMessage = mode === 'missing-requester-profile'
+  const refusalMessage = ssh
+    ? `This Agent CLI cannot run in a linux-x64 target: ${mode === 'ssh-wrong-location'
+      ? 'its install recipe did not install the CLI where the Agent declares it'
+      : 'its install recipe needs a command the target does not have'}`
+    : mode === 'missing-requester-profile'
     ? 'Select a Connected Account profile in your own Account, then edit the Workflow to use it and start a new Run.'
     : mode === 'permanent-refusal'
     ? 'Connected services resolution failed: ConnectedServiceSpawnNoEligibleMemberError(no_eligible_member): Connected-service account group has no eligible member'
@@ -1120,8 +1187,8 @@ it.each(['fresh', 'retained', 'rejoined', 'lost-claim', 'lost-claim-root', 'term
   let launches = 0;
   let recoveryRequested = false;
   let successfulStarts = 0;
-  const typedRefusal = transientHome || mode === 'permanent-refusal' || mode === 'missing-requester-profile';
-  const expectedCode = transientHome ? 'project_requester_home_unavailable'
+  const typedRefusal = transientHome || mode === 'permanent-refusal' || mode === 'missing-requester-profile' || ssh;
+  const expectedCode = ssh ? 'agent_cli_target_unavailable' : transientHome ? 'project_requester_home_unavailable'
     : mode === 'missing-requester-profile' ? 'connected_service_auth_group_authority_active_profile_missing'
     : mode === 'permanent-refusal' ? 'SPAWN_VALIDATION_FAILED' : 'ERR_BAD_REQUEST';
   const expectedState = transientHome ? 'interrupted' : 'failed';
@@ -1139,6 +1206,17 @@ it.each(['fresh', 'retained', 'rejoined', 'lost-claim', 'lost-claim-root', 'term
         metadata: JSON.stringify(buildCommittedLaunchMetadata({ options, directory, accountSettings: {} })) }));
       return { type: 'success', sessionId, sessionCreationOutcome: { disposition: 'created',
         organizationPlacement: { folderId: null, tagIds: [] } } };
+    }
+    if (ssh) {
+      try {
+        await deliverMuseToSshGuest(mode === 'ssh-wrong-location' ? 'wrong-location' : 'missing');
+      } catch (error) {
+        const refusal = projectSessionTargetLaunchFailure(error);
+        expect(refusal).toMatchObject({ errorDetail: { kind: 'launch_error', code: expectedCode, message: refusalMessage,
+          failureCause: { actionCause: { phase: 'session.target.prepare', errorCode: expectedCode } } } });
+        return refusal;
+      }
+      throw new Error('The guest recipe unexpectedly installed Muse');
     }
     // Both the observed loaded producer and the current producer carry the
     // same typed Home refusal, despite their different generic outer codes.
@@ -1180,7 +1258,7 @@ it.each(['fresh', 'retained', 'rejoined', 'lost-claim', 'lost-claim-root', 'term
   const sessionInput = sessionInputBoundary();
   const interrupted = new AbortController();
   let rejectCorrespondence = mode === 'lost-claim' || mode === 'lost-claim-root';
-  let rejectTerminalWrite = mode === 'terminal-write-lost' || mode === 'terminal-expired';
+  let rejectTerminalWrite = mode === 'terminal-write-lost' || mode === 'terminal-expired' || mode === 'ssh-missing-curl-recovered';
   let rejectParentSettlement = mode === 'parent-write-lost' || mode === 'requester-home-reconstructed';
   const coordinate = workflowDaemonProcess({ storage: { ...kit, execute: async (operation, options) => {
     if (rejectParentSettlement && operation.operation === 'transition' && operation.state === expectedState) {
@@ -1208,7 +1286,7 @@ it.each(['fresh', 'retained', 'rejoined', 'lost-claim', 'lost-claim-root', 'term
     expect(rowFor(kit, 'launch')?.lifecycle).toBe('failed');
     expect(kit.run().workflowCustodyState).toBe('pending');
   }
-  if (mode === 'terminal-write-lost' || mode === 'terminal-expired') {
+  if (mode === 'terminal-write-lost' || mode === 'terminal-expired' || mode === 'ssh-missing-curl-recovered') {
     await expect(coordinate({ runId, attempt: 0, expectedRevision: 0, accountCurrentness: currentness,
       acceptedEnvelope })).rejects.toThrow('storage_unavailable');
     expect(rowFor(kit, 'launch')?.lifecycle).toBe('running');
@@ -1236,11 +1314,18 @@ it.each(['fresh', 'retained', 'rejoined', 'lost-claim', 'lost-claim-root', 'term
     const progress = openRowProgress(kit, leaf);
     expect(progress).toMatchObject({ reason: { code: expectedCode }, execution: {
       kind: 'action', actionId: 'session.spawn_new', awaitedOperations: [{ operationId: 'failed-start', machineId }],
-      output: { operation: { state: 'failed', ...(mode === 'missing-requester-profile' || transientHome
+      output: { operation: { state: 'failed', ...(mode === 'missing-requester-profile' || transientHome || ssh
         ? { error: { errorCode: 'spawn_failed' }, result: { type: 'error', code: 'spawn_failed',
           launchError: { code: expectedCode } } }
         : { error: { errorCode: expectedCode } }) } },
     } });
+    if (ssh) {
+      expect(operations.store.get(scope, 'failed-start')).toMatchObject({
+        result: { launchError: { code: expectedCode, message: refusalMessage } },
+      });
+      expect(progress.reason).toMatchObject({ code: expectedCode, message: refusalMessage,
+        failureCause: { phase: 'session.target.prepare', errorCode: expectedCode } });
+    }
     if (typedRefusal) {
       // A new process-local owner has no record of the retired operation. The
       // sealed original correspondence, not another native attempt, survives.
@@ -1296,7 +1381,8 @@ it.each(['fresh', 'retained', 'rejoined', 'lost-claim', 'lost-claim-root', 'term
           cancel: async () => { throw new Error('terminal_startup_has_no_runner'); } } });
       await expect(observe({ progress, index: leaf, run: kit.run(), observationOnly: true,
         terminalParent: !transientHome, cancellationRequested: false }))
-        .resolves.toMatchObject({ kind: 'failed', code: expectedCode });
+        .resolves.toMatchObject({ kind: 'failed', code: expectedCode, ...(ssh ? { message: refusalMessage,
+          failureCause: { phase: 'session.target.prepare', errorCode: expectedCode } } : {}) });
       expect(launches).toBe(1);
       expect(successfulStarts).toBe(0);
       expect(sessionInput.enqueue).not.toHaveBeenCalled();

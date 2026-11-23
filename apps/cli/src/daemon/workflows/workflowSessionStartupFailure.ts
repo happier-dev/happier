@@ -26,14 +26,18 @@ export function readWorkflowSessionStartupRefusal(error: unknown): Extract<Sessi
     ...('agentId' in details ? { agentId: details.agentId } : {}) });
 }
 
-/** Native classification stays at its producer; Workflow carries only non-content recovery facts. */
+/** Native classification stays at its producer; recovery metadata stays content-free. */
 function workflowSessionStartupRefusalError(
   refusal: Extract<SessionSpawnNewResultV1, { type: 'error' }>, occurredAt: number,
 ): WorkflowSessionCompositionError {
   const launch = 'launchError' in refusal ? refusal.launchError : undefined;
   const code = launch?.code ?? ('providerError' in refusal ? refusal.providerError?.code : undefined) ?? refusal.code;
   const providerCause = 'providerError' in refusal ? readSessionRuntimeFailureCause(refusal.providerError, 'client_start') : undefined;
-  const actionFailureCause = ('failureCause' in refusal ? refusal.failureCause : undefined) ?? providerCause?.actionCause;
+  // Target placement supplies a redacted, user-facing explanation for this refusal.
+  const targetCliRefusal = launch?.code === 'agent_cli_target_unavailable'
+    && launch.failureCause?.actionCause?.phase === 'session.target.prepare' ? launch : undefined;
+  const actionFailureCause = targetCliRefusal?.failureCause?.actionCause
+    ?? ('failureCause' in refusal ? refusal.failureCause : undefined) ?? providerCause?.actionCause;
   if (actionFailureCause && !launch && !('providerError' in refusal && refusal.providerError)) {
     return new WorkflowSessionCompositionError(code, code, undefined, undefined, undefined, actionFailureCause);
   }
@@ -42,7 +46,7 @@ function workflowSessionStartupRefusalError(
   const runtimeIssueV1 = projectSessionRuntimeIssueMetadataV1({ v: 1, scope: 'primary_session', status: 'failed',
     code, source: failureCause.failureReason === 'usage_limit' ? 'usage_limit' : 'unknown', occurredAt, failureCause,
     ...('agentId' in refusal && refusal.agentId ? { agentId: refusal.agentId } : {}) });
-  return new WorkflowSessionCompositionError(code, code, undefined, undefined, runtimeIssueV1, actionFailureCause);
+  return new WorkflowSessionCompositionError(code, targetCliRefusal?.message ?? code, undefined, undefined, runtimeIssueV1, actionFailureCause);
 }
 
 /** Both live observation and cold recovery consume the original operation's typed result. */

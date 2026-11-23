@@ -3593,6 +3593,35 @@ describe('WorkflowRunContent', () => {
     );
   });
 
+  it('shows the recorded SSH Agent install refusal in the failed step’s Technical details', async () => {
+    const invocation = createWorkflowInvocationIndexFixture({ id: 'inv-1', lifecycle: 'failed' });
+    const message = 'This Agent CLI cannot run in a linux-x64 target: its install recipe needs a command the target does not have';
+    const code = 'agent_cli_target_unavailable';
+    const progress = {
+      kind: 'happier.workflow-progress.v1' as const,
+      invocationPath: { blockId: 'analyze', scope: [] },
+      blockKind: 'step' as const,
+      attempt: '0',
+      logicalInvocationRecordId: invocation.id,
+      reason: { code, message, failureCause: { phase: 'session.target.prepare', errorClass: 'Error' as const, errorCode: code, httpStatus: null },
+        runtimeIssueV1: { v: 1 as const, scope: 'primary_session' as const, status: 'failed' as const, source: 'unknown' as const,
+          occurredAt: 1, code, failureCause: { phase: 'client_start' as const, failureReason: 'unknown' as const, providerErrorCode: code } } },
+    };
+    const rendered = await renderContent({
+      run: createWorkflowRunSummaryFixture({ state: 'failed' }),
+      invocations: [invocation],
+      selectedInvocationId: invocation.id,
+      selectedInvocationProgress: progress,
+      invocationProgressById: new Map([[invocation.id, progress]]),
+      firstFailedInvocationId: invocation.id,
+      firstFailedInvocationResolution: 'resolved',
+    });
+    await rendered.pressByTestIdAsync('workflow-run-invocation-technical.header');
+    expect(rendered.getTextContent()).toContain(message);
+    expect(rendered.getTextContent()).toContain(code);
+    await rendered.unmount();
+  });
+
   it("keeps a failed step's cause in its open card, its code under Technical details, and completed steps quiet", async () => {
     const recordedStorageMessage = 'The Run store could not be written.';
     const retryFreshAgent = vi.fn();

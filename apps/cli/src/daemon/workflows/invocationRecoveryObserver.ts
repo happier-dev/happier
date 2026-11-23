@@ -59,11 +59,12 @@ type WorkflowInvocationRecoveryEvidence = Awaited<ReturnType<NonNullable<Workflo
 function failedOperationObservation(operation: ActionOperationSnapshotV1, sessionStartup: boolean): WorkflowInvocationRecoveryObservation {
   const startup = sessionStartup ? readWorkflowSessionStartupError(operation) : undefined;
   if (startup && !(startup instanceof WorkflowSessionCompositionError)) return { kind: 'unresolved', code: startup.code };
+  const message = startup && startup.message !== startup.code ? startup.message : operation.error?.error;
   return { kind: 'failed', code: startup?.code ?? operation.error?.errorCode ?? 'action_operation_failed',
     ...(startup?.failureCause ?? operation.error?.failureCause
       ? { failureCause: startup?.failureCause ?? operation.error?.failureCause } : {}),
     ...(startup?.runtimeIssueV1 ? { runtimeIssueV1: startup.runtimeIssueV1 } : {}),
-    ...(operation.error?.error ? { message: operation.error.error } : {}) };
+    ...(message ? { message } : {}) };
 }
 
 type RecoveryActionExecutor = Readonly<{
