@@ -16,7 +16,8 @@ import { DeploymentTargetLinkProviderContentV1Schema, DeploymentTargetRoleInputP
 import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
 import { bindExternalActionExecutionAuthorizationVerifyHttpPathV1, createDeploymentDomainContentArtifactIdV1,
     createDeploymentLinkContentArtifactIdV1, createDeploymentEnvironmentContentArtifactIdV1, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1,
-    ExternalActionRequestEnvelopeV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
+    ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema,
+    bindExternalActionExecutionAuthorizationHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
@@ -649,7 +650,7 @@ describe('public roots through real reviewed-child packet producers', () => {
         } finally { await f.close(); }
     });
 
-    it('opens receipt content in the admitted Environment under the real receipt-get issuer regardless of requester', async () => {
+    it('reads own-Account Artifacts with the receipt-get root, including receipts requested by another Account', async () => {
         const f = await deploymentFixture();
         const foreign = await deploymentFixture();
         try {
@@ -684,22 +685,78 @@ describe('public roots through real reviewed-child packet producers', () => {
                 ...await f.artifact('deployment-receipt.v1') } });
             const otherEnvironment = await db.deployment.create({ data: { ...receipt, id: crypto.randomUUID(),
                 requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), environmentId: foreign.environment.id,
-                targetLinkId: foreign.link.id, ...await f.artifact('deployment-receipt.v1') } });
+                targetLinkId: foreign.link.id, ...await foreign.artifact('deployment-receipt.v1') } });
             const teammateContent = await read(`/v1/artifacts/${otherRequester.contentArtifactId}`);
             expect(teammateContent.statusCode, teammateContent.body).toBe(200);
-            for (const id of [f.environment.contentArtifactId, f.link.contentArtifactId,
-                otherEnvironment.contentArtifactId, crypto.randomUUID()]) {
-                const denied = await read(`/v1/artifacts/${id}`);
-                expect(denied.statusCode, denied.body).toBe(401);
+            for (const [name, id, status] of [
+                ['own Environment', f.environment.contentArtifactId, 200],
+                ['own Link', f.link.contentArtifactId, 200],
+                ['foreign receipt content', otherEnvironment.contentArtifactId, 404],
+                ['missing Artifact', crypto.randomUUID(), 404],
+            ] as const) {
+                const response = await read(`/v1/artifacts/${id}`);
+                expect.soft(response.statusCode, name).toBe(status);
             }
             for (const request of [
-                { path: `/v1/artifacts/${receipt.contentArtifactId}?other=1`, method: 'GET', body: undefined },
-                { path: `/v1/artifacts/${receipt.contentArtifactId}`, method: 'POST', body: {} },
+                { path: `/v1/artifacts/${receipt.contentArtifactId}?other=1`, method: 'GET', body: undefined, status: 400 },
+                { path: `/v1/artifacts/${receipt.contentArtifactId}`, method: 'POST', body: {}, status: 401 },
             ] as const) {
                 const denied = await read(request.path, request.method, request.body);
-                expect(denied.statusCode, denied.body).toBe(401);
+                expect.soft(denied.statusCode, `${request.method} Artifact request`).toBe(request.status);
             }
         } finally { await foreign.close(); await f.close(); }
+    });
+
+    it('limits a foreign-custodian receipt-get root to receipt metadata and content', async () => {
+        const f = await deploymentFixture();
+        const carrier = await createReviewedChildAuthorizationFixture();
+        try {
+            const actionId = 'deployments.receipts.get';
+            await makeShareEligibleForTest(carrier.account.id, f.account.id);
+            await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: carrier.account.id, machineId: carrier.machine.id,
+                principal: { kind: 'account', accountId: f.account.id }, level: 'view' }));
+            const deploy = await f.root('deployments.deploy', f.deployInput);
+            const body = { ...f.deployInput, actionOperationId: crypto.randomUUID() };
+            const path = `/v1/deployments/environments/${f.environment.id}/deploy`;
+            const admitted = await f.resourceApp.inject({ method: 'POST', url: path, payload: body,
+                headers: await f.headers(deploy, { effectActionId: 'deployments.deploy', method: 'POST', path, body }) });
+            expect(admitted.statusCode, 'Deployment admission').toBe(200);
+            const receipt = await db.deployment.findFirstOrThrow({ where: { environmentId: f.environment.id } });
+            // The native executor is the boundary, as in the own-Account case.
+            await db.deployment.update({ where: { id: receipt.id }, data: { state: 'failed' } });
+
+            const input = { serverId: f.serverId, environmentId: f.environment.id, deploymentId: receipt.id };
+            const target = { kind: 'machine' as const, machineId: carrier.machine.id };
+            const issued = await f.app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${f.presentUserToken}` },
+                payload: { v: 1, machineId: carrier.machine.id, envelope: ExternalActionRequestEnvelopeV1Schema.parse({
+                    v: 1, requestId: crypto.randomUUID(), target, input,
+                }) } });
+            expect(issued.statusCode, 'Receipt root issuance').toBe(200);
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+            expect(authorization.binding).toMatchObject({ accountId: f.account.id, custodianAccountId: carrier.account.id,
+                environmentId: f.environment.id, target });
+            const spec = getActionSpec(actionId);
+            if (!spec.serverTransport) throw new Error('Receipt read has no canonical HTTP transport');
+            const metadata = bindHomeDomainHttpRequestV1({ transport: spec.serverTransport, inputSchema: spec.inputSchema, input });
+            const read = (readPath: string) => f.resourceApp.inject({ method: 'GET', url: readPath,
+                headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
+                    ...createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: actionId,
+                        target: authorization.binding.target, installationId: carrier.machine.installationId!,
+                        method: 'GET', path: readPath, privateKey: carrier.keyPair.secretKey }) },
+            });
+
+            const detail = await read(metadata.path);
+            expect(detail.statusCode, 'Receipt metadata').toBe(200);
+            expect(detail.json()).toMatchObject({ deployment: { id: receipt.id, contentArtifactId: receipt.contentArtifactId } });
+            const content = await read(`/v1/artifacts/${receipt.contentArtifactId}`);
+            expect(content.statusCode, 'Receipt content').toBe(200);
+            expect(content.json()).toMatchObject({ id: receipt.contentArtifactId });
+            const environment = await read(`/v1/artifacts/${f.environment.contentArtifactId}`);
+            expect.soft(environment.statusCode, 'Environment Artifact outside the receipt').toBe(401);
+            const link = await read(`/v1/artifacts/${f.link.contentArtifactId}`);
+            expect(link.statusCode, 'Link Artifact outside the receipt').toBe(401);
+        } finally { await carrier.app.close(); await f.close(); }
     });
 
     it.each(['deployments.bindings.set', 'deployments.environments.update'] as const)(
