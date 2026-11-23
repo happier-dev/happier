@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { createActionExecuteFailureError, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
     useReportSessionInfoSectionSummary,
     useSessionInfoSectionSummarySessionId,
@@ -88,10 +89,9 @@ export const WorkspaceSyncRelationshipRow = React.memo(function WorkspaceSyncRel
     const runAction = React.useCallback(async (action: 'sync' | 'disable' | 'enable' | 'terminate') => {
         setPendingAction(action);
         setMenuOpen(false);
-        const settled = <T extends Readonly<{ ok: boolean }>>(result: T): Extract<T, { ok: true }> => {
-            if (result.ok) return result as Extract<T, { ok: true }>;
-            const failure = result as unknown as Readonly<{ errorCode?: string; error?: string }>;
-            throw Object.assign(new Error(failure.error), { code: failure.errorCode });
+        const settled = <T extends Readonly<{ ok: true }>>(result: T | ActionExecuteFailure): T => {
+            if (!result.ok) throw createActionExecuteFailureError(result);
+            return result;
         };
         try {
             if (action === 'sync') {

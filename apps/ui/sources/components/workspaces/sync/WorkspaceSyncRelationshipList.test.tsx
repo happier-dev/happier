@@ -11,12 +11,6 @@ import { installSessionHandoffCommonModuleMocks } from '@/components/sessions/ha
 
 const routerPushSpy = vi.hoisted(() => vi.fn());
 const openDefaultDetailsSpy = vi.hoisted(() => vi.fn());
-const relationshipActionSpies = vi.hoisted(() => ({
-    disable: vi.fn(async () => ({ ok: true, v: 1, relationshipId: 'relationship-1', enabled: false })),
-    enable: vi.fn(async () => ({ ok: true, v: 1, relationshipId: 'relationship-1', enabled: true })),
-    flush: vi.fn(async () => ({ ok: true, v: 1, relationshipId: 'relationship-1', status: null })),
-    terminate: vi.fn(async () => ({ ok: true, v: 1, relationshipId: 'relationship-1', terminated: true })),
-}));
 const mountedExecuteSpy = vi.hoisted(() => vi.fn());
 const mountedExecution = vi.hoisted(() => ({ current: true }));
 
@@ -42,13 +36,6 @@ installSessionHandoffCommonModuleMocks({
 
 vi.mock('@/components/approvals/useMountedActionExecution', () => ({
     useMountedActionExecution: () => ({ execute: mountedExecuteSpy, ready: true, isCurrent: () => mountedExecution.current }),
-}));
-
-vi.mock('@/sync/ops/actions/workspaceSyncRelationshipActions', () => ({
-    disableWorkspaceSyncRelationshipAction: relationshipActionSpies.disable,
-    enableWorkspaceSyncRelationshipAction: relationshipActionSpies.enable,
-    flushWorkspaceSyncRelationshipAction: relationshipActionSpies.flush,
-    terminateWorkspaceSyncRelationship: relationshipActionSpies.terminate,
 }));
 
 vi.mock('expo-router', async () => {
@@ -158,34 +145,37 @@ function statusOf(screen: RenderedScreen): Readonly<{ text: string; tone: string
 
 describe('WorkspaceSyncRelationshipRow', () => {
     // A failed lifecycle Action records its error in the shared status snapshot; no row test inherits another's.
-    beforeEach(() => resetWorkspaceSyncStatusStoreForTests());
+    beforeEach(() => {
+        mountedExecuteSpy.mockClear();
+        resetWorkspaceSyncStatusStoreForTests();
+    });
 
     it('routes termination through its Action even when a private modal would refuse', async () => {
-        for (const spy of Object.values(relationshipActionSpies)) spy.mockClear();
+        mountedExecuteSpy.mockResolvedValueOnce({ ok: true, result: { v: 1, relationshipId: 'relationship-1', terminated: true } });
         const screen = await renderScreen(<WorkspaceSyncRelationshipRow summary={createSummary(0)} />);
         const menu = screen.findAllByType('DropdownMenu')[0];
 
         await act(async () => { menu?.props.onSelect('terminate'); });
-        await vi.waitFor(() => expect(relationshipActionSpies.terminate).toHaveBeenCalledWith({
+        expect(mountedExecuteSpy).toHaveBeenCalledWith('workspace.sync.relationship.terminate', {
             controllerMachineId: 'machine-alpha',
             relationshipId: 'relationship-1',
-        }, null, mountedExecuteSpy));
+        });
     });
 
-    it('presents a refused lifecycle Action as its own refusal instead of a generic failure', async () => {
+    it('shows the Sync owner refusal when the Action envelope has a generic code', async () => {
         const { Modal } = await import('@/modal');
         vi.mocked(Modal.alert).mockClear();
         const screen = await renderScreen(<WorkspaceSyncRelationshipRow summary={createSummary(0)} />);
         const menu = screen.findAllByType('DropdownMenu')[0];
 
-        relationshipActionSpies.enable.mockResolvedValueOnce({ ok: false, errorCode: 'target_bootstrap_required', error: 'Git workspace sync target requires an explicit SCM bootstrap source' } as never);
+        mountedExecuteSpy.mockResolvedValueOnce({ ok: false, errorCode: 'credential_scope_denied', error: 'Request refused',
+            failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: null, nativeErrorReason: null } });
         await act(async () => { menu?.props.onSelect('enable'); });
-        await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith('common.error', 'workspaceSync.error.destinationNeedsPreparation (target_bootstrap_required)'));
-
-        vi.mocked(Modal.alert).mockClear();
-        relationshipActionSpies.enable.mockResolvedValueOnce({ ok: false, errorCode: 'something_unmapped', error: 'x' } as never);
-        await act(async () => { menu?.props.onSelect('enable'); });
-        await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith('common.error', 'common.requestFailed (something_unmapped)'));
+        const actions = vi.mocked(Modal.alert).mock.lastCall?.[2];
+        const details = actions?.find(action => action.text === 'approvals.technicalDetails');
+        expect(details).toBeDefined();
+        details?.onPress?.();
+        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', 'machine_manage_required');
     });
 
     it('presents nothing when the row left the list before its own Stop settled', async () => {
@@ -196,13 +186,13 @@ describe('WorkspaceSyncRelationshipRow', () => {
 
         // The daemon removes the relationship before its Stop settles, so the list drops the row and
         // retires the row's mounted Action interest; the cancelled settle is not a failed Stop.
-        relationshipActionSpies.terminate.mockImplementationOnce(async () => {
+        mountedExecuteSpy.mockImplementationOnce(async () => {
             mountedExecution.current = false;
-            return { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' } as never;
+            return { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' };
         });
         try {
             await act(async () => { menu?.props.onSelect('terminate'); });
-            await vi.waitFor(() => expect(relationshipActionSpies.terminate).toHaveBeenCalled());
+            expect(mountedExecuteSpy).toHaveBeenCalledWith('workspace.sync.relationship.terminate', expect.anything());
         } finally {
             mountedExecution.current = true;
         }
