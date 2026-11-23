@@ -2573,9 +2573,9 @@ describe('Board task controls through the contributed Action front door', () => 
             transitions: [{ id: 'start', label: 'Start work', category: 'started' }] } });
         const producer = await createPluginTestkit({ manifest: fixture.plugin.manifest, module: fixture.plugin });
         const pluginId = fixture.plugin.manifest.id;
-        const baseLifetime = clientAccountLifetime();
-        const serverId = rpcHomes.get('server-client-action')!.id;
-        const lifetime = { ...baseLifetime, scope: { ...baseLifetime.scope, serverId } };
+        const home = rpcHomes.get('server-client-action')!;
+        const serverId = home.id;
+        const lifetime = clientAccountLifetime(serverId);
         const executionOrigin = clientActionExecutionOrigin(pluginId);
         const contributes = PluginContributesV2Schema.parse(fixture.plugin.manifest.contributes);
         const hostOrigin = { ...CLIENT_ACTION_HOST_ORIGIN, serverId, executionOrigin };
@@ -2623,31 +2623,44 @@ describe('Board task controls through the contributed Action front door', () => 
             const card = buildBoardCards([{ key, ref, available: true, picked: true, sourced: false }], {
                 nowMs: Date.now(), task: () => result.items.get(key) ?? null, session: () => null,
                 workflow: () => null, workflowRun: () => null, machine: () => null,
-                accountScopedHome: () => true, machineSessionCounts: new Map() })[0]!;
+                accountScopedHome: () => true, machineSessionCounts: new Map() })[0];
+            if (!card) return null;
             return React.createElement(BoardTaskRefreshContext.Provider, { value: result.refresh }, React.createElement(BoardCardView, { card }));
         }
         const owner: AppShellPluginUiProjectionValue = { pluginUiProjection: projection, pluginBrowserProjection: null,
             phase: 'current', interactionEnabled: true, machineId: null, serverId, platform: 'web', accountLifetime: lifetime,
             clientExecutableActivation: { status: 'ready' }, reloadConnectedAccountProjection: () => {}, reloadClientExecutables: () => {} };
         const render = (value = owner) => React.createElement(AppShellPluginUiProjectionValueProvider, { value }, React.createElement(LiveTask));
-        const requests: ReturnType<typeof DaemonPluginStructuredMessageActionExecuteRequestSchema.parse>[] = [];
-        daemonRpc.mockImplementation(async (request: { method: string; payload: unknown }) => {
-            if (request.method !== RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) return answerActionSchemasRead(request);
-            const wire = DaemonPluginStructuredMessageActionExecuteRequestSchema.parse(request.payload);
-            requests.push(wire);
-            return { ok: true, result: await producer.invokeAction('transition', wire.input, { surface: wire.executionSurface }) };
+        const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+        const { ActionInvokeInputSchema } = await import('@happier-dev/protocol/actions/actionInvokeInput');
+        const machineId = getPluginMachineExecutionOriginRef(executionOrigin).machineId;
+        const requests: ReturnType<typeof ActionInvokeInputSchema.parse>[] = [];
+        const boundary = await createExternalActionAccountHttpBoundary({
+            serverUrl: home.serverUrl, serverIdentityId: 'srv_client_action', accountId: home.accountId, machineId,
+            actionId: 'action.invoke', tokenEpoch: 0, requesterInvocation: 'optional',
+            execute: (value, context) => {
+                expect(context.target).toEqual({ kind: 'machine', machineId });
+                expect(context.invocation).toMatchObject({ caller: { kind: 'host' }, surface: 'ui', authority: 'present_user' });
+                expect(context.envelope).not.toHaveProperty('pluginInvocation');
+                const request = ActionInvokeInputSchema.parse(value);
+                requests.push(request);
+                return producer.invokeAction(request.action.localId, request.input, { surface: 'ui' });
+            },
+        });
+        network.setHttpResponder(async (url, init) => {
+            const request = new URL(String(url));
+            return await boundary.handle(request, init) ?? createEmptyAccountBootstrapHttpResponse(request.pathname, init);
         });
         const previous = getStorage().getState();
         try {
             const screen = await renderScreen(render());
             const transitionId = `board-card:${key}:transition:start`;
-            const control = screen.findHostByTestId(transitionId);
-            expect(control).not.toBeNull();
-            await act(async () => control!.props.onPress());
-            expect(requests).toHaveLength(1);
-            expect(requests[0]).toMatchObject({ qualifiedActionId: `${pluginId}/transition`, executionSurface: 'ui',
+            await vi.waitFor(() => expect(screen.findHostByTestId(transitionId)).not.toBeNull());
+            await act(async () => screen.findHostByTestId(transitionId)!.props.onPress());
+            await vi.waitFor(() => expect(requests).toHaveLength(1));
+            expect(requests[0]).toEqual({ action: { pluginId, localId: 'transition' }, expectedContributorOccurrenceId: 'current',
                 input: { serverId, itemId: 'issue', transitionId: 'start' } });
-            expect(requests[0]!.invocation).toBeUndefined();
+            expect(network.requests.map(request => request.method)).not.toContain(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE);
             expect(screen.findHostByTestId(`board-card:${key}:word`)?.props.children).toBe('Start work');
             expect(screen.findHostByTestId(transitionId)?.props.disabled).toBe(false);
             const { transitionAction: _transitionAction, ...readOnly } = source.definition;
@@ -2669,7 +2682,7 @@ describe('Board task controls through the contributed Action front door', () => 
             getStorage().setState(state => ({ settings: { ...state.settings,
                 actionsSettingsV1: normalizeActionsSettingsV1({ v: 1, actions: {} }) } }));
             await act(async () => screen.findHostByTestId(transitionId)!.props.onPress());
-            expect(requests).toHaveLength(2);
+            await vi.waitFor(() => expect(requests).toHaveLength(2));
             lifetime.retire();
             await act(async () => screen.findHostByTestId(transitionId)?.props.onPress());
             expect(requests).toHaveLength(2);
