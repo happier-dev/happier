@@ -48,7 +48,7 @@ test('syncs additions, deletions and unusual filenames without changing other st
   assert.equal(fs.existsSync(path.join(f.cwd, 'deleted')), false);
 });
 
-test('reports committed imports that miss their module or export against the exact landed tree', async (t) => {
+test('refuses missing local imports before landing and reports workspace imports in the exact post-commit tree', async (t) => {
   const f = fixture(t);
   fs.mkdirSync(path.join(f.cwd, 'src'));
   fs.mkdirSync(path.join(f.cwd, 'packages/widget/src'), { recursive: true });
@@ -72,7 +72,19 @@ const lazy = import('@/missing');
 // import 'comment-only';
 export const value = [absent, present, addedLater, widget, lazy];`);
   f.write('src/script.mjs', "import { shipped, unshipped } from './producer.mjs';\nshipped(); unshipped();");
-  const tree = await commitFromPrivateIndex({ ...f, paths: ['src/consumer.ts', 'src/script.mjs'] });
+  const paths = ['src/consumer.ts', 'src/script.mjs'];
+  await assert.rejects(commitFromPrivateIndex({ ...f, paths }), error => {
+    assert.match(error.message, /local import closure/);
+    for (const expected of ['./absent.js', '@/missing', 'addedLater', 'unshipped']) {
+      assert.ok(error.message.includes(expected), expected);
+    }
+    assert.ok(!error.message.includes('@fixture/widget/missing'));
+    return true;
+  });
+  assert.equal(f.git('rev-parse', 'HEAD'), before);
+  assert.equal(f.git('diff', '--cached', '--name-status'), '');
+  f.git('add', '--', ...paths);
+  const tree = f.git('write-tree').trim();
   const report = await runCommitGate({ repo: f.cwd, base: before.trim(), tree, phase: 'post-commit' });
   assert.equal(report.check, 'producer closure');
   const findings = report.findings.join('\n');
@@ -80,8 +92,7 @@ export const value = [absent, present, addedLater, widget, lazy];`);
     assert.ok(findings.includes(expected), `report names ${expected}`);
   }
   for (const satisfied of ['comment-only', ' present ', ' shipped ', 'widget }']) assert.ok(!findings.includes(satisfied), satisfied);
-  assert.equal(f.git('rev-parse', 'HEAD').trim(), tree);
-  assert.equal(f.git('diff', '--cached', '--name-status'), '');
+  assert.equal(f.git('rev-parse', 'HEAD'), before);
 });
 
 test('reports when a landed producer drops an export an unchanged importer still reads, even through a barrel', async (t) => {
@@ -170,18 +181,25 @@ test('refuses a packet that closes an eager import cycle, the same commit gate a
   assert.equal(f.git('rev-parse', 'HEAD'), before);
 });
 
-test('commits a consumer with its producer while an unchanged pre-existing break and ignored generated output never block', async (t) => {
+test('refuses a newly imported ignored producer and still lets unchanged imports through', async (t) => {
   const f = fixture(t);
   fs.mkdirSync(path.join(f.cwd, 'src/generated'), { recursive: true });
   f.write('.gitignore', 'src/generated/\n');
   f.write('src/legacy.ts', "import { gone } from './nowhere';\nexport const legacy = gone;");
-  f.git('add', '--', '.gitignore', 'src/legacy.ts');
+  f.write('src/legacy-generated.ts', "export { routes } from './generated/routes';");
+  f.git('add', '--', '.gitignore', 'src/legacy.ts', 'src/legacy-generated.ts');
   f.git('commit', '-qm', 'test: pre-existing break');
   f.write('src/generated/routes.ts', 'export const routes = [];');
   f.write('src/producer.ts', 'export const made = 1;\nexport type Made = typeof made;');
   f.write('src/consumer.ts', "import { made, type Made } from './producer';\nimport { routes } from './generated/routes';\nexport const value: Made = made; export { routes };");
   f.write('src/legacy.ts', "import { gone } from './nowhere';\nexport const legacy = gone; // touched");
-  const commit = await commitFromPrivateIndex({ ...f, paths: ['src/consumer.ts', 'src/producer.ts', 'src/legacy.ts'] });
+  const paths = ['src/consumer.ts', 'src/producer.ts', 'src/legacy.ts', 'src/legacy-generated.ts'];
+  const before = f.git('rev-parse', 'HEAD');
+  await assert.rejects(commitFromPrivateIndex({ ...f, paths }), /src\/consumer\.ts -> \.\/generated\/routes/);
+  assert.equal(f.git('rev-parse', 'HEAD'), before);
+  f.write('src/consumer.ts', "import { made, type Made } from './producer';\nexport const value: Made = made;");
+  f.write('src/legacy-generated.ts', "export { routes } from './generated/routes'; // touched");
+  const commit = await commitFromPrivateIndex({ ...f, paths });
   assert.equal(f.git('rev-parse', 'HEAD').trim(), commit);
 });
 
@@ -194,7 +212,7 @@ test('an @/ alias that no tsconfig maps (a test runner alias) is outside the clo
   assert.equal(f.git('rev-parse', 'HEAD').trim(), commit);
 });
 
-test('reports an unresolved module-scope require without misresolving createRequire calls', async t => {
+test('refuses an unresolved module-scope require and permits relocated createRequire calls', async t => {
   const f = fixture(t);
   fs.mkdirSync(path.join(f.cwd, 'src'));
   f.write('package.json', '{"type":"module"}');
@@ -209,11 +227,12 @@ function relocated() {
 }`);
   const paths = ['package.json', 'metro.config.js', 'src/relocated.mjs', 'src/native.cjs'];
   const base = f.git('rev-parse', 'HEAD').trim();
-  const tree = await commitFromPrivateIndex({ ...f, paths });
-  const report = await runCommitGate({ repo: f.cwd, base, tree, phase: 'post-commit' });
-  const findings = report.findings.join('\n');
-  assert.match(findings, /src\/native\.cjs -> \.\/missing\.js/);
-  assert.doesNotMatch(findings, /outside-this-module|metro\.config/);
+  await assert.rejects(commitFromPrivateIndex({ ...f, paths }), error => {
+    assert.match(error.message, /src\/native\.cjs -> \.\/missing\.js/);
+    assert.doesNotMatch(error.message, /outside-this-module|metro\.config/);
+    return true;
+  });
+  assert.equal(f.git('rev-parse', 'HEAD').trim(), base);
   f.write('src/native.cjs', `function relocated() {
   const require = createRequire(new URL('../package.json', import.meta.url));
   require('./outside-this-module.js');
@@ -333,6 +352,9 @@ function runWithCommitLockContender(f, winner, name, { treeGateMode, additionalW
   // Advance the real ref under the real lock immediately before the writer's first acquisition.
   fs.writeFileSync(path.join(bin, 'flock'), `#!/bin/sh
 set -eu
+if [ "$#" -ne 2 ] || [ "$1" != -x ] || [ "$2" != 3 ]; then
+  exec "$TEST_FLOCK" "$@"
+fi
 head=$(git rev-parse HEAD)
 printf '%s\\n' "$head" >> "$TEST_ACQUISITIONS"
 if [ "$head" = "$TEST_BASE" ]; then
@@ -638,7 +660,7 @@ test('a foreign CAS winner is preserved without replaying the gate', { skip: !ha
   assert.equal(f.git('rev-parse', 'HEAD').trim(), casWinner);
 });
 
-test('reports a replay whose exact parent removed its producer and releases the commit lock', { skip: !hasFlock }, async (t) => {
+test('refuses a replay whose exact parent removed its producer and releases the commit lock', { skip: !hasFlock }, async (t) => {
   const f = fixture(t);
   f.write('producer.mjs', 'export const producer = true;\n');
   f.git('add', '--', 'producer.mjs');
@@ -651,10 +673,10 @@ test('reports a replay whose exact parent removed its producer and releases the 
 
   const { result, acquisitions, flock, lock } = runWithCommitLockContender(f, winner, 'consumer.mjs');
 
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(f.git('rev-parse', 'HEAD^').trim(), winner);
-  const report = await runCommitGate({ repo: f.cwd, base: winner, tree: 'HEAD', phase: 'post-commit' });
-  assert.match(report.findings.join('\n'), /consumer\.mjs -> \.\/producer\.mjs/);
+  assert.notEqual(result.status, 0, result.stderr);
+  assert.equal(f.git('rev-parse', 'HEAD').trim(), winner);
+  assert.match(result.stderr, /local import closure/);
+  assert.match(result.stderr, /consumer\.mjs -> \.\/producer\.mjs/);
   assert.deepEqual(acquisitions, [base]);
   assert.equal(spawnSync(flock, ['-n', lock, 'true']).status, 0);
 });

@@ -291,7 +291,7 @@ test('route composition subsumes standalone server startup and defers preparatio
   assert.deepEqual((await selectCommitTreeEntryGraphs({ repo, base, tree, phase: 'deferred' })).selected, ['prepare-fixture']);
 });
 
-test('a non-runtime producer closure finding is deferred to the exact post-commit check', async t => {
+test('a non-runtime local import closure finding refuses the exact tree before entry probes', async t => {
   const entry = 'packages/protocol/src/index.ts';
   const { repo, tree: base, write } = miniatureRevision(t, {
     'packages/protocol/package.json': '{"name":"@fixture/protocol"}',
@@ -303,7 +303,9 @@ test('a non-runtime producer closure finding is deferred to the exact post-commi
   git('commit', '-qm', 'candidate');
   const tree = git('rev-parse', 'HEAD');
   const fast = await runCommitGate({ repo, base, tree });
-  assert.equal(fast.verdict, 'pass', JSON.stringify(fast));
+  assert.equal(fast.verdict, 'refused', JSON.stringify(fast));
+  assert.equal(fast.check, 'local import closure');
+  assert.ok(fast.findings.some(finding => finding.includes('./missing.js')));
   const deferred = await runCommitGate({ repo, base, tree, phase: 'post-commit' });
   assert.equal(deferred.check, 'producer closure');
   assert.ok(deferred.findings.some(finding => finding.includes('missing')));
