@@ -65,4 +65,31 @@ describe("pendingVersion witness for Pending delivery statuses", () => {
             expect(listed.json()).toMatchObject({ pendingVersion: await version() });
         });
     });
+
+    it("publishes one queue revision for a changed order and none when that order is replayed", async () => {
+        const owner = await db.account.create({ data: { publicKey: `pk-${randomUUID()}` } });
+        const session = await db.session.create({ data: {
+            accountId: owner.id, tag: randomUUID(), metadata: "meta", metadataVersion: 0, agentState: null, agentStateVersion: 0,
+        }, select: { id: true } });
+
+        await withAuthenticatedTestApp(sessionPendingRoutes, async app => {
+            const url = `/v2/sessions/${session.id}/pending`;
+            const headers = { "x-test-user-id": owner.id };
+            for (const localId of ["a", "b"]) {
+                const enqueued = await app.inject({ method: "POST", url, headers, payload: { localId, ciphertext: `cipher-${localId}` } });
+                expect(enqueued.json()).toMatchObject({ didWrite: true });
+            }
+            const version = async () => (await db.session.findUniqueOrThrow({ where: { id: session.id } })).pendingVersion;
+            const reorder = () => app.inject({ method: "POST", url: `${url}/reorder`, headers, payload: { orderedLocalIds: ["b", "a"] } });
+            const before = await version();
+            const changed = await reorder();
+            expect(changed.statusCode).toBe(200);
+            expect(await version()).toBe(before + 1);
+
+            const replayed = await reorder();
+            expect(replayed.statusCode).toBe(200);
+            expect(await version()).toBe(before + 1);
+            expect(replayed.json()).toEqual(changed.json());
+        });
+    });
 });

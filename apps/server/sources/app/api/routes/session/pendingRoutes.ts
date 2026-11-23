@@ -855,19 +855,21 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
                 return reply.code(500).send({ error: res.error });
             }
 
-            await emitPendingChanged({
-                sessionId,
-                changedByAccountId: request.userId,
-                pendingCount: res.pendingCount,
-                pendingBlockedCount: res.pendingBlockedCount,
-                pendingVersion: res.pendingVersion,
-                ...(request.params.runId ? { recipient: { kind: "execution_run" as const, runId: request.params.runId } } : {}),
-                recipientCursors: res.recipientCursors,
-            });
-            await refreshTrackedSessionAccountBadgePushes({
-                badgeAttentionChanged: res.badgeAttentionChanged,
-                sessionId,
-            });
+            if (res.didWrite) {
+                await emitPendingChanged({
+                    sessionId,
+                    changedByAccountId: request.userId,
+                    pendingCount: res.pendingCount,
+                    pendingBlockedCount: res.pendingBlockedCount,
+                    pendingVersion: res.pendingVersion,
+                    ...(request.params.runId ? { recipient: { kind: "execution_run" as const, runId: request.params.runId } } : {}),
+                    recipientCursors: res.recipientCursors,
+                });
+                await refreshTrackedSessionAccountBadgePushes({
+                    badgeAttentionChanged: res.badgeAttentionChanged,
+                    sessionId,
+                });
+            }
             return reply.send({ ok: true, ...toPendingStateJson(res, request.params.runId) });
         },
     );

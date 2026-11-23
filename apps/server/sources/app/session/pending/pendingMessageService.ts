@@ -4842,7 +4842,7 @@ export async function restorePendingMessage(params: {
 }
 
 export type ReorderPendingMessagesResult =
-    | { ok: true; pendingVersion: number; pendingCount: number; pendingBlockedCount: number; recipientCursors: RecipientCursor[]; badgeAttentionChanged: boolean; meaningfulActivityAt?: Date }
+    | { ok: true; didWrite: boolean; pendingVersion: number; pendingCount: number; pendingBlockedCount: number; recipientCursors: RecipientCursor[]; badgeAttentionChanged: boolean; meaningfulActivityAt?: Date }
     | { ok: false; error: PendingSessionAccessError | "forbidden" | "invalid-params" | "internal" };
 
 export async function reorderPendingMessages(params: {
@@ -4879,48 +4879,34 @@ export async function reorderPendingMessages(params: {
                 select: { localId: true, deliveryState: true, deliveryBlockedReason: true, position: true },
                 orderBy: { position: "asc" },
             });
-            const queuedIds = queued.map((v) => v.localId);
-            if (queuedIds.length !== orderedLocalIds.length) return { ok: false, error: "invalid-params" } as const;
-
-            const a = new Set(queuedIds);
-            for (const id of orderedLocalIds) {
-                if (!a.has(id)) return { ok: false, error: "invalid-params" } as const;
-            }
-            const queuedByLocalId = new Map(queued.map((row) => [row.localId, row]));
+            if (queued.length !== orderedLocalIds.length) return { ok: false, error: "invalid-params" } as const;
             const orderedIndexByLocalId = new Map(orderedLocalIds.map((localId, index) => [localId, index]));
-            for (let existingIndex = 0; existingIndex < queued.length; existingIndex++) {
-                const row = queued[existingIndex];
-                if (
-                    isOrdinaryPendingMutationFenced({ status: "queued", ...row })
-                    && orderedIndexByLocalId.get(row.localId) !== existingIndex
-                ) {
+            const moves: Array<{ localId: string; position: number }> = [];
+            for (const [existingIndex, row] of queued.entries()) {
+                const nextIndex = orderedIndexByLocalId.get(row.localId);
+                if (nextIndex === undefined) return { ok: false, error: "invalid-params" } as const;
+                if (nextIndex === existingIndex) continue;
+                if (isOrdinaryPendingMutationFenced({ status: "queued", ...row })) {
                     // A provider-effect-possible row keeps its queue slot, so
                     // an ordering that would move it is invalid for the
                     // current queue rather than a settlement conflict.
                     return { ok: false, error: "invalid-params" } as const;
                 }
+                const position = queued[nextIndex].position;
+                if (position !== row.position) moves.push({ localId: row.localId, position });
             }
 
-            for (const [index, localId] of orderedLocalIds.entries()) {
-                const position = queued[index].position;
-                const row = queuedByLocalId.get(localId);
-                if (
-                    (row && isOrdinaryPendingMutationFenced({ status: "queued", ...row }))
-                    || row?.position === position
-                ) {
-                    continue;
-                }
+            if (moves.length === 0) {
+                return { ok: true, didWrite: false, ...(await readCurrentPendingMutationState(tx, sessionId)) } as const;
+            }
+            for (const { localId, position } of moves) {
                 await tx.sessionPendingMessage.update({
                     where: { sessionId_localId: { sessionId, localId } },
                     data: { position },
                 });
             }
 
-            const { pendingVersion, pendingCount, pendingBlockedCount, recipientCursors, badgeAttentionChanged } = await applyPendingSessionStateChange({
-                tx,
-                sessionId,
-            });
-            return { ok: true, pendingVersion, pendingCount, pendingBlockedCount, recipientCursors, badgeAttentionChanged };
+            return { ok: true, didWrite: true, ...(await applyPendingSessionStateChange({ tx, sessionId })) } as const;
         }));
     } catch {
         return { ok: false, error: "internal" };
