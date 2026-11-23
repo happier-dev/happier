@@ -6,11 +6,14 @@ import { createWorkspaceActionAdapter } from './workspaceActions';
 import { createWorkspaceState, reduceWorkspaceState } from './workspaceState';
 import { resolveWorkspaceEntityDrop, resolveWorkspaceEntityHref, WORKSPACE_ENTITY_KINDS } from './workspaceEntityDrop';
 import type { WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
-import { isWorkspaceActionId } from '@happier-dev/protocol/actions/workspaceActionFamily';
+import { isWorkspaceActionId, WORKSPACE_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/workspaceActionFamily';
 import { EntityDropAdmissionV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { presentPaneDropAdmission } from '../splitCanvas/presentation/paneDropPresentation';
 import { createWorkspaceDropScene } from './workspaceDropScene';
 import { parseWorkspaceLayout, serializeWorkspaceLayout } from './workspacePersistence';
+import { resolveWorkspaceDestinationEntityItem } from './workspaceEntitySource';
+import { buildWorkspaceFileLink } from '@/utils/url/sessionFileDeepLink';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { t } from '@/text';
 
 installPanelCommonModuleMocks();
@@ -126,6 +129,24 @@ describe('workspace entity Action admission', () => {
         expect(resolveWorkspaceEntityHref({ kind: 'repository-file', scope, workspaceId: 'workspace',
             machineId: 'machine', path: 'README.md' }, { ...h, scope,
             workspaceRefs: [first, { ...first, rootPath: '/other' }] })).toBeNull();
+    });
+    it('opens a dragged Project file beside the Session on its accepted managed checkout', () => {
+        const h = harness();
+        const managed = { id: 'guest-checkout', v: 2, kind: 'managed', serverId: scope.serverId, managedId: 'guest',
+            controller: { machineId: 'machine', installationId: 'installation' }, rootPath: '/repo', createdAtMs: 1 } satisfies WorkspaceRefV1;
+        const target = { kind: 'project', workspaceRefId: managed.id, serverId: scope.serverId, rootPath: managed.rootPath } as const;
+        const href = buildWorkspaceFileLink({ target, path: 'README.md' });
+        const item = resolveWorkspaceDestinationEntityItem({ scope, catalog: h.catalog, href,
+            entityItem: { kind: 'repository-file', scope, machineId: managed.controller.machineId, path: '/repo/README.md', entryKind: 'file' } });
+        if (!item) throw new Error('Expected a repository file drag item');
+        const decision = resolveWorkspaceEntityDrop({ ...h, scope, workspaceRefs: [managed,
+            { id: 'controller-checkout', serverId: scope.serverId, machineId: 'machine', rootPath: '/repo', createdAtMs: 1 }],
+            item, target: { leafId: 'group:1', placement: 'right' }, availableSizePx: 1400, minimumExistingSizePx: 400 });
+        expect(decision).toMatchObject({ status: 'allowed', effect: { actionId: 'workspace.tabs.open' } });
+        if (decision.status !== 'allowed' || decision.effect.actionId !== 'workspace.tabs.open') throw new Error('Expected split Action');
+        expect(WORKSPACE_ACTION_INPUT_SCHEMAS[decision.effect.actionId].parse(decision.effect.input).file).toEqual({ target, path: 'README.md' });
+        expect(h.execute(decision.effect.actionId, decision.effect.input)).toEqual({ ok: true });
+        expect(h.workspace.findOpenHref?.(href)).toBeDefined();
     });
     it('splits destination and qualified repository-file drops through the same measured Action owner', () => {
         for (const item of [

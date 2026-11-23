@@ -6,11 +6,13 @@ import type { WorkspaceNavigationContextValue } from './WorkspaceNavigationConte
 import { createWorkspaceDestinationSplit } from './workspaceSplit';
 import { resolveWorkspaceTabCanvasDrop, resolveWorkspaceTabStripDrop } from './workspaceDropOperations';
 import { buildWorkspaceFileLink } from '@/utils/url/sessionFileDeepLink';
-import type { WorkspaceFileOpenInput } from '@happier-dev/protocol/actions/workspaceActionFamily';
+import { isSafeWorkspaceFilePath, type WorkspaceFileOpenInput } from '@happier-dev/protocol/actions/workspaceActionFamily';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { t } from '@/text';
 import type { PaneDropAdmission } from '../splitCanvas/presentation/paneDropPresentation';
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
+import { workspaceScopeFromProject } from '@/sync/domains/workspaces/workspaceScope';
+import { resolvePathRelativeToRoot } from '@/utils/path/resolvePathRelativeToRoot';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { artifactViewRoute } from '@/components/artifacts/artifactViewRoute';
 import { buildSessionDetailsHref } from '@/components/sessions/panes/url/sessionPaneUrlState';
@@ -19,24 +21,33 @@ export const WORKSPACE_ENTITY_KINDS: readonly EntityDragKindV1[] = [
     'workspace-tab', 'session', 'workflow', 'destination', 'repository-file', 'artifact', 'session-board-item',
 ];
 
+type WorkspaceEntityDestinationInput = Readonly<{
+    scope: EntityDragScopeV1;
+    catalog: readonly CompactAppDestination[];
+    workspaceRefs: readonly WorkspaceRefV1[];
+}>;
+
 function resolveWorkspaceEntityFile(item: EntityDragItemV1, input: Readonly<{
     scope: EntityDragScopeV1;
     workspaceRefs: readonly WorkspaceRefV1[];
 }>): WorkspaceFileOpenInput | null {
     if (item.kind !== 'repository-file' || !item.workspaceId || !entityDragScopesEqualV1(item.scope, input.scope)) return null;
     const resolution = resolveWorkspaceRefById(input.workspaceRefs, item.workspaceId, item.scope.serverId);
-    if (resolution.kind !== 'resolved' || resolution.ref.machineId !== item.machineId) return null;
+    if (resolution.kind !== 'resolved') return null;
     const ref = resolution.ref;
-    return { target: { kind: 'project', workspaceRefId: ref.id, serverId: ref.serverId,
-        machineId: ref.machineId, rootPath: ref.rootPath }, path: item.path };
+    const scope = workspaceScopeFromProject(ref, ref.rootPath);
+    if (scope.machineId !== item.machineId) return null;
+    const path = resolvePathRelativeToRoot({ path: item.path, root: scope.rootPath, preservePathSpelling: true }) ?? item.path;
+    if (!isSafeWorkspaceFilePath(path)) return null;
+    return { target: { kind: 'project', workspaceRefId: ref.id, serverId: scope.serverId,
+        ...(scope.workspace ? {} : { machineId: scope.machineId }), rootPath: scope.rootPath }, path };
 }
 
 /** Destination catalog and persisted WorkspaceRefs remain the only href authorities. */
-export function resolveWorkspaceEntityHref(item: EntityDragItemV1, input: Readonly<{
-    scope: EntityDragScopeV1;
-    catalog: readonly CompactAppDestination[];
-    workspaceRefs: readonly WorkspaceRefV1[];
-}>): string | null {
+function resolveWorkspaceEntityDestination(item: EntityDragItemV1, input: WorkspaceEntityDestinationInput): Readonly<{
+    href: string;
+    file: WorkspaceFileOpenInput | null;
+}> | null {
     if (!entityDragScopesEqualV1(item.scope, input.scope)) return null;
     let href: string | null = null;
     if (item.kind === 'destination') href = item.href;
@@ -57,10 +68,15 @@ export function resolveWorkspaceEntityHref(item: EntityDragItemV1, input: Readon
     const ref = resolveDestinationRefFromHref(input.catalog, href);
     if (!ref || (ref.params.serverId && !areServerProfileIdentifiersEquivalent(ref.params.serverId, input.scope.serverId))
         || (ref.params.accountId && ref.params.accountId !== input.scope.accountId)) return null;
-    if (ref.kind === 'project') {
+    if (ref.kind === 'project' && !file) {
         if (resolveWorkspaceRefById(input.workspaceRefs, ref.params.workspaceRefId, input.scope.serverId).kind !== 'resolved') return null;
     }
-    return hrefForDestinationRef(input.catalog, ref);
+    const canonicalHref = hrefForDestinationRef(input.catalog, ref);
+    return canonicalHref ? { href: canonicalHref, file } : null;
+}
+
+export function resolveWorkspaceEntityHref(item: EntityDragItemV1, input: WorkspaceEntityDestinationInput): string | null {
+    return resolveWorkspaceEntityDestination(item, input)?.href ?? null;
 }
 
 export function resolveWorkspaceEntityDrop(input: Readonly<{
@@ -105,8 +121,9 @@ export function resolveWorkspaceEntityDrop(input: Readonly<{
             effect = { actionId: 'workspace.split', input: { tabId: item.tabId, groupId: group.id, direction: target.placement } };
         }
     } else {
-        const href = resolveWorkspaceEntityHref(item, input);
-        if (!href) return refuse('workspace_destination_unavailable');
+        const destination = resolveWorkspaceEntityDestination(item, input);
+        if (!destination) return refuse('workspace_destination_unavailable');
+        const { href, file } = destination;
         const existing = workspace.findOpenHref?.(href);
         if (existing) {
             if (target.placement === 'center') return { status: 'allowed', effect: { actionId: 'workspace.tabs.activate', input: { tabId: existing.tabId } } };
@@ -123,7 +140,6 @@ export function resolveWorkspaceEntityDrop(input: Readonly<{
         }
         const mode = target.placement === 'center' ? 'newTab'
             : ({ left: 'splitLeft', right: 'splitRight', up: 'splitUp', down: 'splitDown' } as const)[target.placement];
-        const file = resolveWorkspaceEntityFile(item, input);
         effect = { actionId: 'workspace.tabs.open', input: { ...(file ? { file } : { href }), groupId: group.id, mode,
             beforeTabId: input.beforeTabId ?? null, reuseExisting: true } };
     }

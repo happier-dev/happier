@@ -7,6 +7,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { readProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { buildProjectGroupDisplayIndex, projectGroupIdentityKey } from '@/sync/domains/workspaces/projectGroupDisplay';
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
+import { workspaceScopeFromProject } from '@/sync/domains/workspaces/workspaceScope';
 
 import type { LazyActionAccountContext } from './actionAccountContext';
 
@@ -36,7 +37,7 @@ export async function readProjectActionContext(
         ? buildProjectGroupDisplayIndex(rows.workspaceRefs).get(projectGroupIdentityKey({ serverId: account.serverId, projectKey: target.projectKey }))?.baseline
         : null;
     if (!ref) return refused('workspace_not_found');
-    const snapshot = exact ? storage.getState().getWorkspaceScmSnapshot({ serverId: ref.serverId, machineId: ref.machineId, rootPath: ref.rootPath }) : null;
+    const snapshot = exact ? storage.getState().getWorkspaceScmSnapshot(workspaceScopeFromProject(ref, ref.rootPath)) : null;
     const facts = { serverId: account.serverId, projectRef: ref, activeCheckout: exact ? ref : null, snapshot, authority: account.accountLifetime };
     let projectContext = readProjectWidgetAreaContextV1(facts);
     if (options?.readSource !== false && projectContext.sourceId) {
