@@ -46,6 +46,46 @@ describe('ApiSocket and scoped HTTP transport selection', () => {
         }
     });
 
+    it('keeps connected Homes and their Machine presence through a non-closing socket error', async () => {
+        const { resolveMachineReachability } = await import('@/sync/domains/machines/reachability/machineReachability');
+        const { resolveServerScopedMachine } = await import('@/sync/domains/machines/resolveServerScopedMachine');
+        const homes = [h.homeA, h.homeB];
+        for (const home of homes) {
+            h.setMachines(home, [{ ...h.machine(home, 'presence-machine'), active: true, activeAt: Date.now() }]);
+        }
+        await h.startFocused();
+        await h.start();
+        await h.ready();
+        const sockets = homes.map(home => h.socket(home));
+        const readPresence = () => homes.map(home => {
+            const machine = resolveServerScopedMachine(h.storage.getState(), home.id, 'presence-machine');
+            if (!machine) throw new Error('Expected a hydrated Machine on ' + home.id);
+            return resolveMachineReachability({ serverId: home.id, accountId: home.accountId }, machine);
+        });
+        const statuses: string[] = [];
+        const release = apiSocket.onStatusChange(status => statuses.push(status));
+        try {
+            expect(sockets.map(({ socket }) => socket.connected)).toEqual([true, true]);
+            expect(statuses).toEqual(['connected']);
+            expect(readPresence()).toEqual(['reachable', 'reachable']);
+
+            for (const socket of sockets) {
+                socket.trigger('error', { type: 'peer-tunnel', error: 'Frame arrived before an authorized open' });
+            }
+            expect(sockets.map(({ socket }) => socket.connected)).toEqual([true, true]);
+            expect(readPresence()).toEqual(['reachable', 'reachable']);
+            expect.soft(statuses).toEqual(['connected']);
+
+            for (const socket of sockets) socket.trigger('disconnect', 'transport close');
+            expect(sockets.map(({ socket }) => socket.connected)).toEqual([false, false]);
+            expect(statuses.at(-1)).toBe('disconnected');
+            // Last admitted Machine activity remains available across actual transport loss.
+            expect(readPresence()).toEqual(['reachable', 'reachable']);
+        } finally {
+            release();
+        }
+    });
+
     it('keeps the reconnected Account observation available to captured identity readers', async () => {
         const { captureAccountEncryptionObservationForHome, bindAccountEncryptionObservation } =
             await import('@/sync/http/accountEncryptionObservationBinding');

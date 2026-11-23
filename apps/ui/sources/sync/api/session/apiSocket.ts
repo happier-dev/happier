@@ -1710,7 +1710,9 @@ class ApiSocket {
                 },
                 onStateChange: (socketState) => {
                     if (this.activeConnectionSupervisor !== supervisor || this.config !== config || config.isCurrent?.() === false) return;
-                    if (socketState.lastErrorMessage) this.setError(new Error(socketState.lastErrorMessage));
+                    if (socketState.phase !== 'online' && socketState.lastErrorMessage) {
+                        this.setError(new Error(socketState.lastErrorMessage));
+                    }
                     if (socketState.phase === 'connecting') {
                         if (!isRetryOfKnownFailure(socketState, this.currentStatus === 'disconnected')) this.updateStatus('connecting');
                     }
@@ -1903,13 +1905,6 @@ class ApiSocket {
                     return;
                 }
                 this.pendingReconnectNotification = true;
-            }),
-            transport.onError((error: unknown) => {
-                if (this.socket !== socket || this.config !== transportConfig || transportConfig?.isCurrent?.() === false) return;
-                if (machineRequestScope) withdrawMachinePresenceForScope(machineRequestScope);
-                // The adapter reports errors on an attached socket. Only withdrawal retires its Account observation.
-                this.setError(error instanceof Error ? error : new Error(String(error)));
-                this.updateStatus('error');
             }),
             () => statusDemandTransport?.dispose(),
         ];
