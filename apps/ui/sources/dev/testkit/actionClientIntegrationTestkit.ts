@@ -7,6 +7,8 @@ import type { RegistryKindV1 } from '@happier-dev/protocol/registries';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
+import { DaemonLocalServiceLauncherSnapshotResponseV1Schema, type DaemonLocalServiceLauncherStartRequestV1, type LocalServiceLaunchTargetV1 } from '@happier-dev/protocol/local/services/launcher/v1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { AccountEncryptionModeResponse } from '@happier-dev/protocol/account/encryptionMode';
 import { isQualifiedConnectedAccountProfileActiveV4 } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
@@ -49,6 +51,23 @@ export { allowRealServerSocketBoundary as allowRealActionServerSocketBoundary } 
 export { createMachineClientEnrollmentOutputFixture } from './machineClientEnrollmentOutputFixture';
 export { createAccountOutputFixture } from './machineAccountOutputContractFixture';
 export { createUiMachineOutputFixture } from './machinesOutputContractFixture';
+
+export async function buildUiServiceStartRequest(input: Readonly<{
+    target: LocalServiceLaunchTargetV1;
+    choice: DaemonLocalServiceLauncherStartRequestV1['choice'];
+}>) {
+    const { buildLocalServiceLauncherStartRequest } = await import('@/components/sessions/localServices/launcherStartAction');
+    return buildLocalServiceLauncherStartRequest(input);
+}
+
+export async function readUiServiceStartReview(serverId: string, request: DaemonLocalServiceLauncherStartRequestV1) {
+    const { machineRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
+    const raw = await machineRpcWithServerScope({
+        serverId, machineId: request.machineId, method: RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT,
+        payload: { machineId: request.machineId, startReview: { request, surface: 'ui' } },
+    });
+    return DaemonLocalServiceLauncherSnapshotResponseV1Schema.parse(raw).startReview;
+}
 export async function mountUiInboxJourney() {
     const { mountUiInboxJourney } = await import('./inboxJourneyIntegrationTestkit');
     return mountUiInboxJourney();

@@ -5,6 +5,7 @@ import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { AccountEncryptionModeResponse } from '@happier-dev/protocol/account/encryptionMode';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
+import type { DaemonLocalServiceLauncherSnapshotResponseV1, DaemonLocalServiceLauncherStartRequestV1, LocalServiceLaunchTargetV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { BundledPluginUiAppArtifactInventory, PluginHostBundledUiDeclaration } from '../../sync/domains/plugins/availability/bundledPluginUiArtifactInventory.js';
@@ -13,6 +14,14 @@ export type { BundledPluginUiAppArtifactInventory, PluginHostBundledUiDeclaratio
 export function installBundledPluginUiArtifactsForTests(artifacts: BundledPluginUiAppArtifactInventory): () => void;
 export function installBundledPluginUiDeclarationsForTests(declarations: readonly PluginHostBundledUiDeclaration[]): () => void;
 export function installPersonTransientConfirmationBoundary(): () => void;
+
+export function buildUiServiceStartRequest(input: Readonly<{
+    target: LocalServiceLaunchTargetV1;
+    choice: DaemonLocalServiceLauncherStartRequestV1['choice'];
+}>): Promise<DaemonLocalServiceLauncherStartRequestV1>;
+
+export function readUiServiceStartReview(serverId: string, request: DaemonLocalServiceLauncherStartRequestV1):
+    Promise<DaemonLocalServiceLauncherSnapshotResponseV1['startReview']>;
 export type TriageComposeJourneyDraftProbe = Readonly<{
     seededText: string;
     pendingSeedCount: number;

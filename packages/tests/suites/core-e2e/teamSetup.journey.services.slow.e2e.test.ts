@@ -1,10 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { chmod, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
-import { chmod, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import { DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1, DATABASE_CAPTURE_RESOURCE_REF_V1,
   DatabaseCaptureConfigureResultV1Schema, databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -13,8 +12,9 @@ import { parseLocalServiceDeclarationPreviewLandingUrlV1 } from '@happier-dev/pr
 import { computeWorkspaceSyncPolicyDigest, WorkspaceSyncRelationshipCreateResultV1Schema,
   WorkspaceSyncRelationshipsListActionOutputV1Schema } from '@happier-dev/protocol';
 import { createProjectServiceDeclarationTargetIdV1, type LocalServiceManagedServiceActionTargetV1 } from '@happier-dev/protocol/local/services/actions/v1';
-import { DaemonLocalServiceLauncherStartResponseV1Schema, DaemonLocalServiceLauncherSnapshotResponseV1Schema,
+import { DaemonLocalServiceLauncherStartResponseV1Schema,
   LocalServiceLauncherSnapshotV1Schema, LocalServiceStartApprovalReviewV1Schema, isLocalServiceStateRunningV1 } from '@happier-dev/protocol/local/services/launcher/v1';
+import { buildUiServiceStartRequest, connectUiPersonActionClient, readUiServiceStartReview } from '@happier-tests/ui-action-client';
 import { ProjectServicePlacementGetResultV1Schema, ProjectServicePlacementMutationResultV1Schema } from '@happier-dev/protocol/workspaces/projectServicePlacementV1';
 import { ProjectWorkerCopyInspectResultV1Schema } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import { ProjectServiceRelocateResultV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
@@ -22,9 +22,11 @@ import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/action
 import { startProjectDaemonFixture, type ProjectDaemonFixture } from '../../src/testkit/daemon/projectDaemon';
 import { execGit, initGitRepo } from '../../src/testkit/uiE2e/gitRepoFixtures';
 import { waitFor } from '../../src/testkit/timing';
+import { createRunDirs } from '../../src/testkit/runDir';
 import { applyTrustedLocalPluginFixture } from '../../src/testkit/externalSessionLiveLifecycleFixture';
 import { repoRootDir } from '../../src/testkit/paths';
 
+const run = createRunDirs({ runLabel: 'core' });
 let fixture: ProjectDaemonFixture | undefined;
 let account: Awaited<ReturnType<ProjectDaemonFixture['createAccount']>>;
 const running = new Map<string, LocalServiceManagedServiceActionTargetV1>();
@@ -57,10 +59,10 @@ afterAll(async () => {
   if (failures.length) throw new AggregateError(failures, 'Service journey cleanup failed');
 }, 0);
 
-it.skipIf(process.platform === 'win32')('TS.J.services: copied worker Python Start, changed-script review, address and Stop', async () => {
+async function prepareWorkerService() {
   const databaseUrl = process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL;
   if (!databaseUrl) throw new Error('Service journey requires the disposable PostgreSQL harness');
-  const testDir = await mkdtemp(join(tmpdir(), 'team-journey-services-'));
+  const testDir = run.testDir(`team-journey-services-${randomUUID()}`);
   fixture = await startProjectDaemonFixture({ testDir, serverEnv: { DATABASE_URL: databaseUrl,
     HAPPIER_E2E_PROVIDER_SKIP_SERVER_GENERATE: '1' } });
   account = await fixture.createAccount('service-owner');
@@ -142,19 +144,35 @@ http.server.HTTPServer(('127.0.0.1', int(os.environ['PORT'])), Handler).serve_fo
     workspace: address, serviceName: 'web', expectedRevision: placementRead.revision,
     expected: { kind: 'absent' }, value: placement,
   })).status).toBe('applied');
-  expect(await action('projects.service.placement.get', { workspace: address, serviceName: 'web' })).toMatchObject({ placement });
+  const selectedPlacement = ProjectServicePlacementGetResultV1Schema.parse(await action('projects.service.placement.get', {
+    workspace: address, serviceName: 'web',
+  }));
+  expect(selectedPlacement).toMatchObject({ status: 'ready', placement });
+  if (selectedPlacement.status !== 'ready') throw new Error('Selected Service placement unavailable');
 
   const selection = { kind: 'manifest' as const, name: 'web' };
-  const request = { machineId: source.target.machineId, workspace,
-    targetId: createProjectServiceDeclarationTargetIdV1({ serverId: workspace.serverId, machineId: workspace.machineId, id: workspace.workspaceId }, selection),
-    declaration: { workspaceRefId: workspace.workspaceId, selection } };
+  const targetId = createProjectServiceDeclarationTargetIdV1({ serverId: workspace.serverId,
+    machineId: workspace.machineId, id: workspace.workspaceId }, selection);
+  const discovery = LocalServiceLauncherSnapshotV1Schema.parse(await action('localServices.launcher.snapshot', {
+    machineId: source.target.machineId, workspaceRoot: root,
+  }));
+  const target = discovery.targets.find(candidate => candidate.id === targetId);
+  if (!target) throw new Error('Source Service declaration is absent from ordinary launcher discovery');
+  const request = await buildUiServiceStartRequest({ target, choice: selectedPlacement.placement.runsOn });
   const review = async () => {
-    const snapshot = DaemonLocalServiceLauncherSnapshotResponseV1Schema.parse(await action('localServices.launcher.snapshot', {
-      machineId: source.target.machineId, workspaceRoot: root, startReview: { request, surface: 'ui' },
-    }));
-    return LocalServiceStartApprovalReviewV1Schema.parse(snapshot.startReview);
+    // Use the same scoped UI RPC as the ordinary Start approval preview.
+    const person = await connectUiPersonActionClient({ serverUrl: fixture!.actionServerApiUrl,
+      addressAnchorUrl: fixture!.server.baseUrl, accountSecret: account.auth.accountSigningSeed });
+    try {
+      await waitFor(() => person.isAccountReady() && person.isMachineActive(request.machineId),
+        { context: 'Start reviewer sees the receiving Machine' });
+      const result = await readUiServiceStartReview(person.serverId, request);
+      if (result && 'ok' in result && !result.ok) {
+        throw new Error(`Native Service Start review refused (${result.errorCode}); diagnostics=${testDir}`);
+      }
+      return LocalServiceStartApprovalReviewV1Schema.parse(result);
+    } finally { await person.close(); }
   };
-  const firstReview = await review();
   const start = async (expectedEffectDigest: string, marker: string,
     verifyCapture?: (response: Response, listeners: readonly number[]) => void | Promise<void>) => {
     const started = DaemonLocalServiceLauncherStartResponseV1Schema.parse(await action('localServices.launcher.start', { ...request, expectedEffectDigest }));
@@ -185,8 +203,16 @@ http.server.HTTPServer(('127.0.0.1', int(os.environ['PORT'])), Handler).serve_fo
     running.delete(started.currentTarget.managedServiceId);
     await waitFor(async () => { try { await fetch(url); return false; } catch { return true; } }, { context: 'stopped worker Service endpoint retired' });
   };
-  const upstreamPort = Number(upstream.port || 5432);
-  await start(firstReview.reviewedEffectDigest, 'first-worker', (response, listeners) => {
+  return { address, copy, locked, opened, placement, request, review, root, script, source, start, targetRoot,
+    upstreamPort: Number(upstream.port || 5432), worker };
+}
+
+let service: Awaited<ReturnType<typeof prepareWorkerService>>;
+beforeAll(async () => { if (process.platform !== 'win32') service = await prepareWorkerService(); }, 0);
+
+it.skipIf(process.platform === 'win32')('TS.J.services: cold Worker capture starts the native marker and releases a partially bound listener', async () => {
+  const { opened, review, start, upstreamPort, worker } = service;
+  await start((await review()).reviewedEffectDigest, 'first-worker', (response, listeners) => {
     expect(listeners).toEqual([]);
     expect(response.headers.get('X-Database-Port')).toBe(String(upstreamPort));
     expect(response.headers.get('X-Collector-Port')).toBeNull();
@@ -195,7 +221,7 @@ http.server.HTTPServer(('127.0.0.1', int(os.environ['PORT'])), Handler).serve_fo
   const projectId = opened.facts?.projectKey;
   if (!projectId) throw new Error('Source checkout omitted its Project key');
   const pluginId = DATABASE_CAPTURE_RESOURCE_REF_V1.pluginId;
-  const captureProject = { serverId: fixture.serverId, machineId: worker.target.machineId, projectId };
+  const captureProject = { serverId: fixture!.serverId, machineId: worker.target.machineId, projectId };
   await applyTrustedLocalPluginFixture({ daemonPort: worker.daemon.state.httpPort, controlToken: worker.daemon.state.controlToken,
     pluginRoot: join(repoRootDir(), 'packages/plugins/telemetry'), pluginId, interactionId: randomUUID() });
   const configureCapture = async (enabled: boolean) => {
@@ -236,16 +262,28 @@ http.server.HTTPServer(('127.0.0.1', int(os.environ['PORT'])), Handler).serve_fo
     });
   } finally { await closeCollector(); }
   await configureCapture(false);
+}, 0);
+
+it.skipIf(process.platform === 'win32')('TS.J.services: copied worker Python Start, changed-script review, address and Stop', async () => {
+  const { address, copy, locked, placement, request, review, root, script, source, start, targetRoot, worker } = service;
+  const firstReview = await review();
+  await start(firstReview.reviewedEffectDigest, 'first-worker');
   await writeFile(join(root, 'server.py'), script('edited-worker'));
   const editedReview = await review();
   expect(editedReview.reviewedEffectDigest, 'Editing a copied script must re-prompt review').not.toBe(firstReview.reviewedEffectDigest);
   expect(DaemonLocalServiceLauncherStartResponseV1Schema.parse(await action('localServices.launcher.start', {
     ...request, expectedEffectDigest: firstReview.reviewedEffectDigest,
-  }))).toMatchObject({ status: 'failed', reasonCode: 'project_service_effect_changed' });
+  }))).toMatchObject({ status: 'denied', reasonCode: 'project_service_effect_changed' });
+  const afterDenial = LocalServiceLauncherSnapshotV1Schema.parse(await action('localServices.launcher.snapshot', {
+    machineId: worker.target.machineId, workspaceRoot: targetRoot, projection: 'managed_bindings',
+  }));
+  expect(afterDenial.targets.filter(target => isLocalServiceStateRunningV1(target.serviceState))).toHaveLength(0);
   await start(editedReview.reviewedEffectDigest, 'edited-worker');
+  // Move's receiving Start reviews the exact prepared checkout, including the fallback.
+  await chmod(locked, 0o755);
   // Move starts with a real primary occurrence, then uses the same prepared copy.
   const primary = DaemonLocalServiceLauncherStartResponseV1Schema.parse(await action('localServices.launcher.start', {
-    ...request, choice: { kind: 'primary' },
+    ...request, machineId: source.target.machineId, choice: { kind: 'primary' },
   }));
   if (primary.currentTarget) running.set(primary.currentTarget.managedServiceId, primary.currentTarget);
   expect(primary).toMatchObject({ status: 'succeeded', machineId: source.target.machineId });
@@ -263,9 +301,11 @@ http.server.HTTPServer(('127.0.0.1', int(os.environ['PORT'])), Handler).serve_fo
   expect(move).toMatchObject({ status: 'accepted' });
   if (move.status !== 'accepted') throw new Error(`Move did not start: ${move.status}`);
   const moved = ActionOperationGetV1ResponseSchema.parse(await action('action.operations.get', {
+    serverId: address.serverId, machineId: move.operation.scope.machineId,
     operationId: move.operation.operationId, waitForTerminal: true,
   }));
-  expect(moved).toMatchObject({ kind: 'found', operation: { state: 'succeeded', domainRef: {
+  const moveFailure = moved.kind === 'found' ? moved.operation.error?.errorCode : moved.kind;
+  expect(moved, moveFailure).toMatchObject({ kind: 'found', operation: { state: 'succeeded', domainRef: {
     kind: 'projectService', currentTarget: { machineId: worker.target.machineId },
   } } });
   if (moved.kind !== 'found' || moved.operation.domainRef?.kind !== 'projectService'
@@ -273,32 +313,33 @@ http.server.HTTPServer(('127.0.0.1', int(os.environ['PORT'])), Handler).serve_fo
   running.delete(primary.currentTarget.managedServiceId);
   const movedTarget = moved.operation.domainRef.currentTarget;
   running.set(movedTarget.managedServiceId, movedTarget);
-  const movedSnapshot = DaemonLocalServiceLauncherSnapshotResponseV1Schema.parse(await action('localServices.launcher.snapshot', {
+  const movedSnapshot = LocalServiceLauncherSnapshotV1Schema.parse(await action('localServices.launcher.snapshot', {
     machineId: worker.target.machineId, workspaceRoot: targetRoot, projection: 'managed_bindings',
   }));
-  const sourceAfterMove = DaemonLocalServiceLauncherSnapshotResponseV1Schema.parse(await action('localServices.launcher.snapshot', {
+  const sourceAfterMove = LocalServiceLauncherSnapshotV1Schema.parse(await action('localServices.launcher.snapshot', {
     machineId: source.target.machineId, workspaceRoot: root, projection: 'managed_bindings',
   }));
-  expect(sourceAfterMove.snapshot.targets.filter(value => isLocalServiceStateRunningV1(value.serviceState)),
+  expect(sourceAfterMove.targets.filter(value => isLocalServiceStateRunningV1(value.serviceState)),
     'Move must stop the incumbent before replacing it on the worker').toHaveLength(0);
-  const liveReplacement = movedSnapshot.snapshot.targets.filter(value => isLocalServiceStateRunningV1(value.serviceState));
+  const liveReplacement = movedSnapshot.targets.filter(value => isLocalServiceStateRunningV1(value.serviceState));
   expect(liveReplacement, 'Move must leave exactly one live replacement').toHaveLength(1);
   expect(liveReplacement[0]?.sourceClass).toMatchObject({ kind: 'managed_service', managedServiceId: movedTarget.managedServiceId });
-  const movedUrl = movedSnapshot.snapshot.targets.find(value => value.sourceClass?.kind === 'managed_service'
+  const movedUrl = movedSnapshot.targets.find(value => value.sourceClass?.kind === 'managed_service'
     && value.sourceClass.managedServiceId === movedTarget.managedServiceId)?.endpointUrl;
   if (!movedUrl) throw new Error('Moved Service omitted its address');
   await waitFor(async () => (await fetch(movedUrl)).status === 200, { context: 'moved Service healthy address' });
   expect(await (await fetch(movedUrl)).text()).toBe('edited-worker');
   await action('localServices.actions.stopManaged', { requestId: randomUUID(), target: movedTarget, action: 'stop_managed' });
   running.delete(movedTarget.managedServiceId);
-  await chmod(locked, 0o755);
+  await waitFor(async () => { try { await fetch(movedUrl); return false; } catch { return true; } },
+    { context: 'moved Service endpoint retired' });
   const relationships = WorkspaceSyncRelationshipsListActionOutputV1Schema.parse(await action('workspace.sync.relationships.list', { controllerMachineId: copy.controllerMachineId }));
   const relationship = relationships.relationships.find(value => value.definition.relationshipId === copy.relationshipId)?.definition;
   if (!relationship) throw new Error('Committed worker copy missing');
   const inspect = { workspace: address, machineId: copy.controllerMachineId, expectedRelationship: relationship,
     kind: 'preview' as const, targetMachineId: worker.target.machineId, targetWorkspaceRefId: copy.targetWorkspaceRefId };
   expect(ProjectWorkerCopyInspectResultV1Schema.parse(await action('projects.worker.copy.inspect', inspect))).toMatchObject({ ok: true });
-  expect(ProjectWorkerCopyInspectResultV1Schema.parse(await action('projects.worker.copy.inspect', {
+  expect(await account.executeAsPerson('projects.worker.copy.inspect', {
     ...inspect, expectedRelationship: { ...relationship, relationshipId: randomUUID() },
-  }))).toMatchObject({ ok: false, errorCode: 'workspace_copy_not_owned' });
-}, 180_000);
+  })).toMatchObject({ ok: false, errorCode: 'bootstrap_definition_conflict' });
+}, 0);
