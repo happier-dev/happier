@@ -1,4 +1,5 @@
 import type { JsonValue } from '@happier-dev/protocol';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { describe, expect, it } from 'vitest';
 import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { executeManagedMachinePowerIntent } from './power.js';
@@ -150,6 +151,34 @@ describe('shared admitted native power', () => {
         });
         expect(command).toMatchObject({ resource: machine.resource!.value, argv: ['sh', '-c', expect.stringContaining("'daemon' 'start' '--json'")] });
         expect(command).not.toHaveProperty('processConfig');
+    });
+
+    it.each([null, 'service_start_timeout'] as const)('follows the installed guest service owner and carries its failure (%s)', async serviceFailure => {
+        let startedService = false;
+        const value = await executeManagedMachinePowerIntent({
+            machine: { ...machine, enrolledMachineId: 'same-machine', enrollmentIdentity: { kind: 'existingUser', role: 'personal' } },
+            guestStartup: { channel: 'dev', transport: { kind: 'native', exec: 'exec', putFile: 'put-file' } },
+            invoke: async (role, body): Promise<JsonValue> => {
+                if (role === 'inspect') return { observedAt: 1, availability: 'present', power: 'running', storage: 'retained' };
+                if (role === 'bootstrap') return { kind: 'native', transport: { contributionRef: machine.resource!.contributionRef, schemaVersion: 1 } };
+                expect(role).toBe('exec');
+                startedService = JSON.stringify(body).includes("'daemon' 'service' 'start'");
+                const error = startedService ? serviceFailure : 'installed_background_service_conflict';
+                return { stdoutBase64: encodeBase64(new TextEncoder().encode(JSON.stringify(error
+                    ? { ok: false, error, message: 'PRIVATE_GUEST_OUTPUT' } : { ok: true }))),
+                    stderrBase64: '', stdoutTruncated: false, stderrTruncated: false,
+                    termination: { requestedBy: { kind: 'none' }, observed: { kind: 'exit', exitCode: error ? 1 : 0 } } };
+            },
+        });
+        expect(startedService).toBe(true);
+        expect(value.observation).toMatchObject({ power: 'running' });
+        const failure = value.guestStartupError?.toActionFailure('machines.managed.power.set');
+        if (serviceFailure) {
+            expect(failure).toMatchObject({ errorCode: 'native_boot_unconfirmed', failureCause: { errorCode: serviceFailure } });
+            expect(JSON.stringify(failure)).not.toContain('PRIVATE_GUEST_OUTPUT');
+        } else {
+            expect(failure).toBeUndefined();
+        }
     });
 
     it.each([

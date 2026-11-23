@@ -5,6 +5,7 @@ import { ManagedMachineControllerError } from './controllerErrors.js';
 import { MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { encodeBase64, decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readGuestCliFailureOutput } from '@happier-dev/protocol/ssh/commandFailure';
 import { SystemTaskExecutionError } from '../../systemTasks/runSystemTask.js';
 import { AcquireResultV1Schema, type ManagedBootstrapCarrierV1, type ManagedGuestPlatformV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -31,6 +32,16 @@ export function buildManagedNativeGuestCommand(command: string, guestHome?: Pick
         : command;
 }
 
+function readNativeDaemonStartFailure(stdout: string): string | undefined {
+    try {
+        const result: unknown = JSON.parse(stdout);
+        if (!result || typeof result !== 'object' || !('ok' in result) || result.ok !== false || !('error' in result)) return;
+        // The daemon start CLI emits these refusal codes. Drop its message and other guest output.
+        if (result.error === 'installed_background_service_conflict' || result.error === 'owner_conflict'
+            || result.error === 'start_failed') return result.error;
+    } catch { /* A carrier can fail before the CLI emits JSON. */ }
+}
+
 /** Reuse the installed identity; starting a retained guest never installs or pairs. */
 export async function startManagedNativeGuestDaemon(input: Readonly<{
     native: ManagedNativeBootstrapIO; binaryPath: string; channel: 'stable' | 'preview' | 'dev';
@@ -49,8 +60,23 @@ export async function startManagedNativeGuestDaemon(input: Readonly<{
             detachedDaemonStartArgv: ['sh', '-c', buildManagedNativeGuestCommand(detachedCommand, input.guestHome)],
         } } : {}),
     });
-    if (configured.status !== 0) throw new SystemTaskExecutionError('native_boot_unconfirmed', 'The native daemon startup was not confirmed.');
     input.signal?.throwIfAborted();
+    if (configured.status === 0) return;
+    const error = readNativeDaemonStartFailure(configured.stdout);
+    if (!input.guestHome && error === 'installed_background_service_conflict') {
+        // The guest CLI identified its installed owner. Start that service without changing its definition.
+        const args = ['daemon', 'service', 'start', '--json'];
+        const service = await input.native.exec({
+            command: buildRemoteHappierInvocationCommand({ binaryPath: input.binaryPath, args, channel: input.channel }),
+            signal: input.signal, timeoutMs: input.timeoutMs ?? null,
+        });
+        input.signal?.throwIfAborted();
+        if (service.status === 0) return;
+        const cause = readGuestCliFailureOutput(service.stdout, service.stderr);
+        throw new SystemTaskExecutionError(cause?.guestCliCode ?? 'remote_command_failed',
+            'The installed guest daemon service failed to start.');
+    }
+    throw new SystemTaskExecutionError(error ?? 'remote_command_failed', 'The native daemon startup was not confirmed.');
 }
 
 /** Adapt the provider's native byte/exec roles to the one shared enrollment recipe. */

@@ -71,7 +71,8 @@ export async function executeManagedMachinePowerIntent(input: Readonly<{
             return { ...power, guestStartupError: error instanceof ManagedMachineControllerError ? error
                 : new ManagedMachineControllerError(io?.signal?.aborted ? 'cancelled' : 'native_boot_unconfirmed', undefined,
                     error instanceof SystemTaskExecutionError ? error.details : undefined,
-                    projectActionFailureCauseV1(error, 'machines.managed.power.set'), error) };
+                    projectActionFailureCauseV1(error, 'machines.managed.power.set',
+                        { allowUnknownErrorCode: error instanceof SystemTaskExecutionError }), error) };
         }
     };
     if (beforeWake?.power === 'running') return await complete(beforeWake);

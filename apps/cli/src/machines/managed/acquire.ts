@@ -159,10 +159,16 @@ async function withManagedPresetDefinition<T>(input: ManagedMachineAcquisitionDr
     return await hydrator.withPresetDefinition(preset, (opened, open) => read(preset, opened, open), signal);
 }
 
+type ManagedPresetPreparation = Readonly<{
+    provisioner: MachineProvisionerContributionV1;
+    open: ManagedPresetDefinitionOpener;
+    configurationRevision: number;
+}>;
+
 async function withManagedPresetPolicy(input: ManagedMachineAcquisitionDriverInput,
     acquisition: Extract<ManagedAcquireInputV1, { selection: { kind: 'preset' } }>,
     hydrator: ManagedPresetHydrator, delegated: boolean, accept: (policy: Omit<ReturnType<typeof resolveMachineRetentionPolicyV1>, 'category'>,
-        provisioner: MachineProvisionerContributionV1, open: ManagedPresetDefinitionOpener) => Promise<ManagedMachineFullV1>,
+        preparation: ManagedPresetPreparation) => Promise<ManagedMachineFullV1>,
     options: ManagedMachineExecutionOptions) {
     const admittedRoot = options.context?.externalActionExecutionAuthorization?.binding;
     const preparedPlacement = options.sessionPresetPlacement;
@@ -185,7 +191,7 @@ async function withManagedPresetPolicy(input: ManagedMachineAcquisitionDriverInp
             nativeCapabilities: provisioner.retention, presetOverride: preset,
             ...((admittedRoot?.sessionPresetAcquisition?.admission?.delegated ?? delegated) ? {} : { machineOverride: { retention: acquisition.retention,
                 wakeOnAcceptedMessage: acquisition.wakeOnAcceptedMessage } }) });
-        return await accept(policy, provisioner, open);
+        return await accept(policy, { provisioner, open, configurationRevision: preset.configurationRevision ?? 0 });
     }, options.signal, admittedRoot);
 }
 
@@ -195,19 +201,23 @@ async function openManagedPresetAdmissionWithHydrator(params: Readonly<{
     admission: ManagedAdmissionOutputV1;
     hydrator: ManagedPresetHydrator;
     signal?: AbortSignal;
-    preparation?: Readonly<{ provisioner: MachineProvisionerContributionV1; open: ManagedPresetDefinitionOpener }>;
+    preparation?: ManagedPresetPreparation;
 }>): Promise<ManagedMachineFullV1> {
     const selection = params.acquisition.selection;
     if (selection.kind !== 'preset') {
         if (isOpaqueManagedAdmission(params.admission)) throw new ManagedMachineControllerError('request_conflict');
         return ManagedMachineFullV1Schema.parse(params.admission.machine);
     }
-    if (!isOpaqueManagedAdmission(params.admission) || params.admission.machine.preset.id !== selection.id
-        || params.admission.machine.preset.revision !== selection.revision) {
+    const { admission, preparation } = params;
+    if (!isOpaqueManagedAdmission(admission) || admission.machine.preset.id !== selection.id) {
         throw new ManagedMachineControllerError('request_conflict');
     }
-    const admission = params.admission;
-    const preparation = params.preparation;
+    // Home reuse keeps the original snapshot. A rename changes its display revision,
+    // while Home selects reusable guests by the admitted configuration revision.
+    const matchesRevision = admission.machine.preset.revision === selection.revision
+        || (admission.replayed && preparation !== undefined
+            && admission.machine.preset.configurationRevision === preparation.configurationRevision);
+    if (!matchesRevision) throw new ManagedMachineControllerError('request_conflict');
     const heldOpen = preparation ? (content: Parameters<ManagedPresetDefinitionOpener>[0]) =>
         preparation.open(content, admission.presetContent.recipients) : undefined;
     const opened = await params.hydrator.openSnapshot(params.admission.machine, params.admission.presetContent, params.signal, heldOpen);
@@ -1508,7 +1518,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     localPayloadAvailable: Boolean(readManagedGuestCliLocalPayloadRoot()),
                     admit: async () => {
                         const admit = async (presetPolicy?: Omit<ReturnType<typeof resolveMachineRetentionPolicyV1>, 'category'>,
-                            preparation?: Readonly<{ provisioner: MachineProvisionerContributionV1; open: ManagedPresetDefinitionOpener }>) => {
+                            preparation?: ManagedPresetPreparation) => {
                             if (options.acquisitionMode === 'resource-bound') {
                                 options.context?.operationOwnerUpdate?.update({ progress: {
                                     phase: 'machines.managed.acquire', label: 'Creating sandbox',
@@ -1527,7 +1537,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                         };
                         const machine = needsPresetPolicy && isManagedPresetAcquireInputV1(acquisition)
                             ? await withManagedPresetPolicy(input, acquisition, hydrator, delegated,
-                                (policy, provisioner, open) => admit(policy, { provisioner, open }), options)
+                                admit, options)
                             : await admit();
                         if (hasAttendedEnrollmentRequirement(machine.enrollmentIdentity)) {
                             throw new ManagedMachineControllerError('enrollment_attendance_required');

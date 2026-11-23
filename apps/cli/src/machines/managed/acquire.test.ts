@@ -2009,7 +2009,7 @@ describe('opaque managed preset admission', () => {
             presetPolicy: { retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }, originalActionEnvelope }]);
         expect(native.effects()).toBe(0);
     });
-    it('hydrates the Home-retained replay snapshot while qualifying omitted policy once', async () => {
+    it.each(['unchanged', 'renamed', 'reconfigured'] as const)('hydrates the Home-retained replay snapshot only for the admitted configuration (%s)', async change => {
         const homeId = 'native-replay-home';
         const carrier = createTeamMemberE2eePresetCarrier({ homeId, machineId: 'native-replay-machine',
             launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1,
@@ -2022,7 +2022,10 @@ describe('opaque managed preset admission', () => {
             presetContent: { ...reported.admission.presetContent, content: reported.acquisition.presetContentOverride.content } } };
         const snapshot = retainTeamMemberReviewedSnapshot(reportedContent, launch, AcquireResultV1Schema.parse({ kind: 'bound',
             resource: { contributionRef: launch.provider, schemaVersion: 1, value: { guest: 'retained-private-guest' } } }));
-        const { retention: _retention, wakeOnAcceptedMessage: _wake, ...acquisition } = carrier.acquisition;
+        const { retention: _retention, wakeOnAcceptedMessage: _wake, ...initialAcquisition } = carrier.acquisition;
+        const acquisition = { ...initialAcquisition, selection: { ...initialAcquisition.selection,
+            revision: initialAcquisition.selection.revision + (change === 'unchanged' ? 0 : 1) } };
+        const configurationRevision = change === 'reconfigured' ? 5 : 4;
         const originalActionEnvelope = { v: 1 as const, requestId: 'replay-request',
             target: { kind: 'machine' as const, machineId: controller.machineId }, input: acquisition };
         const native = nativeFixture({ credentialPurposes: [] });
@@ -2030,12 +2033,13 @@ describe('opaque managed preset admission', () => {
             signingKeyFingerprint: null, contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(carrier.memberPublicKey), updatedAt: 1 } });
         vi.spyOn(axios, 'post').mockImplementation(async url => {
             if (String(url).endsWith('/presets/get')) return { status: 200, data: { kind: 'found', preset: {
-                id: acquisition.selection.id, homeId, revision: acquisition.selection.revision, controller,
+                id: acquisition.selection.id, homeId, revision: acquisition.selection.revision, configurationRevision, controller,
                 owner: { kind: 'account', accountId: 'owner' }, contentEncryptionMode: 'e2ee', ...carrier.admission.presetContent } } };
             if (String(url).endsWith('/admit')) {
                 // reportManagedAcquire replaces the snapshot and clears the consumed initial override atomically.
                 const { presetContentOverride: _override, ...reportedAdmission } = carrier.admission;
-                return { status: 200, data: { ...reportedAdmission, presetContent: snapshot } };
+                return { status: 200, data: { ...reportedAdmission, presetContent: snapshot,
+                    machine: { ...reportedAdmission.machine, preset: { ...reportedAdmission.machine.preset, configurationRevision: 4 } } } };
             }
             throw new Error(`Unexpected Home POST ${String(url)}`);
         });
@@ -2043,9 +2047,15 @@ describe('opaque managed preset admission', () => {
         const driver = createManagedMachineAcquisitionDriver({ ...accountInputs, token: carrier.token,
             serverUrl: 'https://home.example', homeId, controller, runtimeRegistry: native.runtimeRegistry,
             credentials: { token: carrier.token, encryption: { type: 'dataKey', machineKey: carrier.memberKey, publicKey: carrier.memberPublicKey } } });
-        await expect(driver.execute('machines.managed.acquire', acquisition, { requestId: 'replay-request',
+        const execution = driver.execute('machines.managed.acquire', acquisition, { requestId: 'replay-request',
             context: { surface: 'cli', originalActionEnvelope, operationAcceptance: { operationId: 'replay-operation',
-                accept(value) { accepted.push(value); throw new Error('Stop after hydrated replay acceptance'); } } } })).rejects.toThrow('Stop after hydrated replay acceptance');
+                accept(value) { accepted.push(value); throw new Error('Stop after hydrated replay acceptance'); } } } });
+        if (change === 'reconfigured') {
+            await expect(execution).rejects.toMatchObject({ code: 'request_conflict' });
+            expect(accepted).toEqual([]);
+            return;
+        }
+        await expect(execution).rejects.toThrow('Stop after hydrated replay acceptance');
         expect(accepted).toEqual([{ managedId: carrier.admission.machine.id, operation: { operationId: 'replay-operation' } }]);
         expect(keyReads).toHaveBeenCalledOnce();
         expect(native.effects()).toBe(0);
