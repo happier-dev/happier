@@ -1227,7 +1227,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             // Runtime presence is an ephemeral device observation. Durable `active` state is
             // orthogonal and must not be promoted into online/offline reachability.
             sessions.forEach(incomingSession => {
-                const retainedSession = state.sessions[incomingSession.id];
+                const retainedSession = mergedSessions[incomingSession.id];
                 const previousHome = normalizeTrimmedString(retainedSession?.serverId);
                 const incomingHome = normalizeTrimmedString(incomingSession.serverId);
                 // Version and runtime facts belong to one Home. A newly admitted

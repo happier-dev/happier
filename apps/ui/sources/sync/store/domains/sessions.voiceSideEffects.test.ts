@@ -31,20 +31,22 @@ function createHarness() {
 }
 
 describe('sessions domain: no voice side effects', () => {
-    it.each(['omitted-full', 'undefined-projection', 'stale-projection'] as const)(
+    it.each(['omitted-full', 'undefined-projection', 'stale-projection', 'same-batch-full'] as const)(
         'preserves completed turn anchors across a non-authoritative publication (%s)', (publication) => {
         const { get, domain } = createHarness();
         const completed = createSessionFixture({ id: 's1', serverId: 'server_1', encryptionMode: 'plain',
             encryptedContentAvailability: 'ready', sessionTurns: { v: 1, sessionId: 's1', updatedAt: 3,
                 latestTurnId: 'turn-1', turns: [{ turnId: 'turn-1', status: 'completed', startedAt: 1,
+                    automationLifecycleFacts: { launchProfileId: null, changedFiles: true },
                     updatedAt: 3, terminalAt: 3, transcriptAnchors: { startUserMessageSeq: 1, finalAssistantMessageSeq: 2 } }] } });
-        domain.applySessions([completed]);
+        if (publication !== 'same-batch-full') domain.applySessions([completed]);
         const { sessionTurns, ...partial } = completed;
         const incoming = { ...partial, updatedAt: completed.updatedAt + 1,
             ...(publication === 'undefined-projection' ? { sessionTurns: undefined } : {}),
             ...(publication === 'stale-projection' ? { sessionTurns: { v: 1 as const, sessionId: 's1', updatedAt: 1, turns: [] } } : {}),
         };
-        domain.applySessions([incoming], publication === 'omitted-full' ? 'full' : 'projection');
+        domain.applySessions(publication === 'same-batch-full' ? [completed, incoming] : [incoming],
+            publication === 'omitted-full' || publication === 'same-batch-full' ? 'full' : 'projection');
         expect(get().sessions.s1?.sessionTurns).toBe(sessionTurns);
     });
 
