@@ -24,7 +24,7 @@ import {
   type UsageBodyProps,
 } from './usageBodyKit';
 import { useUsageWork } from './useUsageWork';
-import { resolveUsageWorkProviderDisplay, usageWorkProviderIdentities } from './UsageWorkProviderMark';
+import { usageWorkProviderIdentities, usageWorkProviderNames } from './UsageWorkProviderMark';
 import type {
   UsageWorkBranchRow,
   UsageWorkIdentities,
@@ -179,6 +179,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
   const sessionRows = (parts: UsageWorkProjectRow['sessions'], testID: string) => (
     <UsageWorkSessionRows
       title={t('usage.board.work.funnelSessions')}
+      outcomesRead={allocationRead}
       parts={parts}
       summary={summary}
       format={format}
@@ -212,12 +213,12 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
     { label: t('usage.board.work.linesKept') },
     { label: t('usage.board.work.linkedPrs') },
   ];
-  // Details name the full set witnessed for their own row, independently of the fitted strip: each identity once,
-  // by its display name, the same in the visible line and the spoken label (review J-B31).
-  const identityNames = (row: UsageWorkIdentities) => [...new Set([
-    ...row.agentIds.map(id => usageAgentTitle(id)),
-    ...usageWorkProviderIdentities(row.providers).map(provider => resolveUsageWorkProviderDisplay(provider, props.serverId).label),
-  ])].join(' · ');
+  // Details name the full set witnessed for their own row, independently of the fitted strip: one name per identity
+  // (identity decides, never the label), the same in the visible line and the spoken label (review J-B31).
+  const identityNames = (row: UsageWorkIdentities) => {
+    const agents = row.agentIds.map(id => usageAgentTitle(id));
+    return [...agents, ...usageWorkProviderNames(usageWorkProviderIdentities(row.providers), props.serverId, agents)].join(' · ');
+  };
   const identityLine = (row: UsageWorkIdentities, testID: string) => {
     const names = identityNames(row);
     return names ? <Text style={[styles.reasonLabel, caption]} testID={`${testID}.identities`}>{names}</Text> : null;

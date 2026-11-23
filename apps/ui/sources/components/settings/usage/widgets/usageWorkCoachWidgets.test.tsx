@@ -44,8 +44,11 @@ import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolve
 import { UsageAnalyticsQueryResponseSchema, type UsageAnalyticsTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { UsageProjectLedgerWidget } from './UsageProjectLedgerWidget';
-import { UsageWorkProviderMark, resolveUsageWorkProviderDisplay } from './UsageWorkProviderMark';
-import { UsageWorkMarks } from './UsageWorkParts';
+import { UsageWorkProviderMark, resolveUsageWorkProviderDisplay, usageWorkProviderDisplay } from './UsageWorkProviderMark';
+import { formatUsageDimensionLabel } from '@/sync/api/account/formatUsageDimensionLabel';
+import { readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { UsageWorkMarks, UsageWorkSectionTitle } from './UsageWorkParts';
 import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
 import { UsageSessionValueWidget } from './UsageSessionValueWidget';
 import { UsageHumanLoopWidget } from './UsageHumanLoopWidget';
@@ -387,48 +390,103 @@ describe('Work and Coach widget bodies', () => {
     expect(screen.findByTestId('ledger.project.p1.detail')).toBeTruthy();
     const identities = String(screen.findByTestId('ledger.project.p1.identities')?.props.children ?? '').split(' · ');
     expect(identities).toEqual(expect.arrayContaining([...hidden.map(id => usageAgentTitle(id)),
-      resolveUsageWorkProviderDisplay({ providerId: sessionlessProvider, machineId: null }, 'home').label]));
+      resolveUsageWorkProviderDisplay({ providerId: sessionlessProvider, machineIds: [null] }, 'home').label]));
     await screen.pressByTestIdAsync(toggle);
     await layout(1000);
     expect(displayed()).toHaveLength(agentIds.length);
     expect(screen.findAllByType(UsageWorkProviderMark)).toHaveLength(1);
     expect(screen.getTextContent()).not.toContain('+');
   });
-  it('names each Provider once by its display name, never by a raw id, on the row and in its detail (review J-B31, r224 #48)', async () => {
-    const bundled = 'happier.provider.cliproxyapi/cliproxyapi';
-    const undeclared = 'happier.provider.nowhere-declared/nowhere-declared';
-    const rows: UsageWorkContribution[] = [
-      { ...contribution('m1', 's1', 't1'), machineId: 'machine-1', providerId: bundled, providerConnectionId: 'connection' },
-      { ...contribution('m2', 's1', 't2'), machineId: 'machine-2', providerId: bundled, providerConnectionId: 'connection' },
-      { ...contribution('miss', 's1', 't3'), providerId: undeclared, providerConnectionId: 'connection' },
-    ];
+  // Provider naming (review J-B31 after ff62c956107): identity decides, never the label. The marks, the visible
+  // detail line and the spoken detail list exactly one entry per distinct identity, none of them a raw qualified id.
+  it.each([
+    { kind: 'one identity witnessed on two Machines', providers: [['happier.provider.cliproxyapi/cliproxyapi', 'machine-1'],
+      ['happier.provider.cliproxyapi/cliproxyapi', 'machine-2']], expected: ['CLIProxyAPI'] },
+    { kind: 'two identities with the same label', providers: [['acme.first/gateway', 'machine'], ['acme.second/gateway', 'machine']],
+      expected: null },
+    { kind: 'a Provider labelled like an Agent', providers: [['acme.tools/claude', 'machine']], expected: null },
+    { kind: 'a Provider declared nowhere', providers: [['happier.provider.nowhere-declared/nowhere-declared', 'machine']],
+      expected: ['Nowhere Declared'] },
+    { kind: 'an opaque Provider key', providers: [['provider.project-only', 'machine']],
+      expected: [formatUsageDimensionLabel('source', 'provider.project-only', 'Provider.project-only')] },
+  ] as const)('names $kind once per identity in the marks, the detail line and the spoken detail', async ({ providers, expected }) => {
+    const rows: UsageWorkContribution[] = providers.map(([providerId, machineId], index) => ({
+      ...contribution(`p${index}`, 's1', 't1'), machineId, providerId, providerConnectionId: 'connection' }));
     const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [evidence('s1', 't1', 2493)] }));
     const screen = await renderScreen(<UsageChartInteractions>
       <UsageProjectLedgerWidget {...props} query={normalizeUsageQuery({ ...query, metric: 'tokens' })}
         slice={{ ...slice, work }} id="usage_project_ledger" testID="ledger" />
     </UsageChartInteractions>);
     await layoutIdentityStrip(screen.findByTestId('ledger.marks'), 1000);
-    expect(screen.findAllByType(UsageWorkProviderMark)).toHaveLength(2);
+    const identityCount = new Set(providers.map(([providerId]) => providerId)).size;
+    const marks = screen.findAllByType(UsageWorkProviderMark);
+    expect(marks).toHaveLength(identityCount);
+    const spokenMarks = marks.map(mark => mark.findByProps({ accessible: true }).props.accessibilityLabel as string);
+    expect(new Set(spokenMarks).size).toBe(identityCount);
     await screen.pressByTestIdAsync('ledger.project.p1.toggle');
-    const identities = String(screen.findByTestId('ledger.project.p1.identities')?.props.children ?? '').split(' · ');
-    expect(new Set(identities).size).toBe(identities.length);
-    expect(identities.join(' · ')).not.toContain('happier.provider');
-    expect(identities).toEqual(expect.arrayContaining(['Nowhere Declared']));
-    const exact = screen.findAllByType(ChartDatum).find(node => node.props.testID === 'ledger.project.p1.prs-datum-0');
-    expect(exact?.props.datum.accessibilityLabel ?? '').not.toContain('happier.provider');
+    const line = String(screen.findByTestId('ledger.project.p1.identities')?.props.children ?? '').split(' · ');
+    const agent = usageAgentTitle('claude');
+    expect(line[0]).toBe(agent);
+    const names = line.slice(1);
+    expect(names).toHaveLength(identityCount);
+    expect(new Set([agent, ...names]).size).toBe(identityCount + 1);
+    if (expected) expect(names).toEqual(expected);
+    for (const [providerId] of providers) if (providerId.includes('/')) expect(line.join(' · ')).not.toContain(providerId);
+    for (const name of names) expect(spokenMarks.some(label => label.endsWith(name))).toBe(true);
+    const spoken = screen.findAllByType(ChartDatum).find(node => node.props.testID === 'ledger.project.p1.prs-datum-0')?.props.datum.accessibilityLabel;
+    expect(typeof spoken).toBe('string');
+    for (const name of [agent, ...names]) expect(spoken).toContain(name);
   });
-  it('leads a Project’s Sessions with the largest behind Show all and says an unlinked group once (acceptance r224 #48)', async () => {
-    const rows = Array.from({ length: 10 }, (_, index) => contribution(`c${index}`, `s${index}`, `t${index}`));
+  it('names a Provider from any witnessing Machine that declares it before falling back to its local id (review J-B31)', () => {
+    const declaration = readAccountProviderDeclarations({ kind: 'account' })[0]!;
+    const custom = 'acme.custom/gateway';
+    const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, agentsById: {},
+      familiesById: { providers: { family: 'providers', entriesById: {
+        [custom]: { id: custom, pluginId: 'acme.custom', provenance: 'external', sourceKind: 'path',
+          definition: { ...declaration.definition, id: 'gateway', name: 'Acme Gateway' } },
+      } } } });
+    expect(usageWorkProviderDisplay(custom, [{ machineId: 'offline', projection: null },
+      { machineId: 'ready', projection }]).label).toBe('Acme Gateway');
+    expect(usageWorkProviderDisplay(custom, [{ machineId: 'offline', projection: null }]).label).toBe('Gateway');
+  });
+  // The Sessions group's outcome caption follows the Work coverage decision (review J-B34): only a group that has
+  // Sessions, whose linked PRs were read and none is linked, says "no linked outcome yet" — once, beside its title.
+  it.each([
+    { kind: 'no Sessions', sessionId: null, read: true, linked: false, caption: false },
+    { kind: 'Sessions whose PRs were not read', sessionId: 's1', read: false, linked: false, caption: false },
+    { kind: 'Sessions read with none linked', sessionId: 's1', read: true, linked: false, caption: true },
+    { kind: 'Sessions with a linked PR', sessionId: 's1', read: true, linked: true, caption: false },
+  ] as const)('claims an outcome state for $kind only when the coverage decision allows it', async ({ sessionId, read, linked, caption }) => {
+    const rows = [{ ...contribution('only', sessionId ?? 'unused', 't1'), sessionId }];
+    const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows,
+      evidence: linked ? [evidence('s1', 't1', 2493)] : [] }));
+    const screen = await renderScreen(<UsageProjectLedgerWidget {...props} query={normalizeUsageQuery({ ...query, metric: 'tokens' })}
+      slice={{ ...slice, work, workSummary: projectUsageWorkSummary(work.outcomes, read, work) }} id="usage_project_ledger" testID="ledger" />);
+    await screen.pressByTestIdAsync('ledger.project.p1.toggle');
+    const title = screen.findAllByType(UsageWorkSectionTitle).find(node => node.props.children === t('usage.board.work.funnelSessions'));
+    expect(title?.props.caption).toBe(caption ? t('usage.board.work.noOutcome') : undefined);
+    const detail = screen.findByTestId('ledger.project.p1.detail');
+    const claims = detail ? JSON.stringify(detail.findAllByType(HappierDataRows).map(node => node.props.rows)) : '';
+    expect(claims).not.toContain(t('usage.board.work.noOutcome'));
+    if (linked) expect(claims).toContain('Retry relay handshake');
+  });
+  it('leads a Project’s Sessions with the largest six behind Show all · n and keeps the Project total (acceptance r224 #48)', async () => {
+    const rows = Array.from({ length: 10 }, (_, index) => ({ ...contribution(`c${index}`, `s${index}`, `t${index}`),
+      tokens: { ...tokens, total: 10 + index } }));
     const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] }));
     const screen = await renderScreen(<UsageProjectLedgerWidget {...props} query={normalizeUsageQuery({ ...query, metric: 'tokens' })}
       slice={{ ...slice, work }} id="usage_project_ledger" testID="ledger" />);
+    const total = () => screen.findAllByType(HappierDataRows).find(node => node.props.testID === 'ledger.projects')!.props.rows[0][1];
+    expect(total()).toBe(145);
     await screen.pressByTestIdAsync('ledger.project.p1.toggle');
     const sessions = () => screen.findAllByType(HappierDataRows).find(node => node.props.testID === 'ledger.project.p1.session')!.props.rows;
-    expect(sessions()).toHaveLength(6);
-    expect(JSON.stringify(sessions())).not.toContain(t('usage.board.work.noOutcome'));
-    expect(screen.getTextContent().split(t('usage.board.work.noOutcome'))).toHaveLength(2);
+    expect(sessions().map((row: readonly unknown[]) => row[1])).toEqual([19, 18, 17, 16, 15, 14]);
+    const footer = screen.findByTestId('ledger.project.p1.session.more');
+    expect(footer?.findAll(node => typeof node.props.children === 'string' || typeof node.props.children === 'number')
+      .map(node => String(node.props.children)).join(' ')).toContain('10');
     await screen.pressByTestIdAsync('ledger.project.p1.session.more.toggle');
     expect(sessions()).toHaveLength(10);
+    expect(total()).toBe(145);
   });
   it.each(['linked PR', 'nested branch', 'standalone branch'] as const)(
     'recovers each fitted mark from the %s’s own detail',
@@ -479,7 +537,7 @@ describe('Work and Coach widget bodies', () => {
         expect(strip.findAll(node => node.props.children === t('usage.board.work.moreMarks', { count: hidden })).length).toBeGreaterThan(0);
 
         const names = [...group.agents.map(id => usageAgentTitle(id)),
-          resolveUsageWorkProviderDisplay({ providerId: group.provider, machineId: 'machine' }, 'home').label];
+          resolveUsageWorkProviderDisplay({ providerId: group.provider, machineIds: ['machine'] }, 'home').label];
         if (kind === 'standalone branch') {
           const key = table.props.rowIds?.[index];
           await screen.pressByTestIdAsync(`ledger.branch.${key}.toggle`);

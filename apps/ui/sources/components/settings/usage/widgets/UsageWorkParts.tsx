@@ -11,7 +11,8 @@ import { Typography } from '@/constants/Typography';
 import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
 import { t } from '@/text';
 import { UsageAgentMark, UsageShowAllRows, leadingUsageRows, useUsagePluginTheme } from './usageBodyKit';
-import { UsageWorkProviderMark, usageWorkProviderIdentities } from './UsageWorkProviderMark';
+import { UsageWorkProviderMark, usageWorkProviderIdentities, usageWorkProviderNames } from './UsageWorkProviderMark';
+import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
 import type {
   UsageWorkIdentities,
   UsageWorkSessionPart,
@@ -80,8 +81,10 @@ export function UsageWorkMarks(
   const metrics = usePageRowMetrics('list');
   const [width, setWidth] = React.useState<number | null>(null);
   const [countWidth, setCountWidth] = React.useState<number | null>(null);
-  // One Provider on several Machines is one identity: it is drawn once (review J-B31).
+  // One Provider on several Machines is one identity: it is drawn once, and two identities that share a name are
+  // told apart in their spoken labels the way the detail line tells them apart (review J-B31).
   const providerIdentities = usageWorkProviderIdentities(props.providers);
+  const providerNames = usageWorkProviderNames(providerIdentities, props.serverId, props.agentIds.map(id => usageAgentTitle(id)));
   const total = props.agentIds.length + providerIdentities.length;
   if (total === 0) return null;
   const gap = theme.space.s4;
@@ -98,10 +101,11 @@ export function UsageWorkMarks(
       {agents.map((agentId) => (
         <UsageAgentMark key={agentId} agentId={agentId} serverId={props.serverId} />
       ))}
-      {providers.map((provider) => (
+      {providers.map((provider, index) => (
         <UsageWorkProviderMark
-          key={`${provider.providerId}\u0000${provider.machineId ?? ''}`}
-          {...provider}
+          key={provider.providerId}
+          provider={provider}
+          label={providerNames[index]}
           serverId={props.serverId}
           testID={props.testID ? `${props.testID}.provider.${provider.providerId}` : undefined}
         />
@@ -215,12 +219,15 @@ export function useUsageWorkDisclosures(rows: readonly Readonly<{ id: string; ti
 /**
  * Every Session of a row with its exact part of that row, the largest first and the rest behind the Usage
  * "Show all · n" footer (a Project can hold hundreds, acceptance r224 #48). Each opens that Session's own
- * autopsy through the one Session Usage route. Under a `title`, a group in which no Session is linked to a PR
- * says so once beside the title instead of on every row.
+ * autopsy through the one Session Usage route. Under a `title`, the outcome state follows the Work coverage decision
+ * (review J-B34): a group that has Sessions, whose linked PRs were read (`outcomesRead`) and none is linked, says so
+ * once beside the title; rows name only a linked PR, or its absence beside a sibling that has one. No Sessions, or
+ * PRs not read, claims nothing.
  */
 export function UsageWorkSessionRows(
   props: Readonly<{
     title?: string;
+    outcomesRead?: boolean;
     parts: readonly UsageWorkSessionPart[];
     summary: UsageWorkSummary;
     format: (value: number | null, moneyBasis?: UsageWorkMoneyBasis | null) => string;
@@ -239,8 +246,11 @@ export function UsageWorkSessionRows(
   );
   const [expanded, setExpanded] = React.useState(false);
   const shown = leadingUsageRows(props.parts, expanded);
-  const outcomeOnce = props.title !== undefined
-    && props.parts.every(part => (bySession.get(part.sessionId)?.outcomes.length ?? 0) === 0);
+  const linked = (sessionId: string) => (bySession.get(sessionId)?.outcomes.length ?? 0) > 0;
+  const anyLinked = props.parts.some(part => linked(part.sessionId));
+  const outcomeOnce = props.title !== undefined && props.outcomesRead === true && props.parts.length > 0 && !anyLinked;
+  const outcomeLine = (sessionId: string) => props.title === undefined || linked(sessionId)
+    || props.outcomesRead === true && anyLinked ? usageWorkSessionOutcomeLine(bySession.get(sessionId)) : null;
   const rows = (
     <HappierDataRows
       theme={theme}
@@ -264,7 +274,7 @@ export function UsageWorkSessionRows(
       rows={shown.rows.map((part) => [
         props.sessionLabel(part.sessionId),
         props.cell(part.amount, part.moneyBasis),
-        [outcomeOnce ? null : usageWorkSessionOutcomeLine(bySession.get(part.sessionId)),
+        [outcomeLine(part.sessionId),
           part.tokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · '),
       ])}
       rowDatums={shown.rows.map(part => props.datum(props.sessionLabel(part.sessionId), part.amount, part.moneyBasis))}

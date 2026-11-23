@@ -104,10 +104,10 @@ describe('packaged Provider marks through admitted consumers', () => {
         rpc.intercept(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, async () => ({ protocolVersion: 1, projection }));
         expect((await loadDaemonMergedProjectionCacheEntry({ sections: 'complete', machineId: 'machine-a', serverId }))?.kind).toBe('ready');
         const reads = rpc.state.requests.length;
-        const screen = await renderScreen(<UsageWorkProviderMark providerId={contributionKey} machineId="machine-a" serverId={serverId} />);
+        const screen = await renderScreen(<UsageWorkProviderMark provider={{ providerId: contributionKey, machineIds: ['machine-a'] }} serverId={serverId} />);
         expect(screen.findAllByType('Image').some(node => node.props.source?.uri?.startsWith('data:image/png;base64,'))).toBe(true);
         expect(rpc.state.requests).toHaveLength(reads);
-        const unknown = await renderScreen(<UsageWorkProviderMark providerId="unidentified" machineId="machine-a" serverId={serverId} />);
+        const unknown = await renderScreen(<UsageWorkProviderMark provider={{ providerId: 'unidentified', machineIds: ['machine-a'] }} serverId={serverId} />);
         expect(unknown.findAllByType('Image')).toHaveLength(0);
     });
 });
