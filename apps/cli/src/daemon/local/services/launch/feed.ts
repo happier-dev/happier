@@ -27,8 +27,11 @@ export type LocalServiceLauncherFeedSnapshotRequest = Readonly<{
     /** Host-only mutation read: an unresolved Workspace must not broaden to Machine scope. */
     requireWorkspaceScope?: true;
     projection?: 'managed_bindings';
-    /** Host-private Home admission; never accepted from launcher wire operands. */
-    requesterManagedServices?: Readonly<{ serverId: string; accountId: string }>;
+    /** Host-private Home admission; never accepted from launcher wire operands. With the
+     * requester's own Session, the read is that Session's workspace, whatever scope or root was
+     * asked, discovered under their own Account; otherwise their installed bindings only. */
+    requesterManagedServices?: Readonly<{ serverId: string; accountId: string; ownSession?: Readonly<{
+        sessionId: string; account: NonNullable<LocalServiceRunTargetDiscoveryOptions['projectDefinitionAccount']> }> }>;
     /** Host-only material update: use admitted discovery facts and live supervisor state. */
     discovery?: 'cached';
     /** Explicit scope: `machine` skips workspace scoping; `workspace` (default) keeps it. */
@@ -269,27 +272,34 @@ export function createLocalServiceLauncherFeed(
         refreshRunTargets,
         resolveWorkspaceScope,
         async getSnapshot(request, observedInventoryEntries) {
-            const bindingsOnly = request?.projection === 'managed_bindings' || request?.requesterManagedServices !== undefined;
+            const ownSession = request?.requesterManagedServices?.ownSession;
+            const ownSessionId = ownSession?.sessionId;
+            const bindingsOnly = request?.projection === 'managed_bindings'
+                || request?.requesterManagedServices !== undefined && ownSessionId === undefined;
             if (bindingsOnly && !input.projectManagedServices) {
                 throw createActionExecuteFailureError({ ok: false, errorCode: 'project_service_bindings_unavailable', error: 'Project Service binding owner is unavailable' });
             }
-            const sessionId = request?.sessionId ?? input.sessionId;
-            const workspaceScopePaths = await resolveWorkspaceScope(request);
-            if (request?.requireWorkspaceScope && !workspaceScopePaths?.length) {
+            const sessionId = ownSessionId ?? request?.sessionId ?? input.sessionId;
+            const workspaceScopePaths = await resolveWorkspaceScope(ownSessionId ? { sessionId: ownSessionId } : request);
+            if ((request?.requireWorkspaceScope || ownSessionId) && !workspaceScopePaths?.length) {
                 throw createActionExecuteFailureError({ ok: false, errorCode: 'local_service_workspace_scope_unavailable', error: 'Local service workspace scope is unavailable' });
             }
-            const includePackageScripts = request?.scope !== 'machine';
+            const includePackageScripts = ownSessionId !== undefined || request?.scope !== 'machine';
             // Complete bindings read cached listener evidence without waiting for discovery.
             // Both projections must retain the same managed identity and preview presentation.
-            if (!bindingsOnly && request?.discovery !== 'cached') {
+            // The requester's own discovery stays private to this read: their Account qualifies its
+            // Projects, and the Machine's shared observation is neither read nor replaced.
+            const own = ownSession ? await resolveRunTargets(input.runTargets, input.onRunTargetsError, workspaceScopePaths,
+                { includePackageScripts, projectDefinitionAccount: ownSession.account }) : undefined;
+            if (!bindingsOnly && !ownSession && request?.discovery !== 'cached') {
                 await refreshRunTargets(workspaceScopePaths, request?.signal, { includePackageScripts }, true);
             }
             const selectedRoot = !bindingsOnly && workspaceScopePaths?.length === 1 ? workspaceScopePaths[0] : undefined;
-            const declaredPorts = selectedRoot ? observedWorktreePortDefinitions.find(definition => canonicalAbsolutePathsEqual(definition.rootPath, selectedRoot)) : undefined;
+            const declaredPorts = selectedRoot ? (own?.worktreePortDefinitions ?? observedWorktreePortDefinitions).find(definition => canonicalAbsolutePathsEqual(definition.rootPath, selectedRoot)) : undefined;
             const worktreePorts = selectedRoot && declaredPorts
                 ? { rootPath: selectedRoot, declaredSlots: declaredPorts.slots, result: await (input.worktreePorts ?? getHostWorktreePortsOwner()).read({ rootPath: selectedRoot }) }
                 : undefined;
-            const runTargets = bindingsOnly ? [] : includePackageScripts
+            const runTargets = bindingsOnly ? [] : ownSession ? own?.targets ?? [] : includePackageScripts
                 ? [...observedDeclarations, ...observedPackageScripts] : observedDeclarations;
             // The scan publisher projects this same observation before deciding whether to wake
             // readers. Ordinary reads use the registry's annotated, visible inventory.

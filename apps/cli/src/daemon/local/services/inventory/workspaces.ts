@@ -4,6 +4,7 @@ import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceR
 
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { StoredCredentials } from '@/persistence';
+import type { LocalServiceRunTargetDiscoveryOptions } from '../launch/runTargets';
 import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 
 import type { LocalServiceWorkspaceFact } from './provenance';
@@ -108,6 +109,8 @@ export async function readLocalServiceWorkspaceFacts(input: Readonly<{
     machineId: string;
     markers: readonly LocalServiceWorkspaceSessionMarker[];
     signal?: AbortSignal;
+    /** A requester's own Session read qualifies declarations by that requester's Account rows. */
+    account?: LocalServiceRunTargetDiscoveryOptions['projectDefinitionAccount'];
 }>): Promise<LocalServiceWorkspaceFactsSnapshot> {
     input.signal?.throwIfAborted();
     let acceptedWorkspaceRefs: readonly WorkspaceRefV1[] = [];
@@ -116,8 +119,8 @@ export async function readLocalServiceWorkspaceFacts(input: Readonly<{
         const { readProjectAccountRows } = await import('@/workspaces/projectAccountRows');
         const selectedHomeServerId = await resolveServerProfileHomeIdentityId(input.serverId) ?? input.serverId;
         input.signal?.throwIfAborted();
-        const snapshot = await runWithServerHttpBaseUrl(input.serverBaseUrl, () => readProjectAccountRows({
-            credentials: input.credentials,
+        const snapshot = await runWithServerHttpBaseUrl(input.account?.serverHttpBaseUrl ?? input.serverBaseUrl, () => readProjectAccountRows({
+            ...(input.account?.account ?? { credentials: input.credentials }),
             serverId: input.serverId,
             selection: { kinds: ['workspace-ref'], serverId: selectedHomeServerId },
             ...(input.signal ? { signal: input.signal } : {}),

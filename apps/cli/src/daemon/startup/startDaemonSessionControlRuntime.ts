@@ -9017,13 +9017,14 @@ export async function startDaemonSessionControlRuntime(
       token: params.credentials.token,
       get serverBaseUrl() { return params.serverBaseUrl; },
     },
-    workspaceFacts: async () =>
+    workspaceFacts: async (account) =>
       readLocalServiceWorkspaceFacts({
         credentials: params.credentials,
         serverId: params.serverId,
         serverBaseUrl: params.serverBaseUrl,
         machineId: params.machineId,
         markers: await listSessionMarkers(),
+        ...(account ? { account } : {}),
       }),
     processEnv: params.processEnv,
     internalProcessPids: () => [

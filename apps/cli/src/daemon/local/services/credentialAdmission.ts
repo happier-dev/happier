@@ -52,15 +52,16 @@ export async function assertLocalServiceReadCustody(
         && context.workspaceSyncSourceExecution?.originalActionEnvelope
         ? readRequesterAccountActionContext(context.callerInputAuthorization) : null;
     const privateMove = requester?.authorization.binding.accountId === admission?.actorAccountId && await requester?.isCurrent();
-    // The Services ingress lent an admitted guest their own Session's custody: they read as that Session's Account.
+    // The Services ingress lent an admitted guest their own Session's custody: it lets them act, and
+    // they read only as that requester (the reader pins it to that Session), never the Machine view.
     const ownSession = !!admission && context.requesterSessionBootstrap?.attribution.accountId === admission.actorAccountId;
-    const requesterOnly = readScope === 'requester_managed_services' && admission
-        && admission.actorAccountId !== input.accountId && !privateMove && !ownSession;
+    const guest = !!admission && admission.actorAccountId !== input.accountId && !privateMove;
+    const requesterOnly = guest && (readScope === 'requester_managed_services' || ownSession && readScope !== 'machine_inventory');
     if (!input.accountId || !admission || admission.machineId !== input.machineId || context.signal.aborted
         || !context.verifyMachineAdmissionCurrent) {
         throw new Error('requester_credentials_unavailable');
     }
-    if (admission.actorAccountId !== input.accountId && !privateMove && !requesterOnly && !ownSession) {
+    if (guest && !requesterOnly) {
         if (readScope === 'machine_inventory') {
             throw new RpcError('requester_credentials_unavailable', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
         }

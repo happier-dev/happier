@@ -61,7 +61,7 @@ import {
     getSharedTerminalProcessRegistry,
     type TerminalProcessRegistry,
 } from './inventory/terminalRegistry';
-import { discoverLocalServiceRunTargets } from './launch/runTargets';
+import { discoverLocalServiceRunTargets, type LocalServiceRunTargetDiscoveryOptions } from './launch/runTargets';
 import {
     scanPlatformLocalServices,
     type LocalServicesScanResult,
@@ -82,8 +82,10 @@ import {
 type LocalServicesScanner = (options?: Parameters<typeof scanPlatformLocalServices>[0]) => Promise<LocalServicesScanResult>;
 
 type LocalServiceWorkspaceFactsSource = readonly LocalServiceWorkspaceFact[] | LocalServiceWorkspaceFactsSnapshot;
-type LocalServiceWorkspaceFactsProvider =
-    () => Promise<LocalServiceWorkspaceFactsSource> | LocalServiceWorkspaceFactsSource;
+type LocalServiceWorkspaceFactsProvider = (
+    /** Whose Account rows qualify accepted Projects; the daemon's own when absent. */
+    account?: LocalServiceRunTargetDiscoveryOptions['projectDefinitionAccount'],
+) => Promise<LocalServiceWorkspaceFactsSource> | LocalServiceWorkspaceFactsSource;
 
 export type LocalServicesDaemonRuntime = Readonly<{
     inventoryRegistry: LocalServiceInventoryRegistry;
@@ -276,8 +278,10 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     }));
     const workspaceFacts = params.workspaceFacts
         ?? (params.scan ? undefined : async () => await readDaemonSessionWorkspaceFacts(params.machineId));
-    const readWorkspaceFacts = async (): Promise<LocalServiceWorkspaceFactsSnapshot> => {
-        const source = await workspaceFacts?.();
+    const readWorkspaceFacts = async (
+        account?: LocalServiceRunTargetDiscoveryOptions['projectDefinitionAccount'],
+    ): Promise<LocalServiceWorkspaceFactsSnapshot> => {
+        const source = await workspaceFacts?.(account);
         return source && 'facts' in source ? source : { facts: source ?? [], acceptedWorkspaceRefs: [], diagnostics: [] };
     };
     const staleAfterMs = params.staleAfterMs ?? DEFAULT_LOCAL_SERVICE_CAPABILITIES.inventory.staleAfterMs;
@@ -601,10 +605,12 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
             isWorkspacePathWithin(known, root) ? [root] : isWorkspacePathWithin(root, known) ? [known] : [])))] : knownRoots;
     };
     const defaultRunTargetsProvider: LocalServiceRunTargetsProvider = async (roots, options) => {
-        const source = await readWorkspaceFacts();
+        // A requester's own Session read names its Account; every other read is the daemon's.
+        const account = options?.projectDefinitionAccount ?? params.projectDefinitionAccount;
+        const source = await readWorkspaceFacts(options?.projectDefinitionAccount);
         const requestedRoots = selectRequestedRoots(source, roots);
         return await discoverLocalServiceRunTargets({ ...options, roots: requestedRoots,
-            projectDefinitionAccount: params.projectDefinitionAccount,
+            ...(account ? { projectDefinitionAccount: account } : {}),
             acceptedWorkspaceRefs: source.acceptedWorkspaceRefs.filter(ref => requestedRoots.some(root =>
                 isWorkspacePathWithin(root, ref.rootPath) || isWorkspacePathWithin(ref.rootPath, root))) });
     };

@@ -197,9 +197,11 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
                         const result = await watchLauncherSnapshot({ targets: projection.targets, worktreePorts: projection.worktreePorts,
                             readSnapshot: () => reader.getSnapshot({ ...projection.request, discovery: 'cached',
                                 ...(context ? { signal: context.signal } : {}) }),
-                            // Guest projections contain only their installed managed bindings;
-                            // they cannot enroll the custodian's declaration discovery roots.
-                            ...(!reader.requesterOnly && projection.request.projection !== 'managed_bindings'
+                            // A guest's own Session enrolls only that Session's workspace (the reader's
+                            // pin); other guest projections hold their installed managed bindings and
+                            // cannot enroll the custodian's declaration discovery roots.
+                            ...(reader.ownSessionId ? { launcherScopes: [{ sessionId: reader.ownSessionId }] }
+                                : !reader.requesterOnly && projection.request.projection !== 'managed_bindings'
                                 && projection.request.scope !== 'machine'
                                 && (projection.request.sessionId || projection.request.workspaceRoot)
                                 ? { launcherScopes: [{ ...(projection.request.sessionId ? { sessionId: projection.request.sessionId } : {}),
