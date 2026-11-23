@@ -1,6 +1,7 @@
 import type { DeploymentSourceIntentV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { recordFailureCause } from '@/diagnostics/recordFailureCause';
-import { classifyNativeComposeFailure, NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE, readNativeDockerSocketAccessFailure } from './nativeComposeFailure';
+import { projectDeploymentFailureRecoveryV1, type DeploymentNativeComposeFailureV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { classifyNativeComposeFailure, NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE, readNativeComposeCommandFailure, readNativeDockerSocketAccessFailure } from './nativeComposeFailure';
 import { readNativeComposeLogsForHost } from './nativeComposeLogs';
 import { MANAGED_SERVICE_NATIVE_LOG_PAGE_BYTES } from '@/plugins/runtime/invocation/services/managedServiceNativeLogBudget';
 export { readNativeComposeLogsForHost } from './nativeComposeLogs';
@@ -806,8 +807,15 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
 }
 
 function nativeRefusal(reason: string, step = 'deployment.native', errorCode: string | null = null,
-    effectAttempted?: true): never {
+    effectAttempted?: true, nativeCompose?: DeploymentNativeComposeFailureV1): never {
     const failureCause: ActionFailureCauseV1 = { phase: `${step}.${reason}`, errorClass: 'Error', errorCode, httpStatus: null };
+    if (nativeCompose) {
+        const { requiredFact, remedy } = projectDeploymentFailureRecoveryV1({ failureCause }, 'native_failed');
+        throw createActionExecuteFailureError({
+            ok: false, errorCode: 'native_failed', error: 'native_failed', failureCause,
+            details: { requiredFact, remedy, nativeCompose }, ...(effectAttempted ? { effectAttempted } : {}),
+        });
+    }
     throw new PluginError({ code: 'native_failed', message: 'Native Compose operation could not be completed', details: { reason },
         failureCause }, effectAttempted === undefined ? undefined : { cause: {
             ok: false, errorCode: 'native_failed', error: 'native_failed', failureCause, effectAttempted,
@@ -946,7 +954,13 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
             const stderr = output.stderr ?? '';
             const socketFailure = readNativeDockerSocketAccessFailure(launch.secretRedactionLease?.redact(stderr) ?? stderr,
                 'native_failed', step, authority ? true : undefined);
-            if (socketFailure) throw createActionExecuteFailureError(socketFailure);
+            const nativeCompose = readNativeComposeCommandFailure(args, output.exitCode, stderr,
+                launch.secretRedactionLease?.redact);
+            if (socketFailure) {
+                throw createActionExecuteFailureError(nativeCompose
+                    ? { ...socketFailure, details: { ...socketFailure.details, nativeCompose } }
+                    : socketFailure);
+            }
             const nativeOutput = output.stdout + '\n' + stderr;
             if (args[0] === 'buildx' && args[1] === 'bake' && !args.includes('--print')) {
                 throw new NativeComposeBakeFailure(output.exitCode, nativeOutput, authority ? true : undefined);
@@ -955,7 +969,7 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
             return nativeRefusal(cause ?? 'native_compose_command_failed', step, cause,
                 // A returned process result proves this admitted native effect ran.
                 // Launch errors and read-only native commands remain unknown.
-                authority ? true : undefined);
+                authority ? true : undefined, nativeCompose);
         }
         return output;
     };

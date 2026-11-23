@@ -40,8 +40,42 @@ describe('phase-correct native platform image production', () => {
                     && !request.args.includes('--print'))).toHaveLength(command === 'bake' ? 1 : 0);
                 expect(requests.some(request => request.args.includes('up'))).toBe(false);
                 expect(JSON.stringify(receipt)).not.toContain('private-output-sentinel');
-            }, { failureOutput: { command, stdout: output, stderr: 'private-output-sentinel' } });
+            }, { failureOutput: { command, stdout: output, stderr: 'https://fixture-user:private-output-sentinel@registry.example.test/check' } });
         }
+    });
+
+    it('carries a failed image-only Compose configuration through Action and Receipt', async () => {
+        const catalog: { apps: Array<{ itemId: string; app: { compose: { document: string; services: string[] } } }> } =
+            JSON.parse(await readFile(new URL('../../../../../../../packages/plugins/deployment-templates/resources/registry/apps.json', import.meta.url), 'utf8'));
+        const template = catalog.apps.find(({ itemId }) => itemId === 'postgresql');
+        if (!template) throw new Error('PostgreSQL catalog fixture is missing');
+        const stderr = [
+            'older diagnostic '.repeat(512),
+            String.raw`compose could not open C:\Program Files\Docker data\candidate.compose.json`,
+            'https://fixture-user:fixture-password@registry.example.test/check',
+            'native hint buildkit-only-fixture-secret',
+        ].join('\r\n');
+        await withBuilder(async ({ project, requests }) => {
+            await expect(project.describeBuild()).resolves.toBeDefined();
+            const error: unknown = await project.prepareImages({ planOnly: true }).catch(failure => failure);
+            const failure = projectDeploymentFailure('native_failed', error);
+            const child = readDeploymentChildResult(JSON.parse(JSON.stringify(failure)));
+            const details = { nativeCompose: { subcommand: 'config', exitStatus: 23,
+                stderrTail: expect.stringContaining('candidate.compose.json') } };
+            expect(failure).toMatchObject({ ok: false, errorCode: 'native_failed', details });
+            expect(child).toMatchObject({ ok: false, errorCode: 'native_failed', details });
+            expect(projectDeploymentReceiptFailure(projectDeploymentFailure('native_failed',
+                new Error('refused', { cause: child })), 'build')).toMatchObject({ code: 'native_failed', ...details });
+            expect(JSON.stringify(child)).not.toContain('fixture-password');
+            expect(JSON.stringify(child)).not.toContain('buildkit-only-fixture-secret');
+            expect(JSON.stringify(child)).not.toContain('older diagnostic '.repeat(511));
+            const candidate = requests.filter(({ args }) => args.some(arg => arg.endsWith('candidate.compose.json')));
+            expect(candidate).toHaveLength(1);
+            const args = candidate[0]!.args;
+            const file = args[args.indexOf('--file') + 1]!;
+            expect(file).toContain('happier native builder-');
+            expect(args.slice(args.indexOf('--file') + 1)).toEqual([file, 'config', '--format', 'json']);
+        }, { sourceCompose: template.app.compose, failureOutput: { command: 'candidate-config', exitCode: 23, stderr } });
     });
 
     it.each(['bake', 'info'] as const)('names the attempted Docker socket when %s is denied', async command => {

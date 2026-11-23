@@ -32,9 +32,18 @@ export function describeDeploymentImageResolutionFailureV1(failure: z.infer<type
     }
 }
 
+/** Native Compose failures disclose the command token and a masked diagnostic excerpt, never arguments. */
+export const DeploymentNativeComposeFailureV1Schema = lazyZodSchema(() => z.strictObject({
+    subcommand: z.string().check(z.regex(/^[a-z][a-z-]*$/u)),
+    exitStatus: z.number().check(z.int()),
+    stderrTail: z.optional(z.string()),
+}));
+export type DeploymentNativeComposeFailureV1 = z.infer<typeof DeploymentNativeComposeFailureV1Schema>;
+
 /** The fallback names the unavailable result, never an invented provider prerequisite. */
 export const DeploymentFailureRecoveryV1Schema = lazyZodSchema(() => z.strictObject({
     requiredFact: z.literal('deploymentActionResult'),
+    nativeCompose: z.optional(DeploymentNativeComposeFailureV1Schema),
     remedy: z.string().check(z.trim(), z.minLength(1)),
 }));
 

@@ -57,6 +57,7 @@ export const DeploymentReceiptFailureV1Schema = lazyZodSchema(() => z.strictObje
     DeploymentFailureRecoveryV1Schema.shape.requiredFact])),
   remedy: z.optional(z.string().check(z.trim(), z.minLength(1))),
   failureCause: z.optional(ActionFailureCauseV1Schema),
+  nativeCompose: DeploymentFailureRecoveryV1Schema.shape.nativeCompose,
   effectAttempted: z.optional(z.boolean()),
 }));
 export type DeploymentReceiptFailureV1 = z.infer<typeof DeploymentReceiptFailureV1Schema>;

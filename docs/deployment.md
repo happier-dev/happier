@@ -3032,6 +3032,15 @@ The failed receipt's runtime-log read uses its retained activation range, includ
 terminal stderr, rather than requiring the removed candidate or reading the restored
 predecessor. Capture failure leaves the original activation stderr available and does
 not prevent recovery. Previously deleted container output cannot be reconstructed.
+
+A nonzero Docker Compose command can also return a typed `nativeCompose`
+diagnostic in the Action failure and the opened receipt's Investigation
+projection. It records the subcommand and exit status plus a redacted stderr
+tail when the executor has a redaction lease. Existing failures can omit the
+diagnostic. Receipt headers and summary reads retain the existing closed facts.
+Older strict 0.3 development readers require the matching schema when a new
+Receipt includes this diagnostic.
+
 File and symlink removal cannot recurse
 if an application replaces a leaf with a directory.
 

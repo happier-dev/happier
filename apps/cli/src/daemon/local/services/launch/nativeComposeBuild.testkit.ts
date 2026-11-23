@@ -56,9 +56,10 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
 }>) => Promise<void>, options?: Readonly<{ environmentInstanceId?: string; secretArgument?: boolean; corruptArchive?: boolean; dynamicSecretName?: boolean;
     prebuilt?: boolean; prebuiltIndex?: boolean; preapprovalIndex?: boolean; extensionSecret?: boolean; selectedSubset?: boolean;
     missingBuildx?: boolean; subdirectoryCompose?: boolean;
+    sourceCompose?: Readonly<{ document: string; services: readonly string[] }>;
     bakeFailure?: 'unsupportedPlatform' | 'execFormat' | 'buildFailed';
     bakeFailurePlatform?: string;
-    failureOutput?: Readonly<{ command: 'bake' | 'compose' | 'imagetools' | 'info'; stdout?: string; stderr?: string }>;
+    failureOutput?: Readonly<{ command: 'bake' | 'compose' | 'candidate-config' | 'imagetools' | 'info'; exitCode?: number; stdout?: string; stderr?: string }>;
     prebuiltContainerd?: 'unchanged' | 'changed' | 'movesAfterLookup';
     effectivePlatforms?: boolean;
     preapprovalArmOnly?: boolean;
@@ -66,7 +67,7 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
     coincidentRuntime?: boolean;
     stageOutput?: NativeComposeEnvironmentProjectInput['stageOutput'];
     publication?: 'ok' | 'missingRepository' | 'pushFailure' | 'resourceChanged' | 'tamperedIndex' | 'secretRepository' | 'engineMismatch' }>) {
-    const root = await mkdtemp(join(tmpdir(), 'happier-native-builder-'));
+    const root = await mkdtemp(join(tmpdir(), options?.sourceCompose ? 'happier native builder-' : 'happier-native-builder-'));
     try {
         const repository = join(root, 'repository');
         const executionDirectory = join(root, 'build-execution');
@@ -94,7 +95,8 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
         const composeFile = options?.subdirectoryCompose ? 'nested/compose.yaml' : 'compose.yaml';
         const contextDirectory = options?.subdirectoryCompose ? join(repository, 'nested/backend') : repository;
         await mkdir(contextDirectory, { recursive: true });
-        await writeFile(join(repository, composeFile), JSON.stringify(model(options?.subdirectoryCompose ? './backend' : '.')));
+        await writeFile(join(repository, composeFile),
+            options?.sourceCompose?.document ?? JSON.stringify(model(options?.subdirectoryCompose ? './backend' : '.')));
         await writeFile(join(contextDirectory, 'Dockerfile'), 'FROM scratch AS release\n');
         await writeFile(join(repository, '.env'), 'UNREVIEWED=${RUNTIME_SECRET:?runtime-only}\n');
         const git = (...args: string[]) => execFileSync('git', args, { cwd: repository, encoding: 'utf8' }).trim();
@@ -240,8 +242,10 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
             if (options?.failureOutput && (options.failureOutput.command === 'bake'
                 ? request.args[0] === 'buildx' && request.args[1] === 'bake' && !request.args.includes('--print')
                 : options.failureOutput.command === 'compose' ? request.args[0] === 'compose' && request.args.includes('config')
+                : options.failureOutput.command === 'candidate-config' ? request.args[0] === 'compose' && request.args.includes('config')
+                    && request.args.some(arg => arg.endsWith('candidate.compose.json'))
                 : options.failureOutput.command === 'info' && request.args[0] === 'info')) {
-                return { exitCode: 1, stdout: options.failureOutput.stdout ?? '', stderr: options.failureOutput.stderr ?? '' };
+                return { exitCode: options.failureOutput.exitCode ?? 1, stdout: options.failureOutput.stdout ?? '', stderr: options.failureOutput.stderr ?? '' };
             }
             // Docker output is this fixture's OS boundary. Exercise the real
             // admitted launch's streaming sanitizer before delivering bytes.
@@ -445,7 +449,7 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
             return { exitCode: 0, stdout: '' };
         } };
         const createProject = (images: readonly DeploymentImageV1[]) => createNativeComposeLifecycle({ kind: 'environmentProject', phase: 'build', executionDirectory, exec, envPort, source,
-            files: [composeFile], services: options?.selectedSubset ? ['web'] : ['web', 'worker'], images,
+            files: [composeFile], services: options?.sourceCompose?.services ?? (options?.selectedSubset ? ['web'] : ['web', 'worker']), images,
             ...(options?.publication ? { imageAcquisition: createOwnServerNativeImageAcquisition({ source,
                 runtime: { exec, buildExecutionDirectory: executionDirectory, secrets: { installationPrivateSeed: seed,
                     grants: prepared.grants, registryConfigBaseDir: join(root, 'registry-configs') } },

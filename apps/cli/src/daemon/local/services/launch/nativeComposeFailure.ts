@@ -1,5 +1,7 @@
+import { stripVTControlCharacters } from 'node:util';
+import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
 import type { ActionExecuteFailure, ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { projectDeploymentFailureRecoveryV1, type DeploymentNativeComposeFailureV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
 export const NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE = 'deployment.native.image.registry';
 
@@ -9,7 +11,7 @@ export function readNativeDockerSocketAccessFailure(
     errorCode: 'native_failed' | 'native_tool_unavailable',
     phase: string,
     effectAttempted?: true,
-): ActionExecuteFailure | undefined {
+): (ActionExecuteFailure & Readonly<{ details: { requiredFact: string; remedy: string } }>) | undefined {
     const denied = /permission denied while trying to connect to the docker (?:API|daemon socket)\b(?: at ([^\s]+))?/iu.exec(stderr);
     if (!denied) return undefined;
     const failureCause: ActionFailureCauseV1 = { phase, errorClass: 'Error', errorCode: 'deployment_docker_socket_access_denied',
@@ -21,7 +23,22 @@ export function readNativeDockerSocketAccessFailure(
         ...(effectAttempted ? { effectAttempted } : {}) };
 }
 
-/** Closed observations only: private native output stays at this process boundary. */
+/** Args contain the admitted Docker invocation, without the executable prefix. */
+export function readNativeComposeCommandFailure(args: readonly string[], exitStatus: number,
+    stderr: string, redact?: (value: string) => string): DeploymentNativeComposeFailureV1 | undefined {
+    if (args[0] !== 'compose') return undefined;
+    // Our Compose global options precede the subcommand and each takes one argv element.
+    let index = 1;
+    while (args[index]?.startsWith('--')) index += 2;
+    const subcommand = args[index];
+    if (!subcommand || !/^[a-z][a-z-]*$/u.test(subcommand)) return undefined;
+    const stderrTail = redact
+        ? trimBugReportTextToMaxBytes(redactBugReportSensitiveText(redact(stripVTControlCharacters(stderr)).trim()), 8_192)
+        : '';
+    return { subcommand, exitStatus, ...(stderrTail ? { stderrTail } : {}) };
+}
+
+/** Failure classification uses private process output. Only the masked excerpt can leave the process. */
 const nativeFailurePatterns = [
     ['build_platform_unsupported', /no support for running processes with [^\r\n]+ platform,\s*supported:/iu],
     ['deployment_execution_format_error', /exec format error/iu],
