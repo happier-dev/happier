@@ -8,6 +8,8 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
+import { useCurrentUiContextLocalCommands, type CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { PermissionPromptCard } from '@/components/tools/shell/permissions/PermissionPromptCard';
 import { ApprovalPromptCard } from '@/components/tools/shell/approvals/ApprovalPromptCard';
 import { ApprovalPromptRoomContext, resolveApprovalPromptTrayMaxHeight, shareApprovalPromptRoom, type ApprovalPromptCardHeights, type ApprovalPromptRoom } from '@/components/tools/shell/approvals/ApprovalPromptChrome';
@@ -24,6 +26,8 @@ type AttentionRequest =
     | Readonly<{ kind: 'approval'; request: OpenApprovalAttentionArtifactForSession }>;
 
 const NO_ATTENTION_REQUESTS: readonly AttentionRequest[] = Object.freeze([]);
+const NO_COMMANDS: readonly CurrentUiContextLocalCommand[] = Object.freeze([]);
+const EARLIER_FAILURES_COMMAND = 'earlierFailures';
 
 /** A request still waiting for the person's decision; the rest are settled failures kept until dismissed. */
 function isPendingAttentionRequest(request: AttentionRequest): boolean {
@@ -158,6 +162,18 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
     const pendingKey = pendingRequests.map(getAttentionRequestKey).join('|');
     const [failuresShownFor, setFailuresShownFor] = React.useState<string | null>(null);
     const failuresShown = foldedFailures.length > 0 && failuresShownFor === pendingKey;
+    const earlierFailuresLabel = t('approvals.earlierFailures', { count: foldedFailures.length });
+    // The folded failures' disclosure is the composer's current-context command, so an agent can show or hide them as
+    // the row does; the row's press runs the same command. Transient view state only: it decides no approval.
+    const earlierFailuresCommands = useCurrentUiContextLocalCommands(React.useMemo(() => foldedFailures.length === 0 ? NO_COMMANDS : [{
+        key: EARLIER_FAILURES_COMMAND,
+        title: earlierFailuresLabel,
+        description: 'composer.attentionRequests.earlierFailures: show ({ shown: true }) or hide ({ shown: false }) the earlier failed actions folded above the pending request.',
+        invoke: (input) => {
+            if (!isJsonObject(input) || typeof input.shown !== 'boolean') return false;
+            setFailuresShownFor(input.shown ? pendingKey : null);
+        },
+    }], [earlierFailuresLabel, foldedFailures.length, pendingKey]), { contextKey: 'composer.attentionRequests', unbound: 'local' });
     const shownFailures = failuresShown ? foldedFailures : NO_ATTENTION_REQUESTS;
     // The request on screen when one shows at a time. Deciding it shows the one that takes its place.
     const [current, setCurrent] = React.useState<Readonly<{ key: string; index: number }> | null>(null);
@@ -250,7 +266,6 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
             )}
         </React.Fragment>
     );
-    const earlierFailuresLabel = t('approvals.earlierFailures', { count: foldedFailures.length });
     const earlierFailuresToggle = failuresShown ? t('common.hide') : t('approvals.earlierFailuresShow');
 
     return (
@@ -306,7 +321,7 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
                             accessibilityRole="button"
                             accessibilityLabel={`${earlierFailuresLabel}, ${earlierFailuresToggle}`}
                             expanded={failuresShown}
-                            onPress={() => setFailuresShownFor(failuresShown ? null : pendingKey)}
+                            onPress={() => { void earlierFailuresCommands.invoke(EARLIER_FAILURES_COMMAND, { shown: !failuresShown }); }}
                             style={({ pressed }: { pressed: boolean }) => [styles.earlierFailures, pressed ? styles.earlierFailuresPressed : null]}
                         >
                             <Icon name="warning-circle" size={14} color={theme.colors.text.secondary} />
