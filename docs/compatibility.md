@@ -2380,8 +2380,17 @@ Presentation metadata remains unchanged. Omitted refresh facts preserve an
 existing kind. Prior records without the field remain readable and unknown
 unless the existing legacy-mode classifier recognizes them; no service or
 modern authentication-mode inference or automatic backfill is introduced.
-Unknown kinds retain health and selection eligibility; only a known kind
-outside the Agent's declared set excludes an account.
+Unknown kinds retain Agent health and selection eligibility. A Provider family
+that requires a kind refuses an unknown profile and returns the same typed
+recovery through the model catalog, launch and Credits. Refresh an OAuth
+sign-in or reconnect a personal token to publish its kind.
+
+Plugin authentication mode descriptors may declare the kind a successful
+callback must report. The shared host dispatcher refuses a connected result
+with a missing or mismatched kind before settlement. Vercel declares its OAuth
+and personal-token modes. The strict 0.3 mode descriptor and Provider error
+envelopes gain optional fields under the existing development-source cut.
+There is no persisted schema change or wire epoch change.
 
 This is a coordinated direct cut in unpublished 0.3: reload the matching
 protocol, plugin SDK, daemon, server and clients together. Older strict metadata

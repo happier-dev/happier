@@ -91,12 +91,18 @@ import type { PluginConnectedAccountAuthenticationModeV2 } from '@happier-dev/pl
 const oauthMode = {
   id: 'oauth',
   kind: 'oauthAuthorizationCode',
+  credentialKind: 'oauth',
   // No callbackUrl: the attempt uses the Home's Connected Account callback.
   scopes: ['example.read'], // Use the upstream service's documented scopes.
   pkce: 'required',
   outcomeReconciliation: 'none',
 } satisfies PluginConnectedAccountAuthenticationModeV2;
 ```
+
+An authentication mode can declare the kind its successful results produce.
+If you set `credentialKind` to `'oauth'` or `'token'`, return the same
+`credentialKind` on each connected result. The host refuses to save a connected
+result that omits the declared kind or returns a different one.
 
 The initiating daemon's existing authentication attempt supplies state and the
 S256 challenge to the runtime's `begin` method. Its `complete` method receives

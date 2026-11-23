@@ -1,3 +1,5 @@
+import { readConnectedServiceCredentialKindRefusal, type ConnectedServiceCredentialKindRecovery } from '@happier-dev/protocol/connect/connectedServiceCredentialKind';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { resolveProviderBindingCompatibilityFromSourceFactsV1 } from '@happier-dev/protocol/providers/binding-compatibility';
@@ -63,6 +65,7 @@ export async function readConnectedAccountCatalogSources(input: Readonly<{
   const service = input.target.kind === 'account' ? input.target.account.service : input.target.service;
   const signal = input.signal ?? new AbortController().signal;
   const sources = [];
+  let credentialKindRecovery: ConnectedServiceCredentialKindRecovery | undefined;
   for (const provider of providers) {
     const declarations = provider.connectedAccountDeclarations;
     if (!declarations) continue;
@@ -79,11 +82,20 @@ export async function readConnectedAccountCatalogSources(input: Readonly<{
       if (!selection || signal.aborted || !await selection.isCurrent(signal)) continue;
       const profile = selection.resolved.observation?.profiles.find(profile =>
         profile.ref.accountId === selection.resolved.account.accountId);
-      if (family.credentialKinds && profile && (!profile.kind || !family.credentialKinds.includes(profile.kind))) continue;
+      const refusal = readConnectedServiceCredentialKindRefusal(profile?.kind, family.credentialKinds, 'provider');
+      if (refusal) {
+        if (refusal !== 'unsupported_kind') credentialKindRecovery ??= refusal;
+        continue;
+      }
       for (const endpoint of endpoints) {
         sources.push({ provider, endpoint, family, selection, requestAuthUses: declarations.requestAuthUses });
       }
     }
+  }
+  if (!sources.length && credentialKindRecovery && !signal.aborted) {
+    throw createProviderErrorV1(CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired, {
+      connectedAccountTarget: input.target, credentialKindRecovery,
+    });
   }
   return sources;
 }
@@ -254,7 +266,9 @@ export async function readConnectedAccountModelCatalog(
     return result.error ? { ...result, error: providerErrorFromRpcFailure(result.error, context) } : result;
   } catch (error) {
     if (error instanceof ProviderOperationAbandonedError || error instanceof Error && error.name === 'AbortError') throw error;
-    throw providerErrorFromRpcFailure(error, context);
+    const failure = providerErrorFromRpcFailure(error, context);
+    if (failure.credentialKindRecovery) return { groups: [], error: failure, isCurrent: async () => false };
+    throw failure;
   }
 }
 

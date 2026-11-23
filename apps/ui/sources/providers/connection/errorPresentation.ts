@@ -7,6 +7,7 @@ import {
     type ProviderRecoveryActionV1,
 } from '@happier-dev/protocol/providers/errors';
 
+import type { ConnectedServiceCredentialKindRecovery } from '@happier-dev/protocol/connect/connectedServiceCredentialKind';
 import type { TranslationKeyNoParams } from '@/text';
 import { canDispatchProviderRecoveryAction, type ProviderRecoveryAvailability } from './recovery';
 
@@ -29,6 +30,12 @@ export type ProviderErrorPresentation = Readonly<{
 }>;
 
 type ProviderErrorCopy = Pick<ProviderErrorPresentation, 'titleKey' | 'descriptionKey'>;
+
+export const PROVIDER_CREDENTIAL_KIND_RECOVERY_DESCRIPTION_KEYS = {
+    refresh_sign_in: 'connectedServices.diagnostics.body.refreshSignInForCredentialKind',
+    reconnect_token: 'connectedServices.diagnostics.body.reconnectTokenForCredentialKind',
+    refresh_sign_in_or_reconnect_token: 'connectedServices.diagnostics.body.refreshSignInOrReconnectTokenForCredentialKind',
+} as const satisfies Record<ConnectedServiceCredentialKindRecovery, TranslationKeyNoParams>;
 
 const PRESENTATIONS = Object.freeze({
     connected_service_credential_reconnect_required: {
@@ -301,6 +308,10 @@ export function presentProviderError(input: unknown): ProviderErrorPresentation 
     };
     return {
         ...PRESENTATIONS[error.code],
+        ...(error.credentialKindRecovery ? {
+            titleKey: 'common.unavailable' as const,
+            descriptionKey: PROVIDER_CREDENTIAL_KIND_RECOVERY_DESCRIPTION_KEYS[error.credentialKindRecovery],
+        } : {}),
         ...(needsManagedSetup ? {
             titleKey: 'settingsProviders.local.configureManaged' as const,
             descriptionKey: 'settingsProviders.local.configureManagedDescription' as const,

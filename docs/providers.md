@@ -280,8 +280,15 @@ Authentication and refresh results may report an actual `credentialKind` fact;
 the shared settlement and refresh writers persist it as credential metadata
 `kind`, and the inventory producer projects that fact. The canonical legacy
 authentication-mode classifier remains a fallback for recognized prior records.
-Other kindless records remain unknown and selectable until a real refresh or
-reconnect supplies the fact. Pickers never infer kinds from a service or mode.
+Other kindless records remain selectable for Agent purposes. Pickers never infer
+kinds from a service or mode.
+
+A Provider family that declares supported kinds requires an observed matching
+kind. Catalog lookup, launch and Credits carry the same refusal for a kindless
+source. For an OAuth sign-in, use Refresh in Credentials. A personal token
+needs reconnect because its health refresh does not replace credential metadata.
+Vercel AI Gateway requires OAuth. Vercel provisioning can use a personal token
+through its separate declared purpose.
 
 Kilo uses its native OpenAI auth-loader hook with Happier's
 qualified request-auth client: each Responses request obtains an access token,

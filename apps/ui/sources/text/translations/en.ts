@@ -5174,6 +5174,9 @@ const enConnectedServices = {
         'The provider stayed on a different account after the switch. Review connected accounts or retry the switch.',
       post_switch_verification_failed:
         'Happier could not verify that the provider adopted the selected account. Review connected accounts or retry the switch.',
+      refreshSignInForCredentialKind: "Refresh this sign-in",
+      reconnectTokenForCredentialKind: "Reconnect this token",
+      refreshSignInOrReconnectTokenForCredentialKind: "Refresh this sign-in or reconnect this token",
       connected_service_credential_reconnect_required:
         'The selected connected account needs to be reconnected before use. Reconnect the profile, then retry.',
       connected_service_credential_refresh_unavailable:

@@ -76,13 +76,13 @@ export const PLUGIN = definePlugin({
     declaration: { title: label('account'), ui: { category: 'cloud-machines' }, capabilities: ['usage'], authentication: {
       account: { artifactId: 'connected-account-authentication', exportName: 'activate' }, defaultModeId: 'oauth', modes: [{
       // No callbackUrl: the attempt uses the Home's Connected Account relay. The Home advertises the public client.
-      id: 'oauth', kind: 'oauthAuthorizationCode', title: label('signIn'), scopes: ['openid', 'email', 'profile', 'offline_access'], pkce: 'required',
+      id: 'oauth', kind: 'oauthAuthorizationCode', credentialKind: 'oauth', title: label('signIn'), scopes: ['openid', 'email', 'profile', 'offline_access'], pkce: 'required',
       outcomeReconciliation: 'none', postAuthenticationFieldIds: ['teamId', 'projectId'],
       configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [
         { ...scopeFields[0], description: label('signInTeamIdDescription') }, scopeFields[1],
       ] },
     }, {
-      id: 'token', title: label('token'), kind: 'manual', outcomeReconciliation: 'none', credentialOrigin: 'authentication',
+      id: 'token', title: label('token'), kind: 'manual', credentialKind: 'token', outcomeReconciliation: 'none', credentialOrigin: 'authentication',
       setup: { url: 'https://vercel.com/account/tokens', createKeyTitle: 'Create a Vercel access token',
         checklist: ['Create an access token in [Vercel account settings] and give it a name.', 'Choose the team you will deploy to. Select All Projects to create projects, or select an existing project to limit the token to that project. Choose an expiration and create the token.', 'Copy the token and paste it here, then connect the account.'] },
       credentialFieldKeys: { token: 'token' },

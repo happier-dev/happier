@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { logProviderUnexpectedFailure } from '@/providers/diagnostics';
 import { isConnectedAccountSourceReconnectRequiredError, preserveConnectedAccountSourceHealthFailure } from '@/daemon/connectedServices/purposeBindings/sourceHealth';
 import { providerErrorFromRpcFailure } from '@happier-dev/protocol/providers/errors';
+import { readConnectedServiceCredentialKindRefusal } from '@happier-dev/protocol/connect/connectedServiceCredentialKind';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 
 import { createProviderErrorV1, ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
@@ -725,8 +726,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
                 }
                 const profiles = (await awaitWithinProviderOperation(inventory, operationLifetime)).filter(profile =>
                   profile.status === 'connected' && profile.configurationReady
-                  && (!declaration.credentialKinds || profile.kind !== undefined && profile.kind !== null
-                    && declaration.credentialKinds.includes(profile.kind)));
+                  && !readConnectedServiceCredentialKindRefusal(profile.kind, declaration.credentialKinds, 'provider'));
                 if (profiles.length === 1) {
                   sources.push({ provider, sessionPurpose: { consumer: provider.identity, purpose: declaration.purpose },
                     target: { kind: 'account', account: profiles[0]!.ref } });

@@ -1,5 +1,5 @@
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-key';
-import { createProviderErrorV1, type ProviderErrorCodeV1 } from '@happier-dev/protocol/providers/errors';
+import { createProviderErrorV1, ProviderErrorV1Schema, type ProviderErrorCodeV1 } from '@happier-dev/protocol/providers/errors';
 import type { DaemonProviderUsageRefreshResponseV1, ProviderConnectedAccountUsageSourceV1 } from '@happier-dev/protocol/rpc/providers';
 
 import type { ProviderProbeOperationScope } from '@/providers/probe/authorization';
@@ -118,6 +118,8 @@ export async function readConnectedAccountProviderUsage(input: Readonly<{
   } catch (error) {
     if (error instanceof ProviderProbeCancelledError
       || (error instanceof ProviderOperationAbandonedError && error.reason === 'cancelled')) throw new ProviderProbeCancelledError();
+    const refusal = ProviderErrorV1Schema.safeParse(error);
+    if (refusal.success) return { status: 'error', error: { ...identity, ...refusal.data } };
     return unavailable(error instanceof ProviderOperationAbandonedError ? 'provider_endpoint_unavailable' : 'provider_authorization_changed', error);
   }
 }

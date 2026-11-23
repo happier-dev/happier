@@ -1,3 +1,4 @@
+import { readConnectedServiceCredentialKindRefusal } from '@happier-dev/protocol/connect/connectedServiceCredentialKind';
 import { resolveConnectedServiceSessionSelection } from '@happier-dev/agents';
 import type { AccountProfileResponse, ActionExecutorDeps, ConnectedServiceBindingsV2 } from '@happier-dev/protocol';
 import type { ScmDiffSummaryCatalogUnavailableTargetV1 } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
@@ -51,7 +52,7 @@ export async function withSessionLaunchCredentialReadiness<T>(input: Parameters<
                 const serviceId = buildQualifiedPluginContributionKey(serviceRef);
                 const now = Date.now();
                 const profileOptions = accounts.filter(profile => buildQualifiedPluginContributionKey(profile.ref.service) === serviceId
-                    && (!scope.credentialKinds || scope.credentialKinds.includes(profile.kind))
+                    && !readConnectedServiceCredentialKindRefusal(profile.kind, scope.credentialKinds, 'agent')
                     && isQualifiedConnectedAccountProfileUsableV4({ profile, authentication: service.authentication, now }))
                     .map(profile => ({ profileId: profile.ref.accountId, status: profile.status }));
                 const selection = resolveConnectedServiceSessionSelection({ serviceId, binding: { source: 'connected' },

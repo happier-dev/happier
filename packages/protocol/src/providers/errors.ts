@@ -4,6 +4,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { ProviderConnectionIdSchema, ProviderMachineIdSchema } from './ids.js';
 import { ProfileRecordIdV1Schema } from '../profiles/v2/profileId.js';
 import { isMachineRpcTimeoutError, MACHINE_RPC_TIMEOUT_ERROR_CODE, readRpcErrorCode, RPC_ERROR_CODES } from '../rpc/errors.js';
+import { ConnectedServiceCredentialKindRecoverySchema, type ConnectedServiceCredentialKindRecovery } from '../connect/connectedServiceCredentialKind.js';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '../connect/connectedServiceUxDiagnostics.js';
 import { QualifiedConnectedAccountPurposeBindingTargetV1Schema, type QualifiedConnectedAccountPurposeBindingTargetV1 } from '../connect/connectedAccountPurposeBindings.js';
 import { ActionFailureCauseV1Schema, parseActionExecuteFailure, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '../actions/actionExecutionResult.js';
@@ -124,6 +125,7 @@ export const ProviderErrorV1Schema = lazyZodSchema(() => z.strictObject({
   reason: z.optional(ProviderConnectionInvalidReasonV1Schema),
   /** The Saved Secret owner's admission reason behind a credential refusal, carried unchanged. */
   savedSecretReason: z.optional(SavedSecretOperationAdmissionFailureReasonV1Schema),
+  credentialKindRecovery: z.optional(ConnectedServiceCredentialKindRecoverySchema),
   action: ProviderRecoveryActionV1Schema,
 }).check(z.superRefine((value, ctx) => {
   const [expectedRetryable, defaultAction] = ERROR_DEFAULTS[value.code];
@@ -141,6 +143,10 @@ export const ProviderErrorV1Schema = lazyZodSchema(() => z.strictObject({
   }
   if (value.code !== 'provider_connection_invalid' && value.reason !== undefined) {
     ctx.addIssue({ code: 'custom', path: ['reason'], message: 'Configuration reason is invalid-connection only' });
+  }
+  if (value.credentialKindRecovery !== undefined
+    && value.code !== CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired) {
+    ctx.addIssue({ code: 'custom', path: ['credentialKindRecovery'], message: 'Credential-kind recovery is reconnect-refusal only' });
   }
   if (value.savedSecretReason !== undefined && value.code !== 'provider_secret_missing'
     && value.code !== 'provider_secret_unavailable' && value.code !== 'provider_binding_changed') {
@@ -161,6 +167,7 @@ export function createProviderErrorV1(
     retryAfterMs?: number;
     reason?: ProviderConnectionInvalidReasonV1;
     savedSecretReason?: SavedSecretOperationAdmissionFailureReasonV1;
+    credentialKindRecovery?: ConnectedServiceCredentialKindRecovery;
     modelLoadAvailable?: boolean;
   }> = {},
   cause?: unknown,

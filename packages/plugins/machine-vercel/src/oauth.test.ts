@@ -248,9 +248,9 @@ describe('Sign in with Vercel (public PKCE client on the daemon)', () => {
         (d) => d.id === service.localId,
       );
     expect(descriptor?.authentication?.defaultModeId).toBe('oauth');
-    expect(descriptor?.authentication?.modes.map((mode) => mode.id)).toEqual([
-      'oauth',
-      'token',
+    expect(descriptor?.authentication?.modes.map(({ id, credentialKind }) => ({ id, credentialKind }))).toEqual([
+      { id: 'oauth', credentialKind: 'oauth' },
+      { id: 'token', credentialKind: 'token' },
     ]);
     const mode = descriptor?.authentication?.modes.find(
       (item) => item.id === 'oauth',

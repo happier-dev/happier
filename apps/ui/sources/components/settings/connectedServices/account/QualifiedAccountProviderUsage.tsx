@@ -7,6 +7,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { PROVIDER_CREDENTIAL_KIND_RECOVERY_DESCRIPTION_KEYS } from '@/providers/connection/errorPresentation';
 import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { readConnectedAccountProviderUsageSources } from '@/providers/hooks/useProviderConnectionUsageForSource';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -34,16 +35,20 @@ export function QualifiedAccountProviderUsage(props: Readonly<{
         context: projection ? providerDeclarationContext(props.machineId, projection) : { kind: 'account' },
     }), [props.profile.ref, props.profile.kind, props.machineId, projection]);
     if (!active || choices.length === 0) return null;
-    const selected = choices.find(choice => choice.observationKey === open);
+    const selected = choices.find(choice => choice.observationKey === open && !choice.credentialKindRecovery);
     const unavailable = declarations.phase === 'error' || declarations.phase === 'unsupported';
     return (
         <>
             <ItemGroup>
                 {choices.map(choice => (
                     <Item key={choice.observationKey} testID="connected-account-provider-usage"
-                        title={choice.providerName} subtitle={t('settings.usage')}
-                        accessibilityState={{ expanded: choice.observationKey === open }}
-                        onPress={() => setOpen(current => current === choice.observationKey ? null : choice.observationKey)}
+                        title={choice.providerName}
+                        subtitle={choice.credentialKindRecovery
+                            ? t(PROVIDER_CREDENTIAL_KIND_RECOVERY_DESCRIPTION_KEYS[choice.credentialKindRecovery]) : t('settings.usage')}
+                        disabled={Boolean(choice.credentialKindRecovery)}
+                        accessibilityState={{ expanded: selected?.observationKey === choice.observationKey }}
+                        onPress={choice.credentialKindRecovery ? undefined
+                            : () => setOpen(current => current === choice.observationKey ? null : choice.observationKey)}
                     />
                 ))}
             </ItemGroup>

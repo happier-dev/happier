@@ -18,7 +18,7 @@ import {
 } from '../plugins/contributions/publicTypes.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 import { ProviderAccountUsageRecordKeyV1Schema } from './providerAccountUsagePrimitives.js';
-import type { ConnectedServiceCredentialKind } from './connectedServiceCredentialKind.js';
+import { ConnectedServiceCredentialKindSchema, type ConnectedServiceCredentialKind } from './connectedServiceCredentialKind.js';
 import { QualifiedConnectedAccountCredentialKeyV1Schema } from './qualifiedConnectedAccountCredentialKeyV1.js';
 
 const PluginConnectedAccountAuthenticationFieldV2Schema =
@@ -265,6 +265,7 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
     z.strictObject({
       id: asProtocolZod(PluginContributionLocalIdSchema),
       kind: z.literal('manual'),
+      credentialKind: z.optional(ConnectedServiceCredentialKindSchema),
       browserReachability: z.optional(browserReachabilitySchema),
       title: z.optional(PluginLocalizedStringV2Schema),
       /** Presentation fact only: stored token material and absent usage never establish API-key mode. */
@@ -322,6 +323,7 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
     z.strictObject({
       id: asProtocolZod(PluginContributionLocalIdSchema),
       kind: z.literal('oauthAuthorizationCode'),
+      credentialKind: z.optional(ConnectedServiceCredentialKindSchema),
       browserReachability: z.optional(browserReachabilitySchema),
       title: z.optional(PluginLocalizedStringV2Schema),
       /** Omit to use the Home's Connected Account relay; declare only a provider-fixed callback. */
@@ -349,6 +351,7 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
     z.strictObject({
       id: asProtocolZod(PluginContributionLocalIdSchema),
       kind: z.literal('oauthDeviceCode'),
+      credentialKind: z.optional(ConnectedServiceCredentialKindSchema),
       browserReachability: z.optional(browserReachabilitySchema),
       title: z.optional(PluginLocalizedStringV2Schema),
       scopes: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),

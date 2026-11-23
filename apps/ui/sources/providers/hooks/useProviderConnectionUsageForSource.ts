@@ -3,6 +3,7 @@ import { resolveSavedSecretSlotBindingIdV1 } from '@happier-dev/protocol/provide
 import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { readConnectedServiceCredentialKindRefusal } from '@happier-dev/protocol/connect/connectedServiceCredentialKind';
 import { resolveProviderConnectedAccountDeclarationsV1 } from '@happier-dev/protocol/providers/contributions';
 import type { ProviderConnectedAccountUsageSourceV1 } from '@happier-dev/protocol/rpc/providers';
 import { useProviderCatalogSelection } from '@/sync/store/useProviderCatalog';
@@ -38,12 +39,13 @@ export function readConnectedAccountProviderUsageSources(input: Readonly<{
             if (!purposeId || input.purpose && purposeId !== input.purpose.purpose) return [];
             const purpose = connectedAccounts.find(candidate =>
                 candidate.purpose === purposeId
-                && buildQualifiedPluginContributionKey(candidate.service) === serviceKey
-                && (!input.credentialKind || !candidate.credentialKinds || candidate.credentialKinds.includes(input.credentialKind)));
+                && buildQualifiedPluginContributionKey(candidate.service) === serviceKey);
             if (!purpose) return [];
+            const credentialKindRecovery = readConnectedServiceCredentialKindRefusal(input.credentialKind, purpose.credentialKinds, 'provider');
+            if (credentialKindRecovery === 'unsupported_kind') return [];
             const selected = { account: input.account, purpose: { consumer, purpose: purposeId },
                 endpointTemplateId: source.endpointTemplateId, usageSourceId: source.id };
-            return [{ selected, sources: [source], providerName: declaration.definition.name,
+            return [{ selected, sources: [source], providerName: declaration.definition.name, credentialKindRecovery,
                 observationKey: JSON.stringify(['connectedAccount', selected]),
                 declarationBasis: stableJsonStringify([source, purpose,
                     declaration.definition.endpointTemplates.find(endpoint => endpoint.id === source.endpointTemplateId),

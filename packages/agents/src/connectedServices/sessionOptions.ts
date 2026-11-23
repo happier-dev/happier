@@ -2,7 +2,7 @@ import { isConnectedServiceCredentialHealthStatusUsable, normalizeConnectedServi
 import type { ConnectedServiceCredentialHealthStatusV1 } from '@happier-dev/protocol';
 import type { ConnectedServiceQuotaLimitSelectionV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import type { ConnectedServiceCredentialKind } from '@happier-dev/protocol/connect/connectedServiceCredentialKind';
+import { readConnectedServiceCredentialKindRefusal, type ConnectedServiceCredentialKind } from '@happier-dev/protocol/connect/connectedServiceCredentialKind';
 
 import type { AgentCore, ConnectedServiceId, ConnectedServiceKind } from '../types.js';
 
@@ -49,8 +49,10 @@ export function applyProjectedCredentialKindRestrictions(params: Readonly<{
   }
   return Object.fromEntries(Object.entries(params.optionsByServiceId).map(([key, options]) => {
     const allowed = kindsByService.get(key);
-    return [key, options.map(option => allowed && option.kind && !allowed.has(option.kind)
-      ? { ...option, status: 'unsupported_kind' as const, requiredCredentialKinds: [...allowed] }
+    if (!allowed) return [key, [...options]];
+    const requiredCredentialKinds = [...allowed];
+    return [key, options.map(option => readConnectedServiceCredentialKindRefusal(option.kind, requiredCredentialKinds, 'agent')
+      ? { ...option, status: 'unsupported_kind' as const, requiredCredentialKinds }
       : option)];
   }));
 }
