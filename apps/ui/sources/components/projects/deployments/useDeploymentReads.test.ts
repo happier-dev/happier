@@ -114,6 +114,50 @@ describe('deployment React demand', () => {
                 retainedPreviousCount: null, retainedRollbackTarget: null });
         } finally { await hook.unmount(); controller.retire(); }
     });
+    it('projects loaded built-in address facts through Domains without another receipt or provider read', async () => {
+        const boundary = createBoundary();
+        const base = createDeploymentReceiptDetailV1();
+        const link = boundary.detail.targetLinks[0]!.targetLink;
+        const targetLink = { ...link, source: { kind: 'plugin' as const,
+            contribution: { pluginId: 'acme.deploy', localId: 'deploy' } }, targetKind: 'platform', machines: [], members: [] };
+        let builtInUrls: string[] = ['https://app.vercel.app'];
+        let receiptReads = 0;
+        let domainReads = 0;
+        const controller = createDeploymentReadControllerV1({ scope, transport: { ...boundary.transport,
+            readEnvironment: async () => ({ ok: true, value: { ...boundary.detail, targetLinks: [{ targetLink }] } }),
+            readReceipt: async () => { receiptReads++; return { ok: true, value: { ...base, content: {
+                sourceIntent: base.content.sourceIntent, sourceMethod: 'gitIntegration', machines: [], images: [], machineResults: [], steps: [],
+                platform: { targetLinkRevision: targetLink.revision,
+                    credentialPrincipal: { kind: 'account', accountId: 'account-owner',
+                        purpose: { consumer: { pluginId: 'acme.deploy', localId: 'deploy' }, purpose: 'action-account' },
+                        target: { kind: 'account', account: { service: { pluginId: 'acme.deploy', localId: 'account' }, accountId: 'provider' } } },
+                    providerIdentity: { providerAccountId: 'provider', providerResourceId: 'project', providerEnvironment: 'production' },
+                    providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, observation: { v: 1, state: 'succeeded', observedAtMs: 2000,
+                        urls: ['https://app-exact.vercel.app'], builtInUrls } },
+            } } }; },
+            listDomains: async () => { domainReads++; return { ok: true, value: { items: [], nextCursor: null } }; },
+        } });
+        const receipt = controller.acquireReceipt(boundary.row.id, base.deployment.id, shown);
+        const hook = await renderHook(() => {
+            const environment = useDeploymentEnvironment(controller, boundary.row.id, shown);
+            const domains = useDeploymentEnvironmentDomains(controller, boundary.row.id, shown);
+            return { environment, domains };
+        });
+        try {
+            await flushHookEffects();
+            expect(hook.getCurrent().environment.snapshot.value).toHaveProperty('builtInUrls', ['https://app.vercel.app']);
+            expect(hook.getCurrent().domains.result).toMatchObject({ status: 'empty', items: [] });
+            builtInUrls = ['https://app.my-account.workers.dev'];
+            await act(async () => { await receipt.refresh(); }); await flushHookEffects();
+            expect(hook.getCurrent().environment.snapshot.value?.builtInUrls).toEqual(builtInUrls);
+            builtInUrls = [];
+            await act(async () => { await receipt.refresh(); }); await flushHookEffects();
+            expect(hook.getCurrent().environment.snapshot.value?.builtInUrls).toEqual([]);
+            expect(domainReads).toBe(1);
+            expect(receiptReads).toBe(3);
+            expect(boundary.reads).toBe(0);
+        } finally { receipt.release(); await hook.unmount(); controller.retire(); }
+    });
     it('joins one retained history with exact previous and serving receipts, keeping pending and failed history unknown', async () => {
         const base = createDeploymentReceiptDetailV1();
         if (base.content.sourceIntent.kind !== 'repository') throw new Error('Expected repository fixture');
