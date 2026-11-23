@@ -251,7 +251,9 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
             const revision = history.getRevision();
             if (actionId === WORKFLOW_AUTHORING_ACTION_ID.draftEdit) {
                 const parsed = WorkflowDraftEditInputV1Schema.safeParse(input);
-                if (!parsed.success) return { status: 'refused', reason: 'invalid_parameters' };
+                if (!parsed.success || parsed.data.triggerEdit !== undefined) {
+                    return { status: 'refused', reason: 'invalid_parameters' };
+                }
                 if (parsed.data.expectedDraftRevision !== revision) return { status: 'refused', reason: 'stale_draft_revision', draftRevision: revision };
                 const before = readSnapshot();
                 const result = applyWorkflowDefinitionEditsV1(before.draft, parsed.data.ops ?? []);

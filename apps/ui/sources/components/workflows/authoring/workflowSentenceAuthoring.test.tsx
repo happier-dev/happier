@@ -130,6 +130,13 @@ it('authors the mounted sentence through Actions with shared history and caller-
     expect(initial.settings.triggers.rows).toHaveLength(1);
     await act(async () => {
         expect(await executor.execute('workflow.authoring.draft.edit', { ...address,
+            expectedDraftRevision: initial.draftRevision,
+            triggerEdit: { kind: 'removeAdded', clientId: initial.settings.triggers.rows[0]!.identity.clientId },
+        }, context)).toMatchObject({ ok: true, result: { status: 'refused', reason: 'invalid_parameters' } });
+    });
+    expect(await read()).toEqual(initial);
+    await act(async () => {
+        expect(await executor.execute('workflow.authoring.draft.edit', { ...address,
             expectedDraftRevision: initial.draftRevision, ops: [{ kind: 'rename', name: 'Agent notice' }],
             settings: { description: 'Authored together', projectTarget: { machineId: 'machine-a', directory: '/other' }, executionTarget: 'detached_run' } }, context))
             .toMatchObject({ ok: true, result: { status: 'applied' } });
