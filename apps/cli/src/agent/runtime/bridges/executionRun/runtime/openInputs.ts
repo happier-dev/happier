@@ -2,6 +2,7 @@ import { AgentSessionConfigurationSnapshotV1Schema } from '@happier-dev/protocol
 import { readAgentDefaultModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
 import { isSessionModelRefSourceBound, PersonalSessionModelRefSchema, type PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import { ConnectedServiceBindingsV2Schema, projectConnectedServiceBindingsForChild } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { qualifiedConnectedAccountPreferenceServiceKey } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
 import { resolveAgentStartBaselineSelectionV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { TeamCredentialProviderModelSelectionV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -13,6 +14,8 @@ import type {
 import { executionRunPermissionIntentV1 as permissionMode } from '@happier-dev/protocol/actions/executionRunActionPermissionMode';
 import { readDeclaredCatalogConnectedAccountServiceIds, resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
+import { readProviderConnectedAccountSessionBindings } from '@/providers/modelManagement/connectedAccountCatalog';
+import type { ProviderContributionRegistryView } from '@/providers/registry';
 import type { ConnectedServiceAppliedParentSelectionUnavailableReason } from '@/daemon/connectedServices/runs/materializeContract';
 import { createExecutionRunCodedError } from '../errors';
 import { projectExecutionRunChildChoiceV1 } from '@happier-dev/protocol/execution/runs/responseSchemas';
@@ -77,21 +80,25 @@ function projectInheritedConnectedServices(
     backendTarget: BackendTargetRefV2Input,
     sameAgent: boolean,
     agentCatalogEntry: Pick<AgentCatalogEntry, 'connectedAccountServiceIds'> | null | undefined,
+    providerServiceIds?: ReadonlySet<string>,
 ): ConnectedServiceBindingsV2 | null {
     if (bindings === null) return null;
-    const parsed = ConnectedServiceBindingsV2Schema.parse(bindings);
+    const parsed = providerServiceIds
+        ? projectConnectedServiceBindingsForChild(bindings)
+        : ConnectedServiceBindingsV2Schema.parse(bindings);
     const declaredServiceIds = sameAgent ? null : agentCatalogEntry === undefined
         ? resolveCatalogAgentConnectedAccountServiceIds(resolveExecutionRunRuntimeBackendId(backendTarget))
         : readDeclaredCatalogConnectedAccountServiceIds(agentCatalogEntry);
     const bindingsByServiceId: ConnectedServiceBindingsV2['bindingsByServiceId'] = {};
     for (const [serviceId, binding] of Object.entries(parsed.bindingsByServiceId)) {
-        if (declaredServiceIds && !declaredServiceIds.includes(serviceId)) {
-            if (binding.source === 'native') continue;
+        if (declaredServiceIds && !declaredServiceIds.includes(serviceId) && !providerServiceIds?.has(serviceId)) {
+            if (providerServiceIds || binding.source === 'native') continue;
             throw childSelectionRefusal('execution_run_child_choice_required',
                 'Choose a connected account or pool supported by the child Agent.');
         }
         bindingsByServiceId[serviceId] = binding;
     }
+    if (providerServiceIds) return { v: 2, bindingsByServiceId };
     const target = readBackendTargetRefV2(backendTarget);
     return resolveAgentStartBaselineSelectionV1({ targetKey: buildBackendTargetKeyV2(target),
         profileId: undefined, connectedServices: undefined,
@@ -102,6 +109,7 @@ function projectInheritedConnectedServices(
 export type ExecutionRunChildSelectionInput = Readonly<{
     backendTarget: BackendTargetRefV2Input;
     agentCatalogEntry?: Pick<AgentCatalogEntry, 'connectedAccountServiceIds'> | null;
+    providerRegistry?: ProviderContributionRegistryView;
     lifecycle: 'attached' | 'independent' | 'retained';
     modelId?: string;
     modelSelection?: PersonalSessionModelRef | null;
@@ -248,11 +256,17 @@ function resolveExecutionRunChildSelectionInput(input: ExecutionRunChildSelectio
     const agentTargetKey = sameAgent && parentModelTargetKey
         ? parentModelTargetKey
         : buildBackendTargetKeyV2(readBackendTargetRefV2(input.backendTarget));
-    // The Provider purpose owns its account route, including on Agents that do
-    // not declare that account as a native sign-in. Launch re-admits the route.
-    const connectedServices = inheritedModel && 'source' in inheritedModel
-        ? parent.connectedServices && projectConnectedServiceBindingsForChild(parent.connectedServices)
-        : projectInheritedConnectedServices(parent.connectedServices, input.backendTarget, sameAgent, input.agentCatalogEntry);
+    // Launch re-admits the Provider purpose independently of the Agent's sign-in declarations.
+    const providerServiceIds = inheritedModel && 'source' in inheritedModel ? new Set(
+        !sameAgent && input.providerRegistry ? readProviderConnectedAccountSessionBindings({
+            registry: input.providerRegistry, connectedServices: parent.connectedServices, purpose: inheritedModel.purpose,
+        }).map(({ binding: { target } }) => qualifiedConnectedAccountPreferenceServiceKey(
+            target.kind === 'account' ? target.account.service : target.service,
+        )) : [],
+    ) : undefined;
+    const connectedServices = projectInheritedConnectedServices(
+        parent.connectedServices, input.backendTarget, sameAgent, input.agentCatalogEntry, providerServiceIds,
+    );
     return {
         ...(resolvedModelId ? { modelId: resolvedModelId } : {}),
         ...(inheritedTeam ? { teamCredentialModel: { ...inheritedTeam, agentTargetKey, modelId: resolvedModelId ?? inheritedTeam.modelId } } : {}),

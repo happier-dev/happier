@@ -295,13 +295,21 @@ it.each(gatewaySigninScenarios)('launches the selected signed-in Gateway model f
 
       const streamInheritedRun = async () => {
         if (!handoff?.selection) throw new Error('Expected an applied Account model');
+        const parentTarget = { kind: 'backend', backendId: 'codex' } as const;
         const inherited = resolveExecutionRunChildSelection({
-          backendTarget, lifecycle: 'attached', parent: {
-            status: 'applied', backendTarget, modelId: handoff.selection.modelId,
-            modelSelection: handoff.selection, connectedServices,
+          backendTarget, lifecycle: 'attached', providerRegistry: fixture.registry.contributes,
+          agentCatalogEntry: fixture.registry.contributes.agentDefinitionsById.get(agentId)?.catalogEntry ?? null,
+          parent: {
+            status: 'applied', backendTarget: parentTarget, modelId: handoff.selection.modelId,
+            modelSelection: { ...handoff.selection, agentTargetKey: buildBackendTargetKeyV2(parentTarget) },
+            connectedServices: { v: 2, bindingsByServiceId: {
+              ...connectedServices.bindingsByServiceId,
+              'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'parent-only' },
+            } },
           },
         });
         expect(inherited.modelSelection).toEqual(handoff.selection);
+        expect(inherited.connectedServices).toEqual(connectedServices);
         const run = await prepareExecutionRunProviderLaunch({
           selection: inherited.modelSelection, backendTarget, machineId, agentId, runId: 'gateway-finite-run',
           connectedServices: inherited.connectedServices, featureEnabled: true, happyHomeDir: fixture.happyHomeDir,

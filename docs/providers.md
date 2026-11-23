@@ -1236,7 +1236,9 @@ identity, including a pool rather than its currently active member. It never
 copies credentials, activation handles or capabilities. The child rematerializes
 that choice under current admission. A qualified Connected Account Provider
 model carries its applied purpose, endpoint template and account or pool choice
-into that same admission. For Vercel AI Gateway, the broker uses the configured
+into that same admission. When that model runs on a different Agent, the child
+also inherits bindings for services declared by the child Agent. For Vercel AI
+Gateway, the broker uses the configured
 team from the account it opens for the child. A directly shared Team key
 requires a child credential choice. An explicit Account-default Run starts
 without reading the parent's selection.

@@ -284,7 +284,7 @@ type StartExecutionRunArgs = Readonly<{
   contributions?: Pick<
     ResolvedContributionRegistry,
     'agentDefinitionsById'
-  >;
+  > & Partial<Pick<ResolvedContributionRegistry, 'providersByContributionKey'>>;
   parentProvider: ACPProvider;
   sendAcp: SendAcp;
   streamedTranscriptSession: StreamedTranscriptWriterSession | null;
@@ -543,10 +543,13 @@ async function startAdmittedExecutionRunInWorkspace(
     const voiceInput = originalParams.intent === 'voice_agent'
       ? ExecutionRunVoiceAgentIntentInputV1Schema.parse(originalParams.intentInput ?? {}) : null;
     const primaryModelId = voiceInput ? originalParams.modelId ?? originalParams.chatModelId : originalParams.modelId;
+    const providerRegistry = args.contributions?.providersByContributionKey
+      ? { providersByContributionKey: args.contributions.providersByContributionKey } : undefined;
     const voiceCommitSelectionInput = voiceInput ? {
       backendTarget: originalParams.backendTarget,
       ...(args.contributions ? { agentCatalogEntry: args.contributions.agentDefinitionsById
         .get(resolveExecutionRunRuntimeBackendId(originalParams.backendTarget))?.catalogEntry ?? null } : {}),
+      providerRegistry,
       lifecycle,
       modelId: originalParams.commitModelId === 'default' ? undefined : originalParams.commitModelId,
       modelSelection: originalParams.commitModelId === 'default' ? null : voiceInput.commitModelSelection,
@@ -574,6 +577,7 @@ async function startAdmittedExecutionRunInWorkspace(
       backendTarget: originalParams.backendTarget,
       ...(args.contributions ? { agentCatalogEntry: args.contributions.agentDefinitionsById
         .get(resolveExecutionRunRuntimeBackendId(originalParams.backendTarget))?.catalogEntry ?? null } : {}),
+      providerRegistry,
       lifecycle,
       modelId: primaryModelId,
       modelSelection: originalParams.modelSelection,

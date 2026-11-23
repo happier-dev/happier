@@ -2472,8 +2472,11 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
           const defaultModelId = params.modelId ?? input.modelSelector?.modelId;
           summarySelection = resolveExecutionRunChildSelection({
             backendTarget: params.backendTarget, lifecycle: 'attached', parent,
-            ...(resolution.engineRegistry ? { agentCatalogEntry: resolution.engineRegistry.contributions.agentDefinitionsById
-              .get(resolveExecutionRunRuntimeBackendId(params.backendTarget))?.catalogEntry ?? null } : {}),
+            ...(resolution.engineRegistry ? {
+              agentCatalogEntry: resolution.engineRegistry.contributions.agentDefinitionsById
+                .get(resolveExecutionRunRuntimeBackendId(params.backendTarget))?.catalogEntry ?? null,
+              providerRegistry: resolution.engineRegistry.contributions,
+            } : {}),
             modelId: params.modelId, modelSelection: params.modelSelection,
             teamCredentialModel: params.teamCredentialModel, connectedServices: params.connectedServices,
             connectedServicesDefaultServiceIds: params.connectedServicesDefaultServiceIds,
