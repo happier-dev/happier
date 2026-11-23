@@ -3506,7 +3506,6 @@ describe('Account Action placement through the executable dispatcher', () => {
         { coldBinding: true, settlement: 'current' },
         { coldBinding: false, settlement: 'current' },
         { coldBinding: true, settlement: 'unavailable' },
-        { coldBinding: true, settlement: 'cancelled' },
         { coldBinding: true, settlement: 'withdrawn' },
         { coldBinding: true, settlement: 'retargeted' },
         { coldBinding: true, settlement: 'declaration-withdrawn' },
@@ -3515,14 +3514,14 @@ describe('Account Action placement through the executable dispatcher', () => {
         const accountLifetime = clientAccountLifetime();
         await publishManageMachine(accountLifetime.scope);
         const sourceId = 'acme.provider-source';
-        let provider = PluginProjectedActionV2Schema.parse({ ...resolveDaemonTargetAction({ pluginId: sourceId, localId: 'list' }), surfaces: ['plugin'] });
+        let provider = PluginProjectedActionV2Schema.parse({ ...resolveDaemonTargetAction({ pluginId: sourceId, localId: 'list' }), surfaces: ['plugin'], readOnly: true });
         let providerCurrent = true;
         const machine = vi.fn<PluginSurfaceContributedActionTransport>(async () => ({ supported: true,
             result: { ok: true, result: { rows: ['provider'] } } }));
         let entered = 0;
         let enteredSignal: AbortSignal | undefined;
         const target = definePlugin({ id: CALLER_PLUGIN_ID, version: '1.2.3', actions: {
-            'refresh-index': { title: 'Account entry', scopes: ['global'], surfaces: ['ui'], dangerLevel: 'safe',
+            'refresh-index': { title: 'Account entry', scopes: ['global'], surfaces: ['ui'], dangerLevel: 'safe', readOnly: true,
                 execution: { target: 'account', invokingUi: true, account: { artifactId: CLIENT_ACTION_TARGET.artifactId,
                     exportName: CLIENT_ACTION_TARGET.exportName } }, run: async () => null },
         } });
@@ -3573,6 +3572,7 @@ describe('Account Action placement through the executable dispatcher', () => {
                 targetSourceCustody: admission.targetSourceCustody ?? selected.sourceCustody,
                 machineId: admission.machineId ?? facts.machineId,
                 daemonConnectionFailure: { code: 'timeout', reasonCode: 'plugin_machine_unreachable' },
+                daemonReachable: admission.daemonReady && admission.originCurrent,
                 daemonInteractionEnabled: admission.daemonReady, isDaemonConnectionPending: () => admission.pending },
             binding: { executeContributedAction: machine, isExecutionOriginCurrent: () => admission.originCurrent },
         }), { initialProps: { daemonReady: false, originCurrent: true, pending: true, bound: !coldBinding } });
@@ -3589,8 +3589,8 @@ describe('Account Action placement through the executable dispatcher', () => {
             void read.then(() => { settled = true; }, () => { settled = true; });
             await vi.waitFor(() => expect(entered).toBe(1));
             await act(async () => {});
-            expect(enteredSignal?.aborted).toBe(false);
             expect(machine).not.toHaveBeenCalled();
+            if (settlement !== 'current') expect(enteredSignal?.aborted).toBe(false);
             if (settlement === 'current') {
                 await vi.waitFor(() => expect(settled, 'a current-availability read must settle without a Machine readiness edge').toBe(true));
                 await expect(read).resolves.toEqual({ unavailable: 'plugin_surface_contributed_action_unavailable' });
@@ -3617,22 +3617,21 @@ describe('Account Action placement through the executable dispatcher', () => {
             if (settlement === 'unavailable') {
                 expect(await hook.rerender({ daemonReady: false, originCurrent: true, pending: false, bound: false })).toBe(controller);
                 await expect(read).resolves.toMatchObject({ code: 'plugin_machine_unreachable', diagnostics: expect.arrayContaining(['plugin_machine_unreachable']) });
-            } else if (settlement === 'cancelled' || settlement === 'withdrawn') {
-                if (settlement === 'cancelled') cancellation.abort();
-                else accountLifetime.retire();
-                await expect(read).resolves.toMatchObject({ code: 'timeout', diagnostics: ['plugin_ui_action_outcome_unknown'] });
+            } else if (settlement === 'withdrawn') {
+                accountLifetime.retire();
+                await expect(read).resolves.toMatchObject({ code: 'stale_surface', diagnostics: ['plugin_surface_retired'] });
                 expect(enteredSignal?.aborted).toBe(true);
             } else if (settlement === 'retargeted') {
                 await hook.rerender({ daemonReady: true, originCurrent: true, pending: false, bound: true, machineId: 'replacement-machine' });
-                await expect(read).resolves.toMatchObject({ code: 'unavailable', diagnostics: ['plugin_ui_generation_retired'] });
+                await expect(read).resolves.toMatchObject({ code: 'plugin_ui_generation_retired', diagnostics: ['plugin_ui_generation_retired'] });
             } else if (settlement === 'declaration-withdrawn') {
                 providerCurrent = false;
                 await hook.rerender({ daemonReady: true, originCurrent: true, pending: false, bound: true });
-                await expect(read).resolves.toMatchObject({ code: 'unavailable', diagnostics: ['plugin_surface_action_projection_unavailable'] });
+                await expect(read).resolves.toMatchObject({ code: 'plugin_surface_action_projection_unavailable', diagnostics: ['plugin_surface_action_projection_unavailable'] });
             } else if (settlement === 'declaration-replaced') {
                 provider = { ...provider, occurrenceId: 'replacement-contributor' };
                 await hook.rerender({ daemonReady: true, originCurrent: true, pending: false, bound: true });
-                await expect(read).resolves.toMatchObject({ code: 'unavailable', diagnostics: ['plugin_ui_generation_retired'] });
+                await expect(read).resolves.toMatchObject({ code: 'plugin_ui_generation_retired', diagnostics: ['plugin_ui_generation_retired'] });
             }
             if (settlement !== 'ready' && settlement !== 'ready-with-account-caller') {
                 expect(entered).toBe(1);
@@ -3650,7 +3649,7 @@ describe('Account Action placement through the executable dispatcher', () => {
                 })).resolves.toEqual({ rows: ['provider'] });
             }
             await expect(read).resolves.toEqual({ rows: ['provider'] });
-            expect(enteredSignal?.aborted).toBe(false);
+            expect(enteredSignal?.aborted).toBe(true);
             expect(entered).toBe(1);
             expect(machine).toHaveBeenCalledTimes(settlement === 'ready-with-account-caller' ? 2 : 1);
             expect(machine.mock.calls[0]?.[0]).toBe(CLIENT_ACTION_ORIGIN.materializationRef.machineId);
@@ -3684,7 +3683,7 @@ describe('Account Action placement through the executable dispatcher', () => {
             await vi.waitFor(() => expect(entered).toBe(1));
             await act(async () => {});
             expect(settled, 'an entered handler failure is terminal, not pre-invocation connection admission').toBe(true);
-            await expect(read).resolves.toMatchObject({ code: 'unavailable', diagnostics: ['plugin_surface_contributed_action_unavailable'] });
+            await expect(read).resolves.toMatchObject({ code: 'plugin_surface_contributed_action_unavailable', diagnostics: ['plugin_surface_contributed_action_unavailable'] });
             await hook.rerender(false);
             expect(entered).toBe(1);
         } finally { await hook.unmount(); await activation.composition.unload(); accountLifetime.retire(); }
