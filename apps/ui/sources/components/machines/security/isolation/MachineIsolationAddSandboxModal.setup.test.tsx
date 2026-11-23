@@ -111,8 +111,12 @@ it('sets a kind up through Machine Setup: Continue plans its prerequisite source
     installationId: controller.installationId,
     activeAt: Date.now(),
     kind: 'persistent',
-    // Your own Machine: only Manage may plan its setup.
-    isShared: false,
+    access: {
+      custodian: { accountId: 'owner', displayName: 'Owner' },
+      role: 'manage',
+      resourceMode: 'plain',
+      accessState: 'ready',
+    },
   });
   await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
     { ...machine, metadata: { ...machine.metadata!, platform: 'linux' } },
