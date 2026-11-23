@@ -12,7 +12,11 @@ import { inferPermissionIntentFromClaudeArgs } from './utils/inferPermissionInte
 import { discardQueuedAndPendingForLocalSwitch } from '@/agent/localControl/discardQueuedAndPendingForLocalSwitch';
 import { discardPendingBeforeSwitchToLocal } from '@/agent/localControl/discardPendingBeforeSwitchToLocal';
 import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTarget';
-import { resolvePermissionIntentFromMetadataSnapshot, resolveSessionModeOverrideFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
+import {
+    resolveModelOverrideFromMetadataSnapshot,
+    resolvePermissionIntentFromMetadataSnapshot,
+    resolveSessionModeOverrideFromMetadataSnapshot,
+} from '@/agent/runtime/permission/permissionModeFromMetadata';
 import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSessionInfoBeforeSwitch';
 import { configuration } from '@/configuration';
 import { resolveClaudeConfigDirOverride } from './utils/resolveClaudeConfigDirOverride';
@@ -81,6 +85,22 @@ function upsertClaudePermissionModeArgs(
     }
 
     return filtered.length > 0 ? filtered : undefined;
+}
+
+function upsertClaudeModelArgs(args: string[] | undefined, modelId: string): string[] {
+    const filtered: string[] = [];
+    const input = args ?? [];
+    for (let i = 0; i < input.length; i++) {
+        const arg = input[i];
+        if (arg === '--model') {
+            i++;
+            continue;
+        }
+        if (arg.startsWith('--model=')) continue;
+        filtered.push(arg);
+    }
+    filtered.push('--model', modelId);
+    return filtered;
 }
 
 export type LauncherResult = { type: 'switch' } | { type: 'exit', code: number };
@@ -489,6 +509,12 @@ export async function claudeLocalLauncher(
                     permissionMode: session.lastPermissionMode,
                     agentModeId: resolvedAgentMode ? resolvedAgentMode.modeId : null,
                 });
+                // Same for the model: the session model (seeded at startup, then changed from the app)
+                // lives in metadata, not in the launch args.
+                const resolvedModel = resolveModelOverrideFromMetadataSnapshot({ metadata: metadataSnapshot });
+                if (resolvedModel) {
+                    session.claudeArgs = upsertClaudeModelArgs(session.claudeArgs, resolvedModel.modelId);
+                }
 
                 const { mcpConfigJson: baseMcpConfigJson } = await session.getOrCreateHappierMcpBridge();
                 try {

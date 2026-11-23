@@ -35,7 +35,11 @@ vi.mock('node:child_process', async importOriginal => {
   return { ...actual, spawn: vi.fn(actual.spawn) };
 });
 
-type MetadataSnapshot = { permissionMode?: PermissionMode; permissionModeUpdatedAt?: number };
+type MetadataSnapshot = {
+  permissionMode?: PermissionMode;
+  permissionModeUpdatedAt?: number;
+  modelOverrideV1?: { v: 1; updatedAt: number; modelId: string };
+};
 type RpcHandler = (params?: unknown) => unknown | Promise<unknown>;
 type SessionFoundHookData = NonNullable<Parameters<Session['onSessionFound']>[1]>;
 type LocalLaunchOptions = Parameters<(typeof import('./claudeLocal'))['claudeLocal']>[0];
@@ -558,6 +562,25 @@ describe('claudeLocalLauncher', () => {
 
     mockClaudeLocal.mockImplementationOnce(async (opts: LocalLaunchOptions) => {
       expect(opts.claudeArgs).toEqual(['--permission-mode', 'bypassPermissions']);
+    });
+
+    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+    const result = await claudeLocalLauncher(session);
+
+    expect(mockClaudeLocal).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ type: 'exit', code: 0 });
+  });
+
+  it('spawns local Claude with the session model from metadata, replacing a stale --model arg', async () => {
+    const { session } = createLocalHarness({
+      metadataSnapshot: {
+        modelOverrideV1: { v: 1, updatedAt: 456, modelId: 'claude-model-b' },
+      },
+    });
+    session.claudeArgs = ['--model', 'claude-model-a', '--verbose'];
+
+    mockClaudeLocal.mockImplementationOnce(async (opts: LocalLaunchOptions) => {
+      expect(opts.claudeArgs).toEqual(['--verbose', '--model', 'claude-model-b']);
     });
 
     const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
