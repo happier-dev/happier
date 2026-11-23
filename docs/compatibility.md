@@ -13787,9 +13787,11 @@ non-persisted projection. The development-only `irohEndpoint` and
 `connectionDescriptorRevision` profile fields are ignored and are not written.
 
 In 0.3 development, `addressSelection` on that same device-local profile remembers
-the canonical-address prompt answer for one Home identity and entered/canonical
-address pair. Keep selects the entered transport address without changing the
-canonical credential scope or the exact published descriptor. Saved-profile
+the address choice for one Home identity and entered/canonical address pair.
+Keep selects the entered transport address without changing the canonical
+credential scope or the exact published descriptor. On an HTTPS page, a reached
+Home that identifies itself with an HTTP canonical URL uses the reached HTTPS
+address automatically. Saved-profile
 authentication, focused connections, enrollment and secondary connections consume
 the same address choice through the carrier policy or URL-only snapshot. A saved
 Home requires the explicit address-change confirmation before persisting Keep for

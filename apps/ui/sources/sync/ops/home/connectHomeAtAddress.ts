@@ -19,7 +19,7 @@ import {
 } from '@/sync/domains/server/serverProfiles';
 import { canonicalizeServerUrl, createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { isInsecureRemoteHttpServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
-import { createEndpointReadinessProbe } from '@/sync/runtime/connectivity/createEndpointReadinessProbe';
+import { createEndpointReadinessProbe, isWebMixedContentBlocked } from '@/sync/runtime/connectivity/createEndpointReadinessProbe';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 
 export type HomeAddressChangeConfirmation = Readonly<{ previousUrl: string; nextUrl: string }>;
@@ -103,10 +103,15 @@ export async function connectHomeAtAddress(input: ConnectHomeAtAddressInput): Pr
     const previousSelection = existing ? readHomeAddressSelection(existing) : undefined;
     let useCanonical = true;
     if (advertisedUrl && advertisedUrl !== enteredUrl) {
-        useCanonical = previousSelection?.enteredUrl === enteredUrl
-            && previousSelection.canonicalServerUrl === advertisedUrl
-            ? previousSelection.useCanonical
-            : await input.confirmCanonicalUrl();
+        if (isWebMixedContentBlocked(advertisedUrl)) {
+            if (!learnedIdentity) return { kind: 'mixed_content' };
+            useCanonical = false;
+        } else {
+            useCanonical = previousSelection?.enteredUrl === enteredUrl
+                && previousSelection.canonicalServerUrl === advertisedUrl
+                ? previousSelection.useCanonical
+                : await input.confirmCanonicalUrl();
+        }
         throwIfAborted(input.signal);
     }
 

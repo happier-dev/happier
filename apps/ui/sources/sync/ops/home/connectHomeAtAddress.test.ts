@@ -209,6 +209,46 @@ describe('connectHomeAtAddress', () => {
         expect(profileFacts()).toEqual(before);
     });
 
+    it('keeps the reached HTTPS Home for recovery when its canonical audience is HTTP', async () => {
+        const httpAudience = 'http://happier-home.localhost:3033';
+        const location = new URL('/restore/manual', enteredUrl);
+        location.searchParams.set('server', enteredUrl);
+        vi.stubGlobal('window', { location });
+        vi.stubGlobal('document', {});
+        vi.stubGlobal('location', location);
+        advertisedFeatures = {
+            ...createRootLayoutFeaturesResponse({
+                capabilities: {
+                    server: { canonicalServerUrl: httpAudience },
+                    serverIdentity: { serverIdentityId: homeIdentity },
+                },
+            }),
+            homeConnectionDescriptor: {
+                v: 1,
+                revision: 10,
+                homeServerIdentityId: homeIdentity,
+                canonicalServerUrl: httpAudience,
+                endpoints: [{ kind: 'https', url: enteredUrl }],
+            },
+        };
+        const { operation, profiles } = await owner();
+        const attempt = input({ source: 'url', serverUrl: enteredUrl });
+        const result = await operation.connectHomeAtAddress(attempt);
+        expect(result).toMatchObject({ kind: 'connected', profile: { serverIdentityId: homeIdentity } });
+        if (result.kind !== 'connected') throw new Error('Expected Home connection');
+        await profiles.setActiveServerId(result.profile.id);
+
+        const { resolveHomeKeyChallengeExpectedAudience } = await import('@/auth/flows/resolveHomeAuthenticationTarget');
+        expect(resolveHomeKeyChallengeExpectedAudience({ kind: 'saved_profile', profileRef: result.profile.id }))
+            .toEqual({ origin: httpAudience, serverIdentityId: homeIdentity });
+        const { createEndpointReadinessProbe } = await import('@/sync/runtime/connectivity/createEndpointReadinessProbe');
+        const active = profiles.getActiveServerSnapshot();
+        await expect(createEndpointReadinessProbe({ endpoint: active.runtimeOrigin ?? active.serverUrl, token: null })())
+            .resolves.toMatchObject({ status: 'ready' });
+        expect(active.runtimeOrigin).toBe(enteredUrl);
+        expect(attempt.confirmCanonicalUrl).not.toHaveBeenCalled();
+    });
+
     it.each(['disabled', 'external'] as const)('adopts a Directory-capable Home with %s sign-in delegation without changing the selected service', async (serviceMode) => {
         advertisedFeatures = featurePayload({ serviceMode });
         const { operation, profiles, before, profileFacts } = await owner();

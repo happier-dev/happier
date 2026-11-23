@@ -34,7 +34,7 @@ function normalizeAbsoluteHttpBaseUrl(raw: string): string | null {
     }
 }
 
-function isWebMixedContentBlocked(baseUrl: string): boolean {
+export function isWebMixedContentBlocked(baseUrl: string): boolean {
     if (Platform.OS !== 'web') return false;
     let endpointProtocol: string | null = null;
     try {
