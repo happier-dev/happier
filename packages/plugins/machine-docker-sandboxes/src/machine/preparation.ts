@@ -1,8 +1,9 @@
+import { isSuccessfulProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { Buffer } from 'node:buffer';
 import { posix } from 'node:path';
 import type { ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
-import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import { buildMachineProvisionerPreparationInstallScript, projectMachineProvisionerActionFailure, quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createDockerSandboxesNativeClient } from './nativeClient.js';
@@ -12,8 +13,6 @@ import { DOCKER_SANDBOXES_PREPARATION_BUILDER_PREFIX as builderPrefix, DOCKER_SA
 type Operation = ProtocolSchemaOutput<typeof DockerSandboxesPreparationOperationSchema>;
 type Launch = Operation['launch'];
 
-const completed = (result: PluginProcessResult) => result.termination.observed.kind === 'exit'
-  && result.termination.observed.exitCode === 0 && result.termination.requestedBy.kind === 'none';
 
 /** Only dedicated builders are accepted; a live Session resource is never input. */
 export function createDockerSandboxesPreparation(exec: Pick<ExecService, 'run'>, executable: ManagedExecutableRef,
@@ -58,10 +57,10 @@ export function createDockerSandboxesPreparation(exec: Pick<ExecService, 'run'>,
         if ((await native.start(builder, signal)).status !== 'start-accepted') return unknown(operation, failureCode);
         failureCode = 'docker_sandbox_prepare_setup_failed';
         const directory = `/tmp/${builder.sandboxName}`;
-        if (!completed(await native.exec(builder, ['mkdir', '-p', '--', directory], signal))) return unknown(operation, failureCode);
+        if (!isSuccessfulProcessResult(await native.exec(builder, ['mkdir', '-p', '--', directory], signal))) return unknown(operation, failureCode);
         for (const file of input.cli.files) {
           const guestPath = posix.join(directory, file.path);
-          if (!completed(await native.exec(builder, ['sh', '-eu', '-c',
+          if (!isSuccessfulProcessResult(await native.exec(builder, ['sh', '-eu', '-c',
             'mkdir -p -- "$1"; umask 077; cat > "$2"', 'happier-prepare-file', posix.dirname(guestPath), guestPath],
             signal, Buffer.from(file.contentsBase64, 'base64')))) return unknown(operation, failureCode);
         }
@@ -69,17 +68,17 @@ export function createDockerSandboxesPreparation(exec: Pick<ExecService, 'run'>,
         // the working directory. No provider credential acquisition occurs here.
         const script = buildMachineProvisionerPreparationInstallScript({ cli: input.cli, stageDirectory: directory, setupScript: input.setupScript })
           + 'rm -rf -- ' + quote(directory) + '\n';
-        if (!completed(await native.exec(builder, ['sh', '-eu', '-s'], signal, new TextEncoder().encode(script)))) {
+        if (!isSuccessfulProcessResult(await native.exec(builder, ['sh', '-eu', '-s'], signal, new TextEncoder().encode(script)))) {
           return unknown(operation, failureCode);
         }
         failureCode = 'docker_sandbox_prepare_stop_failed';
-        if (!completed(await run(['stop', builder.sandboxName]))) return unknown(operation, failureCode);
+        if (!isSuccessfulProcessResult(await run(['stop', builder.sandboxName]))) return unknown(operation, failureCode);
         failureCode = 'docker_sandbox_prepare_save_failed';
-        if (!completed(await run(['template', 'save', builder.sandboxName, `${templatePrefix}${operationId}`]))) {
+        if (!isSuccessfulProcessResult(await run(['template', 'save', builder.sandboxName, `${templatePrefix}${operationId}`]))) {
           return unknown(operation, failureCode);
         }
         failureCode = 'docker_sandbox_prepare_cleanup_required';
-        if (!completed(await run(['rm', '--force', builder.sandboxName]))) return unknown(operation, 'docker_sandbox_prepare_cleanup_required');
+        if (!isSuccessfulProcessResult(await run(['rm', '--force', builder.sandboxName]))) return unknown(operation, 'docker_sandbox_prepare_cleanup_required');
         const after = await observe(operationId);
         return after?.templatePresent && !after.builderPresent ? ready(operation) : unknown(operation, 'docker_sandbox_prepare_inventory_unavailable');
       } catch (error) {
@@ -107,7 +106,7 @@ export function createDockerSandboxesPreparation(exec: Pick<ExecService, 'run'>,
       if (!observed.templatePresent && !observed.builderPresent) return { kind: 'confirmed' as const };
       try {
         // Use the exact owned tag, never an image digest, prefix match or reset.
-        if (observed.templatePresent && !completed(await run(['template', 'rm', '--force', `${templatePrefix}${operationId}`]))) {
+        if (observed.templatePresent && !isSuccessfulProcessResult(await run(['template', 'rm', '--force', `${templatePrefix}${operationId}`]))) {
           return unknown(operation, 'docker_sandbox_prepare_cleanup_required');
         }
         if (observed.builderPresent) await native.delete({ sandboxName: `${builderPrefix}${operationId}` }, signal);

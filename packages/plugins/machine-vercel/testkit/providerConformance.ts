@@ -1,4 +1,4 @@
-import type { ProviderConformanceFixture } from '../../../../apps/cli/src/machines/managed/providerConformance.testkit.js';
+import type { ProviderConformanceFixture } from '@happier-dev/plugin-sdk/testing';
 
 /** Vercel Sandbox REST boundary for the shared provider conformance suite. */
 export const providerConformanceFixture: ProviderConformanceFixture = world => {

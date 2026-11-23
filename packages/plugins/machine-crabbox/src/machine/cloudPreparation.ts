@@ -1,10 +1,10 @@
+import { isSuccessfulProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { buildMachineProvisionerPreparationInstallScript, quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { Buffer } from 'node:buffer';
 import { lstat, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
 import { computeSha256HexDigest, type PluginInvocationContext, type PluginContributionRef } from '@happier-dev/plugin-sdk';
-import type { PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 import { createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas,
   projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
@@ -60,9 +60,6 @@ function operation(input: OperationInput, coordinatorScope?: string): Operation 
   return expected;
 }
 function stateRoot(operation: Operation) { return join(tmpdir(), 'happier-crabbox-prepare-' + computeSha256HexDigest(operation.operationId)); }
-function completed(result: PluginProcessResult) {
-  return result.termination.requestedBy.kind === 'none' && result.termination.observed.kind === 'exit' && result.termination.observed.exitCode === 0;
-}
 async function prepareState(root: string) {
   try { await mkdir(root, { mode: 0o700 }); }
   catch (error) {
@@ -224,8 +221,8 @@ export function createCrabboxCloudPreparation(context: PluginInvocationContext,
       const warmed = await run(['warmup', '--provider', launch.backendId, '--target', launch.target, '--arch', 'amd64',
         '--lease-id', op.leaseId, '--keep', '--type', launch.nativeSizeId,
         '--ttl', `${launch.ttlSeconds}s`, '--idle-timeout', `${launch.idleTimeoutSeconds}s`]);
-      if (!completed(warmed)) return unknown(op, 'native_builder_unconfirmed');
-      if (!completed(await run(['run', '--provider', launch.backendId, '--id', op.leaseId, '--keep', '--no-sync', '--no-hydrate', '--script-stdin'], script)))
+      if (!isSuccessfulProcessResult(warmed)) return unknown(op, 'native_builder_unconfirmed');
+      if (!isSuccessfulProcessResult(await run(['run', '--provider', launch.backendId, '--id', op.leaseId, '--keep', '--no-sync', '--no-hydrate', '--script-stdin'], script)))
         return unknown(op, 'native_build_unconfirmed');
       const captured = await request('/v1/checkpoints', 'POST', { id: op.checkpointId, leaseID: op.leaseId, name: op.name,
         strategy: 'image', noReboot: true, retention: { mode: 'manual' } });

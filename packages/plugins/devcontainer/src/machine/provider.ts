@@ -1,3 +1,4 @@
+import { isSuccessfulProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
@@ -21,11 +22,8 @@ function record(value: unknown): Record<string, unknown> {
 }
 function fail(code: string): never { throw Object.assign(new Error(code), { code }); }
 function code(error: unknown) { return typeof record(error).code === 'string' ? String(record(error).code) : 'provider_unavailable'; }
-function completed(result: PluginProcessResult) {
-  return result.termination.requestedBy.kind === 'none' && result.termination.observed.kind === 'exit' && result.termination.observed.exitCode === 0;
-}
 function output(result: PluginProcessResult) {
-  if (!completed(result) || result.stdoutTruncated) fail('native_observation_unavailable');
+  if (!isSuccessfulProcessResult(result) || result.stdoutTruncated) fail('native_observation_unavailable');
   return new TextDecoder('utf-8', { fatal: true }).decode(result.stdout);
 }
 function json(result: PluginProcessResult): unknown { return JSON.parse(output(result)); }
@@ -91,7 +89,7 @@ export async function devcontainerImageNeedsHostDns(image: string,
     if (mode !== 'bridge' && mode !== 'default') {
       if (typeof mode !== 'string' || mode === 'host' || mode === 'none' || mode.startsWith('container:')) return false;
       const inspected = await run(['network', 'inspect', mode]);
-      if (!completed(inspected) || inspected.stdoutTruncated) return false;
+      if (!isSuccessfulProcessResult(inspected) || inspected.stdoutTruncated) return false;
       const networks = json(inspected);
       if (!Array.isArray(networks) || record(networks[0]).Driver !== 'bridge') return false;
     }
@@ -105,7 +103,7 @@ export async function devcontainerImageNeedsHostDns(image: string,
   if (bridge.termination.requestedBy.kind !== 'none' || bridge.termination.observed.kind !== 'exit'
     || bridge.termination.observed.exitCode !== 2) return false;
   const host = await run(['run', '--rm', '--network', 'host', '--entrypoint', probe[0]!, '--', image, ...probe.slice(1)]);
-  return completed(host) && !host.stdoutTruncated && host.stdout.length > 0;
+  return isSuccessfulProcessResult(host) && !host.stdoutTruncated && host.stdout.length > 0;
 }
 
 /** Docker effects exist only behind this provisioner's admitted native roles.
@@ -134,7 +132,7 @@ export function createDevcontainerProvider(input: Readonly<{
   }
   async function inspectContainer(containerId: string, launch: DevcontainerLaunch, managedMachineId: string) {
     const inspected = await run(input.docker, ['inspect', '--type', 'container', containerId], undefined, false, managedMachineId, launch.workspaceFolder);
-    if (!completed(inspected)) {
+    if (!isSuccessfulProcessResult(inspected)) {
       // Inspect failure alone is not absence. A successful complete exact-id
       // inventory is the native witness; transport errors remain unavailable.
       const ids = output(await run(input.docker, ['ps', '--all', '--no-trunc', '--filter', `id=${containerId}`, '--format', '{{.ID}}'], undefined, false, managedMachineId, launch.workspaceFolder))
@@ -228,7 +226,7 @@ export function createDevcontainerProvider(input: Readonly<{
     // Running alone does not mean an image's preparation/setup completed: a
     // detached run can succeed before IO is interrupted, or failed setup cleanup
     // can be unavailable. Only this creation path produces the guest witness.
-    if (imageSource(launch) && !completed(await childExec(launch, containerId, ['sh', '-c', 'test -f "$1"', 'sh', readyPath(managedMachineId)], undefined, false, managedMachineId))) fail('native_realization_unknown');
+    if (imageSource(launch) && !isSuccessfulProcessResult(await childExec(launch, containerId, ['sh', '-c', 'test -f "$1"', 'sh', readyPath(managedMachineId)], undefined, false, managedMachineId))) fail('native_realization_unknown');
     const observed = await namespace(launch, containerId, managedMachineId);
     const resource = DevcontainerResourceSchema.parse({ ...launch, managedMachineId, containerId, ...observed, ...storage(native, observed.workspaceRoot),
       ...(homeOnControllerHost ? { homeOnControllerHost: true } : {}) });
@@ -299,7 +297,7 @@ export function createDevcontainerProvider(input: Readonly<{
       catch (error) { nativeCause = { localCause: 'native_command_failed', command, exitCode: null,
         failureCause: projectActionFailureCauseV1(error, 'exec.run') };
         fail('native_realization_unknown'); }
-      if (!completed(result)) {
+      if (!isSuccessfulProcessResult(result)) {
         const cause = commandFailure(result, command);
         nativeCause = cause;
         const setup = source ? null : failedSetup(result);
@@ -320,13 +318,13 @@ export function createDevcontainerProvider(input: Readonly<{
           const identity = output(await childExec(launch, id, ['sh', '-c', 'id -u; id -g'], undefined, false, managedMachineId)).trim().split(/\r?\n/u);
           if (identity.length !== 2 || identity.some(value => !/^\d+$/u.test(value))) fail('child_namespace_unavailable');
           const ownership = await run(input.docker, ['exec', '--user', '0', id, 'chown', `${identity[0]}:${identity[1]}`, '/workspace']);
-          if (!completed(ownership)) { nativeCause = commandFailure(ownership, command); fail('native_setup_failed'); }
+          if (!isSuccessfulProcessResult(ownership)) { nativeCause = commandFailure(ownership, command); fail('native_setup_failed'); }
           if (source.setupScript) {
             const setup = await childExec(launch, id, ['sh', '-c', source.setupScript], undefined, false, managedMachineId);
-            if (!completed(setup)) { nativeCause = commandFailure(setup, command, true); fail('native_setup_failed'); }
+            if (!isSuccessfulProcessResult(setup)) { nativeCause = commandFailure(setup, command, true); fail('native_setup_failed'); }
           }
           const ready = await childExec(launch, id, ['sh', '-c', ': > "$1"', 'sh', readyPath(managedMachineId)], undefined, false, managedMachineId);
-          if (!completed(ready)) { nativeCause = commandFailure(ready, command); fail('native_setup_failed'); }
+          if (!isSuccessfulProcessResult(ready)) { nativeCause = commandFailure(ready, command); fail('native_setup_failed'); }
         };
         try { await prepare(); }
         catch { return await settleFailedSetup(id); }
@@ -419,7 +417,7 @@ export function createDevcontainerProvider(input: Readonly<{
         // The CLI's remove-existing flag selects by labels (or Compose
         // project/service), so deletion uses the retained exact Docker id.
         // No --volumes: bind sources and external volumes retain their owners.
-        if (!completed(await run(input.docker, ['rm', '--force', resource.containerId], undefined, false, resource.managedMachineId, resource.workspaceFolder))) {
+        if (!isSuccessfulProcessResult(await run(input.docker, ['rm', '--force', resource.containerId], undefined, false, resource.managedMachineId, resource.workspaceFolder))) {
           return { kind: 'unknown' as const, recovery: { reference: resource.containerId, reason: 'native_rebuild_unknown' } };
         }
         return (await realize(replacementLaunch, resource.managedMachineId, resource.containerId, guestHome)).outcome;
@@ -466,7 +464,7 @@ export function createDevcontainerProvider(input: Readonly<{
           ...(size.cpuCores === undefined ? [] : ['--cpus', String(size.cpuCores)]),
           ...(size.memoryBytes === undefined ? [] : ['--memory', String(size.memoryBytes)]), resource.containerId],
         undefined, false, resource.managedMachineId, resource.workspaceFolder);
-        return completed(result) ? { kind: 'confirmed' } : { kind: 'unknown', code: 'container_resize_failed', nativeCause: commandFailure(result, 'update') };
+        return isSuccessfulProcessResult(result) ? { kind: 'confirmed' } : { kind: 'unknown', code: 'container_resize_failed', nativeCause: commandFailure(result, 'update') };
       } catch (error) { return { kind: issued ? 'unknown' : 'refused', code: code(error) }; }
     },
     async power(raw: DevcontainerResource, intent: 'start' | 'stop') {
@@ -480,7 +478,7 @@ export function createDevcontainerProvider(input: Readonly<{
           ? await run(input.docker, ['stop', resource.containerId], undefined, false, resource.managedMachineId, resource.workspaceFolder)
           : imageSource(resource) ? await run(input.docker, ['start', resource.containerId], undefined, false, resource.managedMachineId, resource.workspaceFolder)
             : await run(cli(), ['up', ...managedFlags(resource, resource.managedMachineId), '--expect-existing-container'], undefined, false, resource.managedMachineId, resource.workspaceFolder);
-        if (!completed(result)) return { kind: 'unknown' as const, code: 'native_power_unknown' };
+        if (!isSuccessfulProcessResult(result)) return { kind: 'unknown' as const, code: 'native_power_unknown' };
         if (intent === 'start' && !imageSource(resource)) {
           const started = record(json(result));
           if (started.outcome !== 'success' || started.containerId !== resource.containerId) fail('resource_mismatch');
@@ -514,7 +512,7 @@ export function createDevcontainerProvider(input: Readonly<{
       const { resource } = await exact(raw, true);
       const command = `umask 077; cat > ${quote(guestPath)} && chmod ${mode.toString(8)} ${quote(guestPath)}`;
       const written = await childExec(resource, resource.containerId, ['sh', '-c', command], bytes, false, resource.managedMachineId);
-      return { kind: completed(written) ? 'confirmed' as const : 'unknown' as const };
+      return { kind: isSuccessfulProcessResult(written) ? 'confirmed' as const : 'unknown' as const };
     },
   };
 }

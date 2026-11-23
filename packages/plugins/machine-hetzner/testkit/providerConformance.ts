@@ -1,5 +1,5 @@
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
-import type { ProviderConformanceFixture } from '../../../../apps/cli/src/machines/managed/providerConformance.testkit.js';
+import type { ProviderConformanceFixture } from '@happier-dev/plugin-sdk/testing';
 
 /** Hetzner Cloud REST boundary for the shared provider conformance suite. */
 export const providerConformanceFixture: ProviderConformanceFixture = world => {

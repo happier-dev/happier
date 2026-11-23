@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { copyFileSync, readFileSync } from 'node:fs';
-import type { ProviderConformanceFixture } from '../../../../apps/cli/src/machines/managed/providerConformance.testkit.js';
+import type { ProviderConformanceFixture } from '@happier-dev/plugin-sdk/testing';
 
 /** Cua CLI boundary (local sandbox, local space and BYOC) for the shared provider conformance suite. */
 export const providerConformanceFixture: ProviderConformanceFixture = world => {

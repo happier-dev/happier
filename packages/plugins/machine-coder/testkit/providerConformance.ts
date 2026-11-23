@@ -1,4 +1,4 @@
-import type { ProviderConformanceFixture } from '../../../../apps/cli/src/machines/managed/providerConformance.testkit.js';
+import type { ProviderConformanceFixture } from '@happier-dev/plugin-sdk/testing';
 import { CoderLaunchSchema, ACCOUNT_SERVICE } from '../src/machine/schemas.js';
 import { coderWorkspaceName } from '../src/machine/nativeClient.js';
 

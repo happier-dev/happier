@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ProviderConformanceFixture } from '../../../../apps/cli/src/machines/managed/providerConformance.testkit.js';
+import type { ProviderConformanceFixture } from '@happier-dev/plugin-sdk/testing';
 
 /** Public REST v2 / official @upstash/box 0.7.10, 170dd8b98821 (2026-11-01). */
 export const providerConformanceFixture: ProviderConformanceFixture = world => {

@@ -1,3 +1,4 @@
+import { isSuccessfulProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { buildMachineProvisionerPreparationInstallScript, quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { projectMachineProvisionerActionFailure, projectMachineProvisionerGuestCommandFailure, type MachineProvisionerNativeCauseV1, type ManagedGuestCliBuildInputV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -37,12 +38,8 @@ function path(value: string) {
     if (!value.startsWith('/') || value.endsWith('/') || value.includes('\0')) throw new Error('cua_invalid_guest_path');
     return value;
 }
-function completed(result: Awaited<ReturnType<ExecService['run']>>) {
-    return result.termination.observed.kind === 'exit' && result.termination.observed.exitCode === 0
-        && result.termination.requestedBy.kind === 'none';
-}
 function confirmedDaemonStart(result: Awaited<ReturnType<ExecService['run']>>) {
-    if (!completed(result) || result.stdoutTruncated) return false;
+    if (!isSuccessfulProcessResult(result) || result.stdoutTruncated) return false;
     try {
         const value: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.stdout));
         return daemonStartSchema.safeParse(value).success;
@@ -83,7 +80,7 @@ export function createCuaNativeClient(options: {
     }
     async function privateDirectory(sandboxId: string, signal?: AbortSignal) {
         const made = await shell(sandboxId, 'mktemp -d /tmp/happier-cua.XXXXXXXXXX', signal);
-        if (!completed(made) || made.stdoutTruncated) throw new Error('cua_private_input_unavailable');
+        if (!isSuccessfulProcessResult(made) || made.stdoutTruncated) throw new Error('cua_private_input_unavailable');
         const directory = new TextDecoder('utf-8', { fatal: true }).decode(made.stdout).trim();
         // Bound cleanup to a directory created by this exact native template.
         if (!privateDirectoryPattern.test(directory)) throw new Error('cua_private_input_unavailable');
@@ -95,7 +92,7 @@ export function createCuaNativeClient(options: {
         // directory. An aborted/retired host invocation may forbid cleanup.
         try {
             const cleaned = await shell(sandboxId, `rm -rf -- ${quote(directory)}`);
-            if (!completed(cleaned)) throw new Error('cleanup failed');
+            if (!isSuccessfulProcessResult(cleaned)) throw new Error('cleanup failed');
         } catch (error) { return projectMachineProvisionerActionFailure(error, () => { throw new Error('cua_private_input_cleanup_unknown'); }); }
     }
     async function uploadPrivateFile(sandboxId: string, guestPath: string, bytes: Uint8Array, signal?: AbortSignal) {
@@ -129,7 +126,7 @@ export function createCuaNativeClient(options: {
             const copied = await uploadPrivateFile(sandboxId, staged, bytes, signal);
             if (copied.kind !== 'confirmed') return { kind: 'unknown' as const };
             const published = await shell(sandboxId, `chmod ${mode.toString(8)} ${quote(staged)} && mv -- ${quote(staged)} ${quote(guestPath)}`, signal);
-            return { kind: completed(published) ? 'confirmed' as const : 'unknown' as const };
+            return { kind: isSuccessfulProcessResult(published) ? 'confirmed' as const : 'unknown' as const };
         } finally {
             try { await removePrivateDirectory(sandboxId, directory); }
             catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const })); }
@@ -147,7 +144,7 @@ export function createCuaNativeClient(options: {
             const result = await options.exec.run({ executable: options.executable, args: ['--json', ...args], env: environment }, {
                 signal, ...(startsLocalRuntime ? { descendantDisposition: 'preserve-on-success' as const } : {}),
             });
-            const success = completed(result);
+            const success = isSuccessfulProcessResult(result);
             if (args.includes('create') && !success) {
                 const observed = result.termination.observed;
                 nativeCause = projectMachineProvisionerGuestCommandFailure({
@@ -206,7 +203,7 @@ export function createCuaNativeClient(options: {
                         || relative.includes('\\') || relative.includes('\0')) throw new Error('cua_invalid_guest_path');
                     const destination = `${directory}/${relative}`;
                     const made = await shell(sandboxId, `mkdir -p -- ${quote(posix.dirname(destination))}`, signal);
-                    if (!completed(made) || (await uploadPrivateFile(sandboxId, destination, Buffer.from(file.contentsBase64, 'base64'), signal)).kind !== 'confirmed') {
+                    if (!isSuccessfulProcessResult(made) || (await uploadPrivateFile(sandboxId, destination, Buffer.from(file.contentsBase64, 'base64'), signal)).kind !== 'confirmed') {
                         throw new Error('cua_private_input_unavailable');
                     }
                 }

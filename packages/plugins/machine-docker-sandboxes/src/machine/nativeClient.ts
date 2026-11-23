@@ -1,3 +1,4 @@
+import { isSuccessfulProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { projectMachineProvisionerActionFailure, projectMachineProvisionerGuestCommandFailure, type MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
@@ -16,10 +17,6 @@ function readLocator(resource: SandboxLocator): SandboxLocator {
   };
 }
 
-function completed(result: PluginProcessResult) {
-  return result.termination.observed.kind === 'exit' && result.termination.observed.exitCode === 0
-    && result.termination.requestedBy.kind === 'none';
-}
 
 function checkExecTermination(termination: PluginProcessResult['termination']) {
   // Local sbx exec never creates a missing sandbox and starts stopped ones.
@@ -89,7 +86,7 @@ export function createDockerSandboxesNativeClient(exec: Pick<ExecService, 'run'>
         const result = await run(['create', '--name', launch.data.name, '--template', launch.data.templateId,
           ...(isDockerSandboxesPreparedTemplateId(launch.data.templateId) ? ['--pull', 'never'] : []),
           ...(options?.hostIntegrations === 'disabled' ? ['--skills', 'off', '--static-mcp', 'none'] : []), 'shell'], signal);
-        if (completed(result)) return { status: 'allocated', resource, readiness: 'unqualified' } as const;
+        if (isSuccessfulProcessResult(result)) return { status: 'allocated', resource, readiness: 'unqualified' } as const;
         failed = result;
       } catch (error) {
         projectMachineProvisionerActionFailure(error, () => {});
@@ -101,7 +98,7 @@ export function createDockerSandboxesNativeClient(exec: Pick<ExecService, 'run'>
     async probe(signal?: AbortSignal) {
       try {
         const result = await run(['version'], signal);
-        return { status: completed(result) ? 'available' : 'unavailable', readiness: 'unqualified' } as const;
+        return { status: isSuccessfulProcessResult(result) ? 'available' : 'unavailable', readiness: 'unqualified' } as const;
       } catch (error) {
         return projectMachineProvisionerActionFailure(error, () => ({ status: 'unavailable', readiness: 'unqualified' } as const));
       }
@@ -113,7 +110,7 @@ export function createDockerSandboxesNativeClient(exec: Pick<ExecService, 'run'>
         if (/not signed in to Docker/iu.test(stderr)) {
           throw new PluginError({ code: 'credential_unavailable', message: 'Sign in to Docker: run sbx login', retryable: true });
         }
-        if (completed(result) && !result.stdoutTruncated) {
+        if (isSuccessfulProcessResult(result) && !result.stdoutTruncated) {
           const templateIds = new TextDecoder('utf-8', { fatal: true }).decode(result.stdout).split(/\r?\n/u).filter(Boolean);
           if (templateIds.every(templateId => DockerSandboxesLaunchV1Schema.safeParse({ templateId, name: 'happier' }).success)) {
             return { status: 'available', templateIds } as const;
@@ -134,7 +131,7 @@ export function createDockerSandboxesNativeClient(exec: Pick<ExecService, 'run'>
         // Both supply presence and power from one complete native inventory.
         // Neither native presence nor power is enrollment evidence.
         const result = await run(['ls', '--json'], signal);
-        if (!completed(result) || result.stdoutTruncated) return { presence: 'unknown', resource: locator, readiness: 'unqualified' } as const;
+        if (!isSuccessfulProcessResult(result) || result.stdoutTruncated) return { presence: 'unknown', resource: locator, readiness: 'unqualified' } as const;
         const inventory: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.stdout));
         const values: readonly unknown[] | undefined = Array.isArray(inventory) ? inventory
           : typeof inventory === 'object' && inventory !== null && 'sandboxes' in inventory && Array.isArray(inventory.sandboxes)
@@ -177,7 +174,7 @@ export function createDockerSandboxesNativeClient(exec: Pick<ExecService, 'run'>
       let failed: PluginProcessResult | undefined;
       try {
         const result = await run(['run', '-d', '--name', resource.sandboxName], signal);
-        if (completed(result)) {
+        if (isSuccessfulProcessResult(result)) {
           return { status: 'start-accepted', resource: readLocator(resource) } as const;
         }
         failed = result;
@@ -190,7 +187,7 @@ export function createDockerSandboxesNativeClient(exec: Pick<ExecService, 'run'>
       const locator = readLocator(resource);
       try {
         const result = await run(['stop', locator.sandboxName], signal);
-        if (completed(result)) return { status: 'stop-accepted', resource: locator, nativeAbsence: 'unproven' } as const;
+        if (isSuccessfulProcessResult(result)) return { status: 'stop-accepted', resource: locator, nativeAbsence: 'unproven' } as const;
       } catch (error) {
         projectMachineProvisionerActionFailure(error, () => {});
         // Stop leaves the same retained resource; acceptance is not power proof.
@@ -203,7 +200,7 @@ export function createDockerSandboxesNativeClient(exec: Pick<ExecService, 'run'>
       const locator = readLocator(resource);
       try {
         const result = await run(['rm', '--force', locator.sandboxName], signal);
-        if (completed(result)) return { status: 'delete-accepted', resource: locator, nativeAbsence: 'unproven' } as const;
+        if (isSuccessfulProcessResult(result)) return { status: 'delete-accepted', resource: locator, nativeAbsence: 'unproven' } as const;
       } catch (error) {
         projectMachineProvisionerActionFailure(error, () => {});
         // A failed/lost command result cannot prove native deletion.

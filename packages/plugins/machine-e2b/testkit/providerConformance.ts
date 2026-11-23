@@ -1,5 +1,5 @@
 import { writeFileSync } from 'node:fs';
-import type { ProviderConformanceFixture } from '../../../../apps/cli/src/machines/managed/providerConformance.testkit.js';
+import type { ProviderConformanceFixture } from '@happier-dev/plugin-sdk/testing';
 
 /** E2B OpenAPI 0.1.0 + envd 0.1.3 / process.proto, 2026-11-01. */
 export const providerConformanceFixture: ProviderConformanceFixture = world => {

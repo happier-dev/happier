@@ -1,4 +1,4 @@
-import type { ProviderConformanceFixture } from '../../../../apps/cli/src/machines/managed/providerConformance.testkit.js';
+import type { ProviderConformanceFixture } from '@happier-dev/plugin-sdk/testing';
 import { railwayVendor } from './vendor.js';
 
 /** Railway API v2 / files wire v3.16.0 boundary for the shared provider conformance suite. */

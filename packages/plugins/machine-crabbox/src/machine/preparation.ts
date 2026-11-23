@@ -1,3 +1,4 @@
+import { isSuccessfulProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { readManagedDependencyExecutable } from '@happier-dev/plugin-sdk/managed-services';
 import { buildMachineProvisionerPreparationInstallScript } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { Buffer } from 'node:buffer';
@@ -39,11 +40,8 @@ export function crabboxPreparationGuest() {
   return process.arch === 'x64' || process.arch === 'arm64'
     ? { target: { os: 'linux' as const, arch: process.arch }, remoteHomeDir: '/opt/happier' } : undefined;
 }
-function completed(result: PluginProcessResult) {
-  return result.termination.requestedBy.kind === 'none' && result.termination.observed.kind === 'exit' && result.termination.observed.exitCode === 0;
-}
 function text(result: PluginProcessResult) {
-  if (!completed(result) || result.stdoutTruncated) throw new Error('Native image observation unavailable');
+  if (!isSuccessfulProcessResult(result) || result.stdoutTruncated) throw new Error('Native image observation unavailable');
   return new TextDecoder('utf-8', { fatal: true }).decode(result.stdout);
 }
 const nativeImage = defineProtocolObject({ Id: runtimeImageId, Config: defineProtocolObject({ Labels: defineProtocolObject({
@@ -120,7 +118,7 @@ export function createCrabboxPreparation(context: PluginInvocationContext) {
         const dockerfile = [`FROM --platform=linux/${platform} ${operation.launch.nativeImageId}`, 'USER root', ...copies, `RUN ${JSON.stringify(command)}`].join('\n') + '\n';
         const built = await run(operation, ['build', '--force-rm', '--tag', name(operation), '--label', `${operationLabel}=${id}`,
           '--label', `${providerLabel}=${providerIdentity}`, '--file', '-', directory], Buffer.from(dockerfile));
-        if (!completed(built)) return unknown(operation, 'native_build_failed');
+        if (!isSuccessfulProcessResult(built)) return unknown(operation, 'native_build_failed');
         const observed = await inspectNative(operation);
         return observed.kind === 'ready' || observed.kind === 'unknown' ? observed : unknown(operation, 'native_build_unconfirmed');
       } catch (error) { return failure(error, operation); }
@@ -142,7 +140,7 @@ export function createCrabboxPreparation(context: PluginInvocationContext) {
         if (observed.kind !== 'ready') return observed;
         // Remove only our operation's tag, never force, prune, or delete an
         // image by digest that may now have another person's retained tags.
-        if (!completed(await run(operation, ['image', 'rm', '--no-prune', '--', name(operation)]))) return unknown(operation);
+        if (!isSuccessfulProcessResult(await run(operation, ['image', 'rm', '--no-prune', '--', name(operation)]))) return unknown(operation);
         const remaining = await inspectNative(operation);
         return remaining.kind === 'absent' ? { kind: 'confirmed' as const }
           : remaining.kind === 'unknown' ? remaining : { kind: 'pending' as const, nativeOperationRef: reference(operation) };

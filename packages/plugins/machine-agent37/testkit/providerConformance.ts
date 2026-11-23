@@ -1,4 +1,4 @@
-import type { ProviderConformanceExpectedFailures, ProviderConformanceFixture } from '../../../../apps/cli/src/machines/managed/providerConformance.testkit.js';
+import type { ProviderConformanceExpectedFailures, ProviderConformanceFixture } from '@happier-dev/plugin-sdk/testing';
 import { Agent37LaunchSchema } from '../src/machine/schemas.js';
 
 /** Agent37 REST boundary for the shared provider conformance suite. */

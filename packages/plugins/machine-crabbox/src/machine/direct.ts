@@ -1,3 +1,4 @@
+import { isSuccessfulProcessResult } from '@happier-dev/plugin-sdk/exec';
 import * as z from 'zod/mini';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
@@ -23,10 +24,6 @@ function reference(resource: CrabboxResourceV1) { return { contributionRef, sche
 function pending(resource: CrabboxResourceV1): MachineProvisionerAcquireResultV1<CrabboxResourceV1, CrabboxResourceV1> {
   return { kind: 'pending', nativeOperationRef: reference(resource) };
 }
-function completed(result: PluginProcessResult) {
-  return result.termination.observed.kind === 'exit' && result.termination.observed.exitCode === 0
-    && result.termination.requestedBy.kind === 'none';
-}
 
 // Primary native contract: openclaw/crabbox b4673cca965cf9811ecd7c6b85ab481083e2b012
 // (v0.71.0), internal/cli/{run,lease,lease_ssh_root,repo,inspect}.go and
@@ -50,7 +47,7 @@ export async function createCrabboxDirectProvider(context: PluginInvocationConte
       ...(verb === 'inspect' ? ['--json'] : [])];
   }
   function readStatus(resource: DirectResource, result: PluginProcessResult) {
-    if (!completed(result) || result.stdoutTruncated) throw failure('native_transport_unknown');
+    if (!isSuccessfulProcessResult(result) || result.stdoutTruncated) throw failure('native_transport_unknown');
     const parsed = statusSchema.safeParse(JSON.parse(new TextDecoder().decode(result.stdout)) as unknown);
     if (!parsed.success) throw failure('native_observation_invalid');
     const status = parsed.data;
@@ -84,7 +81,7 @@ export async function createCrabboxDirectProvider(context: PluginInvocationConte
             ...(launch.localContainerRuntime ? ['--local-container-runtime', launch.localContainerRuntime] : []),
             ...(launch.localContainerCpus === undefined ? [] : ['--local-container-cpus', String(launch.localContainerCpus)]),
             ...(launch.localContainerMemory ? ['--local-container-memory', launch.localContainerMemory] : [])]);
-          if (!completed(result)) return pending(resource);
+          if (!isSuccessfulProcessResult(result)) return pending(resource);
           const status = await observe(resource, run);
           return { kind: 'bound', resource: { ...reference({ ...resource, nativeInstanceId: status.serverId }), origin: 'created' as const } };
         });
@@ -138,7 +135,7 @@ export async function createCrabboxDirectProvider(context: PluginInvocationConte
           const stopped = await run(command(resource, 'stop'));
           // Native local-container ReleaseLease awaits exact docker/podman
           // rm -f, sidecar cleanup and the released native claim write.
-          return completed(stopped) ? { kind: 'confirmed' } : { kind: 'unknown', code: 'native_transport_unknown' };
+          return isSuccessfulProcessResult(stopped) ? { kind: 'confirmed' } : { kind: 'unknown', code: 'native_transport_unknown' };
         });
       } catch (error) {
         return projectMachineProvisionerActionFailure(error, () => {

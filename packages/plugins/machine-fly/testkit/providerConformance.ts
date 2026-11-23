@@ -1,5 +1,5 @@
 import type { PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
-import type { ProviderConformanceFixture } from '../../../../apps/cli/src/machines/managed/providerConformance.testkit.js';
+import type { ProviderConformanceFixture } from '@happier-dev/plugin-sdk/testing';
 
 /** Fly Machines REST + GraphQL boundary for the shared provider conformance suite. */
 export const providerConformanceFixture: ProviderConformanceFixture = world => {

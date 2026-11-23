@@ -1,3 +1,23 @@
+export {
+    createMachineProvisionerConformanceFixture,
+    MANAGED_ID as PROVIDER_CONFORMANCE_MANAGED_ID,
+    NATIVE_EXPIRY as PROVIDER_CONFORMANCE_NATIVE_EXPIRY,
+    PRIVATE_BINDING as PROVIDER_CONFORMANCE_PRIVATE_BINDING,
+    PUBLIC_KEY as PROVIDER_CONFORMANCE_PUBLIC_KEY,
+} from './machineProvisionerConformance.js';
+export type {
+    ProviderConformanceCase,
+    ProviderConformanceExpectedFailures,
+    ProviderConformanceFailure,
+    ProviderConformanceFixture,
+    ProviderConformanceHttpReply,
+    ProviderConformanceHttpRequestFacts,
+    ProviderConformanceVendor,
+    ProviderConformanceVendorFacts,
+    ProviderConformanceVendorState,
+    ProviderConformanceWorld,
+    ProviderFixture as MachineProvisionerConformanceFixture,
+} from './machineProvisionerConformance.js';
 export { createTestResourceInvocationContext } from './resourceInvocation.js';
 export { createPluginHttpFixture } from './http.js';
 export { createPluginActionHandlerUnavailableFixture } from './actionFailure.js';

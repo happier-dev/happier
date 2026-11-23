@@ -1,3 +1,4 @@
+export { isSuccessfulProcessResult } from './processResult.js';
 export { resolveGhNativeToken } from '../exec.js';
 export type { PluginAgentCliReadinessRequest as AgentCliReadinessRequest } from '../services/io.js';
 export type { PluginAgentCliReadinessResult as AgentCliReadinessResult } from '../services/io.js';

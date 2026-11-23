@@ -1,6 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ProviderConformanceExpectedFailures, ProviderConformanceFixture } from '../../../../apps/cli/src/machines/managed/providerConformance.testkit.js';
+import type { ProviderConformanceExpectedFailures, ProviderConformanceFixture } from '@happier-dev/plugin-sdk/testing';
 import { MaritimeLaunchSchema } from '../src/machine/schemas.js';
 import { SandboxLaunchSchema } from '../src/sandbox/schemas.js';
 

@@ -1,5 +1,5 @@
 import { writeFileSync } from 'node:fs';
-import type { ProviderConformanceFixture } from '../../../../apps/cli/src/machines/managed/providerConformance.testkit.js';
+import type { ProviderConformanceFixture } from '@happier-dev/plugin-sdk/testing';
 import { DOCKER_ACCOUNT_SERVICE } from '../src/machine/dockerAccount.js';
 import { LaunchSchema as CloudLaunchSchema } from '../src/cloud/schemas.js';
 import { sandboxFixture, endpointCredentialFixture } from '../src/cloud/fixtures.js';

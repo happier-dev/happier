@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { ProviderConformanceFixture } from '../../../../apps/cli/src/machines/managed/providerConformance.testkit.js';
+import type { ProviderConformanceFixture } from '@happier-dev/plugin-sdk/testing';
 
 /** Crabbox CLI (direct) and coordinator REST boundaries for the shared provider conformance suite. */
 export const providerConformanceFixture: ProviderConformanceFixture = world => {

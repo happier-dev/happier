@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ProviderConformanceFixture } from '../../../../apps/cli/src/machines/managed/providerConformance.testkit.js';
+import type { ProviderConformanceFixture } from '@happier-dev/plugin-sdk/testing';
 
 /** Superserve OpenAPI 0.1.0 / sandbox ee91ea60f1e1, 2026-11-01. */
 export const providerConformanceFixture: ProviderConformanceFixture = world => {

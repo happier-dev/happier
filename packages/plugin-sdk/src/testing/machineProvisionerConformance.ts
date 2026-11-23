@@ -1,13 +1,13 @@
+/** @moduleRealm daemon */
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import type { PluginExecSpawnRequest, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
-import type { HttpRequest, HttpResponse } from '@happier-dev/plugin-sdk/http';
-import type { PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
-import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
-import { createMachineProvisionerFetch } from '@happier-dev/plugin-sdk/machine-provisioners';
+import type { PluginExecSpawnRequest, PluginProcessResult } from '../services/io.js';
+import type { HttpRequest, HttpResponse } from '../http.js';
+import type { PluginTestServicesFixture } from './types.js';
+import type { PluginContributionRef } from '../identity.js';
+import { createMachineProvisionerFetch } from '../machine-provisioners/http.js';
 
 export const PRIVATE_BINDING = 'conformance-private-credential-binding';
 export const PUBLIC_KEY = 'ssh-ed25519 AQIDBA==';
@@ -62,7 +62,7 @@ export type ProviderConformanceVendorFacts = Readonly<{
     blankImageDescriptions?: number;
 }>;
 
-/** A fake vendor owned by the provider's own package: `packages/plugins/<leaf>/testkit/providerConformance.ts`. */
+/** A fake vendor owned by the provider's package. */
 export type ProviderConformanceVendor = Readonly<{
     foreignId: string;
     launch: Record<string, unknown>;
@@ -85,34 +85,15 @@ export type ProviderConformanceFixture = (world: ProviderConformanceWorld) => Pr
 export type ProviderConformanceCase = 'accountPlacement' | 'nativeLifecycle' | 'deleteAfterLostReply' | 'credentialRefusal';
 /** Per contribution id: the case and the owning fix (lane and board post). Removing an entry is how the owner closes it. */
 export type ProviderConformanceExpectedFailures = Readonly<Record<string, Partial<Record<ProviderConformanceCase, string>>>>;
-export type ProviderFixture = Awaited<ReturnType<typeof cloudFixture>>;
+export type ProviderFixture = ReturnType<typeof createMachineProvisionerConformanceFixture>;
 
-const pluginRoot = new URL('../../../../../packages/plugins/', import.meta.url);
-
-async function importProviderFixtureModule(leaf: string): Promise<Record<string, unknown>> {
-    const path = fileURLToPath(new URL(`${leaf}/testkit/providerConformance.ts`, pluginRoot));
-    try { return await import(/* @vite-ignore */ path); }
-    catch (error) { throw new Error(`${leaf} declares machineProvisioners but has no conformance fixture at ${path}`, { cause: error }); }
-}
-
-/** The provider's declared known failures, read when the suite is collected. */
-export async function loadProviderConformanceExpectedFailures(leaf: string): Promise<ProviderConformanceExpectedFailures> {
-    const declared = (await importProviderFixtureModule(leaf)).providerConformanceExpectedFailures;
-    return (declared ?? {}) as ProviderConformanceExpectedFailures;
-}
-
-/** Load the provider's own conformance fixture; a provisioner without one fails here, by name. */
-async function loadProviderFixture(leaf: string): Promise<ProviderConformanceFixture> {
-    const module = await importProviderFixtureModule(leaf);
-    const fixture = module.providerConformanceFixture;
-    if (typeof fixture !== 'function') throw new Error(`${leaf}/testkit/providerConformance.ts must export providerConformanceFixture(world)`);
-    return fixture as ProviderConformanceFixture;
-}
-
-/** Stateful vendor boundary only: public registration, roles, codecs and managed owners stay real. */
-export async function cloudFixture(input: Readonly<{ leaf: string; pluginId: string; contribution: string }>) {
-    const { leaf, pluginId, contribution } = input;
-    const createVendor = await loadProviderFixture(leaf);
+/** Stateful vendor boundary. Supply your provider's fake vendor implementation. */
+export function createMachineProvisionerConformanceFixture(input: Readonly<{
+    pluginId: string;
+    contribution: string;
+    fixture: ProviderConformanceFixture;
+}>) {
+    const { pluginId, contribution, fixture: createVendor } = input;
     const directory = mkdtempSync(join(tmpdir(), 'happier-provider-conformance-'));
     const calls: HttpRequest[] = [];
     const processes: PluginExecSpawnRequest[] = [];
@@ -137,7 +118,7 @@ export async function cloudFixture(input: Readonly<{ leaf: string; pluginId: str
         get foreignId() { return vendor?.foreignId ?? 'happier-foreign'; },
         remove(target, expected, effect) {
             if (target === world.foreignId) { state.foreignPresent = false; return; }
-            if (target !== expected) throw new Error(`Unexpected ${leaf} deletion target: ${target}`);
+            if (target !== expected) throw new Error(`Unexpected ${pluginId}/${contribution} deletion target: ${target}`);
             effect();
         },
         guest(argv, stdin) {
@@ -155,7 +136,7 @@ export async function cloudFixture(input: Readonly<{ leaf: string; pluginId: str
         processes.push(request);
         if (failure === 'outage') return { ...result(PRIVATE_BINDING, 1), stderr: text.encode(PRIVATE_BINDING) };
         if (request.executable.kind === 'systemTool' && request.executable.id === 'ssh-keyscan') return result(`203.0.113.8 ${PUBLIC_KEY}\n`);
-        if (!created.process) throw new Error(`Unexpected vendor process for ${leaf}`);
+        if (!created.process) throw new Error(`Unexpected vendor process for ${pluginId}/${contribution}`);
         const before = failure === 'effect-reply-lost' ? snapshot() : undefined;
         const completed = await created.process(request, request.args ?? []);
         if (before === undefined || before === snapshot()) return completed;
@@ -174,7 +155,7 @@ export async function cloudFixture(input: Readonly<{ leaf: string; pluginId: str
         // A revoked or expired vendor credential: HTTP status is the vendor-neutral refusal fact.
         if (failure === 'credential') return { status: 401, finalUrl: request.url, headers: { 'content-type': 'application/json' },
             body: text.encode(JSON.stringify({ error: { code: 'unauthorized', message: 'Unauthorized' }, message: 'Unauthorized', code: 'unauthorized' })) };
-        if (!created.http) throw new Error(`No vendor HTTP fixture for ${leaf}`);
+        if (!created.http) throw new Error(`No vendor HTTP fixture for ${pluginId}/${contribution}`);
         const before = failure === 'effect-reply-lost' ? snapshot() : undefined;
         const reply = await created.http(request, { url, path, method, isForeign, targetPresent });
         if (before !== undefined && before !== snapshot()) {

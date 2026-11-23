@@ -18,13 +18,38 @@ import { AcquireResultV1Schema, ManagedBootstrapCarrierV1Schema, ProviderObserva
 import { createManagedNativeBootstrapIO, executeManagedMachineAcquire, executeManagedMachinePowerIntent, executeManagedMachineResize,
     prepareManagedMachineDeleteIntent, projectAccountManagedProvisioners, reconcileManagedMachine, settleManagedMachineDeleteIntent, settleManagedNativeIntent,
     type ManagedMachineReconciliation, type ManagedNativeInvocation, type ManagedNativeRole } from '@happier-dev/cli-common/machines/managed';
-import { cloudFixture, loadProviderConformanceExpectedFailures, MANAGED_ID, NATIVE_EXPIRY, PRIVATE_BINDING, PUBLIC_KEY,
-    type ProviderConformanceCase } from './providerConformance.testkit';
+import {
+    createMachineProvisionerConformanceFixture,
+    PROVIDER_CONFORMANCE_MANAGED_ID as MANAGED_ID,
+    PROVIDER_CONFORMANCE_NATIVE_EXPIRY as NATIVE_EXPIRY,
+    PROVIDER_CONFORMANCE_PRIVATE_BINDING as PRIVATE_BINDING,
+    PROVIDER_CONFORMANCE_PUBLIC_KEY as PUBLIC_KEY,
+    type ProviderConformanceCase,
+    type ProviderConformanceExpectedFailures,
+    type ProviderConformanceFixture,
+} from '@happier-dev/plugin-sdk/testing';
+
+const pluginRoot = new URL('../../../../../packages/plugins/', import.meta.url);
+
+async function loadProviderFixture(leaf: string) {
+    const path = fileURLToPath(new URL(`${leaf}/testkit/providerConformance.ts`, pluginRoot));
+    const source: Record<string, unknown> = await import(/* @vite-ignore */ path).catch(error => {
+        throw new Error(`${leaf} declares machineProvisioners but has no conformance fixture at ${path}`, { cause: error });
+    });
+    if (typeof source.providerConformanceFixture !== 'function') {
+        throw new Error(`${leaf}/testkit/providerConformance.ts must export providerConformanceFixture(world)`);
+    }
+    return {
+        fixture: source.providerConformanceFixture as ProviderConformanceFixture,
+        expectedFailures: (source.providerConformanceExpectedFailures ?? {}) as ProviderConformanceExpectedFailures,
+    };
+}
 
 const providerWorker = vi.hoisted(() => ({ preload: '', state: '', entry: '' }));
 
 it('machine-upstash-box native fixture preserves guest bytes through its text exec response', async () => {
-    const vendor = await cloudFixture({ leaf: 'machine-upstash-box', pluginId: 'happier.machine.upstash-box', contribution: 'upstash-box' });
+    const { fixture } = await loadProviderFixture('machine-upstash-box');
+    const vendor = createMachineProvisionerConformanceFixture({ pluginId: 'happier.machine.upstash-box', contribution: 'upstash-box', fixture });
     try {
         const command = buildMachineProvisionerShellCommand(['sh', '-c', 'printf "\\000\\377"; printf guest-stderr >&2; exit 7'], '');
         const response = await vendor.services.http!.request!({ url: 'https://us-east-1.box.upstash.com/v2/box/box-owned/exec',
@@ -48,8 +73,8 @@ vi.mock('node:worker_threads', async importOriginal => {
         }
     } };
 });
-const pluginRoot = new URL('../../../../../packages/plugins/', import.meta.url);
-// Discover source declarations, not the generated catalog: a new leaf cannot silently escape this suite.
+
+// Discover source declarations, not the generated catalog: a new lifecycle provider cannot silently escape this suite.
 // Each leaf contributes its vendor fake from `packages/plugins/<leaf>/testkit/providerConformance.ts`.
 const leaves = readdirSync(pluginRoot, { withFileTypes: true }).filter(entry => entry.isDirectory()).flatMap(entry => {
     const path = new URL(`${entry.name}/src/manifest.ts`, pluginRoot);
@@ -77,9 +102,12 @@ for (const leaf of leaves) {
         const declared = manifest.contributes.actions?.find(action => action.id === actionId)?.hostAccess ?? [];
         return [...manifest.hostAccess.required, ...manifest.hostAccess.optional].filter(access => declared.includes(access.id));
     };
-    const expectedFailures = await loadProviderConformanceExpectedFailures(leaf);
     for (const declared of manifest.contributes.machineProvisioners ?? []) {
         const provisioner = MachineProvisionerContributionV1Schema.parse(declared);
+        // Attachment-only contributions cannot allocate or retire a native resource.
+        // Their transport is exercised by the SSH attachment suite.
+        if (provisioner.workspaceAttachment && provisioner.retention.supportedIntents.length === 0 && !provisioner.reconciliation) continue;
+        const { fixture, expectedFailures } = await loadProviderFixture(leaf);
         // A provider's fixture names each case it is known to fail and the owner fixing it; the case still runs and must fail.
         const known = (key: ProviderConformanceCase) => expectedFailures[provisioner.id]?.[key] ? it.fails : it;
         const checkAccess = hostAccessOf(provisioner.actions.check);
@@ -88,7 +116,7 @@ for (const leaf of leaves) {
             && checkAccess.some(access => access.capability === 'network');
         describe(`${leaf}/${provisioner.id} shared provider conformance`, () => {
             async function host(options: Readonly<{ accountOnly?: boolean }> = {}) {
-                const vendor = await cloudFixture({ leaf, pluginId: manifest.id, contribution: provisioner.id });
+                const vendor = createMachineProvisionerConformanceFixture({ pluginId: manifest.id, contribution: provisioner.id, fixture });
                 Object.assign(providerWorker, vendor.worker ?? { preload: '', state: '', entry: '' });
                 const kit = await createPluginTestkit({ manifest, module: { ...definition, ...source } as NonNullable<Parameters<typeof createPluginTestkit>[0]['module']>, services: vendor.services,
                     ...(options.accountOnly ? { resolveCurrentPluginMaterializationRef: () => null } : {}) });

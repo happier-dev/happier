@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildSync } from 'esbuild';
-import type { ProviderConformanceFixture } from '../../../../apps/cli/src/machines/managed/providerConformance.testkit.js';
+import type { ProviderConformanceFixture } from '@happier-dev/plugin-sdk/testing';
 
 /** Modal 0.11.0 SDK boundary: the provider's real SDK worker runs with only its `modal` import replaced by ./modalSdk.mjs. */
 export const providerConformanceFixture: ProviderConformanceFixture = world => {

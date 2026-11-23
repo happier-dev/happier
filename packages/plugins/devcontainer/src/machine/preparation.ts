@@ -1,3 +1,4 @@
+import { isSuccessfulProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { Buffer } from 'node:buffer';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -36,11 +37,8 @@ function nativeName(operation: PreparationOperation) {
   return `happier-prepared-${Buffer.from(operation.operationId).toString('hex')}`;
 }
 function reference<T extends PreparationOperation>(value: T) { return { contributionRef, schemaVersion: 1, value }; }
-function completed(result: PluginProcessResult) {
-  return result.termination.requestedBy.kind === 'none' && result.termination.observed.kind === 'exit' && result.termination.observed.exitCode === 0;
-}
 function text(result: PluginProcessResult) {
-  if (!completed(result) || result.stdoutTruncated) throw new Error('Native image observation unavailable');
+  if (!isSuccessfulProcessResult(result) || result.stdoutTruncated) throw new Error('Native image observation unavailable');
   return new TextDecoder('utf-8', { fatal: true }).decode(result.stdout);
 }
 function nativeId(value: unknown) {
@@ -126,7 +124,7 @@ export function createDevcontainerPreparation(input: Readonly<{
           '--label', `${operationLabel}=${id}`, '--label', `${providerLabel}=${providerIdentity}`,
           ...(hostNetwork ? ['--network', 'host'] : []),
           '--file', '-', directory], Buffer.from(dockerfile.join('\n') + '\n'), true);
-        if (!completed(built)) return unknown(operation, 'native_build_failed');
+        if (!isSuccessfulProcessResult(built)) return unknown(operation, 'native_build_failed');
         const inspected = await inspectNative(operation);
         if (inspected.kind === 'ready' || inspected.kind === 'unknown') return inspected;
         return unknown(operation, inspected.kind === 'refused' ? inspected.code : 'native_build_unconfirmed');
@@ -144,7 +142,7 @@ export function createDevcontainerPreparation(input: Readonly<{
         const owned = observed.artifact.value;
         // No force: running consumers keep their image. No prune: source and
         // untagged parent images are outside this operation's ownership.
-        if (!completed(await run(['image', 'rm', '--no-prune', '--', owned.imageId]))) return unknown(owned);
+        if (!isSuccessfulProcessResult(await run(['image', 'rm', '--no-prune', '--', owned.imageId]))) return unknown(owned);
         const remaining = await inspectNative(owned);
         if (remaining.kind === 'absent') return { kind: 'confirmed' as const };
         if (remaining.kind === 'unknown') return remaining;

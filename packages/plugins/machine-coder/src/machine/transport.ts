@@ -1,12 +1,11 @@
+import { isSuccessfulProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { PluginError } from '@happier-dev/plugin-sdk';
-import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import type { MachineProvisionerNativeExecResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { CoderResource, ROLE_SCHEMAS } from './schemas.js';
 
-const completed = (result: PluginProcessResult) => result.termination.requestedBy.kind === 'none'
-  && result.termination.observed.kind === 'exit' && result.termination.observed.exitCode === 0;
 /** Only the control-plane token is redacted. All other output remains bytes,
  * including non-UTF8 data and a nonzero remote exit. No output is streamed
  * before this projection; native enrollment accepts buffered IO. */
@@ -56,7 +55,7 @@ export function createCoderTransport(input: { exec: Pick<ExecService, 'run'> & P
       const argv = config ? ['sh', '-c', 'export HOME="$HAPPIER_CODER_HOME" HAPPIER_HOME_DIR="$HAPPIER_CODER_STATE_HOME"; unset HAPPIER_CODER_HOME HAPPIER_CODER_STATE_HOME; exec "$@"', 'sh', ...config.detachedDaemonStartArgv] : value.argv;
       const result = await run(value.resource, argv, value.inputBase64 === undefined ? undefined : Buffer.from(value.inputBase64, 'base64'), value.allowWake, value.timeoutMs, privateEnvironment);
       if (config) {
-        if (!completed(result)) throw new PluginError({ code: 'native_boot_unconfirmed' });
+        if (!isSuccessfulProcessResult(result)) throw new PluginError({ code: 'native_boot_unconfirmed' });
         return { kind: 'process-configured' };
       }
       return { termination: result.termination,
@@ -67,7 +66,7 @@ export function createCoderTransport(input: { exec: Pick<ExecService, 'run'> & P
       if (!value.guestPath.startsWith('/') || value.guestPath.includes('\0')) return { kind: 'refused' as const, code: 'invalid_request' };
       const command = `umask 077; cat > ${quote(value.guestPath)} && chmod ${(value.mode ?? 0o600).toString(8)} ${quote(value.guestPath)}`;
       const result = await run(value.resource, ['sh', '-c', command], Buffer.from(value.bytesBase64, 'base64'), value.allowWake);
-      return completed(result) ? { kind: 'confirmed' as const } : { kind: 'unknown' as const, code: 'provider_unavailable' };
+      return isSuccessfulProcessResult(result) ? { kind: 'confirmed' as const } : { kind: 'unknown' as const, code: 'provider_unavailable' };
     },
   };
 }
