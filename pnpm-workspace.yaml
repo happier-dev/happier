@@ -26,6 +26,7 @@ packages:
   - packages/deployment-protocol
   - packages/deployments
   - packages/railway-api
+  - packages/vercel-api
   - packages/database-protocol
   - packages/databases
   - packages/triage-sources

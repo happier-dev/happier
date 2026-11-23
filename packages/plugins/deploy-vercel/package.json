@@ -39,6 +39,7 @@
   "dependencies": {
     "@happier-dev/deployment-protocol": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0",
+    "@happier-dev/vercel-api": "0.0.0",
     "@happier-dev/plugin-ui": "0.0.0"
   },
   "devDependencies": {

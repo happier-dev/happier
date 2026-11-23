@@ -1,3 +1,4 @@
+import { decodeVercelProjectsPage, vercelProjectsPageUrl } from '@happier-dev/vercel-api';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import type {
@@ -137,23 +138,34 @@ export async function probe(token: string, scope: Scope | null, context: Context
     providerIdentity: { accountId: null, email: null, organizationId: scope.teamId }, scopes: [] };
 }
 
+function decodeTeamPage(body: unknown) {
+  if (!object(body) || !Array.isArray(body.teams) || !object(body.pagination)) return null;
+  const choices: Choice[] = [];
+  for (const team of body.teams) {
+    if (!object(team) || !identifier(team.id) || typeof team.name !== 'string' || !team.name.trim()) return null;
+    choices.push({ id: team.id, name: team.name });
+  }
+  const next = body.pagination.next;
+  if (next === null) return { choices };
+  if (typeof next === 'number' && Number.isSafeInteger(next) || typeof next === 'string' && /^\d+$/u.test(next)) {
+    return { choices, nextCursor: String(next) };
+  }
+  return null;
+}
+
 /**
- * Official GET /v2/teams (checked 2026-11-14) and GET /v10/projects (checked
- * 2026-11-18) share Vercel's REST pagination: pages continue with
- * until=pagination.next until next is null.
- * https://vercel.com/docs/rest-api/teams/list-all-teams
- * https://vercel.com/docs/rest-api/projects/retrieve-a-list-of-projects
- * Project tokens deny team-level resources, so a non-token 403 means "cannot list".
+ * Project tokens deny team-level resources, so a non-token 403 means the
+ * account can still use the exact-scope probe even when discovery cannot list.
  */
-async function listChoices(token: string, context: Context, signal: AbortSignal,
-  path: '/v2/teams' | '/v10/projects', key: 'teams' | 'projects', parameters: Readonly<Record<string, string>> = {},
-): Promise<readonly Choice[] | 'unlisted' | Failure> {
+async function listChoices(token: string, context: Context, signal: AbortSignal, teamId?: string): Promise<readonly Choice[] | 'unlisted' | Failure> {
   const choices = new Map<string, Choice>();
-  let until: string | null = null;
+  let cursor: string | undefined;
   for (;;) {
-    const url = new URL(`${origin}${path}`);
-    for (const [name, value] of Object.entries(parameters)) url.searchParams.set(name, value);
-    if (until !== null) url.searchParams.set('until', until);
+    const url = teamId
+      ? vercelProjectsPageUrl({ teamId, limit: 100, ...(cursor ? { cursor } : {}) })
+      : new URL(`${origin}/v2/teams`);
+    if (!url) return unexpectedResponse();
+    if (!teamId && cursor) url.searchParams.set('until', cursor);
     let response: HttpResponse;
     try { response = await send(context, token, url.href, 'GET', signal); }
     catch (error) { return transportFailure(error, signal); }
@@ -161,28 +173,21 @@ async function listChoices(token: string, context: Context, signal: AbortSignal,
     if (response.status === 403 && !invalidToken(response, body)) return 'unlisted';
     const failure = responseFailure(response, body);
     if (failure) return failure;
-    const items = object(body) ? body[key] : undefined;
-    if (!object(body) || !Array.isArray(items) || !object(body.pagination)) return unexpectedResponse();
-    for (const item of items) {
-      if (!object(item) || !identifier(item.id) || typeof item.name !== 'string' || !item.name.trim()) return unexpectedResponse();
-      choices.set(item.id, { id: item.id, name: item.name });
-    }
-    const next: unknown = body.pagination.next;
-    if (next === null) return [...choices.values()];
-    const cursor = typeof next === 'number' && Number.isSafeInteger(next) ? String(next)
-      : typeof next === 'string' && /^\d+$/u.test(next) ? next : null;
+    const page = teamId ? decodeVercelProjectsPage(body, teamId) : decodeTeamPage(body);
     // A cursor that does not advance would page forever.
-    if (cursor === null || cursor === until) return unexpectedResponse();
-    until = cursor;
+    if (!page || (page.nextCursor && page.nextCursor === cursor)) return unexpectedResponse();
+    for (const choice of page.choices) choices.set(choice.id, choice);
+    if (!page.nextCursor) return [...choices.values()];
+    cursor = page.nextCursor;
   }
 }
 
 export function listTeams(token: string, context: Context, signal: AbortSignal) {
-  return listChoices(token, context, signal, '/v2/teams', 'teams');
+  return listChoices(token, context, signal);
 }
 
 export function listProjects(token: string, teamId: string, context: Context, signal: AbortSignal) {
-  return listChoices(token, context, signal, '/v10/projects', 'projects', { teamId, limit: '100' });
+  return listChoices(token, context, signal, teamId);
 }
 
 export function teamField(teams: readonly Choice[]): PluginConnectedAccountConfigurationFieldV2 {

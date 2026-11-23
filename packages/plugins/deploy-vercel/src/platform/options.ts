@@ -1,3 +1,4 @@
+import { decodeVercelProjectsPage, vercelProjectsPageUrl } from '@happier-dev/vercel-api';
 import { PluginError, projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetPreparationBaseV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
 import type { DefinePluginInput, JsonValue } from '@happier-dev/plugin-sdk';
@@ -20,21 +21,6 @@ function text(value: unknown): value is string { return typeof value === 'string
 function invalid(): never { throw new PluginError({ code: 'provider_response_invalid' }); }
 function matches(option: InputOption, query?: string) {
   return !query || option.label.toLowerCase().includes(query.toLowerCase());
-}
-function pageCursor(value: unknown) {
-  if (!record(value) || !('next' in value)) return invalid();
-  if (value.next === null) return undefined;
-  if (typeof value.next === 'number' && Number.isFinite(value.next)) return `until:${value.next}`;
-  if (text(value.next)) return `from:${value.next}`;
-  return invalid();
-}
-function continuation(url: URL, cursor?: string) {
-  if (!cursor) return;
-  const divider = cursor.indexOf(':');
-  const kind = cursor.slice(0, divider);
-  const value = cursor.slice(divider + 1);
-  if ((kind !== 'until' && kind !== 'from') || !value) throw new PluginError({ code: 'invalid_parameters' });
-  url.searchParams.set(kind, value);
 }
 async function read(url: URL, context: PluginAccountActionContext): Promise<unknown> {
   if (!context.services.http) throw new PluginError({ code: 'client_required' });
@@ -71,18 +57,13 @@ async function options(input: OptionsInput, context: PluginAccountActionContext)
     throw new PluginError({ code: 'missing_option_dependency', details: { requiredDraftPath: 'providerAccountId' } });
   }
   if (input.fieldPath === paths[1]) {
-    const url = new URL(vercelEndpoint('/v10/projects', input.providerAccountId));
-    if (input.query) url.searchParams.set('search', input.query);
-    continuation(url, input.cursor);
-    const value = await read(url, context);
-    const projects = Array.isArray(value) ? value : record(value) ? value.projects : undefined;
-    if (!Array.isArray(projects)) return invalid();
-    const result: InputOption[] = projects.map(project => {
-      if (!record(project) || !text(project.id) || !text(project.name) || project.accountId !== input.providerAccountId) return invalid();
-      return { value: project.id, label: project.name };
-    });
-    const nextCursor = Array.isArray(value) ? undefined : record(value) ? pageCursor(value.pagination) : undefined;
-    return { options: result, ...(nextCursor ? { nextCursor } : {}) };
+    const url = vercelProjectsPageUrl({ accountId: input.providerAccountId,
+      ...(input.query ? { search: input.query } : {}), ...(input.cursor ? { cursor: input.cursor } : {}) });
+    if (!url) throw new PluginError({ code: 'invalid_parameters' });
+    const page = decodeVercelProjectsPage(await read(url, context), input.providerAccountId);
+    if (!page) return invalid();
+    return { options: page.choices.map(project => ({ value: project.id, label: project.name })),
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
   }
   if (!input.providerResourceId) {
     throw new PluginError({ code: 'missing_option_dependency', details: { requiredDraftPath: 'projectId' } });

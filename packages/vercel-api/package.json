@@ -1,0 +1,35 @@
+{
+  "name": "@happier-dev/vercel-api",
+  "version": "0.0.0",
+  "description": "Shared Vercel project-list API for Happier plugins.",
+  "private": false,
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "happier-source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "package.json"
+  ],
+  "happier": {
+    "publicSdkRelease": {
+      "posture": "developer_preview",
+      "supportPolicy": "README.md#evolving-the-api",
+      "externalPublicationRequiresApproval": true
+    }
+  },
+  "scripts": {
+    "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
+    "build": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
+    "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+  }
+}

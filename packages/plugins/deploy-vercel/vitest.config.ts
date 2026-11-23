@@ -11,6 +11,7 @@ export default defineConfig({
     { packageName: '@happier-dev/deployment-protocol', packageSourceRoot: resolve(repoRoot, 'packages/deployment-protocol/src') },
     { packageName: '@happier-dev/plugin-sdk', packageSourceRoot: resolve(repoRoot, 'packages/plugin-sdk/src') },
     { packageName: '@happier-dev/protocol', packageSourceRoot: resolve(repoRoot, 'packages/protocol/src') },
+    { packageName: '@happier-dev/vercel-api', packageSourceRoot: resolve(repoRoot, 'packages/vercel-api/src') },
   ])],
   test: {
     ...resolveVitestWorkers(),

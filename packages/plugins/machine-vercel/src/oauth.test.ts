@@ -532,7 +532,7 @@ const scopeRefusal = {
 const projectId = 'prj_example';
 const projects = {
   status: 200,
-  body: { projects: [{ id: projectId, name: 'Example site' }, { id: 'prj_docs', name: 'Docs' }], pagination: { next: null } },
+  body: { projects: [{ id: projectId, name: 'Example site', accountId: teamId }, { id: 'prj_docs', name: 'Docs', accountId: teamId }], pagination: { next: null } },
 };
 const paths = (h: Awaited<ReturnType<typeof harness>>) => h.requests.map((item) => new URL(item.url).pathname);
 
@@ -588,6 +588,19 @@ describe('Sign in with Vercel: granted team, project and re-consent', () => {
       providerIdentity: { accountId: 'user_subject', organizationId: teamId } });
     expect(paths(h).at(-1)).toBe(`/v9/projects/${projectId}`);
     expect(h.staged.values.has('projectChoiceTeamId')).toBe(false);
+  });
+
+  it('offers project names from the documented unpaginated response', async () => {
+    const h = await harness();
+    h.routes.set('/v10/projects', {
+      status: 200, body: [{ id: projectId, name: 'Example site', accountId: teamId }],
+    });
+    await h.mode.begin({ callbackUrl, state: 'attempt-1.nonce', pkce }, h.authentication);
+    expect(await h.mode.complete(completion, h.authentication)).toMatchObject({
+      status: 'configurationRequired',
+      fields: [{ id: 'teamId' }, { id: 'projectId', schema: { enum: [projectId] } }],
+    });
+    expect(paths(h).filter(path => path === '/v10/projects')).toHaveLength(1);
   });
 
   it('connects without a project when the person skips the optional choice, offering it once', async () => {
