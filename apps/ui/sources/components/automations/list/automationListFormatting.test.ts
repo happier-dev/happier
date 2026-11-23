@@ -60,7 +60,7 @@ describe('formatAutomationTriggerLabel', () => {
         expect(new Set(labels).size).toBe(labels.length);
     });
 
-    it('keeps an unavailable Plugin Event declaration generic without reading private source content', () => {
+    it('names an offline Plugin Event from its retained declaration without reading private source content', () => {
         const trigger = AutomationTriggerListItemSchema.parse({
             id: 'trigger-event-1',
             revision: 3,
@@ -75,7 +75,7 @@ describe('formatAutomationTriggerLabel', () => {
             sourceStatus: null,
             sourceCatalogStatus: null,
         });
-        expect(formatAutomationTriggerLabel(trigger)).toBe(t('workflows.triggers.kind.pluginEvent'));
+        expect(formatAutomationTriggerLabel(trigger)).toBe('Pull request opened');
         expect(formatAutomationTriggerStatusLabel(trigger)).toBe('Waiting for the first report');
     });
 
@@ -97,7 +97,7 @@ describe('formatAutomationTriggerLabel', () => {
             createdAt: 1,
             updatedAt: 2,
             kind: 'pluginEvent',
-            eventRef: { pluginId: 'happier.scm.github', localId: 'issue-opened-v1' },
+            eventRef: { pluginId: 'happier.scm.github', localId: 'event9-v1' },
             sourceSelectorId,
             sourceContractVersion: 1,
             observation: { kind: 'checkpointedPull', watcher: null },
