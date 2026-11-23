@@ -9523,6 +9523,12 @@ alone does not declare a form.
 
 Feature-specific caller contracts belong in their public feature package. For PRs & Issues, [`@happier-dev/triage-protocol/v1`](../packages/triage-protocol/src/v1/index.ts) publishes source detail-tab declarations, qualified fix-link Action schemas/references, and the `agent-actions` point (`TriageAgentActionsContributionProtocolV1`) where a plugin declares agent action records with the same declaration schema as Happier's own subject owners; Triage's catalog owner qualifies, merges and offers them ([configured Session actions](triage-sources.md#configured-session-actions-03-development)). Triage retains its private relationship writer and resolver; callers receive the owner-resolved read projection. These contracts add no Triage policy to the generic SDK or host. See [Triage source ownership](triage-sources.md).
 
+Source contributors use that same public entry point for source failure and
+pacing outcomes, detail-tab and detail-input schemas, and Review skip facts.
+A skip fact explains the source's skipped Review outcome. The
+[Triage handoff contract](triage-sources.md#configured-session-actions-03-development)
+covers the Send operands and receipts.
+
 Hosted CI's 0.3 development-source contracts use the same protocol-only
 `@happier-dev/triage-protocol` package's explicit `/ci/v1` and
 `/ci/testing/v1` domain entries. Releases use `/releases/v1` and

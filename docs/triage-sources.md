@@ -1863,6 +1863,17 @@ their distinct evidence shapes. Configured Session, Agent/profile and
 compose/send choices remain with the existing catalog and Session owners.
 The helper preserves the standard approval/failure envelope and action-owned
 recovery; an uncertain send is not permission to start again.
+
+For an existing Session, supply the Session selector in
+`handoff.sessionChoice.session`. The confirmation can display that selector,
+`handoff.task`, and the optional `recipientStopNotice`. The mounted Session
+snapshot supplies the notice for presentation. Agent callers can omit it.
+The Session owner retains the requester class and decides whether to deliver.
+When a person has explicitly stopped the recipient, Agent Send can return
+`handoff.kind: 'sendResult'` with `result.status: 'held'` and
+`result.failureCause.errorCode: 'held_by_person'`. Tell the person that the
+recipient Session is stopped and that they can resume it.
+
 Entry execution results use the same envelope with a typed `entryExecution`
 phase summary and the original per-unit starts, Review outcomes and recovery
 facts. Optional `failure` preserves the single-start owner's public diagnostic
