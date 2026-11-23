@@ -1472,19 +1472,20 @@ describe('action.invoke target occurrence through the real current-UI owner', ()
     });
 });
 
-describe('cold mounted caller Actions through the executable dispatcher', () => {
-    async function publishManageMachine(serverId: string, machineId: string) {
-        const { createMachineFixture, createMachineListByServerIdFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
-        const previous = getStorage().getState();
-        getStorage().setState({
-            machineListByServerId: { ...previous.machineListByServerId,
-                ...createMachineListByServerIdFixture([createMachineFixture({ id: machineId, isShared: false })], serverId) },
-            machineListStatusByServerId: { ...previous.machineListStatusByServerId, [serverId]: 'idle' },
-        });
-        onTestFinished(() => getStorage().setState({ machineListByServerId: previous.machineListByServerId,
-            machineListStatusByServerId: previous.machineListStatusByServerId }));
-    }
+async function publishManageMachine(
+    scope: ActiveServerAccountScopeLifetime['scope'],
+    machineId: string = CLIENT_ACTION_ORIGIN.materializationRef.machineId,
+) {
+    const { createHydratedPlainMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    const { profileScope, machineRecordsByServerId, machineDisplayById, machinePresenceById, machinePresenceByServerId,
+        machines, machineListByServerId, machineListStatusByServerId } = getStorage().getState();
+    onTestFinished(() => getStorage().setState({ profileScope, machineRecordsByServerId, machineDisplayById,
+        machinePresenceById, machinePresenceByServerId, machines, machineListByServerId, machineListStatusByServerId }));
+    await publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({ id: machineId, accountId: scope.accountId })]);
+}
 
+describe('cold mounted caller Actions through the executable dispatcher', () => {
     it.each(['issueClose', 'issueReopen'] as const)('acquires an unprojected same-plugin source mutation before confirmation (%s)', async mutation => {
         const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/scm-github/src/manifest');
         const { GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 } = await import('../../../../../../packages/plugins/scm-github/src/triage/contribution');
@@ -1496,7 +1497,7 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
         const identity = { pluginId: PLUGIN_MANIFEST.id, localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1[mutation] };
         const declaration = normalized.manifest.contributes.actions.find(action => action.id === identity.localId)!;
         const accountLifetime = clientAccountLifetime(resolveServerProfileScopeIdForIdentifier(rpcHomes.get('server-client-action')!.id));
-        await publishManageMachine(accountLifetime.scope.serverId, 'machine-1');
+        await publishManageMachine(accountLifetime.scope, 'machine-1');
         const executionOrigin = { ...clientActionExecutionOrigin(identity.pluginId), materializationRef: {
             ...clientActionExecutionOrigin(identity.pluginId).materializationRef, machineId: 'machine-1' } };
         const action = PluginProjectedActionV2Schema.parse({ ...resolveDaemonTargetAction(identity),
@@ -2077,13 +2078,13 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
             TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1 } = await import('../../../../../../packages/plugins/triage/src/actions/sessionLinksProtocol');
         const { testkitEntryRef, testkitLocator } = await import('../../../../../../packages/plugins/triage/src/corpus/testkit/observations.test-support');
         const lifetime = clientAccountLifetime();
-        if (placement === 'daemon') await publishManageMachine(lifetime.scope.serverId, CLIENT_ACTION_ORIGIN.materializationRef.machineId);
+        await publishManageMachine(lifetime.scope);
         const pluginId = 'happier.triage';
         const localId = TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1;
         // Real authoring, registration and invocation; the artifact loader is
         // the existing system boundary. No Account storage write is needed to
         // exercise the mounted input/result schema preparation contract.
-        const execution = { target: 'account' as const, account: {
+        const execution = { target: 'account' as const, invokingUi: true as const, account: {
             artifactId: CLIENT_ACTION_TARGET.artifactId, exportName: CLIENT_ACTION_TARGET.exportName,
         } };
         const received: unknown[] = [];
@@ -2794,7 +2795,8 @@ describe('Account Action placement through the executable dispatcher', () => {
 
     it.each(['account', 'client'] as const)('collects and validates omitted %s Action input while daemon execution is unavailable', async target => {
         const accountLifetime = clientAccountLifetime();
-        const activation = createClientActionActivation({ accountPlacement: target === 'account', accountLifetime,
+        await publishManageMachine(accountLifetime.scope);
+        const activation = createClientActionActivation({ accountPlacement: target === 'account', invokingUi: true, accountLifetime,
             inputHints: { fields: [{ path: 'name', title: 'Name', widget: 'text', required: true }] },
             inputSchema: { type: 'object', properties: { name: { type: 'string', minLength: 1 } }, required: ['name'], additionalProperties: false },
             ...(target === 'account' ? { accountHandler: async value => value } : { handler: async value => value }),
@@ -2838,6 +2840,7 @@ describe('Account Action placement through the executable dispatcher', () => {
         const { createPluginAccountAvailabilityReaderStore } = await import('@/sync/domains/plugins/availability/reader');
         const { reconcileProjectedPluginUiClientExecutables } = await import('@/components/plugins/reactNative/clientExecutableActivation');
         const accountLifetime = clientAccountLifetime();
+        await publishManageMachine(accountLifetime.scope);
         const activation = createClientActionActivation({ accountPlacement: true, accountLifetime, accountHandler: async () => {
             throw new Error('A refused target must not execute');
         } });
@@ -2886,6 +2889,7 @@ describe('Account Action placement through the executable dispatcher', () => {
         'settles only its expected cold Account executable through the mounted admission owner (%s)', async settlement => {
         const { AppShellPluginUiProjectionValueProvider, useAppShellPluginUiProjection } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
         const accountLifetime = clientAccountLifetime();
+        await publishManageMachine(accountLifetime.scope);
         // The physical Host binds routed credentials independently from the
         // AppShell active Account owner, even when both scopes are current.
         const mountedLifetime = settlement.startsWith('routed-') ? Object.freeze({ ...accountLifetime }) : accountLifetime;
@@ -2893,7 +2897,7 @@ describe('Account Action placement through the executable dispatcher', () => {
             ? Object.freeze({ ...accountLifetime, scope: { ...accountLifetime.scope, accountId: 'another-account' } })
             : settlement === 'retired-owner' ? Object.freeze({ ...accountLifetime, isCurrent: () => false }) : accountLifetime;
         let entered = 0;
-        const activation = createClientActionActivation({ accountPlacement: true, accountLifetime,
+        const activation = createClientActionActivation({ accountPlacement: true, invokingUi: true, accountLifetime,
             accountHandler: async () => { entered += 1; return { read: true }; } });
         let currentAction: PluginProjectedActionV2 | null = activation.action;
         let scopedProjection = activation.projection;
@@ -3498,6 +3502,7 @@ describe('Account Action placement through the executable dispatcher', () => {
         { coldBinding: true, settlement: 'declaration-replaced' },
     ] as const)('waits for the mounted Machine settlement before nested Account continuation dispatch ($settlement, cold binding=$coldBinding)', async ({ coldBinding, settlement }) => {
         const accountLifetime = clientAccountLifetime();
+        await publishManageMachine(accountLifetime.scope);
         const sourceId = 'acme.provider-source';
         let provider = PluginProjectedActionV2Schema.parse({ ...resolveDaemonTargetAction({ pluginId: sourceId, localId: 'list' }), surfaces: ['plugin'] });
         let providerCurrent = true;
@@ -3507,7 +3512,7 @@ describe('Account Action placement through the executable dispatcher', () => {
         let enteredSignal: AbortSignal | undefined;
         const target = definePlugin({ id: CALLER_PLUGIN_ID, version: '1.2.3', actions: {
             'refresh-index': { title: 'Account entry', scopes: ['global'], surfaces: ['ui'], dangerLevel: 'safe',
-                execution: { target: 'account', account: { artifactId: CLIENT_ACTION_TARGET.artifactId,
+                execution: { target: 'account', invokingUi: true, account: { artifactId: CLIENT_ACTION_TARGET.artifactId,
                     exportName: CLIENT_ACTION_TARGET.exportName } }, run: async () => null },
         } });
         const parsed = ingestPluginManifestV2(target.manifest);
@@ -3643,8 +3648,9 @@ describe('Account Action placement through the executable dispatcher', () => {
 
     it('does not replay an entered Account handler that throws an unavailable diagnostic while its Machine is pending', async () => {
         const accountLifetime = clientAccountLifetime();
+        await publishManageMachine(accountLifetime.scope);
         let entered = 0;
-        const activation = createClientActionActivation({ accountPlacement: true, accountLifetime,
+        const activation = createClientActionActivation({ accountPlacement: true, invokingUi: true, accountLifetime,
             accountHandler: async () => {
                 entered += 1;
                 throw new PluginError({ code: 'plugin_surface_contributed_action_unavailable' });
@@ -3675,10 +3681,11 @@ describe('Account Action placement through the executable dispatcher', () => {
 
     it('finishes an entered Account Action across its unchanged caller Resource declaration refresh', async () => {
         const accountLifetime = clientAccountLifetime();
+        await publishManageMachine(accountLifetime.scope);
         let enteredSignal: AbortSignal | undefined;
         let release = () => {};
         const settled = new Promise<void>(resolve => { release = resolve; });
-        const activation = createClientActionActivation({ accountPlacement: true, accountLifetime,
+        const activation = createClientActionActivation({ accountPlacement: true, invokingUi: true, accountLifetime,
             accountHandler: async (_value, context) => {
                 enteredSignal = context.signal;
                 await settled;
@@ -4573,7 +4580,7 @@ describe('Account Action placement through the executable dispatcher', () => {
             contributionPoints: { sources: protocol.point() }, actions: {
                 'refresh-index': { title: 'Read source', scopes: ['global'], surfaces: ['ui'], dangerLevel: 'safe',
                     ...(sessionTarget ? { sessionTarget } : {}),
-                    execution: { target: 'account', account: { artifactId: CLIENT_ACTION_TARGET.artifactId, exportName: CLIENT_ACTION_TARGET.exportName } },
+                    execution: { target: 'account', invokingUi: true, account: { artifactId: CLIENT_ACTION_TARGET.artifactId, exportName: CLIENT_ACTION_TARGET.exportName } },
                     ...(sessionTarget ? { inputSchema: defineProtocolObject({ sessionId: defineProtocolString() }, { policy: 'closed' }) } : {}),
                     run: async () => null },
             } });
@@ -4712,6 +4719,7 @@ describe('Account Action placement through the executable dispatcher', () => {
                 ...activation.projection.actionsById, ...accountProjection?.actionsById,
                 ...(placement === 'mounted native read' ? {} : { [`${source.manifest.id}/inspect`]: provider }),
             } };
+            if (mounted) await publishManageMachine(accountLifetime.scope, 'provider-machine');
             const controller = mounted ? createBoundPluginSurfaceController({ facts: {
                 ...surfaceContext(), machineId: 'provider-machine', serverId: accountLifetime.scope.serverId,
                 occurrenceId: selected.custodyId,
@@ -5560,6 +5568,7 @@ describe('client Action declared SessionTarget admission', () => {
         const { buildSessionTurnsProjectionV1 } = await import('@happier-dev/protocol/sessions/turns/sessionTurnV1');
         const accountLifetime = clientAccountLifetime();
         const originHome = rpcHomes.get('server-client-action')!.id;
+        await publishManageMachine(accountLifetime.scope);
         const targetHome = mode === 'foreignAccount'
             ? (await network.addHome('https://raw-address-foreign-account', 'another-account')).id
             : rpcHomes.get('server-wire')!.id;
@@ -5592,8 +5601,8 @@ describe('client Action declared SessionTarget admission', () => {
             interactionEnabled: true, daemonInteractionEnabled: true,
         }, binding: { executeHostAction: execute } });
         try {
-            const outcome = await controller.hostApi.handleRequest(executeActionRequest({ action: 'session.open',
-                input: { sessionId: 'reviewed' }, sessionAddress: { serverId: targetHome, sessionId: 'reviewed' } }))
+            const outcome = await Promise.resolve(controller.hostApi.handleRequest(executeActionRequest({ action: 'session.open',
+                input: { sessionId: 'reviewed' }, sessionAddress: { serverId: targetHome, sessionId: 'reviewed' } })))
                 .then(value => ({ kind: 'value' as const, value }), error => ({ kind: 'error' as const, error }));
             if (mode === 'retiredCapture' && outcome.kind === 'error') {
                 expect(outcome.error).toMatchObject({ name: 'AbortError' });
@@ -5613,7 +5622,9 @@ describe('client Action declared SessionTarget admission', () => {
                 expect(sessionReads).toBe(readsAtIdle);
                 expect(displayWarnings.mock.calls.filter(([message]) => String(message).includes('[SessionDisplay]'))).toHaveLength(0);
             } else {
-                expect(result, JSON.stringify(result)).toMatchObject({ code: 'unavailable' });
+                expect(result, JSON.stringify(result)).toMatchObject(mode === 'foreignAccount'
+                    ? { code: 'action_account_scope_changed', diagnostics: ['action_account_scope_changed'] }
+                    : { code: 'stale_surface', diagnostics: ['plugin_surface_retired'] });
                 expect(opened).toEqual([]);
             }
         } finally { controller.dispose(); accountLifetime.retire(); }
