@@ -11121,7 +11121,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
                 normalizedManifest: PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id: pluginId, version: '3.2.1',
                     displayName: 'Composer Account callee', engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 },
                     contributes: { actions: [{ id: 'read-page', title: 'Read', scopes: ['global'], surfaces: ['ui'],
-                        placementBindings: [], dangerLevel: 'safe', execution: { target: 'account',
+                        placementBindings: [], dangerLevel: 'safe', execution: { target: 'account', invokingUi: true,
                             account: { artifactId: generatedIdentity.artifactId, exportName: 'renderSurface' } },
                         inputSchema: { type: 'object' }, resultSchema: { type: 'object' } }],
                         ui: { renderers: [{ id: 'native-panel', kind: 'reactNative', artifact: generatedIdentity.artifactId }] } } }),
@@ -14152,7 +14152,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
                         schemaVersion: 2, id: pluginId, version, displayName: 'Account renderer continuity',
                         engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 },
                         contributes: { actions: [{ id: 'read-page', title: 'Read page', scopes: ['global'],
-                            surfaces: ['ui'], placementBindings: [], dangerLevel: 'safe', execution: { target: 'account',
+                            surfaces: ['ui'], placementBindings: [], dangerLevel: 'safe', execution: { target: 'account', invokingUi: true,
                                 account: { artifactId: generatedIdentity.artifactId, exportName: 'renderSurface' } },
                             inputSchema: { type: 'object', additionalProperties: false }, resultSchema: { type: 'object' } }], ui: {
                             renderers: [{ id: 'native-panel', kind: 'reactNative', artifact: generatedIdentity.artifactId,
