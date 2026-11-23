@@ -87,7 +87,7 @@ import {
     TRIAGE_SET_ENTRY_PINNED_ACTION_LOCAL_ID_V1,
     TriageSetEntryPinnedInputV1Schema,
 } from '../actions/userMarksProtocol.js';
-import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
+import { CORPUS_SESSION_LINKS_INDEX_ID, CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { fromCorpusStoredRow, toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
 import type { CorpusSessionLinkRowV1, CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
 import { deriveSessionLinkEntryTag, deriveSessionLinkTag } from '../corpus/identity/tags.js';
@@ -2523,6 +2523,24 @@ describe('opening a row into the source detail', () => {
         await act(async () => { await shell.press(await shell.findByRole('button', { name: 'Retry: Fix pull request' })); });
         // The retried read lands as the fix step, named after the pull request.
         await vi.waitFor(() => expect(document.querySelector('[data-testid="triage-story-fix-pr"]')?.textContent).toContain('Unprojected fix'));
+    });
+
+    it('keeps the PR story open with one notice when its linked Sessions cannot be read', async () => {
+        const shell = await mountShell({ activeSurface: true });
+        const links = currentHarness!.collections.sessionLinks;
+        const query = links.query.bind(links);
+        vi.spyOn(links, 'query').mockImplementation(async (input, options) => {
+            if (input.index === CORPUS_SESSION_LINKS_INDEX_ID.byEntry && input.prefix !== undefined) {
+                throw new PluginError({ code: 'account_storage_unavailable' });
+            }
+            return await query(input, options);
+        });
+
+        await openTheRow(shell);
+
+        await expect(shell.getByText(DETAIL_BODY_TEXT)).resolves.toBeDefined();
+        const detailRegion = document.querySelector(`[data-testid="${TRIAGE_SHELL_DETAIL_REGION_TEST_ID_V1}"]`);
+        expect(detailRegion?.textContent?.split('Some linked Sessions are unavailable.')).toHaveLength(2);
     });
     it('lets an agent switch the mounted Collection to Board through the UI owner', async () => {
         let published: PluginUiContextEnrichmentV1 | null = null;

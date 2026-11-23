@@ -16,6 +16,7 @@ import { sameTriageEntryRefV1 } from '../state/surface.js';
 import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
 import { useTriageEntryDetail } from './useTriageEntryDetail.js';
 import { useTriagePostMutationRow } from './useTriagePostMutationRow.js';
+import { TriageLinkedSessionsAttention } from './linkedSessions.js';
 import { TriageSessionPanel } from './sessionPanel.js';
 
 const EMPTY_LANES: readonly TriageListLaneV1[] = Object.freeze([]);
@@ -118,8 +119,9 @@ function TriageEntrySessionCompanion(): React.ReactElement {
       />
     );
   }
+  const attention = detail.linkedSessionsAttention === true ? <TriageLinkedSessionsAttention /> : null;
   if (detail.linkedSessions.length === 0) {
-    return (
+    return attention ?? (
       <EmptyState
         titleKey="plugins.triage.surface.detail.session.companion.none"
         title="No Session is linked to this entry."
@@ -127,15 +129,18 @@ function TriageEntrySessionCompanion(): React.ReactElement {
     );
   }
   return (
-    <TriageSessionPanel
-      sessions={detail.linkedSessions}
-      entryRef={detail.input.observation.entryRef}
-      sourceInstanceId={detail.input.instance.instance.sourceInstanceId}
-      onUnlinked={detail.refreshLinkedSessions}
-      continuation={{ hasMore: detail.linkedSessionsNextCursor !== undefined,
-        pageState: detail.linkedSessionsPageState, onLoadMore: detail.loadMoreLinkedSessions }}
-      header="pane"
-    />
+    <>
+      {attention}
+      <TriageSessionPanel
+        sessions={detail.linkedSessions}
+        entryRef={detail.input.observation.entryRef}
+        sourceInstanceId={detail.input.instance.instance.sourceInstanceId}
+        onUnlinked={detail.refreshLinkedSessions}
+        continuation={{ hasMore: detail.linkedSessionsNextCursor !== undefined,
+          pageState: detail.linkedSessionsPageState, onLoadMore: detail.loadMoreLinkedSessions }}
+        header="pane"
+      />
+    </>
   );
 }
 

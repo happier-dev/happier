@@ -247,7 +247,7 @@ describe('the entry detail read', () => {
         expect(sourceReads).toHaveBeenCalledTimes(1);
     });
 
-    it.each(['typed', 'untyped'] as const)('preserves a %s source failure through the real relation and detail owners to the mounted reader', async kind => {
+    it.each(['typed', 'untyped'] as const)('opens the entry while a %s Session-link refusal reaches the mounted reader', async kind => {
         const { collections } = await seedTwoConnections();
         const failure = new PluginError({ code: 'machine_not_found', retryable: false,
             details: { requestId: 'detail-request-51' }, diagnostics: [{ code: 'target_machine_required', severity: 'error' }] });
@@ -259,9 +259,7 @@ describe('the entry detail read', () => {
         } }, { selection: { entryRef: ENTRY_REF, sourceInstanceId: INSTANCE_A }, observation: {
             entryRef: ENTRY_REF, observedAtMs: 2_000, locator: testkitLocator(), snapshot: testkitSnapshot(), viewer: testkitViewer(),
         } });
-        expect(state).toMatchObject({ kind: 'unreachable', failure: kind === 'typed' ? {
-            code: 'machine_not_found', retryable: false, details: { requestId: 'detail-request-51' },
-        } : { code: 'sessionLinksReadFailed', retryable: true } });
+        expect(state).toMatchObject({ kind: 'ready', linkedSessions: [], linkedSessionsAttention: true });
         expect(reads).toBe(1);
     });
 

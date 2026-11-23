@@ -101,7 +101,7 @@ import {
   readTriageSourceGetOperationV1,
 } from './sourceSurface.js';
 import { useTriageEntryDetail } from './useTriageEntryDetail.js';
-import { TriageLinkedSessions } from './linkedSessions.js';
+import { TriageLinkedSessions, TriageLinkedSessionsAttention } from './linkedSessions.js';
 import { TriageDetailWholeBody, TriageSessionPanel } from './sessionPanel.js';
 import { TriageDetailPageLeadProvider, TriageDetailPanelMount, TriageDetailTabbedBody, type TriageDetailActionsNavigationV1, type TriageDetailSourceMountV1, type TriageDetailTabSelectionV1 } from './body.js';
 import { TriageAgentStep, TriagePermissionCard, type TriageAgentEntryV1 } from './storyRail.js';
@@ -1419,6 +1419,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
         } : {})}
       />
 
+      {detail?.kind === 'ready' && detail.linkedSessionsAttention === true ? <TriageLinkedSessionsAttention /> : null}
       {pinned ? null : actionRegion}
       {/* Without an action row (no workflow subject yet) the task's Status still leads its facts. */}
       {/* The task's Status keeps its own width at the start of the facts (lab t1 phone), never a bar. */}

@@ -71,7 +71,7 @@ export async function readTriageEntryDetail(
     }
 
     const sourceLinks = await deps.sourceRelations.read({ entryRef: input.entryRef, sourceInstanceId: input.sourceInstanceId,
-        paged: true, readFailure: 'throw', ...(input.linkedSessionsCursor === undefined ? {} : { cursor: input.linkedSessionsCursor }) });
+        paged: true, ...(input.linkedSessionsCursor === undefined ? {} : { cursor: input.linkedSessionsCursor }) });
     const { admittedReview, reviewSkip } = await deps.readReviewOutcome?.(input.entryRef, options) ?? {};
     return Object.freeze({
         kind: 'read',
@@ -79,6 +79,9 @@ export async function readTriageEntryDetail(
         linkedSessions: Object.freeze(sourceLinks.links.map(({ sessionId }) => Object.freeze({ sessionId }))),
         ...(admittedReview === undefined ? {} : { admittedReview }),
         ...(reviewSkip === undefined ? {} : { reviewSkip }),
+        ...(sourceLinks.kind !== 'complete' && sourceLinks.nextCursor === undefined
+            ? { linkedSessionsAttention: true as const }
+            : {}),
         ...(sourceLinks.nextCursor === undefined
             ? {}
             : { linkedSessionsNextCursor: sourceLinks.nextCursor }),

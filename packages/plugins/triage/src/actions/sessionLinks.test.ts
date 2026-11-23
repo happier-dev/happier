@@ -623,14 +623,14 @@ describe('the session-link writer Action', () => {
             expect(roleReads).toBe(0);
             expect(corpusReads).toBe(1);
             corpusReads = 0;
+            const prDetail = await detail({ v: 1, entryRef: testkitEntryRef(), sourceInstanceId: configured.instance.sourceInstanceId }, context);
             if (healthy || roleState === 'foreignSession') {
-                expect(await detail({ v: 1, entryRef: testkitEntryRef(), sourceInstanceId: configured.instance.sourceInstanceId }, context))
-                    .toMatchObject({ kind: 'read', linkedSessions: roleState === 'empty' ? [] : [{ sessionId: roleState === 'foreignSession' ? 'another-session' : 'session-a' }] });
+                expect(prDetail).toMatchObject({ kind: 'read',
+                    linkedSessions: roleState === 'empty' ? [] : [{ sessionId: roleState === 'foreignSession' ? 'another-session' : 'session-a' }],
+                });
+                expect(prDetail).not.toHaveProperty('linkedSessionsAttention');
             } else {
-                await expect(detail({ v: 1, entryRef: testkitEntryRef(), sourceInstanceId: configured.instance.sourceInstanceId }, context))
-                    .rejects.toMatchObject({ code: incompleteRoles ? 'sessionLinksRolesUnsupported'
-                        : roleState === 'throw' ? 'sessionLinksReadFailed' : roleState === 'typedThrow' ? 'source_transport_unavailable'
-                            : roleState === 'denied' ? 'denied' : 'sessionLinksInvalidResult' });
+                expect(prDetail).toMatchObject({ kind: 'read', linkedSessions: [], linkedSessionsAttention: true });
             }
             expect(corpusReads).toBe(0);
             for (const actionId of [TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1, TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1]) {

@@ -65,7 +65,7 @@ describe('native PR Session relations', () => {
             } } }],
         });
     });
-    it('retains a source-result Request ID when authoritative detail preparation throws its refusal', async () => {
+    it('retains the source Request ID in the failed exact relation result', async () => {
         const { collections, control } = createTestkitCorpusCollections();
         const entryRef = testkitEntryRef();
         const configured = testkitConfiguredInstance();
@@ -81,8 +81,10 @@ describe('native PR Session relations', () => {
                 kind: 'failed', failure: { class: 'transient', code: 'source_links_unavailable', requestId: 'links-source-17' },
             }) } },
         } as unknown as Parameters<typeof createTriageSourceSessionRelations>[0], collections); // Host admission and dispatch boundaries.
-        await expect(relations.read({ entryRef, sourceInstanceId: configured.instance.sourceInstanceId, readFailure: 'throw' }))
-            .rejects.toMatchObject({ code: 'source_links_unavailable', data: { details: { requestId: 'links-source-17' } } });
+        const result = await relations.read({ entryRef, sourceInstanceId: configured.instance.sourceInstanceId });
+        expect(result).toMatchObject({ kind: 'failed', links: [], lanes: [{ health: {
+            kind: 'failed', failure: { code: 'source_links_unavailable', requestId: 'links-source-17' },
+        } }] });
     });
     it('reads the first selected PR through Account activation without a retained census', async () => {
         const { collections, control } = createTestkitCorpusCollections();

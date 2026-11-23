@@ -42,6 +42,7 @@ export type TriageEntryDetailStateV1 =
     input: TriageDetailSurfaceInputV1;
     /** Every linked Session page this mount has answered, in Collection order. */
     linkedSessions: readonly TriageLinkedSessionProjectionV1[];
+    linkedSessionsAttention?: true;
     /** The opaque Collection continuation, held only for this mount. */
     linkedSessionsNextCursor?: string;
     linkedSessionsPageState: 'idle' | 'loading' | 'failed';
@@ -190,6 +191,7 @@ async function readTriageEntryDetailStateThrough(
       kind: 'ready',
       input: built.input,
       linkedSessions: result.linkedSessions,
+      ...(result.linkedSessionsAttention === true ? { linkedSessionsAttention: true as const } : {}),
       ...(result.linkedSessionsNextCursor === undefined
         ? {}
         : { linkedSessionsNextCursor: result.linkedSessionsNextCursor }),
@@ -332,15 +334,12 @@ export function useTriageEntryDetail(
         linkedSessions: Object.freeze([...retained.linkedSessions, ...appended]),
         linkedSessionsPageState: 'idle',
       });
-      if (isSpentTriageLinkedSessionCursorV1(
+      if (result.linkedSessionsAttention === true || isSpentTriageLinkedSessionCursorV1(
         spentLinkedSessionCursors.current,
         result.linkedSessionsNextCursor,
       )) {
-        // Keep every linked Session this page admitted, but do not republish an
-        // cursor this mounted walk already spent as another available page.
-        // This settles both A→A and longer A→B→A cycles. Retry asks the current
-        // Account boundary again after it recovers; the set dies with this
-        // selection and is neither durable custody nor a second paging owner.
+        // Keep the confirmed links and let the existing page control retry
+        // this cursor after an incomplete response or a cursor cycle.
         publish(Object.freeze({
           ...accumulated,
           linkedSessionsNextCursor: cursor,

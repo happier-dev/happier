@@ -498,6 +498,13 @@ writes still require the exact current writer contract. The optional private
 
 The source plugin retains its private configuration-token encoding and provider-specific behavior. `configuration.token` is non-secret source-selection data, despite its name. Agents obtain the configured instance from `entries/read-detail-v1` and pass it unchanged into source Actions, including issue facts and pin/unpin. A `[REDACTED]` replacement is invalid configuration. Credentials are acquired separately through the admitted binding; keep configuration contents out of user-facing prose. Triage business behavior stays in `packages/plugins/triage`; shared host code stays source-neutral. Do not use this schema package as a new source service, credential store or corpus persistence owner.
 
+In 0.3 development, `entries/read-detail-v1` returns the configured connection
+and any confirmed Session links even when part of the relationship could not be
+read. `linkedSessionsAttention: true` signals incomplete coverage. An empty list
+without attention or a continuation means the relationship was read and had no
+links. The mounted detail keeps the entry open and shows one linked-Session
+notice.
+
 For SCM pull-request writes, the Action spec names the reads that supply its inputs. Resolve a GitHub URL with `entries/resolve-resource-v1` or select the matching connection in `entries/list-v1`. Use the entry reference and that connection’s source instance ID to read the full configured instance. Copy the routing token or, for Bitbucket, the complete locator from the matching observation. An invalid operand returns `plugin_action_input_schema_invalid` before approval. When an input hint covers the invalid field, the typed issue includes instructions for recovering that operand.
 
 Currentness readers that already possess a configured instance may pass it as

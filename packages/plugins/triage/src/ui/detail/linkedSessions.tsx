@@ -69,6 +69,11 @@ export function TriageLinkedSessionsContinuation(props: Readonly<{
   </>;
 }
 
+export function TriageLinkedSessionsAttention(): React.ReactElement {
+  return <Status tone="warning" labelKey="plugins.triage.surface.sessionActivity.unreachable"
+    label="Some linked Sessions are unavailable." />;
+}
+
 /** Common-header rendering for the bounded read-only linked Session projection. */
 export function TriageLinkedSessions(props: Readonly<{
   sessions: readonly TriageLinkedSessionProjectionV1[];

@@ -59,7 +59,8 @@ export type TriageReadEntryDetailInputV1 = ReturnType<
  * through to another connection, which would open a different provider's answer
  * under the entry the reader chose.
  *
- * `linkedSessions` is required and `[]` means no links — never "unknown".
+ * `linkedSessions` contains confirmed links. An empty list with no continuation
+ * or attention means the relation was read and had no links.
  * A retained link whose generic Session summary is unavailable or tombstoned
  * keeps its `sessionId` and omits the two presentation fields, exactly as
  * `CONTRACT.md` §7 requires; no reader may infer that such a Session was never
@@ -75,7 +76,9 @@ export const TriageReadEntryDetailResultV1Schema = defineProtocolUnion([
         kind: defineProtocolLiteral('read'),
         instance: TriageConfiguredSourceInstanceV1Schema,
         linkedSessions: defineProtocolArray(TriageLinkedSessionProjectionV1Schema),
-        /** The Collection owner's opaque continuation; absent means this page completed the relation. */
+        /** Some Session links could not be read. Any confirmed links are still returned. */
+        linkedSessionsAttention: defineProtocolLiteral(true).optional(),
+        /** The Collection owner's opaque continuation for the next page. */
         linkedSessionsNextCursor: ProtocolCollectionOpaqueCursorV1Schema.optional(),
         /** The entry's latest admitted PR Review and round; absent when none was admitted through Triage. */
         admittedReview: TriageAdmittedReviewV1Schema.optional(),

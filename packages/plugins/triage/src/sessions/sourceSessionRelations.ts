@@ -244,9 +244,7 @@ export function createTriageSourceSessionRelations(
             }
         },
         async read(input: Readonly<{ entryRef?: TriageEntryRefV1; sourceInstanceId?: string; sessionId?: string; sessionIds?: readonly string[]; kindId?: string;
-            paged?: boolean; cursor?: string;
-            /** Detail preparation requires an authoritative page and preserves the original transport refusal. */
-            readFailure?: 'throw' }>, reads?: Readonly<{
+            paged?: boolean; cursor?: string }>, reads?: Readonly<{
                 corpus?: () => Promise<Readonly<{ links: readonly CorpusSessionLinkRowV1[]; incomplete?: boolean }>>;
             }>): Promise<TriageReadSourceSessionLinksResultV1> {
             const { sources, configured } = await readView(input);
@@ -353,8 +351,6 @@ export function createTriageSourceSessionRelations(
                         ? { kind: 'partial', unavailableRefs: [...unavailableRefs.values()] } : { kind: 'complete' }) });
                 } catch (error) {
                     context.signal.throwIfAborted();
-                    if (input.readFailure === 'throw') throw isPluginError(error) ? error
-                        : new PluginError({ code: 'sessionLinksReadFailed', retryable: true });
                     const requestId = readPluginErrorRequestIdV1(error);
                     const diagnostic = isPluginError(error) ? TriageListInvocationErrorV1Schema.safeParse({
                         code: error.code, retryable: error.retryable,
@@ -418,8 +414,6 @@ export function createTriageSourceSessionRelations(
                     }
                 } catch (error) {
                     context.signal.throwIfAborted();
-                    if (input.readFailure === 'throw') throw isPluginError(error) ? error
-                        : new PluginError({ code: 'sessionLinksReadFailed', retryable: true });
                     unknownCorpusCoverage = true;
                     const requestId = readPluginErrorRequestIdV1(error);
                     const diagnostic = isPluginError(error) ? TriageListInvocationErrorV1Schema.safeParse({
@@ -460,14 +454,6 @@ export function createTriageSourceSessionRelations(
                 : complete > 0 || lanes.some(lane => lane.health.kind === 'partial') || links.length > 0 || nextCursor !== undefined ? 'partial' : 'failed', links, lanes,
                 ...(configureSources.length === 0 ? {} : { configureSources }),
                 ...(nextCursor === undefined ? {} : { nextCursor }) };
-            if (input.readFailure === 'throw' && result.nextCursor === undefined && (result.kind === 'failed'
-                || unknownCorpusCoverage || lanes.some(lane => lane.health.kind === 'failed' || lane.health.kind === 'unavailable'))) {
-                const health = lanes.find(lane => lane.health.kind === 'failed')?.health;
-                throw new PluginError(health?.kind === 'failed'
-                    ? { code: health.failure.code, retryable: health.failure.class === 'transient',
-                        ...(health.failure.requestId === undefined ? {} : { details: { requestId: health.failure.requestId } }) }
-                    : { code: 'sessionLinksReadFailed', retryable: true });
-            }
             return result;
         },
     };
