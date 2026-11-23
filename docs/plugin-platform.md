@@ -148,6 +148,9 @@ from the Happier `errorCode` classification. Plugin author-payload and RPC reade
 normalize malformed code/status leaves independently, retaining the valid cause
 fields. UI client errors and the SDK test host carry the same authored cause,
 details and remediation. Existing causes without a native code remain valid.
+Unavailable client Actions use the same refusal projection as failed Actions.
+The shared presentation preserves an authored sentence and correlates it with
+the request ID. A code-only unavailable Action uses the existing localized copy.
 
 
 ## Channel message observation demand (unreleased 0.3)

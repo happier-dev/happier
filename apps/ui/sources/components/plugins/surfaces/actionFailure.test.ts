@@ -9,6 +9,9 @@ it.each([
 ])('preserves the invocation owner terminal result $code', ({ code, reason }) => {
     const outcome = projectClientActionInvocationFailure({ status: 'unavailable', code, message: code }, { readOnly: true }, {});
     expect(outcome).toMatchObject({ ok: false, reason });
+    const payload = readPluginSurfaceHostApiErrorPayload(createPluginSurfaceActionFailurePayload(outcome));
+    expect(payload).not.toBeNull();
+    expect(payload?.message).not.toBe(code);
 });
 
 it.each([
@@ -43,6 +46,21 @@ it('keeps the admission comparison detail in the client refusal', () => {
 import { projectPluginActionFailure } from './actionFailure';
 import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { createPluginSurfaceActionFailurePayload } from './actionFailure';
+
+it('presents the authored unavailable Action refusal with its request ID', () => {
+    const result = projectClientActionInvocationFailure({
+        status: 'unavailable', code: 'credential_scope_denied', message: 'Choose another credential', retryable: true,
+        data: { requestId: 'issued-unavailable-refusal', effectAttempted: false, remediation: { kind: 'retry' } },
+    }, { readOnly: false }, {});
+    const payload = readPluginSurfaceHostApiErrorPayload(createPluginSurfaceActionFailurePayload(result));
+    expect(payload).toMatchObject({ message: 'Choose another credential', requestId: 'issued-unavailable-refusal', effectAttempted: false,
+        remediation: { kind: 'retry' }, retryable: true });
+    const presented = presentActionExecutionFailure({ ...result, errorCode: result.reason });
+    expect(presented.reason).toContain('Choose another credential');
+    expect(presented.technicalDetails).toContainEqual(expect.objectContaining({
+        key: 'requestId', value: 'issued-unavailable-refusal',
+    }));
+});
 import { readPluginSurfaceHostApiErrorPayload } from './createPluginSurfaceHostApi';
 
 const typedRefusal = { errorCode: 'credential_scope_denied', error: 'Choose another credential',

@@ -175,16 +175,10 @@ export function projectClientActionInvocationFailure(
     input: unknown,
 ): Failure {
     if (result.status === 'invalid') return clientActionFailure(result.code);
-    if (result.status === 'unavailable') {
-        const code = result.code;
-        const author = readPluginActionFailureAuthorPayload(result.data);
-        if (author.failureCause) return projectPluginActionFailure({ ...result, code });
-        const metadata: FailureMetadata = {
-            ...(author.details === undefined ? {} : { details: author.details }),
-            ...(result.actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation: result.actionHandlerInvocation }),
-        };
-        return actionOutcomeUnknownFailure(code, declaration, input, metadata) ?? clientActionFailure(code, metadata);
-    }
-    const metadata = projectPluginActionFailure(result);
-    return metadata.failureCause ? metadata : actionOutcomeUnknownFailure(result.code, declaration, input, metadata) ?? metadata;
+    const metadata = projectPluginActionFailure(result.status === 'unavailable' && result.message === result.code
+        ? { ...result, message: undefined }
+        : result);
+    if (metadata.failureCause) return metadata;
+    return actionOutcomeUnknownFailure(result.code, declaration, input, metadata)
+        ?? (result.status === 'unavailable' ? clientActionFailure(result.code, metadata) : metadata);
 }
