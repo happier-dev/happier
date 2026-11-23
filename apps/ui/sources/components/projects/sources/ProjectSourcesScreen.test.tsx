@@ -678,12 +678,14 @@ describe('Projects › Sources', () => {
       expect(screen.findByTestId('projects.sources.detail.outcomeUnknown')).toBeTruthy(),
     );
     // Save cannot repeat it yet; the banner's only way forward is to check every Source.
+    const inspections = shared.calls.filter((call) => call.actionId === 'projects.sources.list').length;
     await act(async () => {
       screen.pressByTestId('projects.sources.detail.outcomeUnknown.action');
     });
-    await vi.waitFor(() =>
-      expect(screen.findByTestId('projects.sources.detail.outcomeUnknown.action')).toBeTruthy(),
-    );
+    await vi.waitFor(() => {
+      expect(shared.calls.filter((call) => call.actionId === 'projects.sources.list')).toHaveLength(inspections + 1);
+      expect(screen.getTextContent()).toContain('projects.sources.saveAgain');
+    });
     await act(async () => {
       screen.pressByTestId('projects.sources.detail.outcomeUnknown.action');
     });

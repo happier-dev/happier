@@ -1,7 +1,7 @@
 import { z } from 'zod/mini';
 import {
     ProjectSourcesListOutputV1Schema, ProjectSourcesReadOutputV1Schema, ProjectSourcesCreateActionInputV1Schema,
-    ProjectSourcesCreateActionOutputV1Schema, ProjectSourcesUpdateOutputV1Schema, ProjectSourcesDeleteOutputV1Schema,
+    ProjectSourcesCreateActionOutputV1Schema, ProjectSourcesCreateInputV1Schema, ProjectSourcesUpdateOutputV1Schema, ProjectSourcesDeleteOutputV1Schema,
     type ProjectSourceV1, type ProjectSourceListItemV1, type ProjectSourcesCreateInputV1, type ProjectSourcesUpdateInputV1,
     type ProjectSourcesListInputV1, type ProjectSourcesCreateActionInputV1, type ProjectSourceCheckoutLinkV1,
 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
