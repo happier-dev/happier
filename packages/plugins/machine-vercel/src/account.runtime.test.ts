@@ -125,7 +125,7 @@ describe('activated Vercel vendor Connected Account', () => {
     const h = await host();
     try {
       const result = await h.mode.complete({ fields: { token: secret } }, h.authentication);
-      expect(result).toMatchObject({ status: 'connected', providerIdentity: { organizationId: teamId }, scopes: [] });
+      expect(result).toMatchObject({ status: 'connected', credentialKind: 'token', providerIdentity: { organizationId: teamId }, scopes: [] });
       expect(result).not.toHaveProperty('accountId');
       expect(h.staged).toEqual(new Map([['token', secret]]));
       expect(h.requests).toEqual([expect.objectContaining({ method: 'GET', redirect: 'error',
@@ -251,13 +251,13 @@ describe('activated Vercel vendor Connected Account', () => {
   it('rechecks manual-token health on refresh and requires reconnect after expiration or revocation', async () => {
     const h = await host();
     try {
-      expect(await h.runtime.status(h.read)).toMatchObject({ status: 'connected' });
+      expect(await h.runtime.status(h.read)).toMatchObject({ status: 'connected', credentialKind: 'token' });
       h.respond({ error: { code: 'invalid_token', message: secret } }, 401);
       expect(await h.runtime.refresh(h.mutation)).toMatchObject({ status: 'reconnectRequired', diagnostic: { code: 'vercel_invalid_token' } });
       expect(h.staged.size).toBe(0);
       expect(h.requests.every(r => r.method === 'GET')).toBe(true);
       h.respond(project);
-      expect(await h.runtime.refresh(h.mutation)).toMatchObject({ status: 'connected' });
+      expect(await h.runtime.refresh(h.mutation)).toMatchObject({ status: 'connected', credentialKind: 'token' });
     } finally { await h.kit.dispose(); }
   });
 
@@ -386,7 +386,7 @@ describe('Vercel team picker from a pasted token', () => {
       admitsDiscoveredFields(offered);
       const chosen = { ...h.authentication, configuration: { ...h.authentication.configuration, values: { teamId: 'team_second' } } };
       expect(await h.mode.reconcile?.(chosen))
-        .toMatchObject({ status: 'connected', displayName: 'Second team', providerIdentity: { organizationId: 'team_second' } });
+        .toMatchObject({ status: 'connected', credentialKind: 'token', displayName: 'Second team', providerIdentity: { organizationId: 'team_second' } });
       expect(h.requests.at(-1)?.url).toBe('https://api.vercel.com/v2/teams/team_second');
     } finally { await h.kit.dispose(); }
   });
@@ -399,7 +399,7 @@ describe('Vercel team picker from a pasted token', () => {
         : { status: 200, body: team } });
     try {
       expect(await h.mode.complete({ fields: { token: secret } }, h.authentication))
-        .toMatchObject({ status: 'connected', displayName: 'Example team', providerIdentity: { organizationId: teamId } });
+        .toMatchObject({ status: 'connected', credentialKind: 'token', displayName: 'Example team', providerIdentity: { organizationId: teamId } });
       expect(stagedConfiguration).toEqual([expect.objectContaining({ values: { teamId } })]);
       expect(h.requests.map(request => request.url)).toEqual([teamsUrl, 'https://api.vercel.com/v2/teams/team_example']);
       expect(h.staged.get('token')).toBe(secret);

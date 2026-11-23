@@ -271,7 +271,7 @@ async function retainedIdentity(
   return { subject, email };
 }
 
-/** The team probe is the token mode's; the person's identity and the OAuth credential kind come from the sign-in. */
+/** Attach the person's identity to the exact scope verified by the probe. */
 function signedIn(
   result: Exclude<ConnectedAccountAuthCompletionResult, { status: 'configurationRequired' }>,
   identity: Identity,
@@ -287,7 +287,6 @@ function signedIn(
   }
   return {
     ...result,
-    credentialKind: 'oauth' as const,
     providerIdentity: {
       accountId: identity.subject,
       email: identity.email,

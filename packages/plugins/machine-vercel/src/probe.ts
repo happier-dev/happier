@@ -134,7 +134,7 @@ export async function probe(token: string, scope: Scope | null, context: Context
   }
   // A team can contain multiple independently scoped connections. The host
   // mints their account identity; organizationId must not become its KV key.
-  return { status: 'connected', displayName: body.name,
+  return { status: 'connected', credentialKind: signIn ? 'oauth' : 'token', displayName: body.name,
     providerIdentity: { accountId: null, email: null, organizationId: scope.teamId }, scopes: [] };
 }
 
