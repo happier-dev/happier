@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import { AgentUsageObservedPayloadV1Schema } from '@happier-dev/protocol/runtime/agentUsageObservedPayloadV1';
 import { buildTokenCountAgentMessageFromUsageObservation, buildTokenCountSessionMessageFromUsageObservation, buildLegacyUsageReportFromUsageObservation } from '@/usage/legacy/legacyUsageTransport';
 import { buildUsageObservedMeasurementFromTokenCountMessage } from '../runtime/tokenCountForwarding';
@@ -22,7 +23,10 @@ describe('buildAcpPromptUsageObservation', () => {
     const observation = await buildAcpPromptUsageObservation({ provider: 'fx',
       promptResponse: { modelId: 'fixture-model', usage: { inputTokens: 17, outputTokens: 7,
         cacheReadTokens: 5, cacheWriteTokens: 2, reasoningTokens: 3 } },
-      projectUsage: FX_PROMPT_USAGE.projectPromptUsage,
+      projectUsage: ({ usage, promptResponse }) => FX_PROMPT_USAGE.projectPromptUsage({
+        usage: AgentRuntimeJsonValueV1Schema.parse(usage),
+        promptResponse: AgentRuntimeJsonValueV1Schema.parse(promptResponse),
+      }),
     });
     for (const buildMessage of [buildTokenCountAgentMessageFromUsageObservation, buildTokenCountSessionMessageFromUsageObservation]) {
       const message = buildMessage(observation!);
