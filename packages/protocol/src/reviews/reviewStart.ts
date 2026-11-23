@@ -20,6 +20,7 @@ import { ExecutableSessionParticipantSelectionV1Schema, ExecutableModelParticipa
 import { ReviewRequestedReviewerInputV1Schema } from './reviewHumanV1.js';
 import { ReviewRoundBindingV1Schema } from './reviewArtifactV1.js';
 import { ReviewFindingSeveritySchema } from './reviewFindingClassification.js';
+import { buildQualifiedPluginContributionKey } from '../plugins/contributionIdentity.js';
 
 /**
  * Canonical, cross-surface input contract for starting reviews.
@@ -137,7 +138,7 @@ export function reviewReviewerDisplayNamesForStartV1(input: Pick<ReviewStartInpu
     const name = reviewer.kind === 'engine'
       ? reviewer.teamCredentialModel?.modelId ?? reviewer.modelSelection?.modelId ?? reviewer.modelId
         ?? readEngineLabel?.(reviewer, id) ?? reviewer.engineId
-      : reviewer.kind === 'model' ? reviewer.launch.modelSelection?.ref.modelId ?? reviewer.launch.agentTarget.identity.localId
+      : reviewer.kind === 'model' ? buildQualifiedPluginContributionKey(reviewer.launch.agentTarget.identity)
       : reviewer.kind === 'session' ? readSessionLabel?.(reviewer)
       : undefined;
     return name ? [[id, name]] : [];

@@ -4,8 +4,29 @@ import { ReviewArtifactBodyV1Schema } from '@happier-dev/protocol/reviews/review
 import settledRound from '@/dev/testkit/fixtures/settledReviewRound.json';
 import historicalRound from '@/dev/testkit/fixtures/historicalReviewRound.json';
 import twoStepRound from '@/dev/testkit/fixtures/twoStepPartialReviewRound.json';
+import nativeModelReviewer from '@/dev/testkit/fixtures/nativeModelReviewReviewer.json';
+import { ReviewStartInputSchema, reviewReviewerDisplayNamesForStartV1 } from '@happier-dev/protocol/reviews/reviewStart';
 import { projectReviewRoundReviewers, reviewRosterOf, reviewRoundReviewerName, reviewRoundReviewerOutcomeLabel, reviewRoundReviewerReasonWords,
   reviewRoundReviewerRowCount, reviewRoundUnfinishedReviewers } from './reviewRoundReviewers';
+
+it('keeps an explicit native model reviewer identified by its Agent and mark across steps (U8 R7 NM1)', () => {
+  // Captured SHIP-02 1123-mixed-workflow-terminal accepted launch; only Home, Machine and path are anonymized.
+  const input = ReviewStartInputSchema.parse({ reviewers: [nativeModelReviewer], instructions: 'Review.', steps: [
+    { kind: 'review', instructions: 'Review.', reviewers: [nativeModelReviewer] },
+    { kind: 'verify', instructions: 'Verify.', reviewers: [nativeModelReviewer] },
+  ] });
+  const round = ReviewArtifactBodyV1Schema.parse(twoStepRound).rounds[0]!;
+  const named = { ...round, reviewerOutcomes: undefined, reviewerDisplayNames: reviewReviewerDisplayNamesForStartV1(input) };
+  expect(projectReviewRoundReviewers(named, undefined).map(({ name, agentId }) => ({ name, agentId }))).toEqual([
+    { name: 'Claude · step 1', agentId: 'claude' }, { name: 'Claude · step 2', agentId: 'claude' },
+  ]);
+  // Another plugin's identically named local contribution is not the bundled Claude Agent.
+  const other = ReviewStartInputSchema.parse({ reviewers: [{ ...nativeModelReviewer, launch: {
+    ...nativeModelReviewer.launch, agentTarget: { kind: 'agent', identity: { pluginId: 'other.agent', localId: 'claude' } },
+  } }], instructions: 'Review.' });
+  const otherNamed = { ...named, reviewerIds: ['step-1-reviewer-1'], reviewerDisplayNames: reviewReviewerDisplayNamesForStartV1(other) };
+  expect(projectReviewRoundReviewers(otherNamed, undefined)[0]?.agentId).toBeNull();
+});
 
 it('uses the sealed reviewer result and timing after settlement, even while its continued execution still runs', () => {
   // Captured real createReviewRecordPortV1.start/settle output (P02 producer e, 2026-11-22).

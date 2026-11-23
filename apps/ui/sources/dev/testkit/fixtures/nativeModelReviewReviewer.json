@@ -1,0 +1,50 @@
+{
+  "kind": "model",
+  "launch": {
+    "executionTarget": {
+      "serverId": "review-home",
+      "machineId": "review-machine"
+    },
+    "directory": {
+      "kind": "path",
+      "path": "/repo"
+    },
+    "organizationPlacement": {
+      "folderId": null,
+      "tagIds": []
+    },
+    "agentTarget": {
+      "kind": "agent",
+      "identity": {
+        "pluginId": "happier.agent.claude",
+        "localId": "claude"
+      }
+    },
+    "modelSelection": {
+      "v": 1,
+      "ref": {
+        "agentTargetKey": "agent:happier.agent.claude/claude",
+        "providerConnectionId": null,
+        "modelId": "claude-sonnet-4-5"
+      },
+      "updatedAt": 1795395930138
+    },
+    "permissionMode": "read-only",
+    "configuration": {
+      "mode": {
+        "value": null,
+        "updatedAtMs": 1795395944144
+      },
+      "model": {
+        "value": "claude-sonnet-4-5",
+        "updatedAtMs": 1795395930138
+      },
+      "permissionIntent": {
+        "value": "read-only",
+        "updatedAtMs": 1795395944144
+      },
+      "options": {}
+    },
+    "checkoutCreationDraft": null
+  }
+}

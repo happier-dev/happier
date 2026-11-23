@@ -3,7 +3,7 @@ import type { ReviewArtifactV1, ReviewRoundReviewerOutcomeV1 } from '@happier-de
 import { readReviewReviewerSlotV1 } from '@happier-dev/protocol/reviews/reviewStart';
 import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
-import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
+import { normalizeAgentCatalogId, resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { resolveAgentIdFromFlavor, type AgentId } from '@/agents/catalog/catalog';
 import { presentExecutionRunFailureSummary } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { t } from '@/text';
@@ -101,7 +101,7 @@ export function reviewRosterOf(rounds: readonly Pick<ReviewRound, 'reviewerIds' 
 /** The name a round recorded for a reviewer, read as an Agent when it is one ("claude" is Claude, with its mark). */
 function recordedReviewer(round: NamedRound, reviewerId: string): Readonly<{ base: string | null; agentId: AgentId | null }> {
   const recorded = round.reviewerDisplayNames?.[reviewerId] ?? null;
-  const agentId = recorded ? resolveAgentIdFromFlavor(recorded) : null;
+  const agentId = recorded ? resolveAgentIdFromFlavor(normalizeAgentCatalogId(recorded)) : null;
   return { base: agentId ? resolveAgentCatalogTitle(agentId) : recorded, agentId };
 }
 
