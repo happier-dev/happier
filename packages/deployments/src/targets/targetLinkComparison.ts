@@ -98,11 +98,12 @@ export async function checkDeploymentTargetV1(input: DeploymentTargetCheckInputV
     if (environment && !environment.ok) return 'errorCode' in environment ? environment : failure(environment.error);
     if (environment && environment.environment.projectSourceId !== source.source.id) return failure('deployment_unavailable');
     const { target, manifests } = await host.readTarget();
-    const inspect = target?.role === 'runtime' && target.source.kind === 'plugin' ? target.actions.inspect : undefined;
+    if (target?.role !== 'runtime' || target.source.kind !== 'plugin') return failure('target_unavailable');
+    const inspect = target.actions.inspect;
     const action = inspect?.kind === 'plugin' ? parseQualifiedPluginActionId(inspect.actionId) : null;
     const manifest = action && manifests.find(item => item.manifest.id === action.pluginId)?.manifest;
     const credential = action && manifest ? readPluginActionCredentialPurposeV1(manifest, action.localId) : null;
-    if (!target || !action || !credential) return failure('target_unavailable');
+    if (!action || !credential) return failure('target_unavailable');
     if (!sameStrictJsonValue(credential.service, input.credentialRef.service)) return failure('target_mismatch');
     const repositoryIdentity = readProjectSourceRepositoryIdentityV1(source.source.repository);
     const { repository: _repository, environmentId: _environmentId, expectedRevision: _expectedRevision, ...fields } = input.fields;
@@ -120,7 +121,8 @@ export async function checkDeploymentTargetV1(input: DeploymentTargetCheckInputV
     if (!('kind' in inspection) || inspection.kind !== 'ready') return inspection;
     const { provider } = inspection;
     const association = await findExistingDeploymentTargetLinkV1({ serverId: input.serverId,
-        environmentId: input.environmentId, source: target.source, targetKind: target.targetKind, provider,
+        ...(input.environmentId === undefined ? {} : { environmentId: input.environmentId }),
+        source: target.source, targetKind: target.targetKind, provider,
     }, { list: (selection, cursor) => host.list(source.source.owner, selection, cursor), artifact: host.artifact });
     await host.assertCurrent();
     return association ? { kind: 'alreadyLinked', association } : inspection;
