@@ -2420,6 +2420,26 @@ describe('createCliActionDeps workflow boundary', () => {
     })).resolves.not.toMatchObject({ normalizedDefinition: { defaults: { agentTarget: external } } });
   });
 
+  it('validates Workflow shorthand from a configured ACP Session with the exact definition', async () => {
+    const identity = { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' };
+    const backendTarget = { kind: 'agent' as const, identity, definitionId: 'qa-configured-acp' };
+    const deps = createCliActionDeps({
+      token: 'token', credentials: { token: 'token', encryption: null }, sessionId: 'session-1',
+      getCurrentSessionMetadata: () => ({ path: process.cwd(), machineId: 'machine-1', flavor: 'custom-acp' }),
+      getCurrentSessionBackendTarget: () => backendTarget,
+      resolveServerFeaturesSnapshot: () => enabledFeatures as never,
+      mode: 'plain', ctx: null,
+    });
+
+    await expect(deps.workflowAction!({
+      actionId: 'workflow.validate',
+      input: { definition: { blocks: ['work'] } },
+      context: { surface: 'agent', defaultSessionId: 'session-1', actionCaller: {
+        kind: 'session', sessionId: 'session-1', starterDepth: 0, turnDepth: 0,
+      } },
+    })).resolves.toMatchObject({ valid: true, normalizedDefinition: { defaults: { agentTarget: backendTarget } } });
+  });
+
   it('reports transport unavailable without promoting a session caller to signed-root authority', async () => {
     const deps = createCliActionDeps({
       token: 'token',

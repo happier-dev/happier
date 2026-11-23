@@ -16,7 +16,7 @@ import { resolveWorkflowRunDataKeyV1 } from '@happier-dev/protocol/workflows/wor
 import { resolveWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionResolverV1';
 import { formatWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionRefV1';
 import type { ActionExecutorDeps, ActionExecutorContext, WorkflowActionExecuteArgs, PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildBackendTargetKeyV2, writePersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { WorkflowStepExecutionSelectionSchema, WorkflowIngressContextV1Schema } from '@happier-dev/protocol/workflows/workflowV1';
 import { resolveExplicitSessionSpawnMachineTarget } from '@happier-dev/protocol/actions/sessionSpawnMachineTarget';
 import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
@@ -136,6 +136,17 @@ export function createCliWorkflowFamily(
   const { roleArtifactStore, readRoleSources, projectHomeId, actionHomeId, callMachineAction, sessionList, sessionRead, approvalsStore, readCurrentSessionMetadata, resolveAgentStartContext, isSameActionHomeId, resolveServerRequestHeaders, resolveCurrentSessionValue, resolveProjectHomeIdentity, readServerFeaturesSnapshot, resolveActionCallerSession, resolveSessionAgentIdentity, invokeSessionPullRequestBinding, resolveTransportForSession, readTransportSessionOwnerMetadata, callSessionRpcForTransport, callDetachedExecutionRunRpc, accountCallerContext, callerSessionResolution, normalizeStringValue, readExecutionRunTransportMachineId } = host;
   const { workflowRunServerHttpBaseUrl, createWorkflowRunStorage, workflowRunStorage } = runStorage;
 
+  const resolveWorkflowSessionAgentTarget = async (
+    metadata: Record<string, unknown> | null | undefined,
+    backendTarget: PersistedBackendTargetRefV2 | null | undefined,
+  ): Promise<WorkflowIngressContextV1['agentTarget']> => {
+    const target = backendTarget?.kind === 'backend' && backendTarget.sourceKind === 'configured'
+      ? writePersistedBackendTargetRefV2(backendTarget) : backendTarget;
+    if (target?.kind === 'agent') return target;
+    const identity = await resolveSessionAgentIdentity(metadata, target);
+    return identity ? { kind: 'agent', identity } : undefined;
+  };
+
   const resolveTriggerSession: NonNullable<Parameters<typeof createCliWorkflowTriggerActions>[0]['resolveSession']> = async (sessionId, caller, options) => {
     const transport = await resolveTransportForSession(sessionId, caller?.signal);
     if (!transport.ok) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
@@ -153,9 +164,9 @@ export function createCliWorkflowFamily(
       }
     }
     const { resolveBackendTargetFromSessionMetadata } = await import("@/session/backendTargets/resolveBackendTargetFromSessionMetadata");
-    const identity = await resolveSessionAgentIdentity(metadata, resolveBackendTargetFromSessionMetadata(metadata));
-    const selection = identity ? WorkflowStepExecutionSelectionSchema.safeParse({
-      agentTarget: { kind: 'agent', identity }, ...(metadata?.permissionMode ? { permissionMode: metadata.permissionMode } : {}),
+    const agentTarget = await resolveWorkflowSessionAgentTarget(metadata, resolveBackendTargetFromSessionMetadata(metadata));
+    const selection = agentTarget ? WorkflowStepExecutionSelectionSchema.safeParse({
+      agentTarget, ...(metadata?.permissionMode ? { permissionMode: metadata.permissionMode } : {}),
     }) : null;
     return { project: { machineId, directory }, nativeGoalOwner,
       ...(selection?.success ? { executionSelection: selection.data } : {}) };
@@ -284,10 +295,10 @@ export function createCliWorkflowFamily(
     // The live Session client is the canonical current Agent authority for the
     // hosting Session. The synced Session record is a fallback for a field the
     // live context does not supply, never an unconditional prerequisite.
-    const agentIdentity = await resolveSessionAgentIdentity(session.metadata, session.backendTarget);
+    const agentTarget = await resolveWorkflowSessionAgentTarget(session.metadata, session.backendTarget);
     const { machineId, directory } = session;
     return WorkflowIngressContextV1Schema.parse({
-      ...(agentIdentity ? { agentTarget: { kind: 'agent', identity: agentIdentity } } : {}),
+      ...(agentTarget ? { agentTarget } : {}),
       ...(machineId ? { machineId } : {}),
       ...(directory ? { directory } : {}),
     });
