@@ -300,9 +300,13 @@ export const DeploymentReceiptDetail = React.memo(
     // The canonical remedy and next action for the recorded cause (RECOVERY-COPY); no page-local copy.
     const recovery = deployment.state === 'failed' && facts.failure
       ? readDeploymentRefusalRecovery(facts.failure.code, facts.failure) : null;
-    const failureCode = facts.failure?.failureCause?.errorCode ?? facts.failure?.code;
-    const recordedCause = deployment.state !== 'failed' ? null : facts.failure
-      ? resolveActionExecutionErrorMessage(facts.failure, recovery ? '' : (failureCode ?? ''))
+    const failureCause = facts.failure?.failureCause;
+    const failureCode = failureCause?.errorCode ?? facts.failure?.code;
+    const homeStorageUnavailable = deployment.state === 'failed'
+      && failureCause?.errorCode === 'database_connection_unavailable' && failureCause.httpStatus === 503;
+    const recordedCause = deployment.state !== 'failed' ? null
+      : homeStorageUnavailable ? t('projects.deployments.receipt.homeStorageUnavailable')
+      : facts.failure ? resolveActionExecutionErrorMessage(facts.failure, recovery ? '' : (failureCode ?? ''))
       : t('workflows.recovery.causeNotRecorded');
     const { deploy, teardown, promote, environmentId } = props;
     const mayDeploy = environmentValue?.environment.capabilities.deploy === true;
@@ -446,6 +450,7 @@ export const DeploymentReceiptDetail = React.memo(
         onPress={() => { rollBack(retainedTarget.deploymentId); }}
       />
     ) : null;
+    const againLabel = retryTeardown || homeStorageUnavailable ? t('common.retry') : t('projects.deployments.deployAgain');
     // A failed receipt's way forward beside Roll back (lab d3 `failed` header).
     const againButton = retryTeardown || (againTarget && deployment.state === 'failed') ? (
       <RoundButton
@@ -453,7 +458,7 @@ export const DeploymentReceiptDetail = React.memo(
         size="normal"
         display="secondary"
         style={phone ? styles.phoneAction : undefined}
-        title={retryTeardown ? t('common.retry') : t('projects.deployments.deployAgain')}
+        title={againLabel}
         leading={<Icon name="arrow-clockwise" size={14} color={theme.colors.text.secondary} />}
         loading={againPress.running}
         disabled={againPress.running || againPress.reviewPending}
@@ -513,7 +518,7 @@ export const DeploymentReceiptDetail = React.memo(
       },
     } : null;
     const againAction = bannerAgain ? {
-      label: t('projects.deployments.deployAgain'),
+      label: againLabel,
       icon: 'arrow-clockwise' as const,
       loading: againPress.running,
       disabled: againPress.running || againPress.reviewPending,

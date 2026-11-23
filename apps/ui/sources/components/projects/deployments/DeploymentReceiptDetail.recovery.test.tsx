@@ -53,6 +53,52 @@ describe('failed deployment migration recovery', () => {
   beforeEach(async () => { await homes.reset(); triage.runs.length = 0; triage.readGate = null; });
   afterEach(standardCleanup);
 
+  it('names the Home that could not complete the deploy and retries its reviewed revision', async () => {
+    const { t } = await import('@/text');
+    const homeId = `srv_${'a'.repeat(32)}`;
+    const serverId = await homes.addHome({ name: 'Recovery', serverUrl: 'https://receipt-recovery.test',
+      serverIdentityId: homeId, accountId: 'account-owner', currentAccount: true });
+    const environment = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: homeId }) });
+    const base = createDeploymentReceiptDetailV1();
+    if (base.content.sourceIntent.kind !== 'repository') throw new Error('Expected repository fixture');
+    const { sha } = base.content.sourceIntent;
+    const receipt = createDeploymentReceiptDetailV1({
+      deployment: createDeploymentReceiptHeaderV1({ state: 'failed', settledAtMs: 2000 }),
+      content: DeploymentOwnServerContentV1Schema.parse({ ...base.content, failure: {
+        code: 'ERR_BAD_RESPONSE', phase: 'activate',
+        failureCause: { phase: 'deployment.failure', errorClass: 'Error', errorCode: 'database_connection_unavailable', httpStatus: 503 },
+      } }),
+    });
+    const controller = createDeploymentReadControllerV1({ scope: { serverId: homeId, accountId: 'account-owner', projectSourceId: 'source-app' }, transport: {
+      listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+      readEnvironment: async () => ({ ok: true, value: environment }),
+      listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+      readReceipt: async () => ({ ok: true, value: receipt }),
+    } });
+    const deploy = vi.fn<NonNullable<React.ComponentProps<typeof DeploymentReceiptDetail>['deploy']>>()
+      .mockResolvedValue({ ok: false, error: 'deployment_conflict' });
+    try {
+      const screen = await renderScreen(<DeploymentReceiptDetail controller={controller} environmentId={environment.environment.id}
+        deploymentId={receipt.deployment.id} environmentName="Production" demand={{ mounted: true, visible: true, focused: true }}
+        accountId="account-owner" serverId={serverId} readLogs={null} onBack={() => {}} rollback={null}
+        cancel={null} deploy={deploy} phone={false} linkPath={null} review={{ pendingId: null, request() {}, open() {} }} onOpenReceipt={() => {}} />);
+      const banner = 'project-deployments.receipt.outcome.failed';
+      const actionId = `${banner}.action`;
+      await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.findByTestId(actionId), value => value !== null); });
+      expect(screen.getTextContent()).toContain('Home is temporarily unavailable');
+      expect(screen.getTextContent()).not.toContain(t('projects.deployments.deployAgain'));
+      expect(screen.getTextContent()).toContain(t('common.retry'));
+      expect(screen.getTextContent()).not.toContain('database_connection_unavailable');
+      await screen.pressByTestIdAsync(`${banner}.details`);
+      expect(screen.getTextContent()).toContain('database_connection_unavailable');
+      expect(deploy).not.toHaveBeenCalled();
+      await screen.pressByTestIdAsync(actionId);
+      expect(deploy).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ environmentId: environment.environment.id, sha }));
+    } finally {
+      controller.retire();
+    }
+  });
+
   it.each([
     { policy: 'restoreBackupAndRollbackCode', capture: true, choice: 'restore' },
     { policy: 'ask', capture: true, choice: 'restore' },

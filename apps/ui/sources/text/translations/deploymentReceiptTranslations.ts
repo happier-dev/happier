@@ -24,6 +24,7 @@ type ReceiptCopy = Readonly<{
   headlineRemoveFailed: (params: { sha: string }) => string;
   headlineRemoveCancelled: (params: { sha: string }) => string;
   headlineRollbackCancelled: (params: { sha: string }) => string;
+  homeStorageUnavailable: string;
   failurePromote: string;
   failurePromoteAdmission: string;
   failureRemove: string;
@@ -54,6 +55,7 @@ type ReceiptCopy = Readonly<{
 
 export const deploymentReceiptTranslations = {
   "en": {
+    homeStorageUnavailable: "This Home is temporarily unavailable.",
     platformDomainRequired: "Add a Domain in the Environment to reach this deployment.",
     publicAddressFailed: "Deployed, but the public address did not answer",
     publicAddressHttpError: ({ address, status }) => `${address} returned HTTP ${status}. Check the app’s entry point and routing.`,
@@ -105,6 +107,7 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Cancel deploy",
   },
   "fr": {
+    homeStorageUnavailable: "Ce Home est temporairement indisponible.",
     platformDomainRequired: "Ajoutez un domaine dans l’environnement pour accéder à ce déploiement.",
     publicAddressFailed: "Déploiement effectué, mais l’adresse publique n’a pas répondu",
     publicAddressHttpError: ({ address, status }) => `${address} a renvoyé HTTP ${status}. Vérifiez le point d’entrée et le routage de l’application.`,
@@ -156,6 +159,7 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Annuler le déploiement",
   },
   "de": {
+    homeStorageUnavailable: "Dieses Home ist vorübergehend nicht verfügbar.",
     platformDomainRequired: "Füge in der Umgebung eine Domain hinzu, um dieses Deployment zu erreichen.",
     publicAddressFailed: "Bereitgestellt, aber die öffentliche Adresse hat nicht geantwortet",
     publicAddressHttpError: ({ address, status }) => `${address} hat HTTP ${status} zurückgegeben. Prüfe den Einstiegspunkt und das Routing der App.`,
@@ -207,6 +211,7 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Bereitstellung abbrechen",
   },
   "es": {
+    homeStorageUnavailable: "Este Home no está disponible temporalmente.",
     platformDomainRequired: "Añade un dominio en el entorno para acceder a este despliegue.",
     publicAddressFailed: "Desplegado, pero la dirección pública no respondió",
     publicAddressHttpError: ({ address, status }) => `${address} devolvió HTTP ${status}. Comprueba el punto de entrada y el enrutamiento de la aplicación.`,
@@ -258,6 +263,7 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Cancelar despliegue",
   },
   "it": {
+    homeStorageUnavailable: "Questo Home non è temporaneamente disponibile.",
     platformDomainRequired: "Aggiungi un dominio nell’ambiente per raggiungere questa distribuzione.",
     publicAddressFailed: "Distribuzione completata, ma l’indirizzo pubblico non ha risposto",
     publicAddressHttpError: ({ address, status }) => `${address} ha restituito HTTP ${status}. Controlla il punto di ingresso e il routing dell’app.`,
@@ -309,6 +315,7 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Annulla distribuzione",
   },
   "pt": {
+    homeStorageUnavailable: "Este Home está temporariamente indisponível.",
     platformDomainRequired: "Adicione um domínio no ambiente para acessar esta implantação.",
     publicAddressFailed: "Implantado, mas o endereço público não respondeu",
     publicAddressHttpError: ({ address, status }) => `${address} retornou HTTP ${status}. Verifique o ponto de entrada e o roteamento do app.`,
@@ -360,6 +367,7 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Cancelar implantação",
   },
   "ca": {
+    homeStorageUnavailable: "Aquest Home no està disponible temporalment.",
     platformDomainRequired: "Afegeix un domini a l’entorn per accedir a aquest desplegament.",
     publicAddressFailed: "Desplegat, però l’adreça pública no ha respost",
     publicAddressHttpError: ({ address, status }) => `${address} ha retornat HTTP ${status}. Comprova el punt d’entrada i l’encaminament de l’aplicació.`,
@@ -411,6 +419,7 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Cancel·la el desplegament",
   },
   "pl": {
+    homeStorageUnavailable: "Ten Home jest chwilowo niedostępny.",
     platformDomainRequired: "Dodaj domenę w środowisku, aby uzyskać dostęp do tego wdrożenia.",
     publicAddressFailed: "Wdrożono, ale adres publiczny nie odpowiedział",
     publicAddressHttpError: ({ address, status }) => `${address} zwrócił HTTP ${status}. Sprawdź punkt wejścia i routing aplikacji.`,
@@ -462,6 +471,7 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Anuluj wdrożenie",
   },
   "ru": {
+    homeStorageUnavailable: "Этот Home временно недоступен.",
     platformDomainRequired: "Добавьте домен в окружении, чтобы открыть это развёртывание.",
     publicAddressFailed: "Развёрнуто, но публичный адрес не ответил",
     publicAddressHttpError: ({ address, status }) => `${address} вернул HTTP ${status}. Проверьте точку входа и маршрутизацию приложения.`,
@@ -513,6 +523,7 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Отменить развёртывание",
   },
   "ja": {
+    homeStorageUnavailable: "このホームは一時的に利用できません。",
     platformDomainRequired: "このデプロイにアクセスするには、環境にドメインを追加してください。",
     publicAddressFailed: "デプロイ済みですが、公開アドレスが応答しませんでした",
     publicAddressHttpError: ({ address, status }) => `${address} が HTTP ${status} を返しました。アプリのエントリーポイントとルーティングを確認してください。`,
@@ -564,6 +575,7 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "デプロイをキャンセル",
   },
   "zh-Hans": {
+    homeStorageUnavailable: "此 Home 暂时不可用。",
     platformDomainRequired: "请在环境中添加域名以访问此部署。",
     publicAddressFailed: "已部署，但公开地址未响应",
     publicAddressHttpError: ({ address, status }) => `${address} 返回了 HTTP ${status}。请检查应用入口和路由。`,
