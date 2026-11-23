@@ -14346,7 +14346,7 @@ settingsSession: {
           subtitle: "Scegli dove appare la voce su questo dispositivo.",
           topBar: "Barra superiore",
           island: "Isola",
-          orb: "Orb",
+          orb: "Sfera",
       },
       orbEnabled: "Orb vocale fluttuante",
       orbEnabledSubtitle: "Mostra il compagno vocale trascinabile su questo dispositivo. La voce resta disponibile dalla barra laterale e dal compositore.",
