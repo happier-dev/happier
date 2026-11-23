@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces';
+import { isManagedWorkspaceRefV2, workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces';
 import type { WorkspaceRefResolutionV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { WorkspaceRefUnconfirmed } from './detail/useWorkspaceRefById';
 
@@ -19,7 +19,7 @@ import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 
 import { resolveWorkspaceRefDisplayName } from './resolveWorkspaceRefDisplayName';
-import { useOpenProject } from './useOpenProject';
+import { useOpenProject, type OpenProjectOptions } from './useOpenProject';
 
 /** The rows are still being read (a ready but partial census is still reading its remaining rows). */
 export function isProjectRowsPending(issue: WorkspaceRefUnconfirmed): boolean {
@@ -61,6 +61,7 @@ export const ProjectOpenResolutionCard = React.memo(
     const machines = useActiveMachineFacts();
     const describe = React.useCallback(
       (candidate: WorkspaceRefV1) => {
+        if (isManagedWorkspaceRefV2(candidate)) return candidate.rootPath;
         const machine =
           machines.find((entry) => entry.id === candidate.machineId) ?? null;
         // Candidates are told apart by their Machine's name from the naming owner, never its raw id.
@@ -119,7 +120,7 @@ export const ProjectOpenResolutionCard = React.memo(
             <View style={styles.candidates}>
               {candidates.map((candidate, index) => (
                 <Item
-                  key={`${candidate.serverId}\u0000${candidate.machineId}\u0000${candidate.rootPath}\u0000${index}`}
+                  key={JSON.stringify(workspaceAddressFromRefV2(candidate))}
                   testID={`${testID}-candidate-${index}`}
                   title={resolveWorkspaceRefDisplayName(candidate)}
                   subtitle={describe(candidate)}
@@ -162,12 +163,12 @@ export const ProjectOpenResolutionCard = React.memo(
 
 /** The exact open of a chosen candidate: its qualified address, never the bare id it shared. */
 export function openProjectCandidate(
-  openProject: ReturnType<typeof useOpenProject>,
+  openProject: (id: string, options?: OpenProjectOptions) => Promise<boolean | null>,
   candidate: WorkspaceRefV1,
 ): Promise<boolean | null> {
   return openProject(candidate.id, {
     serverId: candidate.serverId,
-    workspaceAddress: workspaceAddressFromRefV1(candidate),
+    workspaceAddress: workspaceAddressFromRefV2(candidate),
   });
 }
 

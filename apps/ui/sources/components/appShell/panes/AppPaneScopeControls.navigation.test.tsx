@@ -24,10 +24,12 @@ const { invokeScopeAction, readShellColumnActionOwner, subscribeShellColumnActio
 const initial = storage.getState();
 afterEach(async () => { await standardCleanup(); storage.setState(initial, true); });
 
-it('keeps physical main arrangement, search and visibility when presented detail supplies navigation', async () => {
+it.each(['machine', 'managed'] as const)('keeps physical main arrangement, %s checkout search and visibility when presented detail supplies navigation', async (kind) => {
     const scope = { serverId: 'home', accountId: 'alice' };
+    const controller = { machineId: 'machine', installationId: 'controller-installation' };
     const checkout = WorkspaceRefV1Schema.parse({ id: 'checkout', projectKey: 'project', serverId: 'home',
-        machineId: 'machine', rootPath: '/repo', createdAtMs: 1 });
+        rootPath: '/repo', createdAtMs: 1,
+        ...(kind === 'managed' ? { v: 2, kind, managedId: 'guest', controller } : { machineId: 'machine' }) });
     const projectContext = readProjectWidgetAreaContextV1({ serverId: scope.serverId, activeCheckout: checkout });
     const items = resolveDetailNavigationItems({ scope: 'environment' });
     let showDetail = (_shown: boolean) => {};
@@ -53,7 +55,9 @@ it('keeps physical main arrangement, search and visibility when presented detail
     }
     const screen = await renderScreen(<PresentedDetailNavigationProvider><Fixture /></PresentedDetailNavigationProvider>);
     const physical = { arrangementAvailable: true,
-        searchScope: { accountId: 'alice', serverId: 'home', machineId: 'machine', rootPath: '/repo', sessionId: null } };
+        searchScope: { accountId: 'alice', serverId: 'home', machineId: 'machine', rootPath: '/repo', sessionId: null,
+            ...(kind === 'managed' ? { workspace: { v: 2, kind, serverId: 'home', workspaceId: 'checkout',
+                managedId: 'guest', controller, rootPath: '/repo' } } : {}) } };
     // The mounted title strip synchronously re-reads the registry when owner facts change.
     const unsubscribe = subscribeShellColumnActionOwners(() => { readShellColumnActionOwner('main'); });
     try {

@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import type { OpenProjectOptions } from './useOpenProject';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -31,7 +33,7 @@ vi.mock('@/text', async () => {
 });
 
 const { storage } = await import('@/sync/domains/state/storage');
-const { ProjectOpenResolutionCard } = await import('./ProjectOpenResolution');
+const { openProjectCandidate, ProjectOpenResolutionCard } = await import('./ProjectOpenResolution');
 
 function checkout(machineId: string, rootPath: string): WorkspaceRefV1 {
   return {
@@ -44,6 +46,35 @@ function checkout(machineId: string, rootPath: string): WorkspaceRefV1 {
 }
 
 describe('ProjectOpenResolutionCard (lab p-projects OPEN_S 2)', () => {
+  it('opens the selected managed checkout when an unqualified id matches both Homes', async () => {
+    const machine = checkout('m1', '/repo');
+    const managed = {
+      v: 2, kind: 'managed', id: machine.id, serverId: 'server-2',
+      managedId: 'guest', controller: { machineId: 'm1', installationId: 'controller-installation' },
+      rootPath: '/repo', createdAtMs: 1,
+    } satisfies WorkspaceRefV1;
+    const refs = [machine, managed];
+    const issue = resolveWorkspaceRefV1(refs, { id: managed.id });
+    expect(issue.kind).toBe('ambiguous');
+    if (issue.kind !== 'ambiguous') throw new Error('Expected an ambiguous Project address');
+    const open = vi.fn(async (_id: string, options?: OpenProjectOptions) => {
+      const address = options?.workspaceAddress;
+      if (!address) throw new Error('Missing exact Project address');
+      const result = resolveWorkspaceRefV1(refs, address);
+      expect(result).toEqual({ kind: 'resolved', ref: managed });
+      return true;
+    });
+    const screen = await renderScreen(<ProjectOpenResolutionCard testID="resolution" issue={issue}
+      onChoose={candidate => { void openProjectCandidate(open, candidate); }} />);
+
+    await act(async () => {
+      screen.findByTestId('resolution-candidate-1')!.props.onPress();
+    });
+    expect(open).toHaveBeenCalledWith(managed.id, { serverId: managed.serverId,
+      workspaceAddress: { v: 2, kind: 'managed', serverId: managed.serverId, workspaceId: managed.id,
+        managedId: managed.managedId, controller: managed.controller, rootPath: managed.rootPath } });
+  });
+
   it('offers every matching checkout with where it lives and opens only the one chosen', async () => {
     storage
       .getState()

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { workspaceScopeFromProject } from '@/sync/domains/workspaces/workspaceScope';
 import { useMountedScopeActionCommand } from '@/components/approvals/useMountedScopeActionCommand';
 import { usePresentedDetailNavigationChrome, type DetailNavigationMainColumnControls } from '@/components/appShell/rightSidebar/usePresentedDetailNavigation';
 import { registerShellColumnActionOwner, notifyShellColumnActionOwnersChanged, type ShellColumnActionOwner } from '@/sync/ops/actions/scopeActionFamily';
@@ -49,8 +50,7 @@ export function AppPaneScopeControls(props: Readonly<{
             label: props.descriptor === undefined ? undefined : hidden ? labels.showLabel : labels.hideLabel,
             arrangementAvailable: props.arrangementHonoured && layout?.multiPaneEnabled === true && layout.deviceType !== 'phone',
             ...(checkout && accountId ? { searchScope: {
-                accountId, serverId: checkout.serverId, machineId: checkout.machineId,
-                rootPath: checkout.rootPath, sessionId: null,
+                accountId, ...workspaceScopeFromProject(checkout, checkout.rootPath), sessionId: null,
             } } : {}),
             setVisible: visible => props.setHidden(!visible),
         };
