@@ -13,6 +13,7 @@ import { formatLastSeen } from '@/utils/sessions/sessionUtils';
 export {
   CheckoutReachabilityScope,
   describeCheckoutUnreachable,
+  resolveCheckoutReadPresence,
   retryMachineReachability,
   useAnnouncedCheckoutMachine,
   useCheckoutReachability,
@@ -33,20 +34,15 @@ import {
  * nothing while the machine answers.
  */
 export function CheckoutReachabilityLine(
-  props: Readonly<{
-    scope: CheckoutMachineScope;
-    testID?: string;
-    /** An attached workspace recovers on its own when its controller is back: the line says Offline, with no Retry. */
-    recoversOnItsOwn?: boolean;
-  }>,
+  props: Readonly<{ scope: CheckoutMachineScope; testID?: string }>,
 ) {
   const reachability = useCheckoutReachability(props.scope);
-  return <CheckoutReachabilityLineView reachability={reachability} testID={props.testID} recoversOnItsOwn={props.recoversOnItsOwn} />;
+  return <CheckoutReachabilityLineView reachability={reachability} testID={props.testID} />;
 }
 
 /** The same line for a surface that already holds its Machine's reachability. */
 export function CheckoutReachabilityLineView(
-  props: Readonly<{ reachability: CheckoutReachability; testID?: string; recoversOnItsOwn?: boolean }>,
+  props: Readonly<{ reachability: CheckoutReachability; testID?: string }>,
 ) {
   const { reachability } = props;
   // Going offline and coming back are moments, not jumps: the line reveals and folds away with the
@@ -65,8 +61,10 @@ export function CheckoutReachabilityLineView(
       {shown.unreachable ? (
         <SurfaceFreshnessLine
           testID={props.testID ?? 'checkout-reachability'}
-          reason={shown.runtime.label}
-          action={shown.runtime.nextAction === 'retry' && !props.recoversOnItsOwn
+          reason={shown.reachedThrough && shown.runtime.status === 'offline'
+            ? t('projects.checkouts.reachedThroughOffline', { machine: shown.machineName })
+            : shown.runtime.label}
+          action={shown.runtime.nextAction === 'retry' && !shown.reachedThrough
             ? { label: t('common.retry'), onPress: retryMachineReachability } : undefined}
         />
       ) : null}

@@ -45,6 +45,7 @@ import { NavigationLargeTitleProvider } from '@/components/ui/layout/navigationT
 import { createProjectInfoDetailsTab } from './detail/projectDetailsTabBuilders';
 import { ListPresentationProvider, PageColumnProvider } from '@/components/ui/lists/listPresentation';
 import { useProjectRouteActions } from './detail/useProjectRouteActions';
+import { useForgetAttachedWorkspaceAction } from './detail/useForgetAttachedWorkspaceAction';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { RIGHT_SIDEBAR_BUILTIN_TABS } from '@/components/appShell/rightSidebar/rightSidebarBuiltinTabs';
 import { ProjectTerminalSurface } from './detail/surfaces/ProjectTerminalSurface';
@@ -105,10 +106,13 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     const openProjectInfo = React.useCallback(() => {
         pane.openDetailsTab(createProjectInfoDetailsTab(), { intent: 'pinned' });
     }, [pane]);
+    // An attached workspace adds Forget after the shipped rows (lab project-more): the retire Action, never Delete.
+    const forgetWorkspaceAction = useForgetAttachedWorkspaceAction(workspaceRef);
     const projectMenuActions = React.useMemo(() => [
         { id: 'availableOn', title: t('workspaceSync.availableOn'), testID: 'project-shell-header.availableOn', onSelect: openProjectInfo },
         { id: 'terminal', title: t('settings.terminal'), onSelect: openProjectTerminal },
-    ], [openProjectInfo, openProjectTerminal]);
+        ...(forgetWorkspaceAction ? [forgetWorkspaceAction] : []),
+    ], [forgetWorkspaceAction, openProjectInfo, openProjectTerminal]);
     // A phone draws no Project header: the same list goes to the phone bar's More while this page is the one shown.
     const projectPageFocused = useIsFocused();
     useCurrentUiContextLocalCommands(React.useMemo(() => projectPageFocused && props.isFocused !== false ? [{

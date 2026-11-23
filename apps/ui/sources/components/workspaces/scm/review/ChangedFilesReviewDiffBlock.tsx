@@ -39,6 +39,7 @@ import type { ChangedFilesReviewDiffStateSource } from '@/components/workspaces/
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { CheckoutUnreachableState, resolveCheckoutReadPresence, useAnnouncedCheckoutMachine, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import type { ChangedFilesReviewFindModel } from './useChangedFilesReviewFind';
 import type { HunkReviewControllerParams } from './hunkReview/useHunkReviewController';
@@ -374,8 +375,7 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
     if (state.status === 'error') {
         return (
             <View testID={blockTestId} style={[{ paddingHorizontal: theme.space.s16, paddingVertical: theme.space.s12 }, noOverflowAnchor]}>
-                <SurfaceStateCard testID={`${blockTestId}-error`} kind="error" size="line"
-                    title={t('files.reviewUnableToLoadDiff')} reason={state.error ?? undefined} action={retryAction} />
+                <ReviewDiffErrorState testID={blockTestId} error={state.error} retryAction={retryAction} />
             </View>
         );
     }
@@ -535,6 +535,40 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
         </View>
     );
 }, areChangedFilesReviewDiffBlockPropsEqual);
+
+/**
+ * A diff that failed to load. Under a page that announces its checkout Machine, the Machine's presence comes first
+ * (`resolveCheckoutReadPresence`, as Files): offline is the page's one line and this row says when it shows, an
+ * unanswered presence still reads as loading, and the read runs again once presence settles. Otherwise the failure,
+ * said once: a reason that only repeats the title is dropped.
+ */
+function ReviewDiffErrorState(props: Readonly<{
+    testID: string;
+    error: string | null;
+    retryAction: Readonly<{ label: string; onPress: () => void }> | undefined;
+}>): React.ReactElement {
+    const announced = useAnnouncedCheckoutMachine();
+    const reachability = useCheckoutReachability(announced);
+    const presence = announced ? resolveCheckoutReadPresence(reachability, true) : null;
+    const waited = React.useRef(presence !== null);
+    const retry = props.retryAction?.onPress;
+    React.useEffect(() => {
+        if (presence !== null) waited.current = true;
+        else if (waited.current) {
+            waited.current = false;
+            retry?.();
+        }
+    }, [presence, retry]);
+    if (presence === 'unreachable') {
+        return <CheckoutUnreachableState reachability={reachability} silent testID={`${props.testID}-unreachable`} />;
+    }
+    if (presence === 'pending') {
+        return <SurfaceStateCard testID={`${props.testID}-loading`} kind="loading" size="line" title={t('common.loading')} />;
+    }
+    const title = t('files.reviewUnableToLoadDiff');
+    return <SurfaceStateCard testID={`${props.testID}-error`} kind="error" size="line" title={title}
+        reason={props.error && props.error !== title ? props.error : undefined} action={props.retryAction} />;
+}
 
 const EMPTY_NOTE_TOPS: ReadonlyMap<number, number> = new Map();
 const EMPTY_COLUMN_NOTES: NonNullable<ChangedFilesReviewDiffBlockProps['hunkNotes']> = { placement: 'column', columnWidth: 0, render: () => null };

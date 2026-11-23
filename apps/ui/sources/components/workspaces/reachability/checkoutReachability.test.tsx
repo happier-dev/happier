@@ -178,4 +178,19 @@ describe('checkout reachability', () => {
             expect(hook.getCurrent().machineName).toBe('nl3');
         } finally { await hook.unmount(); }
     });
+    it('an attached workspace\'s page line says which controller it is reached through, with no Retry (QA cut 29 u5-offline)', async () => {
+        const controller = createMachineFixture({ id: 'controller', activeAt: Date.now() - 60 * 60 * 1000 });
+        storage.getState().applyMachines([{ ...controller, active: false,
+            metadata: { ...controller.metadata!, displayName: 'nl3' } }], true, { sourceServerId: serverId });
+        const { checkoutMachineScopeOfProject: scopeOfProject } = await import('./checkoutReachabilityModel');
+        const scope = scopeOfProject({ v: 2, kind: 'managed', id: 'checkout', serverId, managedId: 'api-dev', rootPath: '/home/coder/api',
+            createdAtMs: 1, controller: { machineId: 'controller', installationId: 'installation' } });
+        const { CheckoutReachabilityLine } = await import('./checkoutReachability');
+        const line = await renderScreen(<CheckoutReachabilityLine scope={scope} testID="page-line" />);
+        try {
+            await waitForHomeGovernance(() => expect(line.getTextContent())
+                .toContain(t('projects.checkouts.reachedThroughOffline', { machine: 'nl3' })));
+            expect(line.getTextContent()).not.toContain(t('common.retry'));
+        } finally { await line.unmount(); }
+    });
 });

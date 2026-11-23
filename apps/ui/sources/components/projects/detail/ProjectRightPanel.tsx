@@ -497,8 +497,7 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
                 testID="project-rightpanel-header"
             />
             {/* The page's line spans only its own column, and a phone pane covers it: the pane says it under its header too. */}
-            <CheckoutReachabilityLine scope={workspaceScope} testID="project-rightpanel-reachability"
-                recoversOnItsOwn={workspaceScope.workspace?.kind === 'managed'} />
+            <CheckoutReachabilityLine scope={workspaceScope} testID="project-rightpanel-reachability" />
             <View style={styles.body}>
                 {/* Beside the Code page, which says a stopped workspace once with Start, the pane's line leaves Start to it (lab project-stopped). */}
                 <ManagedWorkspaceStartOfferedBeside offered={props.activePage === 'code' && deviceType !== 'phone'}>

@@ -1,6 +1,6 @@
 import { isFilesystemErrorRetryable, resolveFilesystemErrorReason } from '@/components/ui/filesystemBrowser/filesystemErrorReason';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { CheckoutUnreachableState, useAnnouncedCheckoutMachine, useCheckoutReachability, type CheckoutMachineScope } from '@/components/workspaces/reachability/checkoutReachability';
+import { CheckoutUnreachableState, resolveCheckoutReadPresence, useAnnouncedCheckoutMachine, useCheckoutReachability, type CheckoutMachineScope } from '@/components/workspaces/reachability/checkoutReachability';
 import { MANAGED_POWER_REQUIRED, ManagedWorkspaceStoppedState } from '@/components/workspaces/reachability/ManagedWorkspaceStoppedState';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { t } from '@/text';
@@ -17,12 +17,14 @@ export function RepositoryTreeRootErrorState(props: Readonly<{
     | Readonly<{ kind: 'unavailable'; error?: never; onRetry?: () => void }>)) {
     // A listing that waits for an unreachable machine is that one state, not a failure of its own.
     const announcedMachine = useAnnouncedCheckoutMachine();
-    const reachability = useCheckoutReachability(props.machineScope ?? announcedMachine);
-    if (props.kind === 'unavailable' && reachability.unreachable) {
+    const machineScope = props.machineScope ?? announcedMachine;
+    const reachability = useCheckoutReachability(machineScope);
+    // A cold controller has not answered presence yet, so no listing was attempted.
+    const presence = props.kind === 'unavailable' ? resolveCheckoutReadPresence(reachability, machineScope != null) : null;
+    if (presence === 'unreachable') {
         return <CheckoutUnreachableState reachability={reachability} returns={t('projects.checkouts.filesReturn')} testID="repository-tree-unreachable" />;
     }
-    // A cold controller has not answered presence yet, so no listing was attempted.
-    if (props.kind === 'unavailable' && (props.machineScope ?? announcedMachine) && reachability.runtime.status === 'unknown') {
+    if (presence === 'pending') {
         return <SurfaceStateCard testID="repository-tree-root-loading" kind="loading" title={t('common.loading')} />;
     }
     // A stopped workspace is not a listing failure: it names the workspace and its one next step (lab project-stoppedCold).

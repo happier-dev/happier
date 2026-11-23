@@ -16,6 +16,9 @@ const { ChangedFilesReview } = await import('./ChangedFilesReview');
 const { useChangedFilesReviewDiffLoading } = await import('./useChangedFilesReviewDiffLoading');
 const { useChangedFilesReviewDiffBlockRenderer } = await import('./useChangedFilesReviewDiffBlockRenderer');
 const { readCapturedScmFileForSession } = await import('@/sync/ops/scmDiffSummary/generate');
+const { CheckoutReachabilityScope } = await import('@/components/workspaces/reachability/checkoutReachability');
+const { storage } = await import('@/sync/domains/state/storageStore');
+const { t } = await import('@/text');
 let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>> | undefined;
 afterEach(async () => { await standardCleanup(); await fixture?.dispose(); fixture = undefined; });
 const files = ['a.ts', 'b.ts'].map(path => scmFileStatusFromChange({ path, changeKind: 'modified', added: 1, removed: 1 }));
@@ -93,5 +96,52 @@ describe('Review diff recovery', () => {
         await vi.waitFor(() => expect(screen.tree.root.findAllByType(SurfaceFreshnessLine)).toHaveLength(0));
         expect(screen.getTextContent()).toContain('last known content');
         expect(reads).toBe(3);
+    });
+    it('under a page whose Machine has not answered presence yet, a failed row reads as loading, not as its own error', async () => {
+        // QA cut 29 u5-live-offline: an expanded Review row said "Unable to load diff · Unable to load diff" with Retry while
+        // the page above was still settling its Machine's presence. The row defers to presence, as Files does.
+        fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request => request.method === RPC_METHODS.SCM_DIFF_FILE
+            ? { success: false, error: '', errorCode: 'COMMAND_FAILED' } : undefined });
+        const current = fixture;
+        const fetchUnifiedDiffForPath = reader(current);
+        let reads = 0;
+        const counted: typeof fetchUnifiedDiffForPath = input => { reads++; return fetchUnifiedDiffForPath(input); };
+        function Review() {
+            const loading = useChangedFilesReviewDiffLoading({ sessionId: 's1', isRepo: true, reviewFiles: files,
+                diffArea: 'pending', requestedPaths: ['a.ts'], tooLarge: false, selectedPath: 'a.ts',
+                snapshotSignature: 'cold-capture', refreshToken: 0, fetchUnifiedDiffForPath: counted,
+                normalizeError: String, fallbackError: t('files.reviewDiffRequestFailed') });
+            const render = useChangedFilesReviewDiffBlockRenderer({ theme: createThemeFixture(), sessionId: 's1',
+                diffStateSource: loading.diffStateSource, onRetryDiff: loading.retryDiff });
+            // The announced controller is not in this Home's presence yet.
+            return <CheckoutReachabilityScope scope={{ serverId: current.scope.serverId, machineId: 'controller-not-yet-seen' }}>
+                {render('a.ts', { snapshotSignature: 'cold-capture' })}
+            </CheckoutReachabilityScope>;
+        }
+        const screen = await current.render(<Review />);
+        await vi.waitFor(() => expect(reads).toBeGreaterThan(0));
+        await vi.waitFor(() => expect(screen.tree.root
+            .findAll(node => node.props.testID === 'scm-review-diff-a.ts-loading')).not.toHaveLength(0));
+        expect(screen.getTextContent()).not.toContain(t('files.reviewUnableToLoadDiff'));
+        expect(screen.tree.root.findAll(node => node.props.testID === 'scm-review-diff-a.ts-error-action')).toHaveLength(0);
+    });
+
+    it('says a failure once when its reason only repeats the title', async () => {
+        fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request => request.method === RPC_METHODS.SCM_DIFF_FILE
+            ? { success: false, error: '', errorCode: 'COMMAND_FAILED' } : undefined });
+        const fetchUnifiedDiffForPath = reader(fixture);
+        function Review() {
+            const loading = useChangedFilesReviewDiffLoading({ sessionId: 's1', isRepo: true, reviewFiles: files,
+                diffArea: 'pending', requestedPaths: ['a.ts'], tooLarge: false, selectedPath: 'a.ts',
+                snapshotSignature: 'failed-capture', refreshToken: 0, fetchUnifiedDiffForPath,
+                normalizeError: String, fallbackError: t('files.reviewDiffRequestFailed') });
+            const render = useChangedFilesReviewDiffBlockRenderer({ theme: createThemeFixture(), sessionId: 's1',
+                diffStateSource: loading.diffStateSource, onRetryDiff: loading.retryDiff });
+            return render('a.ts', { snapshotSignature: 'failed-capture' });
+        }
+        const screen = await fixture.render(<Review />);
+        const title = t('files.reviewUnableToLoadDiff');
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(title));
+        expect(screen.getTextContent().split(title)).toHaveLength(2);
     });
 });

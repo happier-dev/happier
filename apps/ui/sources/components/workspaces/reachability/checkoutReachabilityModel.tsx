@@ -17,6 +17,8 @@ import { describeMachinePresenceSummary, type MachineRuntimePresence } from '@/u
 export type CheckoutMachineScope = Readonly<{
   serverId: string;
   machineId: string;
+  /** An attached workspace is reached through this Machine (its controller) rather than living on it. */
+  workspace?: Readonly<{ kind: 'managed' }>;
 }>;
 
 /**
@@ -37,6 +39,8 @@ export type CheckoutReachability = Readonly<{
   lastSeenAt: number | null;
   /** A page above already says it; this surface only inherits. */
   announced: boolean;
+  /** The checkout is an attached workspace reached through this Machine: it recovers when the Machine is back. */
+  reachedThrough?: boolean;
 }>;
 
 /**
@@ -45,8 +49,8 @@ export type CheckoutReachability = Readonly<{
  * beneath, which read through the same scope, inherit its offline line.
  */
 export function checkoutMachineScopeOfProject(ref: WorkspaceRefV1): CheckoutMachineScope {
-  const { serverId, machineId } = workspaceScopeFromProject(ref, ref.rootPath);
-  return { serverId, machineId };
+  const { serverId, machineId, workspace } = workspaceScopeFromProject(ref, ref.rootPath);
+  return { serverId, machineId, ...(workspace ? { workspace } : {}) };
 }
 
 const AnnouncedCheckoutMachine =
@@ -99,14 +103,15 @@ export function useCheckoutReachabilityPresentation(
   const unreachable = runtime.showStatus;
   // Every use of this name is inside a sentence, so a Machine still loading reads "this machine", never "Loading…".
   const machineName = presence.sentenceName ?? scope?.machineId ?? '';
+  const reachedThrough = scope?.workspace?.kind === 'managed';
   const announced =
     unreachable &&
     scope != null &&
     announcedScope?.serverId === scope.serverId &&
     announcedScope.machineId === scope.machineId;
   return React.useMemo(
-    () => ({ unreachable, machineName, lastSeenAt, announced, runtime }),
-    [unreachable, machineName, lastSeenAt, announced, runtime],
+    () => ({ unreachable, machineName, lastSeenAt, announced, reachedThrough, runtime }),
+    [unreachable, machineName, lastSeenAt, announced, reachedThrough, runtime],
   );
 }
 
@@ -129,4 +134,18 @@ export function describeCheckoutUnreachable(reachability: CheckoutReachability):
   return reachability.runtime.nextAction === 'retry'
     ? t('projects.checkouts.outOfReach', { machine: reachability.machineName })
     : reachability.runtime.label;
+}
+
+/**
+ * How a checkout read with nothing to show defers to its Machine's presence (Files root, a Review diff row, the README):
+ * an unreachable Machine is that one state, and a Machine whose presence has not answered yet is still loading, so
+ * neither reads as the read's own failure. `attributed`: the read knows which Machine it waits for. Null: the read's
+ * own result stands.
+ */
+export function resolveCheckoutReadPresence(
+  reachability: CheckoutReachability,
+  attributed: boolean,
+): 'unreachable' | 'pending' | null {
+  if (reachability.unreachable) return 'unreachable';
+  return attributed && reachability.runtime.status === 'unknown' ? 'pending' : null;
 }

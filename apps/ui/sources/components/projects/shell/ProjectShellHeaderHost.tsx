@@ -12,7 +12,7 @@ import { useNavigateToProjectOpen } from '@/components/projects/activation/proje
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { useProjectNewSessionAction } from '@/components/projects/useProjectNewSessionAction';
 import { type ProjectPageV1, type ProjectPageSelection } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { ProjectPageCatalogProvider, useOptionalProjectPageCatalog, useProjectPageCatalog } from '../navigation/useProjectPageCatalog';
@@ -33,8 +33,9 @@ import { useProjectMachineDisplays } from '../useProjectMachineDisplays';
 import { workspaceScopeFromProject } from '@/sync/domains/workspaces/workspaceScope';
 import { isManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
-import { useManagedMachineName } from '@/components/approvals/approvalReferenceReading';
-import { describeManagedCheckoutPlace } from './projectCheckoutPlace';
+import { readManagedLaunchName, useManagedMachineName } from '@/components/approvals/approvalReferenceReading';
+import { checkoutPlaceKey, describeManagedCheckoutPlace, describeSiblingCheckoutPlace } from './projectCheckoutPlace';
+import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
 
 import { resolveWorkspaceRefDisplayName } from '../resolveWorkspaceRefDisplayName';
 import { useOpenProject } from '../useOpenProject';
@@ -120,9 +121,22 @@ export function useProjectShellCheckout(
   const branch = snapshot?.branch.head ?? null;
   const worktrees = snapshot?.repo.worktrees;
   const { onSelectRootPath } = props;
+  // Other checkouts of this Project at another place (a Machine or an attached workspace), from their exact addresses.
+  const placeKey = checkoutPlaceKey(props.workspaceRef);
+  const siblings = React.useMemo(() => (Array.isArray(refs) ? refs : []).filter((ref) =>
+    ref.id !== props.workspaceRef.id &&
+    areServerProfileIdentifiersEquivalent(ref.serverId, props.workspaceRef.serverId) &&
+    checkoutPlaceKey(ref) !== placeKey &&
+    sameWorkspaceProject(ref, props.workspaceRef)), [placeKey, props.workspaceRef, refs]);
+  // An attached sibling is named by its managed resource; read only while one exists.
+  const siblingInventory = useManagedMachineInventory(siblings.some(isManagedWorkspaceRefV2) ? [props.workspaceRef.serverId] : []);
+  const siblingManagedName = React.useCallback((managedId: string) => {
+    const row = Object.values(siblingInventory.machinesByServerId).flat().find(machine => machine?.id === managedId);
+    return readManagedLaunchName(row) ?? null;
+  }, [siblingInventory.machinesByServerId]);
 
   const choices = React.useMemo((): DropdownMenuItem[] => {
-    const glyph = (name: 'git-branch' | 'desktop' | 'plus') => (
+    const glyph = (name: IconName) => (
       <Icon
         name={name}
         size={ICON_SIZE.sm}
@@ -149,21 +163,17 @@ export function useProjectShellCheckout(
               checked: true,
             },
           ];
-    const elsewhere: DropdownMenuItem[] = (Array.isArray(refs) ? refs : [])
-      .filter(
-        (ref) =>
-          ref.id !== props.workspaceRef.id &&
-          areServerProfileIdentifiersEquivalent(ref.serverId, props.workspaceRef.serverId) &&
-          ref.machineId !== props.workspaceRef.machineId &&
-          sameWorkspaceProject(ref, props.workspaceRef),
-      )
-      .map((ref) => ({
-        id: `ref:${ref.id}`,
-        title: ref.label ?? lastPathSegment(ref.rootPath),
-        subtitle: `${machineName(ref.machineId)} · ${ref.rootPath}`,
-        category: t('projects.checkouts.otherMachines'),
-        icon: glyph('desktop'),
-      }));
+    const elsewhere: DropdownMenuItem[] = siblings
+      .map((ref) => {
+        const place = describeSiblingCheckoutPlace(ref, { machineName, managedName: siblingManagedName });
+        return {
+          id: `ref:${ref.id}`,
+          title: ref.label ?? lastPathSegment(ref.rootPath),
+          subtitle: place.subtitle,
+          category: place.category,
+          icon: glyph(place.icon),
+        };
+      });
     return [
       ...local,
       ...elsewhere,
@@ -178,8 +188,8 @@ export function useProjectShellCheckout(
     branch,
     machineName,
     props.activeRootPath,
-    props.workspaceRef,
-    refs,
+    siblingManagedName,
+    siblings,
     theme.colors.text.secondary,
     worktrees,
   ]);

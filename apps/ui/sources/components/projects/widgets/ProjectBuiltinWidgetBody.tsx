@@ -38,7 +38,7 @@ import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
-import { CheckoutUnreachableState, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
+import { CheckoutUnreachableState, resolveCheckoutReadPresence, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
@@ -196,6 +196,9 @@ function ReadmeBody(props: Props): React.ReactElement {
     const key = tryBuildWorkspaceCacheKey(scope);
     const directoryRevision = useWorkspaceRepositoryDirectoryRevision(key);
     const reachability = useCheckoutReachability(scope);
+    // Presence first, as Files and a Review diff row: a read that failed before the Machine answered reads again once it has.
+    const presence = resolveCheckoutReadPresence(reachability, true);
+    const presenceSettled = presence === null;
     const [read, setRead] = React.useState<Readonly<{ key: string | null; kind: 'ready'; path: string | null }> | Readonly<{ key: string | null; kind: 'error' }> | null>(null);
     const [refresh, setRefresh] = React.useState(0);
     React.useEffect(() => {
@@ -205,10 +208,10 @@ function ReadmeBody(props: Props): React.ReactElement {
             setRead(result.ok ? { key, kind: 'ready', path: readProjectReadmePath(result.entries) } : { key, kind: 'error' });
         }).catch(() => { if (current) setRead({ key, kind: 'error' }); });
         return () => { current = false; };
-    }, [scope, key, refresh, directoryRevision]);
+    }, [scope, key, refresh, directoryRevision, presenceSettled]);
     // The README waits for its machine (lab p-code STATES 4); the page above says why.
-    if (reachability.unreachable && read?.kind !== 'ready') return <CheckoutUnreachableState reachability={reachability} testID={`${props.testID}-unreachable`} />;
-    if (!read || read.key !== key) return <UnavailableInstalledWidget unresolved={{ state: 'loading', reasonCode: 'widget_project_readme_loading' }} testID={props.testID} />;
+    if (presence === 'unreachable' && read?.kind !== 'ready') return <CheckoutUnreachableState reachability={reachability} testID={`${props.testID}-unreachable`} />;
+    if (!read || read.key !== key || (presence === 'pending' && read.kind === 'error')) return <UnavailableInstalledWidget unresolved={{ state: 'loading', reasonCode: 'widget_project_readme_loading' }} testID={props.testID} />;
     // One state, one message, its next action beside it (the same line states as Local changes).
     if (read.kind === 'error') return <SurfaceStateCard testID={props.testID} size="line" kind="error"
         title={t('projects.code.readUnavailable')} action={{ label: t('common.retry'), onPress: () => setRefresh(value => value + 1) }} />;

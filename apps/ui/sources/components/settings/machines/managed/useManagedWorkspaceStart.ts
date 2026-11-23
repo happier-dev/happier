@@ -12,12 +12,11 @@ import { createManagedProvisionerClient } from './managedProvisionerClient';
 import { useManagedMachineInventory } from './useManagedMachineInventory';
 import { useManagedProvisionerPresentation } from './useManagedProvisionerPresentation';
 
-/** The stopped Project uses the same power admission and wake verb as Machines. */
-export function useManagedWorkspaceStart(scope: WorkspaceScopeBase): Readonly<{
-    start(): void;
-    pending: boolean;
-    reviewApproval: (() => void) | null;
-}> | null {
+/**
+ * The managed resource an attached workspace's page controls (Start, Forget): the exact row behind its address, read
+ * through its current controller by someone who may control it. Null while any of that is unknown or differs.
+ */
+export function useManagedWorkspaceControlTarget(scope: WorkspaceScopeBase) {
     const { serverId, workspace } = scope;
     const inventory = useManagedMachineInventory(workspace ? [serverId] : [], workspace?.managedId);
     const profileId = resolveServerProfileScopeIdForIdentifier(serverId) || serverId;
@@ -26,12 +25,25 @@ export function useManagedWorkspaceStart(scope: WorkspaceScopeBase): Readonly<{
     const controller = useServerScopedMachine(serverId, workspace?.controller.machineId ?? '');
     const currentController = controller?.installationId === workspace?.controller.installationId ? controller ?? null : null;
     const target = workspace && machine && binding && inventory.entries[profileId]?.status === 'ready'
-        && currentController && machine.homeId === workspace.serverId
+        && currentController && machine.homeId === workspace.serverId && machine.id === workspace.managedId
         && machine.controller?.machineId === workspace.controller.machineId
         && machine.controller.installationId === workspace.controller.installationId
-        && machine.creationState === 'active' && machine.archivedAt === undefined
+        && machine.archivedAt === undefined
         && binding.isCurrent() && canPresentManagedMachineControl(binding.accountId, machine, currentController)
         ? machine : null;
+    return { target, binding, profileId };
+}
+
+/** The stopped Project uses the same power admission and wake verb as Machines. */
+export function useManagedWorkspaceStart(scope: WorkspaceScopeBase): Readonly<{
+    start(): void;
+    pending: boolean;
+    reviewApproval: (() => void) | null;
+}> | null {
+    const { serverId, workspace } = scope;
+    const control = useManagedWorkspaceControlTarget(scope);
+    const { binding, profileId } = control;
+    const target = control.target?.creationState === 'active' ? control.target : null;
     const presentation = useManagedProvisionerPresentation({
         serverId, accountScope: target ? binding?.scope : null, purpose: 'mark',
         controller: target?.controller, provider: target?.launch.provider, schemaVersion: target?.launch.schemaVersion,

@@ -186,6 +186,51 @@ describe('managed configurator uses the exact Home Action front door', () => {
         }
     });
 
+    it('forgets an attached workspace through retire with manual responsibility, once, carrying the page confirmation', async () => {
+        // Remote workspaces F9: Forget from the Project page never deletes the remote workspace (QA cut 29 step 7).
+        const homeId = 'srv_forget_workspace';
+        const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://forget-workspace.test',
+            serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
+        const controller = { machineId: 'host', installationId: 'installation' };
+        const workspace = { v: 2, kind: 'managed', serverId: homeId, workspaceId: 'project-checkout',
+            managedId: 'attached', controller, rootPath: '/home/guest/project' } as const;
+        const provider = { pluginId: 'happier.machine.coder', localId: 'coder' };
+        const machine = ManagedMachinePublicFullV1Schema.parse({
+            id: workspace.managedId, homeId, custodianAccountId: 'owner', controller, allocation: 'bound',
+            creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 3,
+            launch: { provider, schemaVersion: 1, name: 'api-dev', choices: { existingWorkspaceId: 'native-id' } },
+            resource: { contributionRef: provider, schemaVersion: 1, value: { workspaceId: 'native-id' } },
+            workspaceAttachment: { os: 'linux', arch: 'x64', home: '/home/guest' },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            observation: { availability: 'present', observedAt: 1, power: 'running' },
+        });
+        harness.answer(serverId, '/v1/machines/managed/actions/get', { body: machine });
+        const retired: unknown[] = [];
+        // Retire is an Account control the Home admits; the provider is never called.
+        harness.answer(serverId, '/v1/machines/managed/controller/admit-control', { select: value => {
+            const request = value as { action?: string; input?: unknown };
+            expect(request.action).toBe('machines.managed.retire');
+            retired.push(request.input);
+            return { body: { machine: { ...machine, archivedAt: 5 }, replayed: false } };
+        } });
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' },
+            [createManagedControllerMachineFixture({ id: controller.machineId, installationId: controller.installationId })]);
+        const { useManagedWorkspaceForget } = await import('./useManagedWorkspaceForget');
+        const hook = await renderHook(() => useManagedWorkspaceForget({ serverId,
+            machineId: controller.machineId, rootPath: workspace.rootPath, workspace }));
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent()?.workspaceName).toBe('api-dev'));
+            const current = hook.getCurrent()!;
+            let outcomes: unknown[] = [];
+            await act(async () => { outcomes = await Promise.all([current.forget(), current.forget()]); });
+            expect(outcomes).toContain('forgotten');
+            expect(retired).toEqual([{ homeId, managedId: machine.id, expectedIntentRevision: 3, manualResponsibility: true }]);
+            expect(harness.requestsFor('/v1/actions/machines.managed.delete')).toHaveLength(0);
+        } finally {
+            await hook.unmount();
+        }
+    });
+
     it('shares the selected availability answer across concurrent readers and launch-option edits', async () => {
         const homeId = 'srv_shared_availability';
         const serverId = await harness.addHome({ name: 'Build', serverUrl: 'https://shared-availability.example',

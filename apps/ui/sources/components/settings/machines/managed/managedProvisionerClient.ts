@@ -36,6 +36,8 @@ export type ManagedProvisionerClientOptions<T> = Omit<MachinePresetCollectionOpt
     managedPresetOrigin?: ManagedMachinePresetAcquireOriginV1;
     onApprovalAdmitted?: (receipt: ExternalActionManagedAdmissionReceiptV1) => void;
     onApprovalFailed?: (code: string, failure?: ActionExecuteFailure) => void;
+    /** The caller already showed its own confirmation for this exact request (a Project page's Forget). */
+    confirmed?: true;
 }>;
 export function projectManagedProvisionerFailure(code: string, details?: unknown, requestId?: string, failureCause?: ActionExecuteFailure['failureCause']): ManagedProvisionerFailure {
     // Only the canonical PluginError payload carries an authored reason; arbitrary transport text stays private.
@@ -77,7 +79,7 @@ export function createManagedProvisionerClient(scope: ServerAccountScope, homeId
             // Acquire is the configurator's designed Create after its review.
             // Carry that exact confirmation through the existing front door;
             // explicit approval requirements still belong to Action admission.
-            const dispatch = actionId === 'machines.managed.acquire' ? executeAction.confirmed : executeAction;
+            const dispatch = actionId === 'machines.managed.acquire' || options?.confirmed ? executeAction.confirmed : executeAction;
             const result = await dispatch(actionId, parsed.data, {
                     surface: 'ui', authority: 'present_user', serverId: scope.serverId, expectedAccountId: scope.accountId,
                     ...(options?.managedPresetOrigin ? { managedPresetOrigin: options.managedPresetOrigin } : {}),

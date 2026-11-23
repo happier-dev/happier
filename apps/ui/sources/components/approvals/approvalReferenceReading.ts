@@ -251,9 +251,13 @@ function useManagedReferenceSources(reference: ApprovalReference | undefined, ap
 
 /** The managed guest's name: its enrolled Machine's current display name, else the launch name it was created with. */
 function readManagedMachineName(sources: Pick<ApprovalReferenceSources, 'managedMachine' | 'managedEnrolledMachine'>): string | undefined {
-    const fullMachine: ManagedMachineFullV1 | null = sources.managedMachine && !isManagedOpaquePresetMachineV1(sources.managedMachine)
-        ? sources.managedMachine : null;
-    return getSettledMachineDisplayName(sources.managedEnrolledMachine) ?? fullMachine?.launch.name.trim();
+    return getSettledMachineDisplayName(sources.managedEnrolledMachine) ?? readManagedLaunchName(sources.managedMachine);
+}
+
+/** The name a managed resource was created or attached with; an opaque preset row carries none. */
+export function readManagedLaunchName(machine: ManagedMachineV1 | undefined): string | undefined {
+    const fullMachine: ManagedMachineFullV1 | null = machine && !isManagedOpaquePresetMachineV1(machine) ? machine : null;
+    return fullMachine?.launch.name.trim() || undefined;
 }
 
 /**
