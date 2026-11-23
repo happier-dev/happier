@@ -15,7 +15,6 @@ export type VoiceSurfaceRecovery = Readonly<{
     | 'update_agent_runtime';
   /** The action's one label, drawn and announced alike in every placement (lab ST: Allow · Retry · Set up). */
   labelKey:
-    | 'voice.readiness.actions.select_execution_machine'
     | 'voicePresence.recovery.setUp'
     | 'voicePresence.recovery.allow'
     | 'voiceSurface.reconnect'
@@ -33,8 +32,10 @@ export function resolveVoiceSurfaceRecovery(
   switch (action) {
     case 'review_credentials':
       return { kind: 'review_credentials', labelKey: 'voicePresence.recovery.setUp', icon: 'gear' };
+    // The lab's three short verbs (Allow · Retry · Set up): "Choose a machine" took the floating
+    // capsule's room and cut the failure itself to "Machine u…"; the caption names the machine problem.
     case 'select_execution_machine':
-      return { kind: 'select_execution_machine', labelKey: 'voice.readiness.actions.select_execution_machine', icon: 'gear' };
+      return { kind: 'select_execution_machine', labelKey: 'voicePresence.recovery.setUp', icon: 'gear' };
     case 'select_speech_engine':
       return { kind: 'select_speech_engine', labelKey: 'voicePresence.recovery.setUp', icon: 'gear' };
     case 'open_settings':

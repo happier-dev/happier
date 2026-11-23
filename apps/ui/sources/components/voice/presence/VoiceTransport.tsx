@@ -295,7 +295,8 @@ const VoiceTransportLabelled = React.memo(function VoiceTransportLabelled(props:
             testID={`${testID}-end`}
             display="destructive"
             size={button}
-            style={sheet ? control : styles.endTrailing}
+            // Beside Mute at every width: a wide Companion never strands End at the far edge.
+            style={sheet ? control : undefined}
             title={t('voicePresence.end')}
             accessibilityLabel={t('voiceAssistant.endVoice')}
             onPress={voice.onToggle}
@@ -333,5 +334,4 @@ const styles = StyleSheet.create((theme) => ({
     labelledSheet: { gap: theme.space.s8 },
     // Lab `.vo-sheet .vo-cb`: on the sheet the row's controls share its full width.
     sheetControl: { flex: 1 },
-    endTrailing: { marginLeft: 'auto' },
 }));

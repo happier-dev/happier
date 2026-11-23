@@ -25,7 +25,7 @@ import { resolveVoicePresenceReadAloud } from './resolveVoicePresenceReadAloud';
 import { registerVoiceGlancePresentation, revealVoiceCompanionSection } from './voiceCompanionSectionReveal';
 import { useVoicePresenceContainer } from './useVoicePresenceContainer';
 
-import { VoiceTopBarAnatomy, VOICE_TOP_BAR_PILL_HEIGHT as PILL_HEIGHT } from './voicePresenceAnatomy';
+import { VoiceTopBarAnatomy, VOICE_TOP_BAR_PILL_HEIGHT as PILL_HEIGHT, VOICE_TOP_BAR_TARGET_MAX_WIDTH } from './voicePresenceAnatomy';
 const MARK_SIZE = 20;
 const executePresentationAction = createFrontDoorUiActionExecutor();
 
@@ -140,9 +140,12 @@ const VoiceTopBarPill = React.memo(function VoiceTopBarPill(props: Readonly<{
                     {reading
                         ? <VoiceReadAloudStatus phase={reading.readAloud.phase} size="pill" testID={`${props.testID}-read-aloud-status`} />
                         : <VoiceStatusLine voice={voice} size="pill" />}
-                    {/* The admitted target stays named through its clean ended moment; global has none. */}
+                    {/* The admitted target stays named through its clean ended moment; global has none.
+                        Its name is bounded so a long Session title never pushes the tab strip aside (lab A). */}
                     {voice.targetSessionAddress ? (
-                        <VoiceTargetIdentity address={voice.targetSessionAddress} size="pill" testID={`${props.testID}-target`} />
+                        <View style={styles.target}>
+                            <VoiceTargetIdentity address={voice.targetSessionAddress} size="pill" testID={`${props.testID}-target`} />
+                        </View>
                     ) : null}
                 </View>
             </HappierPressable>}
@@ -162,7 +165,9 @@ const stylesheet = StyleSheet.create({
         flexShrink: 1,
     },
     labelPressed: { opacity: 0.7 },
-    labelRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 },
+    // Shrinks with the pill so the caption gives way before it can run under the transport.
+    labelRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, flexShrink: 1 },
+    target: { maxWidth: VOICE_TOP_BAR_TARGET_MAX_WIDTH, minWidth: 0, flexShrink: 1 },
     // The glyph stands in the mark's square, so the word starts where the live pill's label does.
     readAloudMark: { width: PILL_HEIGHT, height: PILL_HEIGHT, alignItems: 'center', justifyContent: 'center' },
 });

@@ -6,6 +6,8 @@ import { resolveVoiceSurfaceStatusPresentation } from '@/components/voice/surfac
 import type { VoiceSurfaceViewModel } from '@/components/voice/surface/useVoiceSurfaceModel';
 import { resolveVoiceMachineErrorTranslationKey } from '@/voice/runtime/machine/voiceMachineErrorCopy';
 import { t } from '@/text';
+import { resolveVoiceSurfaceRecovery } from '@/components/voice/surface/resolveVoiceSurfaceRecovery';
+import { translateVoiceReadiness } from '@/voice/settings/panels/voiceProviderReadinessPresentation';
 
 /**
  * Dev-only attempt projections for the presence specimen (lab `voice-presence` ST): each state is
@@ -14,7 +16,7 @@ import { t } from '@/text';
  */
 export type VoicePresenceFixtureState =
     | 'rest' | 'connecting' | 'live' | 'listening' | 'transcribing' | 'thinking' | 'speaking'
-    | 'interrupted' | 'muted' | 'blocked' | 'reconnecting' | 'failed' | 'stop_failed' | 'ended' | 'working' | 'needs_you';
+    | 'interrupted' | 'muted' | 'blocked' | 'reconnecting' | 'failed' | 'stop_failed' | 'start_failed' | 'ended' | 'working' | 'needs_you';
 
 export function isVoicePresenceFixtureState(value: unknown): value is VoicePresenceFixtureState {
     return typeof value === 'string' && Object.hasOwn(SURFACE_STATE, value);
@@ -22,7 +24,7 @@ export function isVoicePresenceFixtureState(value: unknown): value is VoicePrese
 
 export const VOICE_PRESENCE_FIXTURE_STATES: readonly VoicePresenceFixtureState[] = [
     'rest', 'connecting', 'live', 'listening', 'transcribing', 'thinking', 'speaking', 'working',
-    'needs_you', 'interrupted', 'muted', 'blocked', 'reconnecting', 'failed', 'ended',
+    'needs_you', 'interrupted', 'muted', 'blocked', 'reconnecting', 'failed', 'start_failed', 'ended',
 ];
 
 const NOOP = (): void => {};
@@ -42,6 +44,7 @@ const SURFACE_STATE: Readonly<Record<VoicePresenceFixtureState, VoiceSurfaceStat
     reconnecting: 'reconnecting',
     failed: 'error',
     stop_failed: 'error',
+    start_failed: 'error',
     ended: 'idle',
     working: 'listening',
     needs_you: 'listening',
@@ -53,8 +56,12 @@ const STOP_FAILED_COPY_KEY = resolveVoiceMachineErrorTranslationKey(
     'voice_previous_session_stop_failed',
 );
 
+/** `start_failed`: the start refused because the Voice machine is offline (live: VOICE_AGENT_TARGET_MACHINE_OFFLINE). */
+const START_FAILED_RECOVERY = resolveVoiceSurfaceRecovery('select_execution_machine')!;
+const START_FAILED_COPY_KEY = resolveVoiceMachineErrorTranslationKey('execution_machine_unavailable', 'voice_agent_target_machine_offline');
+
 export function buildVoicePresenceFixture(state: VoicePresenceFixtureState): VoiceAttemptControlProjection {
-    const failed = state === 'failed' || state === 'stop_failed';
+    const failed = state === 'failed' || state === 'stop_failed' || state === 'start_failed';
     const surfaceState = SURFACE_STATE[state];
     const status = state === 'rest' || state === 'ended'
         ? 'disconnected' as const
@@ -80,16 +87,16 @@ export function buildVoicePresenceFixture(state: VoicePresenceFixtureState): Voi
         canCommitInput: sendable,
     });
     // The real recovery copy (`resolveVoiceSurfaceRecovery`): a denied microphone is allowed, a lost transport retried.
-    const recoveryLabel = state === 'blocked' ? t('voicePresence.recovery.allow') : recovery ? t('common.retry') : null;
-    const recoveryIcon = state === 'blocked' ? 'microphone' as const : recovery ? 'arrow-clockwise' as const : null;
+    const recoveryLabel = state === 'blocked' ? t('voicePresence.recovery.allow') : state === 'start_failed' ? t(START_FAILED_RECOVERY.labelKey) : recovery ? t('common.retry') : null;
+    const recoveryIcon = state === 'blocked' ? 'microphone' as const : state === 'start_failed' ? START_FAILED_RECOVERY.icon : recovery ? 'arrow-clockwise' as const : null;
     // The projection's own failure captions: how to unblock, or the runtime's reason (a lost transport).
     const captionLabel = state === 'blocked'
         ? t('voicePresence.captions.blocked')
-        : state === 'failed' ? t(resolveVoiceMachineErrorTranslationKey('transport_disconnect')) : state === 'stop_failed' ? t(STOP_FAILED_COPY_KEY) : state === 'live' ? t('voiceSurface.a11y.microphoneInactive') : '';
+        : state === 'failed' ? t(resolveVoiceMachineErrorTranslationKey('transport_disconnect')) : state === 'stop_failed' ? t(STOP_FAILED_COPY_KEY) : state === 'start_failed' ? translateVoiceReadiness(START_FAILED_COPY_KEY, { service: 'Local voice' }) : state === 'live' ? t('voiceSurface.a11y.microphoneInactive') : '';
     return {
         ...control,
         statusCell: state === 'working' || state === 'needs_you' ? state : control.statusCell,
-        statusWord: state === 'working' ? 'Working' : state === 'needs_you' ? 'Needs you' : state === 'ended' ? t('voicePresence.ended') : state === 'muted' ? t('voicePresence.muted') : t(resolveVoiceSurfaceStatusPresentation(surfaceState).wordKey ?? resolveVoiceSurfaceStatusPresentation(surfaceState).labelKey),
+        statusWord: state === 'start_failed' ? t('voice.readiness.short.machineUnreachable') : state === 'working' ? 'Working' : state === 'needs_you' ? 'Needs you' : state === 'ended' ? t('voicePresence.ended') : state === 'muted' ? t('voicePresence.muted') : t(resolveVoiceSurfaceStatusPresentation(surfaceState).wordKey ?? resolveVoiceSurfaceStatusPresentation(surfaceState).labelKey),
         statusLabel: state === 'working' ? 'Working' : state === 'needs_you' ? 'Needs you' : state === 'ended' ? t('voicePresence.ended') : state === 'muted' ? t('voicePresence.muted') : t(resolveVoiceSurfaceStatusPresentation(surfaceState).labelKey),
         ended: state === 'ended' ? { sessionId: 'specimen-voice', adapterId: null, startedAt: SPECIMEN_STARTED_AT - 118_000, endedAt: SPECIMEN_STARTED_AT + 134_000, reason: { kind: 'stopped' as const }, conversationSessionAddress: null, targetSessionAddress: null, transcriptMode: null, accountScope: null, conversationScope: null } : null,
         commitInputLabel: sendable ? t('common.send') : null,

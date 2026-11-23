@@ -27,7 +27,12 @@ import { VoiceIsland, VOICE_ISLAND_DESKTOP, VOICE_ISLAND_PHONE } from './VoiceIs
 import { VoiceOrb, VOICE_ORB_BODY_SIZE } from './VoiceOrb';
 import { VoicePresenceFloat } from './VoicePresenceFloat';
 import { useVoiceReadAloud } from './VoiceReadAloud';
-import { registerVoiceGlancePresentation, revealVoiceCompanionSection } from './voiceCompanionSectionReveal';
+import {
+    isVoiceCompanionSectionOnScreen,
+    registerVoiceGlancePresentation,
+    revealVoiceCompanionSection,
+    subscribeVoiceCompanionSectionOnScreen,
+} from './voiceCompanionSectionReveal';
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -95,11 +100,15 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
     }, [open]);
 
     const orb = props.container === 'orb';
+    // On a phone the Companion's Voice section, while on screen, is the call's one glance.
+    const sectionOnScreen = React.useSyncExternalStore(
+        subscribeVoiceCompanionSectionOnScreen, isVoiceCompanionSectionOnScreen, isVoiceCompanionSectionOnScreen);
+    const yieldsToSection = phone && !orb && sectionOnScreen;
     // One visibility fact governs both the container and its measured composer clearance.
     // Keyboard-open moves the same presence above measured keyboard chrome; transport stays reachable.
     // A reading stays presented with its Stop whatever the call can do next.
-    const visible = resolveVoicePresenceReadAloud(voice, readAloud) !== null
-        || (voice.availability !== 'unavailable' && (orb || voice.live || Boolean(voice.ended)));
+    const visible = !yieldsToSection && (resolveVoicePresenceReadAloud(voice, readAloud) !== null
+        || (voice.availability !== 'unavailable' && (orb || voice.live || Boolean(voice.ended))));
     // The keyboard scaffold already lifts the composer. In that state the float clears the
     // measured composer instead of reporting the keyboard height back as composer reservation.
     const reservesComposerSpace = visible && phone && !orb && keyboardHeight === 0;

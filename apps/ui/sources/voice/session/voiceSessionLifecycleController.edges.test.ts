@@ -765,7 +765,7 @@ describe('voice session lifecycle edge contracts', () => {
                 expect(snapshot.errorMessage).toBe('execution_machine_incompatible');
                 expect(resolveVoiceMachineErrorTranslationKey('execution_machine_unavailable', snapshot.errorMessage)).toBe(readiness.reasonKey);
                 expect(resolveVoiceSurfaceRecovery(snapshot.errorRecoveryAction)).toMatchObject({
-                    kind: 'select_execution_machine', labelKey: 'voice.readiness.actions.select_execution_machine',
+                    kind: 'select_execution_machine', labelKey: 'voicePresence.recovery.setUp',
                 });
             }
             expect(published).toHaveBeenCalledTimes(1);

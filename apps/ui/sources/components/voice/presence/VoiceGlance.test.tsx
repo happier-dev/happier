@@ -454,7 +454,7 @@ describe('VoiceGlance', () => {
         expect(voice.onOpenConversation).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps the ended actions to words the row can hold: starting fresh is one quiet icon', async () => {
+    it('names every ended action: Continue and New are words, New keeps its full accessible name', async () => {
         const idle = resolveVoiceAttemptControl({
             surfaceState: 'idle', tone: 'neutral', status: 'disconnected', sessionId: null, canStop: false,
             muted: false, capturing: false, startAdmitted: true, hasRecovery: false,
@@ -467,8 +467,8 @@ describe('VoiceGlance', () => {
 
         expect(screen.findByTestId('voice-glance-new-conversation')?.props.accessibilityLabel).toBe(t('voicePresence.newConversation'));
         expect(screen.getTextContent()).toContain(t('voicePresence.continueConversation'));
-        // The third word is what wrapped the row; the control keeps its full accessible name instead.
-        expect(screen.getTextContent()).not.toContain('New');
+        // Starting fresh is the quiet one, but still a word (a bare "+" said nothing); a narrow row wraps.
+        expect(screen.getTextContent()).toContain(t('voicePresence.newConversationShort'));
         screen.pressByTestId('voice-glance-new-conversation');
         expect(voice.onNewConversation).toHaveBeenCalledTimes(1);
         expect(voice.onPrimaryAction).not.toHaveBeenCalled();

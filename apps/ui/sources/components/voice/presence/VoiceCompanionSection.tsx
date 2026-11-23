@@ -18,7 +18,7 @@ import {
 
 import { VoiceGlance } from './VoiceGlance';
 import { useVoiceReadAloud } from './VoiceReadAloud';
-import { registerVoiceCompanionSection } from './voiceCompanionSectionReveal';
+import { registerVoiceCompanionSection, reportVoiceCompanionSectionOnScreen } from './voiceCompanionSectionReveal';
 
 const SURFACE_PROPS = Object.freeze({ variant: 'sidebar' as const });
 
@@ -55,6 +55,7 @@ function VoiceCompanionSectionPresentation(props: Readonly<{ tracker: NearViewpo
         const { y, height } = event.nativeEvent.layout;
         setSpan((current) => current?.top === y && current.height === height ? current : { top: y, height });
     }, []);
+    React.useEffect(() => presented ? reportVoiceCompanionSectionOnScreen() : undefined, [presented]);
     // Keep the model, turns and semantic pose mounted; only presentation demand changes on scroll.
     return <View onLayout={onLayout} testID={`${props.testID}-presentation`}>
         <PluginSurfaceFocusEligibilityProvider active={presented} presentationActive={presented}>

@@ -2480,7 +2480,7 @@ describe('useVoiceAttemptControl capture and caption projection', () => {
       surfaceState: 'error', statusWord: t('voice.readiness.short.machineUnreachable'),
       failureMessage: t('voice.readiness.execution_machine_incompatible'),
       captionLabel: t('voice.readiness.execution_machine_incompatible'),
-      recoveryLabel: t('voice.readiness.actions.select_execution_machine'),
+      recoveryLabel: t('voicePresence.recovery.setUp'),
     });
     expect(hook.getCurrent().statusWord).not.toBe(hook.getCurrent().captionLabel);
     await hook.unmount();

@@ -2,7 +2,6 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
@@ -12,7 +11,8 @@ import { Typography } from '@/constants/Typography';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import type { VoiceSurfaceViewModel } from '@/components/voice/surface/useVoiceSurfaceModel';
 import type { VoiceSurfaceTranscriptEntry } from '@/components/voice/surface/mergeVoiceSurfaceTranscriptEntries';
-import { useSession } from '@/sync/domains/state/storage';
+import { useSession, useSetting } from '@/sync/domains/state/storage';
+import { getVoiceContextFormatterPrefs } from '@/voice/context/voiceContextPrefs';
 import {
   getSessionName,
   useSessionStatus,
@@ -38,7 +38,7 @@ import {
   VoiceElapsed,
   VoiceStatusLine,
 } from './VoiceStatusLine';
-import { HAPPIER_PAGE_METRICS, HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 /** How many of the latest turns the glance reads back; the full history is the conversation itself. */
 const GLANCE_TURNS = 3;
@@ -90,6 +90,9 @@ export const VoiceGlance = React.memo(function VoiceGlance(
       testID={testID}
       frameStyle="plain"
       placement="companion"
+      // The Voice section heads itself with a title ("Voice 2:14", "Talking to Review #2481"), lab A/NY,
+      // in every host: it is the section, not a quiet glance among grouped rows.
+      pageSection
       mark={
         boundTarget && boundName ? (
           <VoiceTargetIdentity
@@ -222,10 +225,13 @@ const VoiceGlanceBody = React.memo(function VoiceGlanceBody(
       ) : null}
       {voice.statusCell === 'needs_you' &&
       voice.pendingRequestSessionAddress ? (
-        <VoiceNeedsYouPrompts
-          address={voice.pendingRequestSessionAddress}
-          testID={`${props.testID}-needs-you`}
-        />
+        <>
+          <VoiceNeedsYouPrompts
+            address={voice.pendingRequestSessionAddress}
+            testID={`${props.testID}-needs-you`}
+          />
+          <VoiceNeedsYouHint testID={`${props.testID}-needs-you-hint`} />
+        </>
       ) : null}
       {model.delegatedWork ? (
         <VoiceGlanceHandoff model={model} testID={`${props.testID}-handoff`} />
@@ -241,6 +247,24 @@ const VoiceGlanceBody = React.memo(function VoiceGlanceBody(
     </View>
   );
 });
+
+/**
+ * How the waiting request can be answered (lab NY "Read aloud · say yes or no, or tap"): Voice read it
+ * out; with spoken approval on the person may answer aloud, otherwise only a tap decides. The
+ * preference is read through the same reader that tells the Voice agent whether it may approve.
+ */
+function VoiceNeedsYouHint(props: Readonly<{ testID: string }>): React.ReactElement {
+  const voiceSettings = useSetting('voice');
+  const spoken = React.useMemo(
+    () => getVoiceContextFormatterPrefs({ settings: { voice: voiceSettings } }).voiceCanApproveRequests,
+    [voiceSettings],
+  );
+  return (
+    <Text testID={props.testID} style={stylesheet.needsYouHint}>
+      {spoken ? t('voicePresence.needsYouHint.spoken') : t('voicePresence.needsYouHint.tap')}
+    </Text>
+  );
+}
 
 /** The hero's status word: an active reading leads it (its own word), otherwise the call's state. */
 function VoiceGlanceStatusWord(
@@ -357,9 +381,9 @@ const VoiceGlanceEnded = React.memo(function VoiceGlanceEnded(
         ended={ended}
         testID={`${props.testID}-ended-pending`}
       />
-      {/* One bordered action, the way back to the conversation; Start again is a quiet text
-                action beside it — the hero mark above is already the start control. They share one
-                row at every width: the bordered action is the one that gives way. */}
+      {/* The two next steps carry equal weight (lab ST ended): back to the conversation, or talk
+          again. Starting fresh is the least-used, so it is the quiet one, still named. A narrow
+          column wraps the row rather than squeezing a label. */}
       <View style={styles.endedControls}>
         {readAloud ? (
           <VoiceReadAloudStopPill
@@ -392,25 +416,24 @@ const VoiceGlanceEnded = React.memo(function VoiceGlanceEnded(
         {voice.canStart && !readAloud ? (
           <RoundButton
             testID={`${props.testID}-start-again`}
-            display="inverted"
+            display="secondary"
             size={size}
             style={styles.endedQuiet}
             title={voice.onNewConversation ? t('voicePresence.continueConversation') : t('voicePresence.startAgain')}
-            textStyle={styles.startAgain}
             onPress={voice.onPrimaryAction}
           />
         ) : null}
         {voice.canStart && voice.onNewConversation && !readAloud ? (
-          <IconButton
+          <RoundButton
             testID={`${props.testID}-new-conversation`}
-            iconName="plus"
+            display="inverted"
+            size={size}
+            style={styles.endedQuiet}
+            title={t('voicePresence.newConversationShort')}
             accessibilityLabel={t('voicePresence.newConversation')}
-            tooltip={t('voicePresence.newConversation')}
-            variant="plain"
-            // Level with the labelled pills beside it.
-            size={props.sheet ? HAPPIER_PAGE_METRICS.controlHeightPx : HAPPIER_PAGE_METRICS.smallControlHeightPx}
-            iconSize={iconSize}
+            textStyle={styles.startAgain}
             onPress={voice.onNewConversation}
+            leading={<Icon name="plus" size={iconSize} color={theme.colors.text.secondary} />}
           />
         ) : null}
       </View>
@@ -558,6 +581,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     ...Typography.variant('meta'),
     color: theme.colors.text.secondary,
   },
+  // Tucked under the request card it explains, at the card's own edge.
+  needsYouHint: {
+    ...Typography.variant('meta'),
+    color: theme.colors.text.tertiary,
+    marginTop: -theme.space.s6,
+    paddingLeft: theme.space.s2,
+  },
   quietLink: { alignSelf: 'flex-start' },
   quietLinkLabel: {
     ...Typography.variant('meta'),
@@ -575,9 +605,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     ...Typography.variant('meta'),
     color: theme.colors.text.secondary,
   },
-  // The ended state's actions stay on one row in every host, the narrow Companion column included.
+  // The ended state's actions: one row where they fit, wrapping in the narrow Companion column.
   endedControls: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: theme.space.s8,
   },

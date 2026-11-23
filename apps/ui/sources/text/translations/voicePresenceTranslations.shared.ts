@@ -32,6 +32,10 @@ export type VoicePresenceTranslation = Readonly<{
     startAgain: string;
     newConversation: string;
     continueConversation: string;
+    /** The ended glance's visible word beside its plus; `newConversation` stays the accessible name. */
+    newConversationShort: string;
+    /** Under a waiting request in the Voice section: how it can be answered (spoken approval on or off). */
+    needsYouHint: Readonly<{ spoken: string; tap: string }>;
     endedCaption: (params: Readonly<{ elapsed: string }>) => string;
     dismiss: string;
     mute: string;
@@ -76,12 +80,14 @@ export const voicePresenceTranslationsEnglish = { en: {
         startAgain: 'Start again',
         newConversation: 'New conversation',
         continueConversation: 'Continue',
+        newConversationShort: "New",
+        needsYouHint: { spoken: "Read aloud · say yes or no, or tap", tap: "Read aloud · tap to decide" },
         endedCaption: ({ elapsed }) => `${elapsed} · the conversation is saved`,
         dismiss: 'Dismiss',
         mute: "Mute",
         unmute: "Unmute",
         end: "End",
-        captions: { thinkingInputUnavailable: "Wait for the reply before sending more.", connecting: "Opening the audio channel", listening: "Go ahead", listeningSend: "Talk, then press Send", transcribing: "Turning that into text", thinking: "Working out an answer", speaking: "You can interrupt any time", interrupted: "Go ahead", muted: "Unmute to talk · Voice can still speak", reconnecting: "Lost the connection · trying again", blocked: "Allow microphone access to talk", failed: "Try again, or check Voice settings", needsYou: "Waiting for your decision" },
+        captions: { thinkingInputUnavailable: "Wait for the reply before sending more.", connecting: "Opening the audio channel", listening: "Go ahead", listeningSend: "Talk, then press Send", transcribing: "Turning that into text", thinking: "Working out an answer", speaking: "You can interrupt any time", interrupted: "Go ahead", muted: "Voice can still speak", reconnecting: "Connection lost", blocked: "Allow microphone access to talk", failed: "Try again, or check Voice settings", needsYou: "Waiting for your decision" },
         recovery: { allow: "Allow", setUp: "Set up" },
         readAloud: { preparing: "Getting ready to read", speaking: "Reading aloud", stop: "Stop reading" },
         containerA11y: ({ status }) => `Voice, ${status}`,

@@ -150,7 +150,7 @@ function KitBoard(): React.ReactElement {
 }
 
 const ORDER: readonly VoicePresenceFixtureState[] = [
-    'connecting', 'listening', 'transcribing', 'thinking', 'working', 'needs_you', 'speaking', 'interrupted', 'muted', 'blocked', 'reconnecting', 'failed', 'ended',
+    'connecting', 'listening', 'transcribing', 'thinking', 'working', 'needs_you', 'speaking', 'interrupted', 'muted', 'blocked', 'reconnecting', 'failed', 'start_failed', 'ended',
 ];
 
 function StatesBoard(): React.ReactElement {

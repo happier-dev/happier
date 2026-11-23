@@ -22,6 +22,28 @@ export function revealVoiceCompanionSection(): boolean {
     return reveal();
 }
 
+/**
+ * Whether a Companion Voice section is on screen right now (near its viewport). On a phone the
+ * floating Island steps aside while it is, so one call shows one set of Mute · End (lab N2p).
+ */
+let sectionsOnScreen = 0;
+const onScreenListeners = new Set<() => void>();
+export function reportVoiceCompanionSectionOnScreen(): () => void {
+    sectionsOnScreen += 1;
+    onScreenListeners.forEach((listener) => listener());
+    return () => {
+        sectionsOnScreen -= 1;
+        onScreenListeners.forEach((listener) => listener());
+    };
+}
+export function subscribeVoiceCompanionSectionOnScreen(listener: () => void): () => void {
+    onScreenListeners.add(listener);
+    return () => { onScreenListeners.delete(listener); };
+}
+export function isVoiceCompanionSectionOnScreen(): boolean {
+    return sectionsOnScreen > 0;
+}
+
 // Mounted presentation owners lend their existing controls; no request survives an unmount.
 let glance: ((open: boolean) => void) | null = null;
 type SetupControl = (open: boolean) => boolean | void;

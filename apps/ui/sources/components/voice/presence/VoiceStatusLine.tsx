@@ -115,10 +115,12 @@ export const VoiceElapsed = React.memo(function VoiceElapsed(props: Readonly<{
 });
 
 const styles = StyleSheet.create((theme) => ({
+    // Shrinks inside a tight capsule so only the trailing next step gives way, never past the transport.
     row: {
         flexDirection: 'row',
         alignItems: 'center',
         minWidth: 0,
+        flexShrink: 1,
     },
     // In a capsule the state word never truncates ("Microph…" says nothing); the caption line
     // beneath is what gives way when the capsule is tight.

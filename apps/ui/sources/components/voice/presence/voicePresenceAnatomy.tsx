@@ -5,6 +5,8 @@ import { StyleSheet } from 'react-native-unistyles';
 import { GlassPanel } from '@/components/ui/glass/GlassPanel';
 
 export const VOICE_TOP_BAR_PILL_HEIGHT = 28;
+/** The live pill's target name stops here and ellipsizes: the pill sits in the title strip beside the tabs. */
+export const VOICE_TOP_BAR_TARGET_MAX_WIDTH = 160;
 export const VOICE_ISLAND_DESKTOP = Object.freeze({ width: 330, height: 56, mark: 26 });
 export const VOICE_ISLAND_PHONE = Object.freeze({ height: 58, mark: 28 });
 /** The island mark's slot: never smaller than the drawn mark, the same under every pointer (a finger reaches past it through the hit area). */

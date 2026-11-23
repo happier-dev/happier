@@ -13,7 +13,7 @@ import { t } from '@/text';
 
 import { VoiceMark } from './VoiceMark';
 import { VOICE_PRESENCE_NO_DRAG_PROPS } from './VoicePresenceFloat';
-import { readVoiceElapsedStartedAt, VoiceElapsed, VoiceStatusLine } from './VoiceStatusLine';
+import { VoiceStatusLine } from './VoiceStatusLine';
 import { VoiceTargetIdentity } from './VoiceTargetIdentity';
 import { VoiceReadAloudStatus, type VoiceReadAloud } from './VoiceReadAloud';
 import { resolveVoicePresenceReadAloud } from './resolveVoicePresenceReadAloud';
@@ -115,17 +115,15 @@ export const VoiceOrb = React.memo(function VoiceOrb(props: Readonly<{
                         {/* The chip is the options target and keeps saying what the call is doing
                             (lab: "Speaking 2:14"); its accessible name is "Voice options". */}
                         <GlassPanel radius={13} shadowLevel={2} innerShadow={false} style={styles.caption}>
-                            {/* A failure leads with its status ("Couldn't connect"): the target's name
-                                alone would leave the Orb looking fine. */}
-                            {readAloud !== null ? <VoiceReadAloudStatus phase={readAloud.phase} size="pill" /> : voice.targetSessionAddress && voice.tone !== 'error' ? (
-                                // The same admitted name remains after End, with the ended status in place of a live clock.
-                                <View style={voice.live ? styles.targetCaption : styles.endedTargetCaption}>
+                            {/* A live call announces its phase and clock ("Speaking 2:14", 10-28 ruling); who
+                                it is talking to reads in the Voice section. Once ended, the admitted target
+                                stays named so the chip says which conversation it was. */}
+                            {readAloud !== null ? <VoiceReadAloudStatus phase={readAloud.phase} size="pill" /> : !voice.live && voice.targetSessionAddress && voice.tone !== 'error' ? (
+                                <View style={styles.endedTargetCaption}>
                                     <View style={styles.targetName}>
                                         <VoiceTargetIdentity address={voice.targetSessionAddress} size="pill" testID="voice-orb-target" />
                                     </View>
-                                    {!voice.live ? <VoiceStatusLine voice={voice} size="pill" /> : readVoiceElapsedStartedAt(voice) !== null ? (
-                                        <VoiceElapsed startedAt={readVoiceElapsedStartedAt(voice)!} fontSize={12.5} lineHeight={16} />
-                                    ) : null}
+                                    <VoiceStatusLine voice={voice} size="pill" />
                                 </View>
                             ) : <VoiceStatusLine voice={voice} size="pill" />}
                         </GlassPanel>
@@ -174,7 +172,6 @@ const stylesheet = StyleSheet.create({
     noDrag: { flexShrink: 1, minWidth: 0 },
     options: { minHeight: VOICE_ORB_BODY_SIZE, minWidth: 0, flexShrink: 1, justifyContent: 'center' },
     caption: { height: 26, paddingHorizontal: 10, justifyContent: 'center', flexShrink: 1, minWidth: 0 },
-    targetCaption: { flexDirection: 'row', alignItems: 'center', gap: 7, minWidth: 0, flexShrink: 1 },
     // Ended: the name leads and the status follows only when it fits whole. The one-line box wraps the
     // status out of view rather than squeezing the name down to an initial and a dot.
     endedTargetCaption: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 7, height: 16, overflow: 'hidden', minWidth: 0, flexShrink: 1 },
