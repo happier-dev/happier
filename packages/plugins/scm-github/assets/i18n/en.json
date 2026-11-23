@@ -301,6 +301,7 @@
   "plugins.github.ui.overview.reread": "Re-read this overview from GitHub",
   "plugins.github.ui.overview.unavailable": "The current overview is unavailable",
   "plugins.github.ui.overview.retained": "Showing the last overview read",
+  "plugins.github.ui.overview.branchRulesUnavailable": "Base branch rules are unavailable.",
   "plugins.github.ui.overview.details": "Current GitHub details",
   "plugins.github.ui.overview.openVideo": "Open video",
   "plugins.github.ui.overview.openAttachment": "Open attachment",

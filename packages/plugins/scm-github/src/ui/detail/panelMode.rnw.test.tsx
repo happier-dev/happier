@@ -699,6 +699,53 @@ describe('the GitHub detail as Triage panels', () => {
     expect(document.body.textContent).not.toContain('source/unauthorized');
   });
 
+  it('shows the refused base branch rules while keeping the registered Overview readable', async () => {
+    const description = 'The pull request description remains readable.';
+    const stub = createStubGithubTransport({ respond: request => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/pulls/1284')) return { status: 200, body: {
+        ...GITHUB_PULL_REQUEST_RESPONSE,
+        body: description,
+        mergeable: true,
+        mergeable_state: 'blocked',
+        head: { ...GITHUB_PULL_REQUEST_RESPONSE.head, sha: HEAD_REVISION },
+        base: { ...GITHUB_PULL_REQUEST_RESPONSE.base, repo: { ...GITHUB_PULL_REQUEST_RESPONSE.base.repo, id: 1296269 } },
+      } };
+      if (path.includes('/rules/branches/')) return { status: 403, body: { message: 'Forbidden' } };
+      if (path === '/graphql') return { status: 200, body: { data: { repository: {
+        isArchived: false, hasIssuesEnabled: true, mergeCommitAllowed: true,
+        squashMergeAllowed: false, rebaseMergeAllowed: true,
+        pullRequest: { headRefOid: HEAD_REVISION, reviewDecision: 'APPROVED', mergeStateStatus: 'BLOCKED',
+          commits: { nodes: [{ commit: { oid: HEAD_REVISION, statusCheckRollup: null } }] },
+        },
+      } } } };
+      return undefined;
+    } });
+    const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      http: stub.context.services.http, connectedAccounts: stub.context.services.connectedAccounts,
+    } });
+    let detail: PluginUiTestkit | undefined;
+    try {
+      detail = await mountPanel('overview', {
+        invokeRead: async (localId, input, signal) => projectNativeJsonValueForTransport(
+          await kit.invokeAction(localId, input as JsonValue, { signal }),
+        ),
+        translations: { 'plugins.triage.sourceSettings.failure.permission': 'The GitHub connection was refused access.' },
+      });
+      await vi.waitFor(async () => expect(await detail.queryByText(description)).toBeDefined());
+      expect(stub.requests.some(request => new URL(request.url).pathname.includes('/rules/branches/'))).toBe(true);
+      await expect(detail.getByText('Base branch rules are unavailable.')).resolves.toBeDefined();
+      await expect(detail.getByText('The GitHub connection was refused access.')).resolves.toBeDefined();
+    } finally {
+      if (detail !== undefined) {
+        const current = detail;
+        await act(async () => { await current.dispose(); });
+        mounted.splice(mounted.indexOf(current), 1);
+      }
+      await kit.dispose();
+    }
+  });
+
   it.each(['unavailable', 'timeout'])('keeps Overview Action refusal %s and its Request ID behind the shared details disclosure', async (code) => {
     const detail = await mountPanel('overview', { readCapabilities: async () => readableCapabilitiesAnswer(), rejectRead: localId =>
       localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readOverview ? new PluginError({

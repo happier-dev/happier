@@ -4427,6 +4427,8 @@ function GithubStoryOverview({
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const exact = overview.value;
+  const branchRulesFailure = exact?.kindId === 'pull-request' ? exact.pullRequestStatus?.merge?.branchRules?.failure : undefined;
+  const readFailure = overview.failure ?? branchRulesFailure;
   // The observation's own summary is the ask until the reader re-reads the
   // current description; neither is invented when both are absent.
   const ask = exact?.body ?? input.observation.snapshot.summary;
@@ -4442,17 +4444,17 @@ function GithubStoryOverview({
         // Preview follows Checks in the story (DEPLOY-COMPOSE-1107 P15); the slot keeps their order.
         checks={kindId === 'pull-request' ? <><GithubChecksStep /><GithubPullRequestPreviewStep input={input} closed={exact?.state === 'closed'} /></> : null}
         trailing={byline.length === 0 ? undefined : <Text variant="micro" tone="secondary" value={byline.join(' · ')} />}
-        notice={overview.failure === null ? undefined : (
-          // One line above the ask, beside its Re-read: the description it previews (the last read, or the
-          // list's own summary) stays readable instead of sitting under a whole-panel error.
+        notice={readFailure === undefined ? undefined : (
           <Stack gap="small">
             <Status
               tone="warning"
-              label={exact === null
+              label={overview.failure === null
+                ? text('plugins.github.ui.overview.branchRulesUnavailable', 'Base branch rules are unavailable.')
+                : exact === null
                 ? text('plugins.github.ui.overview.unavailable', 'The current overview is unavailable')
                 : text('plugins.github.ui.overview.retained', 'Showing the last overview read')}
-              value={failureDescription(overview.failure, text('plugins.github.ui.readFailed', 'GitHub could not complete this read.'), text)}
-              action={(
+              value={failureDescription(readFailure, text('plugins.github.ui.readFailed', 'GitHub could not complete this read.'), text)}
+              action={overview.failure === null ? undefined : (
                 <RefreshRow
                   onRefresh={refresh}
                   pending={overview.refreshing}
@@ -4460,7 +4462,7 @@ function GithubStoryOverview({
                 />
               )}
             />
-            <GithubReadFailureDetails failures={[overview.failure]} />
+            <GithubReadFailureDetails failures={[readFailure]} />
           </Stack>
         )}
       >
