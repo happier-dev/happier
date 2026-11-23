@@ -100,19 +100,22 @@ describe('qualified Connected Account deadline composition', () => {
     });
     const vendorQuotaBody = () => ({ rate_limit: { primary_window: { used_percent: 25,
       reset_at: Math.trunc(Date.now() / 1000) + 3600, limit_window_seconds: 18_000 } } });
-    const requests = vi.spyOn(globalThis, 'fetch').mockImplementation(async url => String(url).includes('/v1/features')
-      ? Response.json(FeaturesResponseSchema.parse({ features: { connectedServices: { enabled: true, quotas: { enabled: true } } }, capabilities: {} }))
-      : Response.json(vendorQuotaBody()));
-    // Node's plug-in HTTP path carries a private dispatcher. Use the same
-    // fake provider response at that network boundary, with live network disabled.
-    const providerAgent = mode === 'wake-admission' ? new Agent() : undefined;
-    if (providerAgent) providerAgent.dispatch = providerAgent.dispatch.bind(providerAgent);
-    const providerNetwork = providerAgent ? new MockAgent({ agent: providerAgent }) : undefined;
-    providerNetwork?.disableNetConnect();
-    providerNetwork?.get('https://chatgpt.com').intercept({ method: 'GET', path: '/backend-api/wham/usage' })
-      .reply(200, vendorQuotaBody, { headers: { 'content-type': 'application/json' } }).persist();
-    const dispatch = providerNetwork && vi.spyOn(Agent.prototype, 'dispatch')
-      .mockImplementation(providerNetwork.dispatch.bind(providerNetwork));
+    const featureRequests = vi.spyOn(globalThis, 'fetch').mockImplementation(async url => {
+      if (new URL(String(url)).pathname !== '/v1/features') throw new Error('Unexpected global fetch in quota startup');
+      return Response.json(FeaturesResponseSchema.parse({
+        features: { connectedServices: { enabled: true, quotas: { enabled: true } } }, capabilities: {},
+      }));
+    });
+    // The provider transport uses its own Undici dispatcher. Keep the real request
+    // path and count responses at that boundary with outbound networking disabled.
+    const providerReads = vi.fn(vendorQuotaBody);
+    const providerAgent = new Agent();
+    providerAgent.dispatch = providerAgent.dispatch.bind(providerAgent);
+    const providerNetwork = new MockAgent({ agent: providerAgent });
+    providerNetwork.disableNetConnect();
+    providerNetwork.get('https://chatgpt.com').intercept({ method: 'GET', path: '/backend-api/wham/usage' })
+      .reply(200, providerReads, { headers: { 'content-type': 'application/json' } }).persist();
+    const dispatch = vi.spyOn(Agent.prototype, 'dispatch').mockImplementation(providerNetwork.dispatch.bind(providerNetwork));
     const phases = vi.spyOn(logger, 'infoFile');
     const registry = new ConnectedServiceRuntimeRegistry();
     const trackedSessions = new Map<SessionTrackingKey, TrackedSession>();
@@ -177,11 +180,18 @@ describe('qualified Connected Account deadline composition', () => {
         && typeof detail === 'object' && detail !== null && 'phase' in detail && detail.phase === 'established_snapshots'
         && 'status' in detail && detail.status === 'started');
       expect(initialPreparations).toHaveLength(1);
-      // The optimization is not permission to reuse material at effect boundaries.
-      expect(fixture.readCredential.mock.calls.length).toBeGreaterThan(1);
+      // The health-only startup has no quota effect. Quota re-acquires material
+      // when the provider request actually runs.
+      if (mode === 'health-only') {
+        expect(fixture.readCredential).toHaveBeenCalledOnce();
+        expect(providerReads).not.toHaveBeenCalled();
+      } else {
+        expect(fixture.readCredential.mock.calls.length).toBeGreaterThan(1);
+        expect(providerReads).toHaveBeenCalled();
+      }
       if (mode === 'demanded-quota') {
         const initialCredentialReads = fixture.readCredential.mock.calls.length;
-        const initialProviderReads = requests.mock.calls.length;
+        const initialProviderReads = providerReads.mock.calls.length;
         phases.mockClear();
         const deadlineTick = new Promise<void>(resolve => {
           const release = runtime!.connectedServiceQuotasLoopHandle!.subscribeAfterTick(() => { release(); resolve(); });
@@ -191,15 +201,13 @@ describe('qualified Connected Account deadline composition', () => {
         await vi.advanceTimersByTimeAsync(resetAt - Date.now());
         await deadlineTick;
         expect(fixture.readCredential.mock.calls.length).toBeGreaterThan(initialCredentialReads);
-        expect(requests.mock.calls.length).toBeGreaterThan(initialProviderReads);
+        expect(providerReads.mock.calls.length).toBeGreaterThan(initialProviderReads);
         expect(phases.mock.calls.filter(([message, detail]) => message === '[CONNECTED ACCOUNT] Materialization phase'
           && typeof detail === 'object' && detail !== null && 'materializationKey' in detail
           && detail.materializationKey === 'coincident-deadline')).toHaveLength(0);
         console.info('[c217 quota demanded cost]', { idleSeconds: 61, initialCredentialReads,
           demandedCredentialReads: fixture.readCredential.mock.calls.length - initialCredentialReads,
-          demandedFetches: requests.mock.calls.length - initialProviderReads,
-          demandedProviderReads: requests.mock.calls.slice(initialProviderReads)
-            .filter(([url]) => !String(url).includes('/v1/features')).length });
+          demandedProviderReads: providerReads.mock.calls.length - initialProviderReads });
       }
       if (mode === 'wake-admission') {
         const loop = runtime!.connectedServiceQuotasLoopHandle!;
@@ -255,7 +263,7 @@ describe('qualified Connected Account deadline composition', () => {
       if (mode === 'both') {
         const idleReads = reads.mock.calls.length;
         const idleCredentialReads = fixture.readCredential.mock.calls.length;
-        const idleProviderReads = requests.mock.calls.length;
+        const idleProviderReads = providerReads.mock.calls.length;
         clock += 61_000;
         // K scheduler demands with unchanged health/quota authority must not
         // reacquire material or poll the provider before its real deadline.
@@ -265,7 +273,7 @@ describe('qualified Connected Account deadline composition', () => {
         }
         expect(reads).toHaveBeenCalledTimes(idleReads);
         expect(fixture.readCredential).toHaveBeenCalledTimes(idleCredentialReads);
-        expect(requests).toHaveBeenCalledTimes(idleProviderReads);
+        expect(providerReads).toHaveBeenCalledTimes(idleProviderReads);
         for (let wake = 0; wake < 25; wake++) {
           const settled = new Promise<void>(resolve => {
             const release = runtime!.connectedServiceQuotasLoopHandle!.subscribeAfterTick(() => { release(); resolve(); });
@@ -274,7 +282,7 @@ describe('qualified Connected Account deadline composition', () => {
           await settled;
         }
         expect(fixture.readCredential).toHaveBeenCalledTimes(idleCredentialReads);
-        expect(requests).toHaveBeenCalledTimes(idleProviderReads);
+        expect(providerReads).toHaveBeenCalledTimes(idleProviderReads);
         phases.mockClear();
         const beforeRefresh = quotaWrites.length;
         const latest = quotaWrites.at(-1);
@@ -292,7 +300,7 @@ describe('qualified Connected Account deadline composition', () => {
           && typeof detail === 'object' && detail !== null && 'materializationKey' in detail
           && detail.materializationKey === 'coincident-deadline')).toHaveLength(0);
         expect(healthWrites).toHaveLength(1);
-        const beforeOptIn = requests.mock.calls.length;
+        const beforeOptIn = providerReads.mock.calls.length;
         const beforeOptInCredentialReads = fixture.readCredential.mock.calls.length;
         const beforeOptInListings = listings;
         const optInSettled = new Promise<void>(resolve => {
@@ -306,15 +314,13 @@ describe('qualified Connected Account deadline composition', () => {
           settingsVersion: getActiveAccountSettingsSnapshot()!.settingsVersion + 1, loadedAtMs: clock, settingsSecretsReadKeys });
         await vi.waitFor(() => expect(listings).toBeGreaterThan(beforeOptInListings));
         await optInSettled;
-        expect(requests.mock.calls).toHaveLength(beforeOptIn);
+        expect(providerReads).toHaveBeenCalledTimes(beforeOptIn);
         expect(fixture.readCredential.mock.calls).toHaveLength(beforeOptInCredentialReads);
         expect(healthWrites).toHaveLength(1);
         console.info('[c217 quota cost]', { initialCredentialReads: idleCredentialReads, idleSeconds: 61,
           idleDemands: 25, inventoryWakes: 25, extraIdleCredentialReads: 0,
           optInCredentialReads: fixture.readCredential.mock.calls.length - beforeOptInCredentialReads,
-          optInFetches: requests.mock.calls.length - beforeOptIn,
-          optInProviderReads: requests.mock.calls.slice(beforeOptIn)
-            .filter(([url]) => !String(url).includes('/v1/features')).length });
+          optInProviderReads: providerReads.mock.calls.length - beforeOptIn });
 
         // Run the key-wake probe after PF23's idle/manual-refresh/opt-in
         // journey so its preference changes cannot alter that journey's setup.
@@ -352,9 +358,9 @@ describe('qualified Connected Account deadline composition', () => {
       if (useFakeLoopClock) await vi.advanceTimersByTimeAsync(20);
       else await new Promise(resolve => setTimeout(resolve, 20));
       expect(reads).toHaveBeenCalledTimes(stoppedReads);
-      phases.mockRestore(); requests.mockRestore(); writes.mockRestore(); health.mockRestore(); reads.mockRestore();
-      dispatch?.mockRestore();
-      await providerNetwork?.close();
+      phases.mockRestore(); featureRequests.mockRestore(); writes.mockRestore(); health.mockRestore(); reads.mockRestore();
+      dispatch.mockRestore();
+      await providerNetwork.close();
       timerContext?.mockRestore();
       vi.useRealTimers();
       if (previousSettings) setActiveAccountSettingsSnapshot(previousSettings); else clearActiveAccountSettingsSnapshot();
