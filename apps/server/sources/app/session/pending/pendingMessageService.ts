@@ -1,6 +1,7 @@
 import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { decodeStoredSessionMessage } from "@/storage/sessionMessageContent";
 import { isTransactionStorageError } from '@/storage/transactionErrors';
+import { PENDING_TRANSACTION_RETRY_AFTER_MS } from './pendingTransactionRetry';
 import { normalizeSessionMessageContentForStorage } from "@/app/session/normalizeSessionMessageContentForStorage";
 import { DiscussionMessageAddressingV1Schema, type DiscussionAddressingV1 } from '@happier-dev/protocol/discussions/references';
 import { buildSessionInputAdmissionReceipt, isSameSessionInputAdmissionIssuer, readCurrentSessionInputMachineTargetInTx, readCurrentCommittedSessionInputMachineTargetForSessionInTx, readStoredSessionInputAdmissionReceipt, isSessionInputTargetCurrentForPublisherInTx, areCurrentSessionInputMachineTargetsInTx, SessionInputPermissionModesDisjointError } from "@/app/session/messages/sessionInputAdmission";
@@ -1760,7 +1761,7 @@ async function enqueuePendingMessageWithAdmission(
             return {
                 ok: false,
                 error: "transaction-unavailable",
-                retryAfterMs: 1_000,
+                retryAfterMs: PENDING_TRANSACTION_RETRY_AFTER_MS,
                 ...(params.diagnosticCorrelationId ? { correlationId: params.diagnosticCorrelationId } : {}),
             };
         }
@@ -3141,7 +3142,7 @@ export async function updatePendingRequestedAction(params: Readonly<{
     } catch (error) {
         reportPendingOperationError({ operation: "requested-action", sessionId, localId, error }, "pending requested action failed");
         if (isTransactionStorageError(error)) {
-            return { ok: false, error: "transaction-unavailable", retryAfterMs: 1_000 };
+            return { ok: false, error: "transaction-unavailable", retryAfterMs: PENDING_TRANSACTION_RETRY_AFTER_MS };
         }
         return { ok: false, error: "internal" };
     }
@@ -4204,7 +4205,7 @@ export async function resolveAcceptedPendingDelivery(params: {
             return {
                 ok: false,
                 error: "transaction-unavailable",
-                retryAfterMs: 1_000,
+                retryAfterMs: PENDING_TRANSACTION_RETRY_AFTER_MS,
                 ...(params.diagnosticCorrelationId ? { correlationId: params.diagnosticCorrelationId } : {}),
             };
         }
@@ -4840,7 +4841,7 @@ export async function restorePendingMessage(params: {
         }));
     } catch (error) {
         if (isTransactionStorageError(error)) {
-            return { ok: false, error: "transaction-unavailable", retryAfterMs: 1_000 };
+            return { ok: false, error: "transaction-unavailable", retryAfterMs: PENDING_TRANSACTION_RETRY_AFTER_MS };
         }
         return { ok: false, error: "internal" };
     }

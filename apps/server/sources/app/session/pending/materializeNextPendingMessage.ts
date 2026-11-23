@@ -1,6 +1,7 @@
 import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { decodeStoredSessionMessage } from "@/storage/sessionMessageContent";
 import { isTransactionStorageError } from '@/storage/transactionErrors';
+import { PENDING_TRANSACTION_RETRY_AFTER_MS } from './pendingTransactionRetry';
 import type { SessionRecipientCursor, SessionRecipientPublication } from "@/app/session/changeTracking/markSessionProjectionRecipientsChanged";
 import { pendingPublicationResult, type PendingPublicationFields } from "./pendingPublicationResult";
 import { acquireSessionAccountCursorLocksInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
@@ -392,7 +393,7 @@ export async function materializeNextPendingMessage(
 export function mapPendingMaterializationError(error: unknown): MaterializeNextPendingMessageResult {
     if (error instanceof PublisherAuthorityLostError) return { ok: false, error: "forbidden" };
     if (isTransactionStorageError(error)) {
-        return { ok: false, error: "transaction-unavailable", retryAfterMs: 1_000 };
+        return { ok: false, error: "transaction-unavailable", retryAfterMs: PENDING_TRANSACTION_RETRY_AFTER_MS };
     }
     return { ok: false, error: "internal" };
 }
