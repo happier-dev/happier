@@ -1,19 +1,27 @@
-import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecuteFailure, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { createAccountRoleActionExecutorV1 } from '@happier-dev/protocol/prompts/roles/accountRoleActions';
 import { RoleActionOutputSchemasV1 } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { presentActionApproval, readActionApprovalSubject, readActionApprovalRoleId } from '@/components/approvals/actionApprovalPresentation';
 import { readApprovalReferenceForConfirmation } from '@/components/approvals/approvalReferenceReading';
 import { readDetectedProviderConfirmation } from '@/components/approvals/providerConnectionApprovalPresentation';
+import { accountErasureFailureNotice } from '@/components/settings/home/governance/homeGovernanceLabels';
 import { buildRoleCatalog } from '@/sync/domains/roles/roleCatalog';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { storage } from '@/sync/domains/state/storageStore';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
+import { HappyError } from '@/utils/errors/errors';
 import { t } from '@/text';
 import type { LazyActionAccountContext } from './actionAccountContext';
 
 type ConfirmationPresenter = NonNullable<ActionExecutorDeps['presentUserActionConfirmation']>;
+
+function presentReviewFailure(failure: ActionExecuteFailure) {
+  return accountErasureFailureNotice(new HappyError(failure.error, false, {
+    code: failure.errorCode, details: failure.details, failureCause: failure.failureCause,
+  }));
+}
 
 /** One native presenter for finite Actions and their host Resource admissions. Policy stays with the receiving executor. */
 export function createActionConfirmationPresenter(accountContext: LazyActionAccountContext, opts?: Readonly<{
@@ -21,11 +29,12 @@ export function createActionConfirmationPresenter(accountContext: LazyActionAcco
   accountRoleAction?: ReturnType<typeof createAccountRoleActionExecutorV1> | null;
 }>): ConfirmationPresenter {
   const accountRoleAction = opts?.accountRoleAction;
-  return async ({ actionId, input, context, preview }) => {
+  return async ({ actionId, input, context, preview, reviewRecovery }) => {
     accountContext.assertCurrent();
     throwIfAborted(context.signal);
     if (opts?.presentUserActionConfirmation) {
-      const confirmed = await opts.presentUserActionConfirmation({ actionId, input, context, ...(preview === undefined ? {} : { preview }) });
+      const confirmed = await opts.presentUserActionConfirmation({ actionId, input, context, ...(preview === undefined ? {} : { preview }),
+        ...(reviewRecovery ? { reviewRecovery } : {}) });
       if (context.signal?.aborted) return false;
       accountContext.assertCurrent();
       return confirmed;
@@ -49,20 +58,34 @@ export function createActionConfirmationPresenter(accountContext: LazyActionAcco
     const homeDir = targetMachineId
       ? resolveServerScopedMachine(storage.getState(), accountContext.serverId, targetMachineId)?.metadata?.homeDir?.trim() || null : null;
     const formatPath = homeDir ? (path: string) => formatPathRelativeToHome(path, homeDir) : null;
-    const presentation = presentActionApproval({ ...presentationInput, kind: 'confirmation', subject: detectedProvider?.name ?? (reading.named ? reading.text : null), role, formatPath });
+    const present = (reviewPreview: unknown) => presentActionApproval({ ...presentationInput,
+      preview: reviewPreview, kind: 'confirmation', subject: detectedProvider?.name ?? (reading.named ? reading.text : null), role, formatPath });
+    const presentation = present(preview);
     const confirmationSummary = [presentation.summary,
       ...(detectedProvider ? [detectedProvider.where, detectedProvider.availability,
         detectedProvider.models?.title, detectedProvider.models?.subtitle] : []),
     ].filter(Boolean).join('\n\n');
     // A receiving executor's carried review with host-discovered facts (the command a Service starts, a deploy's
     // effect, its included steps) reads through the approval family presenters, not as a bare sentence.
-    const reviewFacts = preview !== undefined
+    const reviewFacts = preview !== undefined || reviewRecovery
       ? await import('@/components/approvals/ActionConfirmationReview') : null;
     const confirmed = reviewFacts
       ? await reviewFacts.confirmActionReview({ actionId, actionArgs: input, preview,
         summaryPlacement: 'host',
         title: actionId === 'account.delete' ? t('settingsAccount.deleteAccountConfirmTitle') : presentation.title ?? t('approvals.untitled'),
-        summary: confirmationSummary || null,
+        summary: reviewRecovery ? null : confirmationSummary || null,
+        ...(reviewRecovery ? { reviewRecovery: {
+          notice: presentReviewFailure(reviewRecovery.failure),
+          retry: async () => {
+            try {
+              const retried = await reviewRecovery.retry();
+              return 'ok' in retried ? { ok: false as const, notice: presentReviewFailure(retried) }
+                : { ok: true as const, preview: retried.preview, summary: present(retried.preview).summary };
+            } catch {
+              return { ok: false as const, notice: presentReviewFailure(reviewRecovery.failure) };
+            }
+          },
+        } } : {}),
         confirmLabel: actionId === 'account.delete' ? t('settingsAccount.deleteAccount') : presentation.confirmLabel ?? t('approvals.approve'),
         ...(actionId === 'account.delete' ? { typedConfirmation: { text: 'DELETE', placeholder: 'DELETE',
           instruction: t('settingsAccount.deleteAccountConfirmBody') } } : {}),

@@ -1,4 +1,5 @@
 import { AccountErasureDeploymentBlockerV1Schema, projectAccountErasureDeploymentActionDetailsV1 } from '@happier-dev/protocol/home/governance';
+import { ACCOUNT_ERASURE_REVIEW_UNAVAILABLE_CODE } from '@happier-dev/protocol/auth/accountErasureReview';
 import type {
     AccountStatusV1,
     HomeAdmissionModeV1,
@@ -195,8 +196,8 @@ function readErasureDeploymentBlocker(details: unknown) {
 
 /** Both erasure surfaces use the Home's typed verdict. An unreadable erasure result remains unconfirmed. */
 export function accountErasureFailureNotice(error: unknown, environmentName?: string): Readonly<{ title: string; body: string }> {
-    if (error instanceof HappyError && error.code === 'account_erasure_review_unavailable') {
-        return { title: t('homeGovernance.changeFailedTitle'), body: t('homeGovernance.erasureReviewUnavailable') };
+    if (error instanceof HappyError && error.code === ACCOUNT_ERASURE_REVIEW_UNAVAILABLE_CODE) {
+        return { title: t('homeGovernance.erasureReviewUnavailableTitle'), body: t('homeGovernance.erasureReviewUnavailable') };
     }
     if (error instanceof HappyError && (error.code === 'account_erasure_transition_cleanup_pending'
         || error.code === 'account_erasure_upload_pending'

@@ -23,8 +23,9 @@ export const AccountErasureReviewV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type AccountErasureReviewV1 = z.infer<typeof AccountErasureReviewV1Schema>;
 
+export const ACCOUNT_ERASURE_REVIEW_UNAVAILABLE_CODE = 'account_erasure_review_unavailable' as const;
 export const accountErasureReviewUnavailable = () => ({ ok: false as const,
-  errorCode: 'account_erasure_review_unavailable', error: 'account_erasure_review_unavailable' });
+  errorCode: ACCOUNT_ERASURE_REVIEW_UNAVAILABLE_CODE, error: ACCOUNT_ERASURE_REVIEW_UNAVAILABLE_CODE });
 
 export async function openAccountErasureReviewV1(preview: AccountErasurePreviewResponseV1,
   readHeaders: (ids: readonly string[]) => Promise<readonly OpenedDeploymentArtifactV1[]>,

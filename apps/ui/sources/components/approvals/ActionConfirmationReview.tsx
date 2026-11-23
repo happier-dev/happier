@@ -25,6 +25,10 @@ export type ActionConfirmationReviewInput = Pick<ApprovalReviewFactsInput, 'acti
 }>;
 
 type TypedConfirmation = Readonly<{ text: string; placeholder?: string; instruction?: string }>;
+type ReviewNotice = Readonly<{ title: string; body: string }>;
+type ReviewRetryResult = Readonly<{ ok: true; preview: unknown; summary: string | null }>
+  | Readonly<{ ok: false; notice: ReviewNotice }>;
+type ReviewRecovery = Readonly<{ notice: ReviewNotice; retry: () => Promise<ReviewRetryResult> }>;
 
 /** The same family facts as a retained approval, without requiring an Artifact. */
 export const ActionConfirmationReviewFacts = React.memo(function ActionConfirmationReviewFacts(
@@ -46,53 +50,77 @@ type ConfirmationReviewModalProps = CustomModalInjectedProps &
     destructive?: boolean;
     summaryPlacement?: 'body' | 'host';
     typedConfirmation?: TypedConfirmation;
+    reviewRecovery?: ReviewRecovery;
     onAnswer: (confirmed: boolean) => void;
   }>;
 
 function ConfirmationReviewModal(props: ConfirmationReviewModalProps) {
-  const { onAnswer, onClose, setChrome, confirmLabel, irreversible, destructive, typedConfirmation } = props;
+  const { onAnswer, onClose, setChrome, confirmLabel, irreversible, destructive, typedConfirmation, reviewRecovery } = props;
   const [typedValue, setTypedValue] = React.useState('');
+  const [retryResult, setRetryResult] = React.useState<ReviewRetryResult | null>(null);
+  const [retrying, setRetrying] = React.useState(false);
+  const notice = retryResult ? (retryResult.ok ? null : retryResult.notice) : reviewRecovery?.notice;
+  const retryReview = React.useCallback(async () => {
+    if (!reviewRecovery || retrying) return;
+    setRetrying(true);
+    try {
+      setRetryResult(await reviewRecovery.retry());
+    } finally {
+      setRetrying(false);
+    }
+  }, [reviewRecovery, retrying]);
   const answer = React.useCallback(
     (confirmed: boolean) => {
-      onAnswer(confirmed && (typedConfirmation === undefined || typedValue === typedConfirmation.text));
+      onAnswer(confirmed && !notice && (typedConfirmation === undefined || typedValue === typedConfirmation.text));
       onClose();
     },
-    [onAnswer, onClose, typedConfirmation, typedValue],
+    [notice, onAnswer, onClose, typedConfirmation, typedValue],
   );
   React.useEffect(() => {
     setChrome?.({
       kind: 'card',
+      ...(retryResult?.ok && retryResult.summary ? { subtitle: retryResult.summary } : {}),
       footer: (
         // The same footer as every other confirmation card: Cancel, then the Action's verb, trailing.
         <ModalCardFooterActions
           cancel={{ onPress: () => answer(false), testID: 'actions.confirmation-review.decision-reject' }}
-          note={irreversible ? t('approvals.irreversibleNote') : null}
+          note={!notice && irreversible ? t('approvals.irreversibleNote') : null}
           noteTestID="approvals.irreversible-note"
         >
-          <RoundButton
+          {notice ? <RoundButton
+            testID="actions.confirmation-review.retry-review"
+            size="normal"
+            title={t('common.retry')}
+            onPress={retryReview}
+            loading={retrying}
+            disabled={retrying}
+          /> : <RoundButton
             testID="actions.confirmation-review.decision-approve"
             size="normal"
             display={irreversible || destructive ? 'destructive' : 'default'}
             title={confirmLabel}
             onPress={() => answer(true)}
-          />
+          />}
         </ModalCardFooterActions>
       ),
     });
-  }, [answer, confirmLabel, destructive, irreversible, setChrome]);
+  }, [answer, confirmLabel, destructive, irreversible, notice, retryResult, retryReview, retrying, setChrome]);
   return (
     <ListPresentationProvider value="page" pageInsets="contained">
       <View testID="actions.confirmation-review" style={styles.body}>
-        <ActionConfirmationReviewFacts
+        {notice ? <View accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.challenge}>
+          <Text variant="body" emphasis="semibold">{notice.title}</Text>
+          <Text variant="body">{notice.body}</Text>
+        </View> : <ActionConfirmationReviewFacts
           actionId={props.actionId}
           actionArgs={props.actionArgs}
-          preview={props.preview}
+          preview={retryResult?.ok ? retryResult.preview : props.preview}
           principalNames={props.principalNames}
           serverId={props.serverId}
           testID="actions.confirmation-review"
           summaryPlacement={props.summaryPlacement}
-        />
-        {typedConfirmation ? <View style={styles.challenge}>
+        />}
+        {typedConfirmation && !notice ? <View style={styles.challenge}>
           {typedConfirmation.instruction ? <Text variant="body">{typedConfirmation.instruction}</Text> : null}
           <FieldTextInput testID="actions.confirmation-review.typed-confirmation"
             accessibilityLabel={typedConfirmation.text} value={typedValue} onChangeText={setTypedValue}
@@ -117,6 +145,7 @@ export function confirmActionReview(
       /** Custom hosts keep local annotations in chrome; the default presenter already places the review sentence there. */
       summaryPlacement?: 'body' | 'host';
       typedConfirmation?: TypedConfirmation;
+      reviewRecovery?: ReviewRecovery;
       confirmLabel: string;
       irreversible: boolean;
       destructive?: boolean;
@@ -154,6 +183,7 @@ export function confirmActionReview(
         destructive: input.destructive === true,
         summaryPlacement: input.summaryPlacement,
         typedConfirmation: input.typedConfirmation,
+        reviewRecovery: input.reviewRecovery,
         onAnswer: settle,
       },
       onRequestClose: () => settle(false),

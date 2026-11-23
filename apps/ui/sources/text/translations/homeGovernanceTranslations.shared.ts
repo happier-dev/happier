@@ -194,6 +194,7 @@ export const en = {
     errorErasureDeploymentCleanupRequired: 'Ask a Home administrator to identify the deployment blocker before deleting the account.',
     erasureSharedEnvironment: ({ name, memberCount }: { name: string; memberCount: number }) =>
         `${name} will be deleted. ${memberCount} other ${memberCount === 1 ? 'member will' : 'members will'} lose access.`,
+    erasureReviewUnavailableTitle: 'Could not check what will be deleted',
     erasureReviewUnavailable: 'Could not check which shared Environments would be deleted. Try again.',
     erasureDeploymentEnvironment: ({ name, message }: { name: string; message: string }) => `${name}\n\n${message}`,
     erasureDetachTarget: 'Detach and keep running',

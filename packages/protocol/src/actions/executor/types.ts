@@ -3132,6 +3132,11 @@ export type ActionExecutorDeps = Readonly<{
     input: unknown;
     context: ActionExecutorContext;
     preview?: unknown;
+    /** A failed required read can be retried inside the same confirmation. */
+    reviewRecovery?: Readonly<{
+      failure: ActionExecuteFailure;
+      retry: () => Promise<Readonly<{ preview: unknown }> | ActionExecuteFailure>;
+    }>;
   }>) => Promise<boolean>;
 
   /**

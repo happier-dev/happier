@@ -81,7 +81,7 @@ import { resolveSessionIdFromInput, resolveExecutionRunScope, withoutExecutionRu
 import { projectApprovalInvocationResult, projectActionExecutionObservation, projectActionObservationInput, readUnavailableApprovalReplayOrigin, buildApprovalDecisionResult, buildActionExecuteResultFromRecordedApprovalExecution, projectApprovalRequestPluginCaller, classifyApprovalExecutionOriginCurrentness, hasDeferredApprovalSessionResult, projectSettledApprovalExecution, projectApprovalResultDeliveryV1, projectThrownApprovalResultDeliveryV1, withApprovalResultDeliveryV1 } from './executor/approvalResults.js';
 import { isApprovalRequestV2TerminalStatus } from '../approvals/approvalRequestStatus.js';
 export { buildActionExecuteResultFromRecordedApprovalExecution, classifyApprovalExecutionOriginCurrentness } from './executor/approvalResults.js';
-import { AccountErasureReviewV1Schema } from '../auth/accountErasureReview.js';
+import { ACCOUNT_ERASURE_REVIEW_UNAVAILABLE_CODE, AccountErasureReviewV1Schema } from '../auth/accountErasureReview.js';
 import { mapApprovalCreatedBySurface, buildApprovalSummary, buildApprovalPreviewSummary, projectPreparedActionOperation, resolveComputerActionSelection, readDeploymentPreparation, readDeploymentApprovalSemanticInput, readDeploymentRolloutSemanticInput, prepareApprovalRequest } from './executor/approvalPreparation.js';
 export { buildApprovalPreviewSummary, projectPreparedActionOperation } from './executor/approvalPreparation.js';
 import { resolveApprovalOriginForRequest, projectActionApprovalOrigin, projectActionObservationContext, resolveApprovalRequestingSessionId, projectApprovalExecutionOriginCaller, buildApprovalExecutionOriginV1, isApprovalActionId, isApprovalRequestActionReplayAdmitted, isBlockingApprovalRequest } from './executor/approvalOrigins.js';
@@ -4157,18 +4157,35 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}),
           }, async () => {
             if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
-            const policyReview = await prepareCurrentApproval();
-            if (!policyReview) {
+            const initialReview = await prepareCurrentApproval();
+            if (!initialReview) {
               const errorCode = ctx.signal?.aborted ? 'cancelled' : 'approval_context_unavailable';
               return classifyExecutionRunStartPreDispatchFailure(actionId, { ok: false, errorCode, error: errorCode });
             }
+            let policyReview = initialReview;
+            const recovering = 'ok' in initialReview && initialReview.errorCode === ACCOUNT_ERASURE_REVIEW_UNAVAILABLE_CODE;
+            if (recovering) {
+              const confirmed = await confirm({
+                actionId, input: admittedInput, context: ctx,
+                reviewRecovery: {
+                  failure: initialReview,
+                  retry: async () => {
+                    policyReview = await prepareCurrentApproval() ?? initialReview;
+                    return policyReview;
+                  },
+                },
+              });
+              if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+              if (!confirmed) return { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled' };
+            }
+            // A host cannot confirm while its required review is still unread.
             if ('ok' in policyReview) return policyReview;
             const confirmationInput = policyReview.actionArgs;
             const serviceStartReview = readNativeServiceStartApproval(actionId, confirmationInput, policyReview.preview);
             if (serviceStartReview?.ok === false) return serviceStartReview;
             const pluginInstallReview = actionId === 'plugins.install'
               ? readPluginInstallApprovalPendingReview(policyReview.preview) : null;
-            const confirmed = await confirm({ actionId, input: confirmationInput, context: ctx, preview: policyReview.preview });
+            const confirmed = recovering || await confirm({ actionId, input: confirmationInput, context: ctx, preview: policyReview.preview });
             if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
             if (!confirmed) return { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled' };
             // Review projections omit live-only operands. Keep execution on

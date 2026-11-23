@@ -201,6 +201,44 @@ async function mountErasureRefusal(blocker: AccountErasureDeploymentBlockerV1 | 
 }
 
 describe('Delete account deployment recovery dialog', () => {
+    it('keeps deletion unavailable until retry reads the shared Environments', async () => {
+        const { screen, homeId, erasures, preflights } = await mountErasureRefusal(null, true);
+        const preview = 'GET /v1/auth/account/delete/preview';
+        const retry = 'actions.confirmation-review.retry-review';
+        const confirm = 'actions.confirmation-review.decision-approve';
+        try {
+            homeHttp.answer(homeId, preview, { status: 404, body: { error: 'not_found' } });
+            await act(async () => { screen.pressByTestId('settings-account-delete'); });
+            await vi.waitFor(() => expect(screen.findByTestId(retry), screen.getTextContent()).not.toBeNull());
+            expect(screen.getTextContent()).toContain('Could not check what will be deleted');
+            expect(screen.getTextContent()).toContain('Could not check which shared Environments would be deleted');
+            expect(screen.findByTestId(confirmationInput)).toBeNull();
+            expect(screen.findByTestId(confirm)).toBeNull();
+            expect(erasures()).toHaveLength(0);
+
+            await act(async () => { screen.pressByTestId(retry); });
+            await vi.waitFor(() => expect(preflights()).toHaveLength(2));
+            expect(screen.findByTestId(confirm)).toBeNull();
+            expect(erasures()).toHaveLength(0);
+
+            homeHttp.answer(homeId, preview, {
+                body: { sharedEnvironments: sharedEnvironments.map(({ name: _name, ...row }) => row) },
+            });
+            await act(async () => { screen.pressByTestId(retry); });
+            await vi.waitFor(() => expect(screen.findByTestId(confirmationInput), screen.getTextContent()).not.toBeNull());
+            expect(screen.findByTestId(retry)).toBeNull();
+            expect(screen.getTextContent()).toContain('Shared Staging');
+            expect(screen.getTextContent()).toContain('3 other members will lose access');
+            expect(preflights()).toHaveLength(3);
+            expect(erasures()).toHaveLength(0);
+            await act(async () => {
+                screen.changeTextByTestId(confirmationInput, 'DELETE');
+            });
+            await act(async () => { screen.pressByTestId(confirm); });
+            await vi.waitFor(() => expect(erasures()).toHaveLength(1));
+        } finally { await screen.unmount(); }
+    });
+
     it.each([true, false])('discloses the effect on members before confirming (shared: %s)', async shared => {
         const { screen, erasures, preflights } = await mountErasureRefusal(null, shared);
         try {
