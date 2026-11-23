@@ -9,7 +9,7 @@ import { projectReviewRoundReviewers, reviewRosterOf, type ReviewRoundReviewerOu
 
 type Round = Pick<
   ReviewArtifactV1['rounds'][number],
-  'ordinal' | 'state' | 'startedAt' | 'finishedAt' | 'reviewerIds' | 'reviewerDisplayNames' | 'reviewerOutcomes' | 'runs'
+  'ordinal' | 'state' | 'startedAt' | 'finishedAt' | 'reviewerIds' | 'reviewerDisplayNames' | 'reviewerAgentIds' | 'reviewerOutcomes' | 'runs'
 >;
 
 /** Who did it: a person (the viewer reads "You"), an Agent acting in a session, or a reviewer run. */

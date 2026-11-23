@@ -28,6 +28,38 @@ it('keeps an explicit native model reviewer identified by its Agent and mark acr
   expect(projectReviewRoundReviewers(otherNamed, undefined)[0]?.agentId).toBeNull();
 });
 
+it.each(['running', 'completed'] as const)('keeps a titled Session reviewer and its recorded Agent mark while %s (U8 R8 NM1b)', state => {
+  // b9002f44's titled Session slot, augmented with P03A's admitted NM1b identity contract.
+  const captured = ReviewArtifactBodyV1Schema.parse(settledRound).rounds[0]!;
+  const round = { ...captured, state, reviewerIds: ['step-1-reviewer-1'], runs: [],
+    reviewerDisplayNames: { 'step-1-reviewer-1': 'NM1 Security double-check' },
+    reviewerAgentIds: { 'step-1-reviewer-1': 'happier.agent.claude/claude' },
+    reviewerOutcomes: state === 'running' ? undefined : [{ reviewerId: 'step-1-reviewer-1',
+      displayName: 'NM1 Security double-check', agentId: 'happier.agent.claude/claude', outcome: 'completed' as const }],
+  };
+  expect(projectReviewRoundReviewers(round, undefined)).toMatchObject([
+    { name: 'NM1 Security double-check', agentId: 'claude', outcome: state },
+  ]);
+});
+
+it('keeps settled and retried Session identity authoritative without guessing from a Session title', () => {
+  const captured = ReviewArtifactBodyV1Schema.parse(settledRound).rounds[0]!;
+  const first = { ...captured, reviewerIds: ['session'], reviewerDisplayNames: { session: 'Security double-check' },
+    reviewerAgentIds: { session: 'happier.agent.codex/codex' }, reviewerOutcomes: [{ reviewerId: 'session',
+      displayName: 'Security double-check', agentId: 'happier.agent.claude/claude', outcome: 'completed' as const }],
+  };
+  const roster = reviewRosterOf([first]);
+  expect(projectReviewRoundReviewers(first, undefined, roster)[0]).toMatchObject({ name: 'Security double-check', agentId: 'claude' });
+  const retry = { ...first, state: 'running' as const, reviewerOutcomes: undefined, reviewerDisplayNames: undefined, reviewerAgentIds: undefined };
+  expect(projectReviewRoundReviewers(retry, undefined, roster)[0]).toMatchObject({ name: 'Security double-check', agentId: 'claude' });
+  // A titled historical round without Agent identity cannot borrow a later round's mark.
+  const historical = { ...retry, reviewerDisplayNames: first.reviewerDisplayNames };
+  expect(projectReviewRoundReviewers(historical, undefined, roster)[0]).toMatchObject({ name: 'Security double-check', agentId: null });
+  // A Session can be titled like an Agent; another plugin's local id still cannot claim that mark.
+  const other = { ...retry, reviewerDisplayNames: { session: 'claude' }, reviewerAgentIds: { session: 'other.agent/claude' } };
+  expect(projectReviewRoundReviewers(other, undefined, roster)[0]).toMatchObject({ name: 'claude', agentId: null });
+});
+
 it('uses the sealed reviewer result and timing after settlement, even while its continued execution still runs', () => {
   // Captured real createReviewRecordPortV1.start/settle output (P02 producer e, 2026-11-22).
   const round = ReviewArtifactBodyV1Schema.parse(settledRound).rounds[0]!;

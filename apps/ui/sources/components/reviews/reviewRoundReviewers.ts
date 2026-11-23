@@ -23,7 +23,7 @@ export type ReviewRoundReviewer = Readonly<{
   name: string;
   /** The round recorded a name for it; false when `name` is only its place ("Reviewer 2"). */
   named: boolean;
-  /** The Agent its recorded name is, for its mark; null for an engine or a model name that is not an Agent. */
+  /** The recorded Agent resolved through its catalog for the mark; null when the Agent is unknown. */
   agentId: AgentId | null;
   /** Settled result, open-round execution progress, or unknown for older rounds without individual results. */
   outcome: ReviewRoundReviewerOutcome | null;
@@ -58,7 +58,7 @@ export function reviewRoundReviewerOutcomeLabel(outcome: ReviewRoundReviewerOutc
   return t(OUTCOME_KEYS[outcome]);
 }
 
-type NamedRound = Pick<ReviewRound, 'reviewerIds' | 'reviewerDisplayNames'>;
+type NamedRound = Pick<ReviewRound, 'reviewerIds' | 'reviewerDisplayNames' | 'reviewerAgentIds'>;
 type ReviewerReason = ReviewRoundReviewerOutcomeV1['reason'];
 
 /**
@@ -85,24 +85,29 @@ export function reviewRoundReviewerReasonWords(reason: ReviewerReason | undefine
  * Every reviewer the Review named across its rounds, with the names they recorded: a reviewer keeps one name in every
  * round ("Claude · step 2" in round 1 and in its retry round), so disambiguation reads the whole roster.
  */
-export function reviewRosterOf(rounds: readonly Pick<ReviewRound, 'reviewerIds' | 'reviewerDisplayNames' | 'reviewerOutcomes'>[]): NamedRound {
+export function reviewRosterOf(rounds: readonly Pick<ReviewRound, 'reviewerIds' | 'reviewerDisplayNames' | 'reviewerAgentIds' | 'reviewerOutcomes'>[]): NamedRound {
   const reviewerIds: string[] = [];
   const reviewerDisplayNames: Record<string, string> = {};
+  const reviewerAgentIds: Record<string, string> = {};
   for (const round of rounds) {
     for (const id of [...round.reviewerIds, ...(round.reviewerOutcomes ?? []).map(outcome => outcome.reviewerId)]) {
       if (!reviewerIds.includes(id)) reviewerIds.push(id);
     }
     Object.assign(reviewerDisplayNames, round.reviewerDisplayNames,
       Object.fromEntries((round.reviewerOutcomes ?? []).flatMap(outcome => outcome.displayName ? [[outcome.reviewerId, outcome.displayName]] : [])));
+    Object.assign(reviewerAgentIds, round.reviewerAgentIds,
+      Object.fromEntries((round.reviewerOutcomes ?? []).flatMap(outcome => outcome.agentId ? [[outcome.reviewerId, outcome.agentId]] : [])));
   }
-  return { reviewerIds, reviewerDisplayNames };
+  return { reviewerIds, reviewerDisplayNames, reviewerAgentIds };
 }
 
-/** The name a round recorded for a reviewer, read as an Agent when it is one ("claude" is Claude, with its mark). */
+/** Session titles stay names; their separately recorded Agent owns the mark. Older Agent names still use the catalog. */
 function recordedReviewer(round: NamedRound, reviewerId: string): Readonly<{ base: string | null; agentId: AgentId | null }> {
   const recorded = round.reviewerDisplayNames?.[reviewerId] ?? null;
-  const agentId = recorded ? resolveAgentIdFromFlavor(normalizeAgentCatalogId(recorded)) : null;
-  return { base: agentId ? resolveAgentCatalogTitle(agentId) : recorded, agentId };
+  const recordedAgentId = round.reviewerAgentIds?.[reviewerId];
+  const identity = recordedAgentId ?? recorded;
+  const agentId = identity ? resolveAgentIdFromFlavor(normalizeAgentCatalogId(identity)) : null;
+  return { base: recordedAgentId && recorded ? recorded : agentId ? resolveAgentCatalogTitle(agentId) : recorded, agentId };
 }
 
 /**
@@ -154,7 +159,7 @@ export function reviewCommentEngineName(engineId: string, index: number): string
  * supplies progress only while the round is open. Older settled rounds keep names without inventing individual facts.
  */
 export function projectReviewRoundReviewers(
-  round: Pick<ReviewRound, 'state' | 'reviewerIds' | 'reviewerDisplayNames' | 'reviewerOutcomes' | 'runs'>,
+  round: Pick<ReviewRound, 'state' | 'reviewerIds' | 'reviewerDisplayNames' | 'reviewerAgentIds' | 'reviewerOutcomes' | 'runs'>,
   reads: ReadonlyMap<string, ReviewRoundReviewerRead> | undefined,
   /** The whole Review's roster (`reviewRosterOf`), so names stay the same across rounds; this round alone otherwise. */
   roster?: NamedRound,
@@ -164,9 +169,8 @@ export function projectReviewRoundReviewers(
       reviewerId, ...reviewRoundReviewerIdentity(round, reviewerId, roster), outcome: null, reason: null, findingsCount: null, run: null,
     }));
     // A settled result keeps its own recorded name and facts; a continued execution's later state never overrides them.
-    const named = { reviewerIds: round.reviewerOutcomes.map(reviewer => reviewer.reviewerId), reviewerDisplayNames: {
-      ...round.reviewerDisplayNames, ...Object.fromEntries(round.reviewerOutcomes.flatMap(reviewer =>
-        reviewer.displayName ? [[reviewer.reviewerId, reviewer.displayName]] : [])) } };
+    const named = reviewRosterOf([{ reviewerIds: round.reviewerOutcomes.map(reviewer => reviewer.reviewerId),
+      reviewerDisplayNames: round.reviewerDisplayNames, reviewerAgentIds: round.reviewerAgentIds, reviewerOutcomes: round.reviewerOutcomes }]);
     return round.reviewerOutcomes.map(reviewer => ({
       reviewerId: reviewer.reviewerId, ...reviewRoundReviewerIdentity(named, reviewer.reviewerId, roster ?? named),
       outcome: reviewer.outcome, reason: reviewRoundReviewerReasonWords(reviewer.reason),
