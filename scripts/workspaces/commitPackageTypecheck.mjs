@@ -914,7 +914,8 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
   const base = pending ? pending.base : rollingBase(repo, recorded, head);
   result.base = base;
   const record = verdict => {
-    if (!pending) {
+    const missingAppVerdict = isAppScope(scope) && (result.incomplete.length || result.unavailable.length);
+    if (!pending && !missingAppVerdict) {
       writeFileSync(`${recordedPath}.tmp`, head);
       renameSync(`${recordedPath}.tmp`, recordedPath);
     }
@@ -940,7 +941,10 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
   const compared = freshBetween(git, treeOf(base), headTree, packages, await rowsAt(treeOf(base), packages, 'base'), headRows);
   result.incomplete = compared.incomplete;
   result.unavailable = compared.unavailable;
-  if (!compared.fresh.length) { record(compared.incomplete.length ? 'INCOMPLETE' : 'ok'); return result; }
+  if (!compared.fresh.length) {
+    record(compared.incomplete.length || (isAppScope(scope) && compared.unavailable.length) ? 'INCOMPLETE' : 'ok');
+    return result;
+  }
   // The verdict is decided here. Attribution compiles intermediate commits and can take hours on a
   // long range, so the rolling loop records every scope's verdict first and attributes afterwards
   // (2026-11-16: one packages bisection held every verdict, apps/* included, for 16 h).
@@ -1489,24 +1493,25 @@ async function rolling(repo) {
   const behind = () => scopes.filter(scope => recorded(scope) !== head());
   const payload = [process.execPath, ...process.execArgv, fileURLToPath(import.meta.url), '--compiler-admitted'];
   for (;;) {
+    let stalledHead;
     try {
-      await withWorkspaceBundleLock(async () => {
+      stalledHead = await withWorkspaceBundleLock(async () => {
         // One scope per pass (nextRollingScope), HEAD re-read after every pass. A scope that recorded nothing waits for
         // the next HEAD move; when nothing behind can progress, the round ends.
         const stalled = new Set();
         let lastApp, lastScope;
         for (;;) {
-          const pending = behind().filter(scope => !stalled.has(`${scope}@${head()}`));
+          const current = head();
+          const pending = scopes.filter(scope => recorded(scope) !== current && !stalled.has(`${scope}@${current}`));
           const scope = nextRollingScope({ pending, lastScope, lastApp });
           lastScope = scope;
-          if (!scope) { if (behind().length) return; break; }
+          if (!scope) { if (scopes.some(scope => recorded(scope) !== current)) return current; break; }
           {
             const before = recorded(scope);
             ensureWorktree(repo, worktree);
             const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_ROLLING: '1', HAPPIER_COMMIT_TYPECHECK_REPO: repo,
               HAPPIER_COMMIT_TYPECHECK_LOCKED: '1', HAPPIER_COMMIT_TYPECHECK_SCOPE: scope };
             // A range with nothing to compile for this scope needs no admission slot.
-            const current = head();
             const idle = !rollingScopeDirs({ repo, base: rollingBase(repo, before, current), head: current, scope, baseline: !before }).length;
             const command = admittedCommand(repo, payload, idle, scope === 'packages' ? undefined : scope);
             const result = spawnSync(command[0], command.slice(1), { cwd: worktree, env, stdio: 'inherit' });
@@ -1535,7 +1540,7 @@ async function rolling(repo) {
       throw error;
     }
     // Closes the window between the holder's last HEAD read and its release.
-    if (!behind().length) return 0;
+    if (stalledHead === head() || !behind().length) return 0;
   }
 }
 

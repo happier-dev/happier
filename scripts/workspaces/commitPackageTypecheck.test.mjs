@@ -293,6 +293,27 @@ test('a scope without a recorded baseline compiles its whole scope instead of re
   assert.match(readFileSync(join(state, 'verdicts.log'), 'utf8'), /ROLLING-BASELINE scope=apps\/cli /u);
 });
 
+test('an unavailable rolling app comparison preserves its last checked checkpoint', async t => {
+  const { repo, commit } = await workspace(t);
+  const state = await mkdtemp(join(tmpdir(), 'happier-rolling-typecheck-'));
+  t.after(() => rm(state, { recursive: true, force: true }));
+  const checkpoint = join(state, 'rolling-head-apps__cli');
+  const base = await commit('apps/cli/src/index.ts', 'export const value = 2;');
+  await writeFile(checkpoint, base + '\n');
+  const head = await commit('apps/cli/src/index.ts', 'export const value = 3;');
+  let available = false;
+  const options = { repo, env: { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state },
+    scope: 'apps/cli', remote: async () => new Map([['apps/cli', available ? [] : null]]), log: () => {} };
+  const failed = await rollingHeadTypecheckPass(options);
+  assert.deepEqual(failed.unavailable, ['apps/cli']);
+  assert.match(readFileSync(join(state, 'verdicts.log'), 'utf8'), /ROLLING-INCOMPLETE scope=apps\/cli /u);
+  assert.equal(readFileSync(checkpoint, 'utf8').trim(), base);
+  available = true;
+  const recovered = await rollingHeadTypecheckPass(options);
+  assert.deepEqual(recovered.unavailable, []);
+  assert.equal(readFileSync(checkpoint, 'utf8').trim(), head);
+});
+
 test('apps/server, apps/cli and apps/ui are selected when the range touches the app or a package it depends on', async t => {
   const { repo, commit } = await workspace(t);
   const appSha = await commit('apps/cli/src/index.ts', 'export const value = 4;\n');

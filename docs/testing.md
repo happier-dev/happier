@@ -754,8 +754,9 @@ The next writer takes over if it needs its own entry probe or projection
 generation, or if its packet cannot be replayed and checked in the group.
 Each packet retains its own commit and post-commit report.
 
-The existing rolling checks run full package and app typechecks. The
-post-commit report compares Protocol and Plugin SDK declarations against
+The existing rolling checks run full package and app typechecks. An incomplete
+app comparison leaves its checked checkpoint in place so the next run can retry
+the range. The post-commit report compares Protocol and Plugin SDK declarations against
 the exact parent and runs the broader entry, bundle and export checks.
 Findings are attributed to the introducing SHA and sent to its author for
 a fix forward. Before and after the ref update are separate verdicts.
