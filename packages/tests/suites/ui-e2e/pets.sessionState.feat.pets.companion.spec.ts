@@ -9,7 +9,7 @@ import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
 import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
-import { waitForDaemonMachineIdFromCliSettings } from '../../src/testkit/uiE2e/daemonMachineId';
+import { waitForDaemonMachineId } from '../../src/testkit/uiE2e/daemonMachineId';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { setSingleAccountUiFeatureToggle } from '../../src/testkit/pets/uiPetsFeatureToggle';
 
@@ -158,7 +158,7 @@ test.describe('ui e2e: pets session state mapping', () => {
     await expect(page.getByTestId('pet-app-shell-companion-sprite')).toHaveCount(1, { timeout: 120_000 });
     await expectPetState(page, /^idle$/);
 
-    const machineId = await waitForDaemonMachineIdFromCliSettings({ cliHomeDir, timeoutMs: 120_000 });
+    const machineId = await waitForDaemonMachineId({ cliHomeDir, timeoutMs: 120_000 });
     await Promise.all([
       createSessionFromNewSessionComposer({
         page,

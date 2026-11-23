@@ -1,3 +1,4 @@
+import { readActiveMachineId, readMachineRegistration, updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { spawn } from 'node:child_process';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
@@ -75,7 +76,7 @@ it('refuses an admitted shared-Machine Use SCM request before launching as the d
             return manager.invokeLocal(method, input, options);
         } },
     }));
-    const previousSettings = await readSettings();
+    const previousRegistration = await readMachineRegistration();
     let servingRuntime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | null = null;
     vi.mocked(spawn).mockClear();
     try {
@@ -114,9 +115,11 @@ it('refuses an admitted shared-Machine Use SCM request before launching as the d
 
         // Publish the real bundled Git runtime as an installed daemon does.
         // Live blame can otherwise bypass the Machine transport entirely.
-        await updateSettings(settings => ({ ...settings,
-            machineIdByServerId: { ...settings.machineIdByServerId, [home]: machineId } }));
-        expect((await readSettings()).machineId).toBe(machineId);
+        await updateMachineRegistration(registration => ({
+          ...registration,
+          machineId,
+        }), home);
+        expect(await readActiveMachineId()).toBe(machineId);
         servingRuntime = await createAdmittedPluginRuntimeFixture({ happyHomeDir: configuration.happyHomeDir,
             controller: pluginReloadController, runtimeOptions: {
                 pluginIds: ['happier.scm.backend.git'],
@@ -164,7 +167,7 @@ it('refuses an admitted shared-Machine Use SCM request before launching as the d
     } finally {
         await servingRuntime?.dispose();
         await pluginReloadController.shutdown();
-        await updateSettings(settings => ({ ...settings, machineIdByServerId: previousSettings.machineIdByServerId }));
+        await updateMachineRegistration(() => previousRegistration);
         await removeTempDir(repository.rootPath);
     }
 });

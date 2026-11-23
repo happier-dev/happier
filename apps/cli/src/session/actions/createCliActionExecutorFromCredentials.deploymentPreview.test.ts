@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import axios from 'axios';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import nacl from 'tweetnacl';
@@ -30,9 +31,10 @@ it.each(['account', 'terminal', 'legacy'] as const)('refuses implicit create bef
         const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', ...(kind === 'legacy' ? {} : { tokenEpoch: 1,
             provenance: { v: 1, kind, authority: kind === 'account' ? 'present_user' : 'account_automation' } }) })).toString('base64url')}.signature`;
         const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
-        await updateSettings(settings => ({ ...settings, machineIdByServerId: {
-            ...settings.machineIdByServerId, [configuration.activeServerId]: 'named-identity-machine',
-        } }));
+        await updateMachineRegistration(registration => ({
+          ...registration,
+          machineId: 'named-identity-machine',
+        }));
         const post = vi.spyOn(axios, 'post').mockRejectedValue(new Error('No external effect is expected'));
         const request = vi.spyOn(axios, 'request').mockRejectedValue(new Error('No external dispatch is expected'));
         vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });

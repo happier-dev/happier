@@ -14,7 +14,7 @@ import { startAutomationWorker } from '../../../../apps/cli/src/daemon/automatio
 import { withConfiguredDaemonTestHome } from '../../../../apps/cli/src/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { readOrCreateInstallationIdentity } from '../../../../apps/cli/src/daemon/identity/store';
 import { readCurrentMachineInstallation } from '../../../../apps/cli/src/daemon/identity/currentMachineInstallation';
-import { updateSettings, writeStoredCredentialsForServerId, readStoredCredentials } from '../../../../apps/cli/src/persistence';
+import { writeStoredCredentialsForServerId, readStoredCredentials } from '../../../../apps/cli/src/persistence';
 import { configuration } from '../../../../apps/cli/src/configuration';
 import { installAxiosFastifyAdapter } from '../../../../apps/cli/src/testkit/http/axiosAdapter';
 import { resolveServerHttpBaseUrl } from '../../../../apps/cli/src/api/client/serverHttpBaseUrl';
@@ -24,6 +24,8 @@ import { deleteAutomation } from '../../../../apps/server/sources/app/automation
 import { registerWorkflowRunStorageRoutes } from '../../../../apps/server/sources/app/api/routes/automations/registerWorkflowRunStorageRoutes';
 import { createProductionWorkflowRunCoordinator } from '../../../../apps/cli/src/daemon/workflows/production';
 import { createWorkflowAcceptedAuthorizationCurrentness } from '../../../../apps/cli/src/daemon/workflows/daemonRuntime';
+
+const daemonHomeEnv = { HAPPIER_SERVER_URL: 'https://automation.example.test' };
 
 // Native JS composes the real server and CLI owners without combining their
 // incompatible package-local @ aliases in one TypeScript compilation program.
@@ -39,16 +41,13 @@ afterAll(async () => { await db.$disconnect(); });
 
 it.each(['retained', 'other-machine', 'released', 'omitted-deadline'])(
 'uses only known retained direct Run deadlines after empty catch-up (%s)', async scenario => {
-    await withConfiguredDaemonTestHome({ prefix: 'automation-direct-lease-' }, async () => {
+    const machineId = randomUUID();
+    await withConfiguredDaemonTestHome({ prefix: 'automation-direct-lease-', env: daemonHomeEnv, machineId }, async () => {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
-        const machineId = randomUUID();
         const token = randomUUID();
         await writeStoredCredentialsForServerId(configuration.activeServerId, { token, encryption: null });
         const credentials = await readStoredCredentials();
         if (!credentials) throw new Error('Fixture authentication unavailable');
-        await updateSettings(settings => ({ ...settings,
-            machineIdByServerId: { ...settings.machineIdByServerId, [configuration.activeServerId]: machineId },
-        }));
         const identity = await readOrCreateInstallationIdentity();
         expect((await readCurrentMachineInstallation())?.machineId).toBe(machineId);
         await db.machine.create({ data: { id: machineId, accountId: account.id, metadata: '{}',
@@ -225,17 +224,14 @@ it.each(['retained', 'other-machine', 'released', 'omitted-deadline'])(
 });
 
 it.each(['deleted', 'live'])('reclaims accepted Automation custody after causal source deletion (%s)', async definitionState => {
-    await withConfiguredDaemonTestHome({ prefix: 'automation-orphan-wake-' }, async () => {
+    const machineId = randomUUID();
+    await withConfiguredDaemonTestHome({ prefix: 'automation-orphan-wake-', env: daemonHomeEnv, machineId }, async () => {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
-        const machineId = randomUUID();
         const otherMachineId = randomUUID();
         const token = randomUUID();
         await writeStoredCredentialsForServerId(configuration.activeServerId, { token, encryption: null });
         const credentials = await readStoredCredentials();
         if (!credentials) throw new Error('Fixture authentication unavailable');
-        await updateSettings(settings => ({ ...settings,
-            machineIdByServerId: { ...settings.machineIdByServerId, [configuration.activeServerId]: machineId },
-        }));
         const identity = await readOrCreateInstallationIdentity();
         await db.machine.createMany({ data: [machineId, otherMachineId].map(id => ({ id, accountId: account.id,
             metadata: '{}', installationId: id === machineId ? identity.installationId : randomUUID(),

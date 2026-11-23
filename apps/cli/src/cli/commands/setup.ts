@@ -1,3 +1,4 @@
+import { readMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { buildSetupHelpPage } from './setupHelp';
 import { hostname } from 'node:os';
 
@@ -342,6 +343,7 @@ async function printSetupAgentReadiness(
 type SetupCommandDeps = Readonly<{
     readCredentialsFn?: typeof readStoredCredentials;
     readSettingsFn?: typeof readSettings;
+    readMachineRegistrationFn?: typeof readMachineRegistration;
     isInteractiveTerminalFn?: typeof isInteractiveTerminal;
     promptInputFn?: typeof promptInput;
     runHappyCliStepFn?: typeof runHappyCliStep;
@@ -687,7 +689,7 @@ export async function handleSetupCommand(
     let readiness = !planMode && !relayNamedOnCommandLine
         ? await resolveActiveServerAuthReadiness({
             readCredentialsFn,
-            readSettingsFn,
+            readMachineRegistrationFn: deps.readMachineRegistrationFn,
             ...(signal ? { signal } : {}),
         })
         : null;
@@ -753,7 +755,7 @@ export async function handleSetupCommand(
         if (choice === 'retry') {
             readiness = await resolveActiveServerAuthReadiness({
                 readCredentialsFn,
-                readSettingsFn,
+                readMachineRegistrationFn: deps.readMachineRegistrationFn,
                 ...(signal ? { signal } : {}),
             });
             initialDecision = decideSetupReadiness({
@@ -1259,7 +1261,7 @@ export async function handleSetupCommand(
         ? readiness
         : await resolveActiveServerAuthReadiness({
             readCredentialsFn,
-            readSettingsFn,
+            readMachineRegistrationFn: deps.readMachineRegistrationFn,
             ...(signal ? { signal } : {}),
         });
     if (readiness === null) throw new Error('Setup readiness was not resolved for the selected Home.');

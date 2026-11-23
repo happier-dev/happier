@@ -158,7 +158,7 @@ function withoutAgentCliPathOverrides(): () => void {
               (argument) => argument !== '--server' && argument !== 'personal-home' && argument !== '--persist',
             ),
             readCredentialsFn: async () => ({ token: 'personal-home-token', encryption: null }),
-            readSettingsFn: async () => ({ machineId: 'machine-local', machineIdConfirmedByServer: true } as never),
+            readMachineRegistrationFn: async () => ({ machineId: 'machine-local', confirmedByServer: true }),
             isInteractiveTerminalFn: () => false,
             readBackgroundServiceSetupGuidanceFn: async () => createBackgroundServiceSetupGuidance(),
             runHappyCliStepFn: async (argv) => {
@@ -222,7 +222,7 @@ function withoutAgentCliPathOverrides(): () => void {
               (argument) => argument !== '--server' && argument !== profileId && argument !== '--persist',
             ),
             readCredentialsFn: async () => ({ token: 'personal-home-token', encryption: null }),
-            readSettingsFn: async () => ({ machineId: 'machine-local', machineIdConfirmedByServer: true } as never),
+            readMachineRegistrationFn: async () => ({ machineId: 'machine-local', confirmedByServer: true }),
             isInteractiveTerminalFn: () => false,
             readBackgroundServiceSetupGuidanceFn: async () => createBackgroundServiceSetupGuidance(),
             runHappyCliStepFn: async (argv) => {
@@ -374,7 +374,7 @@ function withoutAgentCliPathOverrides(): () => void {
             (argument) => !['--server-url', 'https://home.example.test', '--yes'].includes(argument),
           ),
           readCredentialsFn: async () => ({ token: 'valid-token', encryption: null }),
-          readSettingsFn: async () => ({ machineId: 'machine', machineIdConfirmedByServer: true } as never),
+          readMachineRegistrationFn: async () => ({ machineId: 'machine', confirmedByServer: true }),
           isInteractiveTerminalFn: () => false,
           runHappyCliStepFn: child,
         });
@@ -456,7 +456,7 @@ function withoutAgentCliPathOverrides(): () => void {
           return await useProfileFn(profileId);
         },
         readCredentialsFn: async () => null,
-        readSettingsFn: async () => ({ machineId: null } as never),
+        readMachineRegistrationFn: async () => ({}),
         isInteractiveTerminalFn: () => true,
         promptInputFn: async () => '',
         runHappyCliStepFn: async (argv) => {
@@ -514,7 +514,7 @@ function withoutAgentCliPathOverrides(): () => void {
         adoptHomeDescriptorFn: async () => ({ profile: { id: 'failed-home' } } as never),
         useHomeProfileFn: useProfileFn,
         readCredentialsFn: async () => null,
-        readSettingsFn: async () => ({ machineId: null } as never),
+        readMachineRegistrationFn: async () => ({}),
         isInteractiveTerminalFn: () => true,
         promptInputFn: async () => '',
         runHappyCliStepFn: async () => 19,
@@ -567,7 +567,7 @@ function withoutAgentCliPathOverrides(): () => void {
           return { id: profileId } as never;
         },
         readCredentialsFn: async () => null,
-        readSettingsFn: async () => ({ machineId: null } as never),
+        readMachineRegistrationFn: async () => ({}),
         isInteractiveTerminalFn: () => true,
         promptInputFn: async () => '',
         runAccountServiceHomeEntryFn: accountServiceEntry,
@@ -593,7 +593,7 @@ function withoutAgentCliPathOverrides(): () => void {
 
       await handleSetupCommand(['--home-url', 'https://home.example.test', '--skip-daemon', '--skip-providers'], {
         readCredentialsFn: async () => null,
-        readSettingsFn: async () => ({ machineId: null } as never),
+        readMachineRegistrationFn: async () => ({}),
         isInteractiveTerminalFn: () => true,
         promptInputFn: async () => '',
         runAccountServiceHomeEntryFn: accountServiceEntry,
@@ -677,7 +677,7 @@ function withoutAgentCliPathOverrides(): () => void {
         {
           readHomeDescriptorTextFn: async () => JSON.stringify(descriptor),
           readCredentialsFn: async () => null,
-          readSettingsFn: async () => ({ machineId: null } as never),
+          readMachineRegistrationFn: async () => ({}),
           isInteractiveTerminalFn: () => true,
           promptInputFn: async (prompt) => {
             prompts.push(stripAnsi(prompt));
@@ -724,7 +724,7 @@ function withoutAgentCliPathOverrides(): () => void {
         }),
         useHomeProfileFn: useProfileFn,
         readCredentialsFn: async () => null,
-        readSettingsFn: async () => ({ machineId: null } as never),
+        readMachineRegistrationFn: async () => ({}),
         isInteractiveTerminalFn: () => true,
         promptInputFn: async () => '',
         runHappyCliStepFn: async () => 23,
@@ -764,7 +764,7 @@ function withoutAgentCliPathOverrides(): () => void {
         }),
         useHomeProfileFn: useProfileFn,
         readCredentialsFn: async () => null,
-        readSettingsFn: async () => ({ machineId: null } as never),
+        readMachineRegistrationFn: async () => ({}),
         isInteractiveTerminalFn: () => true,
         promptInputFn: async () => 'y',
         runAccountServiceHomeEntryFn: async () => ({ kind: 'direct_home_selected' }),
@@ -825,7 +825,7 @@ function withoutAgentCliPathOverrides(): () => void {
           return { id: profileId } as never;
         },
         readCredentialsFn: async () => null,
-        readSettingsFn: async () => ({ machineId: null } as never),
+        readMachineRegistrationFn: async () => ({}),
         isInteractiveTerminalFn: () => true,
         promptInputFn: async () => 'y',
         runAccountServiceHomeEntryFn: async () => ({ kind: 'direct_home_selected' }),
@@ -893,7 +893,7 @@ function withoutAgentCliPathOverrides(): () => void {
 
       await handleSetupCommand(['--skip-providers'], {
         readCredentialsFn: async () => null,
-        readSettingsFn: async () => ({ machineId: null } as never),
+        readMachineRegistrationFn: async () => ({}),
         isInteractiveTerminalFn: () => true,
         promptInputFn: async (prompt) => {
           prompts.push(prompt);
@@ -937,7 +937,7 @@ function withoutAgentCliPathOverrides(): () => void {
 
       await handleSetupCommand(['--skip-providers'], {
         readCredentialsFn: async () => null,
-        readSettingsFn: async () => ({ machineId: null } as never),
+        readMachineRegistrationFn: async () => ({}),
         isInteractiveTerminalFn: () => true,
         promptInputFn: async (prompt) => {
           setupPrompts.push(prompt);
@@ -974,7 +974,7 @@ function withoutAgentCliPathOverrides(): () => void {
 
       await handleSetupCommand(['--skip-daemon', '--skip-providers'], {
         readCredentialsFn: async () => null,
-        readSettingsFn: async () => ({ machineId: null } as never),
+        readMachineRegistrationFn: async () => ({}),
         isInteractiveTerminalFn: () => true,
         promptInputFn: async (prompt) => {
           prompts.push(prompt);
@@ -1026,7 +1026,7 @@ function withoutAgentCliPathOverrides(): () => void {
 
       await handleSetupCommand(['--skip-daemon', '--skip-providers'], {
         readCredentialsFn: async () => null,
-        readSettingsFn: async () => ({ machineId: null } as never),
+        readMachineRegistrationFn: async () => ({}),
         isInteractiveTerminalFn: () => true,
         promptInputFn: async (prompt) => {
           if (prompt.includes('How would you like to set up this computer?')) return 'e';
@@ -1056,7 +1056,7 @@ function withoutAgentCliPathOverrides(): () => void {
 
       await handleSetupCommand(['--skip-providers'], {
         readCredentialsFn: async () => null,
-        readSettingsFn: async () => ({ machineId: null } as never),
+        readMachineRegistrationFn: async () => ({}),
         isInteractiveTerminalFn: () => true,
         promptInputFn: async (prompt) => {
           if (prompt.includes('How would you like to set up this computer?')) return 'f';
@@ -1087,7 +1087,7 @@ function withoutAgentCliPathOverrides(): () => void {
 
       await handleSetupCommand(['--skip-providers'], {
         readCredentialsFn: async () => null,
-        readSettingsFn: async () => ({ machineId: null } as never),
+        readMachineRegistrationFn: async () => ({}),
         isInteractiveTerminalFn: () => true,
         promptInputFn: async (prompt) => {
           prompts.push(stripAnsi(prompt));
@@ -1120,7 +1120,7 @@ function withoutAgentCliPathOverrides(): () => void {
 
       await handleSetupCommand(['--skip-daemon', '--skip-providers'], {
         readCredentialsFn: async () => null,
-        readSettingsFn: async () => ({ machineId: null } as never),
+        readMachineRegistrationFn: async () => ({}),
         isInteractiveTerminalFn: () => true,
         promptInputFn: async (prompt) => {
           prompts.push(stripAnsi(prompt));
@@ -1151,7 +1151,7 @@ function withoutAgentCliPathOverrides(): () => void {
 
       await handleSetupCommand(['--skip-providers'], {
         readCredentialsFn: async () => null,
-        readSettingsFn: async () => ({ machineId: null } as never),
+        readMachineRegistrationFn: async () => ({}),
         isInteractiveTerminalFn: () => true,
         promptInputFn: async (prompt) => {
           prompts.push(stripAnsi(prompt));
@@ -1183,7 +1183,7 @@ function withoutAgentCliPathOverrides(): () => void {
 
       await handleSetupCommand(['--skip-daemon', '--skip-providers'], {
         readCredentialsFn: async () => null,
-        readSettingsFn: async () => ({ machineId: null } as never),
+        readMachineRegistrationFn: async () => ({}),
         isInteractiveTerminalFn: () => true,
         promptInputFn: async (prompt) => prompt.includes('How would you like to set up this computer?') ? 'f' : '',
         runAccountServiceHomeEntryFn: async (input) => {
@@ -1232,7 +1232,7 @@ function withoutAgentCliPathOverrides(): () => void {
 
       await handleSetupCommand(['--skip-daemon', '--skip-providers'], {
         readCredentialsFn: async () => null,
-        readSettingsFn: async () => ({ machineId: null } as never),
+        readMachineRegistrationFn: async () => ({}),
         isInteractiveTerminalFn: () => true,
         promptInputFn: async (prompt) => {
           prompts.push(prompt);
@@ -1258,7 +1258,7 @@ function withoutAgentCliPathOverrides(): () => void {
 
       await handleSetupCommand(['--skip-providers'], {
         readCredentialsFn: async () => null,
-        readSettingsFn: async () => ({ machineId: null } as never),
+        readMachineRegistrationFn: async () => ({}),
         isInteractiveTerminalFn: () => true,
         promptInputFn: async (prompt) => {
           if (prompt.includes('How would you like to set up this computer?')) return 'f';
@@ -1343,7 +1343,7 @@ function withoutAgentCliPathOverrides(): () => void {
         await handleSetupCommand(['--yes'], {
           applyServerSelectionFromArgs,
           readCredentialsFn: async () => null,
-          readSettingsFn: async () => ({ machineId: null } as any),
+          readMachineRegistrationFn: async () => ({}),
           isInteractiveTerminalFn: () => false,
           promptInputFn: async () => {
             throw new Error('prompt should not be used');
@@ -1372,7 +1372,7 @@ function withoutAgentCliPathOverrides(): () => void {
         {
           applyServerSelectionFromArgs: async () => ['--yes', '--skip-daemon'],
           readCredentialsFn: async () => ({ encryption: { type: 'legacy', secret: new Uint8Array([1]) }, token: 't' } as any),
-          readSettingsFn: async () => ({ machineId: null } as any),
+          readMachineRegistrationFn: async () => ({}),
           isInteractiveTerminalFn: () => false,
           promptInputFn: async () => {
             throw new Error('prompt should not be used');
@@ -1410,7 +1410,7 @@ function withoutAgentCliPathOverrides(): () => void {
         {
           applyServerSelectionFromArgs,
           readCredentialsFn: async () => ({ encryption: { type: 'legacy', secret: new Uint8Array([1]) }, token: 't' } as any),
-          readSettingsFn: async () => ({ machineId: 'mid_123', machineIdConfirmedByServer: true } as any),
+          readMachineRegistrationFn: async () => ({ machineId: 'mid_123', confirmedByServer: true }),
           isInteractiveTerminalFn: () => false,
           promptInputFn: async () => {
             throw new Error('prompt should not be used');
@@ -1439,7 +1439,7 @@ function withoutAgentCliPathOverrides(): () => void {
             throw new Error('relay selection should not be re-applied when the relay URL already matches the active server');
           },
           readCredentialsFn: async () => ({ encryption: { type: 'legacy', secret: new Uint8Array([1]) }, token: 't' } as any),
-          readSettingsFn: async () => ({ machineId: 'mid_123', machineIdConfirmedByServer: true } as any),
+          readMachineRegistrationFn: async () => ({ machineId: 'mid_123', confirmedByServer: true }),
           isInteractiveTerminalFn: () => false,
           promptInputFn: async () => {
             throw new Error('prompt should not be used');
@@ -1480,7 +1480,7 @@ function withoutAgentCliPathOverrides(): () => void {
           invocation: 'authenticated-home-create-continuation',
           applyServerSelectionFromArgs: async () => ['--yes'],
           readCredentialsFn: async () => ({ encryption: { type: 'legacy', secret: new Uint8Array([1]) }, token: 't' } as any),
-          readSettingsFn: async () => ({ machineId: 'mid_123', machineIdConfirmedByServer: true } as any),
+          readMachineRegistrationFn: async () => ({ machineId: 'mid_123', confirmedByServer: true }),
           isInteractiveTerminalFn: () => true,
           promptInputFn,
           readBackgroundServiceSetupGuidanceFn: async () => createBackgroundServiceSetupGuidance({
@@ -1581,7 +1581,7 @@ function withoutAgentCliPathOverrides(): () => void {
           invocation: 'authenticated-home-create-continuation',
           applyServerSelectionFromArgs: async () => ['--yes'],
           readCredentialsFn: async () => ({ encryption: { type: 'legacy', secret: new Uint8Array([1]) }, token: 't' } as any),
-          readSettingsFn: async () => ({ machineId: 'mid_123', machineIdConfirmedByServer: true } as any),
+          readMachineRegistrationFn: async () => ({ machineId: 'mid_123', confirmedByServer: true }),
           isInteractiveTerminalFn: () => true,
           promptInputFn,
           readBackgroundServiceSetupGuidanceFn: async () => createBackgroundServiceSetupGuidance({
@@ -1634,7 +1634,7 @@ function withoutAgentCliPathOverrides(): () => void {
           invocation: 'authenticated-home-create-continuation',
           applyServerSelectionFromArgs: async () => ['--yes'],
           readCredentialsFn: async () => ({ encryption: { type: 'legacy', secret: new Uint8Array([1]) }, token: 't' } as any),
-          readSettingsFn: async () => ({ machineId: 'mid_123', machineIdConfirmedByServer: true } as any),
+          readMachineRegistrationFn: async () => ({ machineId: 'mid_123', confirmedByServer: true }),
           isInteractiveTerminalFn: () => false,
           promptInputFn: async () => {
             throw new Error('prompt should not be used');
@@ -1681,7 +1681,7 @@ function withoutAgentCliPathOverrides(): () => void {
           invocation: 'authenticated-home-create-continuation',
           applyServerSelectionFromArgs: async () => ['--yes'],
           readCredentialsFn: async () => ({ encryption: { type: 'legacy', secret: new Uint8Array([1]) }, token: 't' } as any),
-          readSettingsFn: async () => ({ machineId: 'mid_123', machineIdConfirmedByServer: true } as any),
+          readMachineRegistrationFn: async () => ({ machineId: 'mid_123', confirmedByServer: true }),
           isInteractiveTerminalFn: () => false,
           promptInputFn: async () => {
             throw new Error('prompt should not be used');
@@ -1717,7 +1717,7 @@ function withoutAgentCliPathOverrides(): () => void {
           invocation: 'authenticated-home-create-continuation',
           applyServerSelectionFromArgs: async () => ['--yes'],
           readCredentialsFn: async () => ({ encryption: { type: 'legacy', secret: new Uint8Array([1]) }, token: 't' } as any),
-          readSettingsFn: async () => ({ machineId: 'mid_123', machineIdConfirmedByServer: true } as any),
+          readMachineRegistrationFn: async () => ({ machineId: 'mid_123', confirmedByServer: true }),
           isInteractiveTerminalFn: () => false,
           promptInputFn: async () => {
             throw new Error('prompt should not be used');
@@ -1778,7 +1778,7 @@ function withoutAgentCliPathOverrides(): () => void {
           invocation: 'authenticated-home-create-continuation',
           applyServerSelectionFromArgs: async (args) => args,
           readCredentialsFn: async () => ({ encryption: { type: 'legacy', secret: new Uint8Array([1]) }, token: 't' } as any),
-          readSettingsFn: async () => ({ machineId: 'mid_123', machineIdConfirmedByServer: true } as any),
+          readMachineRegistrationFn: async () => ({ machineId: 'mid_123', confirmedByServer: true }),
           isInteractiveTerminalFn: () => true,
           promptInputFn,
           readBackgroundServiceSetupGuidanceFn: async () => createBackgroundServiceSetupGuidance({
@@ -1854,7 +1854,7 @@ function withoutAgentCliPathOverrides(): () => void {
 
       await handleSetupCommand(['--relay-url', 'https://relay.example.test'], {
         readCredentialsFn: async () => ({ encryption: null, token: 't' }),
-        readSettingsFn: async () => ({ machineId: 'mid_123', machineIdConfirmedByServer: true } as never),
+        readMachineRegistrationFn: async () => ({ machineId: 'mid_123', confirmedByServer: true }),
         isInteractiveTerminalFn: () => true,
         promptInputFn,
         readBackgroundServiceSetupGuidanceFn: async () => createBackgroundServiceSetupGuidance({
@@ -1899,7 +1899,7 @@ function withoutAgentCliPathOverrides(): () => void {
         invocation: 'authenticated-home-create-continuation',
         applyServerSelectionFromArgs: async (args) => args,
         readCredentialsFn: async () => ({ encryption: { type: 'legacy', secret: new Uint8Array([1]) }, token: 't' } as any),
-        readSettingsFn: async () => ({ machineId: 'mid_123', machineIdConfirmedByServer: true } as never),
+        readMachineRegistrationFn: async () => ({ machineId: 'mid_123', confirmedByServer: true }),
         isInteractiveTerminalFn: () => true,
         promptInputFn: async () => 'n',
         readBackgroundServiceSetupGuidanceFn: async () => createBackgroundServiceSetupGuidance({
@@ -1941,7 +1941,7 @@ function withoutAgentCliPathOverrides(): () => void {
           invocation: 'authenticated-home-create-continuation',
           applyServerSelectionFromArgs: async (args) => args,
           readCredentialsFn: async () => ({ encryption: { type: 'legacy', secret: new Uint8Array([1]) }, token: 't' } as any),
-          readSettingsFn: async () => ({ machineId: 'mid_123', machineIdConfirmedByServer: true } as any),
+          readMachineRegistrationFn: async () => ({ machineId: 'mid_123', confirmedByServer: true }),
           isInteractiveTerminalFn: () => false,
           promptInputFn: async () => {
             throw new Error('prompt should not be used');
@@ -2007,7 +2007,7 @@ function withoutAgentCliPathOverrides(): () => void {
           invocation: 'authenticated-home-create-continuation',
           applyServerSelectionFromArgs: async (args) => args,
           readCredentialsFn: async () => ({ encryption: { type: 'legacy', secret: new Uint8Array([1]) }, token: 't' } as any),
-          readSettingsFn: async () => ({ machineId: 'mid_123', machineIdConfirmedByServer: true } as any),
+          readMachineRegistrationFn: async () => ({ machineId: 'mid_123', confirmedByServer: true }),
           isInteractiveTerminalFn: () => false,
           promptInputFn: async () => { throw new Error('prompt should not be used'); },
           readBackgroundServiceSetupGuidanceFn: async () => createBackgroundServiceSetupGuidance({
@@ -2058,7 +2058,7 @@ function withoutAgentCliPathOverrides(): () => void {
           {
             applyServerSelectionFromArgs: async (args) => args,
             readCredentialsFn: async () => ({ encryption: { type: 'legacy', secret: new Uint8Array([1]) }, token: 't' } as any),
-            readSettingsFn: async () => ({ machineId: 'mid_123', machineIdConfirmedByServer: true } as any),
+            readMachineRegistrationFn: async () => ({ machineId: 'mid_123', confirmedByServer: true }),
             isInteractiveTerminalFn: () => true,
             promptInputFn: async () => '',
             runHappyCliStepFn: async () => 0,
@@ -2087,7 +2087,7 @@ function withoutAgentCliPathOverrides(): () => void {
         {
           applyServerSelectionFromArgs: async (args) => args,
           readCredentialsFn: async () => ({ encryption: { type: 'legacy', secret: new Uint8Array([1]) }, token: 't' } as any),
-          readSettingsFn: async () => ({ machineId: 'mid_123', machineIdConfirmedByServer: true } as any),
+          readMachineRegistrationFn: async () => ({ machineId: 'mid_123', confirmedByServer: true }),
           isInteractiveTerminalFn: () => true,
           promptInputFn: async () => '',
           runHappyCliStepFn: async () => 0,
@@ -2110,7 +2110,7 @@ function withoutAgentCliPathOverrides(): () => void {
       await handleSetupCommand(['--relay-url', 'https://relay.example.test', '--skip-daemon'], {
         applyServerSelectionFromArgs: async (args) => args,
         readCredentialsFn: async () => ({ encryption: { type: 'legacy', secret: new Uint8Array([1]) }, token: 't' } as any),
-        readSettingsFn: async () => ({ machineId: 'mid_123', machineIdConfirmedByServer: true } as any),
+        readMachineRegistrationFn: async () => ({ machineId: 'mid_123', confirmedByServer: true }),
         isInteractiveTerminalFn: () => true,
         promptInputFn: async () => '',
         runHappyCliStepFn: async (argv) => { childSteps.push([...argv]); return 0; },
@@ -2131,7 +2131,7 @@ function withoutAgentCliPathOverrides(): () => void {
         {
           applyServerSelectionFromArgs: async (args) => args,
           readCredentialsFn: async () => ({ encryption: { type: 'legacy', secret: new Uint8Array([1]) }, token: 't' } as any),
-          readSettingsFn: async () => ({ machineId: 'mid_123', machineIdConfirmedByServer: true } as any),
+          readMachineRegistrationFn: async () => ({ machineId: 'mid_123', confirmedByServer: true }),
           isInteractiveTerminalFn: () => true,
           promptInputFn: async () => '',
           runHappyCliStepFn: async () => 0,
@@ -2200,7 +2200,7 @@ function withoutAgentCliPathOverrides(): () => void {
             (argument) => argument !== '--server' && argument !== 'cloud',
           ),
           readCredentialsFn: async () => null,
-          readSettingsFn: async () => ({ machineId: null } as any),
+          readMachineRegistrationFn: async () => ({}),
           isInteractiveTerminalFn: () => true,
           promptInputFn: async (prompt) => prompt.includes('How would you like to set up this computer?') ? 'f' : '',
           runAccountServiceHomeEntryFn,
@@ -2239,7 +2239,7 @@ function withoutAgentCliPathOverrides(): () => void {
             credentialReads += 1;
             return credentialReads === 1 ? null : { token: 'home-token', encryption: null };
           },
-          readSettingsFn: async () => ({ machineId: null } as never),
+          readMachineRegistrationFn: async () => ({}),
           isInteractiveTerminalFn: () => true,
           promptInputFn: async (prompt) => prompt.includes('How would you like to set up this computer?') ? 'f' : '',
           runAccountServiceHomeEntryFn: accountServiceEntry,
@@ -2297,7 +2297,7 @@ function withoutAgentCliPathOverrides(): () => void {
 
         await handleSetupCommand(['--skip-daemon', '--skip-providers'], {
           readCredentialsFn: async () => null,
-          readSettingsFn: async () => ({ machineId: null } as never),
+          readMachineRegistrationFn: async () => ({}),
           isInteractiveTerminalFn: () => true,
           promptInputFn: async (prompt) => {
             if (prompt.includes('How would you like to set up this computer?')) return 'f';
@@ -2326,7 +2326,7 @@ function withoutAgentCliPathOverrides(): () => void {
         await handleSetupCommand(['--skip-daemon', '--skip-providers'], {
           applyServerSelectionFromArgs: async (args) => args,
           readCredentialsFn: async () => null,
-          readSettingsFn: async () => ({ machineId: null } as any),
+          readMachineRegistrationFn: async () => ({}),
           isInteractiveTerminalFn: () => true,
           promptInputFn: async (prompt: string) => {
             if (prompt.includes('How would you like to set up this computer?')) return 'e';
@@ -2360,7 +2360,7 @@ function withoutAgentCliPathOverrides(): () => void {
         await handleSetupCommand(['--skip-daemon', '--skip-providers'], {
           applyServerSelectionFromArgs: async (args) => args.filter((arg) => arg !== '--server' && arg !== 'cloud'),
           readCredentialsFn: async () => ({ encryption: { type: 'legacy', secret: new Uint8Array([1]) }, token: 'rejected' } as any),
-          readSettingsFn: async () => ({ machineId: 'mid_123', machineIdConfirmedByServer: true } as any),
+          readMachineRegistrationFn: async () => ({ machineId: 'mid_123', confirmedByServer: true }),
           isInteractiveTerminalFn: () => true,
           promptInputFn: async (prompt: string) => {
             prompts.push(prompt);
@@ -2401,10 +2401,7 @@ function withoutAgentCliPathOverrides(): () => void {
               token: 'stored-token',
               credentialProvenance: 'stored_session',
             }),
-            readSettingsFn: async () => ({
-              machineId: 'machine-confirmed',
-              machineIdConfirmedByServer: true,
-            }) as Awaited<ReturnType<typeof import('@/persistence').readSettings>>,
+            readMachineRegistrationFn: async () => ({ machineId: 'machine-confirmed', confirmedByServer: true }),
             isInteractiveTerminalFn: () => true,
             promptInputFn: async (prompt) => {
               prompts.push(prompt);
@@ -2440,7 +2437,7 @@ function withoutAgentCliPathOverrides(): () => void {
           {
             applyServerSelectionFromArgs: async (args) => args,
             readCredentialsFn: async () => null,
-            readSettingsFn: async () => ({ machineId: null } as any),
+            readMachineRegistrationFn: async () => ({}),
             isInteractiveTerminalFn: () => true,
             promptInputFn: async (prompt: string) => {
               prompts.push(prompt);
@@ -2483,7 +2480,7 @@ function withoutAgentCliPathOverrides(): () => void {
 
         await handleSetupCommand(['--skip-providers'], {
           readCredentialsFn: async () => null,
-          readSettingsFn: async () => ({ machineId: null } as never),
+          readMachineRegistrationFn: async () => ({}),
           isInteractiveTerminalFn: () => true,
           promptInputFn: async (prompt) => prompt.includes('How would you like to set up this computer?') ? 'f' : '',
           runAccountServiceHomeEntryFn: accountServiceEntry,
@@ -2513,7 +2510,7 @@ function withoutAgentCliPathOverrides(): () => void {
 
         await handleSetupCommand(['--skip-providers'], {
           readCredentialsFn: async () => null,
-          readSettingsFn: async () => ({ machineId: null } as never),
+          readMachineRegistrationFn: async () => ({}),
           isInteractiveTerminalFn: () => true,
           promptInputFn: async (prompt) => prompt.includes('How would you like to set up this computer?') ? 'f' : '',
           runAccountServiceHomeEntryFn: async () => ({
@@ -2559,7 +2556,7 @@ function withoutAgentCliPathOverrides(): () => void {
 
         await handleSetupCommand(['--skip-providers'], {
           readCredentialsFn: async () => null,
-          readSettingsFn: async () => ({ machineId: null } as never),
+          readMachineRegistrationFn: async () => ({}),
           isInteractiveTerminalFn: () => true,
           promptInputFn: async (prompt) => prompt.includes('How would you like to set up this computer?') ? 'f' : '',
           runAccountServiceHomeEntryFn: async () => ({
@@ -2599,7 +2596,7 @@ function withoutAgentCliPathOverrides(): () => void {
               return args.filter((arg) => arg !== '--server' && arg !== 'cloud');
             },
             readCredentialsFn: async () => null,
-            readSettingsFn: async () => ({ machineId: null } as any),
+            readMachineRegistrationFn: async () => ({}),
             isInteractiveTerminalFn: () => true,
             promptInputFn: async (prompt: string) => (prompt.includes('How would you like to set up this computer?') ? 'f' : ''),
             runAccountServiceHomeEntryFn: accountServiceEntry,
@@ -2638,7 +2635,7 @@ function withoutAgentCliPathOverrides(): () => void {
 
         await handleSetupCommand(['--skip-providers'], {
           readCredentialsFn: async () => null,
-          readSettingsFn: async () => ({ machineId: null } as never),
+          readMachineRegistrationFn: async () => ({}),
           isInteractiveTerminalFn: () => true,
           promptInputFn: async (prompt) => prompt.includes('How would you like to set up this computer?') ? 'f' : '',
           runAccountServiceHomeEntryFn: accountServiceEntry,
@@ -2668,7 +2665,7 @@ function withoutAgentCliPathOverrides(): () => void {
 
         await handleSetupCommand(['--skip-providers'], {
           readCredentialsFn: async () => null,
-          readSettingsFn: async () => ({ machineId: null } as never),
+          readMachineRegistrationFn: async () => ({}),
           isInteractiveTerminalFn: () => true,
           promptInputFn: async (prompt) => prompt.includes('How would you like to set up this computer?') ? 'f' : '',
           runAccountServiceHomeEntryFn: accountServiceEntry,
@@ -2693,7 +2690,7 @@ function withoutAgentCliPathOverrides(): () => void {
           {
             applyServerSelectionFromArgs,
             readCredentialsFn: async () => null,
-            readSettingsFn: async () => ({ machineId: null } as any),
+            readMachineRegistrationFn: async () => ({}),
             isInteractiveTerminalFn: () => true,
             promptInputFn: async (prompt: string) => {
               if (prompt.includes('How would you like to set up this computer?')) return 'f';
@@ -2729,7 +2726,7 @@ function withoutAgentCliPathOverrides(): () => void {
           {
             applyServerSelectionFromArgs: async () => ['--skip-daemon', '--skip-providers'],
             readCredentialsFn: async () => null,
-            readSettingsFn: async () => ({ machineId: null } as any),
+            readMachineRegistrationFn: async () => ({}),
             isInteractiveTerminalFn: () => true,
             promptInputFn: async (prompt: string) => {
               prompts.push(prompt);
@@ -2758,7 +2755,7 @@ function withoutAgentCliPathOverrides(): () => void {
           {
             applyServerSelectionFromArgs: async (args) => args,
             readCredentialsFn: async () => ({ encryption: { type: 'legacy', secret: new Uint8Array([1]) }, token: 't' } as any),
-            readSettingsFn: async () => ({ machineId: 'mid_123', machineIdConfirmedByServer: true } as any),
+            readMachineRegistrationFn: async () => ({ machineId: 'mid_123', confirmedByServer: true }),
             isInteractiveTerminalFn: () => true,
             promptInputFn: async (prompt: string) => {
               prompts.push(prompt);
@@ -2786,7 +2783,7 @@ function withoutAgentCliPathOverrides(): () => void {
               throw new Error(`relay selection should not run: ${selectionArgs.join(' ')}`);
             },
             readCredentialsFn: async () => ({ encryption: { type: 'legacy', secret: new Uint8Array([1]) }, token: 't' } as any),
-            readSettingsFn: async () => ({ machineId: null } as any),
+            readMachineRegistrationFn: async () => ({}),
             isInteractiveTerminalFn: () => true,
             promptInputFn: async (prompt: string) => {
               prompts.push(prompt);
@@ -2816,7 +2813,7 @@ function withoutAgentCliPathOverrides(): () => void {
           {
             applyServerSelectionFromArgs: async (args) => args,
             readCredentialsFn: async () => null,
-            readSettingsFn: async () => ({ machineId: null } as any),
+            readMachineRegistrationFn: async () => ({}),
             isInteractiveTerminalFn: () => true,
             promptInputFn: async (prompt: string) => {
               prompts.push(prompt);

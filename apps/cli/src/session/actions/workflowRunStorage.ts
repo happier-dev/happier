@@ -3,6 +3,7 @@ import { isWorkflowRunExecutorStorageOperationV1 } from '@happier-dev/protocol/w
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createWorkflowRunStorageClient } from '@/daemon/workflows/workflowRunStorageClient';
+import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import type { WorkflowAccountRunActionDeps } from '@happier-dev/protocol';
 import type { WorkflowCombinedRunStartV1 } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import { readRequesterAccountActionContext, readRequesterAccountActionTransportContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
@@ -82,9 +83,7 @@ export function createCliWorkflowRunStorage(
           throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable',
             details: { code: 'target_unavailable', reason: 'target_binding_mismatch' } });
         }
-        const { readSettings } = await import("@/persistence");
-        const settingsMachineId = operationMachineId || authorizationMachineId ? null : normalizeStringValue((await readSettings()).machineId);
-        const resolvedMachineId = operationMachineId ?? authorizationMachineId ?? settingsMachineId ?? await resolveCurrentSessionValue('machineId');
+        const resolvedMachineId = operationMachineId ?? authorizationMachineId ?? await readActiveMachineId() ?? await resolveCurrentSessionValue('machineId');
         if (!resolvedMachineId) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable',
           details: { code: 'target_unavailable', reason: 'publisher_machine_unavailable' } });
         machineId = resolvedMachineId;

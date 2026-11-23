@@ -1,3 +1,4 @@
+import { readMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { readFile, rm } from 'node:fs/promises';
@@ -19,7 +20,7 @@ import {
   writeProtectedLocalStateFileAtomic,
 } from '@/utils/fs/protectedLocalState';
 import { configuration, reloadConfiguration } from '@/configuration';
-import { readSettings, writeCredentialsTokenOnly } from '@/persistence';
+import { writeCredentialsTokenOnly } from '@/persistence';
 import { handleAuthWait } from './auth/wait';
 import { handleAuthCliCommand } from './auth';
 
@@ -260,9 +261,9 @@ describe('auth wait provisioning response', () => {
         .resolves.toBe(JSON.stringify({ token: 'token-from-claim' }, null, 2));
       await expect(rm(statePath)).rejects.toMatchObject({ code: 'ENOENT' });
 
-      const settings = await readSettings();
+      const settings = await readMachineRegistration();
       expect(settings.machineId).toBeTruthy();
-      expect(settings.machineIdConfirmedByServer).not.toBe(true);
+      expect(settings.confirmedByServer).not.toBe(true);
     } finally {
       controller.abort();
       await completion?.catch(() => {});

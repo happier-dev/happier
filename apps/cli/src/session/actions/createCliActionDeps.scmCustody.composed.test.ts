@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import axios from 'axios';
 import nacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -32,13 +33,16 @@ describe('original terminal saved-result custody', () => {
       try {
         env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'custody-home' }); reloadConfiguration();
         const serverUrl = configuration.serverUrl;
-        await updateSettings(settings => ({ ...settings, activeServerId: 'custody-home',
-          machineIdByServerId: { 'custody-home': 'machine' }, servers: { 'custody-home': {
+        await updateSettings(settings => ({ ...settings, activeServerId: 'custody-home', servers: { 'custody-home': {
             id: 'custody-home', name: 'Custody Home', serverUrl, webappUrl: serverUrl,
             createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact',
             homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: 'srv_custody',
               canonicalServerUrl: serverUrl, revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] }),
           } } }));
+        await updateMachineRegistration(registration => ({
+          ...registration,
+          machineId: 'machine',
+        }), 'custody-home');
         const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 1,
           provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
         const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };

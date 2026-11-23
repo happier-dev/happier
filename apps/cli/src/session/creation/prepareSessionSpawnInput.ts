@@ -16,8 +16,7 @@ import { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/r
 import { resolveConnectedServicesLaunchAuthWithInventory } from '@happier-dev/protocol/connect/resolveConnectedServicesLaunchAuthV1';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { configuration } from '@/configuration';
-import { readSettings } from '@/persistence';
-import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';
+import { readActiveMachineId, readRegisteredMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { readRequesterAccountActionContext, resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { CliActionDepsParams } from '@/session/actions/cliActionDeps/types';
 import { canReadPrivateSessionDefaults, createCliManagedSessionDefaultsContextLoader, sessionCreationAccountSettingsContext, type CliSessionCreationDefaults } from './cliManagedSessionDefaultsContext';
@@ -121,10 +120,9 @@ export function createPrepareSessionSpawnInput(params: CliActionDepsParams, home
       executionTarget = { serverId: placement.homeId, machineId: bound.input.controller.machineId };
     }
     if (!executionTarget) {
-      const settings = await readSettings();
       const machineId = params.explicitMachineId ?? params.sessionSpawnDirectTargetTransport?.machineId
-        ?? resolveMachineIdForServerFromSettings(settings, params.serverId ?? configuration.activeServerId,
-          readAccountIdFromToken(custody.credentials.token)) ?? settings.machineId;
+        ?? await readRegisteredMachineId(params.serverId ?? configuration.activeServerId,
+          readAccountIdFromToken(custody.credentials.token)) ?? await readActiveMachineId();
       if (!machineId) return unavailable('machine_target_unavailable');
       executionTarget = { serverId: home.serverId, machineId };
     }

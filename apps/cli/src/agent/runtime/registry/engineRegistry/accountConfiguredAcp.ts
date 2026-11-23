@@ -1,10 +1,11 @@
+import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { buildConfiguredAcpAgentSelectionV1, isCustomAcpAgentContributionIdentityV1, type AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { agentRoutingIdAddressesContributionIdentityV1, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 import { listValueRefSecretIdsV1 } from '@happier-dev/protocol/valueRefs/valueRefV1';
 
-import { readSettings, readStoredCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -133,7 +134,7 @@ export async function resolveAccountConfiguredAcpLaunch(
       definition: { id: configuredBackend.backendId, title: configuredBackend.title, launch: configuredBackend.launch },
       platform: process.platform, arch: process.arch, env: processEnv,
       launchEnv,
-      settings: launchSnapshot.settings, machineId: (await readSettings()).machineId ?? '',
+      settings: launchSnapshot.settings, machineId: await readActiveMachineId() ?? '',
     });
     await assertAccountCurrent();
     const launchDefinition = normalizeConfiguredAcpDefinition({

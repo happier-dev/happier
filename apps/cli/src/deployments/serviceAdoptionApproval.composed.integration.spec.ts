@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
@@ -55,11 +56,11 @@ describe.skipIf(process.platform !== 'linux')('approved native Compose adoption'
                     delete servers[configuration.activeServerId];
                 return { ...settings, servers };
             }); });
-            await updateSettings(settings => ({ ...settings,
-                machineIdByServerIdByAccountId: { ...settings.machineIdByServerIdByAccountId,
-                    [configuration.activeServerId]: { ...settings.machineIdByServerIdByAccountId?.[configuration.activeServerId],
-                        [home.accountId]: home.machineId } },
-                lastTokenSubByServerId: { ...settings.lastTokenSubByServerId, [configuration.activeServerId]: home.accountId } }));
+            await updateMachineRegistration(registration => ({
+              ...registration,
+              accountId: home.accountId,
+              machineIdByAccountId: { ...registration.machineIdByAccountId, [home.accountId]: home.machineId },
+            }));
             const mounted = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
                 runtimeOptions: { pluginIds: ['happier.machine.services'],
                     scopedActionRuntime: { credentials, actionsSettingsProvider: createActionSettingsProvider() } } });

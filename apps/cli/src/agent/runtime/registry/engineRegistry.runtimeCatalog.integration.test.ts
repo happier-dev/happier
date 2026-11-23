@@ -365,7 +365,7 @@ describe('resolveCliEngineRegistry', () => {
             });
             const command = handleAttachCommand([sessionId], {
                 readCredentialsFn: async () => ({ token: 'fixture-token', encryption: null }),
-                readSettingsFn: async () => ({ schemaVersion: 6, onboardingCompleted: true, machineId: 'machine-native-custody' }),
+                readActiveMachineIdFn: async () => 'machine-native-custody',
                 fetchSessionByIdFn: async () => rawSession,
                 readTerminalAttachmentInfoFn: async () => null,
                 getAccountEncryptionCurrentnessFn: async () => ({
@@ -432,7 +432,7 @@ describe('resolveCliEngineRegistry', () => {
         });
         const attachDeps = {
             readCredentialsFn: async () => ({ token: 'fixture-token', encryption: null }),
-            readSettingsFn: async () => ({ schemaVersion: 6 as const, onboardingCompleted: true, machineId: 'machine-host' }),
+            readActiveMachineIdFn: async () => 'machine-host',
             fetchSessionByIdFn: async () => rawSession,
             readTerminalAttachmentInfoFn: async () => ({ version: 1 as const, sessionId, terminal, updatedAt: 1 }),
             getAccountEncryptionCurrentnessFn: async () => createAccountEncryptionCurrentnessFixture(),

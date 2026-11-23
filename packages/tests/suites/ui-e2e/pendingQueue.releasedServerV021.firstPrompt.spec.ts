@@ -18,7 +18,7 @@ import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
 import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
-import { waitForDaemonMachineIdFromCliSettings } from '../../src/testkit/uiE2e/daemonMachineId';
+import { waitForDaemonMachineId } from '../../src/testkit/uiE2e/daemonMachineId';
 import { secretBearingBrowserCapturePolicy } from '../../src/testkit/uiE2e/secretBearingBrowserCapture';
 import {
   gotoCommittedWithRetries,
@@ -180,7 +180,7 @@ describeReleasedServer(releasedServerSuiteName, () => {
       );
     }
 
-    const machineId = await waitForDaemonMachineIdFromCliSettings({ cliHomeDir, timeoutMs: 120_000 });
+    const machineId = await waitForDaemonMachineId({ cliHomeDir, timeoutMs: 120_000 });
     const firstPrompt = `released old server UI first prompt ${run.runId}`;
     const pendingEnqueueRequests: Request[] = [];
     const recordPendingEnqueue = (request: Request) => {

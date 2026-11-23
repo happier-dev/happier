@@ -146,12 +146,12 @@ describe('machine replacement candidates', () => {
         try {
             seedSettings(homeDir);
             vi.resetModules();
-            const { clearMachineId } = await import('@/persistence');
+            const { clearMachineId, readMachineRegistration } = await import('@/daemon/machineIdentity/machineRegistrationStore');
             await clearMachineId({ preserveReplacementCandidate: true, replacementReason: 'reauth', now: 456 });
 
-            const raw = JSON.parse(readFileSync(join(homeDir, 'settings.json'), 'utf8'));
-            expect(raw.machineIdByServerId.cloud).toBeUndefined();
-            expect(raw.machineReplacementCandidatesByServerIdByAccountId.cloud['account-1']).toEqual({
+            const raw = await readMachineRegistration();
+            expect(raw.machineId).toBeUndefined();
+            expect(raw.replacementCandidates?.['account-1']).toEqual({
                 machineId: 'machine-current',
                 replacementReason: 'reauth',
                 createdAt: 456,
@@ -173,7 +173,7 @@ describe('machine replacement candidates', () => {
             writeFileSync(join(homeDir, 'settings.json'), JSON.stringify(raw, null, 2), 'utf8');
 
             vi.resetModules();
-            const { clearMachineId } = await import('@/persistence');
+            const { clearMachineId, readMachineRegistration } = await import('@/daemon/machineIdentity/machineRegistrationStore');
             await clearMachineId({
                 preserveReplacementCandidate: true,
                 replacementAccountId: 'account-legacy',
@@ -181,9 +181,9 @@ describe('machine replacement candidates', () => {
                 now: 789,
             });
 
-            const nextRaw = JSON.parse(readFileSync(join(homeDir, 'settings.json'), 'utf8'));
-            expect(nextRaw.machineIdByServerId.cloud).toBeUndefined();
-            expect(nextRaw.machineReplacementCandidatesByServerIdByAccountId.cloud['account-legacy']).toEqual({
+            const nextRaw = await readMachineRegistration();
+            expect(nextRaw.machineId).toBeUndefined();
+            expect(nextRaw.replacementCandidates?.['account-legacy']).toEqual({
                 machineId: 'machine-current',
                 replacementReason: 'reauth',
                 createdAt: 789,
@@ -221,8 +221,8 @@ describe('machine replacement candidates', () => {
                 replacesMachineId: 'machine-old',
             });
 
-            const nextRaw = JSON.parse(readFileSync(join(homeDir, 'settings.json'), 'utf8'));
-            expect(nextRaw.machineReplacementCandidatesByServerIdByAccountId).toEqual({});
+            const { readMachineRegistration } = await import('@/daemon/machineIdentity/machineRegistrationStore');
+            await expect(readMachineRegistration('cloud')).resolves.not.toHaveProperty('replacementCandidates.account-1');
         } finally {
             rmSync(homeDir, { recursive: true, force: true });
         }

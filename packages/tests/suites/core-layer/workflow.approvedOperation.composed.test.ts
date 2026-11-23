@@ -1,8 +1,9 @@
+import { resolveMachineRegistrationPath } from '@happier-dev/cli-common/firstPartyRuntime/cliMachineRegistration';
 import { createHash, randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { basename, delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDeploymentFlowCostObserver, type DeploymentFlowCostObserver } from './workflow.deploymentFlowCosts.testkit';
@@ -176,12 +177,21 @@ vi.mock('../../../../apps/cli/src/persistence', async importOriginal => {
     return { ...actual,
         readStoredCredentialsForServerId: async () => { nativeBoundary.costRead?.('credentials');
             return nativeBoundary.installationScope?.getStore()?.credentials ?? nativeBoundary.credentials; },
-        readSettings: async () => {
+    };
+});
+// File reads select the installed identity for the fixture's current process scope.
+vi.mock('node:fs/promises', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:fs/promises')>();
+    const readFile = (...args: Parameters<typeof actual.readFile>) => {
+        const [file, encoding] = args;
+        if (typeof file === 'string' && basename(file) === basename(resolveMachineRegistrationPath('.', 'cloud'))) {
             nativeBoundary.costRead?.('settings');
             const machineId = nativeBoundary.installationScope?.getStore()?.machineId ?? nativeBoundary.machineId;
-            return { ...await actual.readSettings(), ...(machineId ? { machineId } : {}) };
-        },
+            if (machineId && encoding === 'utf8') return Promise.resolve(JSON.stringify({ machineId }));
+        }
+        return actual.readFile(...args);
     };
+    return { ...actual, readFile };
 });
 vi.mock('../../../../apps/cli/src/daemon/identity/store', async importOriginal => {
     const actual = await importOriginal<typeof import('../../../../apps/cli/src/daemon/identity/store')>();

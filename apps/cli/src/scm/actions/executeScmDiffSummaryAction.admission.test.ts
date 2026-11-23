@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -45,7 +46,7 @@ import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider
 import { logger } from '@/ui/logger';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import { configuration, reloadConfiguration } from '@/configuration';
-import { updateSettings, writeDaemonState } from '@/persistence';
+import { writeDaemonState } from '@/persistence';
 import { createDaemonControlApp } from '@/daemon/controlServer';
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { readAppliedParentConnectedServices } from '@/daemon/controlClient';
@@ -334,8 +335,10 @@ describe('SCM generation through real host admission', () => {
                 if (!daemonAddress || typeof daemonAddress === 'string') throw new Error('Daemon fixture did not listen');
                 writeDaemonState({ pid: process.pid, httpPort: daemonAddress.port, controlToken, startedAt: Date.now(),
                     startedWithCliVersion: 'test' });
-                await updateSettings(settings => ({ ...settings,
-                    machineIdByServerId: { ...settings.machineIdByServerId, [configuration.activeServerId]: machineId } }));
+                await updateMachineRegistration(registration => ({
+                  ...registration,
+                  machineId,
+                }));
                 const machineDependencies = { token, credentials: { token, encryption: null },
                     sessionId: '', mode: 'plain', ctx: null, serverId: configuration.activeServerId, serverHttpBaseUrl: serverUrl,
                     scmFilesystemAccessPolicy: { kind: 'restrictedRoots', roots: [fixture.rootPath] },

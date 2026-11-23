@@ -1,4 +1,5 @@
 import { clearServerProfileObservations, copyServerAccountChangesCursors, readAccountChangesCursors, readServerProfileObservations, readSettings, readStoredCredentialsForServerId, updateSettings, writeServerProfileLastUsedAt, type Settings } from '@/persistence';
+import { adoptMachineRegistrationIfMissing } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { deriveServerIdFromName, deriveServerIdFromUrl, sanitizeServerIdForFilesystem } from '@/server/serverId';
 import { isLocalishServerUrl } from '@/server/serverUrlClassification';
 import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
@@ -27,28 +28,6 @@ function deriveLegacyEnvServerIdFromUrl(url: string): string {
     h = Math.imul(h, 16777619);
   }
   return `env_${(h >>> 0).toString(16)}`;
-}
-
-function copyServerScopedEntry<T>(map: Record<string, T> | undefined, sourceId: string, targetId: string): Record<string, T> | undefined {
-  return map && Object.prototype.hasOwnProperty.call(map, sourceId) ? { ...map, [targetId]: map[sourceId] } : map;
-}
-
-function hasServerScopedState(settings: Settings, serverId: string): boolean {
-  return [settings.machineIdByServerId, settings.machineIdByServerIdByAccountId,
-    settings.machineReplacementCandidatesByServerIdByAccountId, settings.lastTokenSubByServerId,
-    settings.machineIdConfirmedByServerByServerId]
-    .some((map) => map && Object.prototype.hasOwnProperty.call(map, serverId));
-}
-
-function copyMissingServerScopedState(current: Settings, sourceId: string, targetId: string): Settings {
-  return {
-    ...current,
-    machineIdByServerId: copyServerScopedEntry(current.machineIdByServerId, sourceId, targetId),
-    machineIdByServerIdByAccountId: copyServerScopedEntry(current.machineIdByServerIdByAccountId, sourceId, targetId),
-    machineReplacementCandidatesByServerIdByAccountId: copyServerScopedEntry(current.machineReplacementCandidatesByServerIdByAccountId, sourceId, targetId),
-    lastTokenSubByServerId: copyServerScopedEntry(current.lastTokenSubByServerId, sourceId, targetId),
-    machineIdConfirmedByServerByServerId: copyServerScopedEntry(current.machineIdConfirmedByServerByServerId, sourceId, targetId),
-  };
 }
 
 async function maybeAdoptDerivedServerProfileState(params: Readonly<{
@@ -81,13 +60,14 @@ async function maybeAdoptDerivedServerProfileState(params: Readonly<{
     try {
       await updateSettings(async (current) => {
         const cursors = await readAccountChangesCursors();
-        if (hasServerScopedState(current, params.targetServerId)
-          || Object.prototype.hasOwnProperty.call(cursors, params.targetServerId)) return current;
-        await mkdir(targetDir, { recursive: true, mode: 0o700 });
-        await copyFile(sourceKeyPath, targetKeyPath);
-        await chmod(targetKeyPath, 0o600).catch(() => {});
-        await copyServerAccountChangesCursors(candidateId, params.targetServerId);
-        return copyMissingServerScopedState(current, candidateId, params.targetServerId);
+        if (Object.prototype.hasOwnProperty.call(cursors, params.targetServerId) || existsSync(targetKeyPath)) return current;
+        await adoptMachineRegistrationIfMissing(candidateId, params.targetServerId, async () => {
+          await mkdir(targetDir, { recursive: true, mode: 0o700 });
+          await copyFile(sourceKeyPath, targetKeyPath);
+          await chmod(targetKeyPath, 0o600).catch(() => {});
+          await copyServerAccountChangesCursors(candidateId, params.targetServerId);
+        });
+        return current;
       });
       return;
     } catch {

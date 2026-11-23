@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
@@ -13,7 +14,6 @@ import { getAgentCliRuntimeSpec, getAgentCliSetupRecommendedIds } from '@happier
 import { resolveAgentCliManagedCommandPathForRuntime } from '@happier-dev/cli-common/agents';
 import { createAgentInstallJobOwner, type AgentInstallJobOwner } from '@/capabilities/installJobs/agentInstallJobOwner';
 import { configuration, reloadConfiguration } from '@/configuration';
-import { updateSettings } from '@/persistence';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
@@ -37,9 +37,10 @@ describe('Agent CLI compiled install jobs', () => {
     envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
     envScope.patch({ HAPPIER_HOME_DIR: home, PATH: join(home, 'bin') });
     reloadConfiguration();
-    await updateSettings(settings => ({ ...settings,
-      machineIdByServerId: { [configuration.activeServerId]: 'current-machine' },
-      machineIdByServerIdByAccountId: { [configuration.activeServerId]: { account: 'current-machine' } },
+    await updateMachineRegistration(registration => ({
+      ...registration,
+      machineId: 'current-machine',
+      machineIdByAccountId: { ...registration.machineIdByAccountId, account: 'current-machine' },
     }));
   });
   afterEach(async () => {

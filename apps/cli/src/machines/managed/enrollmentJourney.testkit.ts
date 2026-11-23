@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { guestCliExecutable } from './enrollmentPayload.testkit';
 import packageJson from '../../../package.json';
 import { machineProvisionerAuthorFixture } from '../../../../../packages/plugin-sdk/fixtures/authoring-inference/machineProvisioners';
@@ -147,9 +148,10 @@ export async function acquireEnrollmentJourneyGuest<T extends Home>(controller: 
         [configuration.activeServerId]: { ...settings.servers?.[configuration.activeServerId], id: configuration.activeServerId,
             name: 'S0 Home', serverUrl: controller.baseUrl, webappUrl: controller.baseUrl,
             homeConnectionDescriptor: descriptor, createdAt: 1, updatedAt: 1, lastUsedAt: 1 } },
-        machineIdByServerIdByAccountId: { ...settings.machineIdByServerIdByAccountId,
-            [configuration.activeServerId]: { [controller.accountId]: controller.machineId } },
-        lastTokenSubByServerId: { ...settings.lastTokenSubByServerId, [configuration.activeServerId]: controller.accountId },
+    }));
+    await updateMachineRegistration(registration => ({
+        ...registration, accountId: controller.accountId,
+        machineIdByAccountId: { [controller.accountId]: controller.machineId },
     }));
     const credentials = decodeStoredCredentials(encodeStoredCredentials({ token: requester.token, encryption: requester.encryption }));
     const controllerCredentials = decodeStoredCredentials(encodeStoredCredentials({ token: controller.token, encryption: controller.encryption }));

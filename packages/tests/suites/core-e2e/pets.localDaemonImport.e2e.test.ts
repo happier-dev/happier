@@ -1,5 +1,6 @@
+import { waitForDaemonMachineId } from '../../src/testkit/uiE2e/daemonMachineId';
 import { afterAll, describe, expect, it } from 'vitest';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
@@ -79,19 +80,6 @@ function requirePreviewAsset(
     throw new Error(`Pet preview read failed: ${response.errorCode} ${truncate(response.error)}`);
   }
   return response;
-}
-
-async function resolveDaemonMachineIdFromSettings(params: { daemonHomeDir: string }): Promise<string> {
-  const raw = await readFile(resolve(join(params.daemonHomeDir, 'settings.json')), 'utf8').catch(() => '');
-  const parsed = raw ? JSON.parse(raw) as unknown : null;
-  if (!isRecord(parsed)) throw new Error('Missing daemon settings object');
-  const activeServerId = typeof parsed.activeServerId === 'string' ? parsed.activeServerId : '';
-  const machineIdByServerId = isRecord(parsed.machineIdByServerId) ? parsed.machineIdByServerId : null;
-  const machineId = activeServerId && typeof machineIdByServerId?.[activeServerId] === 'string'
-    ? machineIdByServerId[activeServerId]
-    : '';
-  if (!machineId) throw new Error('Missing machineIdByServerId[activeServerId] in seeded settings.json');
-  return machineId;
 }
 
 async function resolveMachineDataEncryptionKeyBase64(params: {
@@ -215,7 +203,7 @@ describe('core e2e: pets local daemon import', () => {
       },
     });
 
-    const machineId = await resolveDaemonMachineIdFromSettings({ daemonHomeDir });
+    const machineId = await waitForDaemonMachineId({ cliHomeDir: daemonHomeDir });
     const machineDekBase64 = await resolveMachineDataEncryptionKeyBase64({
       baseUrl: serverBaseUrl,
       token: auth.token,

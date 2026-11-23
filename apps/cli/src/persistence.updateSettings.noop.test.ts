@@ -31,9 +31,9 @@ describe('unchanged settings updates', () => {
     await removeTempDir(homeDir);
   });
 
-  it('serializes and publishes zero settings files for unchanged ensures, then publishes one real identity change', async () => {
+  it('serializes and publishes zero settings files for unchanged ensures, then publishes one real preference change', async () => {
     const { updateSettings } = await import('./persistence');
-    await updateSettings(current => ({ ...current, machineIdByServerId: { cloud: 'machine-original' } }));
+    await updateSettings(current => ({ ...current, onboardingCompleted: false }));
     const settingsPath = join(homeDir, 'settings.json');
     const content = await readFile(settingsPath, 'utf8');
     const stringify = vi.spyOn(JSON, 'stringify');
@@ -47,10 +47,10 @@ describe('unchanged settings updates', () => {
     expect(settingsSerializations()).toBe(0);
     expect(settingsRenames).toBe(0);
     expect(await readFile(settingsPath, 'utf8')).toBe(content);
-    await updateSettings(current => ({ ...current, machineIdByServerId: { cloud: 'machine-replacement' } }));
+    await updateSettings(current => ({ ...current, onboardingCompleted: true }));
     expect(settingsSerializations()).toBe(1);
     expect(settingsRenames).toBe(1);
-    expect(JSON.parse(await readFile(settingsPath, 'utf8')).machineIdByServerId.cloud).toBe('machine-replacement');
+    expect(JSON.parse(await readFile(settingsPath, 'utf8')).onboardingCompleted).toBe(true);
     expect(existsSync(`${settingsPath}.lock`)).toBe(false);
     expect(existsSync(`${settingsPath}.tmp`)).toBe(false);
   });

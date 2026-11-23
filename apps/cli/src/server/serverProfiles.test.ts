@@ -1,3 +1,4 @@
+import { readMachineRegistration, updateMachineRegistration, type MachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
@@ -725,11 +726,6 @@ describe('server profiles', () => {
         }
         return {
           ...current,
-          machineIdByServerId: {
-            ...(current.machineIdByServerId ?? {}),
-            [stackProfile.id]: 'stack-machine',
-            [userProfile.id]: 'user-machine',
-          },
           servers: {
             ...servers,
             [stackProfile.id]: { ...servers[stackProfile.id], preservedStackField: 'keep-stack' },
@@ -738,6 +734,8 @@ describe('server profiles', () => {
         };
       });
 
+      await updateMachineRegistration(() => ({ machineId: 'stack-machine' }), stackProfile.id);
+      await updateMachineRegistration(() => ({ machineId: 'user-machine' }), userProfile.id);
       const updated = await setServerProfileEndpointsById({
         id: stackProfile.id,
         serverUrl: 'http://127.0.0.1:3010',
@@ -761,10 +759,8 @@ describe('server profiles', () => {
       const raw = JSON.parse(await readFile(join(homeDir, 'settings.json'), 'utf-8'));
       expect(raw.servers[stackProfile.id]).toMatchObject({ preservedStackField: 'keep-stack' });
       expect(raw.servers[userProfile.id]).toMatchObject({ preservedUserField: 'keep-user' });
-      expect(raw.machineIdByServerId).toEqual({
-        [stackProfile.id]: 'stack-machine',
-        [userProfile.id]: 'user-machine',
-      });
+      await expect(readMachineRegistration(stackProfile.id)).resolves.toMatchObject({ machineId: 'stack-machine' });
+      await expect(readMachineRegistration(userProfile.id)).resolves.toMatchObject({ machineId: 'user-machine' });
     });
   });
 
@@ -835,22 +831,19 @@ describe('server profiles', () => {
       expect(existsSync(join(homeDir, 'servers', envDerivedServerId, 'access.key'))).toBe(true);
 
       const adoptedState = {
-        machineIdByServerId: 'machine-adopted',
-        machineIdByServerIdByAccountId: { 'account-adopted': 'machine-adopted' },
-        lastTokenSubByServerId: 'account-adopted',
-        machineIdConfirmedByServerByServerId: true,
-        machineReplacementCandidatesByServerIdByAccountId: { 'account-adopted': { machineId: 'machine-before-adoption', replacementReason: 'reauth', createdAt: 1 } },
-      };
+        machineId: 'machine-adopted',
+        machineIdByAccountId: { 'account-adopted': 'machine-adopted' },
+        accountId: 'account-adopted',
+        confirmedByServer: true,
+        replacementCandidates: { 'account-adopted': { machineId: 'machine-before-adoption', replacementReason: 'reauth', createdAt: 1 } },
+      } satisfies MachineRegistration;
       const targetId = deriveServerIdFromName(name);
       await updateSettings((current) => ({
         ...current,
         ...(name === 'constructor' ? { servers: { ...current.servers, [targetId]: { id: targetId, name, serverUrl: 'http://localhost:33005', localServerUrl: 'http://127.0.0.1:3005', webappUrl: 'http://localhost:33005', createdAt: 0, updatedAt: 0 } } } : {}),
-        machineIdByServerId: { [envDerivedServerId]: adoptedState.machineIdByServerId, ...(destinationHasState ? { [targetId]: 'machine-existing' } : {}) },
-        machineIdByServerIdByAccountId: { [envDerivedServerId]: adoptedState.machineIdByServerIdByAccountId },
-        lastTokenSubByServerId: { [envDerivedServerId]: adoptedState.lastTokenSubByServerId },
-        machineIdConfirmedByServerByServerId: { [envDerivedServerId]: adoptedState.machineIdConfirmedByServerByServerId },
-        machineReplacementCandidatesByServerIdByAccountId: { [envDerivedServerId]: adoptedState.machineReplacementCandidatesByServerIdByAccountId },
       }));
+      await updateMachineRegistration(() => adoptedState, envDerivedServerId);
+      if (destinationHasState) await updateMachineRegistration(() => ({ machineId: 'machine-existing' }), targetId);
 
       await writeAccountChangesCursor('account-adopted', 42);
 
@@ -878,16 +871,13 @@ describe('server profiles', () => {
       expect(created.id).toBe(targetId);
       reloadConfiguration();
       expect(existsSync(join(homeDir, 'servers', created.id, 'access.key'))).toBe(!destinationHasState);
-      const settings = await readSettings();
       const cursors = await readAccountChangesCursors();
       expect(cursors[envDerivedServerId]).toEqual({ 'account-adopted': 42 });
       expect(cursors[created.id]).toEqual(destinationHasState ? undefined : { 'account-adopted': 42 });
-      for (const key of Object.keys(adoptedState) as Array<keyof typeof adoptedState>) {
-        expect(settings[key]?.[created.id]).toEqual(destinationHasState
-          ? (key === 'machineIdByServerId' ? 'machine-existing' : undefined)
-          : adoptedState[key]);
-        expect(settings[key]?.[envDerivedServerId]).toEqual(adoptedState[key]);
-      }
+      await expect(readMachineRegistration(created.id)).resolves.toEqual(
+        destinationHasState ? { machineId: 'machine-existing' } : adoptedState,
+      );
+      await expect(readMachineRegistration(envDerivedServerId)).resolves.toEqual(adoptedState);
     });
   });
 

@@ -32,7 +32,7 @@ import {
 import { createRunDirs } from '../../src/testkit/runDir';
 import { fetchSessionMetadataV2 } from '../../src/testkit/sessionHandoffMetadata';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
-import { waitForDaemonMachineIdFromCliSettings } from '../../src/testkit/uiE2e/daemonMachineId';
+import { waitForDaemonMachineId } from '../../src/testkit/uiE2e/daemonMachineId';
 import { enableEnhancedSessionWizard } from '../../src/testkit/uiE2e/enableEnhancedSessionWizard';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 
@@ -153,7 +153,7 @@ test.describe('ui e2e: Provider model selection', () => {
         ANTHROPIC_AUTH_TOKEN: `native-auth-token-must-not-fallback-${run.runId}`,
       },
     });
-    const machineId = await waitForDaemonMachineIdFromCliSettings({ cliHomeDir, timeoutMs: 120_000 });
+    const machineId = await waitForDaemonMachineId({ cliHomeDir, timeoutMs: 120_000 });
     const accessKey = await readCliAccessKey(cliHomeDir);
     if (!accessKey) throw new Error('expected CLI access key after terminal connect');
     await replaceProviderUiE2eSettings({

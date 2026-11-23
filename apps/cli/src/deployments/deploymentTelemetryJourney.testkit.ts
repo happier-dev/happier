@@ -1,3 +1,4 @@
+import { readMachineRegistration, updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { promisify } from 'node:util';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -327,28 +328,30 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                     () => installationBoundary.getStore() ?? readS0Installation(home));
                 const credentials = readS0ControllerCredentials(home);
                 const previousSettings = await readSettings();
+                const previousRegistration = await readMachineRegistration();
                 cleanup.push(async () => { await updateSettings(settings => {
                     const { [configuration.activeServerId]: _profile, ...servers } = settings.servers ?? {};
-                    const { [home.accountId]: _machine, ...machines } = settings.machineIdByServerIdByAccountId?.[configuration.activeServerId] ?? {};
-                    const { [configuration.activeServerId]: _account, ...accounts } = settings.lastTokenSubByServerId ?? {};
                     return { ...settings,
                         servers: { ...servers, ...(previousSettings.servers?.[configuration.activeServerId]
                             ? { [configuration.activeServerId]: previousSettings.servers[configuration.activeServerId] } : {}) },
-                        machineIdByServerIdByAccountId: { ...settings.machineIdByServerIdByAccountId,
-                            [configuration.activeServerId]: machines },
-                        lastTokenSubByServerId: { ...accounts, ...(previousSettings.lastTokenSubByServerId?.[configuration.activeServerId]
-                            ? { [configuration.activeServerId]: previousSettings.lastTokenSubByServerId[configuration.activeServerId] } : {}) },
                     };
                 }); });
+                cleanup.push(async () => {
+                    await updateMachineRegistration(registration => {
+                        const { [home.accountId]: _machine, ...machineIds } = registration.machineIdByAccountId ?? {};
+                        const previousMachineId = previousRegistration.machineIdByAccountId?.[home.accountId];
+                        return { ...registration, accountId: previousRegistration.accountId,
+                            machineIdByAccountId: { ...machineIds, ...(previousMachineId ? { [home.accountId]: previousMachineId } : {}) } };
+                    });
+                });
                 await adoptServerProfileHomeConnectionDescriptor({
                     descriptor: { v: 1, homeServerIdentityId: home.serverId, canonicalServerUrl: home.baseUrl,
                         revision: 1, endpoints: [{ kind: 'https', url: home.baseUrl }] },
                     expectedProfileId: configuration.activeServerId, createIfMissing: true, observation: 'exact',
                 });
-                await updateSettings(settings => ({ ...settings,
-                    machineIdByServerIdByAccountId: { ...settings.machineIdByServerIdByAccountId,
-                        [configuration.activeServerId]: { ...settings.machineIdByServerIdByAccountId?.[configuration.activeServerId], [home.accountId]: home.machineId } },
-                    lastTokenSubByServerId: { ...settings.lastTokenSubByServerId, [configuration.activeServerId]: home.accountId },
+                await updateMachineRegistration(registration => ({
+                    ...registration, accountId: home.accountId,
+                    machineIdByAccountId: { ...registration.machineIdByAccountId, [home.accountId]: home.machineId },
                 }));
                 cleanup.push(async () => { lifetime.abort(); });
                 const runtime = createOwnServerDeploymentRuntimeForHost({ credentials,

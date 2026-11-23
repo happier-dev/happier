@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { afterAll, expect, it, vi } from 'vitest';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -143,8 +144,11 @@ it.each(['backup', 'backup receiver', 'Project setup', 'Project removal', 'Proje
     let fixture: Awaited<ReturnType<typeof createAuthoredAdmittedPluginRuntimeFixture>> | undefined;
     let requester: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> = null;
     try {
-        await updateSettings(settings => ({ ...settings, activeServerId: configuration.activeServerId,
-            machineIdByServerId: { [configuration.activeServerId]: 'machine' } }));
+        await updateSettings(settings => ({ ...settings, activeServerId: configuration.activeServerId }));
+        await updateMachineRegistration(registration => ({
+          ...registration,
+          machineId: 'machine',
+        }));
         fixture = await createAuthoredAdmittedPluginRuntimeFixture({ happyHomeDir: isolated.home,
             controller: pluginReloadController, coldStart: true,
             plugins: [{ manifest: plugin.manifest, replaceExisting: true, files: { 'daemon.mjs':

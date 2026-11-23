@@ -1,3 +1,4 @@
+import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import type { ResolvedSessionTransport } from '../actions/cliActionDeps/types';
 import type { CliActionDepsParams, CurrentMachineControlIdentity } from '../actions/cliActionDeps/types';
 import { homedir } from 'node:os';
@@ -11,7 +12,6 @@ import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import type { getPreferredHostName } from '@/daemon/machine/metadata';
-import type { readSettings } from '@/persistence';
 import { createCliBoundSessionMetadataReader } from '../actions/resolveCliActionCallerSession';
 import { prepareInstalledWorkflowActionAuthorization } from '@/api/installedWorkflowActionAuthorization';
 import type { requestInactiveSessionResume } from '@/session/services/requestInactiveSessionResume';
@@ -88,8 +88,7 @@ export function createCliSessionActionTransport(
     currentMachineControlIdentityPromise ??= (async () => {
       let machineId: string | null = null;
       try {
-        const { readSettings } = await import("@/persistence");
-        machineId = normalizeStringValue((await readSettings()).machineId);
+        machineId = await readActiveMachineId();
       } catch {
         machineId = null;
       }

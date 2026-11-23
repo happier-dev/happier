@@ -1,3 +1,4 @@
+import { readMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm, writeFile, readFile, symlink, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -17,7 +18,7 @@ vi.mock('node:readline', async () => {
 });
 
 import { reloadConfiguration } from '@/configuration';
-import { readAccountChangesCursors, readSettings } from '@/persistence';
+import { readAccountChangesCursors } from '@/persistence';
 import { spawnStoppableHttpDaemon, withConfiguredDaemonTestHome, writeDaemonStateFixture } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { reserveEphemeralPort, waitForHttpReady } from '@/testkit/http/portUtils';
 import { computePromptBundleDigestV1 } from '@happier-dev/protocol/prompts/library/promptLibraryDigests';
@@ -156,9 +157,8 @@ describe('happier auth logout', () => {
       expect(existsSync(join(home, 'servers', 'cloud', 'access.key'))).toBe(false);
       expect(existsSync(join(home, 'servers', 'company', 'access.key'))).toBe(true);
 
-      const next = await readSettings();
-      expect(next.machineIdByServerId?.cloud).toBeUndefined();
-      expect(next.machineIdByServerId?.company).toBe('mid_company');
+      await expect(readMachineRegistration('cloud')).resolves.toEqual({});
+      await expect(readMachineRegistration('company')).resolves.toMatchObject({ machineId: 'mid_company' });
       const cursors = await readAccountChangesCursors();
       expect(cursors.cloud).toBeUndefined();
       expect(cursors.company?.a).toBe(2);

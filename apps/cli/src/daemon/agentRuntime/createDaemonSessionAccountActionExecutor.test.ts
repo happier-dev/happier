@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import axios from 'axios';
 import { stubUndiciFetch } from '@/testkit/http/stubUndiciFetch';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
@@ -439,9 +440,10 @@ describe('daemon Session Account authority', () => {
     const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'comment-owner' })).toString('base64url')}.signature`;
     const credentials = { token, encryption: null };
     const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(63));
-    await updateSettings(settings => ({ ...settings, machineIdByServerId: {
-      ...settings.machineIdByServerId, [configuration.activeServerId]: 'comment-machine',
-    } }));
+    await updateMachineRegistration(registration => ({
+      ...registration,
+      machineId: 'comment-machine',
+    }));
     vi.spyOn(installationStore, 'readOrCreateInstallationIdentity').mockResolvedValue({ version: 1,
       installationId: 'comment-installation', createdAt: 1, publicKey: Buffer.from(keys.publicKey).toString('base64url'),
       privateKey: Buffer.from(keys.secretKey).toString('base64url') });

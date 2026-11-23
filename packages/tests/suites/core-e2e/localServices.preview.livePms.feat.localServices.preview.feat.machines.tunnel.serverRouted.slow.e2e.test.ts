@@ -27,7 +27,7 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { createRunDirs } from '../../src/testkit/runDir';
 import { createSession } from '../../src/testkit/sessions';
 import { waitFor } from '../../src/testkit/timing';
-import { waitForDaemonMachineIdFromCliSettings } from '../../src/testkit/uiE2e/daemonMachineId';
+import { waitForDaemonMachineId } from '../../src/testkit/uiE2e/daemonMachineId';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -411,7 +411,7 @@ describe('core e2e: local service preview over production PMS relay', () => {
       state: 'listening',
     });
 
-    const machineId = await waitForDaemonMachineIdFromCliSettings({
+    const machineId = await waitForDaemonMachineId({
       cliHomeDir: daemonHomeDir,
       timeoutMs: 120_000,
     });

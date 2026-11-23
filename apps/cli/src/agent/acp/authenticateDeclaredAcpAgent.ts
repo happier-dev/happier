@@ -10,7 +10,7 @@ import {
   getRuntimeInstallableAdapter,
   type RuntimeInstallableAdapter,
 } from '@/packagedRuntime/installables/registry';
-import { readSettings } from '@/persistence';
+import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { resolveExecutableManagedDependenciesRegistry } from '@/plugins/projection/registry/managedDependencyExecutables';
 import type {
   ResolvedContributionRegistry,
@@ -24,7 +24,7 @@ type Dependencies = Readonly<{
     key: Parameters<typeof getRuntimeInstallableAdapter>[0],
     options: Readonly<{ installablesRegistry: InstallablesRegistry }>,
   ) => Promise<RuntimeInstallableAdapter>;
-  readSettings: typeof readSettings;
+  readActiveMachineId: typeof readActiveMachineId;
   readAccountSettings: () => AccountSettings | null;
   resolveInstallablesRegistry: typeof resolveExecutableManagedDependenciesRegistry;
   authenticateAcpAgent: typeof authenticateAcpAgent;
@@ -68,7 +68,7 @@ export async function authenticateDeclaredAcpAgent(params: Readonly<{
   const dependencies: Dependencies = {
     ensureRuntimeInstallablesForLaunch,
     getRuntimeInstallableAdapter,
-    readSettings,
+    readActiveMachineId,
     readAccountSettings: () => getActiveAccountSettingsSnapshot()?.settings ?? null,
     resolveInstallablesRegistry: resolveExecutableManagedDependenciesRegistry,
     authenticateAcpAgent,
@@ -102,11 +102,11 @@ export async function authenticateDeclaredAcpAgent(params: Readonly<{
     throw new Error(`ACP managed dependency '${dependencyId}' is unavailable on this host`);
   }
 
-  const settings = await dependencies.readSettings();
+  const machineId = await dependencies.readActiveMachineId();
   const ensured = await dependencies.ensureRuntimeInstallablesForLaunch({
     installableKeys: [descriptor.key],
     settings: dependencies.readAccountSettings(),
-    machineId: settings.machineId ?? '',
+    machineId: machineId ?? '',
     env: params.env,
     installablesRegistry,
   });

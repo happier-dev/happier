@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -82,19 +81,13 @@ async function targetsStackLocalMachine({ daemonContext, env, childArgs }) {
   if (!serverId || (env.HAPPIER_ACTIVE_SERVER_ID && env.HAPPIER_ACTIVE_SERVER_ID !== serverId)
     || (serverOption && serverOption !== serverId)
     || (env.HAPPIER_HOME_DIR && resolve(env.HAPPIER_HOME_DIR) !== resolve(daemonContext.cliHomeDir))) return false;
-  // This reads the CLI's installed identity, not Machine availability or Action placement.
-  // Account-scoped registrations must never fall back to another Account's legacy alias.
-  let settings;
-  try {
-    settings = JSON.parse(await readFile(join(daemonContext.cliHomeDir, 'settings.json'), 'utf8'));
-  } catch {
-    return false;
-  }
-  if (!settings || typeof settings !== 'object') return false;
-  const scoped = settings.machineIdByServerIdByAccountId?.[serverId];
-  const accountId = settings.lastTokenSubByServerId?.[serverId];
-  const machineId = scoped && typeof scoped === 'object'
-    ? scoped[accountId] : settings.machineIdByServerId?.[serverId] ?? settings.machineId;
-  if (typeof machineId !== 'string' || !machineId.trim()) return false;
-  return !machineOption || machineOption.trim() === machineId.trim();
+  // Installed identity determines whether this stack can start the local daemon.
+  const { readReleasedMachineRegistrations, readStoredMachineRegistration, resolveMachineRegistrationPath,
+    resolveRegisteredMachineId } = await import('@happier-dev/cli-common/firstPartyRuntime/cliMachineRegistration');
+  const path = resolveMachineRegistrationPath(join(daemonContext.cliHomeDir, 'servers'), serverId);
+  const stored = await readStoredMachineRegistration(path);
+  // Stack can preflight before the installed CLI first upgrades a released Home.
+  const registration = stored ?? (await readReleasedMachineRegistrations(join(daemonContext.cliHomeDir, 'settings.json'))).get(serverId);
+  const machineId = registration && resolveRegisteredMachineId(registration);
+  return Boolean(machineId && (!machineOption || machineOption.trim() === machineId));
 }

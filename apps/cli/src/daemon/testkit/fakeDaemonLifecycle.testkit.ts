@@ -1,11 +1,13 @@
+import { resolveMachineRegistrationPath } from '@happier-dev/cli-common/firstPartyRuntime/cliMachineRegistration';
 import type { ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
 import { mkdirSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { configuration, reloadConfiguration } from '@/configuration'
 import { resolveDaemonStateBasenameForRing } from '@/cli/runtime/publicReleaseChannel'
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore'
 import { createEnvKeyScope } from '@/testkit/env/envScope'
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir'
 import {
@@ -34,26 +36,6 @@ const baselineServers = {
   },
 }
 
-export function createDaemonSettingsFixture(options: {
-  activeServerId?: string
-  servers?: Readonly<Record<string, unknown>>
-  machineIdByServerId?: Readonly<Record<string, string | undefined>>
-  machineIdByServerIdByAccountId?: Readonly<Record<string, Record<string, string | undefined> | undefined>>
-  machineIdConfirmedByServerByServerId?: Readonly<Record<string, boolean | undefined>>
-  lastTokenSubByServerId?: Readonly<Record<string, string | undefined>>
-} = {}) {
-  return {
-    schemaVersion: 5,
-    onboardingCompleted: false,
-    activeServerId: options.activeServerId ?? 'cloud',
-    servers: options.servers ?? baselineServers,
-    machineIdByServerId: options.machineIdByServerId ?? {},
-    machineIdByServerIdByAccountId: options.machineIdByServerIdByAccountId ?? {},
-    machineIdConfirmedByServerByServerId: options.machineIdConfirmedByServerByServerId ?? {},
-    lastTokenSubByServerId: options.lastTokenSubByServerId ?? {},
-  }
-}
-
 export async function writeDaemonSettingsFixture(homeDir: string, options: {
   activeServerId?: string
   servers?: Readonly<Record<string, unknown>>
@@ -62,11 +44,28 @@ export async function writeDaemonSettingsFixture(homeDir: string, options: {
   machineIdConfirmedByServerByServerId?: Readonly<Record<string, boolean | undefined>>
   lastTokenSubByServerId?: Readonly<Record<string, string | undefined>>
 } = {}): Promise<void> {
-  await writeFile(
-    join(homeDir, 'settings.json'),
-    JSON.stringify(createDaemonSettingsFixture(options), null, 2),
-    'utf-8',
-  )
+  const serverIds = new Set([
+    ...Object.keys(options.machineIdByServerId ?? {}),
+    ...Object.keys(options.machineIdByServerIdByAccountId ?? {}),
+    ...Object.keys(options.machineIdConfirmedByServerByServerId ?? {}),
+    ...Object.keys(options.lastTokenSubByServerId ?? {}),
+  ]);
+  for (const serverId of serverIds) {
+    const path = resolveMachineRegistrationPath(join(homeDir, 'servers'), serverId);
+    mkdirSync(dirname(path), { recursive: true });
+    await writeFile(path, JSON.stringify({
+      machineId: options.machineIdByServerId?.[serverId],
+      machineIdByAccountId: options.machineIdByServerIdByAccountId?.[serverId],
+      confirmedByServer: options.machineIdConfirmedByServerByServerId?.[serverId],
+      accountId: options.lastTokenSubByServerId?.[serverId],
+    }), 'utf8');
+  }
+  await writeFile(join(homeDir, 'settings.json'), JSON.stringify({
+    schemaVersion: 6,
+    onboardingCompleted: false,
+    activeServerId: options.activeServerId ?? 'cloud',
+    servers: options.servers ?? baselineServers,
+  }, null, 2), 'utf8');
 }
 
 export async function writeDaemonStateFixture(homeDir: string, serverId: string, state: {
@@ -102,6 +101,7 @@ export async function withConfiguredDaemonTestHome<T>(
   options: {
     prefix: string
     env?: Readonly<Record<string, string | undefined>>
+    machineId?: string
   },
   fn: (context: { homeDir: string }) => Promise<T>,
 ): Promise<T> {
@@ -134,6 +134,7 @@ export async function withConfiguredDaemonTestHome<T>(
       ...(options.env ?? {}),
     })
     reloadConfiguration()
+    if (options.machineId) await updateMachineRegistration(() => ({ machineId: options.machineId }))
     return await fn({ homeDir })
   } finally {
     envScope.restore()

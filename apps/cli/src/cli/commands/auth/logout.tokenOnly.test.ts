@@ -1,3 +1,4 @@
+import { readMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -56,6 +57,7 @@ vi.mock('@/configuration', () => ({
   configuration: {
     activeServerId: 'plain-server',
     get happyHomeDir() { return settingsFixture.homeDir; },
+    get serversDir() { return join(settingsFixture.homeDir, 'servers'); },
     get settingsFile() { return join(settingsFixture.homeDir, 'settings.json'); },
     get privateKeyFile() { return join(settingsFixture.homeDir, 'access.key'); },
   },
@@ -71,7 +73,7 @@ vi.mock('@/daemon/multiDaemon', () => ({
 }));
 
 import { handleAuthLogout } from './logout';
-import { readAccountChangesCursors, readSettings, type StoredCredentials } from '@/persistence';
+import { readAccountChangesCursors, type StoredCredentials } from '@/persistence';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import {
   getActiveAccountSettingsSnapshot,
@@ -138,7 +140,7 @@ describe('happier auth logout token-only authentication', () => {
       expect(readStoredCredentialsMock).toHaveBeenCalledTimes(1);
       expect(stopDaemonMock).toHaveBeenCalledTimes(1);
       expect(clearCredentialsMock).toHaveBeenCalledTimes(1);
-      expect((await readSettings()).machineIdByServerId?.['plain-server']).toBeUndefined();
+      await expect(readMachineRegistration('plain-server')).resolves.toEqual({});
       expect(await readAccountChangesCursors()).toEqual({ other: { account: 9 } });
       expect(rmSyncMock).not.toHaveBeenCalled();
       expect(logSpy.mock.calls.flat().join(' ')).not.toContain('Not currently authenticated');

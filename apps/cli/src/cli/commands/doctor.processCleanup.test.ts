@@ -16,7 +16,6 @@ vi.mock('@/daemon/controlClient', () => ({
 }));
 vi.mock('@/terminal/prompts/promptConfirmYesNo', () => ({ promptConfirmYesNo: confirm }));
 vi.mock('@/terminal/prompts/promptInput', () => ({ isInteractiveTerminal: () => true }));
-vi.mock('@/persistence', () => ({ readSettings: async () => ({ machineId: 'machine-1' }) }));
 
 import { handleDoctorCliCommand } from './doctor';
 

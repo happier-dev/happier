@@ -3,17 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('axios');
 
-import { CliReloginRequiredError, SUPPORTED_SCHEMA_VERSION, type Settings } from '@/persistence';
+import { CliReloginRequiredError } from '@/persistence';
 
 import { resolveActiveServerAuthReadiness } from './resolveActiveServerAuthReadiness';
-
-function createSettings(overrides: Partial<Settings> = {}): Settings {
-  return {
-    schemaVersion: SUPPORTED_SCHEMA_VERSION,
-    onboardingCompleted: false,
-    ...overrides,
-  };
-}
 
 describe('resolveActiveServerAuthReadiness', () => {
   it('checks Account currentness when booting from a retained 0.2 secret', async () => {
@@ -31,7 +23,7 @@ describe('resolveActiveServerAuthReadiness', () => {
         encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
         credentialProvenance: 'stored_session',
       }),
-      readSettingsFn: async () => createSettings(),
+      readMachineRegistrationFn: async () => ({}),
       validateTokenFn: async () => ({ state: 'valid', httpStatus: 200 }),
     });
     expect(readiness.authenticated).toBe(true);
@@ -46,9 +38,9 @@ describe('resolveActiveServerAuthReadiness', () => {
         encryption: null,
         credentialProvenance: 'stored_session',
       }),
-      readSettingsFn: async () => createSettings({
+      readMachineRegistrationFn: async () => ({
         machineId: 'machine-local-only',
-        machineIdConfirmedByServer: false,
+        confirmedByServer: false,
       }),
       validateTokenFn: async () => ({ state: 'valid', httpStatus: 200, accountLabel: 'alice' }),
     });
@@ -70,9 +62,9 @@ describe('resolveActiveServerAuthReadiness', () => {
         encryption: null,
         credentialProvenance: 'stored_session',
       }),
-      readSettingsFn: async () => createSettings({
+      readMachineRegistrationFn: async () => ({
         machineId: 'machine-confirmed',
-        machineIdConfirmedByServer: true,
+        confirmedByServer: true,
       }),
       validateTokenFn: async () => ({
         state: 'unknown',
@@ -102,7 +94,7 @@ describe('resolveActiveServerAuthReadiness', () => {
         encryption: null,
         credentialProvenance: 'stored_session',
       }),
-      readSettingsFn: async () => createSettings({ machineId: undefined }),
+      readMachineRegistrationFn: async () => ({ machineId: undefined }),
       signal: caller.signal,
       validateTokenFn: async (_token, signal) => {
         if (signal) observed.push(signal);
@@ -116,7 +108,7 @@ describe('resolveActiveServerAuthReadiness', () => {
   it('distinguishes missing, rejected, and server-confirmed readiness facts', async () => {
     const missing = await resolveActiveServerAuthReadiness({
       readCredentialsFn: async () => null,
-      readSettingsFn: async () => createSettings(),
+      readMachineRegistrationFn: async () => ({}),
     });
     expect(missing).toMatchObject({
       credentialState: 'missing',
@@ -131,9 +123,9 @@ describe('resolveActiveServerAuthReadiness', () => {
         encryption: null,
         credentialProvenance: 'stored_session',
       }),
-      readSettingsFn: async () => createSettings({
+      readMachineRegistrationFn: async () => ({
         machineId: 'machine-confirmed',
-        machineIdConfirmedByServer: true,
+        confirmedByServer: true,
       }),
       validateTokenFn: async () => ({
         state: 'invalid',
@@ -154,7 +146,7 @@ describe('resolveActiveServerAuthReadiness', () => {
     const validateTokenFn = vi.fn();
     const readiness = await resolveActiveServerAuthReadiness({
       readCredentialsFn: async () => { throw new CliReloginRequiredError(); },
-      readSettingsFn: async () => createSettings(),
+      readMachineRegistrationFn: async () => ({}),
       validateTokenFn,
     });
 

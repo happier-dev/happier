@@ -1,14 +1,7 @@
 import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
 
-const SERVER_ID_SAFE_RE = /^[A-Za-z0-9._-]{1,64}$/;
-
-export function isServerIdFilesystemSafe(raw: string): boolean {
-  const value = String(raw ?? '').trim();
-  if (!value) return false;
-  if (value === '.' || value === '..') return false;
-  if (value.includes('/') || value.includes('\\')) return false;
-  return SERVER_ID_SAFE_RE.test(value);
-}
+import { isServerIdFilesystemSafe } from '@happier-dev/cli-common/firstPartyRuntime/cliMachineRegistration';
+export { isServerIdFilesystemSafe };
 
 export function sanitizeServerIdForFilesystem(raw: string, fallback = 'cloud'): string {
   const value = String(raw ?? '').trim();

@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFile, rm, writeFile } from 'node:fs/promises';
@@ -11,7 +12,6 @@ import { applyInverseEdits } from '@happier-dev/protocol/diff/hunks';
 import { WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES } from '@happier-dev/protocol/machines/workspaceFiles';
 import { markRpcRequestDisposition } from '@happier-dev/sync-client';
 import { configuration, reloadConfiguration } from '@/configuration';
-import { updateSettings } from '@/persistence';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -74,7 +74,10 @@ describe('Session comparison discard Machine placement', () => {
       const machineId = 'local-review-machine';
       let admitted: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
       try {
-        await updateSettings(settings => ({ ...settings, machineIdByServerId: { 'discard-test-home': machineId } }));
+        await updateMachineRegistration(registration => ({
+          ...registration,
+          machineId,
+        }), 'discard-test-home');
         admitted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: home, controller: pluginReloadController,
           runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
         // Each control character takes six JSON bytes on either side of the

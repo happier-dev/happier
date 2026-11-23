@@ -1,61 +1,17 @@
-import { readFile } from 'node:fs/promises';
+import { readDaemonMachineIds } from '../../uiE2e/daemonMachineId';
 
 import { createLegacyRpcClient, type RpcSocket } from '../../syntheticAgent/rpcClient';
 import { sleep } from '../../timing';
 import { withTimeoutMs } from '../../timing/withTimeout';
 
-function nonEmptyTrimmedString(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-export function resolveMachineIdCandidatesFromSettings(settingsLike: unknown): string[] {
-  if (!settingsLike || typeof settingsLike !== 'object') return [];
-  const settings = settingsLike as Record<string, unknown>;
-  const out: string[] = [];
-
-  const push = (value: unknown) => {
-    const next = nonEmptyTrimmedString(value);
-    if (!next) return;
-    if (!out.includes(next)) out.push(next);
-  };
-
-  push(settings.machineId);
-
-  const activeServerId = nonEmptyTrimmedString(settings.activeServerId);
-  const byServerRaw = settings.machineIdByServerId;
-  const byServer = byServerRaw && typeof byServerRaw === 'object' && !Array.isArray(byServerRaw)
-    ? (byServerRaw as Record<string, unknown>)
-    : null;
-  if (activeServerId && byServer) {
-    push(byServer[activeServerId]);
-  }
-  if (byServer) {
-    for (const value of Object.values(byServer)) {
-      push(value);
-    }
-  }
-
-  return out;
-}
-
-export async function resolveMachineIdsFromSettings(params: {
+export async function waitForDaemonMachineIds(params: {
   settingsPath: string;
   timeoutMs: number;
 }): Promise<string[]> {
   const deadline = Date.now() + params.timeoutMs;
   while (Date.now() < deadline) {
-    const raw = await readFile(params.settingsPath, 'utf8').catch(() => '');
-    if (raw) {
-      try {
-        const json = JSON.parse(raw);
-        const ids = resolveMachineIdCandidatesFromSettings(json);
-        if (ids.length > 0) return ids;
-      } catch {
-        // ignore and retry
-      }
-    }
+    const ids = await readDaemonMachineIds(params.settingsPath).catch(() => []);
+    if (ids.length > 0) return ids;
     await sleep(100);
   }
   return [];

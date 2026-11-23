@@ -121,7 +121,7 @@ describe('authenticateDeclaredAcpAgent', () => {
       onStderr: () => {},
     }, {
       resolveInstallablesRegistry: () => installablesRegistry as never,
-      readSettings: async () => ({ machineId: 'machine-1' }) as never,
+      readActiveMachineId: async () => 'machine-1',
       readAccountSettings: () => ({ featureToggles: {} }) as never,
       ensureRuntimeInstallablesForLaunch,
       getRuntimeInstallableAdapter: async () => ({ resolveLaunchCommand }) as never,

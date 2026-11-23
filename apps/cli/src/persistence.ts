@@ -38,9 +38,8 @@ import { ProcessBirthWitnessSchema } from './processes/census/decodeHelperCensus
 import type { ProcessBirthWitness } from './daemon/processIdentity';
 import { decodeBase64, encodeBase64 } from './api/encryption';
 import { logger } from './ui/logger';
-import { resolveMachineIdForServerFromSettings } from './daemon/resolveMachineIdForServerFromSettings';
+import { ensureReleasedMachineRegistrationsImported, hasReleasedMachineRegistrationKeys, omitReleasedMachineRegistrationKeys, readMachineRegistration } from './daemon/machineIdentity/machineRegistrationStore';
 import { cleanupAtomicWriteTempFiles, cleanupAtomicWriteTempFilesSync, writeJsonAtomicSync } from './utils/fs/writeJsonAtomicSync';
-import type { MachineReplacementReason } from '@happier-dev/protocol';
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
 import { reclaimJsonOwnerFileLockSnapshot, withJsonOwnerFileLock } from './utils/fs/jsonOwnerFileLock';
 import { readProcessRunState } from './daemon/processRunState';
@@ -157,25 +156,6 @@ export interface Settings {
     /** Whether the descriptor is exact or advisory; written by the server profile owner. */
     homeConnectionDescriptorAuthority?: import('@/server/serverProfiles').ServerProfile['homeConnectionDescriptorAuthority']
   }>
-  /**
-   * Per-server machine IDs (schema v5+).
-   */
-  machineIdByServerId?: Record<string, string | undefined>
-  /**
-   * Per-server, per-account machine IDs (schema v6+; best-effort backfill).
-   *
-   * This prevents a single stack home from reusing a machine id that belongs to a different account
-   * when credentials are swapped (e.g. due to credential repair/migration or manual re-auth).
-   */
-  machineIdByServerIdByAccountId?: Record<string, Record<string, string | undefined> | undefined>
-  /**
-   * Last observed JWT `sub` (account id) per server id (schema v6+; best-effort).
-   *
-   * Used to bind machineId selection to an account even when call sites only have Settings.
-   */
-  lastTokenSubByServerId?: Record<string, string | undefined>
-  machineIdConfirmedByServerByServerId?: Record<string, boolean | undefined>
-  machineReplacementCandidatesByServerIdByAccountId?: Record<string, Record<string, MachineReplacementCandidate> | undefined>
   daemonAutoStartWhenRunningHappy?: boolean
   /**
    * Last applied Machine role set per server and Machine (stored `rolesV1.active`; absent = every core role).
@@ -188,25 +168,12 @@ export interface Settings {
   plugins?: {
     devWatch?: boolean
   }
-  // ---- Derived fields (not persisted in v5+) ----
-  /**
-   * Machine id for the active server (derived from machineIdByServerId).
-   * Kept for backwards compatibility with older call sites.
-   */
-  machineId?: string
-  machineIdConfirmedByServer?: boolean
   /**
    * Device-local daemon memory settings (schema v5+; stored as an opaque JSON payload).
    * Parsed/normalized by `settings/memorySettings.ts`.
    */
   memory?: unknown
 }
-
-export type MachineReplacementCandidate = Readonly<{
-  machineId: string
-  replacementReason: MachineReplacementReason
-  createdAt: number
-}>
 
 const defaultHome = resolveBuildDefaultProfile().home;
 const defaultHomeId = defaultHome ? deriveServerIdFromUrl(defaultHome.url) : '';
@@ -224,11 +191,6 @@ const defaultSettings: Settings = {
       updatedAt: 0,
     },
   } : {},
-  machineIdByServerId: {},
-  machineIdByServerIdByAccountId: {},
-  lastTokenSubByServerId: {},
-  machineIdConfirmedByServerByServerId: {},
-  machineReplacementCandidatesByServerIdByAccountId: {},
   plugins: {
     devWatch: true,
   },
@@ -275,20 +237,6 @@ function migrateSettings(raw: any, fromVersion: number): any {
       },
     };
 
-    if (typeof migrated.machineId === 'string' && migrated.machineId.trim()) {
-      migrated.machineIdByServerId = { [cloudId]: migrated.machineId.trim() };
-    } else {
-      migrated.machineIdByServerId = {};
-    }
-    if (typeof migrated.machineIdConfirmedByServer === 'boolean') {
-      migrated.machineIdConfirmedByServerByServerId = { [cloudId]: migrated.machineIdConfirmedByServer };
-    } else {
-      migrated.machineIdConfirmedByServerByServerId = {};
-    }
-
-    // Remove legacy single-server fields from disk representation.
-    if ('machineId' in migrated) delete migrated.machineId;
-    if ('machineIdConfirmedByServer' in migrated) delete migrated.machineIdConfirmedByServer;
     if ('lastChangesCursorByAccountId' in migrated) delete migrated.lastChangesCursorByAccountId;
 
     migrated.schemaVersion = 5;
@@ -475,29 +423,7 @@ async function readSettingsFromDisk(): Promise<{ settings: Settings; needsMigrat
   // Merge with defaults to ensure all required fields exist
   const merged: Settings = serializeSettingsForDisk({ ...defaultSettings, ...migrated });
 
-  // Derive backwards-compat fields for the *effective* active server (schema v5+).
-  // The configuration layer resolves env overrides (HAPPIER_SERVER_URL/HAPPIER_WEBAPP_URL) into
-  // a deterministic server id; use that id so per-server machine ids work in hermetic
-  // test homes even if settings.json.activeServerId is left at "cloud".
-  const activeServerId = sanitizeServerIdForFilesystem(
-    configuration.activeServerId ?? merged.activeServerId ?? 'cloud',
-    'cloud',
-  );
-  const lastTokenSub =
-    merged.lastTokenSubByServerId && typeof merged.lastTokenSubByServerId === 'object'
-      ? merged.lastTokenSubByServerId[activeServerId]
-      : undefined;
-  const resolvedMachineId = resolveMachineIdForServerFromSettings(
-    merged,
-    activeServerId,
-    typeof lastTokenSub === 'string' && lastTokenSub.trim() ? lastTokenSub.trim() : null,
-  );
-  if (resolvedMachineId) merged.machineId = resolvedMachineId;
-  if (merged.machineIdConfirmedByServerByServerId && typeof merged.machineIdConfirmedByServerByServerId === 'object') {
-    const v = merged.machineIdConfirmedByServerByServerId[activeServerId];
-    if (typeof v === 'boolean') merged.machineIdConfirmedByServer = v;
-  }
-  return { settings: merged, needsMigration: schemaVersion < SUPPORTED_SCHEMA_VERSION };
+  return { settings: merged, needsMigration: schemaVersion < SUPPORTED_SCHEMA_VERSION || hasReleasedMachineRegistrationKeys(raw) };
 }
 
 export async function readSettings(): Promise<Settings> {
@@ -510,20 +436,11 @@ export async function readSettings(): Promise<Settings> {
 }
 
 function serializeSettingsForDisk(settings: Settings): Settings {
-  const schemaVersion = settings.schemaVersion ?? SUPPORTED_SCHEMA_VERSION;
   const { lastChangesCursorByAccountId: _legacyCursor,
-    lastChangesCursorByServerIdByAccountId: _legacyScopedCursors, ...withoutCursors } = settings as Settings & {
+    lastChangesCursorByServerIdByAccountId: _legacyScopedCursors, ...rest } = omitReleasedMachineRegistrationKeys(settings) as Settings & {
       lastChangesCursorByAccountId?: unknown;
       lastChangesCursorByServerIdByAccountId?: unknown;
     };
-  if (schemaVersion < 5) return withoutCursors;
-
-  // Strip derived/legacy fields so we don't regress back to single-server semantics.
-  const {
-    machineId: _machineId,
-    machineIdConfirmedByServer: _machineIdConfirmedByServer,
-    ...rest
-  } = withoutCursors;
   return {
     ...rest,
     ...(rest.servers ? { servers: Object.fromEntries(Object.entries(rest.servers).map(([id, profile]) => {
@@ -539,6 +456,7 @@ export async function writeSettings(settings: Settings): Promise<void> {
   // Import predecessor state before a settings publication can retire its source.
   await ensureAccountChangesCursorsImported();
   await ensureServerProfileObservationsImported();
+  await ensureReleasedMachineRegistrationsImported();
 
   // Ensure schema version is set before writing
   const settingsWithVersion = serializeSettingsForDisk({
@@ -670,6 +588,8 @@ export async function updateSettings(
     const { settings: current, needsMigration } = await readSettingsFromDisk();
     await ensureAccountChangesCursorsImported();
     await ensureServerProfileObservationsImported();
+
+    if (needsMigration) await ensureReleasedMachineRegistrationsImported();
 
     // Apply update
     const updated = await updater(current);
@@ -1097,7 +1017,7 @@ export async function prepareCredentialsTokenOnlyForServerId(
   }
   const previousAccountId = previous.token === undefined
     ? options.previousAccountId !== undefined ? options.previousAccountId
-      : (await readSettings()).lastTokenSubByServerId?.[serverId]
+      : (await readMachineRegistration(serverId)).accountId
     : decodeJwtPayload(previous.token)?.sub;
   if (typeof accountId !== 'string' || !accountId.trim()
     || typeof previousAccountId !== 'string' || !previousAccountId.trim()) {
@@ -1171,56 +1091,6 @@ export async function clearCredentials(): Promise<void> {
   if (configuration.activeServerId === 'cloud' && existsSync(configuration.legacyPrivateKeyFile)) {
     await unlink(configuration.legacyPrivateKeyFile).catch(() => {});
   }
-}
-
-export async function clearMachineId(opts?: Readonly<{
-  preserveReplacementCandidate?: boolean
-  replacementAccountId?: string | null
-  replacementReason?: MachineReplacementReason
-  now?: number
-}>): Promise<void> {
-  await updateSettings((settings) => {
-    const activeServerId = sanitizeServerIdForFilesystem(
-      configuration.activeServerId ?? settings.activeServerId ?? 'cloud',
-      'cloud',
-    );
-    const nextMap = { ...(settings.machineIdByServerId ?? {}) };
-    const currentMachineId = typeof nextMap[activeServerId] === 'string'
-      ? String(nextMap[activeServerId]).trim()
-      : '';
-    const nextPerAccount = { ...(settings.machineIdByServerIdByAccountId ?? {}) };
-    if (activeServerId in nextPerAccount) delete nextPerAccount[activeServerId];
-    const nextLastSub = { ...(settings.lastTokenSubByServerId ?? {}) };
-    const explicitReplacementAccountId = typeof opts?.replacementAccountId === 'string'
-      ? opts.replacementAccountId.trim()
-      : '';
-    const storedAccountId = typeof nextLastSub[activeServerId] === 'string'
-      ? String(nextLastSub[activeServerId]).trim()
-      : '';
-    const currentAccountId = explicitReplacementAccountId || storedAccountId;
-    const nextReplacementCandidates = { ...(settings.machineReplacementCandidatesByServerIdByAccountId ?? {}) };
-    if (opts?.preserveReplacementCandidate === true && currentMachineId && currentAccountId) {
-      const byAccount = { ...(nextReplacementCandidates[activeServerId] ?? {}) };
-      byAccount[currentAccountId] = {
-        machineId: currentMachineId,
-        replacementReason: opts.replacementReason ?? 'reauth',
-        createdAt: opts.now ?? Date.now(),
-      };
-      nextReplacementCandidates[activeServerId] = byAccount;
-    }
-    if (activeServerId in nextLastSub) delete nextLastSub[activeServerId];
-    if (activeServerId in nextMap) delete nextMap[activeServerId];
-    const nextConfirmed = { ...(settings.machineIdConfirmedByServerByServerId ?? {}) };
-    if (activeServerId in nextConfirmed) delete nextConfirmed[activeServerId];
-    return {
-      ...settings,
-      machineIdByServerId: Object.keys(nextMap).length ? nextMap : {},
-      machineIdByServerIdByAccountId: Object.keys(nextPerAccount).length ? nextPerAccount : {},
-      machineReplacementCandidatesByServerIdByAccountId: Object.keys(nextReplacementCandidates).length ? nextReplacementCandidates : {},
-      lastTokenSubByServerId: Object.keys(nextLastSub).length ? nextLastSub : {},
-      machineIdConfirmedByServerByServerId: Object.keys(nextConfirmed).length ? nextConfirmed : {},
-    };
-  });
 }
 
 /** Device-local usage observations, independent of deliberate Home preferences. */

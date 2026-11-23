@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AGENT_PERMISSION_INTENTS_V1 } from '@happier-dev/protocol';
 
@@ -9,9 +10,8 @@ import { handleSessionCommand } from './handleSessionCommand';
 const execute = vi.fn();
 const resolveMachineTarget = vi.fn();
 const createCliActionExecutorFromCredentials = vi.fn(() => ({ execute, resolveMachineTarget }));
-const { readStoredCredentials, readSettings, readAgentCatalogSnapshot } = vi.hoisted(() => ({
+const { readStoredCredentials, readAgentCatalogSnapshot } = vi.hoisted(() => ({
   readStoredCredentials: vi.fn(),
-  readSettings: vi.fn(),
   readAgentCatalogSnapshot: vi.fn(),
 }));
 
@@ -35,7 +35,6 @@ vi.mock('@/persistence', async (importOriginal) => {
   return {
     ...actual,
     readStoredCredentials,
-    readSettings,
   };
 });
 
@@ -45,7 +44,7 @@ vi.mock('@/agent/catalog/snapshot', () => ({
 
 let previousExitCode: typeof process.exitCode;
 
-beforeEach(() => {
+beforeEach(async () => {
   previousExitCode = process.exitCode;
   process.exitCode = undefined;
   execute.mockReset();
@@ -57,8 +56,7 @@ beforeEach(() => {
     token: 'token_test',
     encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
   });
-  readSettings.mockReset();
-  readSettings.mockResolvedValue({ machineId: 'machine-1' });
+  await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
   readAgentCatalogSnapshot.mockReset();
   readAgentCatalogSnapshot.mockReturnValue({
     agentDefinitionsById: new Map([

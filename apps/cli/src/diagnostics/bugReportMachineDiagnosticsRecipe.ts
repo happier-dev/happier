@@ -1,3 +1,4 @@
+import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { realpath, stat } from 'node:fs/promises';
 import { isAbsolute, relative, sep } from 'node:path';
 import {
@@ -13,7 +14,7 @@ import {
   type BugReportMachineDiagnosticsSnapshot,
 } from '@happier-dev/protocol/bugs/reports/machineDiagnostics';
 import { configuration } from '@/configuration';
-import { readDaemonState, readSettings, readStoredCredentials, type StoredCredentials } from '@/persistence';
+import { readDaemonState, readStoredCredentials, type StoredCredentials } from '@/persistence';
 import { returnNullOnCliReloginRequired } from '@/auth/returnNullOnCliReloginRequired';
 import { listDaemonLogFiles } from '@/ui/logger';
 import { listSessionMarkers } from '@/daemon/sessionRegistry';
@@ -85,7 +86,7 @@ export async function collectBugReportMachineDiagnosticsSnapshotForBugReport(
     }
     if (metadata) {
       const machineId = typeof metadata.machineId === 'string' ? metadata.machineId : undefined;
-      const localMachineId = scope.machineId ?? (await readSettings()).machineId;
+      const localMachineId = scope.machineId ?? await readActiveMachineId();
       const agentId = resolveAgentIdFromSessionMetadata(metadata);
       sessionDiagnostics.context = {
         sessionId: sessionDiagnostics.context.sessionId,

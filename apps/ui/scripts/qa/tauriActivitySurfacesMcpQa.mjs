@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+
+import { resolveMachineRegistrationPath } from '@happier-dev/cli-common/firstPartyRuntime/cliMachineRegistration';
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -987,15 +989,13 @@ export async function materializeActivitySurfacesCliAuthFromWebStorage({
                     lastUsedAt: 0,
                 },
             },
-            machineIdByServerId: {
-                [credentialPaths.activeServerId]: randomUUID(),
-            },
-            machineIdConfirmedByServerByServerId: {},
             lastChangesCursorByServerIdByAccountId: {},
         }, null, 2)}\n`,
         { encoding: 'utf8', mode: 0o600 },
     );
 
+    const registrationPath = resolveMachineRegistrationPath(join(resolvedCliHomeDir, 'servers'), credentialPaths.activeServerId);
+    await writeFile(registrationPath, JSON.stringify({ machineId: randomUUID() }), { encoding: 'utf8', mode: 0o600 });
     return resolvedCliHomeDir;
 }
 

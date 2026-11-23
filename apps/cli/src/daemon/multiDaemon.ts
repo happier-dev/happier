@@ -15,7 +15,7 @@ import { resolveDaemonStartupSourceServiceManagedState } from '@/daemon/ownershi
 import { DaemonLocallyPersistedStateSchema, inspectDaemonLockOwner, readSettings, reclaimDeadDaemonPublication } from '@/persistence';
 import { logger } from '@/ui/logger';
 import { resolveDaemonServiceInstallationSnapshotFromEnv } from '@/daemon/service/cli';
-import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';
+import { readMachineRegistration, resolveRegisteredMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { resolveDaemonStateCandidatePaths } from '@/daemon/ownership/daemonOwnershipPaths';
 import { buildDaemonControlHttpHeaders, DAEMON_CONTROL_TOKEN_HEADER } from '@/daemon/controlHttp';
 import { DaemonStopIncompleteError, inspectPublishedDaemonPresence, observePublishedDaemonOwner, type PublishedDaemonOwnerObservation } from '@/daemon/controlClient';
@@ -358,7 +358,8 @@ export async function listDaemonStatusesForAllKnownServers(): Promise<DaemonStat
     const serviceInstallation = resolveServiceInstallationForServer({ serverId, serverUrl, persistedActiveServerId });
     const token = await readAuthTokenForServerId(serverId);
     const accountId = token ? readAccountIdFromToken(token) : null;
-    const machineId = resolveMachineIdForServerFromSettings(settings, serverId, accountId);
+    const registration = await readMachineRegistration(serverId);
+    const machineId = resolveRegisteredMachineId(registration, accountId);
     const credentialState: CredentialReadinessState = token == null
       ? 'missing'
       : serverId === activeServerId && activeReadiness
@@ -366,7 +367,7 @@ export async function listDaemonStatusesForAllKnownServers(): Promise<DaemonStat
         : 'unknown';
     const machineRegistrationState: MachineRegistrationState = machineId == null
       ? 'no-local-id'
-      : settings.machineIdConfirmedByServerByServerId?.[serverId] === true
+      : registration.confirmedByServer === true
         ? 'server-confirmed'
         : 'local-only';
     const authenticated = credentialState === 'valid';

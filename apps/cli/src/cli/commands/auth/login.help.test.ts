@@ -1,9 +1,10 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { describe, expect, it } from 'vitest';
 
 import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol';
 
 import { configuration, reloadConfiguration } from '@/configuration';
-import { updateSettings, writeCredentialsDataKey } from '@/persistence';
+import { writeCredentialsDataKey } from '@/persistence';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleText } from '@/testkit/logger/captureOutput';
@@ -31,12 +32,9 @@ describe('happier auth login --help', () => {
                         publicKey: deriveBoxPublicKeyFromSeed(machineKey),
                         machineKey,
                     });
-                    await updateSettings((settings) => ({
-                        ...settings,
-                        machineIdByServerId: {
-                            ...(settings.machineIdByServerId ?? {}),
-                            [configuration.activeServerId ?? 'cloud']: 'mid_123',
-                        },
+                    await updateMachineRegistration(registration => ({
+                      ...registration,
+                      machineId: 'mid_123',
                     }));
 
                     await handleAuthCommand(['login', '--help']);

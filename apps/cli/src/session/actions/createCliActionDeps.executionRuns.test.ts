@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -20,7 +21,6 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { artifactListResponse } from '@/testkit/http/artifactHome';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { reloadConfiguration } from '@/configuration';
-import { updateSettings } from '@/persistence';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -115,7 +115,10 @@ async function withLocalScmMachine<T>(run: () => Promise<T>): Promise<T> {
     try {
       env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: SCM_TEST_HOME_ID });
       reloadConfiguration();
-      await updateSettings(settings => ({ ...settings, machineIdByServerId: { [SCM_TEST_HOME_ID]: SCM_TEST_MACHINE_ID } }));
+      await updateMachineRegistration(registration => ({
+        ...registration,
+        machineId: SCM_TEST_MACHINE_ID,
+      }), SCM_TEST_HOME_ID);
       admitted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: home, controller: pluginReloadController,
         runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
       return await run();
@@ -1931,7 +1934,10 @@ describe('background memory hint Runs', () => {
     try {
       env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'memory-hint-home' });
       reloadConfiguration();
-      await updateSettings(settings => ({ ...settings, machineIdByServerId: { 'memory-hint-home': 'machine-local' } }));
+      await updateMachineRegistration(registration => ({
+        ...registration,
+        machineId: 'machine-local',
+      }), 'memory-hint-home');
       serveSessionRecord({ id: 'inactive-session', active: false, machineId: 'machine-local' });
       fetchSessionById.mockClear();
       callSessionRpc.mockReset();

@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import '../../../../../ui/sources/dev/vitestSetup';
 import { afterEach, expect, it, vi } from 'vitest';
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -23,14 +24,16 @@ vi.mock('node:child_process', async importOriginal => ({
   },
 }));
 
-// The installed daemon identity is persisted OS state; admission and family dispatch stay real.
-vi.mock('@/persistence', () => ({ readSettings: async () => ({ machineId: 'machine' }) }));
 const environment = vi.hoisted(() => ({ happyHomeDir: '', osCalls: 0, cancel: undefined as AbortController | undefined }));
 vi.mock('@/configuration', async importOriginal => {
   const original = await importOriginal<typeof import('@/configuration')>();
   // Configuration is the environment boundary; retain its real defaults and methods.
   const configuration: typeof original.configuration = Object.create(original.configuration);
-  Object.defineProperty(configuration, 'happyHomeDir', { get: () => environment.happyHomeDir });
+  Object.defineProperties(configuration, {
+    happyHomeDir: { get: () => environment.happyHomeDir },
+    serversDir: { get: () => join(environment.happyHomeDir, 'servers') },
+    settingsFile: { get: () => join(environment.happyHomeDir, 'settings.json') },
+  });
   return { ...original, configuration };
 });
 // The archive download is the network boundary; real acquisition/verification owners remain in use.
@@ -54,6 +57,7 @@ it.each(['ui', 'agent'] as const)('returns typed OS authorization from the appro
   Object.defineProperty(process, 'platform', { value: 'linux' });
   Object.defineProperty(process, 'arch', { value: 'x64' });
   environment.happyHomeDir = await mkdtemp(join(tmpdir(), 'sandbox-front-door-'));
+  await updateMachineRegistration(() => ({ machineId: 'machine' }));
   const asset = CHROMIUM_FOR_TESTING_PRODUCT_SOURCE.assetsByPlatform['linux-x64'];
   if (!asset) throw new Error('Missing managed Linux Chromium contract');
   const current = join(environment.happyHomeDir, 'tools', CHROMIUM_FOR_TESTING_PRODUCT_SOURCE.key, 'current');
@@ -114,20 +118,25 @@ it.each(['ui', 'agent'] as const)('returns typed OS authorization from the appro
 
 it('dispatches admitted sandbox recovery without a browser route and preserves Machine targeting', async () => {
   Object.defineProperty(process, 'platform', { value: 'darwin' });
-  const execute = createDaemonRuntimeActionExecutor({ env: {}, resolveRouteOwners: () => ({}),
-    resolveServerFeaturesSnapshot: () => undefined });
-  const args = { actionId: 'browser.sandbox.install' as const, input: { machineId: 'machine' },
-    context: { authority: 'account_automation' as const } };
-  expect(await execute(args))
-    .toEqual({ status: 'failed', code: 'platform_unsupported' });
-  expect(await execute({ ...args, input: { machineId: 'other' }, context: args.context }))
-    .toMatchObject({ ok: false, errorCode: 'browser_machine_mismatch' });
+  environment.happyHomeDir = await mkdtemp(join(tmpdir(), 'sandbox-platform-test-'));
+  try {
+    await updateMachineRegistration(() => ({ machineId: 'machine' }));
+    const execute = createDaemonRuntimeActionExecutor({ env: {}, resolveRouteOwners: () => ({}),
+      resolveServerFeaturesSnapshot: () => undefined });
+    const args = { actionId: 'browser.sandbox.install' as const, input: { machineId: 'machine' },
+      context: { authority: 'account_automation' as const } };
+    expect(await execute(args))
+      .toEqual({ status: 'failed', code: 'platform_unsupported' });
+    expect(await execute({ ...args, input: { machineId: 'other' }, context: args.context }))
+      .toMatchObject({ ok: false, errorCode: 'browser_machine_mismatch' });
+  } finally { await rm(environment.happyHomeDir, { recursive: true, force: true }); }
 });
 
 it('cancels managed artifact acquisition through the existing archive owner and returns a typed cancellation', async () => {
   Object.defineProperty(process, 'platform', { value: 'linux' });
   Object.defineProperty(process, 'arch', { value: 'x64' });
   environment.happyHomeDir = await mkdtemp(join(tmpdir(), 'sandbox-action-test-'));
+  await updateMachineRegistration(() => ({ machineId: 'machine' }));
   environment.cancel = new AbortController();
   try {
     const execute = createDaemonRuntimeActionExecutor({ env: {}, resolveRouteOwners: () => ({}),

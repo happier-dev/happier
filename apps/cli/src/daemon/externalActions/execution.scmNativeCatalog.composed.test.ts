@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
@@ -23,7 +24,7 @@ import { indexAgentRoutingIdsByContributionIdentity, readAgentRoutingIdForContri
 import { createRuntimeProviderModelManagementServices, type RuntimeProviderModelManagementServices } from '@/providers/modelManagement/runtimeServices';
 import { runScmExecutable } from '@/testkit/scm/scmBackendContractFixtures';
 import { resetAgentModelsProbeCacheForTests } from '@/capabilities/probes/agentModelsProbe';
-import { updateSettings, writeDaemonState } from '@/persistence';
+import { writeDaemonState } from '@/persistence';
 
 const boundary = vi.hoisted(() => ({ control: null as Parameters<typeof startDaemonControlServer>[0] | null,
   support: 'supported' as 'supported' | 'unknown' | 'unsupported', nativeOpens: 0, nativeCatalogReads: 0 }));
@@ -119,8 +120,10 @@ it.each(['supported', 'unknown', 'unsupported'] as const)(
       projections.push(projection); return projection;
     },
   });
-  await updateSettings(settings => ({ ...settings,
-    machineIdByServerId: { ...settings.machineIdByServerId, 'scm-native-home': 'machine' } }));
+  await updateMachineRegistration(registration => ({
+    ...registration,
+    machineId: 'machine',
+  }), 'scm-native-home');
   const homeFetch = globalThis.fetch;
   vi.stubGlobal('fetch', ((input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input));

@@ -9,7 +9,6 @@ import { returnNullOnCliReloginRequired } from '@/auth/returnNullOnCliReloginReq
 import {
     readStoredCredentials,
     readStoredCredentialCustodyForServerId,
-    readSettings,
     updateSettings,
     type StoredCredentials,
     writeCredentialsDataKey,
@@ -19,7 +18,7 @@ import { generateWebAuthUrl } from "@/api/webAuth";
 import { sanitizeServerIdForFilesystem } from "@/server/serverId";
 import { openBrowser, BROWSER_NOT_OPENED_NOTE, COPY_LINK_INTO_BROWSER_PROMPT } from '@/ui/openBrowser';
 import type { AuthMethod } from "./ink/AuthSelector";
-import { randomUUID } from 'node:crypto';
+import { activeMachineRegistrationServerId, ensureLocalMachineId, readMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { logger } from './logger';
 import { projectSafeAuthError } from '@/cli/commands/auth/errorDiagnostic';
 import { ensureDaemonRunningForSessionCommand, shouldAutoStartDaemonAfterAuth } from '@/daemon/ensureDaemon';
@@ -884,117 +883,6 @@ export function decryptWithEphemeralKey(encryptedBundle: Uint8Array, recipientSe
     return decrypted;
 }
 
-export async function ensureMachineIdInSettings(opts?: {
-    forceNew?: boolean;
-    accountId?: string | null;
-}): Promise<{ machineId: string }> {
-    const forceNew = opts?.forceNew ?? false;
-    const accountId = typeof opts?.accountId === 'string' ? opts.accountId.trim() : '';
-
-    const settings = await updateSettings(async s => {
-        const activeServerId = sanitizeServerIdForFilesystem(
-            configuration.activeServerId ?? s.activeServerId ?? 'cloud',
-            'cloud',
-        );
-
-        const nextMachineIdByServerId = { ...(s.machineIdByServerId ?? {}) };
-        const prevMachineIdForServer = nextMachineIdByServerId[activeServerId];
-        const nextLastSubByServerId = { ...(s.lastTokenSubByServerId ?? {}) };
-        const nextConfirmed = { ...(s.machineIdConfirmedByServerByServerId ?? {}) };
-        const hadLastSub = activeServerId in nextLastSubByServerId;
-        const hadConfirmed = activeServerId in nextConfirmed;
-
-        if (!accountId) {
-            const current = prevMachineIdForServer;
-            if (hadLastSub) delete nextLastSubByServerId[activeServerId];
-            if (hadConfirmed) delete nextConfirmed[activeServerId];
-
-            if (forceNew || !current) {
-                const machineId = randomUUID();
-                nextMachineIdByServerId[activeServerId] = machineId;
-                return {
-                    ...s,
-                    machineIdByServerId: nextMachineIdByServerId,
-                    lastTokenSubByServerId: nextLastSubByServerId,
-                    machineIdConfirmedByServerByServerId: nextConfirmed,
-                    // derived (not persisted in v5+)
-                    machineId,
-                };
-            }
-
-            if (!hadLastSub && !hadConfirmed) {
-                return {
-                    ...s,
-                    machineId: current,
-                };
-            }
-
-            return {
-                ...s,
-                lastTokenSubByServerId: nextLastSubByServerId,
-                machineIdConfirmedByServerByServerId: nextConfirmed,
-                // derived (not persisted in v5+)
-                machineId: current,
-            };
-        }
-
-        const previousAccountId = typeof nextLastSubByServerId[activeServerId] === 'string'
-            ? String(nextLastSubByServerId[activeServerId]).trim()
-            : '';
-
-        const nextMachineIdByServerIdByAccountId = { ...(s.machineIdByServerIdByAccountId ?? {}) };
-        const currentPerAccount = { ...(nextMachineIdByServerIdByAccountId[activeServerId] ?? {}) };
-        const perAccountMachineId = typeof currentPerAccount[accountId] === 'string' ? String(currentPerAccount[accountId]).trim() : '';
-
-        const didAccountSwap = Boolean(previousAccountId && previousAccountId !== accountId);
-
-        let machineId: string | null = null;
-        if (!forceNew && perAccountMachineId) {
-            machineId = perAccountMachineId;
-        } else if (!forceNew && !didAccountSwap && prevMachineIdForServer && typeof prevMachineIdForServer === 'string' && prevMachineIdForServer.trim()) {
-            // Backfill mapping for older CLIs that only stored machineIdByServerId.
-            machineId = prevMachineIdForServer.trim();
-        }
-
-        if (!machineId) {
-            machineId = randomUUID();
-        }
-
-        const normalizedPrevMachineId = typeof prevMachineIdForServer === 'string' && prevMachineIdForServer.trim()
-            ? prevMachineIdForServer.trim()
-            : null;
-        const needsServerMachineIdUpdate = normalizedPrevMachineId !== machineId;
-        const needsLastSubUpdate = previousAccountId !== accountId;
-        const needsPerAccountUpdate = perAccountMachineId !== machineId;
-
-        const needsConfirmedUpdate = (needsServerMachineIdUpdate || needsLastSubUpdate) && activeServerId in nextConfirmed;
-
-        if (!needsServerMachineIdUpdate && !needsLastSubUpdate && !needsPerAccountUpdate && !needsConfirmedUpdate) {
-            return s;
-        }
-
-        nextMachineIdByServerId[activeServerId] = machineId;
-        nextLastSubByServerId[activeServerId] = accountId;
-        currentPerAccount[accountId] = machineId;
-        nextMachineIdByServerIdByAccountId[activeServerId] = currentPerAccount;
-
-        if (needsConfirmedUpdate) delete nextConfirmed[activeServerId];
-
-        return {
-            ...s,
-            machineIdByServerId: nextMachineIdByServerId,
-            lastTokenSubByServerId: nextLastSubByServerId,
-            machineIdByServerIdByAccountId: nextMachineIdByServerIdByAccountId,
-            machineIdConfirmedByServerByServerId: nextConfirmed,
-            // derived (not persisted in v5+)
-            machineId,
-        };
-    });
-
-    if (!settings.machineId) throw new Error('Failed to ensure machine id in settings');
-    return { machineId: settings.machineId };
-}
-
 export async function ensureMachineIdForCredentials(
     credentials: StoredCredentials,
     opts?: { forceNew?: boolean },
@@ -1013,20 +901,14 @@ export async function ensureMachineIdForCredentials(
     let activeServerIdForLog: string | null = null;
     if (accountId) {
         try {
-            const settings = await readSettings();
-            const activeServerId = sanitizeServerIdForFilesystem(
-                configuration.activeServerId ?? settings.activeServerId ?? 'cloud',
-                'cloud',
-            );
-            activeServerIdForLog = activeServerId;
-            const prev = settings.lastTokenSubByServerId?.[activeServerId];
-            previousAccountId = typeof prev === 'string' ? prev.trim() : null;
+            activeServerIdForLog = activeMachineRegistrationServerId();
+            previousAccountId = (await readMachineRegistration(activeServerIdForLog)).accountId?.trim() ?? null;
         } catch {
             // best-effort only
         }
     }
 
-    const ensured = await ensureMachineIdInSettings({
+    const ensured = await ensureLocalMachineId({
         accountId,
         forceNew: Boolean(opts?.forceNew) && !accountId,
     });

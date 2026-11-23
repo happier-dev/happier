@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import axios, { AxiosHeaders } from 'axios';
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -16,7 +17,7 @@ import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/a
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { configuration, reloadConfiguration } from '@/configuration';
-import { updateSettings, writeCredentialsTokenOnlyForServerId } from '@/persistence';
+import { writeCredentialsTokenOnlyForServerId } from '@/persistence';
 import { resolveCurrentPluginPermissionGrantAuthoritySource } from '@/daemon/identity/currentMachineInstallation';
 import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
@@ -46,8 +47,9 @@ beforeEach(async () => {
     HAPPIER_TOKEN: undefined, HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE: undefined });
   reloadConfiguration();
   await writeCredentialsTokenOnlyForServerId(configuration.activeServerId, { token: 'account-token' });
-  await updateSettings((settings) => ({ ...settings,
-    machineIdByServerId: { ...settings.machineIdByServerId, [configuration.activeServerId]: 'machine-1' },
+  await updateMachineRegistration(registration => ({
+    ...registration,
+    machineId: 'machine-1',
   }));
 });
 afterEach(async () => {

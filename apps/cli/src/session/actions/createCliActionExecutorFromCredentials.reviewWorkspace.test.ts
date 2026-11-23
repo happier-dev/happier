@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import axios from 'axios';
 import Fastify from 'fastify';
 import { afterAll, afterEach, expect, it, onTestFinished, vi } from 'vitest';
@@ -14,7 +15,6 @@ import { ActionOperationDeclarationV1Schema } from '@happier-dev/protocol/action
 import nacl from 'tweetnacl';
 import { configuration } from '@/configuration';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
-import { updateSettings } from '@/persistence';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createLocalScmRepositoryFixture, runScmExecutable } from '@/testkit/scm/scmBackendContractFixtures';
@@ -79,9 +79,10 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
     const machineId = 'review-machine';
     const accountId = 'review-account';
     const serverId = configuration.activeServerId;
-    await updateSettings(settings => ({ ...settings, machineIdByServerId: {
-      ...settings.machineIdByServerId, [serverId]: machineId,
-    } }));
+    await updateMachineRegistration(registration => ({
+      ...registration,
+      machineId,
+    }), serverId);
     const repository = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-child-' });
     const root = repository.rootPath;
     const sourceHeadSha = repository.headCommit;

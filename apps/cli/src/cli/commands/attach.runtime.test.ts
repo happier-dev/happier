@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Metadata } from '@/api/types';
-import { SUPPORTED_SCHEMA_VERSION } from '@/persistence';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 import { handleAttachCommand } from './attach';
@@ -29,7 +28,7 @@ describe('CLI attach without a daemon plugin runtime in its process', () => {
         readCredentialsFn: async () => ({ token: 'fixture-token', encryption: null }),
         fetchSessionByIdFn: async () => row,
         getAccountEncryptionCurrentnessFn: async () => createAccountEncryptionCurrentnessFixture({ mode: 'plain' }),
-        readSettingsFn: async () => ({ schemaVersion: SUPPORTED_SCHEMA_VERSION, onboardingCompleted: true, machineId: 'this-machine' }),
+        readActiveMachineIdFn: async () => 'this-machine',
         readTerminalAttachmentInfoFn: async () => null,
         runHerdrAttachFn: attach, runTmuxAttachFn: attach, runZellijAttachFn: attach,
         runWindowsTerminalAttachFn: attach, runWindowsConsoleAttachFn: attach,

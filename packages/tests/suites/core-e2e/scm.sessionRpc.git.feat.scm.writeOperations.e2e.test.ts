@@ -1,6 +1,7 @@
+import { waitForDaemonMachineId } from '../../src/testkit/uiE2e/daemonMachineId';
 import { afterAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import {
@@ -37,19 +38,6 @@ function runGit(cwd: string, args: string[]): string {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
-}
-
-async function resolveDaemonMachineIdFromSettings(params: { daemonHomeDir: string }): Promise<string> {
-  const raw = await readFile(resolve(join(params.daemonHomeDir, 'settings.json')), 'utf8').catch(() => '');
-  const parsed = raw ? (JSON.parse(raw) as any) : null;
-  const activeServerId = parsed && typeof parsed.activeServerId === 'string' ? String(parsed.activeServerId) : '';
-  const machineIdByServerId = parsed && typeof parsed.machineIdByServerId === 'object' ? parsed.machineIdByServerId : null;
-  const machineId =
-    activeServerId && machineIdByServerId && typeof machineIdByServerId[activeServerId] === 'string'
-      ? String(machineIdByServerId[activeServerId])
-      : '';
-  if (!machineId) throw new Error('Missing machineIdByServerId[activeServerId] in seeded settings.json');
-  return machineId;
 }
 
 type MachineListRow = { id?: unknown; dataEncryptionKey?: unknown };
@@ -178,7 +166,7 @@ describe('core e2e: scm git machine RPC', () => {
         HAPPIER_WEBAPP_URL: serverBaseUrl,
       },
     });
-    const machineId = await resolveDaemonMachineIdFromSettings({ daemonHomeDir });
+    const machineId = await waitForDaemonMachineId({ cliHomeDir: daemonHomeDir });
     const machineDekBase64 = await resolveMachineDataEncryptionKeyBase64({
       baseUrl: serverBaseUrl,
       token: auth.token,

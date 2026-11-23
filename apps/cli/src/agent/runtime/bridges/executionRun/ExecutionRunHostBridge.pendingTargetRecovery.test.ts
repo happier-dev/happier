@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFailed, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -16,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
-import { updateSettings, type StoredCredentials } from '@/persistence';
+import { type StoredCredentials } from '@/persistence';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 
 import type { ExecutionRunState } from './executionRunTypes';
@@ -1841,9 +1842,10 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
       if (detached) return { ok: true, result: { ok: true } };
       return { ok: true, result: { status: 'accepted', localId: sent.localId } };
     };
-    await updateSettings(settings => ({ ...settings, machineIdByServerId: {
-      ...settings.machineIdByServerId, [configuration.activeServerId]: 'machine-1',
-    } }));
+    await updateMachineRegistration(registration => ({
+      ...registration,
+      machineId: 'machine-1',
+    }));
     // review.explain_findings returns a request, not authority. Its host child
     // retains the person/agent caller (protocol actionExecutor.ts). The real SCM
     // receiver consumes signed requester custody or the admitted Machine stamp

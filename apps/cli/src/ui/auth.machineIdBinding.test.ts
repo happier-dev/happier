@@ -1,15 +1,16 @@
+import { ensureLocalMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { reloadConfiguration } from '@/configuration';
-import { ensureMachineIdForCredentials, ensureMachineIdInSettings } from './auth';
+import { ensureMachineIdForCredentials } from './auth';
 import { readStoredCredentials } from '@/persistence';
 import { createRequesterSessionCredentialCustody } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { runInHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
-describe('ensureMachineIdInSettings', () => {
+describe('ensureLocalMachineId', () => {
   const previousHomeDir = process.env.HAPPIER_HOME_DIR;
   const previousActiveServerId = process.env.HAPPIER_ACTIVE_SERVER_ID;
 
@@ -55,11 +56,12 @@ describe('ensureMachineIdInSettings', () => {
       );
 
       reloadConfiguration();
-      const result = await ensureMachineIdInSettings();
+      const result = await ensureLocalMachineId();
       expect(result.machineId).toBe('machine-existing');
 
-      const raw = JSON.parse(readFileSync(settingsPath, 'utf8'));
-      expect(raw.machineIdByServerId.cloud).toBe('machine-existing');
+      const { readMachineRegistration } = await import('@/daemon/machineIdentity/machineRegistrationStore');
+      const raw = await readMachineRegistration();
+      expect(raw.machineId).toBe('machine-existing');
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }
@@ -99,12 +101,13 @@ describe('ensureMachineIdInSettings', () => {
       );
 
       reloadConfiguration();
-      const result = await ensureMachineIdInSettings();
+      const result = await ensureLocalMachineId();
       expect(result.machineId).toMatch(/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/u);
 
-      const raw = JSON.parse(readFileSync(settingsPath, 'utf8'));
-      expect(raw.machineIdByServerId.cloud).toBe(result.machineId);
-      expect((await ensureMachineIdInSettings()).machineId).toBe(result.machineId);
+      const { readMachineRegistration } = await import('@/daemon/machineIdentity/machineRegistrationStore');
+      const raw = await readMachineRegistration();
+      expect(raw.machineId).toBe(result.machineId);
+      expect((await ensureLocalMachineId()).machineId).toBe(result.machineId);
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }
@@ -144,12 +147,13 @@ describe('ensureMachineIdInSettings', () => {
       );
 
       reloadConfiguration();
-      const result = await ensureMachineIdInSettings({ forceNew: true });
+      const result = await ensureLocalMachineId({ forceNew: true });
       expect(result.machineId).not.toBe('machine-acct-a');
       expect(result.machineId).toMatch(/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/u);
 
-      const raw = JSON.parse(readFileSync(settingsPath, 'utf8'));
-      expect(raw.machineIdByServerId.cloud).toBe(result.machineId);
+      const { readMachineRegistration } = await import('@/daemon/machineIdentity/machineRegistrationStore');
+      const raw = await readMachineRegistration();
+      expect(raw.machineId).toBe(result.machineId);
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }

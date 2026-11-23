@@ -1,3 +1,4 @@
+import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
@@ -6,7 +7,6 @@ import { isAbsolute, join } from 'node:path';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { RuntimeActionExecuteArgs } from '@happier-dev/protocol';
 
-import { readSettings } from '@/persistence';
 import { getBrowserChromiumArchiveDownloadInstallableAdapter } from '@/packagedRuntime/installables/sourceAdapters/browserChromium';
 import { resolveManagedBrowserSidecarCandidate } from './source';
 
@@ -103,7 +103,7 @@ export async function executeManagedChromiumSandboxInstall(args: RuntimeActionEx
     const parsed = getActionSpec('browser.sandbox.install').inputSchema.safeParse(args.input);
     if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
     let machineId: string | undefined;
-    try { machineId = (await readSettings()).machineId; }
+    try { machineId = (await readActiveMachineId()) ?? undefined; }
     catch { return { ok: false, errorCode: 'browser_machine_unavailable', error: 'browser_machine_unavailable' }; }
     const requested = parsed.data as Readonly<{ machineId: string }>;
     if (!machineId || requested.machineId !== machineId) {

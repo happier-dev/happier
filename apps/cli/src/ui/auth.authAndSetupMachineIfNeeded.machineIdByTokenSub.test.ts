@@ -369,10 +369,11 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
       expect(result.machineId).toBe('custodian-machine');
       expect(result.credentials.token).toBe(makeJwtWithSub('requester'));
       expect(homeBoundary.requests.filter(request => request.method === 'POST' && request.path === '/v1/machines')).toEqual([]);
-      const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
-      expect(settings).toMatchObject({ machineIdByServerId: { cloud: 'custodian-machine' },
-        lastTokenSubByServerId: { cloud: 'custodian' }, machineIdConfirmedByServerByServerId: { cloud: true } });
-      expect(settings.machineIdByServerIdByAccountId.cloud).toEqual({ custodian: 'custodian-machine' });
+      const { readMachineRegistration } = await import('@/daemon/machineIdentity/machineRegistrationStore');
+      await expect(readMachineRegistration()).resolves.toMatchObject({
+        machineId: 'custodian-machine', accountId: 'custodian', confirmedByServer: true,
+        machineIdByAccountId: { custodian: 'custodian-machine' },
+      });
       await custody.cleanup();
       await expect(run()).rejects.toThrow('requester_session_credentials_unavailable');
       expect(homeBoundary.requests).toEqual([]);
@@ -441,9 +442,10 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
         method: 'POST', path: '/v1/machines', body: expect.objectContaining({ id: 'machine-acct-b' }),
       }));
 
-      const raw = JSON.parse(readFileSync(settingsPath, 'utf8'));
-      expect(raw.machineIdByServerId.cloud).toBe('machine-acct-b');
-      expect(raw.lastTokenSubByServerId.cloud).toBe('acct-b');
+      const { readMachineRegistration } = await import('@/daemon/machineIdentity/machineRegistrationStore');
+      const raw = await readMachineRegistration();
+      expect(raw.machineId).toBe('machine-acct-b');
+      expect(raw.accountId).toBe('acct-b');
     } finally {
       const { logger } = await import('./logger');
       logger.flushSync();
@@ -749,9 +751,10 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
 
       expect(result.machineId).toBe('machine-server-scoped');
 
-      const raw = JSON.parse(readFileSync(settingsPath, 'utf8'));
-      expect(raw.machineIdConfirmedByServerByServerId?.cloud).toBeUndefined();
-      expect(raw.lastTokenSubByServerId?.cloud).toBeUndefined();
+      const { readMachineRegistration } = await import('@/daemon/machineIdentity/machineRegistrationStore');
+      const raw = await readMachineRegistration();
+      expect(raw.confirmedByServer).toBeUndefined();
+      expect(raw.accountId).toBeUndefined();
     } finally {
       const { logger } = await import('./logger');
       logger.flushSync();
@@ -803,10 +806,11 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
 
       expect(result.machineId).not.toBe('machine-before-login');
 
-      const raw = JSON.parse(readFileSync(settingsPath, 'utf8'));
-      expect(raw.machineIdByServerId.cloud).toBe(result.machineId);
-      expect(raw.machineIdConfirmedByServerByServerId?.cloud).toBeUndefined();
-      expect(raw.lastTokenSubByServerId?.cloud).toBeUndefined();
+      const { readMachineRegistration } = await import('@/daemon/machineIdentity/machineRegistrationStore');
+      const raw = await readMachineRegistration();
+      expect(raw.machineId).toBe(result.machineId);
+      expect(raw.confirmedByServer).toBeUndefined();
+      expect(raw.accountId).toBeUndefined();
     } finally {
       const { logger } = await import('./logger');
       logger.flushSync();
@@ -874,9 +878,10 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
 
       expect(result.machineId).toBe('machine-shared');
 
-      const raw = JSON.parse(readFileSync(settingsPath, 'utf8'));
-      expect(raw.machineIdConfirmedByServerByServerId.cloud).toBeUndefined();
-      expect(raw.lastTokenSubByServerId.cloud).toBe('acct-b');
+      const { readMachineRegistration } = await import('@/daemon/machineIdentity/machineRegistrationStore');
+      const raw = await readMachineRegistration();
+      expect(raw.confirmedByServer).toBeUndefined();
+      expect(raw.accountId).toBe('acct-b');
 
       const identityChangeLogs = output.logs.filter((line) => line.includes('[AUTH] tokenSub changed'));
       expect(identityChangeLogs).toContainEqual(expect.stringContaining('server=cloud machineId=machine-shared'));

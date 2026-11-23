@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import axios from 'axios';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol';
@@ -157,11 +158,14 @@ describe('installed own Machine isolation status admission', () => {
     const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'requester', tokenEpoch: 1,
       provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
     const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
-    await updateSettings(current => ({ ...current, machineIdByServerId: { ...current.machineIdByServerId, [f.serverId]: f.machineId },
-      servers: { ...current.servers, [f.serverId]: { id: f.serverId, name: 'Status Home', serverUrl: f.serverHttpBaseUrl,
+    await updateSettings(current => ({ ...current, servers: { ...current.servers, [f.serverId]: { id: f.serverId, name: 'Status Home', serverUrl: f.serverHttpBaseUrl,
         webappUrl: f.serverHttpBaseUrl, createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact',
         homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: f.homeServerIdentityId,
           canonicalServerUrl: f.serverHttpBaseUrl, revision: 1, endpoints: [{ kind: 'https', url: f.serverHttpBaseUrl }] }) } } }));
+    await updateMachineRegistration(registration => ({
+      ...registration,
+      machineId: f.machineId,
+    }), f.serverId);
     await writeStoredCredentialsForServerId(f.serverId, credentials);
     const receiver = createCliActionExecutor({ token, credentials, sessionId: '', mode: 'plain', ctx: null,
       actionsSettingsProvider: { getActionsSettings: () => settings },

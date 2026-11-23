@@ -1,69 +1,37 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readdir } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import {
+  isServerIdFilesystemSafe, readRegistrationJsonIfPresent, readStoredMachineRegistration,
+  resolveMachineRegistrationPath, resolveRegisteredMachineId,
+} from '@happier-dev/cli-common/firstPartyRuntime/cliMachineRegistration';
 
-type JsonRecord = Record<string, unknown>;
-
-function isRecord(value: unknown): value is JsonRecord {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function normalizeNonEmptyString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
-
-function collectMachineIds(value: unknown): string[] {
-  if (!isRecord(value)) return [];
-  return Object.values(value)
-    .map(normalizeNonEmptyString)
-    .filter((machineId): machineId is string => Boolean(machineId));
-}
-
-function collectPerAccountMachineIds(value: unknown): string[] {
-  if (!isRecord(value)) return [];
-  return Object.values(value).flatMap(collectMachineIds);
-}
-
-function singleUniqueMachineId(machineIds: readonly string[]): string | null {
-  const unique = [...new Set(machineIds)];
-  return unique.length === 1 ? unique[0] ?? null : null;
-}
-
-function resolveMachineIdFromSettings(settings: unknown): string | null {
-  if (!isRecord(settings)) return null;
-
-  const activeServerId = normalizeNonEmptyString(settings.activeServerId);
-  const machineIdByServerId = isRecord(settings.machineIdByServerId) ? settings.machineIdByServerId : null;
-  const machineIdByServerIdByAccountId = isRecord(settings.machineIdByServerIdByAccountId)
-    ? settings.machineIdByServerIdByAccountId
-    : null;
-
-  if (activeServerId && machineIdByServerId) {
-    const activeMachineId = normalizeNonEmptyString(machineIdByServerId[activeServerId]);
-    if (activeMachineId) return activeMachineId;
+export async function readDaemonMachineIds(settingsPath: string): Promise<string[]> {
+  const settings = await readRegistrationJsonIfPresent(settingsPath);
+  const activeServerId = settings && typeof settings === 'object' && 'activeServerId' in settings
+    && typeof settings.activeServerId === 'string' ? settings.activeServerId : null;
+  const serversDir = join(dirname(settingsPath), 'servers');
+  const dirs = await readdir(serversDir, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  });
+  const serverIds = dirs.filter(dir => dir.isDirectory() && isServerIdFilesystemSafe(dir.name)).map(dir => dir.name);
+  if (activeServerId && isServerIdFilesystemSafe(activeServerId)) serverIds.unshift(activeServerId);
+  const ids = new Set<string>();
+  for (const serverId of new Set(serverIds)) {
+    const registration = await readStoredMachineRegistration(resolveMachineRegistrationPath(serversDir, serverId));
+    const machineId = registration && resolveRegisteredMachineId(registration);
+    if (machineId) ids.add(machineId);
   }
-
-  if (activeServerId && machineIdByServerIdByAccountId) {
-    const activePerAccountMachineId = singleUniqueMachineId(
-      collectMachineIds(machineIdByServerIdByAccountId[activeServerId]),
-    );
-    if (activePerAccountMachineId) return activePerAccountMachineId;
-  }
-
-  return singleUniqueMachineId([
-    ...collectMachineIds(machineIdByServerId),
-    ...collectPerAccountMachineIds(machineIdByServerIdByAccountId),
-  ]);
+  return [...ids];
 }
 
-async function readDaemonMachineIdFromCliSettings(cliHomeDir: string): Promise<string> {
-  const settingsPath = join(cliHomeDir, 'settings.json');
-  const raw = await readFile(settingsPath, 'utf8');
-  const machineId = resolveMachineIdFromSettings(JSON.parse(raw) as unknown);
+async function readDaemonMachineId(cliHomeDir: string): Promise<string> {
+  const [machineId] = await readDaemonMachineIds(join(cliHomeDir, 'settings.json'));
   if (machineId) return machineId;
-  throw new Error(`CLI settings did not contain a resolvable daemon machine id: ${settingsPath}`);
+  throw new Error('No current daemon Machine registration under ' + cliHomeDir);
 }
 
-export async function waitForDaemonMachineIdFromCliSettings(
+export async function waitForDaemonMachineId(
   params: Readonly<{ cliHomeDir: string; timeoutMs?: number; pollIntervalMs?: number }>,
 ): Promise<string> {
   const timeoutMs = params.timeoutMs ?? 120_000;
@@ -73,7 +41,7 @@ export async function waitForDaemonMachineIdFromCliSettings(
 
   while (Date.now() - startedAt <= timeoutMs) {
     try {
-      return await readDaemonMachineIdFromCliSettings(params.cliHomeDir);
+      return await readDaemonMachineId(params.cliHomeDir);
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
     }
@@ -82,6 +50,6 @@ export async function waitForDaemonMachineIdFromCliSettings(
   }
 
   throw new Error(
-    `Timed out waiting for daemon machine id in CLI settings after ${timeoutMs}ms: ${lastError?.message ?? 'unknown error'}`,
+    `Timed out waiting for daemon Machine registration after ${timeoutMs}ms: ${lastError?.message ?? 'unknown error'}`,
   );
 }

@@ -41,7 +41,8 @@ import { startServerLight, type TestDbProvider } from '../process/serverLight';
 import { claimTestHomeOwner } from '../homeOwner';
 import { fetchSessionMetadataV2 } from '../sessionHandoffMetadata';
 import { replaceTestDaemonWithoutStoppingSessions, startTestDaemon, type StartedDaemon } from './daemon';
-import { resolveMachineIdForServerFromSettings } from '../../../../../apps/cli/src/daemon/resolveMachineIdForServerFromSettings';
+import { resolveCliHomeStoragePaths } from '../../../../../apps/cli/src/configuration/homeStoragePaths';
+import { readStoredMachineRegistration, resolveMachineRegistrationPath, resolveRegisteredMachineId } from '@happier-dev/cli-common/firstPartyRuntime/cliMachineRegistration';
 import { type CliTestLaunchSpec } from '../process/cliLaunchSpec';
 import { withWorkspaceSourceRuntime } from '../process/tsxImportHook';
 import type { TestAccountCliAuthCredentials } from '../cliAuth';
@@ -499,8 +500,9 @@ async function readEnrolledProjectDaemonHome(params: Readonly<{
     || descriptor.data.homeServerIdentityId !== params.serverId) {
     throw new Error(`Production terminal login did not persist its authenticated Home descriptor in active profile ${settings.activeServerId}`);
   }
-  const machineId = resolveMachineIdForServerFromSettings(settings, settings.activeServerId,
-    readAccountIdFromToken(params.accountToken));
+  const { serversDir } = resolveCliHomeStoragePaths(homeDir);
+  const registration = await readStoredMachineRegistration(resolveMachineRegistrationPath(serversDir, settings.activeServerId));
+  const machineId = registration && resolveRegisteredMachineId(registration, readAccountIdFromToken(params.accountToken));
   if (!machineId) throw new Error('Production terminal login omitted its Account Machine identity');
   return { homeDir, serverId: settings.activeServerId, machineId };
 }

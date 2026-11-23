@@ -1,7 +1,7 @@
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
-import { readSettings } from '@/persistence';
+import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 
 function readNonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -28,7 +28,7 @@ export async function enrichCliActionApprovalContext(input: Readonly<{
   let machineId = readNonEmptyString(input.context?.defaultSessionMachineId)
     ?? readNonEmptyString(input.machineId);
   if (!machineId && input.fixedServerId === null) {
-    machineId = readNonEmptyString((await readSettings().catch(() => null))?.machineId);
+    machineId = await readActiveMachineId().catch(() => null);
   }
   return {
     ...(input.context ?? {}),

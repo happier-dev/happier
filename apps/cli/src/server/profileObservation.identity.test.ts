@@ -1,3 +1,4 @@
+import { readMachineRegistration, updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { reloadConfiguration } from '@/configuration';
@@ -192,9 +193,8 @@ describe('authenticated Home profile identity reuse', () => {
       const ownerBearer = randomUUID();
       await writeCredentialsTokenOnlyForServerId(ownerId, { token: ownerBearer });
       await writeCredentialsTokenOnlyForServerId(selectedId, { token: bearer });
-      await updateSettings(current => ({ ...current,
-        machineIdByServerId: { ...current.machineIdByServerId, [selectedId]: 'selected-machine', [ownerId]: 'owner-machine' },
-      }));
+      await updateMachineRegistration(() => ({ machineId: 'selected-machine' }), selectedId);
+      await updateMachineRegistration(() => ({ machineId: 'owner-machine' }), ownerId);
       const before = await readSettings();
       const profile = await resolveCurrentDaemonHomeProfile();
       expect(profile.id).toBe(selectedId);
@@ -215,7 +215,8 @@ describe('authenticated Home profile identity reuse', () => {
       expect((await getServerProfile(selectedId)).homeConnectionDescriptor).toBeUndefined();
       const after = await readSettings();
       expect(after.activeServerId).toBe(before.activeServerId);
-      expect(after.machineIdByServerId).toEqual(before.machineIdByServerId);
+      await expect(readMachineRegistration(selectedId)).resolves.toEqual({ machineId: 'selected-machine' });
+      await expect(readMachineRegistration(ownerId)).resolves.toEqual({ machineId: 'owner-machine' });
       expect((await readStoredCredentialsForServerId(selectedId))?.token === bearer).toBe(true);
       expect((await readStoredCredentialsForServerId(ownerId))?.token === ownerBearer).toBe(true);
     });

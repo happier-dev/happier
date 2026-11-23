@@ -5,7 +5,7 @@ import { decodeScmDiffSummaryModelOverride, encodeScmDiffSummaryModelOverride, t
     type ScmDiffSummaryCatalogUnavailableTargetV1 } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { buildScmDiffSummaryModelProfiles } from '@happier-dev/protocol/actions/settings/scmDiffSummaryModels';
-import { readSettings, type StoredCredentials } from '@/persistence';
+import { type StoredCredentials } from '@/persistence';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { readAgentStructuredOutputCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import { projectNativeModelStructuredOutputCapabilities } from '@/capabilities/probes/nativeCatalogModels';
@@ -27,7 +27,7 @@ import type { PortableVoiceSettingsBindingContextV1 } from '@happier-dev/protoco
 import type { VoiceSettingsMutationServicesV1 } from '@happier-dev/protocol/voice/settings/voiceSettingBindings';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
-import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';
+import { readRegisteredMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, isCustomAcpAgentContributionIdentityV1, listAgentExecutionTargetsV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { resolveVoiceAgentCatalogSelectionV1, type VoiceAgentCatalogEntryV1 } from '@happier-dev/protocol/voice/settings/voiceAgentSelection';
 import { listSelectableBundledAgentExecutionTargets } from '@happier-dev/agents/definitions';
@@ -208,8 +208,7 @@ export function createCliSettingsCatalogServices(params: Readonly<{
             if (params.readMachineAgentProjection && !projection) return null;
             const registry = projection ? null : readCurrentContributionRegistry();
             if (registry) {
-                const local = await readSettings();
-                if (resolveMachineIdForServerFromSettings(local, params.serverId, params.expectedAccountId) !== voice.executionMachine.machineId) return null;
+                if (await readRegisteredMachineId(params.serverId, params.expectedAccountId) !== voice.executionMachine.machineId) return null;
             }
             const generation = projection?.generation ?? pluginReloadController.getState().generation;
             const entries: VoiceAgentCatalogEntryV1[] = projection ? Object.values(projection.agentsById).flatMap(entry => {
@@ -325,7 +324,7 @@ export function createCliSettingsCatalogServices(params: Readonly<{
                 const serverId = params.serverId ?? configuration.activeServerId;
                 const serverHttpBaseUrl = operationContext?.serverHttpBaseUrl ?? params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
                 const executionMachineId = params.machineId ?? (credentials && !params.authorizeConnectedAccountRequest
-                    ? resolveMachineIdForServerFromSettings(await readSettings(), serverId, readAccountIdFromToken(credentials.token)) ?? undefined
+                    ? await readRegisteredMachineId(serverId, readAccountIdFromToken(credentials.token)) ?? undefined
                     : undefined);
                 const callMachineAction: CliMachineActionCall | undefined = params.callMachineAction
                     ?? (credentials && !params.authorizeConnectedAccountRequest ? async request => {

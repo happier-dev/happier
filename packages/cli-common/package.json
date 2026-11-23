@@ -374,6 +374,12 @@
       "import": "./dist/service/index.js",
       "default": "./dist/service/index.js"
     },
+    "./firstPartyRuntime/cliMachineRegistration": {
+      "happier-source": "./src/firstPartyRuntime/cliMachineRegistration.ts",
+      "types": "./dist/firstPartyRuntime/cliMachineRegistration.d.ts",
+      "import": "./dist/firstPartyRuntime/cliMachineRegistration.js",
+      "default": "./dist/firstPartyRuntime/cliMachineRegistration.js"
+    },
     "./firstPartyRuntime/serverRuntimeArtifactLayout": {
       "happier-source": "./src/firstPartyRuntime/serverRuntimeArtifactLayout.ts",
       "types": "./dist/firstPartyRuntime/serverRuntimeArtifactLayout.d.ts",

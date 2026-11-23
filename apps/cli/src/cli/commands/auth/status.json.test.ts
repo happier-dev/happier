@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
@@ -92,13 +93,10 @@ describe('happier auth status --json', () => {
             publicKey: deriveBoxPublicKeyFromSeed(machineKey),
             machineKey,
           });
-          await updateSettings((settings) => ({
-            ...settings,
-            machineIdByServerId: { ...(settings.machineIdByServerId ?? {}), [configuration.activeServerId ?? 'cloud']: 'mid_123' },
-            machineIdConfirmedByServerByServerId: {
-              ...(settings.machineIdConfirmedByServerByServerId ?? {}),
-              [configuration.activeServerId ?? 'cloud']: true,
-            },
+          await updateMachineRegistration(registration => ({
+            ...registration,
+            machineId: 'mid_123',
+            confirmedByServer: true,
           }));
 
           await handleAuthCommand(['status', '--json']);
@@ -264,12 +262,9 @@ describe('happier auth status --json', () => {
             publicKey: deriveBoxPublicKeyFromSeed(machineKey),
             machineKey,
           });
-          await updateSettings((settings) => ({
-            ...settings,
-            machineIdByServerId: {
-              ...(settings.machineIdByServerId ?? {}),
-              [configuration.activeServerId ?? 'cloud']: 'mid_rejected',
-            },
+          await updateMachineRegistration(registration => ({
+            ...registration,
+            machineId: 'mid_rejected',
           }));
 
           await handleAuthCommand(['status', '--json']);

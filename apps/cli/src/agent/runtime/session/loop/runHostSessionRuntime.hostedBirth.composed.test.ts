@@ -1,3 +1,4 @@
+import { readMachineRegistration, updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -5,7 +6,7 @@ import { AccountEncryptionCurrentnessResponseSchema, deriveSessionCreationTagV1,
 import { StoredSessionOwnerMetadataEnvelopeV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 import { configuration } from '@/configuration';
-import { clearDaemonStateForTestTeardown, readSettings, writeDaemonState, writeSettings } from '@/persistence';
+import { clearDaemonStateForTestTeardown, writeDaemonState } from '@/persistence';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { runHostSessionRuntime, type HostSessionRuntimeConfig } from './runHostSessionRuntime';
@@ -15,9 +16,8 @@ afterEach(() => vi.unstubAllEnvs());
 it('publishes each hosted Session profile through real runtime initialization and Session creation', async () => {
     // The CLI runner owns a disposable Home. A live daemon record keeps the
     // real API initializer on the existing registered-Machine startup path.
-    const settings = await readSettings();
-    await writeSettings({ ...settings, machineId: 'hosted-birth-machine',
-        machineIdByServerId: { ...settings.machineIdByServerId, [configuration.activeServerId]: 'hosted-birth-machine' } });
+    const previousRegistration = await readMachineRegistration();
+    await updateMachineRegistration(() => ({ machineId: 'hosted-birth-machine' }));
     writeDaemonState({ pid: process.pid, httpPort: 1, startedAt: Date.now(), startedWithCliVersion: 'test', controlToken: 'test-token' });
     vi.stubEnv('HAPPIER_SESSION_PROFILE_ID', 'host-process-profile');
 
@@ -91,6 +91,6 @@ it('publishes each hosted Session profile through real runtime initialization an
     } finally {
         await new Promise<void>((resolve, reject) => home.close(error => error ? reject(error) : resolve()));
         await clearDaemonStateForTestTeardown();
-        await writeSettings(settings);
+        await updateMachineRegistration(() => previousRegistration);
     }
 });

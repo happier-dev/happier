@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,7 +26,6 @@ import { createCliActionExecutor } from '@/session/actions/createCliActionExecut
 import * as daemonControlClient from '@/daemon/controlClient';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { updateSettings } from '@/persistence';
 import { configuration } from '@/configuration';
 import { bootstrapAccountSettingsContext, resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { clearActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -138,13 +138,9 @@ async function createBoundaryHarness(holdRetainedSource?: () => Promise<void>, s
     });
     // CLI's canonical test setup gives persistence its own per-process home.
     // Generate the real installation publisher key there instead of faking crypto.
-    await updateSettings((settings) => ({
-        ...settings,
-        machineId: project.machineId,
-        machineIdByServerId: {
-            ...settings.machineIdByServerId,
-            [configuration.activeServerId]: project.machineId,
-        },
+    await updateMachineRegistration(registration => ({
+      ...registration,
+      machineId: project.machineId,
     }));
     const handlers = new Map<string, (input: unknown) => Promise<unknown>>();
     const rpcHandlerManager = new RpcHandlerManager({

@@ -10,7 +10,7 @@ import { enqueuePendingQueueV2 } from '../../pendingQueueV2';
 import { createUserScopedSocketCollector } from '../../socketClient';
 import { createLegacyRpcClient } from '../../syntheticAgent/rpcClient';
 import { enrichCapabilityProbeError } from '../harness/capabilityProbeFailure';
-import { invokeRpcAcrossMachineIds, resolveMachineIdsFromSettings } from './runtimeHelpers';
+import { invokeRpcAcrossMachineIds, waitForDaemonMachineIds } from './runtimeHelpers';
 
 type CapabilityRpcMethod = typeof RPC_METHODS.CAPABILITIES_INVOKE | typeof RPC_METHODS.CAPABILITIES_DETECT;
 
@@ -39,7 +39,7 @@ export async function invokeCapabilitiesMethod(params: {
   timeoutMs?: number;
 }): Promise<unknown> {
   const settingsPath = `${params.cliHome}/settings.json`;
-  const machineIds = await resolveMachineIdsFromSettings({ settingsPath, timeoutMs: 15_000 });
+  const machineIds = await waitForDaemonMachineIds({ settingsPath, timeoutMs: 15_000 });
   if (machineIds.length === 0) {
     throw new Error(`machineId not found in settings.json (${settingsPath})`);
   }

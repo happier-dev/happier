@@ -132,7 +132,8 @@ describe('updateSettings', () => {
     failRead = false;
     await updateSettings((current) => ({ ...current, daemonAutoStartWhenRunningHappy: true }));
     const { lastUsedAt, ...profilePreferences } = saved.servers.selfhost;
-    expect(await readSettings()).toMatchObject({ ...saved, servers: { selfhost: profilePreferences }, daemonAutoStartWhenRunningHappy: true });
+    expect(await readSettings()).toMatchObject({ schemaVersion: 6, onboardingCompleted: true, activeServerId: 'selfhost',
+      servers: { selfhost: profilePreferences }, daemonAutoStartWhenRunningHappy: true });
     expect(await readServerProfileObservations()).toEqual({ selfhost: lastUsedAt });
     expect(await readFile(cursorPath, 'utf8')).toBe(cursorContent);
   });

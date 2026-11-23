@@ -69,15 +69,8 @@ describe('happier session list API Token timeout', () => {
     });
     const { reloadConfiguration, configuration } = await import('@/configuration');
     reloadConfiguration();
-    const { readSettings, writeSettings } = await import('@/persistence');
-    const settings = await readSettings();
-    await writeSettings({
-      ...settings,
-      machineIdByServerId: {
-        ...(settings.machineIdByServerId ?? {}),
-        [configuration.activeServerId]: 'machine-session-list',
-      },
-    });
+    const { updateMachineRegistration } = await import('@/daemon/machineIdentity/machineRegistrationStore');
+    await updateMachineRegistration(() => ({ machineId: 'machine-session-list' }));
   });
 
   afterEach(async () => {

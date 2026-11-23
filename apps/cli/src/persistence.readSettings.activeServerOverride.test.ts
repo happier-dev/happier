@@ -71,8 +71,9 @@ describe('readSettings (active server override)', () => {
       raw.machineIdByServerId = { [envServerId]: 'machine-env' };
       writeFileSync(join(homeDir, 'settings.json'), JSON.stringify(raw, null, 2), 'utf8');
 
+      const { readActiveMachineId } = await import('@/daemon/machineIdentity/machineRegistrationStore');
       const settings = await readSettings();
-      expect(settings.machineId).toBe('machine-env');
+      expect(await readActiveMachineId()).toBe('machine-env');
     });
   }, 15_000);
 
@@ -136,14 +137,11 @@ describe('readSettings (active server override)', () => {
       };
       writeFileSync(settingsPath, JSON.stringify(seeded, null, 2), 'utf8');
 
-      const { clearMachineId } = await import('./persistence');
+      const { clearMachineId, readMachineRegistration } = await import('@/daemon/machineIdentity/machineRegistrationStore');
       await clearMachineId();
 
-      const raw = JSON.parse(readFileSync(settingsPath, 'utf8'));
-      expect(raw.machineIdByServerId.cloud).toBe('machine-cloud');
-      expect(raw.machineIdByServerId[envServerId]).toBeUndefined();
-      expect(raw.machineIdConfirmedByServerByServerId.cloud).toBe(true);
-      expect(raw.machineIdConfirmedByServerByServerId[envServerId]).toBeUndefined();
+      await expect(readMachineRegistration('cloud')).resolves.toMatchObject({ machineId: 'machine-cloud', confirmedByServer: true });
+      await expect(readMachineRegistration(envServerId)).resolves.toEqual({});
     });
   }, 15_000);
 
@@ -188,8 +186,9 @@ describe('readSettings (active server override)', () => {
 
       vi.resetModules();
       const { readSettings } = await import('./persistence');
+      const { readActiveMachineId } = await import('@/daemon/machineIdentity/machineRegistrationStore');
       const settings = await readSettings();
-      expect(settings.machineId).toBe('machine-stack');
+      expect(await readActiveMachineId()).toBe('machine-stack');
     });
   });
 
@@ -237,9 +236,10 @@ describe('readSettings (active server override)', () => {
 
       vi.resetModules();
       const { readSettings } = await import('./persistence');
+      const { readActiveMachineId } = await import('@/daemon/machineIdentity/machineRegistrationStore');
       const settings = await readSettings();
 
-      expect(settings.machineId).toBeUndefined();
+      expect(await readActiveMachineId()).toBeNull();
     });
   });
 });

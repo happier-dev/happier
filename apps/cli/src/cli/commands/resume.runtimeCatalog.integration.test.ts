@@ -22,8 +22,7 @@ import {
 import { deserializeSessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 
 import { reloadConfiguration } from '@/configuration';
-import type { Credentials, Settings } from '@/persistence';
-import { SUPPORTED_SCHEMA_VERSION } from '@/persistence';
+import type { Credentials } from '@/persistence';
 import { encodeBase64, encrypt } from '@/api/encryption';
 import { readSessionAttachFromFile } from '@/agent/runtime/sessionAttach';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -160,7 +159,7 @@ describe('happier resume', () => {
       getAccountEncryptionCurrentnessFn: async () => createAccountEncryptionCurrentnessFixture(),
       resolveAgentHandlerFn,
       attachDeps: {
-        readSettingsFn: async (): Promise<Settings> => ({ machineId: 'machine-local' } as Settings),
+        readActiveMachineIdFn: async () => 'machine-local',
         readTerminalAttachmentInfoFn: async () => ({ version: 1, sessionId: rawSession.id, terminal, updatedAt: Date.now() }),
         runHerdrAttachFn: async () => { throw new Error('Herdr terminal is no longer available'); },
       },
@@ -203,7 +202,7 @@ describe('happier resume', () => {
           resolveContributionRegistryFn: async () => null,
           getAccountEncryptionCurrentnessFn: async () => createAccountEncryptionCurrentnessFixture({ mode: 'plain' }),
           chdirFn,
-          attachDeps: { readSettingsFn: async () => ({ schemaVersion: SUPPORTED_SCHEMA_VERSION, onboardingCompleted: true, machineId: 'this-machine' }),
+          attachDeps: { readActiveMachineIdFn: async () => 'this-machine',
             runHerdrAttachFn: async input => { attached.push(input.terminal.herdr?.paneId ?? ''); return 0; } },
         });
         if (runner === 'absent') {

@@ -7,13 +7,11 @@ import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 const mocks = vi.hoisted(() => ({
   createExecutor: vi.fn(),
   readCredentials: vi.fn(),
-  readSettings: vi.fn(),
   readStoredCredentials: vi.fn(),
 }));
 
 vi.mock('@/persistence', () => ({
   readCredentials: mocks.readCredentials,
-  readSettings: mocks.readSettings,
   readStoredCredentials: mocks.readStoredCredentials,
 }));
 
@@ -43,7 +41,6 @@ describe('plain-account RPC action ingress', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.readCredentials.mockResolvedValue(null);
-    mocks.readSettings.mockResolvedValue({ machineId: 'machine-1' });
     mocks.readStoredCredentials.mockResolvedValue({
       token: 'token-only',
       encryption: null,

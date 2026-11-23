@@ -1,14 +1,13 @@
-import { readSettings } from '@/persistence';
+import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 
 const DEFAULT_MISSING_MACHINE_ID_MESSAGE =
-    '[START] No machine ID found in settings. Please report this issue on https://github.com/happier-dev/happier/issues';
+    '[START] No machine ID found in the local registration. Please report this issue on https://github.com/happier-dev/happier/issues';
 
 export async function readRequiredStartupMachineId(
     missingMachineIdMessage?: string,
 ): Promise<string> {
-    const settings = await readSettings();
-    const machineId = typeof settings?.machineId === 'string' ? settings.machineId.trim() : '';
-    if (machineId.length > 0) {
+    const machineId = await readActiveMachineId();
+    if (machineId) {
         return machineId;
     }
 

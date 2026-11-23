@@ -1,3 +1,4 @@
+import { readStoredMachineRegistration, resolveMachineRegistrationPath } from '@happier-dev/cli-common/firstPartyRuntime/cliMachineRegistration';
 import { randomBytes } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -114,10 +115,10 @@ describe('seedCliDataKeyAuthForServer', () => {
       tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey,
     ));
 
-    const settings = JSON.parse(await readFile(join(cliHome, 'settings.json'), 'utf8')) as {
-      machineReplacementCandidatesByServerIdByAccountId?: Record<string, Record<string, unknown>>;
-    };
-    expect(settings.machineReplacementCandidatesByServerIdByAccountId?.[seeded.serverId]?.[accountId]).toMatchObject({
+    const registration = await readStoredMachineRegistration(
+      resolveMachineRegistrationPath(join(cliHome, 'servers'), seeded.serverId),
+    );
+    expect(registration?.replacementCandidates?.[accountId]).toMatchObject({
       machineId: oldMachineId,
       replacementReason: 'reauth',
     });

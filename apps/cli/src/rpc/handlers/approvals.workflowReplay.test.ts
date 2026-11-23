@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { Buffer } from 'node:buffer';
 
 import axios from 'axios';
@@ -25,12 +26,10 @@ import { bootstrapAccountSettingsContext, resetInMemoryAccountSettingsContextFor
 // the daemon's own Workflow accepted-authorization owner all run for real.
 const files = vi.hoisted(() => ({
   readStoredCredentials: vi.fn(),
-  readSettings: vi.fn(),
 }));
 vi.mock('@/persistence', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/persistence')>(),
   readStoredCredentials: files.readStoredCredentials,
-  readSettings: files.readSettings,
 }));
 
 import { registerApprovalRpcHandlers } from './approvals';
@@ -186,7 +185,7 @@ beforeEach(async () => {
   resetInMemoryAccountSettingsContextForTests();
   resetServerFeaturesClientForTests();
   files.readStoredCredentials.mockResolvedValue(credentials);
-  files.readSettings.mockResolvedValue({ machineId: MACHINE_ID });
+  await updateMachineRegistration(() => ({ machineId: MACHINE_ID }));
   installAccountServer();
   await bootstrapAccountSettingsContext({ credentials, mode: 'blocking', refresh: 'force' });
 });

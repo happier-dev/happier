@@ -33,7 +33,7 @@ import { startDatabaseWorkbenchPostgres } from '../../src/testkit/process/databa
 import { startProjectDaemonFixture } from '../../src/testkit/daemon/projectDaemon';
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 import { resolveAcpSdkTestRuntime } from '../../src/testkit/providers/acpSdkTestRuntime';
-import { resolveMachineIdsFromSettings } from '../../src/testkit/providers/scenarios/runtimeHelpers';
+import { waitForDaemonMachineIds } from '../../src/testkit/providers/scenarios/runtimeHelpers';
 import {
     enqueueSessionPromptForScenario,
     waitForAssistantMessageContaining,
@@ -418,7 +418,7 @@ describe('core e2e: same-Session cross-Agent transition', () => {
         const beforeTransition = await fetchSessionV2(server.baseUrl, auth.token, sessionId);
         const messagesBefore = await fetchAllMessages(server.baseUrl, auth.token, sessionId);
 
-        const machineIds = await resolveMachineIdsFromSettings({
+        const machineIds = await waitForDaemonMachineIds({
             settingsPath: resolve(join(daemonHomeDir, 'settings.json')),
             timeoutMs: 60_000,
         });
@@ -836,7 +836,7 @@ describe('core e2e: same-Session cross-Agent transition', () => {
         const beforeFirstCutover = await fetchSessionV2(server.baseUrl, auth.token, sessionId);
         const messagesBeforeFirstCutover = await fetchAllMessages(server.baseUrl, auth.token, sessionId);
 
-        const machineIds = await resolveMachineIdsFromSettings({
+        const machineIds = await waitForDaemonMachineIds({
             settingsPath: resolve(join(daemonHomeDir, 'settings.json')),
             timeoutMs: 60_000,
         });

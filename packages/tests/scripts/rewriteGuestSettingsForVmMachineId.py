@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -43,6 +44,9 @@ def main() -> int:
     if not active_server_id or not vm_machine_id:
         raise SystemExit(0)
 
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", active_server_id) or active_server_id in (".", ".."):
+        raise SystemExit("Invalid Machine registration Home")
+
     account_id = ""
     if access_key_path is not None and access_key_path.exists():
         try:
@@ -73,21 +77,15 @@ def main() -> int:
                 "lastUsedAt": 0,
             },
         },
-        "machineIdByServerId": {
-            active_server_id: vm_machine_id,
-        },
-        "machineIdByServerIdByAccountId": {
-            active_server_id: {
-                account_id: vm_machine_id,
-            } if account_id else {},
-        },
-        "lastTokenSubByServerId": {
-            active_server_id: account_id,
-        } if account_id else {},
-        "machineIdConfirmedByServerByServerId": {
-            active_server_id: True,
-        },
     }
+    registration = {
+        "machineId": vm_machine_id,
+        "confirmedByServer": True,
+        **({"accountId": account_id, "machineIdByAccountId": {account_id: vm_machine_id}} if account_id else {}),
+    }
+    registration_path = settings_path.parent / "servers" / active_server_id / "machine-registration.json"
+    registration_path.parent.mkdir(parents=True, exist_ok=True)
+    registration_path.write_text(json.dumps(registration, indent=2) + "\n", encoding="utf-8")
 
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     settings_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

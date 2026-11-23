@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DaemonState, Machine, MachineMetadata } from '@/api/types';
@@ -61,7 +61,7 @@ describe('ensureMachineRegistered', () => {
 
       vi.resetModules();
       const { ensureMachineRegistered } = await import('./ensureMachineRegistered');
-      const { readSettings } = await import('@/persistence');
+      const { readMachineRegistration } = await import('@/daemon/machineIdentity/machineRegistrationStore');
       await ensureMachineRegistered({
         api: {
           getOrCreateMachine: async (options) => ({
@@ -78,9 +78,9 @@ describe('ensureMachineRegistered', () => {
         metadata: { host: 'host1' } as MachineMetadata,
       });
 
-      await expect(readSettings()).resolves.toMatchObject({
+      await expect(readMachineRegistration()).resolves.toMatchObject({
         machineId,
-        machineIdConfirmedByServer: true,
+        confirmedByServer: true,
       });
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
@@ -206,7 +206,7 @@ describe('ensureMachineRegistered', () => {
       );
 
       vi.resetModules();
-      const { readSettings } = await import('@/persistence');
+      const { readMachineRegistration } = await import('@/daemon/machineIdentity/machineRegistrationStore');
       const { ensureMachineRegistered } = await import('./ensureMachineRegistered');
 
       const calls: string[] = [];
@@ -240,10 +240,10 @@ describe('ensureMachineRegistered', () => {
       expect(machineId).toBe(calls[1]);
       expect(machine.id).toBe(calls[1]);
 
-      const settings = await readSettings();
+      const settings = await readMachineRegistration();
       expect(settings.machineId).toBe(calls[1]);
-      expect(settings.machineIdConfirmedByServer).toBe(true);
-      expect(settings.machineReplacementCandidatesByServerIdByAccountId?.cloud?.['account-1']).toEqual({
+      expect(settings.confirmedByServer).toBe(true);
+      expect(settings.replacementCandidates?.['account-1']).toEqual({
         machineId: oldMachineId,
         replacementReason: 'rotation',
         createdAt: expect.any(Number),
@@ -297,7 +297,7 @@ describe('ensureMachineRegistered', () => {
       );
 
       vi.resetModules();
-      const { readSettings } = await import('@/persistence');
+      const { readMachineRegistration } = await import('@/daemon/machineIdentity/machineRegistrationStore');
       const { ensureMachineRegistered } = await import('./ensureMachineRegistered');
 
       const calls: string[] = [];
@@ -329,10 +329,10 @@ describe('ensureMachineRegistered', () => {
       expect(machineId).toBe(alreadyRotated);
       expect(machine.id).toBe(alreadyRotated);
 
-      const settings = await readSettings();
+      const settings = await readMachineRegistration();
       expect(settings.machineId).toBe(alreadyRotated);
       // Another process may have already confirmed the rotated id; do not clobber that state.
-      expect(settings.machineIdConfirmedByServer).toBe(true);
+      expect(settings.confirmedByServer).toBe(true);
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }
@@ -384,7 +384,7 @@ describe('ensureMachineRegistered', () => {
       );
 
       vi.resetModules();
-      const { readSettings } = await import('@/persistence');
+      const { readMachineRegistration } = await import('@/daemon/machineIdentity/machineRegistrationStore');
       const { ensureMachineRegistered } = await import('./ensureMachineRegistered');
 
       const calls: string[] = [];
@@ -418,10 +418,10 @@ describe('ensureMachineRegistered', () => {
       expect(machineId).toBe(calls[1]);
       expect(machine.id).toBe(calls[1]);
 
-      const settings = await readSettings();
-      expect(settings.machineReplacementCandidatesByServerIdByAccountId?.cloud?.['account-rebound']).toBeUndefined();
+      const settings = await readMachineRegistration();
+      expect(settings.replacementCandidates?.['account-rebound']).toBeUndefined();
       expect(settings.machineId).toBe(calls[1]);
-      expect(settings.machineIdConfirmedByServer).toBe(true);
+      expect(settings.confirmedByServer).toBe(true);
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }
@@ -487,7 +487,7 @@ describe('ensureMachineRegistered', () => {
       );
 
       vi.resetModules();
-      const { readSettings } = await import('@/persistence');
+      const { readMachineRegistration } = await import('@/daemon/machineIdentity/machineRegistrationStore');
       const { ensureMachineRegistered } = await import('./ensureMachineRegistered');
 
       const calls: string[] = [];
@@ -519,13 +519,13 @@ describe('ensureMachineRegistered', () => {
       expect(machineId).toBe(replacementMachineId);
       expect(didRotateMachineId).toBe(true);
 
-      const settings = await readSettings();
+      const settings = await readMachineRegistration();
       expect(settings.machineId).toBe(replacementMachineId);
-      const raw = JSON.parse(readFileSync(join(homeDir, 'settings.json'), 'utf8'));
-      expect(raw.machineIdByServerId.cloud).toBe(replacementMachineId);
-      expect(raw.machineIdByServerIdByAccountId.cloud['acct-a']).toBe(replacementMachineId);
-      expect(raw.machineIdConfirmedByServerByServerId?.cloud).toBe(true);
-      expect(raw.machineReplacementCandidatesByServerIdByAccountId?.cloud?.['acct-a']).toBeUndefined();
+      const raw = await readMachineRegistration();
+      expect(raw.machineId).toBe(replacementMachineId);
+      expect(raw.machineIdByAccountId?.['acct-a']).toBe(replacementMachineId);
+      expect(raw.confirmedByServer).toBe(true);
+      expect(raw.replacementCandidates?.['acct-a']).toBeUndefined();
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }
@@ -581,7 +581,7 @@ describe('ensureMachineRegistered', () => {
       );
 
       vi.resetModules();
-      const { readSettings } = await import('@/persistence');
+      const { readMachineRegistration } = await import('@/daemon/machineIdentity/machineRegistrationStore');
       const { ensureMachineRegistered } = await import('./ensureMachineRegistered');
 
       const calls: string[] = [];
@@ -612,13 +612,13 @@ describe('ensureMachineRegistered', () => {
       expect(calls).toHaveLength(2);
       expect(machineId).toBe(calls[1]);
 
-      const settings = await readSettings();
+      const settings = await readMachineRegistration();
       expect(settings.machineId).toBe(calls[1]);
 
-      const raw = JSON.parse(readFileSync(join(homeDir, 'settings.json'), 'utf8'));
-      expect(raw.machineIdByServerId.cloud).toBe(calls[1]);
-      expect(raw.machineIdByServerIdByAccountId?.cloud?.['acct-a']).toBe(calls[1]);
-      expect(raw.machineIdConfirmedByServerByServerId?.cloud).toBe(true);
+      const raw = await readMachineRegistration();
+      expect(raw.machineId).toBe(calls[1]);
+      expect(raw.machineIdByAccountId?.['acct-a']).toBe(calls[1]);
+      expect(raw.confirmedByServer).toBe(true);
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }
@@ -715,10 +715,8 @@ describe('ensureMachineRegistered', () => {
 
       await expect(registration).rejects.toThrow(/quiesc/i);
       expect(getOrCreateMachine).toHaveBeenCalledTimes(1);
-      const persisted = JSON.parse(readFileSync(join(homeDir, 'settings.json'), 'utf8')) as {
-        machineIdByServerId?: Record<string, string>;
-      };
-      expect(persisted.machineIdByServerId?.cloud).toBe(machineId);
+      const { readMachineRegistration } = await import('@/daemon/machineIdentity/machineRegistrationStore');
+      expect((await readMachineRegistration()).machineId).toBe(machineId);
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }

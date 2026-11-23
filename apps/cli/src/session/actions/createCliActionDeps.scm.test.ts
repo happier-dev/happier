@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { buildReviewUnits } from '@happier-dev/protocol/scm/comparisonOccurrences';
 import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { markRpcRequestDisposition } from '@happier-dev/sync-client';
@@ -157,7 +158,10 @@ describe('exact-machine SCM Action targeting', () => {
       try {
         env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'public-retained-home' });
         reloadConfiguration();
-        await updateSettings(settings => ({ ...settings, machineIdByServerId: { 'public-retained-home': 'machine' } }));
+        await updateMachineRegistration(registration => ({
+          ...registration,
+          machineId: 'machine',
+        }), 'public-retained-home');
         const saved = await scmDiffSummaryResultStore.create({ cwd: home, sessionId: 'deleted-session',
           output: ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: 'retained-comparison',
             metadata: { source: { kind: 'workingTree' }, sourceKey: 'retained-comparison' },
@@ -231,7 +235,10 @@ describe('exact-machine SCM Action targeting', () => {
       try {
         env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'retained-home' });
         reloadConfiguration();
-        await updateSettings(settings => ({ ...settings, machineIdByServerId: { [configuration.activeServerId]: 'machine' } }));
+        await updateMachineRegistration(registration => ({
+          ...registration,
+          machineId: 'machine',
+        }));
         const sessionId = 'deleted-session';
         const saved = await scmDiffSummaryResultStore.create({ cwd: home, sessionId,
           output: ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: 'retained-comparison',
@@ -306,7 +313,10 @@ describe('exact-machine SCM Action targeting', () => {
       try {
         env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'retained-clear-home' });
         reloadConfiguration();
-        await updateSettings(settings => ({ ...settings, machineIdByServerId: { 'retained-clear-home': 'machine' } }));
+        await updateMachineRegistration(registration => ({
+          ...registration,
+          machineId: 'machine',
+        }), 'retained-clear-home');
         const sessionId = 'deleted-generator';
         const cwd = fixture.rootPath;
         await writeFile(join(cwd, fixture.trackedPath), 'Retained captured change\n');
@@ -428,7 +438,10 @@ describe('exact-machine SCM Action targeting', () => {
       try {
         env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'blame-native-home' });
         reloadConfiguration();
-        await updateSettings(settings => ({ ...settings, machineIdByServerId: { 'blame-native-home': 'machine' } }));
+        await updateMachineRegistration(registration => ({
+          ...registration,
+          machineId: 'machine',
+        }), 'blame-native-home');
         admitted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: home, controller: pluginReloadController,
           runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
         await writeFile(join(fixture.rootPath, fixture.trackedPath), 'native uncommitted line\n');
@@ -469,7 +482,10 @@ describe('exact-machine SCM Action targeting', () => {
       try {
         env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'session-review-home' });
         reloadConfiguration();
-        await updateSettings(settings => ({ ...settings, machineIdByServerId: { 'session-review-home': 'machine' } }));
+        await updateMachineRegistration(registration => ({
+          ...registration,
+          machineId: 'machine',
+        }), 'session-review-home');
         admitted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: home, controller: pluginReloadController,
           runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
         await writeFile(join(fixture.rootPath, fixture.trackedPath), 'Session-bound pending change\n');
@@ -514,8 +530,11 @@ describe('exact-machine SCM Action targeting', () => {
           createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact' as const,
           homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: serverId, canonicalServerUrl: serverUrl,
             revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] }) };
-        await updateSettings(settings => ({ ...settings, machineIdByServerId: { [profileId]: 'machine' }, activeServerId: profileId,
-          servers: { [profileId]: profile } }));
+        await updateSettings(settings => ({ ...settings, activeServerId: profileId, servers: { [profileId]: profile } }));
+        await updateMachineRegistration(registration => ({
+          ...registration,
+          machineId: 'machine',
+        }), profileId);
         const saved = await scmDiffSummaryResultStore.create({ cwd: home,
           output: ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: 'portable-comparison',
             metadata: { source: { kind: 'workingTree' }, sourceKey: 'portable-comparison' },

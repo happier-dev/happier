@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { EventEmitter } from 'node:events';
 import { createSocketTransportAdapter, markRpcRequestDisposition } from '@happier-dev/sync-client';
 import axios from 'axios';
@@ -9,7 +10,6 @@ import { createCliActionExecutorHarness } from '@/session/actions/createCliActio
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { setSessionArchivedState } from './setSessionArchivedState';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
-import { updateSettings } from '@/persistence';
 import { configuration } from '@/configuration';
 
 const boundary = vi.hoisted(() => ({ createSocket: vi.fn(), callMachineRpc: vi.fn() }));
@@ -75,9 +75,10 @@ describe('setSessionArchivedState', () => {
 
   it('retains original authorization while stopping an active session and retrying archive', async () => {
     await readOrCreateInstallationIdentity();
-    await updateSettings(settings => ({ ...settings, machineIdByServerId: {
-      ...settings.machineIdByServerId, [configuration.activeServerId]: 'archive-machine',
-    } }));
+    await updateMachineRegistration(registration => ({
+      ...registration,
+      machineId: 'archive-machine',
+    }));
     active = true;
     const post = vi.spyOn(axios, 'post')
       .mockResolvedValueOnce({ status: 409, data: { error: 'session_active' } })

@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 // Transform the Account host graph during collection; the test clock measures execution.
 import '@/plugins/runtime/accountExecutionRuntime';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -19,7 +20,7 @@ import { ExternalActionRequestEnvelopeV2Schema, openExternalActionRequestV2,
     prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, projectExternalActionHttpError } from '@happier-dev/protocol/actions/externalActionApi';
 import { configuration } from '@/configuration';
-import { updateSettings, writeDaemonState } from '@/persistence';
+import { writeDaemonState } from '@/persistence';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -199,9 +200,10 @@ describe('paired terminal Action admission', () => {
         await withConfiguredDaemonTestHome({ prefix: 'happier-session-create-configured-' }, async () => {
             const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 4,
                 provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
-            await updateSettings(settings => ({ ...settings, machineId: 'another-account-machine',
-                machineIdByServerIdByAccountId: { [configuration.activeServerId]: { owner: 'account-scoped-machine' } },
-                lastTokenSubByServerId: { [configuration.activeServerId]: 'owner' },
+            await updateMachineRegistration(registration => ({
+              ...registration,
+              accountId: 'owner',
+              machineIdByAccountId: { ...registration.machineIdByAccountId, owner: 'account-scoped-machine' },
             }));
             const get = vi.spyOn(axios, 'get').mockRejectedValue(new Error('A configured target needs no inventory read'));
             const executor = createCliActionExecutorFromCredentials({

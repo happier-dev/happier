@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import axios from 'axios';
 import { expect, it, onTestFinished, vi } from 'vitest';
 import type { Socket } from 'socket.io';
@@ -78,9 +79,12 @@ it.each([
   h.tracked.agentRuntimeDaemonServiceAuthorityFilePath = bridge.path;
   h.tracked.agentRuntimeDaemonServiceCapabilityHash = bridge.capabilityDigest;
   await seedTestServerProfile({ id: serverId, homeId, serverUrl: 'https://session-home.test' });
-  await updateSettings(settings => ({ ...settings, activeServerId: serverId,
-    machineIdByServerId: { ...settings.machineIdByServerId, [serverId]: 'machine' },
-    lastTokenSubByServerId: { ...settings.lastTokenSubByServerId, [serverId]: 'requester' } }));
+  await updateSettings(settings => ({ ...settings, activeServerId: serverId }));
+  await updateMachineRegistration(registration => ({
+    ...registration,
+    machineId: 'machine',
+    accountId: 'requester',
+  }), serverId);
   reloadConfiguration();
   if (losesProfileIdentity) {
     const transport = axios.request.bind(axios);

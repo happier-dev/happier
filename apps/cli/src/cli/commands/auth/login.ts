@@ -2,7 +2,8 @@ import os from 'node:os';
 
 import { resolveActiveServerAuthReadiness } from '@/auth/resolveActiveServerAuthReadiness';
 import { returnNullOnCliReloginRequired } from '@/auth/returnNullOnCliReloginRequired';
-import { clearCredentials, clearMachineId, readStoredCredentials } from '@/persistence';
+import { clearCredentials, readStoredCredentials } from '@/persistence';
+import { clearMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import { isDaemonStopIncompleteError, stopDaemon } from '@/daemon/controlClient';
 import { logger } from '@/ui/logger';

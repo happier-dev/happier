@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -15,7 +16,6 @@ import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { configuration, reloadConfiguration } from '@/configuration';
-import { updateSettings } from '@/persistence';
 import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { PLUGIN_MANIFEST } from '../../../../../packages/plugins/scm-github/src/manifest';
@@ -159,7 +159,10 @@ it.each(['ui', 'rpc'] as const)('captures Files through the source-owned Account
   try {
     env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: serverId, HAPPIER_SERVER_URL: serverHttpBaseUrl });
     reloadConfiguration();
-    await updateSettings(settings => ({ ...settings, machineIdByServerId: { [serverId]: machineId } }));
+    await updateMachineRegistration(registration => ({
+      ...registration,
+      machineId,
+    }), serverId);
     registerAccountHomeHttp(app, { accountId, serverId,
       qualifiedCredential: { read: () => credential, write: next => { credential = next; } } });
     await registerAuthoredAccountActionRelease(app, accountId, { primary: {

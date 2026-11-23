@@ -3,10 +3,8 @@ import { ApiClient } from '@/api/api';
 import type { MachineMetadata } from '@/api/types';
 import { ensureMachineRegistered } from '@/api/machine/ensureMachineRegistered';
 import type { StoredCredentials } from '@/persistence';
-import { readDaemonState, readSettings } from '@/persistence';
-
-const DEFAULT_MISSING_MACHINE_ID_MESSAGE =
-  '[START] No machine ID found in settings. Please report this issue on https://github.com/happier-dev/happier/issues';
+import { readDaemonState } from '@/persistence';
+import { readRequiredStartupMachineId } from '@/agent/runtime/startup/readRequiredStartupMachineId';
 
 const silentRecoveryLogger = {
   info: () => undefined,
@@ -32,12 +30,7 @@ export async function initializeBackendApiContext(opts: {
   machineId: string;
 }> {
   const api = await ApiClient.create(opts.credentials);
-  const settings = await readSettings();
-  const machineId = settings?.machineId;
-  if (!machineId) {
-    console.error(opts.missingMachineIdMessage ?? DEFAULT_MISSING_MACHINE_ID_MESSAGE);
-    process.exit(1);
-  }
+  const machineId = await readRequiredStartupMachineId(opts.missingMachineIdMessage);
   if (await shouldSkipMachineRegistration(opts.skipMachineRegistration)) {
     api.setLocalMachineId(machineId);
     return { api, machineId };

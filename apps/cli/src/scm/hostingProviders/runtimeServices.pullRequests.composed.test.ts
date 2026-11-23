@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { execFileSync } from 'node:child_process';
 import { expect, it, vi } from 'vitest';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -15,7 +16,6 @@ import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { registerAccountHomeHttp } from '@/session/actions/widgetApproval.testkit';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { reloadConfiguration } from '@/configuration';
-import { updateSettings } from '@/persistence';
 import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveDefaultScmBackendRegistry } from '@/scm/scmBackendCatalog';
@@ -66,7 +66,10 @@ it('reuses a GitHub pull request through raw SCM RPC without aliasing the null a
         }
         env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: serverId, HAPPIER_SERVER_URL: serverUrl });
         reloadConfiguration();
-        await updateSettings(settings => ({ ...settings, machineIdByServerId: { [serverId]: machineId } }));
+        await updateMachineRegistration(registration => ({
+          ...registration,
+          machineId,
+        }), serverId);
         const features = registerAccountHomeHttp(app, { accountId, serverId });
         const serverFeatures = { ...features, features: { ...features.features, connectedServices: { enabled: true } },
             capabilities: { ...features.capabilities, connectedServices: { qualifiedAccounts: { protocolVersion: 4 } } } };

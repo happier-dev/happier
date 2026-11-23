@@ -1,3 +1,4 @@
+import { resolveMachineRegistrationPath, readStoredMachineRegistration } from '@happier-dev/cli-common/firstPartyRuntime/cliMachineRegistration';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
@@ -325,8 +326,6 @@ test('hstack stack happier <name> selects the stable stack scope without copying
       schemaVersion: 6,
       onboardingCompleted: true,
       activeServerId: 'stack-local',
-      machineIdByServerId: { 'stack-local': 'machine-stack-local' },
-      machineIdByServerIdByAccountId: { 'stack-local': { 'account-1': 'machine-stack-local-account-1' } },
       servers: {
         'stack-local': {
           id: 'stack-local',
@@ -343,6 +342,10 @@ test('hstack stack happier <name> selects the stable stack scope without copying
   });
 
   const settingsPath = join(fixture.storageDir, fixture.stackName, 'cli', 'settings.json');
+  const registrationPath = resolveMachineRegistrationPath(join(dirname(settingsPath), 'servers'), 'stack-local');
+  const registration = { machineId: 'machine-stack-local', machineIdByAccountId: { 'account-1': 'machine-stack-local-account-1' } };
+  await mkdir(dirname(registrationPath), { recursive: true });
+  await writeFile(registrationPath, JSON.stringify(registration));
   const res = await runNodeCapture([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'happier', fixture.stackName], {
     cwd: rootDir,
     env: fixture.baseEnv,
@@ -356,10 +359,10 @@ test('hstack stack happier <name> selects the stable stack scope without copying
   assert.equal(settings.activeServerId, stableScopeId);
   assert.ok(settings.servers[stableScopeId]);
   assert.ok(settings.servers['stack-local']);
-  assert.deepEqual(settings.machineIdByServerId, { 'stack-local': 'machine-stack-local' });
-  assert.deepEqual(settings.machineIdByServerIdByAccountId, {
-    'stack-local': { 'account-1': 'machine-stack-local-account-1' },
-  });
+  assert.deepEqual(await readStoredMachineRegistration(registrationPath), registration);
+  assert.equal(await readStoredMachineRegistration(
+    resolveMachineRegistrationPath(join(dirname(settingsPath), 'servers'), stableScopeId),
+  ), undefined);
 });
 
 test('hstack stack happier <name> uses stack.runtime.json ports when env file does not pin HAPPIER_STACK_SERVER_PORT', async (t) => {

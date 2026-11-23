@@ -1,3 +1,4 @@
+import { resolveMachineRegistrationPath, type MachineRegistration } from '@happier-dev/cli-common/firstPartyRuntime/cliMachineRegistration';
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -63,26 +64,6 @@ function isAccountBearer(token: string): boolean {
   return readAuthTokenProvenance(payload, { allowLegacyHome: true })?.provenance.kind === 'account';
 }
 
-function buildMachineReplacementCandidates(
-  params: Readonly<{
-    serverId: string;
-    token: string;
-    replacementCandidate?: SeedReplacementCandidate;
-  }>,
-): Record<string, Record<string, { machineId: string; replacementReason: MachineReplacementReason; createdAt: number }>> {
-  const accountId = readAccountIdFromToken(params.token);
-  if (!accountId || !params.replacementCandidate?.machineId) return {};
-  return {
-    [params.serverId]: {
-      [accountId]: {
-        machineId: params.replacementCandidate.machineId,
-        replacementReason: params.replacementCandidate.replacementReason,
-        createdAt: 0,
-      },
-    },
-  };
-}
-
 async function seedCliCredentialsForServer(params: {
   cliHome: string;
   serverUrl: string;
@@ -102,13 +83,17 @@ async function seedCliCredentialsForServer(params: {
   await writeFile(join(params.cliHome, 'access.key'), credentials, { encoding: 'utf8', mode: CLI_HOME_FILE_MODE });
   await writeFile(join(perServerDir, 'access.key'), credentials, { encoding: 'utf8', mode: CLI_HOME_FILE_MODE });
 
-  // Seed settings.json with an active server profile + machine id to keep daemon startup non-interactive.
-  // This avoids races where the detached daemon reads settings before the foreground CLI finishes creating them.
-  const machineReplacementCandidatesByServerIdByAccountId = buildMachineReplacementCandidates({
-    serverId,
-    token: params.token,
-    replacementCandidate: params.replacementCandidate,
-  });
+  const accountId = readAccountIdFromToken(params.token);
+  const candidate = params.replacementCandidate;
+  const registration: MachineRegistration = {
+    machineId,
+    ...(accountId ? { accountId } : {}),
+    ...(accountId && candidate ? { replacementCandidates: { [accountId]: { ...candidate, createdAt: 0 } } } : {}),
+  };
+  await writeFile(resolveMachineRegistrationPath(join(params.cliHome, 'servers'), serverId),
+    JSON.stringify(registration), { encoding: 'utf8', mode: CLI_HOME_FILE_MODE });
+
+  // Seed the active profile before starting the detached daemon.
   const seededSettings = {
     schemaVersion: 5,
     onboardingCompleted: true,
@@ -129,13 +114,6 @@ async function seedCliCredentialsForServer(params: {
           : null),
       },
     },
-    machineIdByServerId: {
-      [serverId]: machineId,
-    },
-    ...(Object.keys(machineReplacementCandidatesByServerIdByAccountId).length
-      ? { machineReplacementCandidatesByServerIdByAccountId }
-      : null),
-    machineIdConfirmedByServerByServerId: {},
     lastChangesCursorByServerIdByAccountId: {},
   };
   await writeFile(join(params.cliHome, 'settings.json'), JSON.stringify(seededSettings, null, 2) + '\n', {

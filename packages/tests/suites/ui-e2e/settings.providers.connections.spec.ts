@@ -13,7 +13,7 @@ import {
 } from '../../src/testkit/providers/uiE2eProviderSettings';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
-import { waitForDaemonMachineIdFromCliSettings } from '../../src/testkit/uiE2e/daemonMachineId';
+import { waitForDaemonMachineId } from '../../src/testkit/uiE2e/daemonMachineId';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
@@ -108,7 +108,7 @@ test.describe('ui e2e: Provider connections settings', () => {
       uiBaseUrl,
       daemonStartupTimeoutMs: 180_000,
     });
-    const machineId = await waitForDaemonMachineIdFromCliSettings({ cliHomeDir, timeoutMs: 120_000 });
+    const machineId = await waitForDaemonMachineId({ cliHomeDir, timeoutMs: 120_000 });
     const accessKey = await readCliAccessKey(cliHomeDir);
     if (!accessKey) throw new Error('expected CLI access key after terminal connect');
     await replaceProviderUiE2eSettings({

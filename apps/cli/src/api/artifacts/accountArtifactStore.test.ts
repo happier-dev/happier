@@ -1,3 +1,4 @@
+import { readActiveMachineId, readMachineRegistration, updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -48,7 +49,6 @@ import { classifyServerEndpointError } from '@/api/client/classifyServerEndpoint
 import { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { createAccountEncryptionCurrentnessFixture, createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
-import { readSettings, writeSettings } from '@/persistence';
 import { readCurrentMachineInstallation } from '@/daemon/identity/currentMachineInstallation';
 import { createDefaultPluginInstallationPublisherHeader } from '@/plugins/installations/publisherProof';
 import { configuration } from '@/configuration';
@@ -2617,15 +2617,14 @@ it.each(['plain', 'e2ee'] as const)('round trips binary content under the same A
     ['plain', 'publisher proof'], ['e2ee', 'publisher proof'],
     ['plain', 'cancellation'], ['e2ee', 'cancellation'],
   ] as const)('lets %s headless Inbox header reads make room for %s before selected body HTTP', async (mode, competingWork) => {
-    const previousSettings = await readSettings();
+    const previousRegistration = await readMachineRegistration();
     let pendingProof: Promise<string | null> | undefined;
     let pendingCancellation: Promise<void> | undefined;
     try {
-      await writeSettings({ schemaVersion: 6, onboardingCompleted: true,
-        machineIdByServerId: { [configuration.activeServerId]: 'publisher-machine' } });
+      await updateMachineRegistration(() => ({ machineId: 'publisher-machine' }));
       // Prepare the real local installation before testing reads competing with
       // page projection. Only the remote Artifact HTTP response is substituted.
-      expect((await readSettings()).machineId).toBe('publisher-machine');
+      expect(await readActiveMachineId()).toBe('publisher-machine');
       await readOrCreateInstallationIdentity();
       expect(await readCurrentMachineInstallation()).not.toBeNull();
       const machineKey = new Uint8Array(randomBytes(32));
@@ -2706,7 +2705,7 @@ it.each(['plain', 'e2ee'] as const)('round trips binary content under the same A
     } finally {
       await pendingProof;
       await pendingCancellation;
-      await writeSettings(previousSettings);
+      await updateMachineRegistration(() => previousRegistration);
     }
   });
 

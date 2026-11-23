@@ -111,7 +111,8 @@ describe('installation identity store', () => {
         try {
             vi.resetModules();
             const { readOrCreateInstallationIdentity } = await import('./store');
-            const { clearCredentials, clearMachineId } = await import('@/persistence');
+            const { clearCredentials } = await import('@/persistence');
+            const { clearMachineId } = await import('@/daemon/machineIdentity/machineRegistrationStore');
 
             const before = await readOrCreateInstallationIdentity();
             await clearCredentials();

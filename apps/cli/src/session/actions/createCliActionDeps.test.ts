@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import axios from 'axios';
@@ -963,7 +964,7 @@ describe('createCliActionDeps hook dispatch', () => {
     createCliReviewCommentActionExecutorFromCredentials.mockReset();
     fetchSessionByIdCompat.mockReset();
     resolveReplaySeedDraft.mockReset();
-    readSettings.mockResolvedValue({ machineId: 'local-machine' });
+    await updateMachineRegistration(() => ({ machineId: 'local-machine' }));
     getPreferredHostName.mockResolvedValue('local-machine.local');
     hostSubagentStore.list.mockReset();
     hostSubagentStore.get.mockReset();
@@ -5205,7 +5206,7 @@ describe('createCliActionDeps hook dispatch', () => {
       mode: 'plain',
       accountEncryptionCurrentness: createAccountEncryptionCurrentnessFixture(),
     });
-    readSettings.mockResolvedValue({ machineId: 'target-machine' });
+    await updateMachineRegistration(() => ({ machineId: 'target-machine' }));
 
     const deps = createCliActionDeps({
       token: 'token',
@@ -5761,7 +5762,7 @@ describe('createCliActionDeps session lifecycle bindings', () => {
     callExactMachineRpc.mockReset();
     callMachineRpc.mockReset();
     readSettings.mockReset();
-    readSettings.mockResolvedValue({ machineId: 'machine-current' });
+    await updateMachineRegistration(() => ({ machineId: 'machine-current' }));
     // Resuming an inactive Session resolves its persisted Agent against the
     // one catalog projection, so this describe owns its own catalog state
     // instead of inheriting whatever another describe left on the mock.

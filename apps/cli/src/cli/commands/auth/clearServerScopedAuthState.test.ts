@@ -1,64 +1,36 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { clearServerScopedAuthStateInSettings } from './clearServerScopedAuthState';
-import type { Settings } from '@/persistence';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
-describe('clearServerScopedAuthStateInSettings', () => {
-  it('clears machine id, account-bound machine ids, replacement candidates, token sub, confirmation, and cursors for target server only', () => {
-    const input: Settings = {
-      schemaVersion: 6,
-      onboardingCompleted: true,
-      machineIdByServerId: { cloud: 'm1', other: 'm2' },
-      machineIdByServerIdByAccountId: { cloud: { a: 'm1' }, other: { b: 'm2' } },
-      machineReplacementCandidatesByServerIdByAccountId: {
-        cloud: { a: { machineId: 'm-old', replacementReason: 'reauth', createdAt: 1 } },
-        other: { b: { machineId: 'm-other-old', replacementReason: 'rotation', createdAt: 2 } },
-      },
-      lastTokenSubByServerId: { cloud: 'a', other: 'b' },
-      machineIdConfirmedByServerByServerId: { cloud: true, other: true },
-    };
-
-    const out = clearServerScopedAuthStateInSettings(input, 'cloud');
-
-    expect(out.machineIdByServerId).toEqual({ other: 'm2' });
-    expect(out.machineIdByServerIdByAccountId).toEqual({ other: { b: 'm2' } });
-    expect(out.machineReplacementCandidatesByServerIdByAccountId).toEqual({
-      other: { b: { machineId: 'm-other-old', replacementReason: 'rotation', createdAt: 2 } },
+describe('clearServerScopedAuthState', () => {
+  it('clears only the selected Home registration and changes cursor', async () => {
+    await withTempDir('happier-clear-machine-registration-', async homeDir => {
+      vi.stubEnv('HAPPIER_HOME_DIR', homeDir);
+      vi.stubEnv('HAPPIER_ACTIVE_SERVER_ID', 'cloud');
+      vi.resetModules();
+      try {
+        const { readMachineRegistration, updateMachineRegistration } = await import('@/daemon/machineIdentity/machineRegistrationStore');
+        const { readAccountChangesCursors, writeAccountChangesCursor, updateSettings, readSettings } = await import('@/persistence');
+        const { clearServerScopedAuthState } = await import('./clearServerScopedAuthState');
+        const registration = {
+          machineId: 'machine', accountId: 'account', machineIdByAccountId: { account: 'machine' },
+          confirmedByServer: true, replacementCandidates: {
+            account: { machineId: 'old-machine', replacementReason: 'reauth' as const, createdAt: 1 },
+          },
+        };
+        await updateSettings(settings => ({ ...settings, onboardingCompleted: true }));
+        await updateMachineRegistration(() => registration, 'cloud');
+        await updateMachineRegistration(() => registration, 'other');
+        await writeAccountChangesCursor('account', 42);
+        await clearServerScopedAuthState('cloud/unsafe');
+        await expect(readMachineRegistration('cloud')).resolves.toEqual({});
+        await expect(readMachineRegistration('other')).resolves.toEqual(registration);
+        expect((await readAccountChangesCursors()).cloud).toBeUndefined();
+        expect((await readSettings()).onboardingCompleted).toBe(true);
+      } finally {
+        vi.unstubAllEnvs();
+        vi.resetModules();
+      }
     });
-    expect(out.lastTokenSubByServerId).toEqual({ other: 'b' });
-    expect(out.machineIdConfirmedByServerByServerId).toEqual({ other: true });
-  });
-
-  it('preserves undefined server-scoped maps when they were unset', () => {
-    const input: Settings = {
-      schemaVersion: 6,
-      onboardingCompleted: true,
-    };
-
-    const out = clearServerScopedAuthStateInSettings(input, 'cloud');
-
-    expect(out.machineIdByServerId).toBeUndefined();
-    expect(out.machineIdByServerIdByAccountId).toBeUndefined();
-    expect(out.machineReplacementCandidatesByServerIdByAccountId).toBeUndefined();
-    expect(out.lastTokenSubByServerId).toBeUndefined();
-    expect(out.machineIdConfirmedByServerByServerId).toBeUndefined();
-  });
-
-  it('clears entries using the sanitized server id key', () => {
-    const input: Settings = {
-      schemaVersion: 6,
-      onboardingCompleted: true,
-      machineIdByServerId: { cloud: 'm1', other: 'm2' },
-      machineIdByServerIdByAccountId: { cloud: { a: 'm1' }, other: { b: 'm2' } },
-      lastTokenSubByServerId: { cloud: 'a', other: 'b' },
-      machineIdConfirmedByServerByServerId: { cloud: true, other: true },
-    };
-
-    const out = clearServerScopedAuthStateInSettings(input, 'cloud/unsafe');
-
-    expect(out.machineIdByServerId).toEqual({ other: 'm2' });
-    expect(out.machineIdByServerIdByAccountId).toEqual({ other: { b: 'm2' } });
-    expect(out.lastTokenSubByServerId).toEqual({ other: 'b' });
-    expect(out.machineIdConfirmedByServerByServerId).toEqual({ other: true });
   });
 });

@@ -1,3 +1,4 @@
+import { readStoredMachineRegistration, resolveMachineRegistrationPath, resolveRegisteredMachineId } from '@happier-dev/cli-common/firstPartyRuntime/cliMachineRegistration';
 import { afterEach, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -7,7 +8,6 @@ import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/mach
 import { MachineInstallationIdentityV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { connectUiActionClient } from '@happier-tests/ui-action-client';
-import { resolveMachineIdForServerFromSettings } from '../../../../apps/cli/src/daemon/resolveMachineIdForServerFromSettings';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { decodeStoredCredentials, type Settings } from '../../../../apps/cli/src/persistence';
 import { ApiClient } from '../../../../apps/cli/src/api/api';
@@ -159,8 +159,8 @@ describe('core e2e: machine installation identity replacement', () => {
       } });
       let machineId: string | null = null;
       await waitFor(async () => {
-        const settings = JSON.parse(await readFile(join(homeDir, 'settings.json'), 'utf8')) as Settings;
-        machineId = resolveMachineIdForServerFromSettings(settings, paired.serverId, readAccountIdFromToken(account.credentials.token));
+        const registration = await readStoredMachineRegistration(resolveMachineRegistrationPath(join(homeDir, 'servers'), paired.serverId));
+        machineId = registration ? resolveRegisteredMachineId(registration, readAccountIdFromToken(account.credentials.token)) : null;
         return machineId !== null && machineId !== paired.machineId && ui!.isMachineControlReady(machineId);
       }, { timeoutMs: 60_000, context: 'rotated Machine persisted and control published' });
       if (!machineId) throw new Error('Registration did not publish its recovered Machine identity');
@@ -242,8 +242,8 @@ describe('core e2e: machine installation identity replacement', () => {
         const homeDir = join(testDir, account.name, 'home');
         const settings = JSON.parse(await readFile(join(homeDir, 'settings.json'), 'utf8')) as Settings;
         if (!settings.activeServerId) throw new Error('First registrar did not persist its active Home');
-        const machineId = resolveMachineIdForServerFromSettings(settings, settings.activeServerId,
-          readAccountIdFromToken(account.auth.token));
+        const registration = await readStoredMachineRegistration(resolveMachineRegistrationPath(join(homeDir, 'servers'), settings.activeServerId));
+        const machineId = registration ? resolveRegisteredMachineId(registration, readAccountIdFromToken(account.auth.token)) : null;
         if (!machineId) throw new Error('First registrar did not persist its Machine identity');
         const credentials = decodeStoredCredentials(account.uiCredentials);
         if (!credentials?.encryption || credentials.encryption.type !== 'dataKey') {

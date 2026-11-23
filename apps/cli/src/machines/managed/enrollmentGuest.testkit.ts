@@ -1,3 +1,4 @@
+import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { writeFile } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 
@@ -11,14 +12,14 @@ export async function runEnrollmentGuestBoundary(command: 'request' | 'wait', ar
     }
     const { handleAuthWait } = await import('@/cli/commands/auth/wait');
     await handleAuthWait(args);
-    const { readSettings, readStoredCredentials } = await import('@/persistence');
+    const { readStoredCredentials } = await import('@/persistence');
     const { readInstallationIdentityIfExistsSync } = await import('@/daemon/identity/store');
     const { ApiClient } = await import('@/api/api');
     const { runWithServerHttpBaseUrl } = await import('@/api/client/serverHttpBaseUrl');
     const { encodeBase64 } = await import('@/api/encryption');
     const credentials = await readStoredCredentials();
     const installation = readInstallationIdentityIfExistsSync();
-    const machineId = (await readSettings()).machineId;
+    const machineId = await readActiveMachineId();
     if (!credentials || !installation || !machineId) throw new Error('Guest enrollment did not persist its identity');
     const machine = await runWithServerHttpBaseUrl(serverUrl, async () => (await ApiClient.create(credentials)).getMachine(machineId));
     if (!machine) throw new Error('Guest enrollment did not publish its Machine');

@@ -85,7 +85,7 @@ import { sanitizeDaemonEnvForSpawn } from '../testkit/daemon/daemon';
 import { createRunDirs } from '../testkit/runDir';
 import { createUserScopedSocketCollector, type SocketCollector } from '../testkit/socketClient';
 import { waitFor } from '../testkit/timing';
-import { waitForDaemonMachineIdFromCliSettings } from '../testkit/uiE2e/daemonMachineId';
+import { waitForDaemonMachineId } from '../testkit/uiE2e/daemonMachineId';
 import { renderPackedExternalAgentExecutable } from '../../scripts/plugin-platform/packed-external-agent-executable.mjs';
 
 const PACKED_NOVEL_CONNECTED_ACCOUNT_SERVICE = Object.freeze({
@@ -258,7 +258,7 @@ export async function runPackedAuthorVerticalAWithTestServer(
       machineId: string;
       ui: SocketCollector;
     }>> => {
-      const machineId = await waitForDaemonMachineIdFromCliSettings({
+      const machineId = await waitForDaemonMachineId({
         cliHomeDir: happyHomeDir,
       });
       if (!ui) {

@@ -44,7 +44,7 @@ import {
 import { startServerLight, type StartedServer } from '../testkit/process/serverLight';
 import { createUserScopedSocketCollector, type SocketCollector } from '../testkit/socketClient';
 import { waitFor } from '../testkit/timing';
-import { waitForDaemonMachineIdFromCliSettings } from '../testkit/uiE2e/daemonMachineId';
+import { waitForDaemonMachineId } from '../testkit/uiE2e/daemonMachineId';
 
 const SDK_PACKAGE_NAME = '@happier-dev/plugin-sdk';
 const PLUGIN_UI_PACKAGE_NAME = '@happier-dev/plugin-ui';
@@ -1441,7 +1441,7 @@ export async function runPackedTargetedContributionProjection(
       contributorInstalled: contributorAfterRestart,
     });
 
-    const machineId = await waitForDaemonMachineIdFromCliSettings({ cliHomeDir: happyHomeDir });
+    const machineId = await waitForDaemonMachineId({ cliHomeDir: happyHomeDir });
     ui = createUserScopedSocketCollector(startedServer.baseUrl, auth.token, {
       captureEvents: false,
     });

@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '../../../../apps/cli/src/daemon/machineIdentity/machineRegistrationStore';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
@@ -17,7 +18,6 @@ import { db } from '../../../../apps/server/sources/storage/db';
 import { plugin } from '../../../plugins/machine-services/src/manifest';
 import { createHealthCheckSourceAdapter } from '../../../plugins/machine-services/src/healthObserver';
 import { configuration, reloadConfiguration } from '../../../../apps/cli/src/configuration';
-import { updateSettings } from '../../../../apps/cli/src/persistence';
 import { readCurrentMachineInstallation } from '../../../../apps/cli/src/daemon/identity/currentMachineInstallation';
 import { withTempDir } from '../../../../apps/cli/src/testkit/fs/tempDir';
 import { createAdmittedPluginRuntimeFixture } from '../../../../apps/cli/src/plugins/testkit/admittedRuntime';
@@ -75,8 +75,10 @@ it.skipIf(process.platform !== 'linux').each(['e2ee', 'plain'] as const)('%s: re
             // The already paired observer and installed declaration are preconditions.
             // Everything after setup, including registration and source adoption, uses public owners.
             await home.prepareControllerProvisioner(plugin.manifest);
-            await updateSettings(settings => ({ ...settings, machineId: home.machineId,
-                machineIdByServerId: { ...settings.machineIdByServerId, [configuration.activeServerId]: home.machineId } }));
+            await updateMachineRegistration(registration => ({
+              ...registration,
+              machineId: home.machineId,
+            }));
             await mkdir(dirname(configuration.installationIdentityFile), { recursive: true });
             await writeFile(configuration.installationIdentityFile, JSON.stringify({ version: 1, createdAt: Date.now(),
                 installationId: home.installationId, publicKey: Buffer.from(home.keys.publicKey).toString('base64url'),

@@ -5,15 +5,10 @@ import {
 } from '@happier-dev/protocol';
 
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
-import { SUPPORTED_SCHEMA_VERSION, type Settings } from '@/persistence';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { handleAttachCommand } from './attach';
 
-const localSettings: Settings = {
-  schemaVersion: SUPPORTED_SCHEMA_VERSION,
-  onboardingCompleted: true,
-  machineId: 'machine-local',
-};
+const localMachineId = 'machine-local';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -25,7 +20,7 @@ describe('standalone attach without an in-process daemon runtime', () => {
     });
     await expect(handleAttachCommand([rawSession.id], {
       readCredentialsFn: async () => ({ token: 'test-token', encryption: null }),
-      readSettingsFn: async () => localSettings,
+      readActiveMachineIdFn: async () => localMachineId,
       fetchSessionByIdFn: async () => rawSession,
       getAccountEncryptionCurrentnessFn: async () => ({
         mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
@@ -69,7 +64,7 @@ describe('standalone attach without an in-process daemon runtime', () => {
       const launchTerminal = vi.fn(async () => 0);
       await handleAttachCommand([rawSession.id], {
         readCredentialsFn: async () => ({ token: 'test-token', encryption: null }),
-        readSettingsFn: async () => localSettings,
+        readActiveMachineIdFn: async () => localMachineId,
         fetchSessionByIdFn: async () => rawSession,
         getAccountEncryptionCurrentnessFn: async () => ({
           mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
@@ -92,7 +87,7 @@ describe('standalone attach without an in-process daemon runtime', () => {
     });
     await expect(handleAttachCommand([rawSession.id], {
       readCredentialsFn: async () => ({ token: 'test-token', encryption: null }),
-      readSettingsFn: async () => localSettings,
+      readActiveMachineIdFn: async () => localMachineId,
       fetchSessionByIdFn: async () => rawSession,
       getAccountEncryptionCurrentnessFn: async () => ({
         mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,

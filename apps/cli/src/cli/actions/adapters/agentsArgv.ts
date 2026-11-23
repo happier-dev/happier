@@ -17,9 +17,9 @@ import { AgentsBackendsListOutputSchema } from '@happier-dev/protocol/actions/ag
 import { readRegistryAgentCliLocatorV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { configuration } from '@/configuration';
-import { readSettings, readStoredCredentials, readStoredCredentialsForServerId, sameStoredCredentials } from '@/persistence';
+import { readStoredCredentials, readStoredCredentialsForServerId, sameStoredCredentials } from '@/persistence';
 import { getServerProfile } from '@/server/serverProfiles';
-import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';
+import { readRegisteredMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { normalizeServerHttpBaseUrl, resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { findCatalogEntry } from '@/agent/catalog/registry';
 import { argvBeforeOptionTerminator } from '@/cli/commands/shared/argvFlags';
@@ -234,7 +234,7 @@ export async function tryHandleAgentCliCommand(params: AgentCliOptions): Promise
     }
   } else {
     const machineId = parsed.canonicalBase?.machineId ?? caller.machineId
-      ?? resolveMachineIdForServerFromSettings(await readSettings(), capturedHomeId, readAccountIdFromToken(captured.credentials.token));
+      ?? await readRegisteredMachineId(capturedHomeId, readAccountIdFromToken(captured.credentials.token));
     if (typeof machineId !== 'string' || !machineId) throw Object.assign(new Error('This computer has no registered Machine for this Account. Supply --machine.'), { code: 'machine_not_registered' });
     const composed = parsed.canonicalBase ? { ok: true as const, input: parsed.canonicalBase }
       : composeActionCliInput({ parsed: { ...parsed, callerOverlay: { ...caller, machineId } },

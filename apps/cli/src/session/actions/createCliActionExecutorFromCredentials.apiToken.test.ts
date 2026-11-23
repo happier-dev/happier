@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
@@ -128,6 +129,8 @@ async function withPublishedAccountDaemon(run: (fixture: Readonly<{
     await writeFile(statePath, JSON.stringify({ ...daemonTarget, startedAt: Date.now(), startedWithCliVersion: 'test' }), 'utf8');
     process.env.HAPPIER_HOME_DIR = taskDir;
     reloadConfiguration();
+    await updateMachineRegistration(() => ({ machineId: daemonTarget.machineId,
+      accountId: daemonTarget.accountId }), serverId);
     const actual = await vi.importActual<typeof import('@/daemon/multiDaemon')>('@/daemon/multiDaemon');
     resolveLiveDaemonControlTargetForServer.mockImplementation(actual.resolveLiveDaemonControlTargetForServer);
     expect(await actual.resolveLiveDaemonControlTargetForServer(serverId)).toEqual(daemonTarget);
@@ -366,7 +369,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     reloadConfiguration();
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
     createCliActionExecutor.mockReset();
     createCliActionExecutor.mockReturnValue({
       prepare: vi.fn(),
@@ -381,7 +384,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     daemonPost.mockReset();
     resolveLiveDaemonControlTargetForServer.mockReset();
     resolveCurrentAccountMachineTarget.mockReset();
-    readSettings.mockResolvedValue({ machineId: 'machine-selected' });
+    await updateMachineRegistration(() => ({ machineId: 'machine-selected' }));
     const legacySessionRouteUsed = () => Promise.reject(new Error('legacy_session_route_used'));
     fetchSessionById.mockImplementation(legacySessionRouteUsed);
     fetchSessionsPage.mockImplementation(legacySessionRouteUsed);
@@ -1069,6 +1072,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
 
   it('uses the sole current account machine when a PAT has no daemon-local target', async () => {
     readSettings.mockResolvedValue({});
+    await updateMachineRegistration(() => ({}));
     resolveCurrentAccountMachineTarget.mockResolvedValue({
       kind: 'selected',
       target: { machineId: 'machine-remote', machineLabel: 'machine-remote' },
@@ -1141,6 +1145,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
 
   it('omits the target for a direct daemon Action endpoint without Account machine discovery', async () => {
     readSettings.mockResolvedValue({});
+    await updateMachineRegistration(() => ({}));
     resolveCurrentAccountMachineTarget.mockRejectedValue(new Error('account_machine_inventory_unavailable'));
     const receivedTargets: unknown[] = [];
     const receivedBodies: unknown[] = [];
@@ -1228,6 +1233,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
 
   it('keeps Account machine targeting for an unclaimed loopback Action endpoint', async () => {
     readSettings.mockResolvedValue({});
+    await updateMachineRegistration(() => ({}));
     resolveCurrentAccountMachineTarget.mockResolvedValue({
       kind: 'selected',
       target: { machineId: 'machine-account-server', machineLabel: 'machine-account-server' },
@@ -1281,6 +1287,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
 
   it('returns selector candidates before transport when multiple PAT machines are current', async () => {
     readSettings.mockResolvedValue({});
+    await updateMachineRegistration(() => ({}));
     resolveCurrentAccountMachineTarget.mockResolvedValue({
       kind: 'selection_required',
       candidates: [

@@ -278,7 +278,7 @@ function resolveMachineWorkspacePath(sessionPath: string, machineWorkspacePath: 
  * ```typescript
  * const { state, metadata } = createSessionMetadata({
  *     flavor: backendId,
- *     machineId: settings.machineId,
+ *     machineId: await readActiveMachineId(),
  *     startedBy: opts.startedBy
  * });
  *

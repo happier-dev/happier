@@ -1,3 +1,5 @@
+import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import fastify from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
@@ -12,7 +14,7 @@ import type { Machine } from '@/api/types';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { configuration } from '@/configuration';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
-import { readAccountChangesCursor, readSettings, updateSettings, writeStoredCredentialsForServerId } from '@/persistence';
+import { readAccountChangesCursor, readSettings, writeStoredCredentialsForServerId } from '@/persistence';
 import { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
 import { clearActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { bindApiMachineSocketSequenceMock, createApiMachineSocketFixture } from '@/testkit/apiMachineTransport';
@@ -50,8 +52,10 @@ it.each(['startup', 'reconnect', 'resume', 'automation changes', 'workflow-run c
             const machine: Machine = { id: 'automation-wake-machine', encryptionMode: 'plain', metadata: null,
                 metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
             await writeStoredCredentialsForServerId(configuration.activeServerId, { token, encryption: null });
-            await updateSettings(settings => ({ ...settings,
-                machineIdByServerId: { ...settings.machineIdByServerId, [configuration.activeServerId]: machine.id } }));
+            await updateMachineRegistration(registration => ({
+              ...registration,
+              machineId: machine.id,
+            }));
             await readOrCreateInstallationIdentity();
             const origin = new URL(resolveServerHttpBaseUrl()).origin;
             const requests: string[] = [];
@@ -220,7 +224,7 @@ it.each(['startup', 'reconnect', 'resume', 'automation changes', 'workflow-run c
                 await vi.waitFor(() => expect(claims).toBe(1));
                 await activeWorker.liveWorkProducer.read();
                 if (mode === 'source invalidation') {
-                    expect((await readSettings()).machineId).toBe(machine.id);
+                    expect(await readActiveMachineId()).toBe(machine.id);
                     const broker = admittedRuntime?.registry.stableEventsBroker;
                     if (!broker) throw new Error('Expected admitted Host Event broker');
                     const observerLifetime = new AbortController();

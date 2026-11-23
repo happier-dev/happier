@@ -1,3 +1,4 @@
+import { waitForDaemonMachineId } from '../testkit/uiE2e/daemonMachineId';
 import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -62,11 +63,7 @@ async function main(): Promise<void> {
     });
     console.log('daemon started');
 
-    const settings = JSON.parse(await readFile(resolve(join(daemonHomeDir, 'settings.json')), 'utf8')) as {
-        activeServerId?: string;
-        machineIdByServerId?: Record<string, string>;
-    };
-    const machineId = settings.machineIdByServerId?.[String(settings.activeServerId ?? '')] ?? '';
+    const machineId = await waitForDaemonMachineId({ cliHomeDir: daemonHomeDir });
     console.log('machineId', machineId);
 
     const machinesRes = await fetchJson<Array<{ id?: string; dataEncryptionKey?: string }>>(`${serverBaseUrl}/v1/machines`, {

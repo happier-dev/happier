@@ -1,3 +1,5 @@
+import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { execFileSync } from 'node:child_process';
@@ -85,7 +87,7 @@ import { readArtifactHeadersForCallerInTx, resolveArtifactAccessInTx } from '../
 import type { createManagedServicesOwner, ProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
-import { readSettings, updateSettings } from '@/persistence';
+import { readSettings } from '@/persistence';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
@@ -571,12 +573,10 @@ describe.skipIf(process.platform !== 'linux')('Source audience Environment conte
                     revision: 1, endpoints: [{ kind: 'https', url: sharedHome.baseUrl }] },
                 expectedProfileId: configuration.activeServerId, createIfMissing: true, observation: 'exact',
             });
-            await updateSettings(settings => ({ ...settings,
-                machineIdByServerIdByAccountId: { ...settings.machineIdByServerIdByAccountId,
-                    [configuration.activeServerId]: { ...settings.machineIdByServerIdByAccountId?.[configuration.activeServerId],
-                        [sharedHome.accountId]: sharedHome.machineId } },
-                lastTokenSubByServerId: { ...settings.lastTokenSubByServerId,
-                    [configuration.activeServerId]: sharedHome.accountId },
+            await updateMachineRegistration(registration => ({
+              ...registration,
+              accountId: sharedHome.accountId,
+              machineIdByAccountId: { ...registration.machineIdByAccountId, [sharedHome.accountId]: sharedHome.machineId },
             }));
             const mounted = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
                 runtimeOptions: { pluginIds: ['happier.scm.backend.git'],
@@ -769,11 +769,10 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
                     revision: 1, endpoints: [{ kind: 'https', url: home.baseUrl }] },
                 expectedProfileId: configuration.activeServerId, createIfMissing: true, observation: 'exact',
             });
-            await updateSettings(settings => ({ ...settings,
-                machineIdByServerIdByAccountId: { ...settings.machineIdByServerIdByAccountId,
-                    [configuration.activeServerId]: { ...settings.machineIdByServerIdByAccountId?.[configuration.activeServerId],
-                        [home.accountId]: home.machineId } },
-                lastTokenSubByServerId: { ...settings.lastTokenSubByServerId, [configuration.activeServerId]: home.accountId },
+            await updateMachineRegistration(registration => ({
+              ...registration,
+              accountId: home.accountId,
+              machineIdByAccountId: { ...registration.machineIdByAccountId, [home.accountId]: home.machineId },
             }));
             const mounted = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
                 runtimeOptions: { pluginIds: ['happier.scm.backend.git'],
@@ -948,11 +947,10 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
                     revision: 1, endpoints: [{ kind: 'https', url: home.baseUrl }] },
                 expectedProfileId: configuration.activeServerId, createIfMissing: true, observation: 'exact',
             });
-            await updateSettings(settings => ({ ...settings,
-                machineIdByServerIdByAccountId: { ...settings.machineIdByServerIdByAccountId,
-                    [configuration.activeServerId]: { ...settings.machineIdByServerIdByAccountId?.[configuration.activeServerId],
-                        [home.accountId]: home.machineId } },
-                lastTokenSubByServerId: { ...settings.lastTokenSubByServerId, [configuration.activeServerId]: home.accountId },
+            await updateMachineRegistration(registration => ({
+              ...registration,
+              accountId: home.accountId,
+              machineIdByAccountId: { ...registration.machineIdByAccountId, [home.accountId]: home.machineId },
             }));
             const mounted = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
                 runtimeOptions: { pluginIds: ['happier.scm.backend.git'],
@@ -1194,13 +1192,12 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
             const credentials = readS0ControllerCredentials(home);
             // Canonical per-worker disposable test Home, never the user's
             // settings: author proofs use this installation's paired Machine.
-            await updateSettings(settings => ({ ...settings,
-                machineIdByServerIdByAccountId: { ...settings.machineIdByServerIdByAccountId,
-                    [configuration.activeServerId]: { ...settings.machineIdByServerIdByAccountId?.[configuration.activeServerId],
-                        [home.accountId]: home.machineId } },
-                lastTokenSubByServerId: { ...settings.lastTokenSubByServerId, [configuration.activeServerId]: home.accountId },
+            await updateMachineRegistration(registration => ({
+              ...registration,
+              accountId: home.accountId,
+              machineIdByAccountId: { ...registration.machineIdByAccountId, [home.accountId]: home.machineId },
             }));
-            expect((await readSettings()).machineId).toBe(home.machineId);
+            expect(await readActiveMachineId()).toBe(home.machineId);
             // Genuine network boundary: once bindings are committed, the
             // author's material reader is unavailable. Artifact/controller
             // transport stays live; the installed target must use its seals.

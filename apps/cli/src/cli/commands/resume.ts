@@ -1,9 +1,10 @@
+import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import chalk from 'chalk';
 import { RESUME_USAGE, printResumeHelp } from './resumeHelp';
 import { hostname } from 'node:os';
 import { errorFrame, fail, neutral, warn } from '@happier-dev/cli-common/output';
 
-import { readSettings, readStoredCredentials, type StoredCredentials } from '@/persistence';
+import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import { createSessionAttachFile } from '@/daemon/sessionAttachFile';
 import { requireCatalogEntry } from '@/agent/catalog/registry';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
@@ -125,10 +126,9 @@ async function selectContinuableSessionId(params: Readonly<{
   contributionRegistry: ResumeContributionRegistry | null;
   accountEncryptionMode: AccountEncryptionCurrentnessResponse['mode'];
 }>): Promise<ResumableSessionSelection> {
-  const settings = await readSettings();
   const model = await buildContinueSelectionModel({
     ...params,
-    currentMachineId: typeof settings.machineId === 'string' && settings.machineId.trim() ? settings.machineId.trim() : null,
+    currentMachineId: await readActiveMachineId(),
     currentMachineHost: hostname(),
     readTerminalAttachmentInfoFn: readTerminalAttachmentInfo,
     isTmuxAvailableFn: isTmuxAvailable,
@@ -270,10 +270,9 @@ export async function handleResumeCommand(
     && (await probeSessionRunnerPresence({ sessionId: rawSession.id, trackedSessions: [] })).state === 'runner_absent';
   let openRestorationCandidate = false;
   if (rowModel.active !== true && !resumeInInheritedHerdrPane) {
-    const settings = await (deps?.attachDeps?.readSettingsFn ?? readSettings)();
     const eligibility = await getSessionHostBridge().evaluateAttachEligibility({
       credentials, rawSession, accountEncryptionMode: accountEncryptionCurrentness.mode,
-      currentMachineId: typeof settings.machineId === 'string' ? settings.machineId.trim() || null : null,
+      currentMachineId: await (deps?.attachDeps?.readActiveMachineIdFn ?? readActiveMachineId)(),
       currentMachineHost: hostname(),
       localAttachmentInfo: await (deps?.attachDeps?.readTerminalAttachmentInfoFn ?? readTerminalAttachmentInfo)({
         happyHomeDir: configuration.happyHomeDir, sessionId: rawSession.id,

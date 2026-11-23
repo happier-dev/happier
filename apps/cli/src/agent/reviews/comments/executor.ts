@@ -1,3 +1,4 @@
+import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { createHash, randomBytes as nodeRandomBytes, randomUUID } from 'node:crypto';
 import axios from '@/api/client/credentialAxios';
@@ -16,7 +17,7 @@ import { createConnectedServiceCredentialApi, type AccountEncryptionModeReadOpti
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { configuration } from '@/configuration';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
-import { readSettings, type StoredCredentials } from '@/persistence';
+import { type StoredCredentials } from '@/persistence';
 import type { RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
 import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
@@ -179,11 +180,10 @@ function createReviewCommentPrincipalBodyHash(body: unknown): string {
 }
 
 async function resolveDefaultPrincipalSigningContext(): Promise<ReviewCommentPrincipalSigningContext> {
-    const [settings, identity] = await Promise.all([
-        readSettings(),
+    const [machineId, identity] = await Promise.all([
+        readActiveMachineId(),
         readOrCreateInstallationIdentity(),
     ]);
-    const machineId = typeof settings?.machineId === 'string' ? settings.machineId.trim() : '';
     if (!machineId) {
         throw new Error('review_comment_principal_machine_identity_required');
     }

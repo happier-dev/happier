@@ -5,7 +5,7 @@ import { admitSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/session
 import { parseSessionCreateSpawnOptions } from './parseSessionCreateSpawnOptions';
 import { tmpdir } from 'node:os';
 import { withConfiguredDaemonTestHome, writeDaemonSettingsFixture } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
-import { readSettings } from '@/persistence';
+import { readMachineRegistration, resolveRegisteredMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { registerSessionCreationTargetPreparationRpc } from '@/session/creation/registerSessionCreationTargetPreparationRpc';
@@ -30,12 +30,7 @@ function createDeps(
   return {
     activeServerId: 'server-1',
     defaultAgentId: 'claude',
-    readSettings: async () => ({
-      machineIdByServerIdByAccountId: {
-        'server-1': { 'account-1': 'machine-account-current' },
-      },
-      lastTokenSubByServerId: { 'server-1': 'account-1' },
-    }),
+    readMachineIdForHome: async () => 'machine-account-current',
     readAgentDefinitions: () => [
       {
         id: 'claude',
@@ -106,7 +101,7 @@ describe('normalizeSessionCreateSpawnRequest', () => {
         const parsed = parseSessionCreateSpawnOptions(['create', '--path', tmpdir(), '--agent', 'claude',
           ...(selectedServerId ? ['--server-id', selectedServerId] : [])]);
         const normalized = await normalizeSessionCreateSpawnRequest(parsed.spawnRequest,
-          createDeps({ activeServerId, readSettings }));
+          createDeps({ activeServerId, readMachineIdForHome: async serverId => resolveRegisteredMachineId(await readMachineRegistration(serverId)) }));
         expect(normalized.input.executionTarget).toEqual({ serverId: serverIdentityId, machineId });
         const exactInput = admitSessionSpawnNewActionInputV2(normalized.input);
         const prepared = await preflight({ input: exactInput });
@@ -116,7 +111,7 @@ describe('normalizeSessionCreateSpawnRequest', () => {
           result: { type: 'error', code: 'target_unavailable', retryable: false } });
       }
       await expect(normalizeSessionCreateSpawnRequest({ directory: tmpdir(), backendTargetKey: null, serverId: 'srv_other_home' },
-        createDeps({ activeServerId, readSettings }))).rejects.toMatchObject({ details: { field: 'serverId' } });
+        createDeps({ activeServerId, readMachineIdForHome: async serverId => resolveRegisteredMachineId(await readMachineRegistration(serverId)) }))).rejects.toMatchObject({ details: { field: 'serverId' } });
     });
   });
   it('admits the P0-DATA no-prompt Codex recipe with read-only permission and low effort', async () => {

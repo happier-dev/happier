@@ -1,3 +1,4 @@
+import { resolveMachineRegistrationPath } from '@happier-dev/cli-common/firstPartyRuntime/cliMachineRegistration';
 // @happier-test-preparation source-condition
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -295,15 +296,14 @@ async function prepareSessionCreateFixture(fixture) {
     sourceRuntimeLaunch: { entrypoint: join(fixture.monoRoot, 'apps/cli/dist/index.mjs'), cliDir: join(fixture.monoRoot, 'apps/cli') },
     sourceRuntimeIdentities: { daemon: { selected: 'fixture-source', loaded: null } },
   }));
-  await writeFile(join(fixture.stackCliHome, 'settings.json'), JSON.stringify({ schemaVersion: 6,
-    machineId: 'unrelated-global-machine', lastTokenSubByServerId: { [serverId]: 'fixture-account' },
-    machineIdByServerIdByAccountId: { [serverId]: { 'fixture-account': 'local-machine' } } }));
   const paths = resolveStackCredentialPaths({ cliHomeDir: fixture.stackCliHome, serverUrl: `http://127.0.0.1:${fixture.serverPort}`,
     env: { HAPPIER_ACTIVE_SERVER_ID: serverId } });
   for (const path of [paths.serverScopedPath, paths.legacyPath]) {
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, 'dummy\n');
   }
+  await writeFile(resolveMachineRegistrationPath(join(fixture.stackCliHome, 'servers'), serverId),
+    JSON.stringify({ accountId: 'fixture-account', machineIdByAccountId: { 'fixture-account': 'local-machine' } }));
   return join(fixture.stackCliHome, 'servers', serverId, 'daemon.state.json');
 }
 

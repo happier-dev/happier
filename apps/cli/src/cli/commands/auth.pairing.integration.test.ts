@@ -1,3 +1,4 @@
+import { readMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fastify, { type FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
@@ -20,7 +21,7 @@ import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { captureConsoleLogAndMuteStdout, captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 import { setStdioTtyForTest } from '@/testkit/process/stdio';
 import { handleAuthRequest } from './auth/request';
-import { writeCredentialsDataKey, readCredentials, readStoredCredentials, writeCredentialsTokenOnly, readSettings } from '@/persistence';
+import { writeCredentialsDataKey, readCredentials, readStoredCredentials, writeCredentialsTokenOnly } from '@/persistence';
 import { approveTerminalAuthRequest } from '@/auth/terminalAuthApproval';
 import { handleAuthWait } from './auth/wait';
 
@@ -601,7 +602,7 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
         waitOut.restore();
       }
 
-      const settings = await readSettings();
+      const settings = await readMachineRegistration();
       expect(settings.machineId).toMatch(/^[-a-z0-9]+$/i);
       await expect(readStoredCredentials()).resolves.toEqual({
         token: 'fresh-approved-token',

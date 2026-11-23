@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { createSessionLiveWorkProducer } from '@/daemon/lifecycle/sessionLiveWorkProducer';
 import { SessionTurnMutationV1Schema, type SessionTurnMutationV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import { createProviderAccountUsageStore } from '@/daemon/connectedServices/accountUsage/store';
@@ -364,7 +365,6 @@ vi.mock('@/persistence', async importOriginal => {
   readStoredCredentials: async () => process.env.HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE !== undefined
     ? await actual.readStoredCredentials() : storage.ordinaryStoredCredentials
       ? await actual.readStoredCredentialsForServerId('df38-home') : { ...storage.credentials, token: storage.persistedToken },
-  readSettings: async () => ({ ...await actual.readSettings(), machineId: 'df38-machine' }),
   readDaemonState: async () => storage.daemonPort ? { pid: process.pid, httpPort: storage.daemonPort,
     controlToken: storage.daemonControlToken, startedAt: 1, startedWithCliVersion: 'test' } : null,
   };
@@ -422,6 +422,7 @@ beforeEach(async () => {
   // process replay owns its own Home/markers, just as distinct workers do.
   storage.home = await mkdtemp(join(tmpdir(), 'happier-df42-runner-'));
   await mkdir(configuration.activeServerDir, { recursive: true });
+  await updateMachineRegistration(() => ({ machineId: 'df38-machine' }));
   storage.persistedToken = storage.credentials.token;
   resetServerFeaturesClientForTests();
   installFixturePluginAvailabilityBoundary();

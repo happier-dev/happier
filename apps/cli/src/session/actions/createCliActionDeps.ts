@@ -1,3 +1,4 @@
+import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { createReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { createCliActionAutomationPortV1 } from '@/api/actionAutomations';
 import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
@@ -205,7 +206,6 @@ import { createRoleSourceReader, type RoleSourceReader } from '@/session/roles/r
 import { readAccountIdFromToken, decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import type { createSessionFollowSourceKeyPreparationAfterSet } from '@/agent/runtime/session/follow/createSessionFollowSourceKeyPreparationAfterSet';
 import type { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
-import type { readSettings } from '@/persistence';
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
 import { createSessionListActionDeps } from './sessionListActionDependency';
 import { createCliBoundSessionMetadataReader, readCliActionBoundSessionId, resolveCliActionCallerSession } from './resolveCliActionCallerSession';
@@ -837,9 +837,8 @@ export function createCliActionDeps(params: CliActionDepsParams,
     },
     prepareBindings: async request => {
       if (!params.credentials) return executionRunActionFailure('client_required');
-      const { readSettings } = await import('@/persistence');
       const machineId = request.context.externalActionExecutionAuthorization?.binding.machineId
-        ?? params.machineActionDirectTargetTransport?.machineId ?? (await readSettings()).machineId;
+        ?? params.machineActionDirectTargetTransport?.machineId ?? await readActiveMachineId();
       if (!machineId) return executionRunActionFailure('machine_not_found');
       return createPrepareDeploymentBindingsForHost({ credentials: params.credentials,
         serverId: request.input.serverId, serverHttpBaseUrl: todoHomeBaseUrl, machineId, resolveRequestHeaders: resolveAccountStorageHeaders,

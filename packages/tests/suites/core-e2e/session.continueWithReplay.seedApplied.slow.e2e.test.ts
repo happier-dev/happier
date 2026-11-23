@@ -1,3 +1,4 @@
+import { waitForDaemonMachineId } from '../../src/testkit/uiE2e/daemonMachineId';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
@@ -100,18 +101,6 @@ async function fetchSessionV2(params: {
   if (typeof dek !== 'string' || dek.length === 0) throw new Error('Missing session.dataEncryptionKey');
   if (typeof meta !== 'string' || meta.length === 0) throw new Error('Missing session.metadata');
   return { dataEncryptionKeyBase64: dek, metadataCiphertextBase64: meta };
-}
-
-async function resolveDaemonMachineIdFromSettings(params: { daemonHomeDir: string }): Promise<string> {
-  const raw = await readFile(resolve(join(params.daemonHomeDir, 'settings.json')), 'utf8').catch(() => '');
-  const parsed = raw ? JSON.parse(raw) as any : null;
-  const activeServerId = parsed && typeof parsed.activeServerId === 'string' ? String(parsed.activeServerId) : '';
-  const machineIdByServerId = parsed && typeof parsed.machineIdByServerId === 'object' ? parsed.machineIdByServerId : null;
-  const machineId = activeServerId && machineIdByServerId && typeof machineIdByServerId[activeServerId] === 'string'
-    ? String(machineIdByServerId[activeServerId])
-    : '';
-  if (!machineId) throw new Error('Missing machineIdByServerId[activeServerId] in seeded settings.json');
-  return machineId;
 }
 
 async function postEncryptedMessage(params: {
@@ -300,7 +289,7 @@ describe('core e2e: replaySeedV1 is applied to the first provider prompt but not
       { timeoutMs: 20_000 },
     );
 
-    const daemonMachineId = await resolveDaemonMachineIdFromSettings({ daemonHomeDir });
+    const daemonMachineId = await waitForDaemonMachineId({ cliHomeDir: daemonHomeDir });
 
     const ui = createUserScopedSocketCollector(server.baseUrl, auth.token);
     ui.connect();

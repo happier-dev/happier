@@ -4,7 +4,6 @@ import { dirname, join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { reloadConfiguration } from '@/configuration';
-import { SUPPORTED_SCHEMA_VERSION } from '@/persistence';
 import { acquireSessionRunnerLock, sessionRunnerLockPathForSessionId } from '@/daemon/sessionRunnerLock';
 import { createTerminalAttachmentId, writeTerminalAttachmentInfo, writeTerminalHostAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 import type { Metadata } from '@/api/types';
@@ -61,7 +60,7 @@ describe('recorded Herdr restoration through shared native attachment', () => {
           readCredentialsFn: async () => ({ token: 'fixture-token', encryption: null }),
           fetchSessionByIdFn: async () => row,
           getAccountEncryptionCurrentnessFn: async () => createAccountEncryptionCurrentnessFixture({ mode: 'plain' }),
-          readSettingsFn: async () => ({ schemaVersion: SUPPORTED_SCHEMA_VERSION, onboardingCompleted: true, machineId: 'this-machine' }),
+          readActiveMachineIdFn: async () => 'this-machine',
           runHerdrAttachFn: async ({ terminal: host }) => { attached.push(host); return 0; },
           runWindowsTerminalAttachFn: async ({ terminal: host }) => { attached.push(host); return 0; },
         });
@@ -110,7 +109,7 @@ describe('recorded Herdr restoration through shared native attachment', () => {
           readCredentialsFn: async () => ({ token: 'fixture-token', encryption: null }),
           fetchSessionByIdFn: async () => row,
           getAccountEncryptionCurrentnessFn: async () => createAccountEncryptionCurrentnessFixture({ mode: 'plain' }),
-          readSettingsFn: async () => ({ schemaVersion: SUPPORTED_SCHEMA_VERSION, onboardingCompleted: true, machineId: 'this-machine' }),
+          readActiveMachineIdFn: async () => 'this-machine',
           runHerdrAttachFn: async ({ terminal: host }) => { opened.push(host.herdr?.paneId ?? ''); return 0; },
         });
         if (presence === 'absent') {

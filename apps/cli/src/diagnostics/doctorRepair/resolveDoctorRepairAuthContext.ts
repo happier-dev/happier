@@ -3,7 +3,7 @@ import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveServerProfileApiUrl } from '@/configuration/serverSelection';
 import { readSettings, readStoredCredentialCustodyForServerId, readStoredCredentials, readStoredCredentialsForServerId } from '@/persistence';
 import { validateStoredAuthTokenAgainstServer } from '@/auth/validateStoredAuthTokenAgainstActiveServer';
-import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';
+import { readMachineRegistration, resolveRegisteredMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 
 import type { AuthSignalsForProfile } from './classifyAuth';
 
@@ -45,8 +45,6 @@ export async function resolveDoctorRepairAuthContext(params: Readonly<{
     ).catch(() => null),
   ]);
   const servers = settings?.servers ?? {};
-  const machineIdConfirmedByServerByServerId = settings?.machineIdConfirmedByServerByServerId ?? {};
-  const lastTokenSubByServerId = settings?.lastTokenSubByServerId ?? {};
   const profiles = Object.values(servers).filter((p): p is NonNullable<typeof p> => Boolean(p));
   const hasAnyServerProfile = profiles.length > 0;
 
@@ -89,12 +87,8 @@ export async function resolveDoctorRepairAuthContext(params: Readonly<{
     ] as const)),
   );
 
-  const signals: AuthSignalsForProfile[] = signalProfiles.map((profile) => {
-    const lastSub = String(lastTokenSubByServerId[profile.id] ?? '').trim();
-    // Unreadable settings yield no server profiles at all, so this callback only
-    // runs with settings present; the empty fallback keeps the machine-id owner's
-    // "no recorded machine" answer rather than reading through a null snapshot.
-    const machineId = resolveMachineIdForServerFromSettings(settings ?? {}, profile.id, lastSub || null);
+  const signals: AuthSignalsForProfile[] = await Promise.all(signalProfiles.map(async profile => {
+    const registration = await readMachineRegistration(profile.id);
     const isActive = profile.id === effectiveActiveServerId;
     return {
       serverId: profile.id,
@@ -104,11 +98,10 @@ export async function resolveDoctorRepairAuthContext(params: Readonly<{
       credentialState: isActive
         ? activeCredentialState
         : inactiveCredentialStateByServerId.get(profile.id) ?? 'missing',
-      machineRegistered: machineId !== null
-        && machineIdConfirmedByServerByServerId[profile.id] === true,
+      machineRegistered: resolveRegisteredMachineId(registration) !== null && registration.confirmedByServer === true,
       isActive,
     };
-  });
+  }));
 
   return { activeServerUrl, authSignals: signals, hasAnyServerProfile, targetProfileExists };
 }

@@ -54,7 +54,8 @@ describe('same-Account historical credential refresh', () => {
       const secret = new Uint8Array(32).fill(8);
       await mkdir(dirname(configuration.privateKeyFile), { recursive: true });
       await writeFile(configuration.privateKeyFile, JSON.stringify({ secret: Buffer.from(secret).toString('base64') }));
-      await persistence.updateSettings(settings => ({ ...settings, lastTokenSubByServerId: { [configuration.activeServerId]: 'alice' } }));
+      const { updateMachineRegistration } = await import('@/daemon/machineIdentity/machineRegistrationStore');
+      await updateMachineRegistration(current => ({ ...current, accountId: 'alice' }));
       await persistence.writeCredentialsTokenOnly({ token: token('alice', 'new') });
       expect(await persistence.readStoredCredentialCustodyForServerId(configuration.activeServerId)).toMatchObject({ encryption: { type: 'legacy', secret } });
     });
@@ -68,7 +69,8 @@ describe('same-Account historical credential refresh', () => {
       const { configuration } = await import('@/configuration');
       await mkdir(dirname(configuration.privateKeyFile), { recursive: true });
       await writeFile(configuration.privateKeyFile, JSON.stringify({ secret: Buffer.from(new Uint8Array(32).fill(8)).toString('base64') }));
-      await persistence.updateSettings(settings => ({ ...settings, lastTokenSubByServerId: { [configuration.activeServerId]: 'bob' } }));
+      const { updateMachineRegistration } = await import('@/daemon/machineIdentity/machineRegistrationStore');
+      await updateMachineRegistration(current => ({ ...current, accountId: 'bob' }));
       await persistence.writeCredentialsTokenOnly({ token: token('bob', 'new') }, { previousAccountId: 'alice' });
       expect(await persistence.readStoredCredentialCustodyForServerId(configuration.activeServerId)).toMatchObject({ encryption: null });
     });

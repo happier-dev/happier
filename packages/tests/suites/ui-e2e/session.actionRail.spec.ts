@@ -22,7 +22,7 @@ import { appendBrowserDiagnostics, collectBrowserDiagnostics } from '../../src/t
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { attachRelayRpcResponses } from '../../src/testkit/uiE2e/relayRpcResponses';
-import { waitForDaemonMachineIdFromCliSettings } from '../../src/testkit/uiE2e/daemonMachineId';
+import { waitForDaemonMachineId } from '../../src/testkit/uiE2e/daemonMachineId';
 import { resolveCanonicalServerIdForUi } from '../../src/testkit/uiE2e/sessionFoldersDrag';
 import { sessionListRowTestId } from '../../src/testkit/uiE2e/sessionListRowTestId';
 import { openSessionListRowMenu, selectSessionListRowMenuItem } from '../../src/testkit/uiE2e/sessionListRowMenu';
@@ -141,7 +141,7 @@ test.describe('ui e2e: session action rail', () => {
       });
       daemon = runDaemon;
       const activeDaemon = runDaemon;
-      const machineId = await waitForDaemonMachineIdFromCliSettings({ cliHomeDir: actionCliHome });
+      const machineId = await waitForDaemonMachineId({ cliHomeDir: actionCliHome });
       const serverId = await resolveCanonicalServerIdForUi(serverUrl);
       const repoDir = resolve(join(testDir, 'repo'));
       await createGitRepoWithChanges({ repoDir, fileCount: 1 });

@@ -85,7 +85,7 @@ vi.mock('@/api/client/connectedServiceCredentialApi', () => ({
 }));
 
 describe('happier attach', () => {
-  const localSettings = { machineId: 'machine-local' } as Settings;
+  const localMachineId = 'machine-local';
   const previousManagedServerStatePath = process.env.HAPPIER_OPENCODE_SERVER_STATE_PATH;
   const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
     throw new Error(`process.exit(${code ?? 0})`);
@@ -140,7 +140,7 @@ describe('happier attach', () => {
 
     await expect((handleAttachCommand as any)(['sid_remote_tmux_1'], {
       readCredentialsFn: async () => credentials,
-      readSettingsFn: async (): Promise<Settings> => ({ machineId: 'machine-local' } as Settings),
+      readActiveMachineIdFn: async () => 'machine-local',
       fetchSessionByIdFn: async () => rawSession,
       readTerminalAttachmentInfoFn: async () => null,
       runProviderAttachFn: vi.fn(async () => false),
@@ -187,7 +187,7 @@ describe('happier attach', () => {
         token: 'token-only',
         encryption: null,
       }),
-      readSettingsFn: async () => localSettings,
+      readActiveMachineIdFn: async () => localMachineId,
       fetchSessionsPageFn,
       canUseInkSelectorFn: () => true,
       selectAttachableSessionIdFn,
@@ -219,7 +219,7 @@ describe('happier attach', () => {
         token: 'token-only',
         encryption: null,
       }),
-      readSettingsFn: async () => localSettings,
+      readActiveMachineIdFn: async () => localMachineId,
       fetchSessionsPageFn,
       canUseInkSelectorFn: () => true,
       selectAttachableSessionIdFn: async () => ({ type: 'cancelled' }),
@@ -252,7 +252,7 @@ describe('happier attach', () => {
 
     await (handleAttachCommand as any)(['sid_opencode_missing_machine_1'], {
       readCredentialsFn: async () => credentials,
-      readSettingsFn: async (): Promise<Settings> => ({ machineId: 'machine-local' } as Settings),
+      readActiveMachineIdFn: async () => 'machine-local',
       fetchSessionByIdFn: async () => rawSession,
       readTerminalAttachmentInfoFn: async () => null,
       runProviderAttachFn,
@@ -294,7 +294,7 @@ describe('happier attach', () => {
 
     const attachRun = (handleAttachCommand as any)(['sid_opencode_generic_attach_1'], {
       readCredentialsFn: async () => credentials,
-      readSettingsFn: async () => localSettings,
+      readActiveMachineIdFn: async () => localMachineId,
       fetchSessionByIdFn: async () => rawSession,
       readTerminalAttachmentInfoFn: async () => null,
       runTmuxAttachFn: vi.fn(async () => 0),
@@ -361,7 +361,7 @@ describe('happier attach', () => {
 
     await (handleAttachCommand as any)(['sid_plugin_attach_backend_1'], {
       readCredentialsFn: async () => credentials,
-      readSettingsFn: async () => localSettings,
+      readActiveMachineIdFn: async () => localMachineId,
       fetchSessionByIdFn: async () => rawSession,
       runProviderAttachFn,
       readTerminalAttachmentInfoFn: async () => null,
@@ -398,7 +398,7 @@ describe('happier attach', () => {
 
     await (handleAttachCommand as any)(['sid_opencode_local_marker_1'], {
       readCredentialsFn: async () => credentials,
-      readSettingsFn: async (): Promise<Settings> => ({ machineId: 'machine-after-reauth' } as Settings),
+      readActiveMachineIdFn: async () => 'machine-after-reauth',
       fetchSessionByIdFn: async () => rawSession,
       readTerminalAttachmentInfoFn: async () => ({
         version: 1,
@@ -544,7 +544,7 @@ describe('happier attach', () => {
 
     await (handleAttachCommand as any)([], {
       readCredentialsFn: async () => credentials,
-      readSettingsFn: async (): Promise<Settings> => ({ machineId: 'machine-local' } as Settings),
+      readActiveMachineIdFn: async () => 'machine-local',
       fetchSessionsPageFn,
       fetchSessionByIdFn: async ({ sessionId }: { sessionId: string }) => {
         const page = await fetchSessionsPageFn();
@@ -606,7 +606,7 @@ describe('happier attach', () => {
 
     await (handleAttachCommand as any)([], {
       readCredentialsFn: async () => credentials,
-      readSettingsFn: async (): Promise<Settings> => ({ machineId: undefined } as Settings),
+      readActiveMachineIdFn: async () => null,
       fetchSessionsPageFn: async () => ({
         sessions: [rawSession],
         nextCursor: null,
@@ -657,7 +657,7 @@ describe('happier attach', () => {
 
     await (handleAttachCommand as any)([], {
       readCredentialsFn: async () => credentials,
-      readSettingsFn: async () => localSettings,
+      readActiveMachineIdFn: async () => localMachineId,
       fetchSessionsPageFn: async () => ({
         sessions: [rawSession],
         nextCursor: null,
@@ -688,7 +688,7 @@ describe('happier attach', () => {
     try {
       await (handleAttachCommand as any)([], {
         readCredentialsFn: async () => credentials,
-        readSettingsFn: async () => localSettings,
+        readActiveMachineIdFn: async () => localMachineId,
         fetchSessionsPageFn: async () => ({
           sessions: [],
           nextCursor: null,
@@ -735,7 +735,7 @@ describe('happier attach', () => {
     const runProviderAttachFn = vi.fn(async () => 1);
     await expect((handleAttachCommand as any)(['sid_plain_codex_1'], {
       readCredentialsFn: async () => credentials,
-      readSettingsFn: async () => localSettings,
+      readActiveMachineIdFn: async () => localMachineId,
       fetchSessionByIdFn: async () => rawSession,
       readTerminalAttachmentInfoFn: async () => null,
       runProviderAttachFn,
@@ -788,7 +788,7 @@ describe('happier attach', () => {
 
     await (handleAttachCommand as any)(['sid_layout1_owner_opencode_1'], {
       readCredentialsFn: async () => credentials,
-      readSettingsFn: async () => localSettings,
+      readActiveMachineIdFn: async () => localMachineId,
       fetchSessionByIdFn: async () => rawSession,
       tryDecryptSessionOwnerMetadataViewFn: decryptOwnerMetadataView,
       runProviderAttachFn,
@@ -837,7 +837,7 @@ describe('happier attach', () => {
 
     await (handleAttachCommand as any)(['sid_opencode_1'], {
       readCredentialsFn: async () => credentials,
-      readSettingsFn: async () => localSettings,
+      readActiveMachineIdFn: async () => localMachineId,
       fetchSessionByIdFn: async () => rawSession,
       runProviderAttachFn,
       runTmuxAttachFn,
@@ -879,7 +879,7 @@ describe('happier attach', () => {
     });
     await expect((handleAttachCommand as any)(['sid_opencode_publish_fail_1'], {
       readCredentialsFn: async () => credentials,
-      readSettingsFn: async () => localSettings,
+      readActiveMachineIdFn: async () => localMachineId,
       fetchSessionByIdFn: async () => rawSession,
       runProviderAttachFn: async () => 1,
       readTerminalAttachmentInfoFn: async () => null,
@@ -916,7 +916,7 @@ describe('happier attach', () => {
 
     await (handleAttachCommand as any)(['sid_claude_1'], {
       readCredentialsFn: async () => credentials,
-      readSettingsFn: async () => localSettings,
+      readActiveMachineIdFn: async () => localMachineId,
       fetchSessionByIdFn: async () => rawSession,
       readTerminalAttachmentInfoFn: async () => ({
         version: 1,
@@ -967,7 +967,7 @@ describe('happier attach', () => {
     const runProviderAttachFn = vi.fn(async () => 0);
     await (handleAttachCommand as any)(['sid_herdr_opencode_1'], {
       readCredentialsFn: async () => credentials,
-      readSettingsFn: async () => localSettings,
+      readActiveMachineIdFn: async () => localMachineId,
       fetchSessionByIdFn: async () => rawSession,
       readTerminalAttachmentInfoFn: async () => ({
         version: 1, sessionId: 'sid_herdr_opencode_1', updatedAt: Date.now(), terminal,
@@ -996,7 +996,7 @@ describe('happier attach', () => {
     const runZellijAttachFn = vi.fn(async () => 0);
     await (handleAttachCommand as any)(['sid_zellij_claude_1'], {
       readCredentialsFn: async () => credentials,
-      readSettingsFn: async () => localSettings,
+      readActiveMachineIdFn: async () => localMachineId,
       fetchSessionByIdFn: async () => rawSession,
       readTerminalAttachmentInfoFn: async () => ({
         version: 1, sessionId: 'sid_zellij_claude_1', updatedAt: Date.now(), terminal,
@@ -1039,7 +1039,7 @@ describe('happier attach', () => {
 
     await (handleAttachCommand as any)(['sid_daemon_claude_1'], {
       readCredentialsFn: async () => credentials,
-      readSettingsFn: async () => localSettings,
+      readActiveMachineIdFn: async () => localMachineId,
       fetchSessionByIdFn: async () => rawSession,
       readTerminalAttachmentInfoFn: async () => ({
         version: 1,
@@ -1124,7 +1124,7 @@ describe('happier attach', () => {
 
     await (handleAttachCommand as any)(['sid_windows_1'], {
       readCredentialsFn: async () => credentials,
-      readSettingsFn: async () => localSettings,
+      readActiveMachineIdFn: async () => localMachineId,
       fetchSessionByIdFn: async () => rawSession,
       readTerminalAttachmentInfoFn: async () => ({
         version: 1,
@@ -1178,7 +1178,7 @@ describe('happier attach', () => {
 
     await expect((handleAttachCommand as any)(['sid_windows_hidden_1'], {
       readCredentialsFn: async () => credentials,
-      readSettingsFn: async () => localSettings,
+      readActiveMachineIdFn: async () => localMachineId,
       fetchSessionByIdFn: async () => rawSession,
       readTerminalAttachmentInfoFn: async () => null,
       runProviderAttachFn: vi.fn(async () => 1),

@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { createNativeSoftwareOsFixture, nativeTerminal, packageOs } from './nativeSoftwareOs';
 import { detectCliSnapshotOnDaemonPath } from '@/capabilities/snapshots/cliSnapshot';
 import axios from 'axios';
@@ -32,7 +33,7 @@ import { MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1,
   MachineUpdateOperationProtocolCapabilitiesRequestV1Schema, MachineUpdateOperationProtocolCapabilitiesResponseV1Schema,
   type MachineOperationProtocolCapabilitiesV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { configuration, reloadConfiguration } from '@/configuration';
-import { updateSettings, sameStoredCredentials, writeDaemonState, writeStoredCredentialsForServerId, type StoredCredentials } from '@/persistence';
+import { sameStoredCredentials, writeDaemonState, writeStoredCredentialsForServerId, type StoredCredentials } from '@/persistence';
 import type { Machine } from '@/api/types';
 import { ApiMachineClient } from '@/api/apiMachine';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
@@ -173,8 +174,10 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
   // Publisher custody is read by the real installation/settings owners.
   recordFixturePhase('installation_settings.begin');
   await writeFile(configuration.installationIdentityFile, JSON.stringify(osStore.identity), { mode: 0o600 });
-  await updateSettings(settings => ({ ...settings, machineId,
-    machineIdByServerId: { ...settings.machineIdByServerId, [configuration.activeServerId]: machineId } }));
+  await updateMachineRegistration(registration => ({
+    ...registration,
+    machineId,
+  }));
   recordFixturePhase('installation_settings.end');
   const issuerToken = options.token ?? `header.${Buffer.from(JSON.stringify({ sub: accountId,
     ...(nativeConfirmed ? { tokenEpoch: 0, provenance: { v: 1, kind: 'account', authority: 'present_user' } } : {}),

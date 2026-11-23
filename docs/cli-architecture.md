@@ -711,6 +711,15 @@ retire a predecessor timestamp, the persistence owner imports 0.2 profile
 `lastUsedAt` values once; the observations file's presence completes that import,
 including when empty. Removing a profile removes its usage observation.
 
+In 0.3 development, the CLI Machine identity owner stores the local registration
+in `servers/<profile-id>/machine-registration.json`, beside that Home's credential
+file. The record holds the allocated ID, Account bindings, last observed Account,
+Home confirmation, and any pending replacement candidate. Commands, daemon
+startup, and Workflow Run publishing read the same Account-scoped registration.
+On upgrade, the CLI transfers the released 0.2 fields from settings before any
+settings write can retire them. An existing registration file, including an
+explicitly cleared record, takes precedence.
+
 In 0.3 development, `persistence.ts` owns the local Account changes-feed
 checkpoint in `changes-cursors.json` beneath the CLI home, keyed by server and
 Account. Cursor acknowledgements atomically replace that file only when progress

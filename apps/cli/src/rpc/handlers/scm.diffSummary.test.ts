@@ -1,8 +1,8 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import axios from 'axios';
 import type { StoredCredentials } from '@/persistence';
-import { updateSettings } from '@/persistence';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
@@ -43,7 +43,10 @@ describe('SCM diff-summary RPC admission', () => {
             try {
                 env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'rpc-evidence-home' });
                 reloadConfiguration();
-                await updateSettings(settings => ({ ...settings, machineIdByServerId: { 'rpc-evidence-home': 'machine' } }));
+                await updateMachineRegistration(registration => ({
+                  ...registration,
+                  machineId: 'machine',
+                }), 'rpc-evidence-home');
                 persistence.credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`, encryption: null };
                 writeFileSync(join(workspace, 'a.txt'), 'before\n');
                 runGit(workspace, ['add', 'a.txt']); runGit(workspace, ['commit', '-m', 'base']);
@@ -158,7 +161,10 @@ describe('SCM diff-summary RPC admission', () => {
             try {
                 env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'rpc-scope-home' });
                 reloadConfiguration();
-                await updateSettings(settings => ({ ...settings, machineIdByServerId: { 'rpc-scope-home': 'machine' } }));
+                await updateMachineRegistration(registration => ({
+                  ...registration,
+                  machineId: 'machine',
+                }), 'rpc-scope-home');
                 persistence.credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`, encryption: null };
                 const sessionId = 'c111111111111111111111111';
                 // Only HTTP and credential persistence are replaced. Session records use
@@ -255,7 +261,10 @@ describe('SCM diff-summary RPC admission', () => {
             try {
                 env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'rpc-custody-home' });
                 reloadConfiguration();
-                await updateSettings(settings => ({ ...settings, machineIdByServerId: { 'rpc-custody-home': 'machine' } }));
+                await updateMachineRegistration(registration => ({
+                  ...registration,
+                  machineId: 'machine',
+                }), 'rpc-custody-home');
                 persistence.credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`, encryption: null };
                 // HTTP and credential persistence are the boundaries. Receiving registration,
                 // executor construction, policy, scope admission and filesystem store remain real.

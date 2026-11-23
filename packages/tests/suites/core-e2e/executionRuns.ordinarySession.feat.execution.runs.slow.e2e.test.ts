@@ -24,7 +24,7 @@ import {
 import { fakeClaudeFixturePath, waitForFakeClaudeInvocation, waitForFakeClaudeUserText } from '../../src/testkit/fakeClaude';
 import { decryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { fetchAllMessages } from '../../src/testkit/sessions';
-import { resolveMachineIdsFromSettings } from '../../src/testkit/providers/scenarios/runtimeHelpers';
+import { waitForDaemonMachineIds } from '../../src/testkit/providers/scenarios/runtimeHelpers';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { repoRootDir } from '../../src/testkit/paths';
 import { waitForSessionActive } from '../../src/testkit/providers/scenarios/sessionRuntime';
@@ -110,7 +110,7 @@ it('starts selected-auth work once and delivers approved Project output to the o
   });
   const ownerContext = { surface: 'ui' as const, authority: 'present_user' as const,
     serverId, actionCaller: { kind: 'host' as const } };
-  const [machineId] = await resolveMachineIdsFromSettings({ settingsPath: resolve(fixture.daemonHomeDir, 'settings.json'), timeoutMs: 30_000 });
+  const [machineId] = await waitForDaemonMachineIds({ settingsPath: resolve(fixture.daemonHomeDir, 'settings.json'), timeoutMs: 30_000 });
   expect(machineId).toEqual(expect.any(String));
   // Control-port startup precedes the daemon's authenticated Home connection.
   await waitFor(() => ui!.isMachineActive(machineId), { timeoutMs: 60_000 });

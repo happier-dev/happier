@@ -13,10 +13,10 @@
 
 import {
   CliReloginRequiredError,
-  readSettings,
   readStoredCredentials,
   type StoredCredentials,
 } from '@/persistence';
+import { readMachineRegistration, resolveRegisteredMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 
 import {
   validateStoredAuthTokenAgainstActiveServer,
@@ -44,7 +44,7 @@ export type ActiveServerAuthReadiness = Readonly<{
 
 type ActiveServerAuthReadinessDeps = Readonly<{
   readCredentialsFn?: typeof readStoredCredentials;
-  readSettingsFn?: typeof readSettings;
+  readMachineRegistrationFn?: typeof readMachineRegistration;
   validateTokenFn?: (token: string, signal?: AbortSignal) => Promise<ActiveServerStoredTokenValidationResult>;
   signal?: AbortSignal;
 }>;
@@ -54,31 +54,28 @@ export async function resolveActiveServerAuthReadiness(
 ): Promise<ActiveServerAuthReadiness> {
   deps.signal?.throwIfAborted();
   const readCredentialsFn = deps.readCredentialsFn ?? readStoredCredentials;
-  const readSettingsFn = deps.readSettingsFn ?? readSettings;
+  const readMachineRegistrationFn = deps.readMachineRegistrationFn ?? readMachineRegistration;
   const validateTokenFn = deps.validateTokenFn ?? validateStoredAuthTokenAgainstActiveServer;
   // An obsolete stored bearer reads as signed out with its typed reason, so
   // status reports it and login proceeds to replace the file.
   let credentialReadReason: CliReloginRequiredError['code'] | null = null;
-  const [credentials, settings] = await Promise.all([
+  const [credentials, registration] = await Promise.all([
     readCredentialsFn().catch((error: unknown) => {
       if (!(error instanceof CliReloginRequiredError)) throw error;
       credentialReadReason = error.code;
       return null;
     }),
-    readSettingsFn(),
+    readMachineRegistrationFn(),
   ]);
   deps.signal?.throwIfAborted();
 
-  const machineIdRaw = settings?.machineId;
-  const machineId = typeof machineIdRaw === 'string' && machineIdRaw.trim().length > 0
-    ? machineIdRaw.trim()
-    : null;
+  const machineId = resolveRegisteredMachineId(registration);
   // `machineId` is only a locally allocated identity. The scoped confirmation
   // bit is written by the canonical registration owner after the Home accepts
   // that identity, and is cleared when credentials/account identity changes.
   const machineRegistrationState: MachineRegistrationState = machineId === null
     ? 'no-local-id'
-    : settings?.machineIdConfirmedByServer === true
+    : registration.confirmedByServer === true
       ? 'server-confirmed'
       : 'local-only';
   const machineRegistered = machineRegistrationState === 'server-confirmed';

@@ -11,7 +11,7 @@ import { enableEnhancedSessionWizard } from '../../src/testkit/uiE2e/enableEnhan
 import { gotoDomContentLoadedWithRetries } from '../../src/testkit/uiE2e/pageNavigation';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 import { fetchMachineIdentities, registerMachineIdentity } from '../../src/testkit/machineIdentity';
-import { waitForDaemonMachineIdFromCliSettings } from '../../src/testkit/uiE2e/daemonMachineId';
+import { waitForDaemonMachineId } from '../../src/testkit/uiE2e/daemonMachineId';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { readCliAccessKey } from '../../src/testkit/cliAccessKey';
 import { seedCliAuthForServer, seedCliDataKeyAuthForServer } from '../../src/testkit/cliAuth';
@@ -182,7 +182,7 @@ test.describe('ui e2e: machine identity and replacement surfaces', () => {
       uiBaseUrl: webUrl,
       daemonStartupTimeoutMs: 180_000,
     });
-    const firstMachineId = await waitForDaemonMachineIdFromCliSettings({ cliHomeDir: firstHomeDir });
+    const firstMachineId = await waitForDaemonMachineId({ cliHomeDir: firstHomeDir });
     const accessKey = await readCliAccessKey(firstHomeDir);
     if (!accessKey) throw new Error('expected CLI access key after terminal connect');
     await waitForMachineActive({
@@ -235,7 +235,7 @@ test.describe('ui e2e: machine identity and replacement surfaces', () => {
         HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
       },
     });
-    const secondMachineId = await waitForDaemonMachineIdFromCliSettings({ cliHomeDir: secondHomeDir });
+    const secondMachineId = await waitForDaemonMachineId({ cliHomeDir: secondHomeDir });
 
     await waitForMachineActive({
       baseUrl: serverUrl,

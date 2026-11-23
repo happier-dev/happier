@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -26,7 +27,7 @@ import { updateAccountSettingsV2WithRetry } from '@/settings/accountSettings/upd
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createDaemonDeploymentActionDeps } from './createDaemonDeploymentActionDeps';
 import * as installationStore from '@/daemon/identity/store';
-import { decodeStoredCredentials, encodeStoredCredentials, updateSettings } from '@/persistence';
+import { decodeStoredCredentials, encodeStoredCredentials } from '@/persistence';
 import type { DeploymentTeardownBoundary } from './actions/teardown';
 import type { OwnServerDeploymentRuntime } from './targets/ownServer/ownServerDeploymentTarget';
 import { createOwnServerDeploymentRuntimeForHost, type OwnServerDeploymentRuntimeHostInput } from './targets/ownServer/ownServerDeploymentHostRuntime';
@@ -288,11 +289,10 @@ describe('deployment teardown through the canonical Action front door', () => {
                         composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`,
                         services: ['app'], profiles: [] };
                     const fixture = await prepare(undefined, [], [], { runtime, definition });
-                    await updateSettings(settings => ({ ...settings,
-                        machineIdByServerIdByAccountId: { ...settings.machineIdByServerIdByAccountId,
-                            [configuration.activeServerId]: { ...settings.machineIdByServerIdByAccountId?.[configuration.activeServerId],
-                                [home.accountId]: home.machineId } },
-                        lastTokenSubByServerId: { ...settings.lastTokenSubByServerId, [configuration.activeServerId]: home.accountId },
+                    await updateMachineRegistration(registration => ({
+                      ...registration,
+                      accountId: home.accountId,
+                      machineIdByAccountId: { ...registration.machineIdByAccountId, [home.accountId]: home.machineId },
                     }));
                     if (scenario === 'admitted-deployment') {
                         const { reason: _reason, ...deployInput } = fixture.input;
@@ -423,11 +423,10 @@ describe('deployment teardown through the canonical Action front door', () => {
                 const runtime = createOwnServerDeploymentRuntimeForHost(nativeHost);
                 const fixture = await prepare(undefined, [], [], { runtime, definition,
                     productionReplay: retainedDomain && !retainedRetry && caller !== 'cancel-before-first-proof' });
-                await updateSettings(settings => ({ ...settings,
-                    machineIdByServerIdByAccountId: { ...settings.machineIdByServerIdByAccountId,
-                        [configuration.activeServerId]: { ...settings.machineIdByServerIdByAccountId?.[configuration.activeServerId],
-                            [home.accountId]: home.machineId } },
-                    lastTokenSubByServerId: { ...settings.lastTokenSubByServerId, [configuration.activeServerId]: home.accountId },
+                await updateMachineRegistration(registration => ({
+                  ...registration,
+                  accountId: home.accountId,
+                  machineIdByAccountId: { ...registration.machineIdByAccountId, [home.accountId]: home.machineId },
                 }));
                 const draft = { ...createDeploymentReceiptDetailV1().content, sourceIntent: definition,
                     machines: [home.machineId], buildMachineId: home.machineId, machineResults: [], images: [image], onFailure: 'rollbackAll' as const };
@@ -607,10 +606,10 @@ describe('deployment teardown through the canonical Action front door', () => {
                     if (caller === 'healthy') {
                         // The CLI identity is a different Machine from the installed
                         // controller; omitting --machine-id must still review there.
-                        await updateSettings(settings => ({ ...settings,
-                            machineIdByServerIdByAccountId: { ...settings.machineIdByServerIdByAccountId,
-                                [configuration.activeServerId]: { ...settings.machineIdByServerIdByAccountId?.[configuration.activeServerId],
-                                    [home.accountId]: 'private-cli-machine' } } }));
+                        await updateMachineRegistration(registration => ({
+                          ...registration,
+                          machineIdByAccountId: { ...registration.machineIdByAccountId, [home.accountId]: 'private-cli-machine' },
+                        }));
                     }
                     // UI and an unselected CLI name only the Environment; the
                     // controller prepares revisions, target and native inventory.

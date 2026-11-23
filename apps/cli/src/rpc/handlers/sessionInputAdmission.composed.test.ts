@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { deriveSessionCreationTagV1, SessionSpawnNewInputV2Schema, SessionSpawnNewResultV1Schema, normalizeActionsSettingsV1, type ActionExecutorContext } from '@happier-dev/protocol';
@@ -34,13 +35,12 @@ import { buildSessionRunnerRespawnDescriptorV1FromSpawnOptions } from '@/daemon/
 import { clearDaemonStateForTestTeardown, writeDaemonState } from '@/persistence';
 import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
-const boundary = vi.hoisted(() => ({ readCredentials: vi.fn(), readSettings: vi.fn(), readDaemonState: vi.fn(), fetchSession: vi.fn(), currentness: vi.fn() }));
+const boundary = vi.hoisted(() => ({ readCredentials: vi.fn(), readDaemonState: vi.fn(), fetchSession: vi.fn(), currentness: vi.fn() }));
 // Filesystem credential/settings reads and HTTP requests are system boundaries.
 // The RPC adapter, Action executor, creator, crypto and send admission stay real.
 vi.mock('@/persistence', async (original) => ({
   ...await original<typeof import('@/persistence')>(),
   readStoredCredentials: boundary.readCredentials,
-  readSettings: boundary.readSettings,
   readDaemonState: boundary.readDaemonState,
 }));
 vi.mock('axios', async (original) => ({
@@ -76,16 +76,20 @@ const agentContext = {
 
 describe('daemon RPC to protected Session input admission composition', () => {
   let release: (() => void) | undefined;
+  let registrationHome: string | undefined;
   const admitted: Parameters<CliActionMachineAdmissionTransport>[0][] = [];
   const transport: CliActionMachineAdmissionTransport = async (request) => {
     admitted.push(request);
     return { status: 'accepted', localId: request.localId };
   };
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    registrationHome = await mkdtemp(join(tmpdir(), 'happier-session-admission-home-'));
+    vi.stubEnv('HAPPIER_HOME_DIR', registrationHome);
+    reloadConfiguration();
     admitted.length = 0;
     boundary.readCredentials.mockResolvedValue(credentials);
-    boundary.readSettings.mockResolvedValue({ machineId });
+    await updateMachineRegistration(() => ({ machineId }));
     boundary.currentness.mockResolvedValue(createAccountEncryptionCurrentnessFixture({ mode: 'e2ee' }));
     boundary.fetchSession.mockResolvedValue(createSessionRecordFixture({
       id: sessionId, active: true, encryptionMode: 'e2ee',
@@ -106,6 +110,10 @@ describe('daemon RPC to protected Session input admission composition', () => {
     release?.(); release = undefined;
     await clearDaemonStateForTestTeardown({ includeLockFile: false });
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    reloadConfiguration();
+    if (registrationHome) await rm(registrationHome, { recursive: true, force: true });
+    registrationHome = undefined;
   });
 
   function registerSpawnBoundary(mode: 'plain' | 'e2ee' = 'e2ee', launch?: SessionSpawnDirectTargetTransport['spawnedSession']['spawn']) {

@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Credentials } from '@/persistence';
+import { reloadConfiguration } from '@/configuration';
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 import type { MachineMetadata } from '@/api/types';
 
 const createApiClient = vi.fn();
 const ensureMachineRegisteredMock = vi.fn();
-const readSettingsMock = vi.fn();
 const readDaemonStateMock = vi.fn();
 
 vi.mock('@/api/api', () => ({
@@ -18,7 +21,6 @@ vi.mock('@/api/machine/ensureMachineRegistered', () => ({
 }));
 
 vi.mock('@/persistence', () => ({
-  readSettings: readSettingsMock,
   readDaemonState: readDaemonStateMock,
 }));
 
@@ -36,16 +38,24 @@ describe('initializeBackendApiContext', () => {
     happyLibDir: '/tmp/home/.happier/lib',
   };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     createApiClient.mockReset();
     ensureMachineRegisteredMock.mockReset();
-    readSettingsMock.mockReset();
     readDaemonStateMock.mockReset();
+    const homeDir = await createTempDir('happier-backend-api-context-');
+    const env = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+    env.patch({ HAPPIER_HOME_DIR: homeDir });
+    reloadConfiguration();
+    return async () => {
+      env.restore();
+      reloadConfiguration();
+      await removeTempDir(homeDir);
+    };
   });
 
   it('skips machine registration when explicitly requested', async () => {
     createApiClient.mockResolvedValue({ api: true, setLocalMachineId: vi.fn() });
-    readSettingsMock.mockResolvedValue({ machineId: 'machine-original' });
+    await updateMachineRegistration(() => ({ machineId: 'machine-original' }));
 
     const { initializeBackendApiContext } = await import('./initializeBackendApiContext');
     const params = {
@@ -62,7 +72,7 @@ describe('initializeBackendApiContext', () => {
 
   it('registers machine by default and returns rotated id when provided', async () => {
     createApiClient.mockResolvedValue({ api: true, setLocalMachineId: vi.fn() });
-    readSettingsMock.mockResolvedValue({ machineId: 'machine-original' });
+    await updateMachineRegistration(() => ({ machineId: 'machine-original' }));
     readDaemonStateMock.mockResolvedValue(null);
     ensureMachineRegisteredMock.mockResolvedValue({ machineId: 'machine-rotated' });
 
@@ -80,7 +90,7 @@ describe('initializeBackendApiContext', () => {
   it('records the resolved runtime machine id on the API client', async () => {
     const api = { setLocalMachineId: vi.fn() };
     createApiClient.mockResolvedValue(api);
-    readSettingsMock.mockResolvedValue({ machineId: 'machine-original' });
+    await updateMachineRegistration(() => ({ machineId: 'machine-original' }));
     readDaemonStateMock.mockResolvedValue(null);
     ensureMachineRegisteredMock.mockResolvedValue({ machineId: 'machine-rotated' });
 
@@ -99,7 +109,7 @@ describe('initializeBackendApiContext', () => {
   it('skips machine registration when daemon is already running', async () => {
     const processKillSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     createApiClient.mockResolvedValue({ api: true, setLocalMachineId: vi.fn() });
-    readSettingsMock.mockResolvedValue({ machineId: 'machine-original' });
+    await updateMachineRegistration(() => ({ machineId: 'machine-original' }));
     readDaemonStateMock.mockResolvedValue({ pid: 12345 });
 
     try {

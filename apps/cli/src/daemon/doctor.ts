@@ -1,3 +1,4 @@
+import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 /**
  * Daemon doctor utilities
  * 
@@ -6,7 +7,6 @@
  */
 
 import { forceStopKnownDaemonPid, inspectDaemonRunningStateAndCleanupStaleState, requestDaemonSignedRootActionExecution, type DaemonControlRequestOptions } from './controlClient';
-import { readSettings } from '@/persistence';
 import { MachineProcessesAnswerV1Schema, type MachineProcessesAnswerV1 } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
 import { normalizeActionExecuteResult, unwrapCliActionSuccessPayload } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 
@@ -19,7 +19,7 @@ export type DoctorProcessAnswer =
 
 /** Diagnostics read the daemon's canonical Action rather than classify its children. */
 export async function readDaemonProcessesForDoctor(options: DaemonControlRequestOptions = {}): Promise<DoctorProcessAnswer> {
-  const machineId = (await readSettings()).machineId;
+  const machineId = await readActiveMachineId();
   if (!machineId) return { status: 'unavailable', reason: 'machine_identity_unavailable' };
   const execution = normalizeActionExecuteResult(await requestDaemonSignedRootActionExecution({
     actionId: 'machines.processes.list', input: { machineId, scope: 'happier', view: 'tree' }, surface: 'cli',

@@ -1,3 +1,4 @@
+import { readMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import type { DeploymentAppMachineBindingV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import tweetnacl from 'tweetnacl';
 import type { MachineEnrollmentCorrelationV1, ManagedEnrollmentMachineMetadataV1 } from '@happier-dev/protocol/machines/enrollmentV1';
@@ -11,7 +12,6 @@ import { initialMachineMetadata } from '@/daemon/machine/metadata';
 import { writeAppliedMachineRoles } from '@/daemon/roles/machineRolesRuntime';
 import {
   prepareCredentialsTokenOnlyForServerId,
-  readSettings,
   readStoredCredentialCustodyForServerId,
   writeCredentialsDataKey,
   writeCredentialsTokenOnly,
@@ -78,7 +78,7 @@ export async function registerAndPersistManagedTerminalEnrollmentCredential(para
   params.assertCurrent();
   // Machine registration updates lastTokenSub. Capture the predecessor's scope
   // first so a tokenless historical key can never be rebound to a new Account.
-  const previousAccountId = (await readSettings()).lastTokenSubByServerId?.[configuration.activeServerId] ?? null;
+  const previousAccountId = (await readMachineRegistration()).accountId ?? null;
   params.assertCurrent();
   const prepared = createTerminalEnrollmentCredential(params);
   const credentials = prepared.encryptionType === 'tokenOnly'

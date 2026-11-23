@@ -15,8 +15,8 @@ import { SessionCapabilitySelectionAuthoringV1Schema, type SessionCapabilitySele
 
 import { configuration } from '@/configuration';
 import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
-import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';
-import { readSettings, readStoredCredentials, type Settings } from '@/persistence';
+import { readMachineRegistration, resolveRegisteredMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
+import { readStoredCredentials } from '@/persistence';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { createCliMcpServerStore } from '@/settings/mcp/mcpServerStore';
 import { readSkillLibraryItems } from '@/prompts/skills/library/readSkillLibraryItems';
@@ -42,15 +42,10 @@ function isSpawnAgentCatalog(value: SpawnAgentDefinitions): value is SpawnAgentC
   return typeof value === 'object' && value !== null && 'definitions' in value;
 }
 
-type SessionCreateMachineSettings = Pick<
-  Settings,
-  'machineId' | 'machineIdByServerId' | 'machineIdByServerIdByAccountId' | 'lastTokenSubByServerId'
->;
-
 export type SessionCreateSpawnRequestNormalizerDeps = Readonly<{
   activeServerId: string;
   defaultAgentId: string;
-  readSettings: () => Promise<SessionCreateMachineSettings>;
+  readMachineIdForHome: (serverId: string) => Promise<string | null>;
   readAgentDefinitions: () => SpawnAgentDefinitions | Promise<SpawnAgentDefinitions>;
   now: () => number;
   readCapabilityCatalogs?: (kinds: Readonly<{ mcp: boolean; skills: boolean }>) => Promise<Readonly<{
@@ -84,7 +79,7 @@ function defaultNormalizerDeps(): SessionCreateSpawnRequestNormalizerDeps {
   return {
     activeServerId: configuration.activeServerId,
     defaultAgentId: DEFAULT_AGENT_ID,
-    readSettings,
+    readMachineIdForHome: async serverId => resolveRegisteredMachineId(await readMachineRegistration(serverId)),
     readAgentDefinitions: async () => {
       const { ensureMergedAgentCommandRegistryLoaded } = await import('@/cli/commandRegistry');
       const registry = await ensureMergedAgentCommandRegistryLoaded();
@@ -260,11 +255,7 @@ async function resolveExecutionTarget(
       field: 'serverId', allowedValues: [...new Set([activeServerId, homeServerId])],
     });
   }
-  const settings = await deps.readSettings();
-  const accountId = nonEmptyString(settings.lastTokenSubByServerId?.[activeServerId]);
-  const configuredMachineId = resolveMachineIdForServerFromSettings(settings, activeServerId, accountId)
-    ?? nonEmptyString(settings.machineId);
-  const machineId = nonEmptyString(request.machineId) ?? configuredMachineId;
+  const machineId = nonEmptyString(request.machineId) ?? await deps.readMachineIdForHome(activeServerId);
   if (!machineId) {
     throw new Error('Missing machine id. Start the local daemon or pass --machine-id.');
   }

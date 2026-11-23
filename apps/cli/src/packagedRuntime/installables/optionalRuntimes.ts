@@ -1,3 +1,4 @@
+import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { access, mkdir, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -13,7 +14,6 @@ import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables/keys';
 import type { InstallableDependencyDescriptor } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
-import { readSettings } from '@/persistence';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { logger } from '@/ui/logger';
 import { resolveAuthoritativePackagedRuntimeProjectRoot } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
@@ -195,7 +195,7 @@ export async function ensureOptionalRuntime(key: OptionalRuntimeKey): Promise<st
   if (!accountSettings || accountSettings.source === 'none') {
     throw new Error(`${key} automatic installation is deferred until account settings are available`);
   }
-  const machineId = (await readSettings()).machineId ?? '';
+  const machineId = await readActiveMachineId() ?? '';
   const result = await ensureRuntimeInstallablesForLaunch({
     installableKeys: [key],
     settings: accountSettings.settings,

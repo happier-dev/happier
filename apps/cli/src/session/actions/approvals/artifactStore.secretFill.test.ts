@@ -1,3 +1,4 @@
+import { readActiveMachineId, updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -24,7 +25,7 @@ import { createConfidentialActionInputsExecutor, createConfidentialSecretFillExe
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { configuration, reloadConfiguration } from '@/configuration';
-import { readSettings, writeSettings, writeStoredCredentialsForServerId } from '@/persistence';
+import { writeStoredCredentialsForServerId } from '@/persistence';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createAccountEncryptionCurrentnessFixture, createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
@@ -71,8 +72,8 @@ describe('confidential continuation Artifact custody', () => {
           provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
         const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
         await writeStoredCredentialsForServerId(serverId, credentials);
-        await writeSettings({ ...await readSettings(), machineIdByServerId: { [serverId]: 'machine' } });
-        expect((await readSettings()).machineId).toBe('machine');
+        await updateMachineRegistration(() => ({ machineId: 'machine' }), serverId);
+        expect(await readActiveMachineId()).toBe('machine');
         const scopeKey = resolveAccountSettingsScopeKeyForToken(token)!;
         const settings = AccountSettingsSchema.parse({});
         setActiveAccountSettingsSnapshot({ source: 'network', scopeKey, loadedAtMs: 1,

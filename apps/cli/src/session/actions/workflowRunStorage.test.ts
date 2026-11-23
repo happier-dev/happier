@@ -1,4 +1,6 @@
 import axios from 'axios';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import tweetnacl from 'tweetnacl';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -14,6 +16,9 @@ import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/r
 import * as installations from '@/daemon/identity/currentMachineInstallation';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import * as sockets from '@/api/session/sockets';
+import { configuration, reloadConfiguration } from '@/configuration';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { withTempDir } from '@/testkit/fs/tempDir';
 import { createCliWorkflowRunStorage } from './workflowRunStorage';
 
 const home = 'https://requester-home.test';
@@ -62,6 +67,28 @@ function factory() {
       return resolved.ok ? resolved.headers : null;
     }, value => typeof value === 'string' && value.trim() ? value.trim() : null);
 }
+
+it('uses the Home registration as the Workflow publisher before the Session Machine', async () => {
+  await withTempDir('happier-workflow-publisher-', async homeDir => {
+    const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_ACTIVE_SERVER_ID']);
+    try {
+      env.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_SERVER_URL: home, HAPPIER_WEBAPP_URL: home, HAPPIER_ACTIVE_SERVER_ID: undefined });
+      reloadConfiguration();
+      await mkdir(configuration.activeServerDir, { recursive: true });
+      await writeFile(join(configuration.activeServerDir, 'machine-registration.json'), JSON.stringify({
+        machineId, accountId: 'requester', machineIdByAccountId: { requester: machineId }, confirmedByServer: true,
+      }));
+      const post = vi.spyOn(axios, 'post').mockResolvedValue({ data: { accepted: true } });
+      const storage = createCliWorkflowRunStorage({ token: 'ambient', serverHttpBaseUrl: home },
+        async () => 'session-machine', () => null, value => typeof value === 'string' && value.trim() ? value.trim() : null);
+      await expect(storage.workflowRunStorage.execute({ operation: 'recovery.list' })).resolves.toEqual({ accepted: true });
+      expect(post.mock.calls[0]?.[1]).toMatchObject({ operation: 'recovery.list', publisherMachineId: machineId });
+    } finally {
+      env.restore();
+      reloadConfiguration();
+    }
+  });
+});
 
 async function admittedContext(isCurrent = async () => true, root = authorization): Promise<ActionExecutorContext> {
   requester = await admitRequesterAccountActionContext({ authorization: root, credentials: { token: 'requester-account', encryption: null },

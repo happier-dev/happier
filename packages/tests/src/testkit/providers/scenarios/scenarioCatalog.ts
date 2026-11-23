@@ -67,8 +67,7 @@ type ScenarioFactory = (provider: ProviderUnderTest) => ProviderScenario;
 export { abortContinuationFollowupSubstrings } from './scenarioCatalogSupport';
 export {
   invokeRpcAcrossMachineIds,
-  resolveMachineIdCandidatesFromSettings,
-  resolveMachineIdsFromSettings,
+  waitForDaemonMachineIds,
 } from './runtimeHelpers';
 
 function capabilityProbePostSatisfyTimeoutMs(providerId: string): number {

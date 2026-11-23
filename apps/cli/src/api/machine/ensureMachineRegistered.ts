@@ -3,9 +3,7 @@ import type { MachineEnrollmentCorrelationV1 } from '@happier-dev/protocol/machi
 
 import type { ApiClient } from '@/api/api';
 import type { DaemonState, Machine, MachineMetadata } from '@/api/types';
-import { updateSettings } from '@/persistence';
-import { sanitizeServerIdForFilesystem } from '@/server/serverId';
-import { configuration } from '@/configuration';
+import { resolveRegisteredMachineId, updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { logger } from '@/ui/logger';
 import { isMachineIdConflictError, isMachineReplacedError, isMachineRevokedError } from './machineRegistrationErrors';
 
@@ -28,149 +26,48 @@ export async function rotateMachineIdForActiveServer(opts: Readonly<{
   let nextMachineId = randomUUID();
   if (nextMachineId === opts.expectedCurrentMachineId) nextMachineId = randomUUID();
 
-  const updated = await updateSettings((settings) => {
-    const activeServerId = sanitizeServerIdForFilesystem(
-      configuration.activeServerId ?? settings.activeServerId ?? 'cloud',
-      'cloud',
-    );
-
-    const nextByServerId = { ...(settings.machineIdByServerId ?? {}) };
-    const current = nextByServerId[activeServerId];
-    // If another process already rotated the machine id, do not rotate again.
-    if (typeof current === 'string' && current.trim() && current !== opts.expectedCurrentMachineId) {
-      return settings;
-    }
-    nextByServerId[activeServerId] = nextMachineId;
-
-    const normalizedTokenSub = typeof settings.lastTokenSubByServerId?.[activeServerId] === 'string'
-      ? (settings.lastTokenSubByServerId?.[activeServerId] ?? '').trim()
-      : '';
-
-    const nextByServerIdByAccountId = (() => {
-      if (!normalizedTokenSub) return settings.machineIdByServerIdByAccountId;
-
-      const next = { ...(settings.machineIdByServerIdByAccountId ?? {}) };
-      const nextForServer = { ...(next[activeServerId] ?? {}) };
-      nextForServer[normalizedTokenSub] = nextMachineId;
-      next[activeServerId] = nextForServer;
-      return next;
-    })();
-
-    const normalizedAccountId = normalizedTokenSub || '';
-    const nextReplacementCandidates = { ...(settings.machineReplacementCandidatesByServerIdByAccountId ?? {}) };
-    if (normalizedAccountId) {
-      const byAccount = { ...(nextReplacementCandidates[activeServerId] ?? {}) };
+  const updated = await updateMachineRegistration(current => {
+    if (current.machineId?.trim() && current.machineId !== opts.expectedCurrentMachineId) return current;
+    const accountId = current.accountId?.trim();
+    const replacementCandidates = { ...current.replacementCandidates };
+    if (accountId) {
       if (opts.recordReplacementCandidate === false) {
         // A displaced installation must not retire the Machine now owned by its successor.
-        delete byAccount[normalizedAccountId];
+        delete replacementCandidates[accountId];
       } else {
-        byAccount[normalizedAccountId] = {
-          machineId: opts.expectedCurrentMachineId,
-          replacementReason: 'rotation',
-          createdAt: Date.now(),
+        replacementCandidates[accountId] = {
+          machineId: opts.expectedCurrentMachineId, replacementReason: 'rotation', createdAt: Date.now(),
         };
       }
-      nextReplacementCandidates[activeServerId] = byAccount;
     }
-
-    const nextConfirmed = { ...(settings.machineIdConfirmedByServerByServerId ?? {}) };
-    if (activeServerId in nextConfirmed) delete nextConfirmed[activeServerId];
-
     return {
-      ...settings,
-      machineIdByServerId: nextByServerId,
-      ...(nextByServerIdByAccountId ? { machineIdByServerIdByAccountId: nextByServerIdByAccountId } : {}),
-      machineReplacementCandidatesByServerIdByAccountId: Object.keys(nextReplacementCandidates).length
-        ? nextReplacementCandidates
-        : {},
-      machineIdConfirmedByServerByServerId: nextConfirmed,
-      // derived (not persisted in v5+)
-      machineId: nextMachineId,
+      ...current, machineId: nextMachineId, confirmedByServer: undefined, replacementCandidates,
+      ...(accountId ? { machineIdByAccountId: { ...current.machineIdByAccountId, [accountId]: nextMachineId } } : {}),
     };
   });
-
-  return updated.machineId ?? nextMachineId;
+  return resolveRegisteredMachineId(updated) ?? nextMachineId;
 }
 
 async function adoptReplacementMachineIdForActiveServer(opts: Readonly<{
   expectedCurrentMachineId: string;
   replacementMachineId: string;
 }>): Promise<string> {
-  const updated = await updateSettings((settings) => {
-    const activeServerId = sanitizeServerIdForFilesystem(
-      configuration.activeServerId ?? settings.activeServerId ?? 'cloud',
-      'cloud',
-    );
-
-    const nextByServerId = { ...(settings.machineIdByServerId ?? {}) };
-    const current = nextByServerId[activeServerId];
-    if (typeof current === 'string' && current.trim() && current !== opts.expectedCurrentMachineId) {
-      return settings;
-    }
-    nextByServerId[activeServerId] = opts.replacementMachineId;
-
-    const normalizedTokenSub = typeof settings.lastTokenSubByServerId?.[activeServerId] === 'string'
-      ? (settings.lastTokenSubByServerId?.[activeServerId] ?? '').trim()
-      : '';
-
-    const nextByServerIdByAccountId = (() => {
-      if (!normalizedTokenSub) return settings.machineIdByServerIdByAccountId;
-      const next = { ...(settings.machineIdByServerIdByAccountId ?? {}) };
-      const nextForServer = { ...(next[activeServerId] ?? {}) };
-      nextForServer[normalizedTokenSub] = opts.replacementMachineId;
-      next[activeServerId] = nextForServer;
-      return next;
-    })();
-
-    const nextReplacementCandidates = { ...(settings.machineReplacementCandidatesByServerIdByAccountId ?? {}) };
-    if (normalizedTokenSub && nextReplacementCandidates[activeServerId]) {
-      const byAccount = { ...(nextReplacementCandidates[activeServerId] ?? {}) };
-      const candidate = byAccount[normalizedTokenSub];
-      if (candidate?.machineId === opts.expectedCurrentMachineId) {
-        delete byAccount[normalizedTokenSub];
-      }
-      if (Object.keys(byAccount).length > 0) {
-        nextReplacementCandidates[activeServerId] = byAccount;
-      } else {
-        delete nextReplacementCandidates[activeServerId];
-      }
-    }
-
-    const nextConfirmed = { ...(settings.machineIdConfirmedByServerByServerId ?? {}) };
-    if (activeServerId in nextConfirmed) delete nextConfirmed[activeServerId];
-
+  const updated = await updateMachineRegistration(current => {
+    if (current.machineId?.trim() && current.machineId !== opts.expectedCurrentMachineId) return current;
+    const accountId = current.accountId?.trim();
+    const replacementCandidates = { ...current.replacementCandidates };
+    if (accountId && replacementCandidates[accountId]?.machineId === opts.expectedCurrentMachineId) delete replacementCandidates[accountId];
     return {
-      ...settings,
-      machineIdByServerId: nextByServerId,
-      ...(nextByServerIdByAccountId ? { machineIdByServerIdByAccountId: nextByServerIdByAccountId } : {}),
-      machineReplacementCandidatesByServerIdByAccountId: nextReplacementCandidates,
-      machineIdConfirmedByServerByServerId: nextConfirmed,
-      machineId: opts.replacementMachineId,
+      ...current, machineId: opts.replacementMachineId, confirmedByServer: undefined, replacementCandidates,
+      ...(accountId ? { machineIdByAccountId: { ...current.machineIdByAccountId, [accountId]: opts.replacementMachineId } } : {}),
     };
   });
-
-  return updated.machineId ?? opts.replacementMachineId;
+  return resolveRegisteredMachineId(updated) ?? opts.replacementMachineId;
 }
 
 async function markMachineIdConfirmedForActiveServer(machineId: string): Promise<void> {
-  await updateSettings((settings) => {
-    const activeServerId = sanitizeServerIdForFilesystem(
-      configuration.activeServerId ?? settings.activeServerId ?? 'cloud',
-      'cloud',
-    );
-    const currentMachineId = settings.machineIdByServerId?.[activeServerId]?.trim();
-    if (currentMachineId !== machineId) return settings;
-    if (settings.machineIdConfirmedByServerByServerId?.[activeServerId] === true) return settings;
-    return {
-      ...settings,
-      machineIdConfirmedByServerByServerId: {
-        ...(settings.machineIdConfirmedByServerByServerId ?? {}),
-        [activeServerId]: true,
-      },
-      // derived (not persisted in v5+)
-      machineId,
-    };
-  });
+  await updateMachineRegistration(current => current.machineId?.trim() === machineId && current.confirmedByServer !== true
+    ? { ...current, confirmedByServer: true } : current);
 }
 
 export async function ensureMachineRegistered(opts: Readonly<{

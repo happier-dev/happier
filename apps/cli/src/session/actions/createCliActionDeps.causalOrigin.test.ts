@@ -1,8 +1,8 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
-import { updateSettings } from '@/persistence';
 import { configuration } from '@/configuration';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createCliActionDeps } from './createCliActionDeps';
@@ -13,9 +13,10 @@ describe('host Action write origin at the archive HTTP boundary', () => {
   it.each(['workflow', 'human', 'unarchive'] as const)('carries only the host Workflow archive origin (%s)', async caller => {
     const sessionId = 'c' + 'a'.repeat(24);
     await readOrCreateInstallationIdentity();
-    await updateSettings(settings => ({ ...settings, machineIdByServerId: {
-      ...settings.machineIdByServerId, [configuration.activeServerId]: 'archive-machine',
-    } }));
+    await updateMachineRegistration(registration => ({
+      ...registration,
+      machineId: 'archive-machine',
+    }));
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { session:
       createSessionRecordFixture({ id: sessionId, active: false, encryptionMode: 'plain', metadata: '{}' }) } });
     const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200,

@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -12,7 +13,6 @@ const {
   createCliActionExecutor,
   createCliActionExecutorFromCredentials,
   readStoredCredentials,
-  readSettings,
   readAgentCatalogSnapshot,
   fetchSessionById,
   fetchAccountEncryptionCurrentness,
@@ -35,7 +35,6 @@ const {
       };
     }),
     readStoredCredentials: vi.fn(),
-    readSettings: vi.fn(),
     readAgentCatalogSnapshot: vi.fn(),
     fetchSessionById: vi.fn(),
     fetchAccountEncryptionCurrentness: vi.fn(),
@@ -57,7 +56,6 @@ vi.mock('@/persistence', async (importOriginal) => {
   return {
     ...actual,
     readStoredCredentials,
-    readSettings,
   };
 });
 
@@ -233,15 +231,14 @@ async function runFirstClass(parityCase: ParityCase): Promise<Invocation> {
 }
 
 describe('first-class session command parity', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     execute.mockReset();
     execute.mockImplementation(async (actionId: string) => actionResult(actionId));
     createCliActionExecutor.mockClear();
     createCliActionExecutorFromCredentials.mockClear();
     readStoredCredentials.mockReset();
     readStoredCredentials.mockResolvedValue(credentials);
-    readSettings.mockReset();
-    readSettings.mockResolvedValue({ machineId: 'machine-1' });
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
     readAgentCatalogSnapshot.mockReset();
     readAgentCatalogSnapshot.mockReturnValue({
       agentDefinitionsById: new Map([

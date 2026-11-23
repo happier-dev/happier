@@ -36,7 +36,6 @@ import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOpe
 import { createNativeAgentProviderAttachModeBinding } from './providerCliAttachMode';
 import { withHerdrApi } from '@/integrations/herdr/herdrApi.testkit';
 import { configuration } from '@/configuration';
-import { SUPPORTED_SCHEMA_VERSION } from '@/persistence';
 import { createTerminalAttachmentId, readTerminalHostAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 
 it.skipIf(process.platform === 'win32').for([false, true, 'client', 'command', 'concurrent', 'concurrent-detach', 'unbound'] as const)('keeps one private native presentation owner through real Session attach and Detach (restored preparation: %s)', async (restoredPreparation, { task }) => {
@@ -271,7 +270,7 @@ it.skipIf(process.platform === 'win32').for([false, true, 'client', 'command', '
                 restoreExitBoundary = () => exitBoundary.mockRestore();
                 const command = handleAttachCommand([session.sessionId], {
                     readCredentialsFn: async () => ({ token: 'fixture-token', encryption: null }),
-                    readSettingsFn: async () => ({ schemaVersion: SUPPORTED_SCHEMA_VERSION, onboardingCompleted: true, machineId: 'machine-local' }),
+                    readActiveMachineIdFn: async () => 'machine-local',
                     fetchSessionByIdFn: async () => V2SessionByIdResponseSchema.parse({ session: serverRow }).session,
                     getAccountEncryptionCurrentnessFn: async () => createAccountEncryptionCurrentnessFixture(),
                     terminalRuntime: { mode: 'herdr', herdrSessionName: 'work', herdrSocketPath: api.socketPath,

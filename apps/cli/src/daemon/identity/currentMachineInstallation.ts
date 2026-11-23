@@ -3,7 +3,7 @@ import type {
     PluginPermissionGrantAuthoritySourceV1,
 } from '@happier-dev/protocol';
 
-import { readSettings } from '@/persistence';
+import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 
 import { readOrCreateInstallationIdentity } from './store';
 
@@ -19,8 +19,7 @@ export type CurrentMachineInstallation = Readonly<{
 }>;
 
 export async function readCurrentMachineInstallation(): Promise<CurrentMachineInstallation | null> {
-    const settings = await readSettings().catch(() => null);
-    const machineId = typeof settings?.machineId === 'string' ? settings.machineId.trim() : '';
+    const machineId = await readActiveMachineId().catch(() => null);
     if (!machineId) return null;
     const identity = await readOrCreateInstallationIdentity().catch(() => null);
     if (!identity) return null;

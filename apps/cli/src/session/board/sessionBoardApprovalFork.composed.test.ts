@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -89,8 +90,11 @@ describe('approved folder visual through native publication and fork', () => {
             } });
             env.patch({ HAPPIER_ACTIVE_SERVER_ID: profile.id });
             reloadConfiguration();
-            await updateSettings(current => ({ ...current, schemaVersion: SUPPORTED_SCHEMA_VERSION, onboardingCompleted: true,
-                machineIdByServerId: { ...current.machineIdByServerId, [configuration.activeServerId]: machineId } }));
+            await updateSettings(current => ({ ...current, schemaVersion: SUPPORTED_SCHEMA_VERSION, onboardingCompleted: true }));
+            await updateMachineRegistration(registration => ({
+              ...registration,
+              machineId,
+            }));
             expect(await resolveServerProfileHomeIdentityId(configuration.activeServerId)).toBe(serverIdentityId);
             await runWithServerHttpBaseUrl(url, async () => {
                 await bootstrapAccountSettingsContext({ credentials, mode: 'blocking', refresh: 'force' });

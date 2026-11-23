@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createProjectServiceDeclarationTargetIdV1 } from '@happier-dev/protocol/local/services/actions/v1';
@@ -88,9 +89,12 @@ it.each(['declared Service', 'incomplete native declaration'] as const)('handles
   h.tracked.agentRuntimeDaemonServiceAuthorityFilePath = bridge.path;
   h.tracked.agentRuntimeDaemonServiceCapabilityHash = bridge.capabilityDigest;
   await seedTestServerProfile({ id: serverId, homeId, serverUrl: 'https://session-home.test' });
-  await updateSettings(settings => ({ ...settings, activeServerId: serverId,
-    machineIdByServerId: { ...settings.machineIdByServerId, [serverId]: 'machine' },
-    lastTokenSubByServerId: { ...settings.lastTokenSubByServerId, [serverId]: 'requester' } }));
+  await updateSettings(settings => ({ ...settings, activeServerId: serverId }));
+  await updateMachineRegistration(registration => ({
+    ...registration,
+    machineId: 'machine',
+    accountId: 'requester',
+  }), serverId);
   reloadConfiguration();
   const owner = h.daemon.externalActionIngressOwner;
   if (!owner) throw new Error('Missing installed external Action owner');

@@ -1,3 +1,4 @@
+import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { isMachineManagedInstallationActionIdV1 } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 import type { CliReceivingMachineSetupPlan } from './cliActionDeps/types';
 import { createCliManagedInstallationRespond } from '@/machines/managed/installationResponse';
@@ -39,7 +40,6 @@ import {
 } from '@/api/client/serverHttpBaseUrl';
 import {
   hasStoredSessionCredentialProvenance,
-  readSettings,
   readStoredCredentialsForServerId,
   sameStoredCredentials,
   type StoredCredentials,
@@ -269,8 +269,7 @@ function withExactSessionId(input: unknown, sessionId: string): unknown {
 }
 
 async function resolveConfiguredMachineTarget(): Promise<ActionTarget | null> {
-  const settings = await readSettings();
-  const machineId = readNonEmptyString(settings.machineId);
+  const machineId = await readActiveMachineId();
   return machineId ? { kind: 'machine', machineId } : null;
 }
 
@@ -1107,7 +1106,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         const currentMachineId = readNonEmptyString(params.machineId)
           ?? (terminalTarget?.kind === 'ready' ? terminalTarget.machineId : null)
           ?? (fixedServerId === null
-            ? readNonEmptyString((await readSettings().catch(() => null))?.machineId)
+            ? await readActiveMachineId().catch(() => null)
             : null);
         if (!currentMachineId) return false;
         const { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } = await import(

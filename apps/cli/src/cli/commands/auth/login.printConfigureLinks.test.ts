@@ -1,3 +1,4 @@
+import { type MachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Settings, StoredCredentials } from '@/persistence';
 import type { ActiveServerStoredTokenValidationResult } from '@/auth/validateStoredAuthTokenAgainstActiveServer';
@@ -11,7 +12,7 @@ const validateStoredAuthTokenAgainstActiveServerMock = vi.hoisted(() =>
   vi.fn<(token: string) => Promise<ActiveServerStoredTokenValidationResult>>(async () => ({ state: 'valid', httpStatus: 200 })),
 );
 const readStoredCredentialsMock = vi.hoisted(() => vi.fn<() => Promise<StoredCredentials | null>>(async () => null));
-const readSettingsMock = vi.hoisted(() => vi.fn<() => Promise<Partial<Settings>>>(async () => ({})));
+const readMachineRegistrationMock = vi.hoisted(() => vi.fn<() => Promise<MachineRegistration>>(async () => ({})));
 const clearCredentialsMock = vi.hoisted(() => vi.fn(async () => {}));
 const clearMachineIdMock = vi.hoisted(() => vi.fn<(opts?: unknown) => Promise<void>>(async () => {}));
 const stopDaemonMock = vi.hoisted(() => vi.fn(async () => ({ status: 'not_running' as const })));
@@ -35,8 +36,11 @@ vi.mock('@/server/serverSelection', () => ({
 
 vi.mock('@/persistence', () => ({
   readStoredCredentials: () => readStoredCredentialsMock(),
-  readSettings: () => readSettingsMock(),
   clearCredentials: () => clearCredentialsMock(),
+}));
+vi.mock('@/daemon/machineIdentity/machineRegistrationStore', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/daemon/machineIdentity/machineRegistrationStore')>(),
+  readMachineRegistration: () => readMachineRegistrationMock(),
   clearMachineId: (opts?: unknown) => clearMachineIdMock(opts),
 }));
 
@@ -83,8 +87,8 @@ describe('happier auth login', () => {
     validateStoredAuthTokenAgainstActiveServerMock.mockResolvedValue({ state: 'valid', httpStatus: 200 });
     readStoredCredentialsMock.mockReset();
     readStoredCredentialsMock.mockResolvedValue(null);
-    readSettingsMock.mockReset();
-    readSettingsMock.mockResolvedValue({});
+    readMachineRegistrationMock.mockReset();
+    readMachineRegistrationMock.mockResolvedValue({});
     clearCredentialsMock.mockReset();
     clearMachineIdMock.mockReset();
     stopDaemonMock.mockReset();
@@ -99,7 +103,7 @@ describe('happier auth login', () => {
       token: 'valid-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32) },
     });
-    readSettingsMock.mockResolvedValue({ machineId: 'machine-1', machineIdConfirmedByServer: true });
+    readMachineRegistrationMock.mockResolvedValue({ machineId: 'machine-1', confirmedByServer: true });
     let authMethodAtFlowStart: string | undefined;
     validateStoredAuthTokenAgainstActiveServerMock.mockImplementationOnce(async () => {
       authMethodAtFlowStart = process.env.HAPPIER_AUTH_METHOD;
@@ -221,9 +225,9 @@ describe('happier auth login', () => {
 
   it('forwards Account material recovery without replacing the existing Home session', async () => {
     readStoredCredentialsMock.mockResolvedValue({ token: 'committed-home-token', encryption: null });
-    readSettingsMock.mockResolvedValue({
+    readMachineRegistrationMock.mockResolvedValue({
       machineId: 'committed-home-machine',
-      machineIdConfirmedByServer: true,
+      confirmedByServer: true,
     });
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
@@ -268,9 +272,9 @@ describe('happier auth login', () => {
       token: 'plain-token',
       encryption: null,
     });
-    readSettingsMock.mockResolvedValue({
+    readMachineRegistrationMock.mockResolvedValue({
       machineId: 'plain-machine',
-      machineIdConfirmedByServer: true,
+      confirmedByServer: true,
     });
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -291,9 +295,9 @@ describe('happier auth login', () => {
       token: 'offline-token',
       encryption: null,
     });
-    readSettingsMock.mockResolvedValue({
+    readMachineRegistrationMock.mockResolvedValue({
       machineId: 'confirmed-machine',
-      machineIdConfirmedByServer: true,
+      confirmedByServer: true,
     });
     validateStoredAuthTokenAgainstActiveServerMock.mockResolvedValue({
       state: 'unknown',
@@ -320,7 +324,7 @@ describe('happier auth login', () => {
       token: 'stale-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32) },
     });
-    readSettingsMock.mockResolvedValue({ machineId: 'machine-1' });
+    readMachineRegistrationMock.mockResolvedValue({ machineId: 'machine-1' });
     validateStoredAuthTokenAgainstActiveServerMock.mockResolvedValue({
       state: 'invalid',
       httpStatus: 401,
@@ -348,7 +352,7 @@ describe('happier auth login', () => {
       token: 'stale-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32) },
     });
-    readSettingsMock.mockResolvedValue({ machineId: 'machine-1' });
+    readMachineRegistrationMock.mockResolvedValue({ machineId: 'machine-1' });
     validateStoredAuthTokenAgainstActiveServerMock.mockResolvedValue({
       state: 'invalid',
       httpStatus: 401,
@@ -406,7 +410,7 @@ describe('happier auth login', () => {
       token: createJwtWithSubject('account-legacy'),
       encryption: { type: 'legacy', secret: new Uint8Array(32) },
     });
-    readSettingsMock.mockResolvedValue({
+    readMachineRegistrationMock.mockResolvedValue({
       machineIdByServerId: { cloud: 'machine-legacy' },
     });
 

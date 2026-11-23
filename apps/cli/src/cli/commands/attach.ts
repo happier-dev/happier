@@ -1,3 +1,4 @@
+import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import chalk from 'chalk';
 import { ATTACH_USAGE, printAttachHelp } from './attachHelp';
 import { spawn } from 'node:child_process';
@@ -14,7 +15,7 @@ import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHos
 import { probeSessionRunnerPresence } from '@/daemon/sessions/isSessionRunnerActive';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { configuration } from '@/configuration';
-import { readSettings, readStoredCredentials, type Settings, type StoredCredentials } from '@/persistence';
+import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { resolveSessionStartAccountSettingsContext } from '@/settings/accountSettings/resolveSessionStartAccountSettingsContext';
 import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
@@ -79,7 +80,7 @@ type SpawnTmuxFn = typeof spawnTmux;
 type AttachCommandDeps = Readonly<{
   terminalRuntime?: CommandContext['terminalRuntime'];
   readCredentialsFn?: () => Promise<StoredCredentials | null>;
-  readSettingsFn?: () => Promise<Settings>;
+  readActiveMachineIdFn?: typeof readActiveMachineId;
   fetchSessionByIdFn?: typeof fetchSessionById;
   fetchSessionsPageFn?: (params: { token: string; cursor?: string; limit?: number; activeOnly?: boolean; archivedOnly?: boolean }) => Promise<{
     sessions: RawSessionListRow[];
@@ -369,7 +370,7 @@ export async function handleAttachCommand(
 
   let sessionIdOrPrefix = argv[0]?.trim() ?? '';
   const readTerminalAttachmentInfoFn = deps.readTerminalAttachmentInfoFn ?? readTerminalAttachmentInfo;
-  const readSettingsFn = deps.readSettingsFn ?? readSettings;
+  const readActiveMachineIdFn = deps.readActiveMachineIdFn ?? readActiveMachineId;
   const fetchSessionsPageFn = deps.fetchSessionsPageFn ?? fetchSessionsPage;
   const runTmuxAttachFn = deps.runTmuxAttachFn ?? (async (params) => await runTmuxAttach(params, {
     isTmuxAvailableFn: deps.isTmuxAvailableFn,
@@ -424,10 +425,7 @@ export async function handleAttachCommand(
       process.exit(1);
     }
 
-    const settings = await readSettingsFn();
-    currentMachineId = typeof settings.machineId === 'string' && settings.machineId.trim().length > 0
-      ? settings.machineId.trim()
-      : null;
+    currentMachineId = await readActiveMachineIdFn();
     const accountSettingsSnapshot = await bootstrapAccountSettingsContext({
       credentials: credentialsForInteractive,
       mode: 'fast',
@@ -485,10 +483,7 @@ export async function handleAttachCommand(
   });
 
   if (context) {
-    const settings = await readSettingsFn();
-    const effectiveMachineId = typeof settings.machineId === 'string' && settings.machineId.trim().length > 0
-      ? settings.machineId.trim()
-      : null;
+    const effectiveMachineId = await readActiveMachineIdFn();
     const eligibility = await getSessionHostBridge().evaluateAttachEligibility({
       credentials: context.credentials,
       rawSession: context.rawSession,
