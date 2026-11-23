@@ -554,24 +554,29 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
       }) : undefined;
       if (checkout.repositoryIdentity) facts = { ...facts, repositoryIdentity: checkout.repositoryIdentity };
       let parentRootPath: string | undefined;
-      if (!privateCheckout && !parentWorkspace
-        && (input.materialization.kind === 'attach' || input.materialization.kind === 'worktree')
-        && !resolveWorkspaceRefForMachineRoot(snapshot.workspaceRefs, {
+      if (!privateCheckout && (input.materialization.kind === 'attach' || input.materialization.kind === 'worktree')) {
+        const current = resolveWorkspaceRefForMachineRoot(snapshot.workspaceRefs, {
           serverId: runtime.serverId, machineId: runtime.machineId, rootPath: checkout.rootPath,
-        })) {
-        const inspected = await inspectWorkspaceLocationWithScmWorkspace({
+        });
+        const discoverParent = !parentWorkspace && !current;
+        const discoverRepository = input.materialization.kind === 'attach'
+          && !facts.repositoryIdentity && !current?.repositoryIdentity;
+        const inspected = discoverParent || discoverRepository ? await inspectWorkspaceLocationWithScmWorkspace({
           candidatePath: checkout.rootPath, registry: runtime.registry, signal: context.signal,
+          includeRepositoryIdentity: discoverRepository,
         }).catch(error => {
           context.signal.throwIfAborted();
           logger.warnLocalFile('[Project Open] Repository association inspection unavailable', {
             code: codeOf(error), error: error instanceof Error ? error.message : String(error),
           });
           return null;
-        });
-        const rootIdentity = resolveCanonicalAbsolutePathComparisonIdentity(checkout.rootPath);
-        if (inspected && rootIdentity !== null
-          && rootIdentity === resolveCanonicalAbsolutePathComparisonIdentity(inspected.inspection.rootPath)) {
-          parentRootPath = inspected.parentRootPath;
+        }) : null;
+        if (inspected) {
+          const rootIdentity = resolveCanonicalAbsolutePathComparisonIdentity(checkout.rootPath);
+          if (rootIdentity !== null && rootIdentity === resolveCanonicalAbsolutePathComparisonIdentity(inspected.inspection.rootPath)) {
+            if (discoverParent) parentRootPath = inspected.parentRootPath;
+            if (inspected.repositoryIdentity) facts = { ...facts, repositoryIdentity: inspected.repositoryIdentity };
+          }
         }
       }
       context.signal.throwIfAborted();
