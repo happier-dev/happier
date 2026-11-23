@@ -138,9 +138,9 @@ describe('Follow exact Home Action transport', () => {
             expect(acquired.status).toBe('ready');
             const filter = normalizeSessionListFilterV1({ homeServerIds: [serverId], show: 'sessions',
                 scope: 'all_accessible', startedBy: ['you', 'agents', 'triggers'] });
-            const read = (value: typeof filter) => executeSessionFollowAction('follow.preview', {
+            const read = (value: typeof filter) => executeSessionFollowAction({ actionId: 'follow.preview', input: {
                 receiver: { kind: 'session', sessionId: 'receiver' }, filter: value,
-            }, serverId, undefined, undefined, 'source', { rules: acquired });
+            }, serverId, sourceSessionId: 'source', readInputs: { rules: acquired } });
             expect(await read(filter)).toMatchObject({ kind: 'ok', value: { coverage: 'complete',
                 matches: [{ source: { kind: 'session', sessionId: 'source' } }] } });
             expect(await read({ ...filter, homeServerIds: ['other-home'] })).toMatchObject({ kind: 'ok',
@@ -208,8 +208,7 @@ describe('Follow exact Home Action transport', () => {
             const acquired = supplied ? await readSessionFollowRules(serverId) : undefined;
             if (supplied) expect(acquired?.status).toBe('ready');
             const beforeQueries = homes.requests.filter(request => request.path === '/v2/sessions/query').length;
-            const reading = executeSessionFollowAction('follow.preview', { receiver: { kind: 'account' }, filter }, serverId,
-                undefined, undefined, undefined, acquired ? { rules: acquired } : undefined);
+            const reading = executeSessionFollowAction({ actionId: 'follow.preview', input: { receiver: { kind: 'account' }, filter }, serverId, readInputs: acquired ? { rules: acquired } : undefined });
             pending = reading;
             await vi.waitFor(() => expect(homes.requests.filter(request => request.path === '/v2/sessions/query').length).toBe(beforeQueries + 1));
             // The Account socket remains connected and receives no mode-change delivery while the query is held.
@@ -288,7 +287,7 @@ describe('Follow exact Home Action transport', () => {
                 requested = createDeferred<void>();
                 bodyReady = createDeferred<void>();
                 const before = authorityReads;
-                const reading = executeSessionFollowAction('follow.list', { direction: 'following', receiver }, env.target.id);
+                const reading = executeSessionFollowAction({ actionId: 'follow.list', input: { direction: 'following', receiver }, serverId: env.target.id });
                 pending = reading;
                 await Promise.race([requested.promise, reading.then(() => { throw new Error('Follow settled before the held census'); })]);
                 expect(authorityReads - before).toBe(0);
@@ -299,8 +298,8 @@ describe('Follow exact Home Action transport', () => {
                 expect(authorityReads - before).toBe(0);
                 if (!changeBeforeDisclosure) {
                     writerStartedAt = authorityReads;
-                    await expect(executeSessionFollowAction('follow.set', { receiver, source: { kind: 'rule', ruleId: 'rule' },
-                        ruleDefinition, policy, expectedVersion: -1 }, env.target.id)).resolves.toMatchObject({ kind: 'ok' });
+                    await expect(executeSessionFollowAction({ actionId: 'follow.set', input: { receiver, source: { kind: 'rule', ruleId: 'rule' },
+                        ruleDefinition, policy, expectedVersion: -1 }, serverId: env.target.id })).resolves.toMatchObject({ kind: 'ok' });
                     expect(authorityReads - writerStartedAt).toBe(2);
                 }
             }
@@ -324,9 +323,9 @@ describe('Follow exact Home Action transport', () => {
             expect(parsed.searchParams.get('limit')).toBe('1');
             return Response.json(parsed.searchParams.has('cursor') ? { follows: [] } : { follows: [], continuation: 'next-source-page' });
         });
-        expect(await executeSessionFollowAction('follow.list', { direction: 'following', receiver, limit: 1 }, env.target.id))
+        expect(await executeSessionFollowAction({ actionId: 'follow.list', input: { direction: 'following', receiver, limit: 1 }, serverId: env.target.id }))
             .toMatchObject({ kind: 'ok', value: { rules: [{ ruleId: 'rule', definition }], coverage: 'partial', continuation: 'next-source-page' } });
-        expect(await executeSessionFollowAction('follow.list', { direction: 'following', receiver, limit: 1, cursor: 'next-source-page' }, env.target.id))
+        expect(await executeSessionFollowAction({ actionId: 'follow.list', input: { direction: 'following', receiver, limit: 1, cursor: 'next-source-page' }, serverId: env.target.id }))
             .toEqual({ kind: 'ok', value: { follows: [], sources: [], rules: [], coverage: 'complete' } });
     });
     it('reads source followers on the captured Home without opening private rule census', async () => {
@@ -339,9 +338,9 @@ describe('Follow exact Home Action transport', () => {
             return Response.json(payload);
         });
         const input = { direction: 'followers' as const, source: { kind: 'session' as const, sessionId: 'source' } };
-        expect(await executeSessionFollowAction('follow.list', input, env.target.id)).toEqual({ kind: 'ok', value: payload });
+        expect(await executeSessionFollowAction({ actionId: 'follow.list', input, serverId: env.target.id })).toEqual({ kind: 'ok', value: payload });
         env.request.mockResolvedValue(Response.json({ error: 'session_not_found' }, { status: 404 }));
-        expect(await executeSessionFollowAction('follow.list', input, env.target.id)).toEqual({ kind: 'failed', error: 'session_not_found' });
+        expect(await executeSessionFollowAction({ actionId: 'follow.list', input, serverId: env.target.id })).toEqual({ kind: 'failed', error: 'session_not_found' });
     });
 
     it('reads actual Account Following relations with continuation without opening private rule census', async () => {
@@ -435,13 +434,13 @@ describe('Follow exact Home Action transport', () => {
             }
             return Response.json({ rule });
         });
-        expect(await executeSessionFollowAction('follow.set', { receiver, source: { kind: 'rule', ruleId: 'rule-a' },
-            ruleDefinition, policy, expectedVersion: -1 }, env.target.id)).toMatchObject({ kind: 'ok', value: { rule: {
+        expect(await executeSessionFollowAction({ actionId: 'follow.set', input: { receiver, source: { kind: 'rule', ruleId: 'rule-a' },
+            ruleDefinition, policy, expectedVersion: -1 }, serverId: env.target.id })).toMatchObject({ kind: 'ok', value: { rule: {
                 ruleId: 'rule-a', receiver, version: 0, definition: { ...ruleDefinition, policy },
             } } });
-        const mismatch = await executeSessionFollowAction('follow.get', {
+        const mismatch = await executeSessionFollowAction({ actionId: 'follow.get', input: {
             receiver: { kind: 'session', sessionId: 'other' }, source: { kind: 'rule', ruleId: 'rule-a' },
-        }, env.target.id);
+        }, serverId: env.target.id });
         expect(mismatch.kind).toBe('failed');
     });
 
@@ -473,8 +472,7 @@ describe('Follow exact Home Action transport', () => {
         expect(acquired.status).toBe('ready');
         expect(await readSessionFollowRules(env.target.id, undefined, { expectedAccountId: 'target-account', rules: acquired })).toBe(acquired);
         for (const rule of rules) {
-            const result = await executeSessionFollowAction('follow.list', { direction: 'following', receiver: rule.receiver },
-                env.target.id, undefined, 'target-account', undefined, { rules: acquired });
+            const result = await executeSessionFollowAction({ actionId: 'follow.list', input: { direction: 'following', receiver: rule.receiver }, serverId: env.target.id, expectedAccountId: 'target-account', readInputs: { rules: acquired } });
             expect(result).toMatchObject({ kind: 'ok', value: { rules: [{ ruleId: rule.ruleId, definition }] } });
         }
         expect(env.request.mock.calls.filter(([url]) => new URL(url).pathname.endsWith('/session-follow-rules'))).toHaveLength(1);
@@ -504,8 +502,7 @@ describe('Follow exact Home Action transport', () => {
         const rules = await readSessionFollowRuleInputs(env.target.id, undefined, { expectedAccountId: 'target-account' });
         expect(rules).toMatchObject({ status: 'ready', accountId: 'target-account', rules: [] });
         expect(env.request.mock.calls.filter(([url]) => new URL(url).pathname.endsWith('/session-follow-preferences'))).toHaveLength(0);
-        expect(await executeSessionFollowAction('follow.preview', { receiver: { kind: 'account' }, filter: normalizeSessionListFilterV1() },
-            env.target.id, undefined, 'target-account', undefined, { rules })).toMatchObject({ kind: 'ok' });
+        expect(await executeSessionFollowAction({ actionId: 'follow.preview', input: { receiver: { kind: 'account' }, filter: normalizeSessionListFilterV1() }, serverId: env.target.id, expectedAccountId: 'target-account', readInputs: { rules } })).toMatchObject({ kind: 'ok' });
         expect(await readSessionFollowRules(env.target.id)).toMatchObject({ status: 'unavailable' });
     });
 
@@ -532,8 +529,7 @@ describe('Follow exact Home Action transport', () => {
         env.accountEncryption.mode = 'e2ee';
         expect(await readSessionFollowRules(env.target.id, undefined, { rules: acquired }))
             .toMatchObject({ status: 'unavailable' });
-        expect(await executeSessionFollowAction('follow.preview', { receiver: { kind: 'account' }, filter: normalizeSessionListFilterV1() },
-            env.target.id, undefined, 'target-account', undefined, { rules: { status: 'unavailable', reason: 'forbidden' } }))
+        expect(await executeSessionFollowAction({ actionId: 'follow.preview', input: { receiver: { kind: 'account' }, filter: normalizeSessionListFilterV1() }, serverId: env.target.id, expectedAccountId: 'target-account', readInputs: { rules: { status: 'unavailable', reason: 'forbidden' } } }))
             .toMatchObject({ kind: 'ok', value: { coverage: 'unavailable' } });
         expect(env.request.mock.calls.filter(([url]) => new URL(url).pathname.endsWith('/session-follow-rules'))).toHaveLength(1);
     });
@@ -553,12 +549,12 @@ describe('Follow exact Home Action transport', () => {
             return Response.json({ rules: [rule, { ...rule, ruleId: 'other', receiver: { kind: 'session', sessionId: 'other' },
                 ...(unreadable ? { content: { t: 'encrypted', c: 'wrong-mode' } } : {}) }] });
         });
-        expect(await executeSessionFollowAction('follow.list', { direction: 'following', receiver: { kind: 'account' } }, env.target.id))
+        expect(await executeSessionFollowAction({ actionId: 'follow.list', input: { direction: 'following', receiver: { kind: 'account' } }, serverId: env.target.id }))
             .toEqual({ kind: 'ok', value: { follows: [], sources: [], rules: [{
                 ruleId: rule.ruleId, receiver: rule.receiver, version: rule.version, definition,
             }], coverage: 'complete' } });
         unreadable = true;
-        expect(await executeSessionFollowAction('follow.list', { direction: 'following', receiver: { kind: 'account' } }, env.target.id))
+        expect(await executeSessionFollowAction({ actionId: 'follow.list', input: { direction: 'following', receiver: { kind: 'account' } }, serverId: env.target.id }))
             .toEqual({ kind: 'failed', error: 'unavailable' });
     });
 
@@ -589,11 +585,11 @@ describe('Follow exact Home Action transport', () => {
             if (changeMode) { env.accountEncryption.mode = 'plain'; env.accountEncryption.contentKeyFingerprint = null; }
             return Response.json({ rule: { ruleId: input.source.ruleId, receiver: input.receiver, version: 0, content: body.content } });
         });
-        expect(await executeSessionFollowAction('follow.set', input, env.target.id)).toMatchObject({ kind: 'ok', value: { rule: {
+        expect(await executeSessionFollowAction({ actionId: 'follow.set', input, serverId: env.target.id })).toMatchObject({ kind: 'ok', value: { rule: {
             definition: { ...input.ruleDefinition, policy: input.policy },
         } } });
         changeMode = true;
-        expect(await executeSessionFollowAction('follow.set', input, env.target.id)).toEqual({ kind: 'failed', error: 'unavailable' });
+        expect(await executeSessionFollowAction({ actionId: 'follow.set', input, serverId: env.target.id })).toEqual({ kind: 'failed', error: 'unavailable' });
     });
     it.each([
         { actionId: 'follow.get', input: { receiver: { kind: 'account' }, source: { kind: 'session', sessionId: 'same' } } },

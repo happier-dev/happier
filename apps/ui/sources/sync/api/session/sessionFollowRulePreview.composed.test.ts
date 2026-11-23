@@ -72,8 +72,7 @@ it.each([true, false])('previews Project matches with bounded body reads and saf
     const filter = normalizeSessionListFilterV1({ show: 'sessions', homeServerIds: [serverId], scope: 'all_accessible',
         startedBy: ['you', 'agents', 'triggers'],
         projects: { include: [{ serverId, projectKey: 'payments' }], exclude: [] } });
-    const read = () => executeSessionFollowAction('follow.preview', { receiver: { kind: 'account' }, filter }, serverId,
-        undefined, accountId, undefined, { rules });
+    const read = () => executeSessionFollowAction({ actionId: 'follow.preview', input: { receiver: { kind: 'account' }, filter }, serverId, expectedAccountId: accountId, readInputs: { rules } });
     const before = homes.requests.length;
     const result = await read();
     expect(result).toMatchObject({ kind: 'ok', value: { coverage: 'complete', matchCount: 3 } });

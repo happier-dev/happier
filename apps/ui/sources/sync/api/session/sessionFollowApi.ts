@@ -146,15 +146,17 @@ export async function readAccountSessionFollowRelations(scope: ServerAccountScop
     });
 }
 
-/** Physical transport for the shared Action executor and scoped read adapters. */
+/** Shared Follow operation for the Action port and already scoped UI reads. */
 export async function executeSessionFollowAction<TActionId extends SessionFollowActionIdV1>(
-    actionId: TActionId,
-    input: unknown,
-    serverId: string,
-    signal?: AbortSignal,
-    expectedAccountId?: string,
-    sourceSessionId?: string,
-    readInputs?: SessionFollowReadInputs,
+    { actionId, input, serverId, signal, expectedAccountId, sourceSessionId, readInputs }: Readonly<{
+        actionId: TActionId;
+        input: unknown;
+        serverId: string;
+        signal?: AbortSignal;
+        expectedAccountId?: string;
+        sourceSessionId?: string;
+        readInputs?: SessionFollowReadInputs;
+    }>,
 ): Promise<SessionFollowApiResult<SessionFollowActionOutputV1[TActionId]>> {
     if (signal?.aborted) return UNAVAILABLE;
     return await withCurrentFollowRequest({
@@ -277,8 +279,7 @@ export async function readAccountSessionDeliveryMutedScopes(
 ): Promise<readonly FollowDeliveryMuteScopeV1[] | null> {
     if (!scope.accountId.trim()) return null;
     try {
-        const result = await executeSessionFollowAction('session.delivery.mute.list', { receiver: { kind: 'account' } },
-            scope.serverId, signal, scope.accountId);
+        const result = await executeSessionFollowAction({ actionId: 'session.delivery.mute.list', input: { receiver: { kind: 'account' } }, serverId: scope.serverId, signal, expectedAccountId: scope.accountId });
         return result.kind === 'ok' ? result.value.scopes : null;
     } catch {
         return null;
@@ -287,7 +288,7 @@ export async function readAccountSessionDeliveryMutedScopes(
 
 export const sessionFollowAction = async (args: Parameters<NonNullable<ActionExecutorDeps['sessionFollowAction']>>[0]
     & Readonly<{ sourceSessionId?: string }>, readInputs?: SessionFollowReadInputs) => {
-    const result = await executeSessionFollowAction(args.actionId, args.input, args.serverId ?? '', args.signal, undefined, args.sourceSessionId, readInputs);
+    const result = await executeSessionFollowAction({ actionId: args.actionId, input: args.input, serverId: args.serverId ?? '', signal: args.signal, sourceSessionId: args.sourceSessionId, readInputs });
     return result.kind === 'ok' ? result.value : {
         ok: false,
         errorCode: result.error === 'unavailable' ? 'network_error' : result.error,

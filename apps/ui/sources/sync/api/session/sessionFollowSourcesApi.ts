@@ -17,17 +17,17 @@ export type SessionFollowSourcesFailure = Extract<SessionFollowApiResult<never>,
 
 /** Source-owned reverse read; personal rows are the caller's own, peopleCount is anonymous. */
 export function listSessionFollowers(source: SessionAddress, signal?: AbortSignal, expectedAccountId?: string) {
-    return executeSessionFollowAction('follow.list', {
+    return executeSessionFollowAction({ actionId: 'follow.list', input: {
         direction: 'followers', source: { kind: 'session', sessionId: source.sessionId },
-    }, source.serverId, signal, expectedAccountId);
+    }, serverId: source.serverId, signal, expectedAccountId });
 }
 
 export async function listSessionFollowSources(destination: SessionAddress, signal?: AbortSignal, expectedAccountId?: string,
     readInputs?: SessionFollowReadInputs) {
-    const result = await executeSessionFollowAction('follow.list', {
+    const result = await executeSessionFollowAction({ actionId: 'follow.list', input: {
         direction: 'following',
         receiver: { kind: 'session', sessionId: destination.sessionId },
-    }, destination.serverId, signal, expectedAccountId, undefined, readInputs);
+    }, serverId: destination.serverId, signal, expectedAccountId, readInputs });
     return result.kind === 'ok'
         ? { kind: 'ok' as const, value: { sources: result.value.sources, rules: result.value.rules,
             coverage: result.value.coverage,

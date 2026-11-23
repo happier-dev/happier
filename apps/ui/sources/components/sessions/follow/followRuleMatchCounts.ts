@@ -89,9 +89,9 @@ export function useFollowRuleMatchCounts(
               } }));
               let count: FollowRuleMatchCount;
               try {
-                const result = await executeSessionFollowAction('follow.preview', {
+                const result = await executeSessionFollowAction({ actionId: 'follow.preview', input: {
                   receiver: { kind: 'session', sessionId: receiverSessionId }, filter: rule.filter,
-                }, serverId, controller.signal, accountId, undefined, { rules: snapshot });
+                }, serverId, signal: controller.signal, expectedAccountId: accountId, readInputs: { rules: snapshot } });
                 count = result.kind === 'ok' ? { status: 'ready', preview: result.value } : { status: 'unavailable' };
               } catch { count = { status: 'unavailable' }; }
               if (isCurrent()) setState(previous => ({ key: signature, lifetime, counts: {
