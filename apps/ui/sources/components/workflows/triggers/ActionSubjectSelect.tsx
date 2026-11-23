@@ -5,10 +5,9 @@ import {
   type AutomationSubjectV1,
 } from '@happier-dev/protocol/automations/automationSubjectV1';
 
-import {
-  ValueFieldSelect,
-  type ValueFieldSelectItem,
-} from '@/components/ui/forms/ValueFieldSelect';
+import { HappierAutomationSubjectPicker, type HappierAutomationSubjectPickerRow } from '@happier-dev/plugin-ui/presentation';
+
+import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import type { WorkflowActionOperand } from '@/components/workflows/presentation/workflowActionCatalog';
 import { areServerAccountScopesEqual, readServerAccountScopeOwnerLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -27,13 +26,27 @@ import { useActiveServerAccountScopeLifetime, useServerScopedMachine } from '@/s
 import { t } from '@/text';
 
 const ANY = 'subject:any';
-const MORE = 'subject:more';
-const RETRY = 'subject:retry';
-const LOADING = 'subject:loading';
 const DATABASE_LOCATIONS = 'subject:database-locations';
 const DATABASE_WORKTREE = 'subject:database-worktree';
-const DATABASE_LOCATION_PREFIX = 'subject:database-location:';
-const KEEPS_OPEN = (id: string) => id === MORE || id === RETRY || id === DATABASE_LOCATIONS || id === DATABASE_WORKTREE || id.startsWith(DATABASE_LOCATION_PREFIX);
+
+const ALWAYS = () => true;
+
+/** The shared subject menu drawn as this form's labelled field. */
+function SubjectFieldMenu(props: Readonly<{
+  testID?: string;
+  label?: string;
+  onOpenChange(open: boolean): void;
+  items: readonly HappierAutomationSubjectPickerRow[];
+  selectedId: string | null;
+  onSelect(id: string): void;
+  emptyLabel: string;
+}>) {
+  const { items } = props;
+  const keepsOpen = React.useCallback((id: string) => items.some(item => item.id === id && item.keepMenuOpen === true), [items]);
+  return <ValueFieldSelect testID={props.testID ?? 'subject'} label={props.label ?? ''} items={items}
+    selectedId={props.selectedId} onSelect={props.onSelect} onOpenChange={props.onOpenChange}
+    keepsOpen={keepsOpen} emptyLabel={props.emptyLabel} />;
+}
 
 type CoreKind = Exclude<WorkflowActionOperand['kind']['kind'], 'plugin'>;
 
@@ -191,128 +204,52 @@ export const ActionSubjectSelect = React.memo(function ActionSubjectSelect(
     onSubjectNamed?.(chosen?.key === selectedKey ? chosen : null);
   }, [chosen, onSubjectNamed, selectedKey]);
   const iconColor = theme.colors.text.secondary;
-  const items = React.useMemo<ValueFieldSelectItem[]>(() => {
-    const listed = read.items.map((item) => {
-      const key = automationSubjectKeyV1(item.subject);
-      return {
-        id: choosingDatabaseLocation ? DATABASE_LOCATION_PREFIX + key : key,
-        title:
-          key === selectedKey ? `${words.this} · ${item.label}` : item.label,
-        ...(item.description === undefined
-          ? {}
-          : { subtitle: item.description }),
-      };
-    });
-    const rows: ValueFieldSelectItem[] = [
-      {
-        id: ANY,
-        title: words.any,
-        subtitle: t('workflows.triggers.card.subjectAnyNote'),
-        icon: (
-          <Icon name="squares-four" size={ICON_SIZE.xs} color={iconColor} />
-        ),
-      },
-      ...(databaseLocation === null ? [] : [{ id: DATABASE_LOCATIONS, title: t('common.back') }]),
-      ...(choosingDatabaseLocation && worktreeLocation && checkout ? [{ id: DATABASE_WORKTREE, title: checkout.rootPath }] : []),
-      ...listed,
-    ];
-    if (
-      read.status === 'loading' ||
-      read.status === 'loading_more' ||
-      (open && lifetime === null && serverId !== null)
-    ) {
-      rows.push({ id: LOADING, title: t('common.loading'), disabled: true });
-    } else if (read.status === 'error') {
-      rows.push({
-        id: RETRY,
-        title: t('common.retry'),
-        subtitle: t('common.requestFailed'),
-      });
-    } else if (read.hasMore) {
-      rows.push({ id: MORE, title: t('common.more') });
-    }
-    // A saved resource the open list has not reached still reads as chosen.
-    if (
-      selectedKey !== ANY &&
-      !listed.some((item) => item.id === selectedKey)
-    ) {
-      rows.splice(1, 0, {
-        id: selectedKey,
-        title:
-          chosen?.key === selectedKey
-            ? `${words.this} · ${chosen.label}`
-            : words.this,
-      });
-    }
-    return rows;
-  }, [
-    read.items,
-    read.status,
-    read.hasMore,
-    selectedKey,
-    chosen,
-    words.this,
-    words.any,
-    iconColor,
-    open,
-    lifetime,
-    serverId,
-    choosingDatabaseLocation,
-    databaseLocation,
-    worktreeLocation,
-    checkout,
-  ]);
-  const { onChange } = props;
-  const select = React.useCallback(
-    (id: string) => {
-      if (id === MORE) {
-        void read.loadMore();
-        return;
-      }
-      if (id === RETRY) {
-        void read.reload();
-        return;
-      }
-      if (id === LOADING) return;
-      if (id === DATABASE_LOCATIONS) {
-        setLocation(null);
-        return;
-      }
-      if (id === DATABASE_WORKTREE) {
-        setLocation(worktreeLocation);
-        return;
-      }
-      if (id.startsWith(DATABASE_LOCATION_PREFIX)) {
-        const option = read.items.find(item => automationSubjectKeyV1(item.subject) === id.slice(DATABASE_LOCATION_PREFIX.length));
-        if (option?.databaseLocation) setLocation(option.databaseLocation);
-        return;
-      }
-      if (id === ANY) {
-        onChange(undefined);
-        return;
-      }
-      const item = read.items.find(
-        (candidate) => automationSubjectKeyV1(candidate.subject) === id,
-      );
-      if (!item) return;
-      setChosen({ key: id, label: item.label });
-      onChange(item.subject);
+  // The shared subject menu draws the choices and the list's Loading, Retry and More; this field leads with Any and,
+  // for a Database, the Environment step that narrows the list before a database is chosen.
+  const leading = React.useMemo<HappierAutomationSubjectPickerRow[]>(() => [
+    {
+      id: ANY,
+      title: words.any,
+      subtitle: t('workflows.triggers.card.subjectAnyNote'),
+      icon: <Icon name="squares-four" size={ICON_SIZE.xs} color={iconColor} />,
     },
-    [read, onChange, worktreeLocation],
-  );
+    ...(databaseLocation === null ? [] : [{ id: DATABASE_LOCATIONS, title: t('common.back'), keepMenuOpen: true }]),
+    ...(choosingDatabaseLocation && worktreeLocation && checkout
+      ? [{ id: DATABASE_WORKTREE, title: checkout.rootPath, keepMenuOpen: true }] : []),
+  ], [words.any, iconColor, databaseLocation, choosingDatabaseLocation, worktreeLocation, checkout]);
+  const formatChoice = React.useCallback((option: Readonly<{ label: string }>, selected: boolean) =>
+    selected ? `${words.this} · ${option.label}` : option.label, [words.this]);
+  const retained = React.useMemo(() => selectedKey === ANY ? null : {
+    id: selectedKey,
+    title: chosen?.key === selectedKey ? `${words.this} · ${chosen.label}` : words.this,
+  }, [selectedKey, chosen, words.this]);
+  const { onChange } = props;
+  const selectLeading = React.useCallback((id: string) => {
+    if (id === ANY) onChange(undefined);
+    else if (id === DATABASE_LOCATIONS) setLocation(null);
+    else if (id === DATABASE_WORKTREE) setLocation(worktreeLocation);
+  }, [onChange, worktreeLocation]);
+  const choose = React.useCallback((subject: AutomationSubjectV1, option: (typeof read.items)[number]) => {
+    if (choosingDatabaseLocation) {
+      if (option.databaseLocation) setLocation(option.databaseLocation);
+      return;
+    }
+    setChosen({ key: automationSubjectKeyV1(subject), label: option.label });
+    onChange(subject);
+  }, [choosingDatabaseLocation, onChange]);
+  const openChange = React.useCallback((next: boolean) => {
+    setOpen(next);
+    if (!next) setLocation(undefined);
+  }, []);
   return (
-    <ValueFieldSelect
-      testID={props.testID}
-      label={words.label}
-      items={items}
-      selectedId={selectedKey}
-      onSelect={select}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (!next) setLocation(undefined);
-      }}
-      keepsOpen={KEEPS_OPEN}
-      emptyLabel={t('common.noMatches')}
-    />
+    <HappierAutomationSubjectPicker Menu={SubjectFieldMenu} testID={props.testID} fieldLabel={words.label}
+        open={open} onOpenChange={openChange} value={props.subject ?? null} selectedId={selectedKey}
+        options={read.items} subjectKey={automationSubjectKeyV1} formatChoice={formatChoice}
+        leading={leading} onSelectLeading={selectLeading} retained={retained} narrowing={choosingDatabaseLocation}
+        waiting={read.status === 'loading' || read.status === 'loading_more' || (open && lifetime === null && serverId !== null)}
+        failed={read.status === 'error'} hasMore={read.hasMore} canSelect={ALWAYS}
+        onRetry={read.reload} onLoadMore={read.loadMore} onChange={choose}
+        chooseLabel={words.label} emptyLabel={t('common.noMatches')} loadingLabel={t('common.loading')}
+        retryLabel={t('common.retry')} failureLabel={t('common.requestFailed')} moreLabel={t('common.more')} />
   );
 });
