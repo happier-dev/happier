@@ -764,6 +764,47 @@ describe('Projects › Sources', () => {
     expect(title('projects.sources.checkout.retired-machine-id')).toBe('machine.unlistedMachine');
   });
 
+  it('shows a Source-linked managed checkout without controller presence and keeps an unlinked replacement out', async () => {
+    signIn();
+    const managedCheckout = {
+      v: 2, kind: 'managed', id: 'retained-checkout', serverId: 'server-1',
+      rootPath: '/home/coder/qa-rws-repo', createdAtMs: 1,
+      managedId: 'guest', controller: { machineId: 'absent-controller', installationId: 'controller-installation' },
+    } as const;
+    const scope = { serverId: 'server-1', accountId: 'account-1' };
+    const localCheckout = {
+      id: 'controller-copy', serverId: scope.serverId, machineId: 'm1', rootPath: '/repo',
+      source: { sourceId: 'source-1', revision: 1 }, createdAtMs: 1,
+    };
+    const linked = { ...managedCheckout, source: localCheckout.source };
+    storage.setState({
+      projectAccountRows: createProjectAccountRowsFixture(scope, { workspaceRefs: [localCheckout, linked] }),
+    });
+    shared.sources = [{ id: 'source-1', revision: 1, name: 'happier', audience: [], createdByAccountId: 'account-1',
+      repository: { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+        repository: { nameWithOwner: 'happier-dev/happier' }, protocol: 'https' } }];
+    shared.routes.params = { source: 'source-1' };
+    const screen = await renderScreen(<ProjectSourcesScreen />);
+    const managedRow = 'projects.sources.checkout.absent-controller';
+    try {
+      await vi.waitFor(() => expect(screen.findByTestId('projects.sources.checkout.m1')).toBeTruthy());
+      expect(screen.findByTestId(managedRow)).toBeTruthy();
+      await act(async () => screen.pressByTestId(managedRow));
+      expect(new URL(String(shared.navigation.at(-1)), 'https://happier.test').pathname)
+        .toMatch(/^\/projects\/retained-checkout(?:\/|$)/u);
+
+      // Forget removed the linked row. Attaching the same guest folder creates a different Project with no Source.
+      const replacement = { ...managedCheckout, id: 'replacement-checkout', createdAtMs: 2 };
+      await act(async () => storage.setState({
+        projectAccountRows: createProjectAccountRowsFixture(scope, { workspaceRefs: [localCheckout, replacement] }),
+      }));
+      expect(screen.findByTestId(managedRow)).toBeNull();
+      expect(screen.findByTestId('projects.sources.checkout.m1')).toBeTruthy();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it('edits the default branch through a field select whose Other entry asks for any ref', async () => {
     signIn();
     shared.sources = [
