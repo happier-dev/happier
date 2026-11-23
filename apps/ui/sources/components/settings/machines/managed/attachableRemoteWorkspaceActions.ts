@@ -139,18 +139,13 @@ export async function attachRemoteWorkspace(input: AttachRemoteWorkspaceChoice &
             if (!read.success) return finishFailure(failed('invalid_action_output'));
             if (read.data.kind !== 'found') return finishFailure(failed('operation_not_found'));
             const snapshot = read.data.operation;
-            if (snapshot.operationId !== operationId || snapshot.scope.accountId !== accountId
-                || snapshot.scope.machineId !== machineId || snapshot.actionId !== MANAGED_ACQUIRE_ACTION_ID_V1) {
-                return finishFailure(failed('operation_scope_mismatch'));
-            }
             const terminal = readActionOperationTerminalResultV1(snapshot);
             if (terminal) {
                 if (!terminal.ok) {
                     const code = terminal.errorCode ?? 'action_operation_failed';
                     return finishFailure(failed(code, projectManagedProvisionerFailure(code, terminal.details).message));
                 }
-                const settled = ManagedAcceptedV1Schema.safeParse(terminal.result);
-                if (!settled.success || settled.data.managedId !== managedId) return finishFailure(failed('invalid_action_output'));
+                if (!ManagedAcceptedV1Schema.safeParse(terminal.result).success) return finishFailure(failed('invalid_action_output'));
                 break;
             }
             const prompt = readActionOperationTaskQuestionV1(snapshot)?.prompt;
