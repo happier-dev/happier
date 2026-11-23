@@ -44,9 +44,21 @@ function receiverDeclaresOptions(projection: PluginProjectionV2 | null | undefin
     return !!resource && (resource.execution?.target !== 'account' || resource.accountRuntimeDeclared === true);
 }
 
-function receiverDeclaresAction(projection: PluginProjectionV2 | null | undefined, identity: PluginContributionIdentityV1): boolean {
+function readReceiverAccountAction(projection: PluginProjectionV2 | null | undefined, identity: PluginContributionIdentityV1) {
     const action = projection?.actionsById[buildQualifiedPluginContributionKey(identity)];
-    return action?.execution.target === 'account' && action.available === true;
+    return action?.execution.target === 'account' ? action : undefined;
+}
+
+/** Bind an Account declaration to the selected Machine's current registry answer. */
+export async function readUiAccountActionReceiverOccurrenceId(account: LazyActionAccountContext,
+    params: Readonly<{ machineId: string; action: PluginContributionIdentityV1; signal: AbortSignal }>,
+): Promise<string | undefined> {
+    const demand = { machineId: params.machineId, serverId: account.serverId, accountLifetime: account.accountLifetime,
+        sections: ACTION_RELAY_SECTIONS, signal: params.signal };
+    const held = readObservedDaemonMergedProjectionCacheEntry(demand);
+    const answer = held?.kind === 'ready' ? held : await loadDaemonMergedProjectionCacheEntry({ ...demand, reuseFreshReady: true });
+    return answer?.kind === 'ready'
+        ? readReceiverAccountAction(answer.inputs.pluginProjectionV2, params.action)?.occurrenceId : undefined;
 }
 
 /** Automatic Account execution stays on an own Machine; explicit native targets retain their reviewed path. */
@@ -78,7 +90,7 @@ export function resolveUiAccountActionFallbackMachineId(account: Pick<ActionAcco
             return entry?.kind === 'ready' ? entry.inputs.pluginProjectionV2 : null;
         })();
         return options.optionsRequest ? receiverDeclaresOptions(cached, options.optionsRequest)
-            : receiverDeclaresAction(cached, options.action!);
+            : readReceiverAccountAction(cached, options.action!)?.available === true;
     });
     return ownCandidates.find(machine => isMachineReachable(account, machine))?.id
         ?? (options?.allowUnreachableFallback ? ownCandidates[0]?.id ?? null : null);
@@ -117,7 +129,8 @@ export async function resolveUiAccountActionReceiverMachineId(account: LazyActio
         if (readObservedDaemonMergedProjectionCacheEntry(demand)?.kind === 'ready') continue;
         const answer = await loadDaemonMergedProjectionCacheEntry(demand);
         const projection = answer?.kind === 'ready' ? answer.inputs.pluginProjectionV2 : null;
-        if (optionsRequest ? receiverDeclaresOptions(projection, optionsRequest) : receiverDeclaresAction(projection, action!)) return machine.id;
+        if (optionsRequest ? receiverDeclaresOptions(projection, optionsRequest)
+            : readReceiverAccountAction(projection, action!)?.available === true) return machine.id;
     }
     return actionTargetUnavailable(reachable.length === 0 ? 'own_reachable_machine_absent'
         : optionsRequest ? 'plugin_options_declaration_absent' : 'plugin_action_declaration_absent');

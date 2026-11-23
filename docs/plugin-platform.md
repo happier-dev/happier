@@ -2488,6 +2488,10 @@ An invocation about a subject with its own Machine carries that subject's Machin
 in the existing `externalActionTarget`; an Environment uses its controller Machine.
 The placement owner preserves this target. Subject-less invocations retain the
 first reachable own Machine, with no preference list or retry on another Machine.
+An Account-projected Session read set sent to a Machine uses the receiving
+Machine's current Action occurrence from its revision-scoped registry projection.
+The Account custody identifier governs the browser's projection. The daemon
+checks the Machine occurrence at admission before opening Session operands.
 An Account Action that uses the invoking UI declares `execution.invokingUi: true`;
 `accountActionPlacement.ts` keeps that invocation on the invoking host so its UI
 capability reaches the handler. Headless hosts still run the same Account Action

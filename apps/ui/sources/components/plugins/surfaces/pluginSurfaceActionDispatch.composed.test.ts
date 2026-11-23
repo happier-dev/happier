@@ -3214,7 +3214,7 @@ describe('Account Action placement through the executable dispatcher', () => {
         } finally { controller.abort(); release(); accountBrowserRelay.enabled = false; }
     });
 
-    it.each(['missing', 'unavailable', 'offline', 'none', 'cold', 'explicit', 'explicit-offline', 'guest-read', 'guest-explicit-read', 'guest-write'] as const)('places Account Actions using receiver runtime availability (%s)', async state => {
+    it.each(['missing', 'unavailable', 'offline', 'none', 'cold', 'explicit', 'explicit-offline', 'guest-read', 'guest-explicit-read', 'guest-write', 'account-projection', 'account-projection-explicit'] as const)('places Account Actions using receiver runtime availability (%s)', async state => {
         const { executeAccountActionAtRuntimeHost } = await import('./accountActionPlacement');
         const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
         const { createMachineFixture, createMachineReadBatchResponseFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
@@ -3222,18 +3222,23 @@ describe('Account Action placement through the executable dispatcher', () => {
         const { loadDaemonMergedProjectionCacheEntry } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
         const { buildDeferredDaemonProjectionSections } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+        const { ActionInvokeInputSchema } = await import('@happier-dev/protocol/actions/actionInvokeInput');
         const lifetime = clientAccountLifetime();
         const account = await captureLazyActionAccountContext(lifetime.scope.serverId);
         const previous = getStorage().getState();
         const identity = { pluginId: 'acme.placement', localId: 'read' };
         const action = createClientTargetAction({ identity, accountPlacement: true });
         const guest = state === 'guest-read' || state === 'guest-explicit-read' || state === 'guest-write';
+        const accountProjection = state === 'account-projection' || state === 'account-projection-explicit';
+        const receiverOccurrence = 'acme.placement:725';
         const artifactFailure = { errorCode: 'artifact_source_unavailable', error: 'artifact_source_unavailable' };
         let effects = 0;
+        let receivedOccurrenceId: string | undefined;
         const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://server-client-action',
             serverIdentityId: 'srv_client_action', accountId: lifetime.scope.accountId, machineId: 'usable',
             actionId: 'action.invoke', tokenEpoch: 0, execute: request => {
                 if (state === 'guest-read') expect(request).not.toHaveProperty('expectedContributorOccurrenceId', 'placement-fixture');
+                if (accountProjection) receivedOccurrenceId = ActionInvokeInputSchema.parse(request).expectedContributorOccurrenceId;
                 effects++;
                 return { selected: 'usable' };
             } });
@@ -3254,6 +3259,7 @@ describe('Account Action placement through the executable dispatcher', () => {
                 v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
                 actionsById: usable || state === 'unavailable' || state === 'offline' || guest
                     ? { 'acme.placement/read': { ...action, available: usable || state === 'offline',
+                        ...(accountProjection ? { occurrenceId: receiverOccurrence } : {}),
                         ...(guest ? { occurrenceId: `placement-${request.machineId}`, readOnly: state !== 'guest-write' } : {}) } } : {},
             } });
             const read = request.payload?.sectionRead;
@@ -3274,14 +3280,40 @@ describe('Account Action placement through the executable dispatcher', () => {
                 ?? createEmptyAccountBootstrapHttpResponse(endpoint.pathname, init);
         });
         accountBrowserRelay.enabled = true;
+        const accountActivation = accountProjection ? createClientActionActivation({
+            pluginId: identity.pluginId, localId: identity.localId, accountPlacement: true, accountLifetime: lifetime,
+            occurrenceId: JSON.stringify(['fixture-package', identity.pluginId, '1.2.3']), readOnly: true,
+            sessionTarget: { field: 'sessionIds.*', cardinality: 'many' },
+            accountHandler: () => { throw new Error('Browser read set must use the Machine'); },
+        }) : undefined;
         try {
+            if (accountActivation) await accountActivation.composition.reconcile([accountActivation.activation]);
             for (const machine of machines) {
-                if (!machine.active || state === 'cold' || state === 'explicit' || state === 'explicit-offline') continue;
+                if (!machine.active || state === 'cold' || state === 'explicit' || state === 'explicit-offline'
+                    || state === 'account-projection-explicit') continue;
                 const answer = await loadDaemonMergedProjectionCacheEntry({ machineId: machine.id, serverId: account.serverId,
                     accountLifetime: account.accountLifetime, sections: ['actionsById'], reuseFreshReady: true });
                 expect(answer, JSON.stringify(answer)).toMatchObject({ kind: 'ready' });
             }
             const reads = network.requests.length;
+            if (accountActivation) {
+                const outcome = await dispatchPluginSurfaceAction({
+                    action: identity, input: { sessionIds: ['session-1'] }, clientAction: {},
+                    resolveContributedAction: resolveExactClientAction(accountActivation.action),
+                    pluginUiProjection: accountActivation.projection,
+                    hostAction: { execute: async () => { throw new Error('No local Action effect'); }, context: {
+                        serverId: lifetime.scope.serverId,
+                        ...(state === 'account-projection-explicit'
+                            ? { externalActionTarget: { kind: 'machine', machineId: 'usable' } } : {}),
+                    } },
+                });
+                expect(receivedOccurrenceId).toBe(receiverOccurrence);
+                expect(outcome).toEqual({ ok: true, result: { selected: 'usable' } });
+                expect(effects).toBe(1);
+                expect(network.requests.filter(request => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
+                    && !(request.payload as { sectionRead?: unknown }).sectionRead)).toHaveLength(state === 'account-projection-explicit' ? 1 : 2);
+                return;
+            }
             const result = executeAccountActionAtRuntimeHost({ accountScope: lifetime.scope, action: identity,
                 execution: { target: 'account', account: { artifactId: 'fixture', exportName: 'activate' } }, input: {},
                 ...(guest ? { sourceMachineId: 'fixture', expectedContributorOccurrenceId: 'placement-fixture',
@@ -3307,7 +3339,7 @@ describe('Account Action placement through the executable dispatcher', () => {
                     && !(request.payload as { sectionRead?: unknown }).sectionRead)).toHaveLength(2);
             } else expect(network.requests.length).toBe(reads);
         } finally {
-            accountBrowserRelay.enabled = false; account.dispose(); lifetime.retire();
+            accountBrowserRelay.enabled = false; await accountActivation?.composition.unload(); account.dispose(); lifetime.retire();
             getStorage().setState({ machines: previous.machines, machineListByServerId: previous.machineListByServerId,
                 machineListStatusByServerId: previous.machineListStatusByServerId });
         }

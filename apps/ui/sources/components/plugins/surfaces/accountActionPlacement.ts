@@ -12,7 +12,7 @@ import { readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import { createUiAccountAction, resolveUiAccountActionReceiverMachineId } from '@/sync/ops/actions/accountActionDeps';
+import { createUiAccountAction, readUiAccountActionReceiverOccurrenceId, resolveUiAccountActionReceiverMachineId } from '@/sync/ops/actions/accountActionDeps';
 import { confirmOwnUiRefusal } from '@/sync/ops/actions/executeMachineActionAtDaemon';
 import { bindPresentUserActionConfirmation } from '@/sync/ops/actions/presentUserConfirmation';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -50,6 +50,8 @@ export async function resolvesAccountActionLocally(params: AccountActionRuntimeP
 /** The dispatcher places whole Account Actions; provider HTTP and credentials stay together. */
 export function executeAccountActionAtRuntimeHost(params: AccountActionRuntimePlacement & Readonly<{
     expectedContributorOccurrenceId?: string;
+    /** An Account declaration has no Machine occurrence to carry. */
+    bindReceiverOccurrence?: true;
     /** The mounted declaration admits these operands as a read. */
     readOnly?: boolean;
     signal: AbortSignal;
@@ -88,8 +90,17 @@ export function executeAccountActionAtRuntimeHost(params: AccountActionRuntimePl
             // A declaration supplier can show an Account read without hosting its
             // executable. Bind a different receiver by Action identity, not by the
             // supplier's runtime occurrence.
-            const occurrenceId = params.sourceMachineId && !pinnedTarget && receiver !== params.sourceMachineId
+            let occurrenceId = params.sourceMachineId && !pinnedTarget && receiver !== params.sourceMachineId
                 ? undefined : params.expectedContributorOccurrenceId;
+            if (params.bindReceiverOccurrence && target.kind === 'machine') {
+                occurrenceId = await readUiAccountActionReceiverOccurrenceId(account, {
+                    machineId: target.machineId, action: params.action, signal: params.signal,
+                });
+                if (!occurrenceId) {
+                    const failure = actionTargetUnavailable('plugin_action_declaration_absent');
+                    throw new PluginError({ code: failure.errorCode, message: failure.error, details: failure.details });
+                }
+            }
             const input = { ...actionInput, ...(occurrenceId === undefined ? {} : { expectedContributorOccurrenceId: occurrenceId }) };
             const requestId = params.context.actionRequestId ?? randomUUID();
             const confirmation = params.confirmedInvocation && sameStrictJsonValue(params.confirmedInvocation.input, input)
