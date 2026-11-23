@@ -1,4 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { t } from '@/text';
+import { presentVoiceAgentFailure } from './presentVoiceAgentFailure.testSupport';
 
 import { VOICE_OUTPUT_INCOMPLETE_TEXT} from '@happier-dev/protocol/voice/outputEvents';
 import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
@@ -70,6 +72,18 @@ describe('streamVoiceAgentTurn', () => {
             userText: 'brief me', displayUserText: 'brief me' }).then(() => null, error => error);
         expect(failure).toMatchObject({ rpcErrorCode: 'codex_app_server_turn_failed', runtimeIssueV1 });
         expect(readSafeVoiceRuntimeFailureFacts(failure)).toEqual({ failureCause });
+        expect(presentVoiceAgentFailure(failure).failureMessage).toContain('429 Too Many Requests');
+    });
+
+    it('keeps an unclassified stream failure on generic copy without raw response text', async () => {
+        const client = serveVoiceStream({ start: async () => ({ streamId: 'failed-stream' }),
+            read: async () => ({ streamId: 'failed-stream', events: [{ t: 'error', error: 'PRIVATE_DAEMON_BODY' }],
+                nextCursor: 1, done: true }), cancel: async () => ({ ok: true }) });
+        const failure: unknown = await streamVoiceAgentTurn({ sessionId: 'sys_voice',
+            handle: { client, voiceAgentId: 'run', rpcSessionId: 'sys_voice' },
+            userText: 'brief me', displayUserText: 'brief me' }).then(() => null, error => error);
+        expect(failure).toBeInstanceOf(Error);
+        expect(presentVoiceAgentFailure(failure).failureMessage).toBe(t('settingsVoice.local.machineErrors.provider_error'));
     });
 
     it('paces an empty predecessor wait reply and cancels its compatibility delay', async () => {

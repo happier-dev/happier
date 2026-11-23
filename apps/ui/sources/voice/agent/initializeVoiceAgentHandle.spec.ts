@@ -1,4 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { t } from '@/text';
+import { presentVoiceAgentFailure } from './presentVoiceAgentFailure.testSupport';
 import { getAgentModelConfig } from '@happier-dev/agents';
 import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { ExecutionRunEnsureOrStartRequestSchema, ExecutionRunEnsureResponseSchema, type ExecutionRunEnsureOrStartRequest} from '@happier-dev/protocol/execution/runs/index';
@@ -373,6 +375,29 @@ describe('initializeVoiceAgentHandle', () => {
         await initializing;
         expect(messageRequests.filter(path => path.includes('/s1/'))).toHaveLength(1);
         expect(admittedStart().intent).toBe('voice_agent');
+    });
+
+    it.each([true, false])('presents a retained failed Run with model repair only when the issue supplies it (%s)', async known => {
+        omitIncidentalProfile();
+        const code = 'agent_startup_model_reconciliation_failed';
+        const runtimeIssueV1 = {
+            v: 1, scope: 'primary_session', status: 'failed', source: 'agent_session_error', occurredAt: 1, code,
+            failureCause: { phase: 'client_start', failureReason: 'model_selection_required', code },
+        };
+        const run = ExecutionRunPublicStateSchema.parse({
+            runId: 'voice-agent-1', callId: 'call', sidechainId: 'sidechain', intent: 'voice_agent',
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'read-only',
+            retentionPolicy: 'ephemeral', runClass: 'long_lived', ioMode: 'streaming', status: 'failed', startedAtMs: 1,
+            error: known ? { code, runtimeIssueV1 } : { code: 'execution_run_failed', message: 'PRIVATE_RUN_BODY' },
+        });
+        sessionExecutionRunGet.mockResolvedValueOnce({ run });
+        const { initializeVoiceAgentHandle } = await import('./initializeVoiceAgentHandle');
+        const failure: unknown = await initializeVoiceAgentHandle({ sessionId: 's1',
+            getDaemonVoiceAgentClient: scope => new DaemonVoiceAgentClient(scope),
+            setDeferredTargetSessionContext: () => {} }).then(() => null, error => error);
+        expect(failure).toMatchObject({ rpcErrorCode: run.error?.code });
+        expect(presentVoiceAgentFailure(failure).failureMessage).toBe(known
+            ? t('session.startFailure.modelSelectionRequired') : t('settingsVoice.local.machineErrors.provider_error'));
     });
 
     it('drops a Claude custom model when following a Codex Session at daemon admission', async () => {

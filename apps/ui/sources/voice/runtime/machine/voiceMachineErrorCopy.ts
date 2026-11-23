@@ -1,7 +1,7 @@
 import type { VoiceMachineError, VoiceMachineErrorKind } from './voiceConversationRuntimeTypes';
 import { t } from '@/text';
 import { formatMoment } from '@/utils/datetime/formatMoment';
-import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
+import { readLegacyExecutionRunFailureMessage } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
 
 /** The daemon owns retry scheduling; a provider reset alone promises no automatic retry. */
@@ -17,11 +17,8 @@ export function presentVoiceUsageLimitMessage(usageLimit: VoiceMachineError['usa
 
 /** Only a typed Agent turn failure admits provider prose into the shared presenter. */
 export function readSafeVoiceProviderFailureMessage(reason: string, cause: unknown): string | undefined {
-    if (reason !== 'acp_turn_failed' && reason !== 'usage_limit'
-        && reason !== 'codex_tool_restriction_unsupported_model') return undefined;
-    const message = cause instanceof Error ? cause.message : undefined;
-    if (!message || message === reason) return undefined;
-    return redactVoicePathLikeString(redactBugReportSensitiveText(message)).trim() || undefined;
+    const message = readLegacyExecutionRunFailureMessage(reason, cause);
+    return message ? redactVoicePathLikeString(message).trim() || undefined : undefined;
 }
 
 export const VOICE_MACHINE_ERROR_TRANSLATION_KEYS = {

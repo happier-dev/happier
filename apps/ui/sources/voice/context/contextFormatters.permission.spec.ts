@@ -93,6 +93,10 @@ describe('formatPermissionRequest privacy', () => {
     expect(result).toContain(canApproveRequests ? 'Voice approvals are enabled' : 'Voice approvals are off');
     if (canApproveRequests) expect(result).toContain('Use the canonical request tools to approve or deny');
     else expect(result).toContain('A tap in the request UI is required');
+    expect(result).toContain('<request_id>req_4</request_id>');
+    expect(result).toContain('do not send new coding work to that Session');
+    expect(result).toContain('working in other Sessions remain available');
+    expect(result).toContain('read-only Inbox requests');
     expect(result).toContain('Never claim it was settled until canonical session updates show the result.');
   });
 

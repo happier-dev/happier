@@ -2603,6 +2603,7 @@ export const ja: TranslationStructure = {
     runDetails: {
       failedToLoad: "実行を読み込めませんでした",
       failedWithoutCause: "この実行はエラーで停止しました。",
+      httpStatus: ({ status }: { status: number }) => `HTTP ${status}`,
       latestToolResultTitle: "最新のツール結果",
       latestToolResultRaw: "生のペイロード",
       cancelTurn: '応答をキャンセル',

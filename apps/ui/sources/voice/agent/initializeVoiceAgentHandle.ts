@@ -898,7 +898,10 @@ export async function initializeVoiceAgentHandle({
                 throw Object.assign(createRpcCallError({
                     error: retainedRunState.error?.message ?? 'Execution Run startup failed',
                     errorCode: retainedRunState.error?.code ?? 'execution_run_failed',
-                }), retainedRunState.error?.uxDiagnostic ? { uxDiagnostic: retainedRunState.error.uxDiagnostic } : {});
+                }), {
+                    runtimeIssueV1: retainedRunState.error?.runtimeIssueV1,
+                    uxDiagnostic: retainedRunState.error?.uxDiagnostic,
+                });
             }
         }
         try {

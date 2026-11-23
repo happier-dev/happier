@@ -2673,6 +2673,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         runDetails: {
             failedToLoad: '載入執行失敗',
             failedWithoutCause: "此執行因錯誤而停止。",
+            httpStatus: ({ status }: { status: number }) => `HTTP ${status}`,
             latestToolResultTitle: '最新工具結果',
             latestToolResultRaw: '原始負載',
             a11y: {

@@ -2660,6 +2660,7 @@ export const pt: TranslationStructure = {
       controlFailed: 'Não foi possível atualizar esta conversa',
       failedToLoad: "Falha ao carregar a execução",
       failedWithoutCause: "Esta execução parou com um erro.",
+      httpStatus: ({ status }: { status: number }) => `HTTP ${status}`,
       latestToolResultTitle: "Último resultado da ferramenta",
       latestToolResultRaw: "Carga bruta",
       a11y: {

@@ -2461,6 +2461,7 @@ export const pl: TranslationStructure = {
         runDetails: {
           failedToLoad: "Nie udało się wczytać uruchomienia",
           failedWithoutCause: "To uruchomienie zatrzymało się z błędem.",
+          httpStatus: ({ status }: { status: number }) => `HTTP ${status}`,
           latestToolResultTitle: "Ostatni wynik narzędzia",
           latestToolResultRaw: "Surowe dane",
           cancelTurn: 'Anuluj odpowiedź',

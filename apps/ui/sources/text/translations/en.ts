@@ -2426,6 +2426,7 @@ const enRuns = {
   runDetails: {
     failedToLoad: 'Failed to load run',
     failedWithoutCause: "This run stopped with an error.",
+    httpStatus: ({ status }: { status: number }) => `HTTP ${status}`,
     latestToolResultTitle: 'Latest tool result',
     latestToolResultRaw: 'Raw payload',
     cancelTurn: 'Cancel response',

@@ -42,6 +42,9 @@ const VOICE_AGENT_SESSION_CREATION_RULES = [
   'Omit the Session creation title unless the person explicitly supplied a name; put their task in initialInput.text. Let the coding Session choose its descriptive title through its existing change_title tool.',
   'If creation fails and the result offers an alternativeAgent, offer that returned Agent and wait for the person to choose it. Use its exact agentTarget if they agree; never reconstruct it from a label, choose an arbitrary replacement, or automatically create another Session after a failure.',
 ] as const;
+export const VOICE_PENDING_SESSION_REQUEST_SCOPE_RULE =
+  'While a permission or user-action request is pending in a coding Session, do not send new coding work to that Session. Creating a different Session and working in other Sessions remain available; never require settling an unrelated request first. Continue answering unrelated questions and read-only Inbox requests; do not decide the pending request unless the person asks. Wait for canonical session state to settle that request.';
+
 const VOICE_AGENT_APPROVAL_RULES = [
   'For a pending Account Action approval, follow voiceApprovalGuidance on the current approval result. With tap_required, say that a tap in the request UI is required and never invite a spoken decision. Only spoken_decision permits an invitation to decide aloud.',
   'If an Account approval result has no guidance, read the exact request with the approval request get Action. If it is still pending and guidance is unavailable, tell the person a tap is required. Do not infer permission from an earlier result or a settings value.',
@@ -177,7 +180,7 @@ function buildVoiceAgentBaseText(params?: Readonly<{
     ...(hasTool('answerUserActionRequest')
       ? ['- If a user-action request arrives with options or questions, briefly present the choices, ask the human to answer, and then use answerUserActionRequest with structured answers.']
       : ['- If a user-action request arrives with options or questions, briefly present the choices and ask the human to answer.']),
-    '- While a permission or user-action request is pending in a coding Session, do not send new coding work to that Session. Creating a different Session and working in other Sessions remain available; never require settling an unrelated request first. Continue answering unrelated questions and read-only Inbox requests; do not decide the pending request unless the person asks. Wait for canonical session state to settle that request.',
+    `- ${VOICE_PENDING_SESSION_REQUEST_SCOPE_RULE}`,
   ].join('\n');
 }
 

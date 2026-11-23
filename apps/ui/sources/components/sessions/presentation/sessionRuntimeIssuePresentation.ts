@@ -22,6 +22,7 @@ import type { PendingActivationFailureDetailsV1 } from '@happier-dev/protocol/se
 import { presentProviderError } from '@/providers/connection/errorPresentation';
 import { describeAgentReadinessCause } from '@/components/sessions/model/sessionReadinessPresentation';
 import { readSessionModelTransitionFailureStatus } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { ExecutionRunErrorSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { readHappierActionToolPayload } from '@happier-dev/protocol/actions/happierActionToolResult';
 import type { SessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
@@ -211,6 +212,24 @@ export function presentSessionStartupFailureCause(
         ? `${presented}\n${t('session.startFailure.requestId', { id: preparationCause.requestId })}` : presented;
 }
 
+/** Run turn evidence is producer-redacted and separate from the raw RPC error message. */
+export function presentExecutionRunTurnFailure(
+    cause: SessionRuntimeIssueV1['failureCause'],
+): string | null {
+    if (cause?.phase !== 'turn') return null;
+    const explanation = cause.providerErrorMessage && redactBugReportSensitiveText(cause.providerErrorMessage).trim();
+    return explanation || (cause.httpStatus !== undefined ? t('runs.runDetails.httpStatus', { status: cause.httpStatus }) : null);
+}
+
+/** Compatibility for older Run responses that only carry a code and a message. */
+export function readLegacyExecutionRunFailureMessage(code: string, error: unknown): string | undefined {
+    if (code !== 'acp_turn_failed' && code !== 'usage_limit'
+        && code !== 'codex_tool_restriction_unsupported_model') return undefined;
+    const message = error instanceof Error ? error.message : undefined;
+    if (!message || message === code) return undefined;
+    return redactBugReportSensitiveText(message).trim() || undefined;
+}
+
 /**
  * A failed Run's one sentence: its typed runtime issue when it carries one, else the cause its typed
  * error code names, else a plain "stopped with an error" with that code. A failed Run never shows nothing.
@@ -223,7 +242,8 @@ export function presentExecutionRunFailure(error: Readonly<{ code: string; runti
     if (!error) return null;
     if (error.runtimeIssueV1) {
         const issue = presentSessionRuntimeIssue(error.runtimeIssueV1);
-        if (issue.message) return { message: issue.message, reset: issue.reset, recovery: issue.recovery };
+        const message = issue.message ?? presentExecutionRunTurnFailure(error.runtimeIssueV1.failureCause);
+        if (message) return { message, reset: issue.reset, recovery: issue.recovery };
     }
     return {
         message: presentSessionStartupFailureRecovery([error.code])?.message ?? presentSessionStartupFailureCause(error.code)

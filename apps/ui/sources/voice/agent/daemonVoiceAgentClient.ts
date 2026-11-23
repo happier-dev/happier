@@ -164,12 +164,15 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
         });
       if (!res.ok) {
         const failure = ExecutionRunStartFailureDetailsV1Schema.safeParse(res.details);
+        const uxDiagnostic = failure.success ? failure.data.uxDiagnostic : readConnectedServiceUxDiagnosticFromError(res);
+        const error = Object.assign(createRpcCallError({ error: res.error, errorCode: res.errorCode }),
+          failure.success ? { details: failure.data, providerError: failure.data.providerError } : {},
+          uxDiagnostic ? { uxDiagnostic } : {});
         if (failure.success && failure.data.executionRunStart.runCreation === 'outcomeUnknown') {
-          throw new VoiceAgentStartOutcomeUnknownError(createRpcCallError({ error: res.error, errorCode: res.errorCode }));
+          throw new VoiceAgentStartOutcomeUnknownError(error);
         }
+        throw error;
       }
-      throwIfRpcError(res);
-      if (!res.ok) throw createRpcCallError({ error: res.error, errorCode: res.errorCode });
       const parsed = existingRunId ? ensureOk(res.result, ExecutionRunEnsureResponseSchema)
         : ensureOk(res.result, ExecutionRunStartResponseSchema);
       throwIfRpcError(parsed);

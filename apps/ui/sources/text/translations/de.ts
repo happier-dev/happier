@@ -2305,6 +2305,7 @@ export const de: TranslationStructure = {
         runDetails: {
             failedToLoad: 'Run konnte nicht geladen werden',
             failedWithoutCause: "Dieser Lauf wurde mit einem Fehler beendet.",
+            httpStatus: ({ status }: { status: number }) => `HTTP ${status}`,
             latestToolResultTitle: 'Letztes Tool-Ergebnis',
             latestToolResultRaw: 'Rohdaten',
             cancelTurn: 'Antwort abbrechen',

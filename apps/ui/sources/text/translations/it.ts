@@ -2435,6 +2435,7 @@ export const it: TranslationStructure = {
     runDetails: {
       failedToLoad: "Impossibile caricare l'esecuzione",
       failedWithoutCause: "Questa esecuzione si è interrotta con un errore.",
+      httpStatus: ({ status }: { status: number }) => `HTTP ${status}`,
       latestToolResultTitle: "Ultimo risultato dello strumento",
       latestToolResultRaw: "Payload grezzo",
       cancelTurn: 'Annulla risposta',

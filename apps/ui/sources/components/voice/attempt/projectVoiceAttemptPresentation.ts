@@ -12,7 +12,8 @@ import type { ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/conne
 import { resolveConnectedServiceUxDiagnosticPresentation } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics';
 import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { presentProviderError, presentProviderRecoveryAction } from '@/providers/connection/errorPresentation';
-import { presentSessionStartupFailureCause } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
+import { presentExecutionRunTurnFailure, presentSessionStartupFailureCause } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import type { VoiceRuntimeFailureCause } from '@/voice/runtime/voiceRuntimeFailureCode';
 
 /** One sanitized presenter for host surfaces, public Plugin UI, and the Action read. */
@@ -55,11 +56,13 @@ export function projectVoiceAttemptPresentation(input: Readonly<{
     const sessionCause = input.errorFailureCause && 'failureReason' in input.errorFailureCause ? input.errorFailureCause : undefined;
     const startupCode = sessionCause?.code ?? input.errorMessage;
     const startupMessage = startupCode ? presentSessionStartupFailureCause(startupCode, undefined, sessionCause) : null;
+    const turnMessage = presentExecutionRunTurnFailure(sessionCause);
+    const providerMessage = turnMessage ? redactVoicePathLikeString(turnMessage) : input.errorProviderMessage;
     const failureMessage = provider ? t(provider.descriptionKey) : connectedService ? t(connectedService.bodyKey)
         : failureKind === 'authentication_required' && input.errorMessage === 'agent_signed_out' && agentTitle && agentMachineLabel
             ? t('settingsVoice.local.machineErrors.agent_signed_out', { agent: agentTitle, machine: agentMachineLabel })
         : startupMessage ?? (failureKind === null ? null
-        : failureKind === 'provider_error' && input.errorProviderMessage ? input.errorProviderMessage
+        : failureKind === 'provider_error' && providerMessage ? providerMessage
         : failureKind === 'provider_error' && input.errorMessage === 'usage_limit' ? presentVoiceUsageLimitMessage(input.errorUsageLimit)
         : translateVoiceReadiness(resolveVoiceMachineErrorTranslationKey(failureKind, input.errorMessage ?? undefined), { service: input.serviceTitle }));
     const failureTitle = provider ? t(provider.titleKey)

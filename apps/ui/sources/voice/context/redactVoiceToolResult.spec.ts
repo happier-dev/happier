@@ -13,6 +13,36 @@ import {
 const SHARE_ALL = { shareFilePaths: true, shareSessionSummary: true, sharePermissionRequests: true } as const;
 
 describe('redactVoiceToolResultValue', () => {
+  it('delivers only the closed Voice attempt failure and recovery kinds to the provider', () => {
+    const action = getActionSpec('ui.voice_global.conversations.open');
+    const toolName = action.bindings!.mcpToolName!;
+    const vendorProse = 'Vendor denied ada@example.com access to /home/ada/private/project';
+    const result = {
+      status: 'completed',
+      voice: {
+        status: 'error',
+        presentation: {
+          failureKind: 'provider_error',
+          failureTitle: vendorProse,
+          failureMessage: vendorProse,
+          recovery: { action: 'retry', label: 'Retry', icon: 'arrow-clockwise', runtimeTarget: null },
+        },
+      },
+    };
+    const expected = {
+      status: 'completed',
+      voice: {
+        status: 'error',
+        presentation: { failureKind: 'provider_error', recovery: { action: 'retry' } },
+      },
+    };
+    expect(redactVoiceToolResultForProvider(action.id, result, SHARE_ALL)).toEqual(expected);
+    expect(redactVoiceActionExecutionResultForProvider(toolName, { ok: true, result }, {
+      ...SHARE_ALL, shareFilePaths: false,
+    })).toEqual({ ok: true, result: expected });
+    expect(result.voice.presentation.failureMessage).toBe(vendorProse);
+  });
+
   it('delivers only closed approval guidance in the provider Action result', () => {
     const result = { request: { status: 'open', summary: 'Setting change', actionArgs: { private: 'raw input' } } };
     const redact = (voiceApprovalGuidance: unknown, sharePermissionRequests = true) =>

@@ -7,5 +7,6 @@ export {
   buildVoiceAgentBasePrompt,
   buildVoiceClientToolAgentPrompt,
   buildVoiceRealtimeAttemptPolicy,
+  VOICE_PENDING_SESSION_REQUEST_SCOPE_RULE,
   type VoicePromptVerbosity,
 } from './voiceAgentPrompt.js';

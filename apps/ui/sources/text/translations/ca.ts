@@ -2456,6 +2456,7 @@ export const ca: TranslationStructure = {
         runDetails: {
             failedToLoad: 'No s\'ha pogut carregar l\'execució',
             failedWithoutCause: "Aquesta execució s'ha aturat amb un error.",
+            httpStatus: ({ status }: { status: number }) => `HTTP ${status}`,
             latestToolResultTitle: 'Últim resultat de l\'eina',
             latestToolResultRaw: 'Càrrega bruta',
             cancelTurn: 'Cancel·la la resposta',

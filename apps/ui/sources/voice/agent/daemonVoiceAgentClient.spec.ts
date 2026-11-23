@@ -1,4 +1,9 @@
 import { beforeEach, afterAll, describe, expect, it, vi } from 'vitest';
+import { t } from '@/text';
+import { presentProviderError, presentProviderRecoveryAction } from '@/providers/connection/errorPresentation';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { presentVoiceAgentFailure } from './presentVoiceAgentFailure.testSupport';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ProviderBoundModelRefSchema} from '@happier-dev/protocol/providers/selection/v1';
 import { ExecutionRunEnsureOrStartRequestSchema, ExecutionRunEnsureResponseSchema } from '@happier-dev/protocol/execution/runs/index';
@@ -265,6 +270,31 @@ describe('DaemonVoiceAgentClient', () => {
     expect(daemonRpc.mock.calls[0]?.[0].payload).toMatchObject({
       actionId: 'voice_agent.welcome', input: { welcomeText },
     });
+  });
+
+  it.each([true, false])('only offers the canonical connection repair when the signed Start supplies it (%s)', async known => {
+    const providerError = createProviderErrorV1('provider_connection_changed', { connectionId: 'pconn_work' });
+    const details = withExecutionRunStartFailureDetails(known ? { providerError } : undefined,
+      known ? 'noRunCreated' : 'outcomeUnknown');
+    daemonAction.mockResolvedValueOnce({ ok: false, error: 'PRIVATE_START_RESPONSE', errorCode: 'execution_run_failed', details });
+    const { DaemonVoiceAgentClient, VoiceAgentStartOutcomeUnknownError } = await import('./daemonVoiceAgentClient');
+    const failure: unknown = await new DaemonVoiceAgentClient(voiceScope).start({
+      sessionId: 's1', agentId: 'codex', chatModelId: 'fast', commitModelId: 'fast',
+      permissionIntent: 'read-only', idleTtlSeconds: 300, initialContext: 'ctx',
+    }).then(() => null, error => error);
+    const presentation = presentVoiceAgentFailure(failure);
+    if (known) {
+      const recovery = presentProviderRecoveryAction(providerError, { retry: true });
+      expect(presentation).toMatchObject({
+        failureMessage: t(presentProviderError(providerError).descriptionKey),
+        providerError,
+        recovery: { label: t(recovery!.titleKey) },
+      });
+    } else {
+      expect(failure).toBeInstanceOf(VoiceAgentStartOutcomeUnknownError);
+      expect(presentation.failureMessage).toBe(t('errors.voiceServiceUnavailable'));
+    }
+    expect(JSON.stringify(presentation)).not.toContain('PRIVATE_START_RESPONSE');
   });
 
   it('preserves the signed Start failure code', async () => {

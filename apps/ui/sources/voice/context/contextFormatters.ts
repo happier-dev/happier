@@ -18,6 +18,7 @@ import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/ses
 import { t } from '@/text';
 import { voiceSettingsDefaults } from '@/sync/domains/settings/voiceSettings';
 import { isAgentThreadTextConversationTurnMeta } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
+import { VOICE_PENDING_SESSION_REQUEST_SCOPE_RULE } from '@happier-dev/agents/voice';
 import type { NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/nativeChoicesV1';
 interface SessionMetadata {
     summary?: { text?: string };
@@ -316,7 +317,7 @@ export function formatPermissionRequest(
         ${args ? `<tool_args>${args}</tool_args>` : '<tool_args_redacted>true</tool_args_redacted>'}
         Interrupt your previous plan and tell the human about this request now.
         ${formatVoiceApprovalGuidance(resolved.voiceCanApproveRequests)}
-        Use only tools needed for this request while it remains pending; do not send new coding-session work.
+        ${VOICE_PENDING_SESSION_REQUEST_SCOPE_RULE}
     `);
 }
 

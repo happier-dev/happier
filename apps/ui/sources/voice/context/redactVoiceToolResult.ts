@@ -8,6 +8,7 @@ import { SETTINGS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/settin
 import { SESSION_AWARENESS_OPERATIONAL_PRIMARY_PRECEDENCE_V1, SessionAwarenessProjectionV1Schema, type SessionOperationalReasonV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 import { SessionActivityCompatibilityResultV1Schema } from '@happier-dev/protocol/sessions/awareness/action';
 import { PluginUiHostApiErrorCodeV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { VoiceAttemptFailureKindSchema, VoiceAttemptRecoveryActionSchema } from '@happier-dev/protocol/voice/attemptPresentation';
 import { ConnectedServiceCredentialHealthStatusV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { SESSION_CONNECTED_SERVICE_AUTH_OPTIONS_SOURCE_ID } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
 import {
@@ -438,6 +439,23 @@ function projectModelList(value: unknown, prefs: VoiceToolResultRedactionPrefs):
   };
 }
 
+/** Voice status carries person-facing failure copy. The provider only needs closed recovery facts. */
+function projectVoiceAttemptForProvider(value: unknown): unknown {
+  const result = readResultRecord(value);
+  const voice = readResultRecord(result.voice);
+  if (voice.presentation === undefined) return value;
+
+  const { failureMessage: _failureMessage, failureTitle: _failureTitle, providerError: _providerError,
+    failureKind, recovery, ...controls } = readResultRecord(voice.presentation);
+  const kind = VoiceAttemptFailureKindSchema.safeParse(failureKind);
+  const action = VoiceAttemptRecoveryActionSchema.safeParse(readResultRecord(recovery).action);
+  return { ...result, voice: { ...voice, presentation: {
+    ...controls,
+    failureKind: kind.success ? kind.data : null,
+    recovery: action.success ? { action: action.data } : null,
+  } } };
+}
+
 export function redactVoiceToolResultForProvider(
   toolName: string,
   value: unknown,
@@ -509,7 +527,7 @@ export function redactVoiceToolResultForProvider(
     return projectModelList(value, prefs);
   }
   return redactVoiceToolResultValueWithClassification(
-    ACCOUNT_REQUEST_READ_TOOL_NAMES.has(toolName) ? projectAccountRequestForProvider(value) : value,
+    ACCOUNT_REQUEST_READ_TOOL_NAMES.has(toolName) ? projectAccountRequestForProvider(value) : projectVoiceAttemptForProvider(value),
     prefs,
     toolName === CURRENT_UI_CONTEXT_READ_TOOL_NAME || DECLARATION_LABEL_TOOL_NAMES.has(toolName)
       || ACTION_CATALOG_TOOL_NAMES.has(toolName) || ACCOUNT_REQUEST_READ_TOOL_NAMES.has(toolName),
