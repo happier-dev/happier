@@ -623,7 +623,7 @@ test('family derivation preserves concrete fields from a typed shared schema fac
   assert.match(second, /result: 'second'/u);
 });
 
-test('external authors can type inline Workflow and Session triggers and cannot author invalid blocks', () => {
+test('external authors can type inline Workflow and Session birth triggers and cannot author invalid blocks', () => {
   const invocation = resolveTypeScriptCliInvocation({ repoRoot: process.cwd(), workspaceDir: process.cwd() });
   const compiled = spawnSync(invocation.command, [...invocation.argsPrefix, '--noEmit', '-p',
     resolve('packages/plugin-sdk/fixtures/authoring-inference/tsconfig.workflowTriggers.json')], { encoding: 'utf8' });

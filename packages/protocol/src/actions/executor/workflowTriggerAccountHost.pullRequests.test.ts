@@ -122,7 +122,7 @@ describe('Account PR trigger private content', () => {
     const added = await host.sessionAdd({ sessionId: 'session-one', target: { kind: 'inline', definition },
       trigger: { kind: 'prComment', enabled: true, pullRequest } });
     machineId = 'machine-two';
-    await expect(host.sessionUpdate({ sessionId: 'session-one', triggerId: added.triggerId!, expectedRevision: added.set.revision,
+    await expect(host.update({ automationId: added.set.automationId, triggerId: added.triggerId!, expectedRevision: added.set.revision,
       patch: { enabled: true } })).rejects.toBeDefined();
     expect(retained.has(`${added.triggerId}/machine-one`)).toBe(true);
     expect(retained.has(`${added.triggerId}/machine-two`)).toBe(outcome === 'unconfirmed');
@@ -165,7 +165,7 @@ describe('Account PR trigger private content', () => {
     });
     const added = await host.sessionAdd({ sessionId: 'session-one', target: { kind: 'inline', definition },
       trigger: { kind: 'prComment', enabled: true, pullRequest } });
-    const removeOrDisable = () => operation === 'disable' ? host.sessionUpdate({ sessionId: 'session-one', triggerId: added.triggerId!,
+    const removeOrDisable = () => operation === 'disable' ? host.update({ automationId: added.set.automationId, triggerId: added.triggerId!,
       expectedRevision: added.set.revision, patch: { enabled: false } }) : host.remove({ automationId: added.set.automationId });
     await expect(removeOrDisable()).rejects.toMatchObject({ code: 'currentness_conflict' });
     expect(retained.has(added.triggerId!)).toBe(true);
@@ -208,7 +208,7 @@ describe('Account PR trigger private content', () => {
         roles: {}, ledSubtreeSessionIds: ['session-one'],
         workDepthLimit: 4, callerPermissionCeiling: 'default' as const } };
     const write = existing
-      ? host.sessionUpdate({ sessionId: 'session-one', triggerId: existing.triggerId!, expectedRevision: existing.set.revision,
+      ? host.update({ automationId: existing.set.automationId, triggerId: existing.triggerId!, expectedRevision: existing.set.revision,
         patch: { enabled: false } }, caller)
       : host.sessionAdd(request, caller);
     await expect(write).rejects.toMatchObject({ code: 'subtree_denied' });
@@ -223,7 +223,7 @@ describe('Account PR trigger private content', () => {
       trigger: { kind, enabled: true, pullRequest } });
     expect(result.set.triggers).toMatchObject([{ kind, pullRequest }]);
     expect(f.row().triggers[0]?.triggerDefinitionEnvelope).not.toContain(pullRequest.repository);
-    await host.sessionUpdate({ sessionId: 'session-one', triggerId: result.triggerId!, expectedRevision: 1, patch: { enabled: false } });
+    await host.update({ automationId: result.set.automationId, triggerId: result.triggerId!, expectedRevision: 1, patch: { enabled: false } });
     expect(f.written()?.triggers[0]).toMatchObject({ kind: 'existing', expectedRevision: 0, enabled: false,
       triggerDefinitionEnvelope: { t: 'encrypted' } });
     expect((await host.sessionList({ sessionId: 'session-one' })).sets[0]?.triggers)

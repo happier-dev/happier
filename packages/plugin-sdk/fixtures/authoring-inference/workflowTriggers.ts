@@ -2,8 +2,6 @@ import type { PluginActionInputById, PluginActionResultById } from '@happier-dev
 
 type WorkflowAddTarget = NonNullable<PluginActionInputById['workflow.trigger.add']['target']>;
 type WorkflowUpdateTarget = NonNullable<PluginActionInputById['workflow.trigger.update']['patch']['target']>;
-type SessionAddTarget = PluginActionInputById['session.trigger.add']['target'];
-type SessionUpdateTarget = NonNullable<PluginActionInputById['session.trigger.update']['patch']['target']>;
 type SessionBirthTarget = NonNullable<PluginActionInputById['session.spawn_new']['initialTriggers']>[number]['target'];
 
 const inline = {
@@ -16,10 +14,8 @@ const inline = {
 
 const workflowAdd: WorkflowAddTarget = inline;
 const workflowUpdate: WorkflowUpdateTarget = inline;
-const sessionAdd: SessionAddTarget = inline;
-const sessionUpdate: SessionUpdateTarget = inline;
 const sessionBirth: SessionBirthTarget = inline;
-void [workflowAdd, workflowUpdate, sessionAdd, sessionUpdate, sessionBirth];
+void [workflowAdd, workflowUpdate, sessionBirth];
 
 declare const run: PluginActionResultById['workflow.run.get'];
 // Recovery needs the accepted authored source, not its materialized execution definition.
@@ -33,10 +29,6 @@ const invalid = { ...inline, definition: { ...inline.definition, blocks: [{ kind
 const invalidWorkflowAdd: WorkflowAddTarget = invalid;
 // @ts-expect-error inline Workflow trigger update rejects an unknown block kind
 const invalidWorkflowUpdate: WorkflowUpdateTarget = invalid;
-// @ts-expect-error inline Session trigger add rejects an unknown block kind
-const invalidSessionAdd: SessionAddTarget = invalid;
-// @ts-expect-error inline Session trigger update rejects an unknown block kind
-const invalidSessionUpdate: SessionUpdateTarget = invalid;
 // @ts-expect-error inline Session birth trigger rejects an unknown block kind
 const invalidSessionBirth: SessionBirthTarget = invalid;
-void [invalidWorkflowAdd, invalidWorkflowUpdate, invalidSessionAdd, invalidSessionUpdate, invalidSessionBirth];
+void [invalidWorkflowAdd, invalidWorkflowUpdate, invalidSessionBirth];

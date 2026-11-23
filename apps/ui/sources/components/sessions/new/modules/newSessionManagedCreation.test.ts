@@ -239,11 +239,7 @@ function bindingTransport(options: Readonly<{ beforeWrite?: () => Promise<void>;
         workflowAction: async request => {
             if (request.actionId === 'workflow.run.start') return runs.execute({ ...request,
                 input: WorkflowRunStartRequestV1Schema.parse(request.input) });
-            if (request.actionId === 'session.trigger.list') return triggers.sessionList(request.input, request.context);
             if (request.actionId === 'workflow.trigger.list') return triggers.list(request.input, request.context);
-            if (request.actionId === 'session.trigger.add') return triggers.sessionAdd(request.input, request.context);
-            if (request.actionId === 'session.trigger.remove') return triggers.sessionRemove(request.input, request.context);
-            if (request.actionId === 'session.trigger.update') return triggers.sessionUpdate(request.input, request.context);
             if (request.actionId === 'workflow.trigger.add') return triggers.add(request.input, request.context);
             if (request.actionId === 'workflow.trigger.update') return triggers.update(request.input, request.context);
             if (request.actionId === 'workflow.trigger.remove') return triggers.remove(request.input, request.context);
@@ -1278,7 +1274,7 @@ describe('ordinary managed creation continuation', () => {
             kind: 'enrolled', machine: { id: 'paid', enrolledMachineId: 'guest' },
         });
         expect(boundary.actions.filter(value => value.actionId === 'machines.managed.acquire')).toHaveLength(1);
-        expect(boundary.actions.some(value => value.actionId === 'session.trigger.add')).toBe(false);
+        expect(boundary.actions.some(value => value.actionId === 'workflow.trigger.add')).toBe(false);
     });
 
     it('acquires only on explicit submission, waits installation, and reuses the paid reference after reload', async () => {

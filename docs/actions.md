@@ -7028,7 +7028,7 @@ may be referenced by document-local JSON Pointers (`#` or `#/…`), including
 recursive references. The compiler retains these references rather than
 expanding them into cyclic JSON. External references and undeclared schema
 keywords are refused; no schema is fetched from a URL or file. This lets a
-Workflow Action validate the native `session.trigger.remove` output without
+Workflow Action validate native trigger Action output without
 weakening its recursive Workflow definition contract.
 
 Native Action acquisition requests outputs explicitly and uses the Protocol
@@ -10733,8 +10733,8 @@ materialized `trigger_write` policy check; approval never supplies that authorit
 The host-stamped approved continuation executes under that original request rather
 than creating a second approval.
 
-Development FIN placement: the nine `workflow.trigger.*` and `session.trigger.*`
-Actions are Account data on the Automation owner. Every Account host composes the one
+Development FIN placement: `workflow.trigger.*` Actions own Account trigger data,
+including triggers attached to a Session. Every Account host composes the one
 Protocol trigger owner through `createAccountWorkflowTriggerActions` (CLI with its
 credentials, the UI front door with its captured Account), so Account-owned trigger data
 does not require a reachable Machine. Host-dependent facts do reach a Machine:

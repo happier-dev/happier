@@ -39,9 +39,9 @@ import {
   type WorkflowTriggerListResultV1Schema, type WorkflowTriggerRemoveResultV1Schema,
   type SessionTriggerListResultV1Schema,
   SessionTriggerListRequestV1Schema, SessionTriggerAddRequestV1Schema,
-  SessionTriggerUpdateRequestV1Schema, SessionTriggerRemoveRequestV1Schema,
+  SessionTriggerRemoveRequestV1Schema,
   type SessionTriggerListRequestV1, type SessionTriggerAddRequestV1,
-  type SessionTriggerUpdateRequestV1, type SessionTriggerRemoveRequestV1,
+  type SessionTriggerRemoveRequestV1,
   type SessionPullRequestLinkV1, type SessionTriggerDefinitionV1, type SessionTriggerPullRequestLinksV1,
   type WorkflowTriggerSummaryInputV1, type WorkflowIntendedTriggerV1, type WorkflowIntendedPluginEventV1,
   type WorkflowTriggerHealthSourceV1,
@@ -236,7 +236,6 @@ export interface WorkflowTriggerActions {
   }>) => Promise<SessionInitialTriggerAdmissionV1[]>;
   sessionList: (raw: SessionTriggerListRequestV1, caller?: Caller) => Promise<ReturnType<typeof SessionTriggerListResultV1Schema.parse>>;
   sessionAdd: (raw: SessionTriggerAddRequestV1, caller?: Caller) => Promise<WorkflowTriggerWriteResult>;
-  sessionUpdate: (raw: SessionTriggerUpdateRequestV1, caller?: Caller) => Promise<WorkflowTriggerWriteResult>;
   sessionRemove: (raw: SessionTriggerRemoveRequestV1, caller?: Caller) => Promise<WorkflowTriggerWriteResult>;
   /** Native Goal handoff uses the incumbent Session trigger writer. */
   removeSessionKeepGoingTriggers: (raw: SessionTriggerListRequestV1, caller?: Caller) => Promise<void>;
@@ -1761,36 +1760,6 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         { sessionId, onComplete, project: authorized.project, authority: authorized.authority });
       try {
         await attachPullRequest(sessionId, result, caller);
-      } catch (cause) { return unresolvedWriteReceipt(cause); }
-      return result;
-    },
-    sessionUpdate: async (raw: SessionTriggerUpdateRequestV1, caller?: Caller) => {
-      const input = SessionTriggerUpdateRequestV1Schema.parse(raw);
-      const authorized = await session(input.sessionId, caller);
-      const row = await findScoped(input.sessionId, input.triggerId);
-      // Retained Event rows cannot bypass the Channel binding/permission
-      // prerequisite by changing only their enablement or set context.
-      if (row.triggers.some((trigger) => trigger.kind === 'pluginEvent')) refuse('target_unavailable');
-      const current = await opened(row, false, caller);
-      const managed = readManagedMachineTriggerAction(input.patch.target ?? current.target);
-      if (input.patch.project && !managed
-        && createCanonicalJsonSigningInput(input.patch.project) !== createCanonicalJsonSigningInput(authorized.project)) {
-        refuseInput('session_trigger_project_mismatch');
-      }
-      await assertContinuationOwner(input.patch.target ?? current.target, input.sessionId, caller);
-      if (input.patch.trigger) assertScopedTrigger(input.patch.trigger, input.sessionId);
-      const { onComplete, ...patch } = input.patch;
-      const trigger = patch.trigger === undefined ? undefined : await resolveScopedTrigger(patch.trigger, input.sessionId, caller);
-      const result = await actions.update(WorkflowTriggerUpdateRequestV1Schema.parse({ automationId: row.id, triggerId: input.triggerId, expectedRevision: input.expectedRevision,
-        patch: { ...patch, ...(trigger === undefined ? {} : { trigger }), project: managed
-          ? input.patch.project ?? project(row, current.context) : authorized.project } }), caller,
-        { sessionId: input.sessionId, onComplete, project: authorized.project, authority: authorized.authority });
-      try {
-        await attachPullRequest(input.sessionId, result, caller);
-        if (input.patch.trigger && input.patch.trigger.kind !== 'prComment' && input.patch.trigger.kind !== 'ciFailed'
-          && row.triggers.some((item) => item.id === input.triggerId && (item.kind === 'prComment' || item.kind === 'ciFailed'))) {
-          await deps.pullRequests?.removeTrigger({ sessionId: input.sessionId, triggerId: input.triggerId }, caller);
-        }
       } catch (cause) { return unresolvedWriteReceipt(cause); }
       return result;
     },
