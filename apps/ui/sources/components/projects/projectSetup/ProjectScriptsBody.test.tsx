@@ -2698,9 +2698,10 @@ describe('Share setup from the Scripts header (plan A U3, lab L6 share)', () => 
     onTestFinished(() => { shared.projectSources = null; });
     shared.inspection = { definition: presentDefinition(declared), detection, importCandidates: [],
       // The Machine's composition: the repository file plus one script added just for this person.
-      effectiveDefinition: { effectiveManifest: { ...declared, version: 1,
-        scripts: { ...declared.scripts, mine: { source: { kind: 'command', command: 'just for me' } } } },
-      origins: [{ path: ['scripts', 'mine'], layer: 'personal', overridden: false }] } };
+      effectiveDefinition: resolveProjectDefinitionV1({
+        repositoryManifest: { ...declared, version: 1 },
+        setupOverrides: { version: 1, scripts: { mine: { source: { kind: 'command', command: 'just for me' } } } },
+      }) };
     const refs = [{ id: workspace.workspaceId, serverId: workspace.serverId, machineId: workspace.machineId,
       rootPath: workspace.rootPath, createdAtMs: 1, projectKey: workspace.workspaceId, source: { sourceId: 'src-own', revision: 4 } }];
     const screen = await render('page', 'scripts.script:test', { workspaceRefs: refs });
@@ -2722,14 +2723,13 @@ describe('Share setup from the Scripts header (plan A U3, lab L6 share)', () => 
     expect(dialog.chrome).toMatchObject({ testID: 'project-setup-share' });
     const onClose = vi.fn();
     const sheet = await renderScreen(<dialog.component {...dialog.props} onClose={onClose} />);
-    await vi.waitFor(() => expect(sheet.findByTestId('project-setup-share.row:scripts')).not.toBeNull());
+    await vi.waitFor(() => expect(sheet.findByTestId('project-setup-share.row:scripts:personal')).not.toBeNull());
     expect(shared.calls.filter(call => call.actionId === 'projects.inspect').length).toBe(inspectsBefore + 1);
-    // The personal script stays out of what is shared, and the sheet says so.
     const { Item } = await import('@/components/ui/lists/Item');
-    const scriptsRow = sheet.findAllByType(Item).find(node => node.props.testID === 'project-setup-share.row:scripts');
-    // One script: the repository's own; the one added just for this person is not counted.
-    expect(scriptsRow?.props.subtitle).toMatch(/^1 · /);
-    expect(sheet.findByTestId('project-setup-share.personal')).not.toBeNull();
+    const scriptRows = sheet.findAllByType(Item);
+    expect(scriptRows.find(node => node.props.testID === 'project-setup-share.row:scripts:personal')?.props.selected).toBe(true);
+    expect(scriptRows.find(node => node.props.testID === 'project-setup-share.row:scripts:repository')?.props.selected).toBe(false);
+    expect(sheet.findByTestId('project-setup-share.repository')).not.toBeNull();
     await act(async () => { await sheet.pressByTestIdAsync('project-setup-share.share'); });
     await vi.waitFor(() => expect(onClose).toHaveBeenCalled(), { timeout: 5000 });
     expect(sourceRequests.find(request => request.method === 'PATCH')?.body).toMatchObject({
