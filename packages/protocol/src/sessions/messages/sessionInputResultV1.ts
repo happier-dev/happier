@@ -9,6 +9,7 @@ import { SessionTargetV1Schema } from '../../actions/sessionTargetV1.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { SessionMessageReplyReadResultV1Schema } from './sessionMessageReplyV1.js';
 import { SessionInputAdmissionRejectionCodeV1Schema } from './sessionInputAdmissionRejectionV1.js';
+import { FollowDeliveryProjectionV1Schema } from '../follow/sessionFollowDeliveryProjectionV1.js';
 import { ActionFailureCauseV1Schema } from '../../actions/actionExecutionResult.js';
 
 export const SessionInputUsageV1Schema = lazyZodSchema(() => z.strictObject({
@@ -38,7 +39,8 @@ export const SessionInputResultGetInputV1Schema = lazyZodSchema(() => z.strictOb
 export const SessionInputResultGetResultV1Schema = lazyZodSchema(() => z.union([
     z.strictObject({ ok: z.literal(true), sessionId: asProtocolZod(SessionIdSchema), localId: PendingLocalIdSchema,
         acceptedTurnId: z.optional(TurnIdSchema), turnStartWitnessId: z.optional(TurnIdSchema),
-        turnStatus: z.optional(SessionTurnLifecycleStatusV1Schema), result: SessionInputResultV1Schema }),
+        turnStatus: z.optional(SessionTurnLifecycleStatusV1Schema),
+        followDeliveryProjection: z.optional(FollowDeliveryProjectionV1Schema), result: SessionInputResultV1Schema }),
     z.strictObject({ ok: z.literal(true), sessionId: asProtocolZod(SessionIdSchema), localId: PendingLocalIdSchema,
         projection: z.literal('reply'), reply: SessionMessageReplyReadResultV1Schema }),
     z.strictObject({ ok: z.literal(false), code: z.union([

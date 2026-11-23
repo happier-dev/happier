@@ -10952,6 +10952,13 @@ failures keep their existing generic non-disclosing result. Matching Protocol
 and CLI source reload together; older strict development readers reject the
 added field. No persistence migration, wire epoch or compatibility adapter is added.
 
+In unreleased 0.3, the ordinary `session.input.result.get` success result can
+include `followDeliveryProjection` from the Home's existing exact transcript
+lookup. It carries the authorized destination's typed disposition. Older Homes
+omit it. The result and its optional projection remain closed, so development
+CLI, Protocol and SDK consumers load together under the direct cut. No request
+shape, stored format or wire epoch changes.
+
 The legacy `session.message.send` completion wait also retains that typed issue on
 `{ status: 'failed', code: 'session_input_turn_failed', localId, runtimeIssueV1? }`.
 The optional field uses `SessionRuntimeIssueV1` and the same canonical failure

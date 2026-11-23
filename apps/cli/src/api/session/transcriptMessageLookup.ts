@@ -15,6 +15,7 @@ import { isNetworkConnectionErrorCode } from '@/api/client/classifyServerEndpoin
 import { TranscriptRecoveryCoordinator } from './recovery/TranscriptRecoveryCoordinator';
 import { openSessionEventSource } from '@/session/transport/socket/sessionSocketAgentState';
 import { SessionInputAdmissionReceiptV1Schema, SessionInputRefusalDispositionV1Schema, type SessionInputAdmissionReceiptV1, type SessionInputRefusalDispositionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { FollowDeliveryProjectionV1Schema, type FollowDeliveryProjectionV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowDeliveryProjectionV1';
 import { SessionMessageRoleSchema, type SessionMessageRole } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
 import { SessionTurnV1Schema, type SessionTurnV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import { SessionRuntimeIssueV1Schema, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
@@ -38,6 +39,7 @@ export type TranscriptMessageLookupResult = {
     turnStartWitnessId?: string;
     turn?: SessionTurnV1;
     inputDeliveryIssue?: SessionRuntimeIssueV1;
+    followDeliveryProjection?: FollowDeliveryProjectionV1;
 };
 
 export type TranscriptLookupOutcome =
@@ -158,6 +160,10 @@ function parseTranscriptLookupMessageFromUnknown(found: unknown): TranscriptMess
     if (turn && !turn.success) return null;
     const inputDeliveryIssue = record.inputDeliveryIssue === undefined ? null : SessionRuntimeIssueV1Schema.safeParse(record.inputDeliveryIssue);
     if (inputDeliveryIssue && !inputDeliveryIssue.success) return null;
+    const followDeliveryProjection = record.followDeliveryProjection === undefined
+        ? undefined
+        : FollowDeliveryProjectionV1Schema.safeParse(record.followDeliveryProjection);
+    if (followDeliveryProjection && !followDeliveryProjection.success) return null;
     const deliveryResolution = record.deliveryResolution === undefined ? null
         : readStoredSessionMessageDeliveryResolutionV1(record.deliveryResolution);
     if (record.deliveryResolution !== undefined && !deliveryResolution) return null;
@@ -189,6 +195,7 @@ function parseTranscriptLookupMessageFromUnknown(found: unknown): TranscriptMess
         ...(typeof record.turnStartWitnessId === 'string' ? { turnStartWitnessId: record.turnStartWitnessId } : {}),
         ...(turn?.success ? { turn: turn.data } : {}),
         ...(inputDeliveryIssue?.success ? { inputDeliveryIssue: inputDeliveryIssue.data } : {}),
+        ...(followDeliveryProjection?.success ? { followDeliveryProjection: followDeliveryProjection.data } : {}),
     };
 }
 

@@ -12,6 +12,31 @@ import type { SessionMessageReplyReadResultV1 } from '@happier-dev/protocol/sess
 afterEach(() => vi.restoreAllMocks());
 
 describe('exact Session input result', () => {
+    it('returns the typed delivery disposition of the exact Follow input to an agent', async () => {
+        const sessionId = 'c1234567890123456789012345';
+        const localId = 'session-follow-wake:batch';
+        const followDeliveryProjection = { status: 'woke', reason: null };
+        const routes = new Map<string, unknown>([
+            ['/v1/account/encryption/currentness', createAccountEncryptionCurrentnessFixture()],
+            [`/v2/sessions/${sessionId}`, { session: createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain' }) }],
+            [`/v2/sessions/${sessionId}/messages/by-local-id/${encodeURIComponent(localId)}`, { message: {
+                id: 'follow-input', seq: 1, localId, createdAt: 1, updatedAt: 1,
+                content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Update' } } },
+                followDeliveryProjection,
+            } }],
+        ]);
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            const path = new URL(String(url)).pathname;
+            if (routes.has(path)) return { status: 200, data: routes.get(path) };
+            throw new Error(`Unexpected HTTP path: ${path}`);
+        });
+        const executor = createActionExecutor(createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+            sessionId, mode: 'plain', ctx: null }));
+        const result = await runWithServerHttpBaseUrl('https://input-result.test', () => executor.execute('session.input.result.get',
+            { sessionId, localId }, { surface: 'agent', authority: 'account_automation' }));
+        expect(result).toMatchObject({ ok: true, result: { ok: true, localId, followDeliveryProjection } });
+    });
+
     it.each(['original', 'reply'] as const)('retains the actual HTTP read cause through the public Action output (%s)', async projection => {
         const sessionId = 'c1234567890123456789012345';
         let failure: 'refused' | 'not_found' | null = null;

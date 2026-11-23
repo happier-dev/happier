@@ -1247,6 +1247,7 @@ export async function readSessionInputResult(params: Readonly<{
       ...(message.acceptedTurnId ? { acceptedTurnId: message.acceptedTurnId } : {}),
       ...(message.turnStartWitnessId ? { turnStartWitnessId: message.turnStartWitnessId } : {}),
       ...(message.turn ? { turnStatus: message.turn.status } : {}),
+      ...(message.followDeliveryProjection ? { followDeliveryProjection: message.followDeliveryProjection } : {}),
       result: message.inputDeliveryIssue && !message.turn
         ? projectBlockedPromptDelivery({ reason: 'team_access_removed', inputDeliveryIssue: message.inputDeliveryIssue }, localId).result
         : resultFromAssistantTurnOutcome(outcome, { serverId: params.serverId ?? configuration.activeServerId, sessionId: target.sessionId }),

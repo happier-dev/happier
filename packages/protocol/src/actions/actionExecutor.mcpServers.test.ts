@@ -180,6 +180,9 @@ describe('MCP catalog Actions', () => {
     expect(readApprovalExecutionFailure(publicRequest)).toEqual({ ok: false,
       errorCode, error: publicReason });
     expect(JSON.stringify(publicRead)).not.toContain('private');
+    const agentRead = await executor.execute('approval.request.get', { artifactId: 'mcp-test-approval' },
+      { surface: 'agent', authority: 'account_automation', serverId: 'home', runtimeAccountId: 'account' });
+    expect(agentRead).toMatchObject({ ok: true, result: { request: publicRequest } });
     expect(getActionSpec('mcp.servers.test').projectObservationOutput?.({ ok: false,
       errorCode: 'private arbitrary error', error: 'private diagnostic' })).toEqual({ ok: false });
   });

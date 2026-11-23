@@ -20,6 +20,7 @@ import { SessionInputSourceSessionV1Schema } from '@happier-dev/protocol/session
 import { TriageEntryRefV1Schema } from '@happier-dev/protocol/tasks/entryRefV1';
 import { hashBinaryContent, createBinaryContentEncryption, openBinaryContent } from '@/sync/encryption/binaryContent';
 import { executeDocDiscussionWriteV1 } from '@happier-dev/protocol/actions/executor/docCollaborationActions';
+import { createActionExecutor } from '@happier-dev/protocol';
 import { readBinaryUploadFrameV1, decodeDiscussionUploadMetadataV1 } from '@happier-dev/transfers';
 import { SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 } from '@happier-dev/protocol/server/http/requestBodyBoundsV1';
 import { prepareAttachmentPayloads } from '@/sync/domains/attachments/prepareAttachmentPayloads';
@@ -365,6 +366,24 @@ describe('Discussion attachment byte transport', () => {
 });
 
 describe('Discussion UI Action adapter', () => {
+    it('returns the held participant delivery reason through the agent read Action', async () => {
+        const transport = http('plain');
+        const discussionAction = await adapter('plain', transport);
+        await discussionAction({ actionId: 'discussion.create', input, context });
+        const participantDeliveryV1 = [{
+            participantSessionId: 'session-b',
+            disposition: 'held',
+            code: 'session_input_target_unavailable',
+        }] as const;
+        transport.messages[0] = { ...transport.messages[0]!, participantDeliveryV1: [...participantDeliveryV1] };
+
+        const executor = createActionExecutor({ discussionAction });
+        const read = await executor.execute('discussion.read', { discussionId: 'discussion-a' }, {
+            surface: 'agent', authority: 'account_automation', serverId: scope.serverId, runtimeAccountId: scope.accountId,
+        });
+        expect(read).toMatchObject({ ok: true, result: { messages: [{ localId: 'message-local', participantDeliveryV1 }] } });
+    });
+
     it.each(['plain', 'e2ee'] as const)('preserves a canonical Task anchor and reply target through the %s resource codec', async mode => {
         const transport = http(mode);
         const execute = await adapter(mode, transport);

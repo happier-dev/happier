@@ -390,6 +390,10 @@ export type SessionTranscriptsActionResultById = {
         acceptedTurnId?: string | undefined;
         turnStartWitnessId?: string | undefined;
         turnStatus?: 'cancelled' | 'completed' | 'failed' | 'in_progress' | 'waiting' | undefined;
+        followDeliveryProjection?: undefined | {
+            status: 'answered' | 'next_turn' | 'queued' | 'woke' | null;
+            reason: 'archived' | 'check_in' | 'exchange_stopped' | 'held' | 'locked' | 'muted' | 'offline' | 'unavailable' | null;
+        };
     };
     readonly "session.transcript.get": {
         items: readonly ({
