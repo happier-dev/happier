@@ -8,7 +8,7 @@ import {
     V2SessionByIdResponseSchema,
 } from "@happier-dev/protocol";
 import { db } from "@/storage/db";
-import { withSqliteReadSnapshot } from "@/storage/prisma";
+import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
@@ -57,37 +57,14 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
         encryptionMode: "plain", dataEncryptionKey: null,
     });
 
-    // Observe the real storage connection used by both inspection snapshots;
-    // delegate calls still execute against the disposable database.
-    async function observeInspectionReads() {
-        const reader = await withSqliteReadSnapshot(async (tx) => tx);
+    function observeInspectionReads() {
         let reads = 0;
-        const restore: (() => void)[] = [];
-        for (const model of Object.keys(reader)) {
-            const delegate: unknown = Reflect.get(reader, model);
-            if (typeof delegate !== "object" || delegate === null) continue;
-            for (const method of ["findUnique", "findUniqueOrThrow", "findFirst", "findFirstOrThrow", "findMany", "count", "aggregate", "groupBy"]) {
-                const operation: unknown = Reflect.get(delegate, method);
-                if (typeof operation !== "function") continue;
-                Object.defineProperty(delegate, method, {
-                    configurable: true,
-                    writable: true,
-                    value: (...args: unknown[]) => {
-                        reads += 1;
-                        return Reflect.apply(operation, delegate, args);
-                    },
-                });
-                restore.push(() => {
-                    // Prisma's lazy delegates expose synthetic descriptors;
-                    // restore the actual function rather than descriptor.value.
-                    Object.defineProperty(delegate, method, { configurable: true, writable: true, value: operation });
-                });
-            }
-        }
-        return {
-            count: () => reads,
-            restore: () => { for (const reset of restore) reset(); },
-        };
+        const restore = observeSqliteRequests({
+            before: ({ action }) => {
+                if (action.startsWith("find") || ["count", "aggregate", "groupBy"].includes(action)) reads += 1;
+            },
+        });
+        return { count: () => reads, restore };
     }
 
     it.each(["allowed", "disabled"] as const)("batches inspection reads for 1/100/500 Account grants under %s external sharing", async (externalSharingPolicy) => {
@@ -101,7 +78,7 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
         await db.account.createMany({ data: recipients.slice(1) });
         const measured: { grants: number; reads: number }[] = [];
         await withAuthenticatedTestApp(sessionRoutes, async (app) => {
-            const observer = await observeInspectionReads();
+            const observer = observeInspectionReads();
             try {
                 for (const count of [1, 100, 500]) {
                     const session = await db.session.create({ data: {
@@ -146,7 +123,7 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
         await db.teamGroup.createMany({ data: groups });
         const measured: { grants: number; reads: number }[] = [];
         await withAuthenticatedTestApp(sessionRoutes, async (app) => {
-            const observer = await observeInspectionReads();
+            const observer = observeInspectionReads();
             try {
                 for (const count of [1, 100, 500]) {
                     const session = await db.session.create({ data: {

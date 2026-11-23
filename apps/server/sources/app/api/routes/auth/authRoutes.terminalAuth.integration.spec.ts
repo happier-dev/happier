@@ -31,20 +31,6 @@ function createTestApp() {
     return trackApp(typed);
 }
 
-function createSignInRequest() {
-    const seed = new Uint8Array(32).fill(7);
-    const kp = tweetnacl.sign.keyPair.fromSeed(seed);
-    const challenge = new Uint8Array(32).fill(9);
-    const signature = tweetnacl.sign.detached(challenge, kp.secretKey);
-    return {
-        body: {
-            publicKey: privacyKit.encodeBase64(new Uint8Array(kp.publicKey)),
-            challenge: privacyKit.encodeBase64(new Uint8Array(challenge)),
-            signature: privacyKit.encodeBase64(new Uint8Array(signature)),
-        },
-    };
-}
-
 function createTerminalKeypair() {
     const kp = tweetnacl.box.keyPair();
     return {
@@ -106,15 +92,17 @@ async function createE2eeAccountWithCurrentContentKey(): Promise<Readonly<{ id: 
     });
 }
 
-async function markSignedInAccountPlain(signInBody: Readonly<{ publicKey: string }>): Promise<void> {
-    await db.account.update({
-        where: { publicKey: privacyKit.encodeHex(privacyKit.decodeBase64(signInBody.publicKey)) },
-        data: { encryptionMode: "plain" },
+async function createPlainApproverToken(): Promise<string> {
+    const account = await db.account.create({
+        data: { publicKey: randomBytes(32).toString("hex"), encryptionMode: "plain" },
+        select: { id: true },
     });
+    return await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
 }
 
 describe("authRoutes (terminal auth request) (integration)", () => {
     let harness: LightSqliteHarness;
+    const serverIdentityId = "srv_authTerminalIdentity";
 
     beforeAll(async () => {
         harness = await createLightSqliteHarness({
@@ -123,6 +111,7 @@ describe("authRoutes (terminal auth request) (integration)", () => {
             initEncrypt: true,
             env: {
                 TERMINAL_AUTH_REQUEST_TTL_SECONDS: "900",
+                HAPPIER_SERVER_IDENTITY_ID: serverIdentityId,
             },
         });
     }, 120_000);
@@ -345,25 +334,12 @@ describe("authRoutes (terminal auth request) (integration)", () => {
     });
 
     it("allows one claim with the correct secret and rejects a second claim as consumed", async () => {
-        harness.resetEnv({
-            HAPPIER_SERVER_IDENTITY_ID: "srv_authClaimIdentity",
-        });
-        const { body: signInBody } = createSignInRequest();
 
         const app = createTestApp();
         authRoutes(app as any);
         await app.ready();
 
-        const signInRes = await app.inject({
-            method: "POST",
-            url: "/v1/auth",
-            payload: signInBody,
-        });
-        expect(signInRes.statusCode).toBe(200);
-        const { token } = signInRes.json() as any;
-        expect(typeof token).toBe("string");
-        expect(token.length).toBeGreaterThan(10);
-        await markSignedInAccountPlain(signInBody);
+        const token = await createPlainApproverToken();
 
         const { publicKeyRaw, publicKeyBase64 } = createTerminalKeypair();
         const claimSecret = new Uint8Array(randomBytes(32));
@@ -409,7 +385,7 @@ describe("authRoutes (terminal auth request) (integration)", () => {
             state: "authorized",
             token: expect.any(String),
             response: expect.any(String),
-            serverIdentityId: "srv_authClaimIdentity",
+            serverIdentityId,
         });
         expect(claimJson.token.length).toBeGreaterThan(10);
         expect(claimJson.token).not.toBe(token);
@@ -431,23 +407,12 @@ describe("authRoutes (terminal auth request) (integration)", () => {
     });
 
     it("keeps an authorized request claimable when token minting fails before claim publication", async () => {
-        harness.resetEnv({
-            HAPPIER_SERVER_IDENTITY_ID: "srv_authClaimRetryIdentity",
-        });
-        const { body: signInBody } = createSignInRequest();
 
         const app = createTestApp();
         authRoutes(app as any);
         await app.ready();
 
-        const signInRes = await app.inject({
-            method: "POST",
-            url: "/v1/auth",
-            payload: signInBody,
-        });
-        expect(signInRes.statusCode).toBe(200);
-        const { token } = signInRes.json() as { token: string };
-        await markSignedInAccountPlain(signInBody);
+        const token = await createPlainApproverToken();
 
         const { publicKeyRaw, publicKeyBase64 } = createTerminalKeypair();
         const claimSecret = new Uint8Array(randomBytes(32));
@@ -496,7 +461,7 @@ describe("authRoutes (terminal auth request) (integration)", () => {
                 state: "authorized",
                 token: expect.any(String),
                 response: expect.any(String),
-                serverIdentityId: "srv_authClaimRetryIdentity",
+                serverIdentityId,
             });
         } finally {
             createTokenSpy.mockRestore();
@@ -505,21 +470,17 @@ describe("authRoutes (terminal auth request) (integration)", () => {
         await app.close();
     });
 
-    it("requires a present user to approve a terminal-auth request before its successor token can be polled", async () => {
+    it("permits person-class approval and refuses an Account Directory credential before polling", async () => {
         const account = await db.account.create({
             data: { publicKey: `pk-terminal-approval-${Date.now()}`, encryptionMode: "plain" },
             select: { id: true },
         });
-        const [presentUserToken, terminalAutomationToken] = await Promise.all([
-            auth.createToken(account.id, undefined, {
-                kind: "account",
-                authority: "present_user",
-                authenticationEvidence: [{ kind: "home_method", methodId: "key_challenge" }],
-            }),
+        const [terminalApproverToken, directoryToken] = await Promise.all([
             auth.createToken(account.id, { session: "terminal-automation" }, {
                 kind: "terminal",
                 authority: "account_automation",
             }),
+            auth.createToken(account.id, undefined, { kind: "account_directory", authority: "present_user" }),
         ]);
         const { publicKeyRaw, publicKeyBase64 } = createTerminalKeypair();
 
@@ -535,14 +496,15 @@ describe("authRoutes (terminal auth request) (integration)", () => {
         expect(request.statusCode).toBe(200);
         expect(request.json()).toEqual({ state: "requested", expiresAt: expect.any(Number) });
 
-        const automationResponse = await app.inject({
+        const response = createTerminalProvisioningResponse({ kind: "tokenOnly", recipientPublicKey: publicKeyRaw });
+        const directoryResponse = await app.inject({
             method: "POST",
             url: "/v1/auth/response",
-            headers: { authorization: `Bearer ${terminalAutomationToken}` },
-            payload: { publicKey: publicKeyBase64, response: "automation must not approve" },
+            headers: { authorization: `Bearer ${directoryToken}` },
+            payload: { publicKey: publicKeyBase64, response, responseKind: "tokenOnly" },
         });
-        expect(automationResponse.statusCode).toBe(403);
-        expect(automationResponse.json()).toEqual({ error: "present_user_required" });
+        expect(directoryResponse.statusCode).toBe(403);
+        expect(directoryResponse.json()).toEqual({ error: "present_user_required" });
 
         const stillRequested = await app.inject({
             method: "POST",
@@ -552,16 +514,14 @@ describe("authRoutes (terminal auth request) (integration)", () => {
         expect(stillRequested.statusCode).toBe(200);
         expect(stillRequested.json()).toEqual({ state: "requested", expiresAt: request.json().expiresAt });
 
-        const response = createTerminalProvisioningResponse({ kind: "tokenOnly", recipientPublicKey: publicKeyRaw });
-
-        const presentUserResponse = await app.inject({
+        const terminalResponse = await app.inject({
             method: "POST",
             url: "/v1/auth/response",
-            headers: { authorization: `Bearer ${presentUserToken}` },
+            headers: { authorization: `Bearer ${terminalApproverToken}` },
             payload: { publicKey: publicKeyBase64, response, responseKind: "tokenOnly" },
         });
-        expect(presentUserResponse.statusCode).toBe(200);
-        expect(presentUserResponse.json()).toEqual({ success: true });
+        expect(terminalResponse.statusCode).toBe(200);
+        expect(terminalResponse.json()).toEqual({ success: true });
 
         const authorized = await app.inject({
             method: "POST",
@@ -868,20 +828,12 @@ describe("authRoutes (terminal auth request) (integration)", () => {
     });
 
     it("returns consumed when the claim write loses a race after eligibility checks", async () => {
-        const { body: signInBody } = createSignInRequest();
 
         const app = createTestApp();
         authRoutes(app as any);
         await app.ready();
 
-        const signInRes = await app.inject({
-            method: "POST",
-            url: "/v1/auth",
-            payload: signInBody,
-        });
-        expect(signInRes.statusCode).toBe(200);
-        const { token } = signInRes.json() as any;
-        await markSignedInAccountPlain(signInBody);
+        const token = await createPlainApproverToken();
 
         const { publicKeyRaw, publicKeyBase64 } = createTerminalKeypair();
         const claimSecret = new Uint8Array(randomBytes(32));
@@ -1007,19 +959,12 @@ describe("authRoutes (terminal auth request) (integration)", () => {
     });
 
     it("returns 401 from /v1/auth/response when base64 decoding fails (no 500)", async () => {
-        const { body: signInBody } = createSignInRequest();
 
         const app = createTestApp();
         authRoutes(app as any);
         await app.ready();
 
-        const signInRes = await app.inject({
-            method: "POST",
-            url: "/v1/auth",
-            payload: signInBody,
-        });
-        expect(signInRes.statusCode).toBe(200);
-        const { token } = signInRes.json() as any;
+        const token = await createPlainApproverToken();
 
         const res = await app.inject({
             method: "POST",
@@ -1034,20 +979,12 @@ describe("authRoutes (terminal auth request) (integration)", () => {
     });
 
     it("returns 401 from /v1/auth/request/claim when the claim secret is wrong", async () => {
-        const { body: signInBody } = createSignInRequest();
 
         const app = createTestApp();
         authRoutes(app as any);
         await app.ready();
 
-        const signInRes = await app.inject({
-            method: "POST",
-            url: "/v1/auth",
-            payload: signInBody,
-        });
-        expect(signInRes.statusCode).toBe(200);
-        const { token } = signInRes.json() as any;
-        await markSignedInAccountPlain(signInBody);
+        const token = await createPlainApproverToken();
 
         const { publicKeyRaw, publicKeyBase64 } = createTerminalKeypair();
         const claimSecret = new Uint8Array(randomBytes(32));
@@ -1131,23 +1068,12 @@ describe("authRoutes (terminal auth request) (integration)", () => {
     });
 
     it("keeps claim-less polling while requiring a canonical v3 approval response", async () => {
-        harness.resetEnv({
-            HAPPIER_SERVER_IDENTITY_ID: "srv_authRequestIdentity",
-        });
-        const { body: signInBody } = createSignInRequest();
 
         const app = createTestApp();
         authRoutes(app as any);
         await app.ready();
 
-        const signInRes = await app.inject({
-            method: "POST",
-            url: "/v1/auth",
-            payload: signInBody,
-        });
-        expect(signInRes.statusCode).toBe(200);
-        const { token } = signInRes.json() as any;
-        await markSignedInAccountPlain(signInBody);
+        const token = await createPlainApproverToken();
 
         const { publicKeyRaw, publicKeyBase64 } = createTerminalKeypair();
 
@@ -1192,7 +1118,7 @@ describe("authRoutes (terminal auth request) (integration)", () => {
             state: "authorized",
             token: expect.any(String),
             response,
-            serverIdentityId: "srv_authRequestIdentity",
+            serverIdentityId,
         });
 
         await app.close();
