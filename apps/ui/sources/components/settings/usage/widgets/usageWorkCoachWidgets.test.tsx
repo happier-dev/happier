@@ -48,6 +48,10 @@ import { UsageWorkProviderMark, resolveUsageWorkProviderDisplay, usageWorkProvid
 import { formatUsageDimensionLabel } from '@/sync/api/account/formatUsageDimensionLabel';
 import { readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
 import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { buildCacheKey, EMPTY_PROJECTION_SUMMARIES, PROJECTION_CACHE } from '@/agents/backendCatalog/daemonMergedProjectionCache';
+import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { getMachineContributionRegistryProjectionRevision } from '@/sync/ops/machineContributionRegistryProjection';
 import { UsageWorkMarks, UsageWorkSectionTitle } from './UsageWorkParts';
 import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
 import { UsageSessionValueWidget } from './UsageSessionValueWidget';
@@ -436,6 +440,68 @@ describe('Work and Coach widget bodies', () => {
     const spoken = screen.findAllByType(ChartDatum).find(node => node.props.testID === 'ledger.project.p1.prs-datum-0')?.props.datum.accessibilityLabel;
     expect(typeof spoken).toBe('string');
     for (const name of [agent, ...names]) expect(spoken).toContain(name);
+  });
+  const gatewayIds = ['acme.tools/gateway', 'acme.tools/gateway-gateway', 'acme.tools/gateway-gateway-gateway'];
+  it.each([
+    { kind: 'three unlisted gateway IDs', ids: gatewayIds },
+    { kind: 'three declared gateways with the same name', ids: gatewayIds, declarations: ['Gateway', 'Gateway', 'Gateway'] },
+    { kind: 'opaque keys differing only by separator', ids: ['work-gateway', 'work_gateway'] },
+    { kind: 'opaque keys differing only by case', ids: ['field-api', 'FIELD-API'] },
+    { kind: 'a declared label occupying a fallback key',
+      ids: [...gatewayIds, 'acme.custom/other', 'acme.custom/independent'],
+      declarations: ['Gateway', 'Gateway', 'Gateway', gatewayIds[0]!, 'Independent Gateway'],
+      expected: [...gatewayIds, 'acme.custom/other', 'Independent Gateway'] },
+  ])('uses distinct final Provider names for $kind on each reading surface', async ({ ids, declarations, expected = ids }) => {
+    const serverId = actionHome!.homes.work!.id;
+    const machineId = 'provider-name-collision-witness';
+    const projectionKey = buildCacheKey(machineId, serverId);
+    if (declarations) {
+      // Seed the retained daemon response at the data boundary; lookup and label resolution run in production code.
+      const declaration = readAccountProviderDeclarations({ kind: 'account' })[0]!;
+      const entriesById = Object.fromEntries(ids.map((id, index) => {
+        const [pluginId, localId] = id.split('/');
+        return [id, { id, pluginId, provenance: 'external', sourceKind: 'path',
+          definition: { ...declaration.definition, id: localId, name: declarations[index] } }];
+      }));
+      const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, agentsById: {},
+        familiesById: { providers: { family: 'providers', entriesById } } });
+      const lifetime = captureActiveServerAccountScopeLifetime();
+      if (!lifetime) throw new Error('Expected a current Account for the retained Machine catalog');
+      PROJECTION_CACHE.set(projectionKey, {
+        kind: 'ready', inputs: publishDaemonMergedProjectionInputs({ projection }),
+        workflowActionCatalog: { current: null }, workflowEventCatalog: { current: null },
+        fetchedAtMs: Date.now(), projectionRevision: getMachineContributionRegistryProjectionRevision({ machineId, serverId }),
+        accountScope: lifetime.scope, targetServerId: serverId, locale: getPreferredLanguage(), summaries: EMPTY_PROJECTION_SUMMARIES,
+      });
+    }
+    try {
+      const rows: UsageWorkContribution[] = ids.map((providerId, index) => ({
+        ...contribution(`provider-${index}`, 's1', 't1'), machineId, providerId, providerConnectionId: 'connection',
+      }));
+      const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [evidence('s1', 't1', 2493)] }));
+      const screen = await renderScreen(<UsageChartInteractions>
+        <UsageProjectLedgerWidget {...props} query={normalizeUsageQuery({ ...query, metric: 'tokens' })}
+          slice={{ ...slice, work }} serverId={serverId} id="usage_project_ledger" testID="ledger" />
+      </UsageChartInteractions>);
+      if (declarations) {
+        expect(ids.map(providerId => resolveUsageWorkProviderDisplay({ providerId, machineIds: [machineId] }, serverId).label))
+          .toEqual(declarations);
+      }
+      await layoutIdentityStrip(screen.findByTestId('ledger.marks'), 1000);
+      const prefix = `${t('usage.board.work.provider')}: `;
+      const spokenMarks = screen.findAllByType(UsageWorkProviderMark).map(mark =>
+        String(mark.findByProps({ accessible: true }).props.accessibilityLabel).replace(prefix, ''));
+      await screen.pressByTestIdAsync('ledger.project.p1.toggle');
+      const names = String(screen.findByTestId('ledger.project.p1.identities')?.props.children ?? '').split(' · ').slice(1);
+      const spoken = screen.findAllByType(ChartDatum).find(node =>
+        node.props.testID === 'ledger.project.p1.prs-datum-0')?.props.datum.accessibilityLabel ?? '';
+      const sorted = [...expected].sort();
+      expect.soft(spokenMarks.sort()).toEqual(sorted);
+      expect.soft(names.sort()).toEqual(sorted);
+      expect.soft(spoken.split(' · ').slice(-expected.length).sort()).toEqual(sorted);
+    } finally {
+      PROJECTION_CACHE.delete(projectionKey);
+    }
   });
   it('names a Provider from any witnessing Machine that declares it before falling back to its local id (review J-B31)', () => {
     const declaration = readAccountProviderDeclarations({ kind: 'account' })[0]!;

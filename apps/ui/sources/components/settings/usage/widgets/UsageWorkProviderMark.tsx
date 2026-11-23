@@ -64,17 +64,39 @@ export function usageWorkProviderIdentities(providers: readonly UsageWorkProvide
 }
 
 /**
- * One name per identity, in order. Identity decides, never the label: a name another identity on the same line also
- * carries (another Provider, or an Agent in `taken`) is told apart by the Provider's whole contribution identity in
- * words ("Gateway (Acme First Gateway)"), never by the raw qualified id.
+ * One name per identity, in order. A shared name is told apart by the Provider's whole contribution identity in
+ * words ("Gateway (Acme First Gateway)"). If those final names still collide, use the exact identity keys.
  */
 export function usageWorkProviderNames(providers: readonly UsageWorkProviderIdentity[], serverId: string,
   taken: readonly string[] = []): readonly string[] {
   const labels = providers.map(provider => resolveUsageWorkProviderDisplay(provider, serverId).label);
   const counts = new Map<string, number>();
   for (const label of [...taken, ...labels]) counts.set(label, (counts.get(label) ?? 0) + 1);
-  return labels.map((label, index) => (counts.get(label) ?? 0) < 2 ? label
+  const names = labels.map((label, index) => (counts.get(label) ?? 0) < 2 ? label
     : `${label} (${formatUsageDimensionLabel('source', providers[index]!.providerId)})`);
+
+  const firstByName = new Map<string, number | null>(taken.map(name => [name, null]));
+  const useExactKey = new Set<number>();
+  names.forEach((name, index) => {
+    const first = firstByName.get(name);
+    if (first === undefined) {
+      firstByName.set(name, index);
+    } else {
+      useExactKey.add(index);
+      if (first !== null) useExactKey.add(first);
+    }
+  });
+
+  // A declared name can itself equal another Provider's exact key. Include it in the same pass;
+  // iteration visits newly added entries, with each Provider falling back at most once.
+  for (const index of useExactKey) {
+    const { providerId } = providers[index]!;
+    const key = normalizeProviderContributionKeyV1(providerId) ?? providerId;
+    names[index] = key;
+    const displaced = firstByName.get(key);
+    if (displaced != null) useExactKey.add(displaced);
+  }
+  return names;
 }
 
 /** A Provider mark, with the same name in its spoken label and optional visible text. */
