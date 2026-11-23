@@ -227,7 +227,7 @@ it('shows nothing for a run that produced no Review of its own', async () => {
 it('finds a Review by its workflowRunId when a contributed PR action produced it', async () => {
   function Result() {
     const result = useWorkflowRunResultReview({ runId: 'hunt-run', scope: { serverId, accountId: 'alice' },
-      result: { reviewId }, enabled: true });
+      result: { reviewId }, finalOutputInvocationId: undefined, enabled: true });
     return <span>{result?.reviewId ?? 'missing'}</span>;
   }
   const screen = await renderScreen(<Result />);

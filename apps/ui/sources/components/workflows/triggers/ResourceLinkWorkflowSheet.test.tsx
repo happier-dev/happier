@@ -73,6 +73,7 @@ function linkFor(missingAudience: readonly PrincipalRefV1[]) {
     setDraft: vi.fn(),
     missingAudience,
     loading: false,
+    issue: undefined,
     retryWhen: vi.fn(),
     retryReview: vi.fn(),
     submit: vi.fn(async (decision: 'accept' | 'decline') =>
@@ -89,7 +90,7 @@ function linkFor(missingAudience: readonly PrincipalRefV1[]) {
             error: new Error('offline'),
           },
     ),
-  };
+  } satisfies React.ComponentProps<typeof ResourceLinkWorkflowSheet>['link'];
 }
 
 // 05 S5 Link + D8: Workflow, When from the resource's starts, the before wait policy, and the same-step share question.

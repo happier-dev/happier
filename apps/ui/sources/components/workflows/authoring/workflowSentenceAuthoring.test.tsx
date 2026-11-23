@@ -177,8 +177,8 @@ it.each([false, true])('saves the exact Session turn or shows the owner refusal 
     expect(createSessionWorkflowSentenceIntent(source, { subject: undefined, exactTurnPrefill })).toBeNull();
     const intent = createSessionWorkflowSentenceIntent(source, { exactTurnPrefill });
     if (intent === null) throw new Error('Expected exact-turn intake');
-    const definition = { version: 1 as const, defaults: {}, blocks: [{ kind: 'wait' as const, id: 'wait',
-        document: { text: 'Acknowledge the QA trigger run.', references: [], attachments: [] } }] };
+    const definition = { version: 1, defaults: {}, inputs: [], blocks: [{ kind: 'wait', id: 'wait',
+        document: { text: 'Acknowledge the QA trigger run.', references: [], attachments: [] } }] } satisfies NonNullable<Parameters<typeof authoring.useWorkflowSentenceDraft>[0]['definition']>;
     const hook = await renderHook(() => authoring.useWorkflowSentenceDraft({ ...intent, definition }, home.lifetime));
     // The editor's portable Workflow defaults to the Machine's Home folder. The watched Session is in /repo.
     await act(async () => hook.getCurrent().changeProject({ machineId: 'machine-a', directory: '~' }));
