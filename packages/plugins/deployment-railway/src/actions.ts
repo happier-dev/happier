@@ -148,11 +148,7 @@ async function options(engine: Engine, input: OptionsInput, context: PluginAccou
   const after = input.cursor ?? null;
   const page = async () => {
     if (input.fieldPath === 'workspaceId') {
-      const [workspaces, externalWorkspaces] = await Promise.all([
-        project.listGrantedWorkspaces(), project.listGrantedProjectWorkspaces(),
-      ]);
-      const choices = new Map([...externalWorkspaces, ...workspaces].map(({ id, name }) => [id, { id, name }]));
-      return { choices: [...choices.values()], nextCursor: null };
+      return { choices: await project.readWorkspaceChoices(), nextCursor: null };
     }
     if (input.fieldPath === 'projectId') {
       const workspaceId = required(input.workspaceId, 'workspaceId');

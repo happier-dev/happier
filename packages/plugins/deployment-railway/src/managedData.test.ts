@@ -58,6 +58,25 @@ describe('activated Railway managed database actions', () => {
     } finally { await h.kit.dispose(); }
   });
 
+  it('lists workspace choices in one request without reading project inventory', async () => {
+    const externalWorkspaces = [{ id: 'workspace-one', name: 'Duplicate grant' }, { id: 'workspace-two', name: 'Shared workspace' }];
+    const h = await host(
+      { data: { me: { workspaces: [{ id: 'workspace-one', name: 'Owned workspace' }] }, externalWorkspaces } },
+      { data: { externalWorkspaces: externalWorkspaces.map(workspace => ({ ...workspace, projects: [] })) } },
+    );
+    try {
+      const action = 'postgresql-options';
+      await expect(h.kit.invokeAction(action, {
+        credentialRef, credentialPrincipal: preparation(action).credentialPrincipal, fieldPath: 'workspaceId',
+      })).resolves.toEqual({ options: [
+        { value: 'workspace-one', label: 'Owned workspace' }, { value: 'workspace-two', label: 'Shared workspace' },
+      ] });
+      expect(h.calls).toHaveLength(1);
+      expect(h.calls[0]?.query).toContain('externalWorkspaces');
+      expect(h.calls[0]?.query).not.toContain('projects');
+    } finally { await h.kit.dispose(); }
+  });
+
   it('lists exact template matches, filtered by provenance and not display name', async () => {
     const h = await host({ data: { template: { id: 'pg-template' }, environment: { id: 'production', projectId: 'project-one',
       serviceInstances: { edges: [databaseService, { ...databaseService, serviceId: 'different', service: { templateId: null } },

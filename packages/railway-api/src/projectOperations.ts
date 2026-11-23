@@ -14,6 +14,7 @@ const open = { policy: 'additive-open/drop' } as const;
 const text = defineProtocolString({ minLength: 1 });
 const boolean = defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]);
 const choice = defineProtocolObject({ id: text, name: text }, open);
+const choices = defineProtocolArray(choice);
 const optionalText = defineProtocolUnion([text, defineProtocolLiteral(null)]);
 const pageInfo = defineProtocolObject({ endCursor: optionalText, hasNextPage: boolean }, open);
 const connection = defineProtocolObject({
@@ -113,9 +114,18 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
 
   async function listGrantedWorkspaces() {
     const data = await graphql('query { me { workspaces { id name } } }', {});
-    const parsed = defineProtocolArray(choice).safeParse(child(data.me, 'workspaces'));
+    const parsed = choices.safeParse(child(data.me, 'workspaces'));
     if (!parsed.success) throw new NativeError('railway_invalid_response');
     return parsed.data;
+  }
+
+  async function readWorkspaceChoices() {
+    const data = await graphql('query { me { workspaces { id name } } externalWorkspaces { id name } }', {});
+    const memberWorkspaces = choices.safeParse(child(data.me, 'workspaces'));
+    const sharedWorkspaces = choices.safeParse(data.externalWorkspaces);
+    if (!memberWorkspaces.success || !sharedWorkspaces.success) throw new NativeError('railway_invalid_response');
+    const byId = new Map([...sharedWorkspaces.data, ...memberWorkspaces.data].map(workspace => [workspace.id, workspace]));
+    return [...byId.values()];
   }
 
   async function listGrantedProjectWorkspaces() {
@@ -219,6 +229,7 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
     listProjects: (workspaceId?: string) => listPages(after => readProjectsPage(after, workspaceId)),
     readProjectsPage,
     listGrantedWorkspaces,
+    readWorkspaceChoices,
     listGrantedProjectWorkspaces,
     listGrantedProjects: async () => (await listGrantedProjectWorkspaces()).flatMap(workspace => workspace.projects),
     listEnvironments: (projectId: string) => listPages(after => readProjectPage(projectId, 'environments', after)),
