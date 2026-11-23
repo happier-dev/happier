@@ -112,11 +112,20 @@ export function formatAutomationTriggerObservationWarning(
     automationEnabled = true,
 ): string | null {
     if (!automationEnabled || !trigger?.enabled || trigger.kind !== 'pluginEvent') return null;
-    const status = trigger.sourceStatus;
+    return formatAutomationSourceStatusWarning(trigger.sourceStatus);
+}
+
+/**
+ * An enabled Event trigger's pushed source status, said when it needs the person: backing off or in attention.
+ * The one presentation every trigger surface uses (a trigger's History, a resource's Automations rows).
+ */
+export function formatAutomationSourceStatusWarning(
+    status: Extract<AutomationTriggerListItem, { kind: 'pluginEvent' }>['sourceStatus'] | undefined,
+): string | null {
     if (!status || (status.state !== 'backingOff' && status.state !== 'attention') || status.code === 'historyGap') return null;
     const codeKey = `settingsPlugins.eventAutomationComposer.sourceStatusCode.${status.code}`;
     return [
-        formatAutomationTriggerStatusLabel(trigger, automationEnabled),
+        t(`settingsPlugins.eventAutomationComposer.sourceStatusState.${status.state}`),
         status.code !== null && hasTranslation(codeKey) ? tLoose(codeKey) : null,
         status.nextRetryAt !== null ? t('settingsPlugins.eventAutomationComposer.sourceStatusNextRetry', {
             time: new Date(status.nextRetryAt).toLocaleString(),

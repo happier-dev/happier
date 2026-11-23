@@ -553,8 +553,8 @@ export const DeploymentEnvironmentDraft = React.memo(
     const saveTitle = partial
         ? t('projects.deployments.openEnvironment')
         : props.copyFrom
-        ? stepReview ? t('projects.deployments.creationReview.createCopy')
-          : prepared ? t('projects.deployments.creationReview.reviewAndCreateCopy') : t('newApp.deploy.review')
+        // On the review itself the primary says what it does, as Create does (PAGE-ACCEPT-176 R13-D8).
+        ? stepReview || prepared ? t('projects.deployments.creationReview.createCopy') : t('newApp.deploy.review')
         : prepared
         ? t('projects.deployments.creationReview.create')
         : t('projects.deployments.saveEnvironment');
@@ -795,13 +795,16 @@ export const DeploymentEnvironmentDraft = React.memo(
         <Item testID="project-deployments.draft.noMachine.create" title={t('managedMachines.add.createPath')}
           subtitle={t('projects.deployments.noMachineBody')} onPress={() => setCreatingMachine(true)} disabled={!props.lifetime} />} />
     ) : null;
+    const soleTarget = props.platformAvailable && targetTiles.length === 1 && targetTiles[0]?.id === OWN_SERVER_TARGET
+      ? targetTiles[0] : null;
     const whereGroup = <>
           <ItemGroup
             // Stepped, the host's step description asks the question; the group keeps the recommendation's reason.
             title={stepped ? undefined : t('projects.deployments.whereTitle')}
             description={deploymentRecommendationDescription(recommendation)}
           >
-            {props.platformAvailable ? (
+            {/* One possible target is no choice: the Machine field carries its line instead of a lone radio (R13-D8). */}
+            {props.platformAvailable && !soleTarget ? (
               <SelectionTiles<string>
                 accessibilityLabel={t('projects.deployments.whereTitle')}
                 testIdPrefix="project-deployments.draft.target"
@@ -823,6 +826,7 @@ export const DeploymentEnvironmentDraft = React.memo(
                 title={onPlatform
                   ? t('projects.deployments.platformLink.deploysFrom')
                   : t('projects.deployments.machine')}
+                {...(soleTarget?.subtitle ? { subtitle: soleTarget.subtitle } : {})}
                 awayMachinesChoosable
                 onSelectMachine={(machine) => setMachineId(machine.id)}
               />

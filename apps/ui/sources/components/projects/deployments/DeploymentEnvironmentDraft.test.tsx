@@ -541,7 +541,9 @@ describe('Environment draft Machine Home', () => {
         expect(header().props.primaryAction.disabled, 'prepared copy can be created').toBe(false); });
       const copyReview = screen.getTextContent();
       expect(copyReview).toContain('Runs your Compose file');
-      expect(copyReview).toContain('Kept for rollback');
+      // How it deploys says how many versions it keeps; Include does not say it again (R13-D8).
+      expect(copyReview.match(/Keeps .* for rollback/g) ?? []).toHaveLength(1);
+      expect(copyReview).not.toContain('Kept for rollback');
       expect(copyReview).toContain('Rollout and restore settings');
       expect(copyReview).not.toMatch(/definition:stored|retainPreviousDeployments:copy|ownServer/);
       // PAGE-ACCEPT-176 R12-D6: the Review replaces the form; the form stays mounted (Back returns to it) but is not shown.
@@ -562,7 +564,8 @@ describe('Environment draft Machine Home', () => {
           await screen.unmount();
           return;
         }
-        expect(header().props.primaryAction.title).not.toBe(reviewTitle);
+        // The review and its confirmation both say what the press does: Create copy (R13-D8), as Create does.
+        expect(header().props.primaryAction.title).toBe(reviewTitle);
         await act(async () => header().props.primaryAction.onPress());
         if (outcome === 'confirmed') {
           await waitForHomeGovernance(() => expect(saved).toEqual([['copied-environment', undefined]]));

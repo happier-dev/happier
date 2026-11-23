@@ -29,6 +29,7 @@ import { useLayoutPresentationActive } from '@/components/ui/presentation/Plugin
 import { areExactTurnAutomationPrefillsEqual, type ExactTurnAutomationPrefill } from '@/components/automations/sessionLifecycle/exactTurnAutomationPrefill';
 import type { SessionWorkflowSentenceOptions } from '@/components/workflows/authoring/workflowSentenceAuthoring';
 
+import { formatAutomationSourceStatusWarning } from '@/components/automations/list/automationListFormatting';
 import type { AccountTriggerRow, TriggerSubject } from './accountTriggerRows';
 import { NewAccountTriggerPopover } from './AccountTriggersSection';
 import { DeploymentPushTriggerSetup } from './DeploymentPushTriggerSetup';
@@ -463,6 +464,9 @@ const SubjectTriggerRowView = React.memo(function SubjectTriggerRowView(
   // A page sheet names a trigger by what it runs, its event the quiet line (the column leads with the event).
   const manual = row.triggerId === null;
   const outcome = useAttachmentOutcome(row);
+  // A watcher that cannot observe (its typed source status) is said on its row, where a stuck start is looked for;
+  // pressing the row opens the trigger to fix it (DEPLOY-AUDIT-1123).
+  const sourceWarning = row.off ? null : formatAutomationSourceStatusWarning(row.attachment?.sourceStatus);
   return (
     <View ref={anchorRef} collapsable={false}>
       <TriggerRow
@@ -473,6 +477,7 @@ const SubjectTriggerRowView = React.memo(function SubjectTriggerRowView(
         enabled={!row.off}
         multiline={!!row.legacy}
         {...(row.attachment ? { outcome } : {})}
+        {...(sourceWarning ? { attention: sourceWarning } : {})}
         glyph={row.sourceGone ? 'warning' : row.glyph}
         menuActions={row.sourceGone ? undefined : menuActions}
         toggleDisabled={props.pending || props.row.sourceGone === true}

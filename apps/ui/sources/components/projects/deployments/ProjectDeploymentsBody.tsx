@@ -28,7 +28,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
-import { Icon } from '@/components/ui/icons/Icon';
+import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { DeploymentEnvironmentRows } from './DeploymentEnvironmentRows';
 import { useCollectionRailWidth } from '@/components/ui/lists/collection/useCollectionRailWidth';
@@ -639,8 +639,11 @@ const ProjectDeploymentsPage = React.memo(
           <ItemList testID="project-deployments.project" pageColumn="wide">
             <PageHeader
               testID="project-deployments.project.header"
-              leading={<Icon name="folder" size={28} color={theme.colors.text.secondary} />}
+              // The Project is the page's entity: its name stays beside its mark on a phone too, as an
+              // Environment's does (PAGE-ACCEPT-176 R13-D8), never moving into the bar and leaving the mark alone.
+              leading={<PageHeaderMarkIcon name="folder" />}
               title={sourceRead.source?.source.name ?? t('projects.deployments.environments')}
+              alwaysShowTitle
               description={t('projects.deployments.services.projectPurpose')}
               meta={[
                 { key: 'environments', text: t('projects.deployments.services.countEnvironmentsTotal', { count: projectEnvironments.length }) },

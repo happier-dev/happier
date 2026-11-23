@@ -764,6 +764,38 @@ describe('Account Workflow Library and settings', () => {
             await screen.unmount();
         }
     });
+    // DEPLOY-AUDIT-1123: a watcher that cannot observe was said nowhere on the Environment, so its starts looked stuck.
+    it('says a watcher that cannot observe on its Environment Automations row, from the pushed source status', async () => {
+        const { SubjectTriggersSection } = await import('./SubjectTriggersSection');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
+        const sourceStatus = { automationId: 'receipt-watch', triggerId: 't1', triggerRevision: 1,
+            eventRef: { pluginId: 'happier.machine-services', localId: 'deployment-receipt-v1' },
+            sourceSelectorId: crypto.randomUUID(),
+            reporterMaterializationRef: { machineId: project.machineId, materializationId: 'materialization-1',
+                pluginId: 'happier.machine-services' },
+            reporterSourceCustody: { kind: 'development' as const, registeredRootId: 'generation-1' },
+            state: 'attention' as const, code: 'sourceContractIncompatible' as const, observedCount: 0, admittedCount: 0,
+            skippedCount: 0, lastObservedAt: null, lastDispositionAt: null, nextRetryAt: null, revision: 1 };
+        home.answer(serverId, 'POST /v3/automations/query', { body: AutomationDefinitionListResponseSchema.parse({
+            automations: [], nextCursor: null, skippedNotSharedCount: 0,
+            attached: [{ automationId: 'receipt-watch', triggerId: 't1', workflowDefinitionId: null,
+                relation: 'direct', enabled: true, revision: 1, sourceStatus,
+                summary: { kind: 'schedule', schedule: trigger('t1').schedule },
+                setUpBy: { accountId: 'account-a', displayName: 'Owner' } }],
+        }) });
+        const screen = await renderAccountScreen(<PluginSurfaceFocusEligibilityProvider active><ListPresentationProvider value="page">
+            <SubjectTriggersSection subject={{ kind: 'environment', machineId: project.machineId, environmentId: 'qa-live' }}
+                serverId={serverId} subjectName="Production" />
+        </ListPresentationProvider></PluginSurfaceFocusEligibilityProvider>);
+        try {
+            await waitForHomeGovernance(() => expect(screen.findByTestId('subject-triggers:receipt-watch:t1')).not.toBeNull());
+            await waitForHomeGovernance(() => expect(screen.getTextContent())
+                .toContain(t('settingsPlugins.eventAutomationComposer.sourceStatusState.attention')));
+        } finally {
+            await screen.unmount();
+        }
+    });
     it('shows a single Automations state while its rows are pending and its starts are unreachable', async () => {
         const { SubjectTriggersSectionContent } = await import('./SubjectTriggersSection');
         const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
