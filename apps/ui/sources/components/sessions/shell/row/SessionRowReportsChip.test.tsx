@@ -77,6 +77,21 @@ describe('SessionRowProgressChip', () => {
       .toBe(t('sessionWork.list.progressA11y', { label: 'QA', done: 9, total: 24 }));
   });
 
+  it.each([
+    [24, 24, 'check'],
+    [9, 24, 'ring'],
+    [0, 24, 'ring'],
+  ] as const)('draws %i of %i with the %s mark and keeps the count beside it', async (done, total, mark) => {
+    const screen = await renderScreen(<SessionRowProgressChip sessionId="qa" progress={{ done, total, label: 'QA', dim: true, complete: done === total }} />);
+    const { CapacityRing } = await import('@/components/ui/progress/CapacityRing');
+    const marks = [
+      screen.findAll(node => node.type === CapacityRing).length > 0 ? 'ring' : null,
+      screen.findAll(node => node.props.name === 'check').length > 0 ? 'check' : null,
+    ].filter(Boolean);
+    expect(marks).toEqual([mark]);
+    expect(screen.getTextContent()).toBe(`QA ${done}/${total}`);
+  });
+
   it('draws nothing when the owner projected no count and no managed Session needs the person', async () => {
     const settled = { total: 3, needsYou: 0, working: 0, stalled: 0, finished: 3, attentionPrimary: null };
     const screen = await renderScreen(<SessionRowProgressChip sessionId="bot" progress={null} reports={settled} />);

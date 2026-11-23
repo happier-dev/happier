@@ -9,6 +9,7 @@ import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { CapacityRing } from '@/components/ui/progress/CapacityRing';
+import { Icon } from '@/components/ui/icons/Icon';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { readSessionManagedSessionsPresentationV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
 import type { SessionAwarenessProjectionV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
@@ -106,7 +107,8 @@ export function hasSessionRowProgressChip(
 
 /**
  * A row's one count (lab ideas-1118-shell scene 7; the lead's reports chip, lab `clgroups`, for any Session): a small
- * ring and "3/7", with the author's short label when it set one ("QA 9/24"). It reads the awareness owner's progress,
+ * ring and "3/7", with the author's short label when it set one ("QA 9/24"); a finished list shows the check instead
+ * of the ring ("✓ 24/24"). It reads the awareness owner's progress,
  * so an explicit count, the task list and managed Sessions never show as two counts, and a completed count stays only
  * while the Session is unread (D1). Not working dims it. A lead whose managed Sessions need the person or failed adds
  * the amber or rose dot, and the count waiting on them.
@@ -140,13 +142,18 @@ export const SessionRowProgressChip = React.memo((props: Readonly<{
         >
             {progress ? (
                 <>
-                    <CapacityRing
-                        size={PROGRESS_RING_PX}
-                        strokeWidth={PROGRESS_STROKE_PX}
-                        ratio={progress.total > 0 ? Math.min(1, progress.done / progress.total) : 0}
-                        color={progress.dim ? theme.colors.text.tertiary : theme.colors.text.secondary}
-                        trackColor={theme.colors.border.default}
-                    />
+                    {/* A finished list reads as done: a full ring looks like an empty one, so it becomes the check. */}
+                    {progress.total > 0 && progress.done >= progress.total ? (
+                        <Icon name="check" size={PROGRESS_RING_PX} color={theme.colors.text.tertiary} />
+                    ) : (
+                        <CapacityRing
+                            size={PROGRESS_RING_PX}
+                            strokeWidth={PROGRESS_STROKE_PX}
+                            ratio={progress.total > 0 ? Math.min(1, progress.done / progress.total) : 0}
+                            color={progress.dim ? theme.colors.text.tertiary : theme.colors.text.secondary}
+                            trackColor={theme.colors.border.default}
+                        />
+                    )}
                     {progress.label ? <Text numberOfLines={1} style={styles.total}>{progress.label}</Text> : null}
                     <Text numberOfLines={1} style={styles.total}>
                         {`${progress.done}/${progress.total}`}
