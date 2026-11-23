@@ -20,7 +20,7 @@ import { resolveUnknownAccountActorName } from '@/sync/domains/account/accountAc
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { t } from '@/text';
 import { Modal } from '@/modal';
-import { alertApprovalFailure, type ApprovalDecisionOptions } from '@/components/tools/shell/approvals/useApprovalDecisionHandler';
+import { alertApprovalFailure, ApprovalExecutionError, type ApprovalDecisionOptions } from '@/components/tools/shell/approvals/useApprovalDecisionHandler';
 import type { ApprovalAutomaticChecksPresentation } from './useApprovalAutomaticChecksPresentation';
 import { useApprovalAutomaticCheckDetails } from './useApprovalAutomaticCheckDetails';
 import { ApprovalCheckReviewSteps } from './ApprovalCheckReviewSteps';
@@ -28,18 +28,9 @@ import { HappierDisclosureToggle } from '@happier-dev/plugin-ui/presentation';
 import { useCoreDisclosureToggleBinding } from '@/components/ui/lists/DisclosureCaret';
 import { formatElapsedDuration } from '@/components/machines/durationWords';
 import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
+import { formatWorkflowInvocationElapsedLabel } from '@/components/workflows/presentation/workflowUsagePresentation';
 import { formatAutomaticCheckSkipNotice } from './formatAutomaticCheckSkipNotice';
-
-/**
- * Which decision the card offers while an Action's before checks hold it (05 S6/S8/S9): a shared check waiting for
- * this person's consent (Allow · Skip), a running check (Cancel), a failed check a person may override
- * (Approve anyway · Deny). Everything else keeps the card's ordinary decision.
- */
-export type ApprovalAutomaticChecksDecision =
-  | Readonly<{ kind: 'consent'; automationId: string; triggerId: string }>
-  | Readonly<{ kind: 'checking' }>
-  | Readonly<{ kind: 'override' }>
-  | null;
+import { readApprovalAutomaticChecksDecision } from './approvalAutomaticChecksDecision';
 
 /** The stored check phase retains the failed occurrence after a person's final Deny. */
 export function readApprovalAutomaticChecksForRequest(
@@ -47,6 +38,10 @@ export function readApprovalAutomaticChecksForRequest(
 ): ApprovalAutomaticChecksV1 | null {
   const checks = request?.automaticChecks;
   if (!checks) return null;
+  if (request?.status !== 'open' && checks.phase === 'consent') {
+    return { ...checks, consents: checks.consents.filter(consent => consent.decision !== 'pending') };
+  }
+  if (request?.status === 'canceled' && (checks.phase === 'checking' || checks.phase === 'override')) return null;
   if (request?.status === 'rejected' && checks.phase === 'override') {
     return { ...checks, phase: 'refused' };
   }
@@ -80,32 +75,12 @@ export function ApprovalCheckRunLink(props: Readonly<{
   />;
 }
 
-export function readApprovalAutomaticChecksDecision(
-  checks: ApprovalAutomaticChecksV1 | null | undefined,
-): ApprovalAutomaticChecksDecision {
-  if (!checks) return null;
-  if (checks.phase === 'consent') {
-    const pending = checks.consents.find(
-      (consent) => consent.decision === 'pending',
-    );
-    return pending
-      ? {
-          kind: 'consent',
-          automationId: pending.automationId,
-          triggerId: pending.triggerId,
-        }
-      : null;
-  }
-  if (checks.phase === 'checking') return { kind: 'checking' };
-  if (checks.phase === 'override') return { kind: 'override' };
-  return null;
-}
-
 /** Whether the checks have anything to tell: a pending consent, a running check, a failure, or a visible Skip. */
 export function readApprovalAutomaticChecksShown(checks: ApprovalAutomaticChecksV1): boolean {
   const failed = readFailedApprovalAutomaticCheck(checks) !== undefined;
   return (checks.phase === 'consent' && checks.consents.some((consent) => consent.decision === 'pending'))
     || checks.phase === 'checking'
+    || (checks.phase === 'passed' && checks.results.some(result => result.outcome === 'passed'))
     || ((checks.phase === 'override' || checks.phase === 'refused') && failed)
     || checks.consents.some((consent) => consent.decision === 'skip')
     || checks.notices.some((notice) => notice.code === 'action_automation_skipped');
@@ -139,7 +114,7 @@ export function useApprovalAutomaticChecksControls(input: Readonly<{
       setIsDeciding(true);
       if (!(await operation())) Modal.alert(t('common.error'), t('approvals.decisionError'));
     } catch (error) {
-      alertApprovalFailure(error);
+      if (!(error instanceof ApprovalExecutionError)) alertApprovalFailure(error);
     } finally {
       setIsDeciding(false);
     }
@@ -246,6 +221,9 @@ export const ApprovalAutomaticChecks = React.memo(
       useApprovalAccountLabel(props.serverId, pendingOwner, 'sentence') ??
       resolveUnknownAccountActorName('sentence');
     const failed = readFailedApprovalAutomaticCheck(checks);
+    const failureReason = failed?.reason
+      ? presentActionFailureOutcome({ error: failed.reason, errorCode: failed.reason }, 'workflowCheck').reason ?? props.failureReason
+      : props.failureReason;
     const skippedConsents = checks.consents.filter(
       (consent) => consent.decision === 'skip',
     );
@@ -266,10 +244,15 @@ export const ApprovalAutomaticChecks = React.memo(
     const disclosure = useCoreDisclosureToggleBinding();
     const changedBlockIds = React.useMemo(() => new Set(pending?.review?.changedSteps?.map((step) => step.blockId) ?? []),
       [pending?.review?.changedSteps]);
-    const { progress: checkingProgress, runSummary: checkingRunSummary, review } = useApprovalAutomaticCheckDetails({
-      runId: checkingRun ? runOf(checkingRun) : null, serverId: props.serverId,
-      reviewWorkflowId: reviewOpen ? pendingWorkflowId : null,
+    const passedChecks = React.useMemo(() => checks.phase === 'passed'
+      ? checks.results.filter(result => result.outcome === 'passed') : [], [checks.phase, checks.results]);
+    const checkingRunId = checkingRun ? runOf(checkingRun) : null;
+    const runIds = React.useMemo(() => checkingRunId ? [checkingRunId] : passedChecks.map(result => result.runId),
+      [checkingRunId, passedChecks]);
+    const { progress: checkingProgress, summaries, review } = useApprovalAutomaticCheckDetails({
+      runIds, serverId: props.serverId, reviewWorkflowId: reviewOpen ? pendingWorkflowId : null,
     });
+    const checkingRunSummary = checkingRunId ? summaries.get(checkingRunId) : null;
     const checkingStartedMs = checkingRunSummary?.state === 'running' ? Date.parse(checkingRunSummary.createdAt) : Number.NaN;
     const openRun = (runId: string | null) =>
       <ApprovalCheckRunLink runId={runId} serverId={props.serverId} onOpenRoute={props.onOpenRoute} />;
@@ -366,8 +349,8 @@ export const ApprovalAutomaticChecks = React.memo(
               {t('workflows.triggers.checks.overrideTitle', { workflow })}
             </Text>
           </View>
-          {failed.reason ? (
-            <Text variant="body" style={styles.primary} testID={props.testID ? `${props.testID}:reason` : undefined}>{failed.reason}</Text>
+          {failureReason ? (
+            <Text variant="body" style={styles.primary} testID={props.testID ? `${props.testID}:reason` : undefined}>{failureReason}</Text>
           ) : null}
           <View style={styles.line}>
             <Text variant="meta" style={styles.secondary}>{t('workflows.triggers.checks.overrideNote')}</Text>
@@ -379,14 +362,10 @@ export const ApprovalAutomaticChecks = React.memo(
       // The refusal settled the request: its reason leads the block (said once, here), the check's name and Run beneath
       // (lab `wait-v-arefused`). Without a reason the block says which check refused or couldn't run.
       const workflowName = knownNameOf(failed);
-      const rawReason = failed.reason ?? props.failureReason ?? null;
-      const reason = rawReason === 'content_unavailable'
-        ? presentActionFailureOutcome({ error: rawReason, errorCode: rawReason }).reason
-        : rawReason;
       body = (
         <View style={[styles.block, styles.dangerBlock]} testID={props.testID ? `${props.testID}:refused` : undefined}>
-          {reason ? (
-            <Text variant="body" style={styles.primary} testID={props.testID ? `${props.testID}:reason` : undefined}>{reason}</Text>
+          {failureReason ? (
+            <Text variant="body" style={styles.primary} testID={props.testID ? `${props.testID}:reason` : undefined}>{failureReason}</Text>
           ) : (
             <View style={styles.lead}>
               <Icon name="warning" size={ICON_SIZE.sm} color={theme.colors.state.danger.foreground} />
@@ -398,11 +377,27 @@ export const ApprovalAutomaticChecks = React.memo(
             </View>
           )}
           <View style={styles.line}>
-            {reason && workflowName ? <Text variant="meta" emphasis="semiBold" style={styles.primary}>{workflowName}</Text> : null}
+            {failureReason && workflowName ? <Text variant="meta" emphasis="semiBold" style={styles.primary}>{workflowName}</Text> : null}
             {openRun(failed.runId)}
           </View>
         </View>
       );
+    } else if (checks.phase === 'passed') {
+      body = passedChecks.map(result => {
+        const summary = summaries.get(result.runId);
+        const duration = summary?.finishedAt == null ? null : formatWorkflowInvocationElapsedLabel({
+          startedAt: summary.createdAt, finishedAt: summary.finishedAt,
+        });
+        return (
+          <View key={actionAutomationTriggerKeyV1(result)} style={styles.line}>
+            <Text variant="meta" style={styles.secondary}>
+              {t('workflows.triggers.checks.passed', { workflow: nameOf(result) })}
+              {duration ? ` · ${duration}` : null}
+            </Text>
+            {openRun(result.runId)}
+          </View>
+        );
+      });
     }
     // One Skip per check: a person's Skip is one consent and one skip notice for the same trigger, so rows are keyed on
     // the trigger identity and the person's own answer (it asks again next time) speaks for it.

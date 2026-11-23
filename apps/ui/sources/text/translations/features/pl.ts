@@ -21382,6 +21382,7 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
     },
 
     problem: {
+        commandFailed: 'Polecenie zakończyło się błędem.',
         title: 'To się nie udało',
         waitingTitle: 'Jeszcze nie teraz',
         subtreeDenied: 'Agent może rozpoczynać pracę tylko we własnej sesji lub w sesjach, które prowadzi.',

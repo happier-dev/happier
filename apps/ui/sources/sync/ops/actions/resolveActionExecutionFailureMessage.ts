@@ -219,6 +219,7 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
         return t('errors.daemonUnavailableBody');
     }
     if (code === 'upstream_error' || code === 'service_unavailable') return t('errors.serverError');
+    if (code === 'command_failed') return t('workflows.problem.commandFailed');
     const discussionCode = typeof code === 'string' && code.startsWith('discussion')
         ? DiscussionErrorCodeV1Schema.safeParse(code) : null;
     if (discussionCode?.success) return discussionFailureLabel(discussionCode.data);

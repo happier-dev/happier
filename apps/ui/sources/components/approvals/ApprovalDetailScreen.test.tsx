@@ -1727,6 +1727,7 @@ describe('ApprovalDetailScreen', () => {
     daemonReply = { ok: true, result: { status: 'rejected', execution } };
     const { Modal } = await import('@/modal');
 
+    expect(screen.findByTestId('approvals.automatic-checks:reason').props.children).toBe('workflows.contentUnavailable');
     expect(screen.findByTestId('approvals.cancel')).toBeNull();
     expect(screen.findByTestId('approvals.session-consent')).toBeNull();
     await screen.pressByTestIdAsync('approvals.reject');

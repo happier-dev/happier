@@ -21233,6 +21233,7 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
     },
 
     problem: {
+        commandFailed: '命令執行失敗。',
         title: '操作沒有成功',
         waitingTitle: '暫時還不行',
         subtreeDenied: '代理只能在自己的工作階段或由其領導的工作階段中啟動工作。',

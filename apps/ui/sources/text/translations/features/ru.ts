@@ -21383,6 +21383,7 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
     },
 
     problem: {
+        commandFailed: 'Команда завершилась с ошибкой.',
         title: 'Не получилось',
         waitingTitle: 'Пока невозможно',
         subtreeDenied: 'Агент может начинать работу только в своей сессии или в сессиях, которыми он руководит.',

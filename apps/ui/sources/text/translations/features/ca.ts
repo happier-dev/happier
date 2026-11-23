@@ -21372,6 +21372,7 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
     },
 
     problem: {
+        commandFailed: 'L’ordre ha fallat.',
         title: 'Això no ha funcionat',
         waitingTitle: 'Encara no és possible',
         subtreeDenied: 'Un agent només pot iniciar feina a la seva pròpia sessió o a les sessions que dirigeix.',

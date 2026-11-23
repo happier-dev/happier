@@ -9,6 +9,7 @@ import { resolveBuiltinWorkflowDefinitionV1 } from '@happier-dev/protocol/workfl
 
 import { act, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { readApprovalAutomaticChecksDecision } from './approvalAutomaticChecksDecision';
 
 vi.mock('@/text', async () =>
   (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
@@ -25,7 +26,7 @@ vi.mock(
 const {
   ApprovalAutomaticChecks,
   readApprovalAutomaticChecksCarryRefusal,
-  readApprovalAutomaticChecksDecision,
+  readApprovalAutomaticChecksForRequest,
   useApprovalAutomaticChecksControls,
 } = await import('./ApprovalAutomaticChecks');
 
@@ -122,6 +123,23 @@ describe('Action before checks on the approval card', () => {
     await screen.unmount();
   });
 
+  it('keeps a passed check and its Run on the executed approval', async () => {
+    const run = { ...ref, runId: 'run-completed' };
+    const completed = readApprovalAutomaticChecksForRequest({ status: 'executed',
+      automaticChecks: checks({ phase: 'passed', runs: [run], results: [{ ...run, outcome: 'passed' }] }) });
+    expect(completed).not.toBeNull();
+    const screen = await renderScreen(<ApprovalAutomaticChecks checks={completed!}
+      actionTitle="Deploy" serverId={null} onOpenRoute={() => undefined} />);
+    expect(screen.getTextContent()).toContain('workflows.triggers.checks.passed');
+    expect(screen.getTextContent()).toContain('workflows.triggers.checks.openRun');
+  });
+
+  it('retires the pending consent when its request is canceled', () => {
+    const pending = checks({ consents: [{ ...ref, decision: 'pending' }] });
+    const canceled = readApprovalAutomaticChecksForRequest({ status: 'canceled', automaticChecks: pending });
+    expect(readApprovalAutomaticChecksDecision(canceled)).toBeNull();
+  });
+
   it('shows a declined check reason and its Run when the Workflow name is unavailable', async () => {
     const runId = 'run-private';
     const screen = await renderScreen(<ApprovalAutomaticChecks
@@ -131,6 +149,37 @@ describe('Action before checks on the approval card', () => {
       onOpenRoute={() => undefined} testID="private-check" />);
     expect(screen.findByTestId('private-check:reason').props.children).toBe('workflows.contentUnavailable');
     expect(screen.getTextContent()).not.toContain('workflows.triggers.checks.aCheckLead');
+    expect(screen.getTextContent()).toContain('workflows.triggers.checks.openRun');
+  });
+
+  it('presents a typed Workflow source failure on the override card', async () => {
+    const run = { ...ref, runId: 'run-private' };
+    const screen = await renderScreen(<ApprovalAutomaticChecks checks={checks({ phase: 'override', runs: [run],
+      results: [{ ...run, outcome: 'failed', reason: 'source_unavailable' }] })}
+      actionTitle="Deploy" serverId={null} onOpenRoute={() => undefined} testID="source-check" />);
+    expect(screen.findByTestId('source-check:reason')?.props.children).toBe('workflows.problem.sourceUnavailable');
+  });
+
+  it('names the failed check and explains its command failure on a declined Team Deploy approval', async () => {
+    const run = { ...ref, runId: 'run-team-deploy' };
+    const declined = readApprovalAutomaticChecksForRequest({
+      status: 'rejected',
+      automaticChecks: checks({
+        phase: 'override',
+        selected: [{
+          ...selected, actionIds: ['deployments.deploy'], subjectKind: 'environment',
+          subjectKey: 'team-environment', reachesOthers: true, workflowId: 'builtin:open-a-pull-request',
+        }],
+        runs: [run],
+        results: [{ ...run, outcome: 'failed', reason: 'command_failed' }],
+      }),
+    });
+    const openRoute = vi.fn();
+    const screen = await renderScreen(<ApprovalAutomaticChecks checks={declined!}
+      actionTitle="Deploy" serverId={null} onOpenRoute={openRoute} testID="team-deploy-check" />);
+    expect(screen.getTextContent()).toContain('workflows.builtins.openAPullRequest.title');
+    expect(screen.findByTestId('team-deploy-check:reason')?.props.children).toBe('workflows.problem.commandFailed');
+    expect(screen.getTextContent()).not.toContain('command_failed');
     expect(screen.getTextContent()).toContain('workflows.triggers.checks.openRun');
   });
 

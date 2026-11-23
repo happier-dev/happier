@@ -20852,6 +20852,7 @@ const de = translated(workflowValueReferenceTranslations.de, {
     },
 
     problem: {
+        commandFailed: 'Der Befehl ist fehlgeschlagen.',
         title: 'Das hat nicht geklappt',
         waitingTitle: 'Noch nicht möglich',
         subtreeDenied: 'Ein Agent kann Arbeit nur in seiner eigenen Sitzung oder in Sitzungen starten, die er leitet.',

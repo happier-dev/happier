@@ -21293,6 +21293,7 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
     },
 
     problem: {
+        commandFailed: 'コマンドが失敗しました。',
         title: 'うまくいきませんでした',
         waitingTitle: 'まだできません',
         subtreeDenied: 'エージェントが作業を開始できるのは、自分のセッションまたは自分が指揮するセッションだけです。',

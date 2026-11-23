@@ -22,6 +22,8 @@ import { FiniteCommandFailureDetailsV1Schema, MachineSetupFailureDetailsV1Schema
 
 import { OpenProjectRefusalV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { t } from '@/text';
+import { formatWorkflowProblemMessage } from '@/components/workflows/presentation/workflowProblemPresentation';
+import { isWorkflowOperationErrorCode, WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { resolveLocalServiceOutput, type LocalServiceOutputRecovery } from '@/sync/domains/local/services/serviceFailure';
@@ -148,16 +150,21 @@ function readFailureHeadline(approval: ApprovalRequest, failure: ActionExecuteFa
 }
 
 /** The same failure reason and diagnostic projection for direct Actions and settled approvals. */
-export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics, scope?: 'deployment', fallbackReason?: string) {
+export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics, scope?: 'deployment' | 'workflowCheck', fallbackReason?: string) {
+    const technicalDetails = presentActionFailureTechnicalDetails(failure, scope === 'deployment' ? scope : undefined);
     const refusal = readActionFailurePresentationV1(failure.errorCode, failure.details);
     if (refusal) return {
         reason: refusal.message ?? t('common.requestFailed'), message: null, code: failure.errorCode ?? null,
-        technicalDetails: presentActionFailureTechnicalDetails(failure, scope),
+        technicalDetails,
+    };
+    if (scope === 'workflowCheck' && isWorkflowOperationErrorCode(failure.errorCode ?? null)) return {
+        reason: formatWorkflowProblemMessage(new WorkflowActionError({ rawCode: failure.errorCode ?? null,
+            message: failure.error, rawDetails: failure.details })),
+        message: null, code: failure.errorCode ?? null, technicalDetails,
     };
     const presented = presentApprovalFailure(failure, fallbackReason ?? failure.errorCode, '');
     const finiteCommand = FiniteCommandFailureDetailsV1Schema.safeParse(failure.details);
     const machineSetup = MachineSetupFailureDetailsV1Schema.safeParse(failure.details);
-    const technicalDetails = presentActionFailureTechnicalDetails(failure, scope);
     const retiredDomain = technicalDetails.find(line => line.key === 'failure-domain')?.value;
     const remedy = technicalDetails.find(line => line.key === 'failure-remedy')?.value;
     const deploymentRecovery = scope === 'deployment' ? readDeploymentRefusalRecovery(failure.errorCode, failure.details) : null;

@@ -21233,6 +21233,7 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
     },
 
     problem: {
+        commandFailed: '命令执行失败。',
         title: '操作没有成功',
         waitingTitle: '暂时还不行',
         subtreeDenied: '代理只能在自己的会话或由其领导的会话中启动工作。',

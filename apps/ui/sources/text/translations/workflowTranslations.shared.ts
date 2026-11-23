@@ -967,6 +967,7 @@ export const en = {
      * person.
      */
     problem: {
+        commandFailed: 'The command failed.',
         title: 'That did not work',
         waitingTitle: 'Not possible yet',
         subtreeDenied: 'An agent can only start work in its own session or in sessions it leads.',

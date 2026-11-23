@@ -21415,6 +21415,7 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
     },
 
     problem: {
+        commandFailed: 'La commande a échoué.',
         title: 'Ça n’a pas marché',
         waitingTitle: 'Pas encore possible',
         subtreeDenied: 'Un agent peut démarrer du travail uniquement dans sa propre session ou dans les sessions qu’il dirige.',

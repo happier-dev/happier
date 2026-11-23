@@ -21358,6 +21358,7 @@ const it = translated(workflowValueReferenceTranslations.it, {
     },
 
     problem: {
+        commandFailed: 'Il comando non è riuscito.',
         title: 'Non ha funzionato',
         waitingTitle: 'Non ancora possibile',
         subtreeDenied: 'Un agente può avviare lavoro solo nella propria sessione o nelle sessioni che coordina.',
