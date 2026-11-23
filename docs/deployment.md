@@ -188,7 +188,9 @@ only bounds that restate it (minimum 0 or 1, maximum 1). That rule is
 `SingleChoiceRestatedBoundsV1Schema` in the question owner, and the check strips
 the same bounds through `omitRestatedSingleChoiceBoundsV1`. The
 dialog renders those questions in its existing form, and an answer starts a new
-round against the retained snapshot. A connect explicitly rebuilds the catalog.
+round against the retained snapshot. When a result has both questions and checked
+recommendations, **Skip** reveals those recommendations without starting a run.
+A connect explicitly rebuilds the catalog.
 
 The runner is the `deploySuggestionRunnerV1` setting, the background-task runner
 picker that Settings shows as "Agent for app suggestions". When a suggestion run
