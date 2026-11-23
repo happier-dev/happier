@@ -274,7 +274,9 @@ describe('resolveExecutionRunChildSelection', () => {
 
     it('requires a child choice when the applied read proves direct custody', () => {
         const parent = { status: 'unavailable', reason: 'direct_custody' } as const;
-        expect(() => resolveExecutionRunChildSelection({ backendTarget: codexTarget, lifecycle: 'attached', parent }))
+        expect(() => resolveExecutionRunChildSelection({
+            backendTarget: codexTarget, lifecycle: 'attached', parent, fallbackSelection: providerSelection,
+        }))
             .toThrow(expect.objectContaining({ code: 'execution_run_child_choice_required', details: {
                 childChoice: expect.objectContaining({ parentRouteCompatibility: 'incompatible' }),
             } }));

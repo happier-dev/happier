@@ -1,6 +1,6 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { resolvePermissionModeForQueueingUserMessage } from '@/agent/runtime/permissions/modeFromUserMessage';
-import { areConnectedAccountSessionModelRefsEqual, createPersonalSessionModelSelection, SessionModelSelectionSchema, readSessionModelSelectionProviderConnectionId, type ConnectedAccountSessionModelRefV2, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import { areConnectedAccountSessionModelRefsEqual, createPersonalSessionModelSelection, isSessionModelRefSourceBound, SessionModelSelectionSchema, readSessionModelSelectionProviderConnectionId, type ConnectedAccountSessionModelRefV2, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { createProviderErrorV1, ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
 import { resolveSessionMcpNativeLaunchMaterial } from '@/mcp/runtime/sessionMcpNativeLaunchMaterial';
 import { randomUUID } from 'node:crypto';
@@ -4051,7 +4051,8 @@ async function runHostedSessionRuntime(
     const teamCredentialModel = hookRuntime.readAppliedTeamCredentialModel?.();
     if (teamCredentialModel === undefined) return unavailable('native_applied_selection_unavailable');
     if (teamCredentialModel && teamCredentialModel.modelId !== appliedTarget.selection.modelId) return unavailable('team_model_mismatch');
-    if (teamCredentialModel && appliedTarget.selection.providerConnectionId !== null) return unavailable('team_route_mismatch');
+    const modelSelection = appliedTarget.connectedAccountSelection ?? appliedTarget.selection;
+    if (teamCredentialModel && isSessionModelRefSourceBound(modelSelection)) return unavailable('team_route_mismatch');
     const connected = await readAppliedParentConnectedServices({
       sessionId: currentLifecycleSession.sessionId, runnerPid: process.pid, agentId: policyAgentId,
     }, { signal: startupRegistrationLifetime.signal }).catch(() => null);
@@ -4067,13 +4068,13 @@ async function runHostedSessionRuntime(
       return unavailable('native_applied_selection_changed');
     }
     if (connected.status !== 'applied') return unavailable('connected_services_unavailable', undefined, connected);
-    const unknownNativeModel = !teamCredentialModel && appliedTarget.selection.modelId === 'default'
-      && appliedTarget.selection.providerConnectionId === null;
+    const unknownNativeModel = !teamCredentialModel && modelSelection.modelId === 'default'
+      && !isSessionModelRefSourceBound(modelSelection);
     return {
       status: 'applied',
       backendTarget: runtimeOpts.backendTarget ?? { kind: 'backend', backendId: policyAgentId },
-      modelId: unknownNativeModel ? null : appliedTarget.selection.modelId,
-      ...(teamCredentialModel ? { teamCredentialModel } : unknownNativeModel ? {} : { modelSelection: appliedTarget.selection }),
+      modelId: unknownNativeModel ? null : modelSelection.modelId,
+      ...(teamCredentialModel ? { teamCredentialModel } : unknownNativeModel ? {} : { modelSelection }),
       connectedServices: filterSuppressedConnectedServiceBindings({
         bindings: connected.connectedServices,
         suppressConnectedServiceIds: appliedTarget.runtimeBindingBasis?.agentSupport.authIsolation.suppressConnectedServiceIds ?? [],

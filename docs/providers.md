@@ -1232,10 +1232,17 @@ together; older Session processes and mixed 0.2/0.3 operation are unsupported.
 Native Connected Service inheritance retains the selected account or pool
 identity, including a pool rather than its currently active member. It never
 copies credentials, activation handles or capabilities. The child rematerializes
-that choice under current admission. A different Agent must admit the inherited
-source/model through its compatibility adapter; unavailable applied state or an
-incompatible choice returns a typed refusal requiring a choice, without changing
-models or billing sources.
+that choice under current admission. A qualified Connected Account Provider
+model carries its applied purpose, endpoint template and account or pool choice
+into that same admission. For Vercel AI Gateway, the broker uses the configured
+team from the account it opens for the child. A directly shared Team key
+requires a child credential choice. An explicit Account-default Run starts
+without reading the parent's selection.
+
+A different Agent must admit the inherited source and model through its
+compatibility adapter. Unavailable applied state or an incompatible choice
+returns a typed refusal requiring a choice, without changing models or
+billing sources.
 
 Workflow admission freezes the origin Session's Connected selection when a leaf
 resolves to that same Agent, whether through a Role, a literal engine or an

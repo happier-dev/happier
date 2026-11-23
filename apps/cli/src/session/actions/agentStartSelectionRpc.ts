@@ -3,7 +3,7 @@ import { z } from 'zod/mini';
 import { AgentStartSessionCallerV1Schema } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
 import { BackendTargetRefV2Schema, PersistedAgentTargetRefV1Schema } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
-import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
+import { PersonalSessionModelRefSchema } from '@happier-dev/protocol/providers/selection/v2';
 import { TeamCredentialProviderModelSelectionV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
@@ -21,7 +21,7 @@ const backendTargetSchema = lazyZodSchema(() => z.union([
 const selectionSchema = z.discriminatedUnion('status', [
   ConnectedServiceAppliedParentSelectionUnavailableSchema,
   z.strictObject({ status: z.literal('applied'), backendTarget: backendTargetSchema,
-    modelId: z.nullable(z.string()), modelSelection: z.optional(ProviderBoundModelRefSchema),
+    modelId: z.nullable(z.string()), modelSelection: z.optional(PersonalSessionModelRefSchema),
     teamCredentialModel: z.optional(TeamCredentialProviderModelSelectionV1Schema),
     connectedServices: z.nullable(ConnectedServiceBindingsV2Schema) }),
 ]);

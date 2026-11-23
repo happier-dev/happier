@@ -85,11 +85,14 @@ export function createCliAgentStartContext(
     const sessionRoleContext = !scopeOnly ? params.getSessionRoleContext?.() : undefined;
     const workflowStepRoleDefaultEngine = !scopeOnly && session.sessionId === params.sessionId
       && !params.getCurrentAppliedChildSelection && !sessionRoleContext ? params.workflowStepRoleDefaultEngine : undefined;
+    const needsAppliedParent = executionRunChildSelectionNeedsAppliedParent({
+      lifecycle: 'attached', childSelection: options?.executionRunChildSelection,
+    });
     const prepareStartReads = async () => {
       let appliedChildSelection: import('@/agent/runtime/bridges/executionRun/runtime/openInputs').ExecutionRunAppliedParentSelection | undefined;
       const readAppliedSelection = session.sessionId === params.sessionId
         ? params.getCurrentAppliedChildSelection ?? sessionRoleContext?.readAppliedChildSelection : session.readAppliedChildSelection;
-      if (!scopeOnly && readAppliedSelection) {
+      if (!scopeOnly && needsAppliedParent && readAppliedSelection) {
         try { appliedChildSelection = await readAppliedSelection(); }
         catch { appliedChildSelection = { status: 'unavailable' }; }
       }
@@ -97,11 +100,9 @@ export function createCliAgentStartContext(
       // Workflow child engine. A role-free Run can proceed with caller facts
       // and no launch configuration when the native selector allows it.
       const hasLaunchBaseline = !scopeOnly && (appliedChildSelection?.status === 'applied' || Boolean(workflowStepRoleDefaultEngine));
-      const childSelection = options?.executionRunChildSelection;
       const directParentCustody = options?.purpose === 'attached_execution_run'
         && appliedChildSelection?.status === 'unavailable' && appliedChildSelection.reason === 'direct_custody';
-      if (!scopeOnly && (!session.backendTarget || (!hasLaunchBaseline && !directParentCustody
-        && (!childSelection || executionRunChildSelectionNeedsAppliedParent({ lifecycle: 'attached', childSelection }))))) {
+      if (!scopeOnly && (!session.backendTarget || (!hasLaunchBaseline && !directParentCustody && needsAppliedParent))) {
         return { effectiveSnapshotUnavailable: true } as const;
       }
       if (hasLaunchBaseline) await measureActionStartPhaseV1(context, 'role_overrides', () => prepareAccountRoleOverrides(context.signal));

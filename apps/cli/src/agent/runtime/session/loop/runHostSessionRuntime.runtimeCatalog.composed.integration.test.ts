@@ -5746,9 +5746,11 @@ describe('runHostSessionRuntime', () => {
       expect(harness.session.getMetadataSnapshot().providerBindingV1).toBeUndefined();
       if (!controls?.readAppliedChildSelection) throw new Error('Applied parent reader missing');
       const readAppliedChildSelection = controls.readAppliedChildSelection;
-      expect(await readAppliedChildSelection()).toMatchObject({
-        status: 'applied', modelId: selection.modelId, modelSelection: selection,
+      const parent = await readAppliedChildSelection();
+      const child = resolveExecutionRunChildSelection({
+        backendTarget: harness.opts.backendTarget!, lifecycle: 'attached', parent,
       });
+      expect(child).toMatchObject({ selectionSource: 'inherited', modelSelection: qualifiedSelection });
       if (admission === 'runtime-successor') {
         if (!params.transitionModelSelectionBeforePrompt) throw new Error('Model transition owner missing');
         await expect(params.transitionModelSelectionBeforePrompt(qualifiedSelection, async transfer => {
@@ -5757,7 +5759,7 @@ describe('runHostSessionRuntime', () => {
           run: () => params.runtime.resetOrDisposeRuntime('runtime_recovery', { kind: 'create' }),
         })).resolves.toMatchObject({ ok: true, status: 'applied' });
         await vi.waitFor(async () => expect(await readAppliedChildSelection()).toMatchObject({
-          status: 'applied', modelId: selection.modelId, modelSelection: selection,
+          status: 'applied', modelId: selection.modelId, modelSelection: qualifiedSelection,
         }));
       }
     };

@@ -73,9 +73,20 @@ it('publishes the live Session applied selection after its proposal turn complet
     release();
     await expect(pending).resolves.toMatchObject({ selection });
     expect(nativeReads).toBe(9);
+    const qualifiedSelection = {
+      ...selection,
+      backendTarget: teamSelection.backendTarget,
+      modelSelection: {
+        source: 'connected_account', agentTargetKey: 'agent:acme.agent/worker', modelId: selection.modelId,
+        purpose: { consumer: { pluginId: 'acme.provider', localId: 'gateway' }, purpose: 'inference' },
+        endpointTemplateId: 'responses',
+      },
+    } as const;
+    readSelection = async () => qualifiedSelection;
+    await expect(read('selection-turn')).resolves.toEqual({ sessionId, turnId: 'selection-turn', selection: qualifiedSelection });
     registration.dispose();
     turnId = 'selection-turn';
     await expect(read('selection-turn')).resolves.toMatchObject({ selection: { status: 'unavailable' } });
-    expect(nativeReads).toBe(9);
+    expect(nativeReads).toBe(10);
   } finally { registration.dispose(); }
 });

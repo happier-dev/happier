@@ -795,6 +795,35 @@ describe('startExecutionRun', () => {
     }
   });
 
+  it('starts an Account-default child without asking its parent for credential custody', async () => {
+    const backendTarget = { kind: 'builtInAgent', agentId: 'claude' } as const;
+    const accountDefault = { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'account-default' };
+    const readAppliedParentSelection = vi.fn(() => ({ status: 'unavailable', reason: 'direct_custody' } as const));
+    const runs = new Map<string, ExecutionRunState>();
+    const controllers = new Map<string, ExecutionRunController>();
+    const createRuntime = () => createProvisioningRuntime();
+    const voiceAgentManager = new VoiceAgentManager({ createRuntime });
+    try {
+      const started = await startExecutionRun({
+        params: { sessionId: 'parent_session_1', intent: 'delegate', backendTarget, childSelection: 'agentDefault',
+          accountSettings: accountSettingsParse({ providerDefaultModelSelectionsByAgentTargetKeyV1: {
+            [accountDefault.agentTargetKey]: { v: 1, updatedAt: 1, ref: accountDefault },
+          } }),
+          permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response' },
+        childSelectionContext: { lifecycle: 'attached', readAppliedParentSelection },
+        parentProvider: 'claude', sendAcp: async () => {}, streamedTranscriptSession: null,
+        createRuntime, getNowMs: () => 1, budgetRegistry: null, runs, controllers,
+        enqueueMarkerWrite: async () => {}, writeActivityMarker: async () => {}, finishRun: async () => {},
+        executeBoundedRun: async () => {}, send: async () => ({ ok: true }), voiceAgentManager,
+      });
+      expect(readAppliedParentSelection).not.toHaveBeenCalled();
+      expect(started.resolvedSelection).toMatchObject({ source: 'explicit', modelSelection: accountDefault });
+    } finally {
+      await Promise.all([...controllers.values()].flatMap(controller => controller.kind === 'backend' ? [controller.backend.dispose()] : []));
+      await voiceAgentManager.dispose();
+    }
+  });
+
   it('refuses attached omission when applied parent state is unavailable before creating or materializing a run', async () => {
     const runs = new Map<string, ExecutionRunState>();
     const voiceAgentManager = new VoiceAgentManager({ createRuntime: () => { throw new Error('unused'); } });

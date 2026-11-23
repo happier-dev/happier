@@ -5,7 +5,8 @@ import { resolveRolesSnapshotV1 } from '@happier-dev/protocol/prompts/roles/reso
 import type { AccountRoleOverridesReadV1 } from '@happier-dev/protocol/prompts/roles/roleOverrideRecordV1';
 import type { RoleSourceInventoryV1 } from '@happier-dev/protocol/prompts/roles/accountRoleActions';
 import { readSessionCapabilitySelectionFromMetadataV1 } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
-import type { AccountSettings, AgentStartContextV1, PersistedBackendTargetRefV2, ResolvedRolesSnapshotV1, RoleEngineV1, ProviderBoundModelRef } from '@happier-dev/protocol';
+import type { AccountSettings, AgentStartContextV1, PersistedBackendTargetRefV2, ResolvedRolesSnapshotV1, RoleEngineV1 } from '@happier-dev/protocol';
+import { createPersonalSessionModelSelection, type PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import {
   readAcpSessionModeIntentFromMetadata,
   readAcpConfigOptionIntentFromMetadata,
@@ -26,7 +27,7 @@ export function readCliSessionEngineBaselineV1(input: Readonly<{
   appliedChildSelection?: Extract<ExecutionRunAppliedParentSelection, { status: 'unavailable' }>
     | Pick<Extract<ExecutionRunAppliedParentSelection, { status: 'applied' }>, 'status' | 'modelId' | 'modelSelection' | 'teamCredentialModel'>;
 }>): Readonly<{
-  modelSelection: ProviderBoundModelRef | undefined;
+  modelSelection: PersonalSessionModelRef | undefined;
   defaultEngine: RoleEngineV1;
 }> {
   const agentTargetKey = buildBackendTargetKeyV2(input.backendTarget);
@@ -117,7 +118,8 @@ export function resolveCliAgentStartContextV1(input: Readonly<{
     baseline: { machineId: input.machineId, directory: input.directory,
       ...(input.directParentCustody && !workflowRun ? { directParentCustody: true } : {}),
       ...(applied ? { configuration: {
-      agentTarget: input.backendTarget, modelSelection: model, permissionMode: ceiling,
+      agentTarget: input.backendTarget, permissionMode: ceiling,
+      modelSelection: model && 'source' in model ? createPersonalSessionModelSelection(model, 0) : model,
       agentModeId: mode, configOptions,
       ...(typeof metadata.profileId === 'string' ? { profileId: metadata.profileId } : {}),
       connectedServices: applied.teamCredentialModel ? undefined : applied.connectedServices,

@@ -75,6 +75,11 @@ Members receive model access through the Team's broker. For direct delivery or a
 Sandbox that requires a native credential, use a separate Gateway API key in
 Saved Secrets.
 
+By default, an attached child Run inherits the parent Session's signed-in
+Gateway model and uses the Vercel team configured on that account. If the parent
+uses a directly shared key, choose a credential source for the child. Choose
+**Account default** to use your Happier Account's default for the child Agent.
+
 The separate [Team credential delivery contract](/accounts/team-credentials#cloud-provider-delivery)
 is being integrated for company-managed Vercel sandboxes. The custodian explicitly
 allows vendor disclosure and confirms experimental Agent/model/endpoint pairings

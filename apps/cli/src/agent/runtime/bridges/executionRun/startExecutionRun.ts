@@ -83,7 +83,7 @@ import { shouldPublishExecutionRunTranscriptMarker } from './executionRunTranscr
 import { isExecutionRunControllerCurrent, settleExecutionRunController } from './settleExecutionRunController';
 import { createExactTurnUsageAccumulator } from '@/usage/exactTurnUsage';
 import { assertExecutionRunStructuredAnalysisModelAllowed, usesExecutionRunProviderModel, readExecutionRunOfferedModel, readExecutionRunSelectedModelStructuredOutputSupport } from './structuredOutputAdmission';
-import { executionRunChildSelectionNeedsAppliedParent, resolveExecutionRunAgentDefaultSelection, resolveExecutionRunChildSelection, type ExecutionRunAppliedParentSelection, type ExecutionRunAppliedParentSelectionReader, type ResolvedExecutionRunChildSelection } from './runtime/openInputs';
+import { executionRunChildSelectionNeedsAppliedParent, readExecutionRunParentChoiceModel, resolveExecutionRunAgentDefaultSelection, resolveExecutionRunChildSelection, type ExecutionRunAppliedParentSelection, type ExecutionRunAppliedParentSelectionReader, type ResolvedExecutionRunChildSelection } from './runtime/openInputs';
 import { projectExecutionRunError } from './errors';
 import { resolveExecutionRunInitialInputLocalId } from './initialInput';
 import { sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
@@ -608,7 +608,7 @@ async function startAdmittedExecutionRunInWorkspace(
       const details = 'details' in error ? readRecord(error.details) : null;
       Object.assign(error, { details: { ...details, childChoice: projectExecutionRunChildChoiceV1({
         agentTargetKey: buildBackendTargetKeyV2(readBackendTargetRefV2(args.params.backendTarget)),
-        parentModelSelection: parent?.status === 'applied' ? parent.modelSelection ?? null : null,
+        parentModelSelection: readExecutionRunParentChoiceModel(parent),
         parentRouteCompatibility: readRecord(details?.providerError)?.code === 'provider_compatibility_unverified' ? 'unverified' : 'incompatible',
       }) } });
     }

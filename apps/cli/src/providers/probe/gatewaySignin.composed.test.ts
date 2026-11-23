@@ -8,6 +8,7 @@ import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/
 import { qualifiedConnectedAccountPreferenceServiceKey } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
 import { SessionModelSelectionSchema } from '@happier-dev/protocol/providers/selection/v2';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { resolveExecutionRunChildSelection } from '@/agent/runtime/bridges/executionRun/runtime/openInputs';
 import { prepareExecutionRunProviderLaunch } from '@/agent/runtime/bridges/executionRun/runtime/providerLaunch';
 import { projectRunnerExecutionRunProviderLaunch } from '@/daemon/agentRuntime/runnerExecutionRunProviderLaunch';
 import { createConnectedAccountRequestAuthService } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthService';
@@ -81,7 +82,8 @@ function headerValues(headers: readonly string[], name: string): string[] {
   return values;
 }
 
-it('launches the selected signed-in Gateway model for a Claude Session through local request auth', async () => {
+const gatewaySigninScenarios = ['Claude Session', 'attached child Run'] as const;
+it.each(gatewaySigninScenarios)('launches the selected signed-in Gateway model for a %s through local request auth', async scenario => {
   await withConfiguredDaemonTestHome({ prefix: 'gateway-signin-' }, async ({ homeDir }) => {
     const cleanups: Array<() => unknown> = [];
     const defer = (cleanup: () => unknown) => { cleanups.unshift(cleanup); };
@@ -290,6 +292,52 @@ it('launches the selected signed-in Gateway model for a Claude Session through l
       expect(admissions).toHaveBeenCalledTimes(1);
       expect(lookupRequestAuth).not.toHaveBeenCalled();
 
+      const streamInheritedRun = async () => {
+        if (!handoff?.selection) throw new Error('Expected an applied Account model');
+        const inherited = resolveExecutionRunChildSelection({
+          backendTarget, lifecycle: 'attached', parent: {
+            status: 'applied', backendTarget, modelId: handoff.selection.modelId,
+            modelSelection: handoff.selection, connectedServices,
+          },
+        });
+        expect(inherited.modelSelection).toEqual(handoff.selection);
+        const run = await prepareExecutionRunProviderLaunch({
+          selection: inherited.modelSelection, backendTarget, machineId, agentId, runId: 'gateway-finite-run',
+          connectedServices: inherited.connectedServices, featureEnabled: true, happyHomeDir: fixture.happyHomeDir,
+          accountSettingsSnapshot: snapshot, readModelProjection: models.projectModels,
+          runtimeRegistryLease: fixture.lease, resolveManagedPurposeBindingIntentSelection: resolveSelection,
+          connectedAccountProviderLaunch: directAccountRuntime,
+        });
+        defer(async () => { await run.cleanupOnExit?.(); });
+        expect(run.providerBinding?.model.id).toBe(modelId);
+        expect(projectRunnerExecutionRunProviderLaunch(run).providerBinding).toMatchObject({
+          source: { kind: 'connected_account', account, purpose }, model: { id: modelId },
+        });
+        expect(await run.revalidateBeforeCommit()).toEqual({ ok: true });
+        for (const token of [vendorToken, rotatedToken]) {
+          expect(JSON.stringify(run.environment).includes(token)).toBe(false);
+        }
+        const beforeRunRequest = upstream.requests.length;
+        const runUrl = new URL(run.environment.ANTHROPIC_BASE_URL!);
+        runUrl.pathname = `${runUrl.pathname.replace(/\/$/u, '')}/v1/messages`;
+        runUrl.search = 'teamId=wrong';
+        const runResponse = await fetch(runUrl, {
+          method: 'POST', headers: { authorization: `Bearer ${run.environment.ANTHROPIC_AUTH_TOKEN}`,
+            'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+          body: JSON.stringify({ model: modelId, stream: true, max_tokens: 32, messages: [{ role: 'user', content: 'finite Run' }] }),
+        });
+        expect(runResponse.status).toBe(200);
+        expect(await runResponse.text()).toContain(answer);
+        expect(upstream.requests).toHaveLength(beforeRunRequest + 1);
+        const upstreamRequest = upstream.requests.at(-1)!;
+        expect(new URL(upstreamRequest.pathAndQuery, upstream.origin).searchParams.getAll('teamId')).toEqual([teamId]);
+        expect(headerValues(upstreamRequest.rawHeaders, 'x-vercel-ai-gateway-team')).toEqual([teamId]);
+      };
+      if (scenario === 'attached child Run') {
+        await streamInheritedRun();
+        return;
+      }
+
       const messagesUrl = new URL(endpoint!);
       messagesUrl.pathname = `${messagesUrl.pathname.replace(/\/$/u, '')}/v1/messages`;
       messagesUrl.search = 'teamId=forged-one&teamId=forged-two&fixture=kept';
@@ -438,38 +486,11 @@ it('launches the selected signed-in Gateway model for a Claude Session through l
         expect(headerValues(request.rawHeaders, 'authorization').join() === `Bearer ${rotatedToken}`).toBe(true);
       }
 
-      if (selection.v !== 2 || selection.ref.source !== 'connected_account') throw new Error('Expected an Account model');
       // The held Session needs no new model list. A new Run admits against a catalog
       // observed for the current grant revision after the explicit reconnect.
       const reconnectedCatalog = await models.projectModels({ machineId, agentTargetKey, connectedServices });
       expect(reconnectedCatalog.status).toBe('success');
-      const run = await prepareExecutionRunProviderLaunch({
-        selection: selection.ref, backendTarget, machineId, agentId, runId: 'gateway-finite-run',
-        connectedServices, featureEnabled: true, happyHomeDir: fixture.happyHomeDir,
-        accountSettingsSnapshot: snapshot, readModelProjection: models.projectModels,
-        runtimeRegistryLease: fixture.lease, resolveManagedPurposeBindingIntentSelection: resolveSelection,
-        connectedAccountProviderLaunch: directAccountRuntime,
-      });
-      defer(async () => { await run.cleanupOnExit?.(); });
-      expect(run.providerBinding?.model.id).toBe(modelId);
-      expect(projectRunnerExecutionRunProviderLaunch(run).providerBinding).toMatchObject({
-        source: { kind: 'connected_account', account, purpose }, model: { id: modelId },
-      });
-      expect(await run.revalidateBeforeCommit()).toEqual({ ok: true });
-      expect(JSON.stringify(run.environment)).not.toContain(rotatedToken);
-      const beforeRunRequest = upstream.requests.length;
-      const runUrl = new URL(run.environment.ANTHROPIC_BASE_URL!);
-      runUrl.pathname = `${runUrl.pathname.replace(/\/$/u, '')}/v1/messages`;
-      runUrl.search = 'teamId=wrong';
-      const runResponse = await fetch(runUrl, {
-        method: 'POST', headers: { authorization: `Bearer ${run.environment.ANTHROPIC_AUTH_TOKEN}`,
-          'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: modelId, stream: true, max_tokens: 32, messages: [{ role: 'user', content: 'finite Run' }] }),
-      });
-      expect(runResponse.status).toBe(200);
-      expect(await runResponse.text()).toContain(answer);
-      expect(upstream.requests).toHaveLength(beforeRunRequest + 1);
-      expect(new URL(upstream.requests.at(-1)!.pathAndQuery, upstream.origin).searchParams.getAll('teamId')).toEqual([teamId]);
+      await streamInheritedRun();
     } finally {
       for (const cleanup of cleanups) await cleanup();
     }

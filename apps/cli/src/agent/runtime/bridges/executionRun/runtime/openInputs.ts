@@ -1,8 +1,7 @@
 import { AgentSessionConfigurationSnapshotV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
-import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
 import { readAgentDefaultModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
 import { isSessionModelRefSourceBound, PersonalSessionModelRefSchema, type PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
-import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { ConnectedServiceBindingsV2Schema, projectConnectedServiceBindingsForChild } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { resolveAgentStartBaselineSelectionV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { TeamCredentialProviderModelSelectionV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -25,7 +24,7 @@ export type ExecutionRunAppliedParentSelection = Readonly<
         status: 'applied';
         backendTarget: BackendTargetRefV2Input;
         modelId: string | null;
-        modelSelection?: ProviderBoundModelRef;
+        modelSelection?: PersonalSessionModelRef;
         teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
         connectedServices: ConnectedServiceBindingsV2 | null;
     }
@@ -59,6 +58,14 @@ export function readExecutionRunAppliedParentModelId(parent: ExecutionRunApplied
     return parent.status === 'applied'
         ? parent.teamCredentialModel?.modelId ?? parent.modelSelection?.modelId ?? parent.modelId
         : null;
+}
+
+/** The V1 child-choice prompt can show legacy Provider connections only. */
+export function readExecutionRunParentChoiceModel(
+    parent: ExecutionRunAppliedParentSelection | undefined,
+): ProviderBoundModelRef | null {
+    const model = parent?.status === 'applied' ? parent.modelSelection : undefined;
+    return model && !('source' in model) ? model : null;
 }
 
 function childSelectionRefusal(code: 'execution_run_parent_selection_unavailable' | 'execution_run_child_choice_required', message: string) {
@@ -143,7 +150,7 @@ export function resolveExecutionRunChildSelection(input: ExecutionRunChildSelect
             Object.assign(error, { details: { childChoice: projectExecutionRunChildChoiceV1({
                 agentTargetKey: buildBackendTargetKeyV2(readBackendTargetRefV2(input.backendTarget)),
                 parentRouteCompatibility: 'incompatible',
-                parentModelSelection: input.parent?.status === 'applied' ? input.parent.modelSelection ?? null : null,
+                parentModelSelection: readExecutionRunParentChoiceModel(input.parent),
             }) } });
         }
         throw error;
@@ -181,15 +188,14 @@ function resolveExecutionRunChildSelectionInput(input: ExecutionRunChildSelectio
 
     const parent = input.parent;
     if (!parent || parent.status !== 'applied') {
-        if (!hasExplicitCredentialRoute && input.fallbackSelection) {
-            return resolveExecutionRunChildSelectionInput({ ...input, lifecycle: 'independent',
-                modelSelection: { ...input.fallbackSelection, modelId: modelId ?? input.fallbackSelection.modelId } });
-        }
         if (parent?.reason === 'direct_custody') {
             resolveAgentStartBaselineSelectionV1({
                 ...input, targetKey: buildBackendTargetKeyV2(readBackendTargetRefV2(input.backendTarget)),
                 profileId: undefined, connectedServices: input.connectedServices,
             }, { directParentCustody: true });
+        } else if (!hasExplicitCredentialRoute && input.fallbackSelection) {
+            return resolveExecutionRunChildSelectionInput({ ...input, lifecycle: 'independent',
+                modelSelection: { ...input.fallbackSelection, modelId: modelId ?? input.fallbackSelection.modelId } });
         }
         throw childSelectionRefusal('execution_run_parent_selection_unavailable',
             'The parent applied model and route are unavailable. Choose an explicit child model and route.');
@@ -233,8 +239,8 @@ function resolveExecutionRunChildSelectionInput(input: ExecutionRunChildSelectio
         throw childSelectionRefusal('execution_run_child_choice_required',
             'Choose a child credential route; direct Team credential custody cannot be inherited.');
     }
-    const inheritedProvider = parent.modelSelection ? ProviderBoundModelRefSchema.parse(parent.modelSelection) : undefined;
-    if (!sameAgent && !inheritedTeam && !inheritedProvider?.providerConnectionId && !modelId) {
+    const inheritedModel = parent.modelSelection;
+    if (!sameAgent && !inheritedTeam && !(inheritedModel && isSessionModelRefSourceBound(inheritedModel)) && !modelId) {
         throw childSelectionRefusal('execution_run_child_choice_required',
             'Choose a model and credential route supported by the child Agent.');
     }
@@ -242,12 +248,16 @@ function resolveExecutionRunChildSelectionInput(input: ExecutionRunChildSelectio
     const agentTargetKey = sameAgent && parentModelTargetKey
         ? parentModelTargetKey
         : buildBackendTargetKeyV2(readBackendTargetRefV2(input.backendTarget));
-    const connectedServices = projectInheritedConnectedServices(parent.connectedServices, input.backendTarget, sameAgent, input.agentCatalogEntry);
+    // The Provider purpose owns its account route, including on Agents that do
+    // not declare that account as a native sign-in. Launch re-admits the route.
+    const connectedServices = inheritedModel && 'source' in inheritedModel
+        ? parent.connectedServices && projectConnectedServiceBindingsForChild(parent.connectedServices)
+        : projectInheritedConnectedServices(parent.connectedServices, input.backendTarget, sameAgent, input.agentCatalogEntry);
     return {
         ...(resolvedModelId ? { modelId: resolvedModelId } : {}),
         ...(inheritedTeam ? { teamCredentialModel: { ...inheritedTeam, agentTargetKey, modelId: resolvedModelId ?? inheritedTeam.modelId } } : {}),
         ...(!inheritedTeam && resolvedModelId ? {
-            modelSelection: { agentTargetKey, providerConnectionId: inheritedProvider?.providerConnectionId ?? null, modelId: resolvedModelId },
+            modelSelection: { ...(inheritedModel ?? { providerConnectionId: null }), agentTargetKey, modelId: resolvedModelId },
         } : {}),
         connectedServices,
         selectionSource: modelId ? 'explicit' : 'inherited',

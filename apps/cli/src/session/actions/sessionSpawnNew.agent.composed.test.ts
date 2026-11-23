@@ -134,7 +134,7 @@ it('admits a J6 Account-default child without inheriting the unavailable parent 
     readOrganization: async () => ({ manager: null, origin: null }),
     readRoleSources: createRoleSourceReader({}),
     readAccountRoleOverrides: () => ({ status: 'ready', overrides: {} }),
-    readAppliedChildSelection: () => appliedSelection,
+    readAppliedChildSelection: vi.fn(() => appliedSelection),
   });
   vi.spyOn(axios, 'get').mockImplementation(async url => {
     const path = new URL(String(url)).pathname;
@@ -178,6 +178,7 @@ it('admits a J6 Account-default child without inheriting the unavailable parent 
   const accepted = { ok: true, result: { runId: 'native-admission' } };
   const control = await invoke({ childSelection: 'agentDefault' });
   expect(control, JSON.stringify(control.ok ? null : { errorCode: control.errorCode, details: control.details })).toMatchObject(accepted);
+  expect(roles.readAppliedChildSelection).not.toHaveBeenCalled();
   executionRunStart.mockClear();
   // Exact projection emitted by the current daemon for a direct Team route.
   appliedSelection = { status: 'unavailable' };
