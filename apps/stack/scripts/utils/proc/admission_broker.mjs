@@ -368,12 +368,9 @@ export function createAdmissionBroker({ root,
     return nearestRank(supersets, 0.5) ?? nearestRank(family, 0.5)
       ?? nearestRank(sameProjects, 0.5) ?? nearestRank(sameClass, 0.5);
   }
-  function workerCeiling(item) {
-    const className = item.resourceClass ?? item.className;
-    const cold = resolveColdAdmissionCpuCost(className);
-    // A distinct numeric declaration specifies a fixed CPU limit, such as
-    // the two-core single-threaded compiler mode. Older queued clients with
-    // symbolic declarations follow the current broker's class policy.
+  function workerCeiling(item, cold) {
+    // A smaller explicit limit retains modes such as single-threaded TypeScript.
+    // A current catalog declaration still follows exact-identity history.
     if (Number.isSafeInteger(item.cpuCost) && item.cpuCost !== cold) return item.cpuCost;
     const observed = nearestRank(recordedIdentityPeaks().get(cpuHistoryKey(identityKey(item))) ?? [], 0.95);
     return Math.min(totalCpuCores, observed === undefined ? cold : Math.ceil(observed * 1.5 / 1000));
@@ -397,7 +394,13 @@ export function createAdmissionBroker({ root,
     item.floorKiB = peak === undefined ? requestedColdFloorKiB(item) : roundPeak(peak);
     const resourceClass = item.resourceClass ?? item.className;
     const workerGrant = usesElasticAdmissionWorkers(resourceClass);
-    item.workerCeiling = workerCeiling(item);
+    const cold = resolveColdAdmissionCpuCost(resourceClass);
+    // Retained clients can resend either legacy CPU field after succession.
+    item.mappedCpuCost = [item.cpuCost, item.requestedCpuCores].find(cost =>
+      cost === 'host' || (Number.isSafeInteger(cost) && cost > cold));
+    item.workerCeiling = item.mappedCpuCost === undefined
+      ? workerCeiling(item, cold)
+      : Math.min(totalCpuCores, cold);
     if (isCommitEntry(item)) item.workerCeiling = Math.min(totalCpuCores, COMMIT_ENTRY_CPU_SHARE);
     const sourceWebExport = resourceClass === SOURCE_WEB_EXPORT_ADMISSION_CLASS;
     const ceiling = Math.min(totalCpuCores, item.workerCeiling,
@@ -1413,7 +1416,8 @@ export function createAdmissionBroker({ root,
       if (request.kind === 'check') {
         const valid = Number.isSafeInteger(request.floorKiB) && request.floorKiB > 0 && validCpuRequest(request);
         const available = status(readCpuForOffer());
-        const probe = { cpuCost: request.cpuCost, className: request.className, floorKiB: request.floorKiB };
+        const probe = { cpuCost: request.cpuCost, requestedCpuCores: request.requestedCpuCores,
+          className: request.className, floorKiB: request.floorKiB };
         if (valid) sizeWaitingItem(probe);
         const minimumFloorKiB = probe.floorOptions?.at(-1).floorKiB ?? probe.floorKiB;
         const memoryFits = minimumFloorKiB <= available.unreservedMemoryKiB;
@@ -1494,6 +1498,12 @@ export function createAdmissionBroker({ root,
       item.requestedFloorOptions = request.floorOptions?.toSorted((left, right) =>
         right.floorKiB - left.floorKiB || right.workers - left.workers);
       sizeWaitingItem(item);
+      if (item.mappedCpuCost !== undefined) {
+        const resourceClass = item.resourceClass ?? item.className;
+        console.warn(JSON.stringify({ event: 'admission-legacy-cpu-mapped',
+          className: Object.hasOwn(HEAVYWEIGHT_COMMAND_RESOURCES, resourceClass) ? resourceClass : 'unknown',
+          cpuCost: item.mappedCpuCost, cpuCores: item.workerCeiling }));
+      }
       if (item.p99DurationMs === undefined) Object.assign(item, recordedIdentityDuration(item));
       // A waiter re-registering after a succession resends the releases it was holding
       // (`held`), so the successor does not admit work ahead of it. Capped by its own
