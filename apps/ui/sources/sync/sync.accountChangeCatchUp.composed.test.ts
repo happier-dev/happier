@@ -435,7 +435,7 @@ describe('sync AccountChange catch-up projection', () => {
             recipientEnvelope: newEnvelope?.envelope ?? null }, readPolicy: { kind: 'team-resource' } })).toBe('Saved before join');
     });
 
-    it('opens a preset for a later Team member after one manager bootstrap census and no preset screen', async () => {
+    it('opens a preset for a later Team member after Sessions settles, using one bootstrap census and no preset screen', async () => {
         const { default: nacl } = await import('tweetnacl');
         const { openManagedMachinePresetContentV1, sealManagedMachinePresetContentV1 } =
             await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
@@ -464,9 +464,17 @@ describe('sync AccountChange catch-up projection', () => {
         let labelCensuses = 0;
         const owed = '/v1/machines/presets/recipient-census/owed';
         const update = '/v1/machines/presets/update';
-        await restoreTestAccount({ credentials: managerCredentials, accountMode: 'e2ee', serverIdentityId: homeId,
+        const sessionListStarted = createDeferred<void>();
+        const sessionListReply = createDeferred<Response>();
+        const repairReads: string[] = [];
+        const restore = restoreTestAccount({ credentials: managerCredentials, accountMode: 'e2ee', serverIdentityId: homeId,
             physicalRequest: (url, init) => {
                 const path = new URL(url).pathname;
+                if (path === '/v2/sessions') {
+                    sessionListStarted.resolve();
+                    return sessionListReply.promise.then(response => response.clone());
+                }
+                if (path.endsWith('/owed')) repairReads.push(path);
                 if (path === '/v1/account/encryption/currentness') {
                     return Promise.resolve(jsonResponse(createAccountEncryptionCurrentnessFixtureForCredentials(managerCredentials)));
                 }
@@ -493,32 +501,46 @@ describe('sync AccountChange catch-up projection', () => {
                     contentEncryptionMode: 'e2ee', owner: { kind: 'team', teamId: 'preset-team' }, recipients } }));
             },
         });
+        void restore.catch(() => {});
         const runtime = syncRuntime as unknown as SyncAccountChangeWakeSchedulingHarness & {
             teamLabelEnvelopeSync: { awaitQueue(): Promise<void> };
         };
+        try {
+            await sessionListStarted.promise;
+            await runtime.teamLabelEnvelopeSync.awaitQueue();
+            expect(repairReads).toEqual([]);
+            expect(openForMember()).toBeNull();
+        } finally {
+            sessionListReply.resolve(jsonResponse({ sessions: [], nextCursor: null, hasNext: false }));
+            await restore;
+        }
         await waitForHomeGovernance(() => expect(labelCensuses).toBe(1));
         await runtime.teamLabelEnvelopeSync.awaitQueue();
+        expect(repairReads).toEqual([
+            '/v1/account/saved-secrets/resources/envelope-census/owed',
+            '/v1/tasks/recipients/owed',
+            '/v1/artifacts/access/recipients/owed',
+            owed,
+        ]);
         expect(requests).toEqual([`GET ${owed}`, `POST ${update}`]);
         expect(openForMember()).toMatchObject({ name: 'Saved before join' });
-        await runtime.resumeSync('socket-reconnect');
-        await runtime.teamLabelEnvelopeSync.awaitQueue();
-        expect(requests).toHaveLength(2);
-        changesResponse.mockResolvedValueOnce({ changes: [{ cursor: 1, changedAt: 1, kind: 'account',
-            entityId: TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1, hint: null }], nextCursor: 1 });
-        await runtime.resumeSync('socket-reconnect');
-        await runtime.teamLabelEnvelopeSync.awaitQueue();
-        expect(requests).toEqual([`GET ${owed}`, `POST ${update}`, `GET ${owed}`]);
     });
 
     // A Saved Secret shared with a Team before someone joined owes that member an envelope only its
     // custodian can write. The membership-change wake is when the custodian learns of it, so it asks
     // the owed census there too, not only when the custodian happens to open Saved Secrets.
     // Owned Tasks and Artifacts shared with a Team or Group owe later members a key the same way. With nothing
-    // owed, each owner's owed census costs exactly one request: no inventory walk, no per-resource census.
-    it.each(['e2ee', 'plain'] as const)('asks the Saved Secret, Task and Artifact owed censuses once each on the membership-change wake (%s)', async mode => {
+    // owed, each owner's owed census, including Machine Presets, costs exactly one request.
+    it.each(['e2ee', 'plain'] as const)('asks the Saved Secret, Task, Artifact and Preset owed censuses once each on the membership-change wake (%s)', async mode => {
         const owedReads: string[] = [];
         const labelReads: string[] = [];
         const repairReads: string[] = [];
+        const presetOwedPath = '/v1/machines/presets/recipient-census/owed';
+        const expectedRepairReads = [
+            'GET /v1/artifacts/access/recipients/owed',
+            `GET ${presetOwedPath}`,
+            'GET /v1/tasks/recipients/owed',
+        ];
         const credentials = mode === 'e2ee'
             ? { token: ACCOUNT_TOKEN, secret: encodeBase64(new Uint8Array(32).fill(73), 'base64url') }
             : { token: ACCOUNT_TOKEN };
@@ -532,9 +554,9 @@ describe('sync AccountChange catch-up projection', () => {
                 return Promise.resolve(jsonResponse({ teams: [] }));
             }
             // The Task inventory and any per-resource census are the reverted O(owned) walk; record them too.
-            if (path === '/v1/tasks' || path.endsWith('/recipients/owed') || path.endsWith('/recipients/census') || path.endsWith('/access/recipients')) {
+            if (path === '/v1/tasks' || path === presetOwedPath || path.endsWith('/recipients/owed') || path.endsWith('/recipients/census') || path.endsWith('/access/recipients')) {
                 repairReads.push(`${init?.method ?? 'GET'} ${path}`);
-                return Promise.resolve(jsonResponse(path === '/v1/tasks' ? { tasks: [] } : { items: [], nextCursor: null }));
+                return Promise.resolve(jsonResponse(path === '/v1/tasks' ? { tasks: [] } : path === presetOwedPath ? { items: [] } : { items: [], nextCursor: null }));
             }
             if (path !== '/v1/account/saved-secrets/resources/envelope-census/owed') return undefined;
             owedReads.push(init?.method ?? 'GET');
@@ -556,24 +578,27 @@ describe('sync AccountChange catch-up projection', () => {
         await runtime.resumeViaChanges({ accountId: ACCOUNT_ID });
         if (mode === 'e2ee') await waitForHomeGovernance(() => {
             expect(owedReads).toEqual(['GET']);
-            expect(repairReads.sort()).toEqual(['GET /v1/artifacts/access/recipients/owed', 'GET /v1/tasks/recipients/owed']);
+            expect(repairReads.sort()).toEqual(expectedRepairReads);
         });
         await runtime.teamLabelEnvelopeSync.awaitQueue();
         expect(labelReads).toEqual(['GET']);
         if (mode === 'plain') expect(repairReads).toEqual([]);
         await runtime.resumeSync('socket-reconnect');
         await runtime.teamLabelEnvelopeSync.awaitQueue();
-        expect({ labels: labelReads, savedSecrets: owedReads }).toEqual({
+        expect({ labels: labelReads, savedSecrets: owedReads, repaired: repairReads.sort() }).toEqual({
             labels: ['GET'], savedSecrets: mode === 'e2ee' ? ['GET'] : [],
+            repaired: mode === 'e2ee' ? expectedRepairReads : [],
         });
         labelReads.length = 0;
         owedReads.length = 0;
+        repairReads.length = 0;
         changesResponse.mockResolvedValueOnce({ changes: [{ cursor: 2, changedAt: 2, kind: 'account',
             entityId: TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1, hint: null }], nextCursor: 2 });
         await runtime.resumeSync('socket-reconnect');
         await runtime.teamLabelEnvelopeSync.awaitQueue();
-        expect({ labels: labelReads, savedSecrets: owedReads }).toEqual({
+        expect({ labels: labelReads, savedSecrets: owedReads, repaired: repairReads.sort() }).toEqual({
             labels: ['GET'], savedSecrets: mode === 'e2ee' ? ['GET'] : [],
+            repaired: mode === 'e2ee' ? expectedRepairReads : [],
         });
     });
 

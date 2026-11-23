@@ -8897,7 +8897,7 @@ class Sync {
           // Session. The Account inventory must neither delay that admission
           // nor compete with Settings/Profile before it. Its existing queue
           // still owns recovery, including a failed Settings first attempt.
-          fireAndForget((async () => {
+          const sessionsFirstAttempt = (async () => {
               try {
                   await settingsReady;
               } catch {
@@ -8908,7 +8908,8 @@ class Sync {
               await routeReady;
               if (!isCurrent()) return;
               await this.sessionsSync.invalidateAndAwait({ settleOnFirstAttempt: true });
-          })(), {
+          })();
+          fireAndForget(sessionsFirstAttempt, {
               tag: 'Sync.bootstrapSessions',
               onError: (error) => { if (isCurrent()) this.reportSyncError(error); },
           });
@@ -8927,7 +8928,13 @@ class Sync {
           for (const syncUnit of [
               this.machinesSync, this.artifactsSync, this.pluginAvailabilitySync,
           ]) syncUnit.invalidateCoalesced();
-          this.teamLabelEnvelopeSync.invalidateCoalesced();
+          // Envelope repair is independent of the first Session snapshot. If Settings
+          // failed its first attempt, let repair proceed while Settings retries.
+          const repairsReady = coreFirstAttempts[0].status === 'rejected' ? routeReady : sessionsFirstAttempt;
+          const wakeEnvelopeRepairs = () => {
+              if (isCurrent()) this.teamLabelEnvelopeSync.invalidateCoalesced();
+          };
+          void repairsReady.then(wakeEnvelopeRepairs, wakeEnvelopeRepairs);
 
           // Draft writes retry through their local outbox. Pending messages have their
           // own durable address index. Neither needs an Account draft collection read.
