@@ -742,9 +742,11 @@ a rollback floor to this transaction before it ships.
 
 **K5 — per-machine update facts.** `readCliUpdateFacts` (`apps/cli/src/cli/runtime/update/cliUpdateFacts.ts`,
 schema `CliUpdateFactsSchema` in `@happier-dev/protocol`) reports `currentVersion`, the ring-filtered
-cached `latestVersion`, `channel`, `installSource` (`managed` only when the running executable is
-inside its ring's recorded install; npm/brew name their own update command), `updateCommand`,
-`canUpdateRemotely` and `lastUpdate`. Every daemon publishes it in its encrypted machine metadata
+cached `latestVersion`, `channel`, `installSource`, `updateCommand`,
+`canUpdateRemotely` and `lastUpdate`. A managed executable belongs to its ring's recorded install,
+including a managed home `bin` shortcut, and the install must retain `current.version`.
+`managedCliShimInstall` owns default/channel shortcut resolution, including Windows hardlinks and
+copy fallbacks; npm/brew installs name their own update command. Every daemon publishes these facts in its encrypted machine metadata
 as `cliUpdate` on its first connect after start and again whenever `last-update.json` changes
 (the daemon watches its install root — no poller; `watchLastCliUpdateResult`), and
 `daemon status --json` extends `cliUpdate` with it. The update-check cache has one writer (`self check`, `recordCliUpdateCheck`) and one
@@ -1694,7 +1696,11 @@ inventory withdraws its choices; a failed discovery retains the last published
 choices. This accommodates V2's initially empty plugin inventory without polling
 or weakening validation against the server's current model inventory.
 
-Herdr-specific transport lives in `integrations/herdr`. The adapter uses direct argv
+Herdr-specific transport lives in `integrations/herdr`. In current development source, the socket client maps
+Windows marker endpoints to Herdr's namespaced pipe address and preserves already-qualified pipe
+names regardless of prefix casing. This transport correction does not enable Windows direct terminal
+attach; the terminal-host resolver still refuses that mode.
+The adapter uses direct argv
 launch, styled screen capture, input, process inspection, and terminal attachment.
 Runtime detection requires a stable Herdr release at or after `0.9.2`, and attach
 and startup also verify the running server's version before using it.

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -17,12 +17,12 @@ describe('readCliUpdateFacts (K5)', () => {
     rmSync(homeDir, { recursive: true, force: true });
   });
 
-  function installManaged(root: string, versionId: string): string {
+  function installManaged(root: string, versionId: string, binaryName = 'happier'): string {
     const versionDir = join(homeDir, root, 'versions', versionId);
     mkdirSync(versionDir, { recursive: true });
-    writeFileSync(join(versionDir, 'happier'), 'binary');
+    writeFileSync(join(versionDir, binaryName), 'binary');
     writeFileSync(join(homeDir, root, 'current.version'), `${versionId}\n`);
-    return join(versionDir, 'happier');
+    return join(versionDir, binaryName);
   }
 
   it('reports a managed install with its ring-filtered latest, update command and last outcome', () => {
@@ -54,11 +54,68 @@ describe('readCliUpdateFacts (K5)', () => {
     });
   });
 
-  it('does not offer a remote update on Windows', () => {
-    const execPath = installManaged('cli', '0.2.13');
+  it('keeps remote updates unavailable for a managed Windows install', () => {
+    const execPath = installManaged('cli', '0.2.13', 'happier.exe');
     expect(readCliUpdateFacts({
       homeDir, publicReleaseRing: 'stable', currentVersion: '0.2.13', execPath, invokedPath: execPath, platform: 'win32', npmPackageName: '@happier-dev/cli',
     })).toMatchObject({ installSource: 'managed', canUpdateRemotely: false, updateCommand: 'happier self update' });
+  });
+
+  it.each(['hardlink', 'copy'] as const)('recognizes a managed home bin %s without enabling Windows remote updates', (shortcut) => {
+    const versionDir = join(homeDir, 'cli', 'versions', '0.2.13');
+    mkdirSync(versionDir, { recursive: true });
+    const payload = join(versionDir, 'happier.exe');
+    writeFileSync(payload, 'binary');
+    writeFileSync(join(homeDir, 'cli', 'current.version'), '0.2.13\n');
+    const shim = join(homeDir, 'bin', 'happier.exe');
+    mkdirSync(join(homeDir, 'bin'), { recursive: true });
+    if (shortcut === 'hardlink') linkSync(payload, shim);
+    else copyFileSync(payload, shim);
+
+    expect(readCliUpdateFacts({
+      homeDir, publicReleaseRing: 'stable', currentVersion: '0.2.13', execPath: shim, invokedPath: shim, platform: 'win32', npmPackageName: '@happier-dev/cli',
+    })).toMatchObject({ installSource: 'managed', canUpdateRemotely: false, updateCommand: 'happier self update' });
+  });
+
+  it('follows the default and channel shortcut owners without attributing them to another ring', () => {
+    installManaged('cli', '0.2.13', 'happier.exe');
+    const payload = installManaged('cli-preview', '0.2.14-preview.1', 'happier.exe');
+    writeFileSync(join(homeDir, 'default-cli-release-channel.json'), JSON.stringify({ releaseChannel: 'preview' }));
+    mkdirSync(join(homeDir, 'bin'), { recursive: true });
+
+    for (const name of ['happier.exe', 'hprev.exe']) {
+      const shim = join(homeDir, 'bin', name);
+      copyFileSync(payload, shim);
+      const params = { homeDir, currentVersion: '0.2.14-preview.1', execPath: shim, invokedPath: shim, platform: 'win32' as const, npmPackageName: '@happier-dev/cli' };
+      expect(readCliUpdateFacts({ ...params, publicReleaseRing: 'preview' })).toMatchObject({
+        installSource: 'managed', updateCommand: 'hprev self update', canUpdateRemotely: false,
+      });
+      expect(readCliUpdateFacts({ ...params, publicReleaseRing: 'stable' })).toMatchObject({
+        installSource: 'other', updateCommand: null, canUpdateRemotely: false,
+      });
+    }
+  });
+
+  it('does not attribute a hardlink outside this install to its managed payload', () => {
+    const payload = installManaged('cli', '0.2.13', 'happier.exe');
+    for (const destination of ['other-home/bin', 'somewhere']) {
+      const directory = join(homeDir, destination);
+      mkdirSync(directory, { recursive: true });
+      const shim = join(directory, 'happier.exe');
+      linkSync(payload, shim);
+      expect(readCliUpdateFacts({
+        homeDir, publicReleaseRing: 'stable', currentVersion: '0.2.13', execPath: shim, invokedPath: shim, platform: 'win32', npmPackageName: '@happier-dev/cli',
+      })).toMatchObject({ installSource: 'other', updateCommand: null, canUpdateRemotely: false });
+    }
+  });
+
+  it('requires the install version marker even for a managed home bin shortcut', () => {
+    const shim = join(homeDir, 'bin', 'happier.exe');
+    mkdirSync(join(homeDir, 'bin'), { recursive: true });
+    writeFileSync(shim, 'binary');
+    expect(readCliUpdateFacts({
+      homeDir, publicReleaseRing: 'stable', currentVersion: '0.2.13', execPath: shim, invokedPath: shim, platform: 'win32', npmPackageName: '@happier-dev/cli',
+    })).toMatchObject({ installSource: 'other', updateCommand: null, canUpdateRemotely: false });
   });
 
   it('names the package manager\'s command for an npm install and never offers a remote update', () => {
