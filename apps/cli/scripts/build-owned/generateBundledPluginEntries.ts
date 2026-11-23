@@ -321,8 +321,9 @@ const CANONICAL_WORKSPACE_PACKAGE_DIRS = Object.freeze({
 function resolveCanonicalWorkspaceModulePath(
   packageName: keyof typeof CANONICAL_WORKSPACE_PACKAGE_DIRS,
   subpath = '.',
+  repoRoot = CANONICAL_GENERATOR_REPO_ROOT,
 ): string {
-  const packageRoot = resolve(CANONICAL_GENERATOR_REPO_ROOT, CANONICAL_WORKSPACE_PACKAGE_DIRS[packageName]);
+  const packageRoot = resolve(repoRoot, CANONICAL_WORKSPACE_PACKAGE_DIRS[packageName]);
   const manifest = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8'));
   return resolveWorkspaceSource(new Map([[packageName, { root: packageRoot, manifest }]]),
     subpath === '.' ? packageName : `${packageName}/${subpath}`);
@@ -331,9 +332,10 @@ function resolveCanonicalWorkspaceModulePath(
 async function importCanonicalWorkspaceModule(
   packageName: keyof typeof CANONICAL_WORKSPACE_PACKAGE_DIRS,
   subpath = '.',
+  repoRoot = CANONICAL_GENERATOR_REPO_ROOT,
 ): Promise<unknown> {
   return await importPluginAuthorRuntimeModules(async (tsImport) =>
-    await tsImport(pathToFileURL(resolveCanonicalWorkspaceModulePath(packageName, subpath)).href, import.meta.url));
+    await tsImport(pathToFileURL(resolveCanonicalWorkspaceModulePath(packageName, subpath, repoRoot)).href, import.meta.url));
 }
 
 async function loadGeneratorWorkspaceDependencies(): Promise<GeneratorWorkspaceDependencies> {
@@ -400,9 +402,9 @@ async function loadGeneratorWorkspaceDependencies(): Promise<GeneratorWorkspaceD
   });
 }
 
-async function loadDaemonProjectionDependencies(): Promise<BundledPluginManifestDependencies> {
+async function loadBundledPluginManifestDependencies(repoRoot = CANONICAL_GENERATOR_REPO_ROOT): Promise<BundledPluginManifestDependencies> {
   const protocol = await importCanonicalWorkspaceModule(
-    '@happier-dev/protocol', 'plugins/manifest',
+    '@happier-dev/protocol', 'plugins/manifest', repoRoot,
   ) as ProtocolManifestWorkspaceModule;
   return Object.freeze({ protocol: Object.freeze({
     ingestPluginManifestV2: protocol.ingestPluginManifestV2,
@@ -1921,7 +1923,8 @@ export async function prepareBundledPluginUiManifestForWorkspaceBuild(params: Re
   if (typeof packageJson.scripts?.['build:ui'] !== 'string' || !packageJson.scripts['build:ui'].trim()) return false;
   await withWorkspaceBundleLock(async () => {
     await withTypescriptModuleInspectionSession(async () => {
-      const dependencies = await loadGeneratorWorkspaceDependencies();
+      // The manifest and its Protocol validator are inputs from the same captured workspace.
+      const dependencies = await loadBundledPluginManifestDependencies(params.repoRoot);
       const manifest = await normalizeBundledSourceManifest({ packageRoot,
         manifest: await loadPluginManifest(params.repoRoot, pluginPackageId, dependencies), dependencies });
       await synchronizeSerializedPluginManifest({ packageRoot, packageName: params.packageName, manifest, mode: 'write' });
@@ -4962,7 +4965,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     }
     // The caller owns this private captured build output. No checkout
     // publication or workspace writer lock participates in source derivation.
-    const dependencies = await loadDaemonProjectionDependencies();
+    const dependencies = await loadBundledPluginManifestDependencies();
     await loadPluginAuthorRuntimeForScope('manifest');
     await generateDaemonProjections(options, dependencies);
     timing.phase('daemon-source-derivation');

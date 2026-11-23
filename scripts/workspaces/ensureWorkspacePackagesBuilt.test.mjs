@@ -4345,6 +4345,9 @@ for (const drift of ['none', 'after manifest preparation', 'during capture']) te
       contributes: { ui: { renderers: [{ id: 'panel', kind: 'reactNative', artifact: 'panel' }] } },
     })};\n`);
   }
+  // Manifest preparation resolves the workspace's authored Protocol export.
+  symlinkSync(fileURLToPath(new URL('../../packages/protocol', import.meta.url)),
+    join(repoRoot, 'packages/protocol'), process.platform === 'win32' ? 'junction' : 'dir');
   const workspaceLock = resolveWorkspaceBundleLockPath(repoRoot);
   const ancestorLock = join(repoRoot, 'ancestor-publication.lock');
   const built = [];
