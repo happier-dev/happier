@@ -1,5 +1,6 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod/mini';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
@@ -87,6 +88,49 @@ export function createEnvironmentRegistryConfigForHost(input: Readonly<{ baseDir
         // No auth material, helper executable or ambient config is introduced.
         const config = registries.length ? { auths } : { auths, credHelpers: { '': '' } };
         writeFileSync(join(directory, 'config.json'), JSON.stringify(config), { flag: 'wx', mode: 0o600 });
-        return { env: { DOCKER_CONFIG: directory }, redactionValues, dispose };
+        privateConfigs.set(directory, config);
+        return { env: { DOCKER_CONFIG: directory }, redactionValues, dispose() { privateConfigs.delete(directory); dispose(); } };
     } catch (error) { dispose(); throw error; }
+}
+
+/** Live private registry configs created above, keyed by directory. */
+const privateConfigs = new Map<string, Readonly<Record<string, unknown>>>();
+
+function readHostFile(path: string): string | undefined {
+    try { return readFileSync(path, 'utf8'); } catch { return undefined; }
+}
+
+/**
+ * Docker resolves its endpoint from the config directory (currentContext plus
+ * contexts/meta), so a private registry DOCKER_CONFIG would otherwise drop the
+ * admitted launch's context and fall back to the default socket. Carry only
+ * those non-secret selection facts from the launch's own config directory;
+ * auths, helpers and contexts/tls never enter. Docker keeps deciding precedence
+ * (--host/--context, DOCKER_HOST/DOCKER_CONTEXT, currentContext) itself.
+ * Docker CLI v29 cli/config/configfile/file.go, cli/context/store/metadatastore.go.
+ */
+export function carryNativeDockerContextSelectionForHost(directory: string, launchEnv: Readonly<Record<string, string>>,
+    platform: NodeJS.Platform = process.platform) {
+    const config = privateConfigs.get(directory);
+    if (!config) return; // Not a registry config this owner created.
+    const home = launchEnv[platform === 'win32' ? 'USERPROFILE' : 'HOME'] || homedir();
+    const source = resolve(launchEnv.DOCKER_CONFIG || join(home, '.docker'));
+    if (source === resolve(directory)) return;
+    // Docker itself warns and continues on an unreadable config file.
+    let currentContext: unknown;
+    try { currentContext = (JSON.parse(readHostFile(join(source, 'config.json')) ?? '{}') as { currentContext?: unknown }).currentContext; }
+    catch { currentContext = undefined; }
+    if (typeof currentContext === 'string' && currentContext) {
+        writeFileSync(join(directory, 'config.json'), JSON.stringify({ ...config, currentContext }), { mode: 0o600 });
+    }
+    const metaRoot = join(source, 'contexts', 'meta');
+    let entries: string[];
+    try { entries = readdirSync(metaRoot); } catch { return; }
+    for (const entry of entries) {
+        const meta = readHostFile(join(metaRoot, entry, 'meta.json'));
+        if (meta === undefined) continue;
+        const target = join(directory, 'contexts', 'meta', entry);
+        mkdirSync(target, { recursive: true, mode: 0o700 });
+        writeFileSync(join(target, 'meta.json'), meta, { mode: 0o600 });
+    }
 }

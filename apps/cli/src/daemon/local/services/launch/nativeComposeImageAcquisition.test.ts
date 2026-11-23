@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import nacl from 'tweetnacl';
@@ -24,9 +24,19 @@ async function fixture(run: (fixture: {
     setSubstitution(value: boolean): void;
     revokeRegistry(): void;
     cancelPull(): void;
-}) => Promise<void>, access: 'pull' | 'pushPull' = 'pushPull') {
+}) => Promise<void>, access: 'pull' | 'pushPull' = 'pushPull', selectedContext?: 'rootless') {
     const root = await mkdtemp(join(tmpdir(), 'happier-image-acquisition-'));
     const registryRoot = join(root, 'registry');
+    const dockerConfig = join(root, 'docker');
+    const contextPath = join('contexts', 'meta', createHash('sha256').update('rootless').digest('hex'), 'meta.json');
+    const rootlessSocket = 'unix:///run/user/1001/docker.sock';
+    if (selectedContext) {
+        await mkdir(join(dockerConfig, contextPath, '..'), { recursive: true });
+        await writeFile(join(dockerConfig, 'config.json'), JSON.stringify({ currentContext: selectedContext,
+            auths: { 'unrelated.example.test': { auth: 'YW1iaWVudDpjcmVkZW50aWFs' } }, credsStore: 'ambient' }));
+        await writeFile(join(dockerConfig, contextPath), JSON.stringify({ Name: selectedContext,
+            Endpoints: { docker: { Host: rootlessSocket } } }));
+    }
     const controller = new AbortController();
     const requests: { args: readonly string[]; env: Record<string, string | undefined> }[] = [];
     const config = Buffer.from(JSON.stringify({ os: 'linux', architecture: 'amd64', config: { Labels: { version: 'A' } } }));
@@ -40,6 +50,7 @@ async function fixture(run: (fixture: {
         async assertCurrent() { controller.signal.throwIfAborted(); }, async commit() {}, async abort() {} };
     const exec = createStablePluginExecService({
         signal: controller.signal, isOccurrenceCurrent: () => true, resolvePath: async () => root,
+        ...(selectedContext ? { environment: { DOCKER_CONFIG: dockerConfig } } : {}),
         resolveExecutable: async () => ({ command: '/docker' }),
         systemTools: { async resolve(request) { return { grantId: 'docker-fixture', toolId: request.toolId, displayName: 'Docker fixture', source: 'system', executablePath: '/docker', launch: { kind: 'binary', executablePath: '/docker' } }; } },
     });
@@ -101,7 +112,12 @@ async function fixture(run: (fixture: {
             if (args[0] === 'image' && args[1] === 'pull') {
                 expect(args).toEqual(['image', 'pull', '--platform', image.platform, imageReference]);
                 expect(request.env.DOCKER_CONFIG).toBeTypeOf('string');
-                expect(JSON.parse(await readFile(join(request.env.DOCKER_CONFIG!, 'config.json'), 'utf8'))).toEqual({
+                const config = JSON.parse(await readFile(join(request.env.DOCKER_CONFIG!, 'config.json'), 'utf8'));
+                if (selectedContext && config.currentContext !== selectedContext) return { exitCode: 1, stdout: '',
+                    stderr: 'permission denied while trying to connect to the docker API at unix:///var/run/docker.sock' };
+                if (selectedContext) expect(JSON.parse(await readFile(join(request.env.DOCKER_CONFIG!, contextPath), 'utf8')))
+                    .toMatchObject({ Endpoints: { docker: { Host: rootlessSocket } } });
+                expect(config).toEqual({ ...(selectedContext ? { currentContext: selectedContext } : {}),
                     auths: { 'registry.example.test': { auth: Buffer.from('deploy:registry-test-secret').toString('base64') } } });
                 if (cancelDuringPull) { controller.abort(); controller.signal.throwIfAborted(); }
                 local = pullExit === 0;
@@ -150,6 +166,15 @@ describe('exact native image acquisition through the real Compose and P42 owners
             expect(input.requests.findIndex(request => request.args[1] === 'pull')).toBeLessThan(input.requests.findIndex(request => request.args.includes('up')));
             expect(await readdir(input.registryRoot)).toEqual([]);
         });
+    });
+
+    it('pulls on the selected rootless engine with only the admitted registry credentials', async () => {
+        await fixture(async input => {
+            input.setLocal(false);
+            await input.activate();
+            expect(input.requests.some(request => request.args.includes('up'))).toBe(true);
+            expect(await readdir(input.registryRoot)).toEqual([]);
+        }, 'pushPull', 'rootless');
     });
 
     it('keeps a failed registry acquisition visible, wipes custody and never activates or substitutes mutable bytes', async () => {

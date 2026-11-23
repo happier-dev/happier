@@ -59,6 +59,7 @@ import { selectRequiredAgentLaunchFiles } from '@/daemon/agentIsolation/required
 import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { consumeDeploymentExecEnvForHost, type HostDeploymentRuntimeProjectionV1,
     type HostRuntimeDockerTuple, type HostRuntimeProjectedDockerInput } from '@/deployments/secrets/deploymentExecEnvPort';
+import { carryNativeDockerContextSelectionForHost } from '@/deployments/secrets/environmentRegistryConfig';
 import { createProviderRedactionLease, type ProviderRedactionLease } from '@/providers/spawn/redaction';
 import { awaitExecLaunchPreparation } from './execLaunchPreparation';
 
@@ -1696,6 +1697,10 @@ export function createStablePluginExecService(params: Readonly<{
             const env: Record<string, string> = deploymentRuntimeProjection
                 ? Object.assign(Object.create(null), authorized.env)
                 : Object.assign(Object.create(null), authorized.env, retained.env);
+            // A private registry config keeps the launch's admitted Docker context selection.
+            if (!deploymentRuntimeProjection && retained.env.DOCKER_CONFIG) {
+                carryNativeDockerContextSelectionForHost(retained.env.DOCKER_CONFIG, authorized.env);
+            }
             const release = () => {
                 // A failed AM-9 cleanup remains the same failed acknowledgement;
                 // a later native reconciliation must not turn it into success.
