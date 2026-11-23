@@ -2163,7 +2163,7 @@ function OverviewPanel({
   return (
     <ScrollArea>
       <Stack gap="large">
-        {kindId === 'pull-request' ? <GithubHappierReviewSummary reviewId={input.admittedReview?.reviewId} reviewSkip={input.reviewSkip} draft={exact?.draft} /> : null}
+        {kindId === 'pull-request' ? <GithubHappierReviewSummary reviewId={input.admittedReview?.reviewId} reviewSkip={input.reviewSkip} draft={exact?.kindId === 'pull-request' ? exact.draft : undefined} /> : null}
         <RefreshRow
           onRefresh={primaryController.refresh}
           pending={overview.refreshing}
@@ -4430,7 +4430,7 @@ function GithubStoryOverview({
   const byline = [exact?.author, opened].filter((part): part is string => typeof part === 'string' && part.length > 0);
   return (
     <Stack gap="large">
-    {kindId === 'pull-request' ? <GithubHappierReviewSummary reviewId={input.admittedReview?.reviewId} reviewSkip={input.reviewSkip} draft={exact?.draft} /> : null}
+    {kindId === 'pull-request' ? <GithubHappierReviewSummary reviewId={input.admittedReview?.reviewId} reviewSkip={input.reviewSkip} draft={exact?.kindId === 'pull-request' ? exact.draft : undefined} /> : null}
     <TriageDetailStory kind={kindId === 'issue' ? 'report' : 'ask'}
         // Nothing to show yet (no last read, no list summary) while the first read settles: hold ①'s place.
         loading={exact === null && overview.failure === null && (ask === undefined || ask === null || ask.length === 0)}

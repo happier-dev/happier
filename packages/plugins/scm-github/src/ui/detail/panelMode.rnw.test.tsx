@@ -737,16 +737,17 @@ describe('the GitHub detail as Triage panels', () => {
     } });
     let detail: PluginUiTestkit | undefined;
     try {
-      detail = await mountPanel('overview', {
+      const mountedDetail = await mountPanel('overview', {
         invokeRead: async (localId, input, signal) => projectNativeJsonValueForTransport(
           await kit.invokeAction(localId, input as JsonValue, { signal }),
         ),
         translations: { 'plugins.triage.sourceSettings.failure.permission': 'The GitHub connection was refused access.' },
       });
-      await vi.waitFor(async () => expect(await detail.queryByText(description)).toBeDefined());
+      detail = mountedDetail;
+      await vi.waitFor(async () => expect(await mountedDetail.queryByText(description)).toBeDefined());
       expect(stub.requests.some(request => new URL(request.url).pathname.includes('/rules/branches/'))).toBe(true);
-      await expect(detail.getByText('Base branch rules are unavailable.')).resolves.toBeDefined();
-      await expect(detail.getByText('The GitHub connection was refused access.')).resolves.toBeDefined();
+      await expect(mountedDetail.getByText('Base branch rules are unavailable.')).resolves.toBeDefined();
+      await expect(mountedDetail.getByText('The GitHub connection was refused access.')).resolves.toBeDefined();
     } finally {
       if (detail !== undefined) {
         const current = detail;
