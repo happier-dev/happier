@@ -11057,6 +11057,10 @@ snapshots: a compiled closure's integrity does not establish source freshness.
 Installed wrappers retain their compiled snapshot selection. Source daemon
 startup loads available bundled plugin source directly through that workspace
 source loader, without building or materializing workspace `dist` outputs.
+When an attested retained first-party Agent belongs to the executing workspace,
+its factory and catalog reuse those same source module instances. Other
+retained TypeScript graphs use the generation-scoped evaluator, including a
+first-party Agent retained from a different source tree.
 Retained flat plugin copies still pass their local copy admission before import;
 immutable runtime artifacts retain their existing artifact admission. A failed
 source admission settles that demand; a later demand may retry through the same

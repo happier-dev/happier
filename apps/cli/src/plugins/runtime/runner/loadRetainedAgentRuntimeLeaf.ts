@@ -11,6 +11,7 @@ import type {
 import {
     normalizePluginDeclarativeAcpRuntime,
 } from '@/agent/acp/runtime/definition/plugin';
+import { defaultCanImportFirstPartyPluginSource } from '@/packagedRuntime/firstPartySourceRuntime';
 
 import type { PluginStorePaths } from '../../store/paths';
 import type { CanonicalPluginManifest } from '../../manifest/types';
@@ -136,15 +137,25 @@ export async function loadRetainedAgentRuntimeLeaf(params: Readonly<{
         });
     }
     const { binding, fact } = attested;
+    // A different retained source tree needs its own evaluator. The registered
+    // workspace loader resolves all workspace imports against this process's tree.
+    const useWorkspaceSourceLoader = attested.sourceKind === 'development'
+        && attested.manifestAuthority === 'bundled_first_party'
+        && defaultCanImportFirstPartyPluginSource()
+        && (!params.developmentRunnerSnapshotIdentity || attested.rootPath === await resolveRetainedFirstPartyDevelopmentRoot({
+            pluginId: binding.pluginId,
+        }));
+    const loadModule = (entryPath: string, loadMode = fact.loadMode) => loadVerifiedPluginModule({
+        entryPath,
+        loadMode,
+        generationScope: binding,
+        cacheKey: `${attested.cacheIdentity}:${relative(attested.rootPath, resolve(entryPath)).split(sep).join('/')}`,
+        nativeFileUrlMode: 'canonical',
+        useWorkspaceSourceLoader,
+    });
     const modulePath = await realpath(join(attested.rootPath, ...fact.normalizedModulePath.split('/')));
     const moduleResolutionMs = checkpoint();
-    const moduleNamespace = await loadVerifiedPluginModule({
-        entryPath: modulePath,
-        loadMode: fact.loadMode,
-        generationScope: binding,
-        cacheKey: `${attested.cacheIdentity}:${fact.normalizedModulePath}`,
-        nativeFileUrlMode: 'canonical',
-    });
+    const moduleNamespace = await loadModule(modulePath);
     const moduleLoadMs = checkpoint();
     const factory = Object.prototype.hasOwnProperty.call(
         moduleNamespace,
@@ -167,7 +178,7 @@ export async function loadRetainedAgentRuntimeLeaf(params: Readonly<{
         externalSessions = companion as AgentExternalSessionsContribution;
     }
     const catalog = await projectRetainedAgentCatalogEntry({
-        attested, declaredEntry,
+        attested, declaredEntry, loadModule,
     });
     const catalogProjectionMs = checkpoint();
     params.onPreparationComplete?.({
@@ -185,6 +196,7 @@ export async function loadRetainedAgentRuntimeLeaf(params: Readonly<{
 async function projectRetainedAgentCatalogEntry(input: Readonly<{
     attested: Awaited<ReturnType<typeof verifyRunnerAgentBindingAgainstGeneration>>;
     declaredEntry: AgentCatalogEntry | null;
+    loadModule(entryPath: string, loadMode?: Parameters<typeof loadVerifiedPluginModule>[0]['loadMode']): Promise<PluginModuleNamespace>;
 }>): Promise<Pick<RetainedAgentRuntimeLeaf, 'catalogEntry' | 'resolveConnectedAccountLaunchCatalogEntry' | 'dispose'>> {
     const { attested, declaredEntry } = input;
     if (!declaredEntry || attested.bindingKind !== 'plugin_factory_v1') {
@@ -233,20 +245,14 @@ async function projectRetainedAgentCatalogEntry(input: Readonly<{
 async function acquireRetainedAgentCatalogEntry(input: Readonly<{
     attested: Awaited<ReturnType<typeof verifyRunnerAgentBindingAgainstGeneration>>;
     declaredEntry: AgentCatalogEntry | null;
+    loadModule(entryPath: string, loadMode?: Parameters<typeof loadVerifiedPluginModule>[0]['loadMode']): Promise<PluginModuleNamespace>;
     isCurrent(): boolean;
 }>): Promise<Pick<RetainedAgentRuntimeLeaf, 'catalogEntry' | 'dispose'>> {
-    const { attested, declaredEntry } = input;
+    const { attested, declaredEntry, loadModule } = input;
     if (!declaredEntry || attested.bindingKind !== 'plugin_factory_v1') {
         return { catalogEntry: declaredEntry, dispose: async () => {} };
     }
     const rootPath = attested.rootPath;
-    const loadModule = async (entryPath: string, loadMode = attested.fact.loadMode) => {
-        const normalizedPath = relative(rootPath, resolve(entryPath)).split(sep).join('/');
-        return await loadVerifiedPluginModule({
-            entryPath, loadMode, generationScope: attested.binding,
-            cacheKey: `${attested.cacheIdentity}:${normalizedPath}`, nativeFileUrlMode: 'canonical',
-        });
-    };
     const daemonEntrypoint = attested.manifest.entrypoints?.daemon;
     if (!daemonEntrypoint) throw new Error('Retained Agent catalog has no activation entrypoint');
     const entryPath = resolve(rootPath, daemonEntrypoint);

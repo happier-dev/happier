@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { resolveBuiltInContributions } from '../../projection/registry/resolveBuiltInContributions';
 import { resolvePluginStorePaths } from '../../store/paths';
@@ -12,6 +12,23 @@ import { attestFreshRunnerAgentBinding } from '../retainedPluginSourceAttestatio
 import { bindPluginRuntimeSourceAuthority } from '../sourceAuthority';
 import { createAgentSessionRunnerFactoryBinding } from './agentSessionRunnerFactoryBinding';
 import { loadRetainedAgentRuntimeLeaf } from './loadRetainedAgentRuntimeLeaf';
+
+const sourceImports = vi.hoisted(() => vi.fn());
+vi.mock('jiti', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('jiti')>();
+    return {
+        ...actual,
+        createJiti: ((id, options) => {
+            const evaluator = actual.createJiti(id, options);
+            const originalImport = evaluator.import;
+            evaluator.import = (async (...args: Parameters<typeof originalImport>) => {
+                sourceImports(args[0]);
+                return await originalImport(...args);
+            }) as typeof originalImport;
+            return evaluator;
+        }) satisfies typeof actual.createJiti,
+    };
+});
 
 describe('retained development source entries', () => {
     it('rejects a packaged TypeScript entry', async () => {
@@ -30,7 +47,7 @@ describe('retained development source entries', () => {
         }
     });
 
-    it.each(['claude', 'codex'])('loads the real %s runner leaf and its development activation entry', async (agentId) => {
+    it.each(['claude', 'codex'])('reuses the workspace graph for the real %s runner and catalog without invoking the author evaluator', async (agentId) => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-first-party-source-entry-'));
         let leaf: Awaited<ReturnType<typeof loadRetainedAgentRuntimeLeaf>> | undefined;
         try {
@@ -64,12 +81,18 @@ describe('retained development source entries', () => {
             // `.happier-plugin-build` publication left by an earlier build.
             expect('kind' in binding ? null : { path: binding.normalizedModulePath, loadMode: binding.loadMode })
                 .toEqual({ path: 'src/agent/runtime/factory.ts', loadMode: 'source-ts' });
+            sourceImports.mockClear();
             leaf = await loadRetainedAgentRuntimeLeaf({
                 paths, binding,
                 developmentRunnerSnapshotIdentity: runnerSnapshotIdentity,
             });
-            expect(leaf.factory).toEqual(expect.any(Function));
+            if ('kind' in binding) throw new Error('Expected a retained factory binding');
+            const activationFactory = await source.resolveRelativeModule(binding.locator.module);
+            expect(activationFactory.module[binding.locator.export]).toEqual(expect.any(Function));
             expect(leaf.catalogEntry?.id).toBe(agent.id);
+            expect(await leaf.resolveConnectedAccountLaunchCatalogEntry?.()).toMatchObject({ id: agent.id });
+            expect(sourceImports).not.toHaveBeenCalled();
+            expect(leaf.factory).toBe(activationFactory.module[binding.locator.export]);
         } finally {
             await leaf?.dispose();
             await rm(happyHomeDir, { recursive: true, force: true });

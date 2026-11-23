@@ -329,7 +329,7 @@ export function resolveNativePluginModuleUrl(params: Readonly<{
 async function importFileBackedModule(params: Readonly<{
     resolvedEntryPath: string;
     cacheKey: string;
-    isTypeScriptDevEntry: boolean;
+    useGenerationTypeScriptEvaluator: boolean;
     generationScope?: object;
     nativeFileUrlMode: NativeFileUrlMode;
 }>): Promise<PluginModuleNamespace> {
@@ -340,7 +340,7 @@ async function importFileBackedModule(params: Readonly<{
         const { loadPortableCommonJsModule } = await import('./portableCommonJs');
         return loadPortableCommonJsModule(params.resolvedEntryPath);
     }
-    if (params.isTypeScriptDevEntry) {
+    if (params.useGenerationTypeScriptEvaluator) {
         const generationScope = params.generationScope;
         if (!generationScope) {
             throw createModuleLoadError(
@@ -382,6 +382,8 @@ export async function loadVerifiedPluginModule(params: Readonly<{
     generationScope: object;
     cacheKey?: string;
     nativeFileUrlMode?: NativeFileUrlMode;
+    /** The caller has attested that the source belongs to the executing workspace. */
+    useWorkspaceSourceLoader?: boolean;
 }>): Promise<PluginModuleNamespace> {
     const resolvedEntryPath = resolve(params.entryPath);
     const extension = extname(resolvedEntryPath).toLowerCase();
@@ -415,6 +417,7 @@ export async function loadVerifiedPluginModule(params: Readonly<{
         );
     }
 
+    const useGenerationTypeScriptEvaluator = isTypeScriptDevEntry && !params.useWorkspaceSourceLoader;
     const nativeFileUrlMode = params.nativeFileUrlMode ?? 'generation-keyed';
     const cacheKey = params.cacheKey?.trim()
         || (isTypeScriptDevEntry ? 'generation-scope' : '');
@@ -429,7 +432,7 @@ export async function loadVerifiedPluginModule(params: Readonly<{
         cacheKey,
         nativeFileUrlMode,
     });
-    const loadCache = isTypeScriptDevEntry
+    const loadCache = useGenerationTypeScriptEvaluator
         ? resolveTypeScriptGenerationLoaderState(params.generationScope)
             .moduleLoadCache
         : moduleLoadCache;
@@ -446,7 +449,7 @@ export async function loadVerifiedPluginModule(params: Readonly<{
     const modulePromise = importFileBackedModule({
         resolvedEntryPath,
         cacheKey,
-        isTypeScriptDevEntry,
+        useGenerationTypeScriptEvaluator,
         generationScope: params.generationScope,
         nativeFileUrlMode,
     });
