@@ -990,6 +990,7 @@ export const en = {
         notFound: 'This run no longer exists.',
         accessDenied: 'You don’t have access to this.',
         conflict: 'This changed somewhere else. Refresh to see the current version; your local work is kept.',
+        githubWebhookHomeUnreachable: 'GitHub can’t reach this Home. Make the Home reachable, deploy manually, or ask an agent to deploy.',
         eventDeclarationNotCurrent: 'The Account’s plugin declaration no longer matches this Event. Update Happier and the plugin on the watcher machine, restart Happier there, then choose the Event again.',
         inputTooLarge: 'That input is too large to send. Nothing was changed.',
         unresolvedOutcome: 'Happier cannot confirm yet that the previous work stopped, so it cannot be replaced.',

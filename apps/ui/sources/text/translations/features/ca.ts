@@ -21377,6 +21377,7 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         notFoundTitle: 'Execució no trobada',
         accessDenied: 'No hi tens accés.',
         conflict: 'Això ha canviat en un altre lloc. Actualitza per veure la versió actual; la teva feina local es conserva.',
+        githubWebhookHomeUnreachable: 'GitHub no pot accedir a aquest Home. Fes que el Home sigui accessible, desplega manualment o demana a un agent que faci el desplegament.',
         eventDeclarationNotCurrent: 'La declaració del connector del compte ja no coincideix amb aquest esdeveniment. Actualitza Happier i el connector a la màquina observadora, reinicia Happier allà i torna a triar l’esdeveniment.',
         inputTooLarge: 'Aquesta entrada és massa gran per enviar-la. No s’ha canviat res.',
         unresolvedOutcome: 'Happier encara no pot confirmar que la feina anterior s’hagi aturat, així que no es pot substituir.',

@@ -20857,6 +20857,7 @@ const de = translated(workflowValueReferenceTranslations.de, {
         notFoundTitle: 'Lauf nicht gefunden',
         accessDenied: 'Du hast darauf keinen Zugriff.',
         conflict: 'Das wurde woanders geändert. Aktualisiere, um die aktuelle Version zu sehen; deine lokale Arbeit bleibt erhalten.',
+        githubWebhookHomeUnreachable: 'GitHub kann dieses Home nicht erreichen. Mach das Home erreichbar, stelle die App manuell bereit oder bitte einen Agenten darum.',
         eventDeclarationNotCurrent: 'Die Plugin-Deklaration des Accounts passt nicht mehr zu diesem Ereignis. Aktualisiere Happier und das Plugin auf dem beobachtenden Rechner, starte Happier dort neu und wähle das Ereignis erneut.',
         inputTooLarge: 'Diese Eingabe ist zu groß zum Senden. Es wurde nichts geändert.',
         unresolvedOutcome: 'Happier kann noch nicht bestätigen, dass die vorherige Arbeit gestoppt ist, deshalb kann sie nicht ersetzt werden.',

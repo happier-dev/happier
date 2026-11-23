@@ -21238,6 +21238,7 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         notFoundTitle: '未找到该运行',
         accessDenied: '你没有访问权限。',
         conflict: '它在别处被改动过。刷新以查看当前版本；你的本地修改会保留。',
+        githubWebhookHomeUnreachable: 'GitHub 无法访问此 Home。请让 Home 可访问、手动部署，或让代理部署。',
         eventDeclarationNotCurrent: '账户的插件声明已与此事件不匹配。请更新监视机器上的 Happier 和插件，在那里重启 Happier，然后重新选择事件。',
         inputTooLarge: '该输入太大，无法发送。没有做任何更改。',
         unresolvedOutcome: 'Happier 还无法确认之前的工作已经停止，因此不能替换它。',

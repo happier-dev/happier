@@ -21298,6 +21298,7 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         notFoundTitle: '実行が見つかりません',
         accessDenied: 'これにはアクセスできません。',
         conflict: 'これは別の場所で変更されました。更新して現在のバージョンを確認してください。ローカルの作業は残ります。',
+        githubWebhookHomeUnreachable: 'GitHub からこのホームにアクセスできません。ホームをアクセス可能にするか、手動でデプロイするか、エージェントにデプロイを依頼してください。',
         eventDeclarationNotCurrent: 'アカウントのプラグイン宣言がこのイベントと一致しなくなりました。監視マシンの Happier とプラグインを更新し、そこで Happier を再起動してから、イベントを選び直してください。',
         inputTooLarge: 'その入力は大きすぎて送信できません。何も変更されていません。',
         unresolvedOutcome: 'Happier は前の作業が止まったことをまだ確認できないため、置き換えられません。',

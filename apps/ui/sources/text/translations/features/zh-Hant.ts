@@ -21238,6 +21238,7 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         notFoundTitle: '找不到此執行',
         accessDenied: '你沒有存取權限。',
         conflict: '它在別處被改動過。重新整理以查看目前版本；你的本機修改會保留。',
+        githubWebhookHomeUnreachable: 'GitHub 無法存取此 Home。請讓 Home 可存取、手動部署，或請代理程式部署。',
         eventDeclarationNotCurrent: '帳戶的外掛程式宣告已與此事件不符。請更新監視機器上的 Happier 和外掛程式，在該處重新啟動 Happier，然後重新選擇事件。',
         inputTooLarge: '該輸入太大，無法送出。沒有做任何變更。',
         unresolvedOutcome: 'Happier 還無法確認先前的工作已經停止，因此不能取代它。',

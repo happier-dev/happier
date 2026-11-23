@@ -115,7 +115,9 @@ export function normalizeWorkflowActionThrownError(error: unknown, diagnostic?: 
   const failure = WorkflowActionFailureV1Schema.safeParse({
     ok: false,
     errorCode: code,
-    error: error instanceof Error ? error.message : code,
+    error: code === 'github_webhook_home_unreachable'
+      ? 'GitHub cannot reach this Home. Make the Home reachable, deploy manually, or ask an agent to deploy.'
+      : error instanceof Error ? error.message : code,
     ...causeFields,
     ...(details !== undefined ? { details } : code === 'target_unavailable'
       ? { details: { code: 'target_unavailable', reason: 'selection_unavailable' } } : {}),

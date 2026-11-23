@@ -21363,6 +21363,7 @@ const it = translated(workflowValueReferenceTranslations.it, {
         notFoundTitle: 'Esecuzione non trovata',
         accessDenied: 'Non hai accesso a questo elemento.',
         conflict: 'Questo è cambiato altrove. Aggiorna per vedere la versione attuale; il tuo lavoro locale resta.',
+        githubWebhookHomeUnreachable: 'GitHub non riesce a raggiungere questa Home. Rendila raggiungibile, esegui il deploy manualmente o chiedi a un agente di farlo.',
         eventDeclarationNotCurrent: 'La dichiarazione del plugin dell’account non corrisponde più a questo evento. Aggiorna Happier e il plugin sulla macchina osservatrice, riavvia Happier lì e scegli di nuovo l’evento.',
         inputTooLarge: 'Quell’input è troppo grande da inviare. Non è stato cambiato nulla.',
         unresolvedOutcome: 'Happier non può ancora confermare che il lavoro precedente si sia fermato, quindi non può essere sostituito.',

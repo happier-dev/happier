@@ -888,6 +888,7 @@ const WORKFLOW_OPERATION_ERROR_CODES_WITHOUT_DETAILS_V1 = [
   'workflow_workspace_restore_unavailable', 'workflow_workspace_restore_failed',
   'ineligible_state', 'custody_pending', 'requester_custody_unavailable',
   'source_unavailable',
+  'github_webhook_home_unreachable',
   'history_not_readable', 'encryption_setup_required', 'waiting_for_keys', 'storage_unavailable',
   'native_goal_owner', 'session_already_started', 'pull_request_link_required',
 ] as const;

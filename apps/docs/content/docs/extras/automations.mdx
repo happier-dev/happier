@@ -490,9 +490,12 @@ when GitHub can reach the Home over HTTPS. The selected GitHub Connected Account
 needs permission to write Webhooks on that repository. Reconnect it with that
 permission if setup asks you to. **Waiting for verified delivery** means the
 hook is registered and Happier is waiting for a signed delivery. **Webhook**
-means Happier has verified a delivery. When GitHub cannot reach the Home,
-**GitHub Events polling** waits on GitHub's events feed, which can take from
-30 seconds to 6 hours before Happier's next check.
+means Happier has verified a delivery. If the Home has no public HTTPS
+address, Happier refuses to save the push trigger. Make the Home reachable
+from GitHub, deploy manually, or ask an agent to deploy.
+
+When a Home advertises a public HTTPS address but GitHub refuses webhook
+registration, Happier reports the refusal in the Save result.
 
 When you remove the last trigger using a managed webhook, Happier tries to
 delete the GitHub hook and retires its Home route. If GitHub removal fails,

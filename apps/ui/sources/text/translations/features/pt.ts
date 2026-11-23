@@ -21349,6 +21349,7 @@ const pt = translated(workflowValueReferenceTranslations.pt, {
         notFoundTitle: 'Execução não encontrada',
         accessDenied: 'Não tens acesso a isto.',
         conflict: 'Isto mudou noutro sítio. Atualiza para veres a versão atual; o teu trabalho local é mantido.',
+        githubWebhookHomeUnreachable: 'O GitHub não consegue aceder a este Home. Torna o Home acessível, faz a implantação manualmente ou pede a um agente para a fazer.',
         eventDeclarationNotCurrent: 'A declaração do plugin da conta já não corresponde a este evento. Atualiza o Happier e o plugin na máquina observadora, reinicia o Happier nessa máquina e volta a escolher o evento.',
         inputTooLarge: 'Essa entrada é demasiado grande para ser enviada. Nada foi alterado.',
         unresolvedOutcome: 'O Happier ainda não consegue confirmar que o trabalho anterior parou, por isso não pode ser substituído.',

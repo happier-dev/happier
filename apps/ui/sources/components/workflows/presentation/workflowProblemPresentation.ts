@@ -90,6 +90,7 @@ const WORKFLOW_PROBLEM_SHAPES = {
     missing_reference: { messageKey: 'workflows.problem.needsRepair', repair: 'none', accessibilitySemantics: 'alert' },
     invalid_reference_scope: { messageKey: 'workflows.problem.needsRepair', repair: 'none', accessibilitySemantics: 'alert' },
     target_unavailable: { messageKey: 'workflows.problem.targetUnavailable', repair: 'retry', accessibilitySemantics: 'alert' },
+    github_webhook_home_unreachable: { messageKey: 'workflows.problem.githubWebhookHomeUnreachable', repair: 'none', accessibilitySemantics: 'alert' },
     run_not_found: { titleKey: 'workflows.problem.notFoundTitle', messageKey: 'workflows.problem.notFound', repair: 'none', accessibilitySemantics: 'alert' },
     run_access_denied: { messageKey: 'workflows.problem.accessDenied', repair: 'none', accessibilitySemantics: 'alert' },
     currentness_conflict: { messageKey: 'workflows.problem.conflict', repair: 'refresh', accessibilitySemantics: 'alert' },

@@ -1,5 +1,6 @@
 import { readManagedGithubWebhookHomeUrlV1 } from '@happier-dev/protocol/automations/event-setup-result';
 
+import { AutomationValidationError } from '@/app/automations/automationValidation';
 import type { ForwardManagedPluginWebhookOperation } from '@/app/api/socket/managedPluginWebhookDispatcher';
 import { readRequestHomeEnv } from '@/app/home/settings/requestHomeEnv';
 import { projectHomeIngressReachability } from '@/app/home/reachability/homeReachability';
@@ -15,27 +16,39 @@ async function readWebhookAddress(request: object) {
     return readManagedGithubWebhookHomeUrlV1(projectHomeIngressReachability({ env, access }));
 }
 
+type ManagedRepositoryWebhookMutation = Readonly<{ triggerId: string; managedGithubRepositoryId?: string }>;
+
+export async function admitManagedRepositoryWebhookSaves(
+    request: object, mutations: readonly ManagedRepositoryWebhookMutation[],
+): Promise<string | null> {
+    if (!mutations.some(item => item.managedGithubRepositoryId !== undefined)) return null;
+    const publicBaseUrl = await readWebhookAddress(request);
+    if (!publicBaseUrl) throw new AutomationValidationError('github_webhook_home_unreachable');
+    return publicBaseUrl;
+}
+
 /** Runs after the Automation transaction has committed. Only the saved trigger can own the route. */
 export async function settleManagedRepositoryWebhookSaves(params: Readonly<{
-    request: object;
+    publicBaseUrl: string | null;
     accountId: string;
     automation: Readonly<{ id: string; triggers: readonly Readonly<{ id: string; revision: number }>[] }>;
-    mutations: readonly Readonly<{ triggerId: string; managedGithubRepositoryId?: string }>[];
+    mutations: readonly ManagedRepositoryWebhookMutation[];
     forward: ForwardManagedPluginWebhookOperation;
 }>) {
+    const { publicBaseUrl } = params;
+    if (publicBaseUrl === null) return undefined;
     const requested = params.mutations.flatMap(item => {
         if (item.managedGithubRepositoryId === undefined) return [];
         const trigger = params.automation.triggers.find(trigger => trigger.id === item.triggerId);
         return trigger ? [{ trigger, repositoryId: item.managedGithubRepositoryId }] : [];
     });
     if (!requested.length) return undefined;
-    const publicBaseUrl = await readWebhookAddress(params.request).catch(() => null);
     return await Promise.all(requested.map(async ({ trigger, repositoryId }) => {
-        const result = publicBaseUrl ? await registerManagedPluginWebhookForEndpoint({
+        const result = await registerManagedPluginWebhookForEndpoint({
             accountId: params.accountId, automationId: params.automation.id,
             triggerId: trigger.id, triggerRevision: trigger.revision, repositoryId, publicBaseUrl,
             forward: params.forward,
-        }) : { kind: 'polling', code: 'route_unavailable' } as const;
+        });
         return { triggerId: trigger.id, result };
     }));
 }

@@ -1,5 +1,5 @@
 import { removeUnusedManagedRepositoryWebhook, type DeletedManagedWebhookConsumer } from "@/app/plugins/webhooks/removeUnusedManagedRepositoryWebhook";
-import { settleManagedRepositoryWebhookSaves } from "@/app/plugins/webhooks/settleManagedRepositoryWebhookSaves";
+import { admitManagedRepositoryWebhookSaves, settleManagedRepositoryWebhookSaves } from "@/app/plugins/webhooks/settleManagedRepositoryWebhookSaves";
 import { AutomationTriggerEventDeclarationsRequestSchema, AutomationTriggerEventDeclarationsResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { readAutomationTriggerEventDeclarations } from '@/app/automations/automationEventPayloadSchemaProjection';
 import { z } from "zod/mini";
@@ -325,6 +325,7 @@ export function registerAutomationV3Routes(
             )) {
                 return sendStoredContentFailure(reply);
             }
+            const publicBaseUrl = await admitManagedRepositoryWebhookSaves(request, body.triggers);
             const automation = await createAutomation({
                 accountId: request.userId,
                 authentication: readTeamOperationAuthenticationFromRequest(request),
@@ -343,7 +344,7 @@ export function registerAutomationV3Routes(
                 },
             });
             const managedGithubRepositoryHooks = await settleManagedRepositoryWebhookSaves({
-                request, accountId: request.userId, automation, mutations: body.triggers,
+                publicBaseUrl, accountId: request.userId, automation, mutations: body.triggers,
                 forward: app.forwardManagedPluginWebhookToMachine,
             });
             const detail = await toAutomationDefinitionDetailWithCurrentEventStatus(automation, accountCurrentness);
@@ -428,6 +429,7 @@ export function registerAutomationV3Routes(
             })) {
                 return sendStoredContentFailure(reply);
             }
+            const publicBaseUrl = await admitManagedRepositoryWebhookSaves(request, body.triggers);
             const hookRemoval = collectManagedWebhookRemovals(app, request.userId);
             const automation = await reconcileAutomationDefinition({
                 accountId: request.userId,
@@ -438,7 +440,7 @@ export function registerAutomationV3Routes(
             });
             if (!automation) return reply.code(404).send({ error: "automation_not_found" });
             const managedGithubRepositoryHooks = await settleManagedRepositoryWebhookSaves({
-                request, accountId: request.userId, automation, mutations: body.triggers,
+                publicBaseUrl, accountId: request.userId, automation, mutations: body.triggers,
                 forward: app.forwardManagedPluginWebhookToMachine,
             });
             const managedGithubRepositoryHookRemovalError = await hookRemoval.finish();
@@ -478,6 +480,7 @@ export function registerAutomationV3Routes(
                 && accountCurrentness.mode !== "plain") {
                 return sendStoredContentFailure(reply);
             }
+            const publicBaseUrl = await admitManagedRepositoryWebhookSaves(request, [body]);
             const automation = await createAutomationTrigger({
                 accountId: request.userId,
                 authentication: readTeamOperationAuthenticationFromRequest(request),
@@ -487,7 +490,7 @@ export function registerAutomationV3Routes(
             });
             if (!automation) return reply.code(404).send({ error: "automation_not_found" });
             const managedGithubRepositoryHooks = await settleManagedRepositoryWebhookSaves({
-                request, accountId: request.userId, automation, mutations: [body],
+                publicBaseUrl, accountId: request.userId, automation, mutations: [body],
                 forward: app.forwardManagedPluginWebhookToMachine,
             });
             const detail = await toAutomationDefinitionDetailWithCurrentEventStatus(automation, accountCurrentness);

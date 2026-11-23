@@ -29,6 +29,8 @@ import { removeUnusedManagedRepositoryWebhook } from "./removeUnusedManagedRepos
 
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkflowRecipe";
+import { registerAutomationV3Routes } from "@/app/api/routes/automations/registerAutomationV3Routes";
 import { createAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { createSignedPluginInstallationPublisherHeader } from "@/testkit/pluginInstallationPublisherTestkit";
 import { registerPluginWebhookDaemonRoutes } from "@/app/api/routes/plugins/webhooks/registerPluginWebhookDaemonRoutes";
@@ -260,6 +262,53 @@ describe("Account webhook endpoint with the shipped GitHub producer", () => {
             () => db.machine.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it("refuses managed GitHub push without saving a polling trigger on a private Home", async () => {
+        harness.resetEnv({
+            HANDY_MASTER_SECRET: "github-account-endpoint-master-secret",
+            HAPPIER_SERVER_IDENTITY_ID: SERVER_IDENTITY_ID,
+            HAPPIER_PUBLIC_SERVER_URL: "https://127.0.0.1:8443",
+        });
+        const accountId = await seedAccount();
+        const repositoryId = ROUTING_SOURCE_INSTANCE_ID.split(":").at(-1)!;
+        const repository = { id: Number(repositoryId), name: "example", full_name: "fixture/example", owner: { login: "fixture" } };
+        const automationId = randomUUID();
+        const app = createAuthenticatedTestApp();
+        registerAutomationV3Routes(app);
+        try {
+            const response = await app.inject({
+                method: "POST",
+                url: "/v3/automations",
+                headers: { "x-test-user-id": accountId },
+                payload: {
+                    automationId, name: "Deploy on push", enabled: true,
+                    assignments: [{ machineId: MACHINE_ID }],
+                    executionRecipe: createAutomationWorkflowRecipeFixture({
+                        templateVersion: 1, directory: "/workspace/app", prompt: "Deploy",
+                    }),
+                    triggers: [{
+                        triggerId: randomUUID(), managedGithubRepositoryId: repositoryId,
+                        trigger: {
+                            kind: "pluginEvent", enabled: true, sourceInstanceId: ROUTING_SOURCE_INSTANCE_ID,
+                            sourceContractVersion: 1, displayLabel: repository.full_name, filter: null,
+                            maximumObservationAgeMs: null,
+                            eventRef: { pluginId: MANIFEST.pluginId, localId: GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1 },
+                            sourceConfig: { v: 1, repository: createGithubRepositorySourceConfig(repository),
+                                credentialRef: { service: GITHUB_CONNECTED_ACCOUNT_SERVICE, accountId: "fixture-github" } },
+                            observationTransport: { kind: "checkpointedPull", watcherMaterializationRef: {
+                                machineId: MACHINE_ID, pluginId: MANIFEST.pluginId, materializationId: MATERIALIZATION_ID,
+                            } },
+                        },
+                    }],
+                },
+            });
+            expect(response.json()).toEqual({ error: "github_webhook_home_unreachable" });
+            expect(response.statusCode).toBe(400);
+            expect(await db.automation.findUnique({ where: { id: automationId } })).toBeNull();
+        } finally {
+            await app.close();
+        }
     });
 
     it.each(["full", "light"])("admits a signed GitHub delivery through the %s-server public route without Redis", async (flavor) => {
