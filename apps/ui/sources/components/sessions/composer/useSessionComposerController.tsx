@@ -109,7 +109,7 @@ import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessag
 import { useTeamCredentialSelectionCoordinator } from "@/components/sessions/teamCredentials/useTeamCredentialSelectionCoordinator";
 import { resourceHasAvailableTeamCredentialProviderModel } from "@/components/sessions/teamCredentials/teamCredentialProviderModelCurrentness";
 import { useScmSessionAutoRefresh } from "@/scm/refresh/useScmSessionAutoRefresh";
-import { storage, useIsMachineListSettled, useLocalSetting, useMachine, useServerScopedMachine, useSetting, useSocketStatus, useWorkspaceReviewCommentsDrafts } from "@/sync/domains/state/storage";
+import { storage, useLocalSetting, useMachine, useServerScopedMachine, useSetting, useSocketStatus, useWorkspaceReviewCommentsDrafts } from "@/sync/domains/state/storage";
 import { useSettingsValues } from "@/sync/store/settingsReadHooks";
 import { PROVIDER_REASONING_EFFORT_OPTION_ID } from "@happier-dev/protocol/providers/catalog/reasoningEffort";
 import { readServerAccountScopeOwnerLifetime, serverAccountScopeKeySuffix } from "@/sync/domains/scope/serverAccountScope";
@@ -1463,9 +1463,7 @@ export function useSessionComposerController({
     // `session.model.set` on its own (Change model without Send). The server rechecks the exact Action.
     const canSelectModel = hasWriteAccess || (embedded?.modelSelectionGranted === true && embedded.modelPicker === true);
     const sessionMachineRecord = useServerScopedMachine(sessionRouteServerId, typeof machineId === 'string' ? machineId : '');
-    const sessionMachineInventorySettled = useIsMachineListSettled(sessionRouteServerId);
-    const sessionMachineAccessRemoved = isSessionMachineAccessRemoved({ session, machineId,
-        inventorySettled: sessionMachineInventorySettled, machinePresent: Boolean(sessionMachineRecord) });
+    const sessionMachineAccessRemoved = isSessionMachineAccessRemoved({ session });
     // Reconnect and the existing exact Home AccountChange edge reread native
     // observations; this does not submit Start or introduce a consumer timer.
     const socketConnectionGeneration = useSocketStatus().lastConnectedAt;

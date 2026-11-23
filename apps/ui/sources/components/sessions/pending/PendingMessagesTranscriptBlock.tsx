@@ -10,10 +10,8 @@ import { Platform, Pressable, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import type { DiscardedPendingMessage, PendingMessage } from '@/sync/domains/state/storageTypes';
-import { useIsMachineListSettled, useServerScopedMachine, useSession, useSetting } from '@/sync/domains/state/storage';
+import { useSession, useSetting } from '@/sync/domains/state/storage';
 import { isSessionMachineAccessRemoved } from '@/components/sessions/access/sessionMachineAccessRemoved';
-import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
-import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { sync } from '@/sync/sync';
 import { canSteerUserMessageNow, supportsInFlightSteerUserMessage } from '@/sync/domains/session/control/submitMode';
 import { derivePendingMessagesRuntimePresentation, getPendingMaterializingKey, getPendingMessageSendPresentation, sendPendingMessageWithIntent } from './pendingMessageSendActions';
@@ -233,12 +231,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     const pendingInputServerId = props.serverId?.trim()
         || session?.serverId
         || resolvePreferredServerIdForSessionId(props.sessionId);
-    const reachableMachineTarget = useSessionReachableMachineTarget(props.sessionId, pendingInputServerId);
-    const machineId = reachableMachineTarget?.machineId ?? (session ? readSessionOwnerMetadataView(session)?.machineId : undefined);
-    const machinePresent = useServerScopedMachine(pendingInputServerId, machineId, Boolean);
-    const machineInventorySettled = useIsMachineListSettled(pendingInputServerId);
-    const machineAccessRemoved = isSessionMachineAccessRemoved({ session, machineId,
-        machinePresent, inventorySettled: machineInventorySettled });
+    const machineAccessRemoved = isSessionMachineAccessRemoved({ session });
     const serverFeaturesSnapshot = useServerFeaturesSnapshotForServerId(pendingInputServerId ?? null, {
         enabled: Boolean(pendingInputServerId),
     });

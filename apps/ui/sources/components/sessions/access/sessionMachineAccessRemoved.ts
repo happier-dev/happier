@@ -1,13 +1,9 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { isSessionAccessOwner } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 
-/** A settled exact-Home inventory, rather than runtime reachability, owns this display fact. */
+/** The access-loss owner publishes this stop reason at the Session's natural boundary. */
 export function isSessionMachineAccessRemoved(input: Readonly<{
-    session: Pick<Session, 'access' | 'accessLevel'> | null | undefined;
-    machineId: string | null | undefined;
-    inventorySettled: boolean;
-    machinePresent: boolean;
+    session: Pick<Session, 'active' | 'metadata'> | null | undefined;
 }>): boolean {
-    return Boolean(input.session && isSessionAccessOwner(input.session.access, input.session.accessLevel)
-        && input.machineId && input.inventorySettled && !input.machinePresent);
+    return input.session?.active === false
+        && input.session.metadata?.lifecycleStateReason === 'machine_access_withdrawn';
 }

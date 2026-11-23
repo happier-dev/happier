@@ -57,6 +57,21 @@ describe('source Session authoring Action', () => {
         },
     );
 
+    it.each([false, true])('seeds the source Machine only without typed withdrawal (withdrawn: %s)', async withdrawn => {
+        const source = createSessionFixture({ id: 'withdrawal-source', serverId: scope.serverId, active: false,
+            metadata: { path: '/repo', host: 'dev', machineId: 'source-machine',
+                ...(withdrawn ? { lifecycleState: 'stopped' as const, lifecycleStateReason: 'machine_access_withdrawn' as const } : {}) } });
+        storage.getState().applySessions([source]);
+        const result = await openSessionAuthoringDraft({
+            input: { sourceSession: { serverId: scope.serverId, sessionId: source.id }, replay: { type: 'latest' } },
+            context: { surface: 'ui', serverId: scope.serverId, runtimeAccountId: scope.accountId },
+        });
+        expect(result.kind).toBe('opened');
+        if (result.kind !== 'opened') throw new Error('Source draft did not open');
+        expect(readNewSessionDraftFromRepository({ scope, draftId: result.draftId })?.selectedMachineId)
+            .toBe(withdrawn ? null : 'source-machine');
+    });
+
     it('does not seed when the requesting surface retires during Action admission', async () => {
         const { openSessionAuthoringSeed } = await import('./openSessionAuthoringSeed');
         let current = true;

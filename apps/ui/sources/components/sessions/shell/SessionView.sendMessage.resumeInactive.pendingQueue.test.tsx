@@ -1988,13 +1988,31 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         } finally { await screen.unmount(); }
     });
 
-    it('keeps requester history mounted after authoritative machine removal and authors continuation through the ordinary composer', async () => {
+    it('keeps the composer mounted when the owner Machine leaves and returns to the settled inventory', async () => {
+        setMachineOnline(true);
+        const screen = await renderSessionView();
+        try {
+            for (const present of [false, true]) {
+                await act(async () => {
+                    storage.getState().applyMachines(present ? [createMachineFixture({ id: 'm-target', active: true })] : [],
+                        true, { sourceServerId: runtime.serverId });
+                    storage.getState().markMachineListSettled(runtime.serverId);
+                });
+                expect(screen.tree.findAll(node => node.props.testID === 'session-requester-access-removed')).toHaveLength(0);
+                expect(findAgentInput(screen)).toBeDefined();
+            }
+        } finally { await screen.unmount(); }
+    });
+
+    it('keeps requester history mounted after typed access withdrawal and authors continuation through the ordinary composer', async () => {
         setMachineOnline(true);
         const screen = await renderSessionView();
         try {
             await act(async () => {
                 storage.getState().applyMachines([], true, { sourceServerId: runtime.serverId });
                 storage.getState().markMachineListSettled(runtime.serverId);
+                updateSession({ active: false, metadata: { ...currentSession().metadata!, lifecycleState: 'stopped',
+                    lifecycleStateReason: 'machine_access_withdrawn' } });
             });
             expect(storage.getState().machineListByServerId[runtime.serverId]).toEqual([]);
             expect(screen.findByTestId('session-requester-access-removed')).toBeTruthy();

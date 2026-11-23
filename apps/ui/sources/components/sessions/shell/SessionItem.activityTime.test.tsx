@@ -243,9 +243,8 @@ describe('SessionItem activity time', () => {
         expect(screen.getTextContent()).toContain(t('session.accessWithdrawn'));
     });
 
-    it('reads access loss from the Session view owner while the Session has not recorded its end', async () => {
-        // The Session body says access was removed as soon as the settled Machine list no longer has its Machine
-        // (`isSessionMachineAccessRemoved`); the row must not keep saying "Ready" for the same Session.
+    it('does not present inventory absence as withdrawn access on a live Session row', async () => {
+        // Machine inventory membership cannot replace the access owner's typed Session stop reason.
         mockSessionStatus = createStatusFixture({ ...defaultSessionStatus, state: 'waiting', statusText: 'online', shouldShowStatus: false });
         storageModule.storage.setState({ machineListByServerId: { server_a: [] }, machineListStatusByServerId: { server_a: 'idle' } });
         const session = createSessionFixture({ id: 'access-lost-row', active: true,
@@ -253,8 +252,8 @@ describe('SessionItem activity time', () => {
         const rowViewModel = createSessionItemRowViewModel({ session, serverId: 'server_a' });
         const screen = await renderScreen(<ArchiveProgressSessionItem session={session} rowViewModel={rowViewModel}
             serverId="server_a" pinned={false} selected={false} compact={false} />);
-        expect(screen.getTextContent()).toContain(t('session.accessWithdrawn'));
-        expect(screen.findByTestId('session-list-item-access-lost-row')?.props.accessibilityLabel).toContain(t('session.accessWithdrawn'));
+        expect(screen.getTextContent()).not.toContain(t('session.accessWithdrawn'));
+        expect(screen.findByTestId('session-list-item-access-lost-row')?.props.accessibilityLabel).not.toContain(t('session.accessWithdrawn'));
     });
 
     it('shows shared archive progress on an already mounted row and clears it when the operation settles', async () => {

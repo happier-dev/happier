@@ -16,6 +16,7 @@ import { resolveMachineControlTargetForSessionFromState } from '@/sync/domains/s
 import { readSessionSnapshotForAuthority } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
 import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from './actionAccountContext';
+import { isSessionMachineAccessRemoved } from '@/components/sessions/access/sessionMachineAccessRemoved';
 
 type AuthoringOpenArgs = Parameters<NonNullable<ActionExecutorDeps['sessionAuthoringOpen']>>[0];
 
@@ -58,7 +59,7 @@ async function openSourceSessionDraft({ input, context }: AuthoringOpenArgs,
         const approvalProfile = approvalProfileId && metadata.approvalProfileTeamOrGroupDerived !== true
             ? await account.readArtifactHeader(approvalProfileId, { signal: context.signal }) : null;
         let configuration = buildNewSessionTempDataFromSessionConfiguration({ session,
-            machineId: target?.machineId ?? metadata.machineId ?? null,
+            machineId: isSessionMachineAccessRemoved({ session }) ? null : target?.machineId ?? metadata.machineId ?? null,
             directoryOverride: target?.basePath ?? metadata.path ?? null, approvalProfile });
         if (input.seed?.directoryIntent?.kind === 'managed') {
             configuration = { ...configuration, directory: '', directoryKind: 'managed' };

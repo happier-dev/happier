@@ -65,7 +65,7 @@ import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropd
 import { ContextMenu } from '@/components/ui/forms/dropdown/ContextMenu';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
-import { useSessionMachineAccessRemoved } from '@/components/sessions/access/useSessionMachineAccessRemoved';
+import { isSessionMachineAccessRemoved } from '@/components/sessions/access/sessionMachineAccessRemoved';
 import {
     resolveSessionRowPresentation,
 } from './row/resolveSessionRowPresentation';
@@ -668,10 +668,9 @@ const SessionItemContent = React.memo(
             () => readSessionRowPresentationAgentId(resolvedSession),
             [resolvedSession],
         );
-        // The Session view's access-loss fact (its Machine left this viewer's settled list), read from the same owner,
+        // The Session view's typed access-loss fact, read from the same owner,
         // so the row never says "Ready" beside a body that says access was removed.
-        const machineAccessRemoved = useSessionMachineAccessRemoved({ serverId, session: resolvedSession,
-            machineId: resolvedSessionMetadata?.machineId ?? null });
+        const machineAccessRemoved = isSessionMachineAccessRemoved({ session: resolvedSession });
         const resolvedSelectionKey = selectionKey ?? '';
         const occurrenceTestId = occurrenceId ?? resolvedSession.id;
         const resolvedSelectionOccurrenceKey = occurrenceId ?? resolvedSelectionKey;
@@ -1274,7 +1273,7 @@ const SessionItemContent = React.memo(
         const runningWorkCount = workflowOccurrence ? undefined : sessionStatus.awareness.runningWorkCount;
         // Why an ended Session ended: it is the row's status (spoken and, on a one-line row, its trailing word).
         const endReasonKey = !session.active && session.lifecycleStateReason ? 'session.machineDeleted'
-            : machineAccessRemoved || (!session.active && session.metadata?.lifecycleStateReason === 'machine_access_withdrawn')
+            : machineAccessRemoved
                 ? 'session.accessWithdrawn' : null;
         const rowPresentation = resolveSessionRowPresentation({
             status: workStatus,
