@@ -358,6 +358,30 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(renderedText).toContain(t(label));
     });
 
+    it('offers one next step for a message refused by a reset Team binding, without repeating the cause', async () => {
+        sessionValue = { active: true, presence: 'online', thinking: false,
+            lastRuntimeIssue: { v: 1, scope: 'primary_session', status: 'failed', code: 'team_credential_binding_not_current',
+                source: 'dependency_failure', occurredAt: 1 } };
+        const message = { ...queuedMessage('reset', 1), discardedAt: 2, discardedReason: 'team_credential_binding_not_current' as const };
+        const Component = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(Component, { sessionId: 's1', pendingMessages: [], discardedMessages: [message] }));
+        const allText = screen.root.findAll(node => String(node.type) === 'Text')
+            .flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
+        // The transcript's runtime row says the cause once; the section says what happened to the message.
+        expect(allText).toContain(t('session.pendingMessages.discarded.failedTitle'));
+        expect(allText).not.toContain(t('session.pendingMessages.discarded.title'));
+        expect(allText).not.toContain(t('startFailure.cause.team_credential_binding_not_current'));
+
+        await hoverDiscardedMessageRow(screen, 'reset');
+        expect(screen.findByTestId('pendingMessages.discarded.requeue:reset')).toBeNull();
+        expect(screen.findByTestId('pendingMessages.discarded.sendNow:reset')).toBeNull();
+        expect(screen.findByTestId('pendingMessages.discarded.remove:reset')).toBeTruthy();
+        await screen.pressByTestIdAsync('pendingMessages.discarded.sendAgain:reset');
+        // Nothing runs, so sending again interrupts nothing and asks nothing.
+        expect(modalConfirm).not.toHaveBeenCalled();
+        expectSendNowAction({ localId: 'reset', deliveryIntent: 'interrupt_and_send' });
+    });
+
     it('presents a retained launch refusal from its typed cause alone', async () => {
         const pendingFailure = { code: 'resume_failed' as const, errorDetail: { kind: 'launch_error' as const,
             code: 'agent_startup_model_reconciliation_failed', childExit: { code: 1, signal: null },
@@ -439,9 +463,8 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(sendPendingMessageNow).not.toHaveBeenCalled();
     });
 
-    it('does not describe resuming a running session whose live presence is not yet observed (fresh client)', async () => {
+    it('sends at once, without a turn warning, when the running session has no turn to stop', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
-        modalConfirm.mockResolvedValueOnce(false);
         sessionValue = { active: true, presence: undefined, thinking: false };
 
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
@@ -453,11 +476,9 @@ describe('PendingMessagesTranscriptBlock', () => {
         await hoverPendingMessageRow(screen, 'p1');
         await screen.pressByTestIdAsync('pendingMessages.sendNow:p1');
 
-        expect(modalConfirm).toHaveBeenCalledWith(
-            t('session.pendingMessages.sendConfirm.title'),
-            t('session.pendingMessages.sendConfirm.body'),
-            { confirmText: t('session.pendingMessages.actions.sendNow') },
-        );
+        // Nothing runs, so nothing is interrupted: no dialog speaks of a current turn.
+        expect(modalConfirm).not.toHaveBeenCalled();
+        expectSendNowAction({ localId: 'p1', deliveryIntent: 'interrupt_and_send' });
     });
 
     it('leaves inactive managed held input to the existing wake recovery control', async () => {

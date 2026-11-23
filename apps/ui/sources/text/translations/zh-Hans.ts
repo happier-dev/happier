@@ -8968,6 +8968,7 @@ export const zhHans: TranslationStructure = {
           interruptAndRunNow: "中断并立即运行",
           markHandled: "标记为已处理",
           requeue: "重新入队",
+          sendAgain: "重新发送",
           continueWaiting: '继续等待',
           dismiss: '关闭',
           sendAsNew: '作为新消息发送',
@@ -9003,6 +9004,7 @@ export const zhHans: TranslationStructure = {
           title: "已丢弃消息",
           subtitle: "这些消息已不在队列中。投递结果可能不确定；重新发送前请检查对话记录。",
           label: "已丢弃",
+          failedTitle: "未发送",
           removeConfirm: {
             title: "移除已丢弃消息？",
             body: "这将删除已丢弃消息。",

@@ -9125,6 +9125,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
           interruptAndRunNow: "Interrompre et exécuter",
           markHandled: "Marquer comme traité",
           requeue: "Remettre en file",
+          sendAgain: "Renvoyer",
         },
         editPrompt: {
           title: "Modifier le message en attente",
@@ -9158,6 +9159,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
           subtitle:
             "Ces messages ne sont plus en attente. Leur livraison peut être incertaine ; vérifiez la transcription avant de les renvoyer.",
           label: "Abandonné",
+          failedTitle: "Non envoyé",
           removeConfirm: {
             title: "Retirer le message abandonné ?",
             body: "Cela supprimera le message abandonné.",

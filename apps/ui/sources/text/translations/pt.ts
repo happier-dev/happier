@@ -9392,6 +9392,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
           interruptAndRunNow: "Interromper e executar agora",
           markHandled: "Marcar como resolvido",
           requeue: "Reenfileirar",
+          sendAgain: "Enviar novamente",
         },
         editPrompt: {
           title: "Editar mensagem pendente",
@@ -9425,6 +9426,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
           subtitle:
             "Estas mensagens já não estão na fila. A entrega pode ser incerta; verifique a transcrição antes de enviar novamente.",
           label: "Descartada",
+          failedTitle: "Não enviado",
           removeConfirm: {
             title: "Remover mensagem descartada?",
             body: "Isso excluirá a mensagem descartada.",

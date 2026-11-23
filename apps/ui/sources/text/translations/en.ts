@@ -10818,6 +10818,7 @@ const enSession = {
       dismiss: 'Dismiss',
       sendAsNew: 'Send as new',
       requeue: 'Re-queue',
+      sendAgain: 'Send again',
     },
     editPrompt: {
       title: 'Edit pending message',
@@ -10853,6 +10854,7 @@ const enSession = {
       subtitle:
         'These messages are no longer queued. Delivery may be uncertain; check the transcript before sending again.',
       label: 'Discarded',
+      failedTitle: 'Not sent',
       removeConfirm: {
         title: 'Remove discarded message?',
         body: 'This will delete the discarded message.',

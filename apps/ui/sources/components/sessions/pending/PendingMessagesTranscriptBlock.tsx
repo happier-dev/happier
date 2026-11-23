@@ -154,6 +154,11 @@ function resolvePendingMessageMenuPressAnchor(event: unknown): PendingMessageMen
     };
 }
 
+/** A retained message that failed to reach the Agent, as opposed to one the person discarded. */
+function isRetainedSendFailure(message: DiscardedPendingMessage): boolean {
+    return Boolean(message.pendingFailure) || getSessionInputFailureLabelKey({ code: message.discardedReason }) !== null;
+}
+
 function isSessionRuntimeWorking(
     session: ReturnType<typeof useSession>,
     pendingMessages: ReadonlyArray<PendingMessage> = [],
@@ -1160,6 +1165,12 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         const menuAnchor = menuPressAnchor?.menuKey === menuKey ? menuPressAnchor.anchor : undefined;
         const isArchivedUncertainty = message.discardedReason === 'dismissed_uncertain'
             || message.discardedReason === 'resent_as_new';
+        // A message the Agent never received (refused before any effect) has one next step: send it again.
+        // While a turn runs, waiting (Re-queue) and interrupting (Send now) stay distinct choices.
+        const offersSendAgain = isRetainedSendFailure(message) && !runtimeWorking;
+        // Under a "Not sent" title, a cause the Session's transcript already says is not repeated on the row.
+        const causeSaidBySession = all.every(isRetainedSendFailure)
+            && admissionFailure !== null && session?.lastRuntimeIssue?.code === message.discardedReason;
 
         const menuItems: DropdownMenuItem[] = [
             ...(text ? [{
@@ -1168,7 +1179,11 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                 title: t('common.copy'),
                 icon: <Icon name="copy" size={16} color={theme.colors.text.secondary} />,
             } as const] : []),
-            ...(!isArchivedUncertainty ? [
+            ...(offersSendAgain ? [
+                { id: 'sendNow', testID: `pendingMessages.discarded.menu.sendAgain:${message.id}`, title: t('session.pendingMessages.actions.sendAgain'), icon: <Icon name="paper-plane" size={16} color={theme.colors.text.secondary} /> },
+                { id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} /> },
+            ] : []),
+            ...(!isArchivedUncertainty && !offersSendAgain ? [
                 { id: 'requeue', title: t('session.pendingMessages.actions.requeue'), icon: <Icon name="arrow-elbow-up-left" size={16} color={theme.colors.text.secondary} /> },
                 { id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} /> },
                 ...(canSteerNow ? [{ id: 'steerNow', title: t('session.pendingMessages.actions.steerNow'), icon: <Icon name="navigation-arrow" size={16} color={theme.colors.text.secondary} /> } as const] : []),
@@ -1249,12 +1264,12 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 messageId={message.id} sessionId={props.sessionId} serverId={props.serverId} createdAt={message.createdAt} /> : <Text numberOfLines={collapsedLines} style={{ color: theme.colors.text.primary, ...Typography.default() }}>
                                 {text}
                             </Text>}
-                            <Text style={[
+                            {!causeSaidBySession ? <Text style={[
                                 { marginTop: theme.space.s6, color: theme.colors.text.secondary, ...Typography.variant('meta', 'semiBold') },
                                 isHostFollowInput ? styles.hostDiscardedLabel : null,
                             ]}>
                                 {outcomeLabel}
-                            </Text>
+                            </Text> : null}
                         </Pressable>
                         </PendingUtteranceSurface>
 
@@ -1271,7 +1286,23 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                         message={message}
                                     />
                                 ) : null}
-                                {!isArchivedUncertainty ? (
+                                {offersSendAgain ? (
+                                    <>
+                                        <IconAction
+                                            testID={`pendingMessages.discarded.sendAgain:${message.id}`}
+                                            accessibilityLabel={t('session.pendingMessages.actions.sendAgain')}
+                                            icon="paper-plane"
+                                            onPress={() => handleSendDiscardedNow(message)}
+                                        />
+                                        <IconAction
+                                            testID={`pendingMessages.discarded.remove:${message.id}`}
+                                            accessibilityLabel={t('common.remove')}
+                                            icon="trash"
+                                            onPress={() => handleRemoveDiscarded(message.id)}
+                                            tone="destructive"
+                                        />
+                                    </>
+                                ) : !isArchivedUncertainty ? (
                                     <>
                                         <IconAction
                                             testID={`pendingMessages.discarded.requeue:${message.id}`}
@@ -1322,7 +1353,9 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         isWeb,
         menuPressAnchor,
         openMenuKey,
+        runtimeWorking,
         sendNowActionLabel,
+        session?.lastRuntimeIssue?.code,
         theme.colors.input.background,
         theme.colors.text.primary,
         theme.colors.text.secondary,
@@ -1379,8 +1412,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     const isQueueExpanded = canExpandPendingQueue && isPendingQueueExpanded;
     const maxHeight = isQueueExpanded ? Math.max(expandedMaxHeightPx, collapsedMaxHeight) : collapsedMaxHeight;
     // The section counts what it holds: the queue may continue in another section further down.
-    const retainedFailureOnly = displayedDiscarded.length > 0 && displayedDiscarded.every(message => Boolean(message.pendingFailure));
-    const retainedTitle = retainedFailureOnly ? t('session.pendingMessages.errors.sendFailed') : t('session.pendingMessages.discarded.title');
+    const retainedFailureOnly = displayedDiscarded.length > 0 && displayedDiscarded.every(isRetainedSendFailure);
+    const retainedTitle = retainedFailureOnly ? t('session.pendingMessages.discarded.failedTitle') : t('session.pendingMessages.discarded.title');
     const headerLabel = visiblePendingMessageIds.size > 0
         ? `${t('session.pendingMessages.title')} (${visiblePendingMessageIds.size})`
         : retainedTitle;

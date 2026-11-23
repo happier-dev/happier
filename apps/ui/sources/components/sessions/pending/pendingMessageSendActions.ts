@@ -14,14 +14,18 @@ export function getPendingMaterializingKey(message: Pick<PendingMessage, 'id' | 
 
 export function getPendingMessageSendPresentation(session: Session | null) {
     const canSteerNow = canSteerUserMessageNow({ session });
-    const backgroundActive = derivePendingMessagesRuntimePresentation(session).backgroundActive;
+    const { backgroundActive, working } = derivePendingMessagesRuntimePresentation(session);
+    const running = session !== null && isSessionRuntimeRunning(session);
     return {
         sendNowActionLabel: canSteerNow ? t('session.pendingMessages.actions.sendNowInterrupt')
             : backgroundActive ? t('session.pendingMessages.actions.sendToAgentNow') : t('session.pendingMessages.actions.sendNow'),
         sendNowConfirmationTitle: canSteerNow ? t('session.pendingMessages.sendConfirm.interruptTitle')
             : backgroundActive ? t('session.pendingMessages.sendConfirm.backgroundTitle') : t('session.pendingMessages.sendConfirm.title'),
-        sendNowConfirmationBody: !session || !isSessionRuntimeRunning(session) ? t('session.pendingMessages.sendConfirm.resumeBody')
-            : backgroundActive ? t('session.pendingMessages.sendConfirm.backgroundBody') : t('session.pendingMessages.sendConfirm.body'),
+        // A confirmation names what the send changes: a resume, background work, or the running turn. A running
+        // Session with no turn and no background work loses nothing, so it sends without asking (`null`).
+        sendNowConfirmationBody: !running ? t('session.pendingMessages.sendConfirm.resumeBody')
+            : backgroundActive ? t('session.pendingMessages.sendConfirm.backgroundBody')
+                : working ? t('session.pendingMessages.sendConfirm.body') : null,
     };
 }
 
@@ -42,8 +46,9 @@ export async function sendPendingMessageWithIntent(opts: {
     if (!discarded && !canUseDirectPendingDeliveryActions(message, undefined, opts.session)) return;
     if (opts.deliveryIntent === 'interrupt_and_send') {
         const presentation = getPendingMessageSendPresentation(opts.session);
-        if (!await Modal.confirm(presentation.sendNowConfirmationTitle, presentation.sendNowConfirmationBody,
-            { confirmText: presentation.sendNowActionLabel })) return;
+        if (presentation.sendNowConfirmationBody !== null
+            && !await Modal.confirm(presentation.sendNowConfirmationTitle, presentation.sendNowConfirmationBody,
+                { confirmText: presentation.sendNowActionLabel })) return;
     }
     if (opts.isCurrent?.() === false) return;
     try {

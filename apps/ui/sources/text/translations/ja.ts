@@ -9590,6 +9590,7 @@ localTailscale: {
           interruptAndRunNow: "中断して今すぐ実行",
           markHandled: "対応済みにする",
           requeue: "キューに戻す",
+          sendAgain: "もう一度送信",
           continueWaiting: '待機を続ける',
           dismiss: '閉じる',
           sendAsNew: '新しいメッセージとして送信',
@@ -9626,6 +9627,7 @@ localTailscale: {
           subtitle:
             "これらのメッセージはキューから削除されました。配信結果が不明な場合があります。再送する前に会話履歴を確認してください。",
           label: "破棄済み",
+          failedTitle: "未送信",
           removeConfirm: {
             title: "破棄されたメッセージを削除しますか？",
             body: "破棄されたメッセージを削除します。",

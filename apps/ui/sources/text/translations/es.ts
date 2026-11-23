@@ -9285,6 +9285,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
           interruptAndRunNow: "Interrumpir y ejecutar ahora",
           markHandled: "Marcar como gestionado",
           requeue: "Reencolar",
+          sendAgain: "Enviar de nuevo",
         },
         editPrompt: {
           title: "Editar mensaje pendiente",
@@ -9318,6 +9319,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
           subtitle:
             "Estos mensajes ya no están en la cola. La entrega puede ser incierta; revisa la transcripción antes de volver a enviarlos.",
           label: "Descartado",
+          failedTitle: "No enviado",
           removeConfirm: {
             title: "¿Eliminar mensaje descartado?",
             body: "Esto eliminará el mensaje descartado.",

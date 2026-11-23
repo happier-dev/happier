@@ -9309,6 +9309,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
                 dismiss: 'Ausblenden',
                 sendAsNew: 'Als neu senden',
                 requeue: 'Neu einreihen',
+                sendAgain: 'Erneut senden',
             },
             editPrompt: {
                 title: 'Offene Nachricht bearbeiten',
@@ -9342,6 +9343,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
                 subtitle:
                     'Diese Nachrichten sind nicht mehr in der Warteschlange. Die Zustellung kann ungewiss sein; prüfe den Verlauf, bevor du sie erneut sendest.',
                 label: 'Verworfen',
+                failedTitle: 'Nicht gesendet',
                 removeConfirm: {
                     title: 'Verworfene Nachricht entfernen?',
                     body: 'Damit wird die verworfene Nachricht gelöscht.',

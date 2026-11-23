@@ -7746,6 +7746,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     interruptAndRunNow: '中斷並立即執行',
                     markHandled: '標記為已處理',
                     requeue: '重新排入佇列',
+                    sendAgain: '重新傳送',
                 },
                 editPrompt: {
                     title: '編輯待傳送訊息',
@@ -7778,6 +7779,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     title: '已丟棄訊息',
                     subtitle: '這些訊息已不在佇列中。傳送結果可能不確定；重新傳送前請檢查對話記錄。',
                     label: '已丟棄',
+                    failedTitle: '未傳送',
                     removeConfirm: {
                         title: '移除已丟棄訊息？',
                         body: '這將刪除已丟棄訊息。',
