@@ -32,6 +32,29 @@ source.
 
 ## Everyday target and contributor authors
 
+### Managed database targets in 0.3 development source
+
+Use a `deploymentTargets` contribution with `role: 'data'` and a
+`dataV1.database` declaration for a database already linked to a Deployment
+Environment. The declaration pairs the engine ID with a
+`DeploymentTargetDatabaseRuntimeV1` from `@happier-dev/plugin-sdk`.
+`listTargets` discovers databases under the admitted link. `open` receives the
+selected database, placement, and authorized read or write class, and returns
+the descriptor and a connection with `execute` and `close` methods.
+
+Use the invocation context's admitted credential services for that selection.
+For a direct write connection, read the deployment's bound `write` data role
+through `context.services.secrets.readDataRole` and use the daemon database
+engine service when it is available. Read access can use a restricted provider
+endpoint or the bound read-only login. Adapters that support setting up a direct
+read-only login can implement `readRoleEndpoint` to return the selected provider
+endpoint without credentials. Keep connection URLs and provider credentials out
+of descriptors and Action results.
+
+The installed SDK's [API surface](/plugins/api/surface) can confirm the contract
+before you depend on it. Use matching 0.3 development components to exercise the
+adapter through the deployed database's Workbench.
+
 ### Machine access descriptors in 0.3 development source
 
 The development SDK exports `defineAccessProviderSchemas` and descriptor types

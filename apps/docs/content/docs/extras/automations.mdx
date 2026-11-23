@@ -483,6 +483,21 @@ operationally:
   when the provider permits it; if that session cannot be resumed, the trigger
   reports a history gap instead of pretending the missed interval was observed.
 
+#### Database sampling events in 0.3 development source
+
+When Workflows offers **When this database is sampled** for the selected
+database, choose the database and its statistics scope before saving the
+trigger. The trigger waits for an admitted statistics read to finish on that
+source. To check delivery, refresh that scope in Insights and look in the
+Workflow's Run history for the matching trigger. Access to the selected
+database and a running Database Workbench plugin are required to produce an
+observation.
+
+Enabling the trigger does not schedule reads or start database capture.
+For periodic samples, configure a separate schedule that runs the database's
+statistics read Action. Replaying the same observation does not start another
+Run.
+
 #### Setting up durable push
 
 For **Deploy on push or merge**, Happier can register a repository webhook
