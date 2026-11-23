@@ -39,7 +39,7 @@ function backgroundContext(state: ReturnType<typeof collectionBoundary>, deliver
       definition.id === CHANNEL_DELIVERIES_COLLECTION.id ? deliveries : state
     ) } },
     logger: { info: vi.fn(), warn: vi.fn() },
-    events: { plugin: { emit: vi.fn(async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 })) } },
+    events: { host: { subscribe: () => ({ dispose() {} }) }, plugin: { emit: vi.fn(async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 })) } },
   } as unknown as PluginServices;
   return {
     surface: 'background',

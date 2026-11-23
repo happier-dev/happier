@@ -80,6 +80,10 @@ const CHANNEL_STATE_INLINE_SCHEMA: PluginJsonSchema = (() => {
   return inline(published) as PluginJsonSchema;
 })();
 
+function schemaItemChildren({ items }: PluginJsonSchema): readonly PluginJsonSchema[] {
+  return Array.isArray(items) ? items : items ? [items] : [];
+}
+
 function containsSchemaReference(
   schema: PluginJsonSchema,
   target: PluginJsonSchema,
@@ -87,7 +91,7 @@ function containsSchemaReference(
   if (schema === target || JSON.stringify(schema) === JSON.stringify(target)) return true;
   const children = [
     ...Object.values(schema.properties ?? {}),
-    ...(schema.items ? [schema.items] : []),
+    ...schemaItemChildren(schema),
     ...(typeof schema.additionalProperties === 'object' ? [schema.additionalProperties] : []),
     ...(schema.anyOf ?? []),
     ...(schema.oneOf ?? []),
@@ -101,7 +105,7 @@ function findSchemaProperty(schema: PluginJsonSchema, property: string): PluginJ
   if (direct !== undefined) return direct;
   const children = [
     ...Object.values(schema.properties ?? {}),
-    ...(schema.items ? [schema.items] : []),
+    ...schemaItemChildren(schema),
     ...(typeof schema.additionalProperties === 'object' ? [schema.additionalProperties] : []),
     ...(schema.anyOf ?? []),
     ...(schema.oneOf ?? []),
@@ -680,7 +684,7 @@ describe('Channels collection declarations', () => {
     const visit = (schema: PluginJsonSchema, isRoot: boolean) => {
       const children: Array<[PluginJsonSchema, boolean]> = [
         ...Object.values(schema.properties ?? {}).map((child): [PluginJsonSchema, boolean] => [child, isRoot]),
-        ...[...Object.values(schema.$defs ?? {}), ...(schema.items ? [schema.items] : []), ...(schema.not ? [schema.not] : []),
+        ...[...Object.values(schema.$defs ?? {}), ...schemaItemChildren(schema), ...(schema.not ? [schema.not] : []),
           ...(typeof schema.additionalProperties === 'object' ? [schema.additionalProperties] : []),
           ...(schema.anyOf ?? []), ...(schema.oneOf ?? []), ...(schema.allOf ?? [])].map((child): [PluginJsonSchema, boolean] => [child, false]),
       ];

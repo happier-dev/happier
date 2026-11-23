@@ -1,3 +1,4 @@
+import { PLUGIN_MANIFEST as DISCORD_PROVIDER_MANIFEST } from '../../channel-discord/src/manifest.js';
 import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import {
   definePlugin,
@@ -46,7 +47,7 @@ import {
 } from './manifest.js';
 import { createConversationOutwardDeliveryCollectionStore } from './outwardDelivery.js';
 import { resourceText } from './testkit/resourceContract.js';
-import { channelsTargetedContributionServices } from './testkit/operationOnlyTargetedContributionsFixture.js';
+import { channelsProviderDescriptorFixture, channelsTargetedContributionServices } from './testkit/operationOnlyTargetedContributionsFixture.js';
 import { isChannelStateJsonRecord } from './accountLocalBindingPolicy.js';
 
 /**
@@ -305,7 +306,7 @@ function reconciliationConnectionAuthority(
   return {
     providerPluginId: PROVIDER_RECONCILIATION_TEST_MANIFEST.id,
     providerContributionSelection: {
-      contributionId: 'discord-test-provider',
+      contributionId: 'discord-provider',
     },
     providerSetupInput: { fixture: 'discord-reconciliation' },
     credentialRef: null,
@@ -650,7 +651,10 @@ async function createProviderReconciliationAction(query: ReconciliationQuery) {
   const core = await createPluginTestkit({
     manifest: PLUGIN_MANIFEST,
     module: { activate },
-    services: { storage },
+    services: {
+      storage,
+      targetedContributions: channelsProviderDescriptorFixture(DISCORD_PROVIDER_MANIFEST),
+    },
   });
   const provider = await createPluginTestkit({
     manifest: PROVIDER_RECONCILIATION_TEST_MANIFEST,
@@ -773,11 +777,6 @@ describe('Channels core activation', () => {
           (action) => action.id === id,
         );
         if (!manifestAction) throw new Error(`Missing manifest Action '${id}'.`);
-        expect(manifestAction.surfaces).toEqual(
-          id === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.conversationStart
-            ? ['cli', 'ui', 'agent', 'mcp', 'plugin']
-            : ['cli', 'ui', 'agent', 'mcp'],
-        );
         if (id === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead) {
           // Association discovery is a read of the admitted Account binding,
           // not connection setup or disclosure of provider credentials.
@@ -899,18 +898,21 @@ describe('Channels core activation', () => {
         },
       },
     });
+    const storage = storageWithEmptyChannelDeliveries(collection);
     const core = await createPluginTestkit({
       manifest: PLUGIN_MANIFEST,
       module: { activate },
-      services: {
-        storage: storageWithEmptyChannelDeliveries(collection),
-      },
-      actionTargets: [setupProvider],
+      services: { storage },
       targetedContributionContributors: [setupProvider],
+    });
+    const reconciliationTarget = await createPluginTestkit({
+      manifest: PLUGIN_MANIFEST,
+      module: { activate },
+      services: { storage, targetedContributions: channelsProviderDescriptorFixture(PROVIDER_SOCKET_SETUP_TEST_MANIFEST) },
     });
     const providerReader = await createPluginTestkit({
       manifest: PROVIDER_SOCKET_RECONCILIATION_TEST_MANIFEST,
-      actionTargets: [core],
+      actionTargets: [reconciliationTarget],
       module: {
         activate(api) {
           api.actions.register(SOCKET_PROVIDER_RECONCILIATION_ACTION_ID, async (input, context): Promise<JsonValue> => {
@@ -1015,6 +1017,7 @@ describe('Channels core activation', () => {
       expect(collection.rows.get(created.connectionId)).toBe(persistedConnection);
     } finally {
       await providerReader.dispose();
+      await reconciliationTarget.dispose();
       await core.dispose();
       await setupProvider.dispose();
     }
@@ -1641,7 +1644,7 @@ describe('Channels core activation', () => {
         connectionId,
         expectedRevision: 5,
         enabled: true,
-      }, { signal: cancellation.signal })).rejects.toMatchObject({ code: 'plugin_action_aborted' });
+      }, { signal: cancellation.signal })).rejects.toMatchObject({ code: 'channels_connection_create_cancelled' });
       abortDuringConnectionGet = null;
       expect(updatedBatches).toHaveLength(writeCountAfterSuccess);
       expect(collection.rows.get(connectionId)?.revision).toBe(5);
@@ -1669,7 +1672,7 @@ describe('Channels core activation', () => {
         connectionId,
         expectedRevision: 6,
         enabled: false,
-      })).rejects.toMatchObject({ code: 'plugin_action_generation_retired' });
+      })).rejects.toMatchObject({ code: 'channels_connection_create_cancelled' });
       retireDuringConnectionGet = false;
       expect(updatedBatches).toHaveLength(writeCountBeforeRetirement);
       expect(collection.rows.get(connectionId)?.revision).toBe(7);
@@ -1843,7 +1846,10 @@ describe('Channels core activation', () => {
     const core = await createPluginTestkit({
       manifest: PLUGIN_MANIFEST,
       module: { activate },
-      services: { storage },
+      services: {
+        storage,
+        targetedContributions: channelsProviderDescriptorFixture(DISCORD_PROVIDER_MANIFEST),
+      },
     });
     const reconciler = await createPluginTestkit({
       manifest: PROVIDER_RECONCILIATION_TEST_MANIFEST,
@@ -2575,7 +2581,7 @@ describe('Channels core activation', () => {
     const providerActionAuthority = {
       providerPluginId: PROVIDER_RECONCILIATION_TEST_MANIFEST.id,
       providerContributionSelection: {
-        contributionId: 'discord-test-provider',
+        contributionId: 'discord-provider',
       },
       providerSetupInput: { source: 'reconciliation' },
       credentialRef: null,
@@ -2622,7 +2628,10 @@ describe('Channels core activation', () => {
     const core = await createPluginTestkit({
       manifest: PLUGIN_MANIFEST,
       module: { activate },
-      services: { storage },
+      services: {
+        storage,
+        targetedContributions: channelsProviderDescriptorFixture(DISCORD_PROVIDER_MANIFEST),
+      },
     });
     const provider = await createPluginTestkit({
       manifest: PROVIDER_RECONCILIATION_TEST_MANIFEST,

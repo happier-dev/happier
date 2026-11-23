@@ -4205,7 +4205,7 @@ describe('transferConversationConnectionForInvocation desired target recovery', 
     const supervisor = createIngressSupervisor();
     const running = supervisor.run({ ...fixture.context, signal: generation.signal,
       services: { ...fixture.context.services, storage: { account: { collection: () => collection } },
-        logger: { info: vi.fn(), warn: vi.fn() }, events: { plugin: { emit: async () => ({ subscriberCount: 0 }) } } },
+        logger: { info: vi.fn(), warn: vi.fn() }, events: { host: { subscribe: () => ({ dispose() {} }) }, plugin: { emit: async () => ({ subscriberCount: 0 }) } } },
     } as unknown as BackgroundServiceContext);
     const publish = (kind: string) => { for (const watcher of watchers) if (watcher.kind === undefined || watcher.kind === kind) watcher.notify(); };
     try {
@@ -4270,7 +4270,7 @@ describe('transferConversationConnectionForInvocation desired target recovery', 
     const supervisor = createIngressSupervisor();
     const running = supervisor.run({ ...fixture.context, signal: generation.signal,
       services: { ...fixture.context.services, storage: { account: { collection: () => collection } },
-        logger: { info: vi.fn(), warn: vi.fn() }, events: { plugin: { emit: async () => ({ subscriberCount: 0 }) } } },
+        logger: { info: vi.fn(), warn: vi.fn() }, events: { host: { subscribe: () => ({ dispose() {} }) }, plugin: { emit: async () => ({ subscriberCount: 0 }) } } },
     } as unknown as BackgroundServiceContext);
     try {
       await vi.advanceTimersByTimeAsync(60_000);

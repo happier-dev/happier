@@ -36,7 +36,7 @@ async function journey(kind: 'source' | 'bundled' | 'materialization', omitCreat
   const deliveries = new MemoryCollection<Record<string, JsonValue>>();
   const effects: string[] = [];
   const providerActions: string[] = [];
-  let pollNetworkUnavailable = false;
+  let pollStatus: 401 | 503 | null = null;
   let generation = 'a';
   let coreMachineId = 'journey-machine';
   let pollGate: Readonly<{ entered(): void; released: Promise<void> }> | undefined;
@@ -59,7 +59,12 @@ async function journey(kind: 'source' | 'bundled' | 'materialization', omitCreat
         gate.entered();
         await gate.released;
       }
-      if (operation === 'getUpdates' && pollNetworkUnavailable) throw new Error('The fixture network is unavailable.');
+      if (operation === 'getUpdates' && pollStatus !== null) return {
+        status: pollStatus,
+        finalUrl: request.url,
+        headers: { 'content-type': 'application/json' },
+        body: new TextEncoder().encode(JSON.stringify({ ok: false, error_code: pollStatus, description: 'Polling refused' })),
+      };
       const result = operation === 'getWebhookInfo' ? { url: '', pending_update_count: 0 }
         : operation === 'getUpdates' ? nextUpdates.splice(0)
           : operation === 'getChat' ? { id: 456, type: 'private', first_name: 'Journey recipient' }
@@ -303,7 +308,7 @@ async function journey(kind: 'source' | 'bundled' | 'materialization', omitCreat
     },
     failPoll(error: Error) { pollFailure = error; },
     clearPollFailure() { pollFailure = undefined; },
-    setPollNetworkUnavailable(value: boolean) { pollNetworkUnavailable = value; },
+    setPollStatus(value: 401 | 503 | null) { pollStatus = value; },
     async connectionsResource() {
       return resourceText(await CONNECTIONS_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
         signal: new AbortController().signal, context: { kind: 'global' }, accountStorage: storage.account,
@@ -365,6 +370,11 @@ describe('Channels connection creation to registered provider journey', () => {
           await gate.started;
         } else if (mode === 'not-started') {
           await fixture.invoke('journey/gap', {});
+          // A retained notice does not park polling. A refusal does, so the old
+          // epoch cannot race the transfer for the held HTTP request.
+          fixture.setPollStatus(401);
+          await expect(fixture.invoke('journey/poll', {})).resolves.toMatchObject({ kind: 'blocked' });
+          fixture.setPollStatus(null);
           running = fixture.invoke('journey/supervise', {}, generation.signal);
           await vi.advanceTimersByTimeAsync(0);
         }
@@ -372,8 +382,8 @@ describe('Channels connection creation to registered provider journey', () => {
         const retainedHistoryNotice = ConversationConnectionListResultV1Schema.parse(
           JSON.parse(await fixture.connectionsResource()),
         ).connections[0]!.attention.historyGap;
+        if (mode !== 'foreign') successor = fixture.holdNextPoll();
         expect(await fixture.transfer()).toMatchObject({ kind: 'transferred', authorityEpoch: 2 });
-        if (mode === 'running' || mode === 'restart') successor = fixture.holdNextPoll();
         if (mode === 'foreign') fixture.placeCoreOn('unrelated-machine');
         if (mode === 'restart' || mode === 'foreign') running = fixture.invoke('journey/supervise', {}, generation.signal);
         await vi.advanceTimersByTimeAsync(0);
@@ -431,14 +441,15 @@ describe('Channels connection creation to registered provider journey', () => {
       expect(approved.attention.pollFailure?.phase).toBe('blocked');
       fixture.clearPollFailure();
       const request = { connectionId: created.connectionId };
-      await fixture.invoke(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPollRetry, request);
-      fixture.setPollNetworkUnavailable(true);
-      await fixture.invoke('journey/poll', {});
+      await expect(fixture.invoke(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPollRetry, request))
+        .resolves.toMatchObject({ kind: 'retryScheduled', revision: approved.revision });
+      fixture.setPollStatus(503);
+      await expect(fixture.invoke('journey/poll', {})).resolves.toMatchObject({ kind: 'retry' });
       const automatic = ConversationConnectionListResultV1Schema.parse(JSON.parse(await fixture.connectionsResource())).connections[0]!;
       expect(automatic.attention.pollFailure?.phase).toBe('retryDue');
       expect(automatic.revision).toBe(approved.revision);
       const effectsBeforeRetry = [...fixture.effects];
-      fixture.setPollNetworkUnavailable(false);
+      fixture.setPollStatus(null);
       await expect(fixture.invoke(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPollRetry, request))
         .resolves.toMatchObject({ kind: 'retryScheduled', revision: approved.revision });
       expect(fixture.effects).toEqual(effectsBeforeRetry);

@@ -27,7 +27,7 @@ import {
   createCurrentConversationConnectionFixture,
   type ConversationConnectionFixtureAuthority,
 } from './testkit/currentConnectionFixture.js';
-import { channelsTargetedContributionServices } from './testkit/operationOnlyTargetedContributionsFixture.js';
+import { channelsProviderDescriptorFixture, channelsTargetedContributionServices } from './testkit/operationOnlyTargetedContributionsFixture.js';
 
 /**
  * These compositions cross only the credential-materialization and HTTP
@@ -554,7 +554,10 @@ describe('Channels first-party provider composition', () => {
       const core = await createPluginTestkit({
         manifest: PLUGIN_MANIFEST,
         module: { activate },
-        services: { storage: input.storage },
+        services: {
+          storage: input.storage,
+          targetedContributions: channelsProviderDescriptorFixture(TELEGRAM_PLUGIN_MANIFEST),
+        },
       });
       const telegram = await createPluginTestkit({
         manifest: TELEGRAM_PLUGIN_MANIFEST,

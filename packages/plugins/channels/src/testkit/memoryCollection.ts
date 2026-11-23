@@ -1,8 +1,6 @@
 import { CHANNEL_STATE_COLLECTION, CHANNEL_DELIVERIES_COLLECTION, CHANNEL_STATE_INDEX_ID, CHANNEL_DELIVERIES_INDEX_ID, CHANNEL_STATE_RECORD_KIND } from '../collections.js';
 import { assertChannelsTestCollectionQueryLimit } from './collectionQueryBound.js';
 import type { PluginCollectionQuery } from '@happier-dev/plugin-sdk/collections';
-import { comparePluginCollectionIndexSortKeysV1, encodePluginCollectionIndexTuplePrefixV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
-import { pluginCollectionQueryShapeV1 } from '@happier-dev/protocol/plugins/data/collectionQueryWireV1';
 
 export type StoredRow<TValue extends Record<string, unknown> = Record<string, unknown>> = Readonly<{
   rowId: string;
@@ -19,13 +17,9 @@ function compareCanonicalText(left: string, right: string): number {
 
 function matchesNumericRange(value: unknown, range: PluginCollectionQuery['range']): boolean {
   if (range === undefined) return true;
-  if (typeof value !== 'number') return false;
-  const encode = (operand: number | string | boolean | null) => encodePluginCollectionIndexTuplePrefixV1({
-    fields: [{ kind: 'finiteNumber', value: operand }],
-  });
-  const key = encode(value);
-  return (range.lower === undefined || comparePluginCollectionIndexSortKeysV1(key, encode(range.lower)) >= 0)
-    && (range.upper === undefined || comparePluginCollectionIndexSortKeysV1(key, encode(range.upper)) <= 0);
+  if (typeof value !== 'number' || !Number.isFinite(value)) return false;
+  return (range.lower === undefined || (typeof range.lower === 'number' && value >= range.lower))
+    && (range.upper === undefined || (typeof range.upper === 'number' && value <= range.upper));
 }
 
 /**
@@ -261,7 +255,7 @@ export class MemoryCollection<TValue extends Record<string, unknown> = Record<st
 
   async query(input: Partial<PluginCollectionQuery>) {
     assertChannelsTestCollectionQueryLimit(input.limit);
-    const limit = pluginCollectionQueryShapeV1().limit.parse(input.limit);
+    const limit = input.limit ?? 50;
     assertDeclaredCollectionIndex(input.index);
     const prefix = input.prefix?.[0];
     const bindingPrefix = input.prefix?.[1];

@@ -750,6 +750,7 @@ const emptyDataClient: PluginUiDataClient = {
   openCollectionQuery: async () => {
     throw new Error('This mounted provider-setup test does not open generic Account queries.');
   },
+  async watchAccountData() { return { dispose() {} }; },
   // This surface never reaches Account KV or Settings; the truthful
   // unavailable scope fails loudly if that ever changes.
   accountKv: createUnavailablePluginUiAccountKv(),
@@ -2455,6 +2456,7 @@ describe('Channels mounted ingress attention recovery', () => {
       nextCursor: undefined,
     }));
     const attentionDataClient: PluginUiDataClient = {
+      ...emptyDataClient,
       collection: <TDefinition extends PluginAccountCollectionDefinition>() => (({
         get: async () => null,
         put: async () => { throw new Error('This mounted ingress-conflict test does not write Account data.'); },
@@ -2464,12 +2466,6 @@ describe('Channels mounted ingress attention recovery', () => {
         // The Data boundary is generic over the caller's definition; this fixture
         // supplies the one Channel state Collection the surface reads.
       }) as unknown as PluginUiAccountCollectionForDefinition<TDefinition>),
-      openCollectionQuery: async () => {
-        throw new Error('This mounted ingress-conflict test does not open generic Account queries.');
-      },
-      // This surface never reaches Account KV or Settings; the truthful
-      // unavailable scope fails loudly if that ever changes.
-      accountKv: createUnavailablePluginUiAccountKv(),
     };
     const executeAction = vi.fn(async () => {
       throw new Error('An occurrence conflict must not expose a recovery Action.');
@@ -2609,6 +2605,7 @@ describe('Channels mounted ingress attention recovery', () => {
       };
     });
     const attentionDataClient: PluginUiDataClient = {
+      ...emptyDataClient,
       collection: <TDefinition extends PluginAccountCollectionDefinition>() => (({
         get: async () => null,
         put: async () => { throw new Error('This mounted ingress-attention test does not write Account data.'); },
@@ -2618,12 +2615,6 @@ describe('Channels mounted ingress attention recovery', () => {
         // The Data boundary is generic over the caller's definition; this fixture
         // supplies the one Channel state Collection the surface reads.
       }) as unknown as PluginUiAccountCollectionForDefinition<TDefinition>),
-      openCollectionQuery: async () => {
-        throw new Error('This mounted ingress-attention test does not open generic Account queries.');
-      },
-      // This surface never reaches Account KV or Settings; the truthful
-      // unavailable scope fails loudly if that ever changes.
-      accountKv: createUnavailablePluginUiAccountKv(),
     };
     const executeAction = vi.fn(async ({ action }: PluginUiTestkitExecuteActionInput) => {
       if (action !== CONVERSATION_MANAGEMENT_ACTION_IDS_V1.ingressRetry) {
@@ -9826,7 +9817,7 @@ describe('Channels Session destination', () => {
       watchResource: async (resource, listener) => {
         const localId = resourceFixtureLocalId(resource);
         if (localId === 'session-conversations-v1') deliver = listener;
-        return { dispose: () => {} };
+        return { subscriptionId: localId === 'session-conversations-v1' ? 'sub-1' : localId, dispose() {} };
       },
     });
     const context = Object.freeze({

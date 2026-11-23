@@ -347,7 +347,10 @@ describe('Channels connections Resource invalidation', () => {
       const unavailableHost = () => { throw new Error('This Resource reads Account storage only.'); };
       const snapshot = JSON.parse(resourceText(await CONNECTIONS_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
         context: { kind: 'global' }, signal: new AbortController().signal,
-        resources: { describe: unavailableHost, read: unavailableHost, watch: unavailableHost },
+        resources: {
+          describe: unavailableHost, read: unavailableHost, watch: unavailableHost,
+          invokeDemand: unavailableHost, notifyDemands: unavailableHost,
+        },
         readAction: unavailableHost, observeAction: unavailableHost,
         // The in-memory Collection is the persistent-storage boundary.
         accountStorage: { collection: (definition: { id: string }) => definition.id === 'channel-state' ? state : deliveries } as unknown as PluginAccountStorageScope,

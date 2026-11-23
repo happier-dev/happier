@@ -189,13 +189,13 @@ describe('Slack through registered Channels ingress and Session projection', () 
       await journey.ingestSlack('EvOriginal', { ...post, type: firstType });
       await journey.ingestSlack('EvTwin', { ...post, type: twinType });
       expect(journey.admissions).toHaveLength(1);
-      expect(journey.admissions[0]).toMatchObject({ text: '<@UBOT> inspect this deployment' });
+      expect(journey.admissions[0]).toMatchObject({ text: 'inspect this deployment' });
 
       const nextPost = { type: 'app_mention', ts: `${postSecond}.000011`, text: '<@UBOT> inspect another deployment' };
       await journey.ingestSlack('EvNext', nextPost);
       await journey.ingestSlack('EvNext', nextPost);
       expect(journey.admissions).toHaveLength(2);
-      expect(journey.admissions[1]).toMatchObject({ text: '<@UBOT> inspect another deployment' });
+      expect(journey.admissions[1]).toMatchObject({ text: 'inspect another deployment' });
       expect(journey.admissions[1]?.idempotencyKey).not.toBe(journey.admissions[0]?.idempotencyKey);
       journey.validateWrites();
     } finally { await journey.dispose(); }
@@ -210,7 +210,7 @@ describe('Slack through registered Channels ingress and Session projection', () 
       await journey.ingestSlack('EvOther', { user: 'U2', ts: `${postSecond}.000003` });
       await journey.ingestSlack('EvBot', { user: 'U1', bot_id: 'OTHERBOT', subtype: 'bot_message', ts: `${postSecond}.000004` });
       expect(journey.admissions).toHaveLength(1);
-      expect(journey.admissions[0]).toMatchObject({ kind: 'userText', text: '<@UBOT> inspect this deployment',
+      expect(journey.admissions[0]).toMatchObject({ kind: 'userText', text: 'inspect this deployment',
         source: { sourceRef: 'channels:binding:binding-1', externalActor: { kind: 'human' } } });
       const limit = journey.prepared.outboundTextLimit!;
       const text = 'x'.repeat(limit.maximum - 1) + '👋'.repeat(20) + '\n\nDeployment succeeded.';

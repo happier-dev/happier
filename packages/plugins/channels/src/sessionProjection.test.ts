@@ -450,7 +450,7 @@ describe('Conversation Session projection no-history baseline', () => {
           kind: 'userText', sessionId: 'session-1', seq: 4, itemId: 'accepted', localId: 'input-1',
           text: 'PRIVATE PATH AND TOOL ARGUMENTS',
           origin: { v: 1, producer: 'pluginSession', actor: 'collaborator',
-            sourceAuthority: { mediatorPluginId: 'happier.channels', sourceRef: 'channels:binding:binding-1' } },
+            sourceAuthority: { mediatorPluginId: 'happier.channels', sourceRef: 'channels:binding:binding-1', sourceRevisionOrEpoch: '1:1' } },
         }] }),
       store: new MemoryProjectionStore(binding('repliesOnly'), frontier()),
       bindingId: 'binding-1', signal: new AbortController().signal,
