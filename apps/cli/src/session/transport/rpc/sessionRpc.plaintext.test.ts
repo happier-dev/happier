@@ -1,7 +1,11 @@
 import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
-import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { readRpcErrorCode, RpcError } from '@happier-dev/protocol/rpcErrors';
+import { projectSocketRpcTargetAcknowledgementV1 } from '@happier-dev/protocol/socketRpc';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import type { AgentState } from '@/api/types';
+import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import tweetnacl from 'tweetnacl';
 import { decrypt, decodeBase64, encrypt, encodeBase64 } from '@/api/encryption';
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
@@ -369,7 +373,7 @@ describe('permission-response lifetime through the CLI Action owner', () => {
     configureNextSocket = socket => { socket.ackMode = 'never'; };
     const executor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials,
       sessionId, ...(mode === 'plain' ? { mode, ctx: null } : { mode, ctx: { encryptionKey: key, encryptionVariant: 'legacy' as const } }) }));
-    return { executor, content };
+    return { executor, content, key };
   }
 
   function respond(executor: ReturnType<typeof createActionExecutor>, actionId: 'session.permission.respond' | 'session.user_action.answer', signal: AbortSignal) {
@@ -431,6 +435,56 @@ describe('permission-response lifetime through the CLI Action owner', () => {
       nextSocket?.delayedAck?.({ ok: true, result: null });
     },
   );
+
+  it.each(['written', 'refused'] as const)('reports an encrypted custom answer when settlement is %s', async settlement => {
+    const { executor, content, key } = createPermissionExecutor('e2ee');
+    const rpcHandlerManager = new RpcHandlerManager({ scopePrefix: sessionId, scopeKind: 'session',
+      encryptionMode: 'e2ee', encryptionKey: key, encryptionVariant: 'legacy', logger: () => {} });
+    let agentState: AgentState = { requests: { [requestId]: {
+      createdAt: 100, tool: 'AskUserQuestion', kind: 'user_action',
+      arguments: { questions: [{ question: 'Revision?', options: [{ label: 'Keep' }],
+        multiSelect: false, required: true, allowCustom: true }] },
+    } }, completedRequests: {} };
+    const writeState = async (update: (state: AgentState) => AgentState) => {
+      const next = update(agentState);
+      if (settlement === 'refused' && next.completedRequests?.[requestId]) {
+        throw new RpcError('Settlement refused', 'permission_request_not_found');
+      }
+      agentState = next;
+    };
+    new ProviderEnforcedPermissionHandler({ sessionId, rpcHandlerManager,
+      getAgentStateSnapshot: () => agentState, getMetadataSnapshot: () => null,
+      updateAgentState: writeState, updateAgentStateRequestSettlement: writeState,
+    } as never, { logPrefix: '[Question settlement fixture]' });
+
+    const pending = executor.execute('session.user_action.answer', { sessionId, requestId,
+      answers: [{ question: 'Revision?', values: [], freeText: 'Fixture revision' }],
+    }, { surface: 'cli', authority: 'present_user' });
+    await vi.waitFor(() => expect(nextSocket?.delayedAck).toBeTypeOf('function'));
+    const packet = nextSocket?.emitted.find(call => call.event === 'rpc-call')?.data;
+    const decoded = await socketRpcCodec.decodeRequestParams(content, packet.params, packet.method);
+    expect(decoded.params).toMatchObject({ answerDetails: { 'Revision?': { freeText: 'Fixture revision' } } });
+    // Home has authenticated the person. The target handler, storage transition and encrypted reply are real.
+    const response = await rpcHandlerManager.handleRequest({ method: packet.method, params: packet.params,
+      callerAuthority: 'present_user', authorization: { kind: 'session.permission.respond', sessionId,
+        actor: { kind: 'accountUser', accountId: 'fixture-account', relationship: 'owner' } },
+    }, undefined, 'authenticated_home_socket');
+    nextSocket?.delayedAck?.(projectSocketRpcTargetAcknowledgementV1(response));
+
+    const outcome = await pending;
+    if (settlement === 'written') {
+      expect(outcome).toEqual({ ok: true, result: { ok: true } });
+      expect(agentState.requests?.[requestId]).toBeUndefined();
+      expect(agentState.completedRequests?.[requestId]).toMatchObject({
+        answerDetails: { 'Revision?': { freeText: 'Fixture revision' } },
+      });
+    } else {
+      expect(outcome).toMatchObject({ ok: false, errorCode: 'permission_request_not_found',
+        failureCause: { phase: 'rpc.handler', errorCode: 'permission_request_not_found' } });
+      expect(agentState.requests?.[requestId]).toBeDefined();
+      expect(agentState.completedRequests?.[requestId]).toBeUndefined();
+    }
+  });
 
   it.each(['session.permission.respond', 'session.user_action.answer'] as const)(
     'reports a disconnected %s as outcome unknown without resending', async actionId => {

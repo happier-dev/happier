@@ -525,6 +525,13 @@ export class RpcHandlerManager {
         let operationContinuation: ReturnType<typeof createSocketRpcContinuation> | undefined;
         let remoteOperation: Awaited<ReturnType<typeof openWorkspaceSyncTargetOperationContinuation>> | undefined;
         const respond = (request: RpcRequest, result: unknown, acknowledgement: SocketRpcTransportAcknowledgementV1 | null = null) => {
+            // Keep answer refusals distinguishable from the strict success acknowledgement.
+            if (privateMethod === RPC_METHODS.SESSION_USER_ACTION_ANSWER && result && typeof result === 'object'
+                && !('ok' in result) && 'error' in result && typeof result.error === 'string') {
+                const errorCode = 'errorCode' in result && typeof result.errorCode === 'string'
+                    ? result.errorCode : 'permission_update_failed';
+                result = { ...result, ok: false, errorCode };
+            }
             diagnostic.outcomeCode = readOutcomeCode(result, false, diagnostic.method);
             diagnostic.modelProbe = readModelProbeDiagnostic(diagnostic.method, result);
             diagnostic.capabilityFailure = readCapabilityFailureDiagnostic(diagnostic.method, result);

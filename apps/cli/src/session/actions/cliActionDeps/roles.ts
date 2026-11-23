@@ -20,6 +20,7 @@ import { resolveCliActionCallerSession } from '../resolveCliActionCallerSession'
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { getActiveAccountSettingsSnapshotLifetimeToken, isActiveAccountSettingsSnapshotLifetimeCurrent, readAccountRoleOverridesFromSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { readPreparedAccountRoleOverrides } from '@/session/roles/sessionRoleContext';
 import type { readSessionPreparationFailureDiagnostic } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
@@ -71,7 +72,7 @@ export function createCliRolesActionDeps(
           && (request.actionId === 'session.roles.apply_to_reports' || ('sessionId' in input && input.sessionId !== params.sessionId))
           && (request.context.actionCaller?.kind !== 'workflowRun'
             && request.context.actionCaller?.kind !== 'session' || !params.sessionActionRpcTransport)) {
-          throw Object.assign(new Error('role_rpc_origin_unavailable'), { code: 'role_rpc_origin_unavailable' });
+          throw new RpcError('role_rpc_origin_unavailable', 'role_rpc_origin_unavailable');
         }
         await prepareAccountRoleOverrides(request.context.signal);
         if (request.context.actionCaller?.kind === 'workflowRun'

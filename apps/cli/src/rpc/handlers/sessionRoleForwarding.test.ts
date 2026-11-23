@@ -10,6 +10,7 @@ import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportD
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { createRoleActionExecutor } from '@/session/actions/roleActions';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { applyRegisteredSessionStateFieldMutationToMetadata } from '@/api/session/client/transport/mutations/applyRegisteredSessionStateFieldMutation';
 import { registerActionSpecRpcHandlers } from './registerActionSpecRpcHandlers';
 import { resolveCliAgentStartContextV1 } from '@/session/actions/resolveCliAgentStartContextV1';
@@ -17,6 +18,17 @@ import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionR
 import { createSessionReadBatchResponseFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 describe('Session role RPC provenance', () => {
+  it('reports the typed refusal for an unbound CLI Role edit without Session provenance', async () => {
+    const cli = createActionExecutor(createCliActionDeps({ token: 'fixture', sessionId: 'cli-global', mode: 'plain', ctx: null }));
+    const context = { surface: 'cli', authority: 'account_automation' } as const;
+    for (const edit of [{ answersWorkerQuestions: false }, { roleId: 'orchestrator' }]) {
+      expect(await cli.execute('session.role.set', { sessionId: 'child', ...edit }, context)).toMatchObject({
+        ok: false, errorCode: 'role_rpc_origin_unavailable',
+        failureCause: { phase: 'dispatch', errorCode: 'role_rpc_origin_unavailable' },
+      });
+    }
+  });
+
   it('uses one registered Role writer for a transported UI edit and CLI edit, with an idle-runtime refusal', async () => {
     let metadata = createTestMetadata();
     const queued: RegisteredSessionStateFieldMutationV1[] = [];
