@@ -122,7 +122,8 @@ describe('foreground Codex Connected Account lifecycle through real materializat
             startedAt: Date.now(), startedWithCliVersion: 'fixture' });
           // Only the daemon HTTP response is replaced: the real private handoff,
           // control client and foreground startup reader consume the owner result.
-          const transport = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(claimed), { status: 200 }));
+          const actualTransport = await vi.importActual<typeof import('undici')>('undici');
+          const transport = stubUndiciFetch(async () => new Response(JSON.stringify(claimed), { status: 200 }));
           try {
             expect(await claimDaemonForegroundAgentRuntimeEnvironment({
               env: { [HAPPIER_FOREGROUND_AGENT_RUNTIME_ADMISSION_FILE_ENV_KEY]: admitted.capability.admissionFilePath },
@@ -133,7 +134,7 @@ describe('foreground Codex Connected Account lifecycle through real materializat
                 : {}),
             })).toMatchObject({ sessionConnectedAccounts: [{ purpose: 'primary', account: account.account }] });
           } finally {
-            transport.mockRestore();
+            transport.mockImplementation(actualTransport.fetch);
           }
           return claimed;
         };
