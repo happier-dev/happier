@@ -22,6 +22,8 @@ import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { projectUsagePlanetFamilyModels } from './usageChartModels';
 
 const DAY = 86_400_000;
+const HOUR = 3_600_000;
+const MINUTE = 60_000;
 const START = Date.UTC(2026, 8, 7); // Monday 7 Sep 2026, UTC calendar
 type Metrics = UsageAgentCalendar['days'][number]['totals'];
 const metrics = (values: Partial<Metrics>): Metrics => ({
@@ -97,6 +99,23 @@ const calendar = (input: Partial<UsageAgentCalendar>): UsageAgentCalendar =>
     machineKinds: { status: 'unavailable', reason: 'no_witnessed_kind' },
     ...input,
   }) satisfies UsageAgentCalendar;
+
+function scoreCalendar(query: ReturnType<typeof normalizeUsageQuery>, spans: readonly (readonly [number, number])[]) {
+  const slice = resolveUsagePageAggregation({
+    queries: [query],
+    howYouWork: [{ query, detail: { status: 'available', facts: spans.map(([startMs, endMs], index) => ({
+      workId: `score-work-${index}`, evidenceId: `score-evidence-${index}`, agentId: 'codex',
+      machineId: null, kind: 'busy' as const, startMs, endMs,
+    })) } }],
+  }, bundledUsageModelPriceCatalog).results[0]!;
+  const owner = slice.howYouWork!.agentCalendar!;
+  expect(owner.coverage.busy).toBe('complete_for_supplied_facts');
+  return owner;
+}
+
+function scoreMinutes(model: ReturnType<typeof projectUsageScoreModel>): number {
+  return model!.rows.flatMap(row => row.hours.flat()).reduce<number>((sum, minutes) => sum + (minutes ?? 0), 0);
+}
 
 describe('Usage chart models', () => {
   it('feeds planet art from recorded calendar days, actual weekly peaks and explicit unavailable evidence', () => {
@@ -537,8 +556,66 @@ describe('Usage chart models', () => {
       })) } }],
     }, bundledUsageModelPriceCatalog).results[0]!;
     const score = projectUsageScoreModel(slice.howYouWork!.agentCalendar!, undefined)!;
+    expect(score.byWeekday).toBe(false);
     expect(score.weekStart).toBe('2026-09-10');
     expect(score.rows[0]?.hours.map(day => day[0])).toEqual([60, null, null, null, null, null, 60]);
+  });
+
+  it('leaves the unread hours between two partial Mondays unknown and clips each drill to its parent', () => {
+    const secondMonday = START + 7 * DAY;
+    const query = normalizeUsageQuery({
+      period: { startMs: START + 12 * HOUR, endMs: secondMonday + 10 * HOUR },
+      timeZoneOffsetMinutes: 0,
+      includeActivity: true,
+    });
+    const owner = scoreCalendar(query, [
+      [START + 12 * HOUR + 15 * MINUTE, START + 12 * HOUR + 45 * MINUTE],
+      [secondMonday + 8 * HOUR + 15 * MINUTE, secondMonday + 9 * HOUR + 15 * MINUTE],
+    ]);
+    const score = projectUsageScoreModel(owner, undefined)!;
+    expect(score.byWeekday).toBe(true);
+    expect(score.rows[0]!.hours[0]!.slice(7, 14)).toEqual([0, 45, 15, null, null, 30, 0]);
+    expect(scoreMinutes(score) * MINUTE).toBe(owner.periodSummary.totals.busyMs);
+
+    const firstDrill = projectUsageScoreModel(owner, '2026-09-07')!;
+    const lastDrill = projectUsageScoreModel(owner, '2026-09-14')!;
+    expect(firstDrill.rows[0]!.hours[0]!.slice(11, 14)).toEqual([null, 30, 0]);
+    expect(lastDrill.rows[0]!.hours[0]!.slice(8, 12)).toEqual([45, 15, null, null]);
+    expect(scoreMinutes(firstDrill) + scoreMinutes(lastDrill)).toBe(scoreMinutes(score));
+  });
+
+  it('makes every weekday hour eligible across whole weeks on the query calendar', () => {
+    const localMonday = START - 330 * MINUTE;
+    const query = normalizeUsageQuery({ period: { startMs: localMonday, endMs: localMonday + 14 * DAY },
+      timeZoneOffsetMinutes: 330, includeActivity: true });
+    const owner = scoreCalendar(query, [[localMonday + HOUR, localMonday + 2 * HOUR]]);
+    const score = projectUsageScoreModel(owner, undefined)!;
+    expect(score.byWeekday).toBe(true);
+    expect(score.rows[0]!.hours.flat()).toEqual(Array.from({ length: 168 }, (_, index) => index === 1 ? 60 : 0));
+    expect(scoreMinutes(score) * MINUTE).toBe(owner.periodSummary.totals.busyMs);
+  });
+
+  it('leaves out-of-period weekday hours unknown for a Session-scoped read', () => {
+    const query = normalizeUsageQuery({ session: 'score-fixture',
+      period: { startMs: START + 16 * HOUR, endMs: START + 7 * DAY + 13 * HOUR },
+      timeZoneOffsetMinutes: 120, includeActivity: true });
+    const owner = scoreCalendar(query, [[START + 16 * HOUR, START + 17 * HOUR]]);
+    const score = projectUsageScoreModel(owner, undefined)!;
+    expect(score.byWeekday).toBe(true);
+    expect(score.rows[0]!.hours[0]!.slice(14, 20)).toEqual([0, null, null, null, 60, 0]);
+    expect(scoreMinutes(score) * MINUTE).toBe(owner.periodSummary.totals.busyMs);
+  });
+
+  it('conserves rolling seven-day Score time when it crosses eight local dates', () => {
+    const start = START + 3 * DAY + 7 * HOUR; // Thursday 12:30 at UTC+05:30.
+    const end = start + 7 * DAY;
+    const query = normalizeUsageQuery({ period: { startMs: start, endMs: end },
+      timeZoneOffsetMinutes: 330, includeActivity: true });
+    const owner = scoreCalendar(query, [[start + 30 * MINUTE, start + HOUR], [end - HOUR, end - 30 * MINUTE]]);
+    const score = projectUsageScoreModel(owner, undefined)!;
+    expect(score.byWeekday).toBe(true);
+    expect(score.rows[0]!.hours[3]!.slice(10, 15)).toEqual([0, 30, null, 30, 0]);
+    expect(scoreMinutes(score) * MINUTE).toBe(owner.periodSummary.totals.busyMs);
   });
 
   it('keeps witnessed work with unknown Agent attribution instead of inventing an identity or dropping the lane', () => {

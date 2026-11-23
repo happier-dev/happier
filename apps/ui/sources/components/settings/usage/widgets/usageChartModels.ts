@@ -247,15 +247,22 @@ export function projectUsageScoreModel(calendar: UsageAgentCalendar, day: string
   const dateCount = Math.ceil((endMs - firstDayMs) / DAY_MS);
   const byWeekday = dateCount > 7;
   const dayCount = byWeekday ? 7 : dateCount;
+  const firstColumnMs = byWeekday ? resolveUsageBucketBounds('week', firstDayMs, offset).bucketStartMs : firstDayMs;
+  const emptyHours = Array.from({ length: dayCount }, () => Array<number | null>(24).fill(null));
+  if (calendar.coverage.busy === 'complete_for_supplied_facts') {
+    // Only a full admitted hour proves a zero. In weekday mode the cells repeat after one week.
+    const firstFullHourMs = firstDayMs + Math.ceil((startMs - firstDayMs) / HOUR_MS) * HOUR_MS;
+    const eligibleEndMs = Math.min(endMs, firstFullHourMs + dayCount * DAY_MS);
+    for (let instant = firstFullHourMs; instant + HOUR_MS <= eligibleEndMs; instant += HOUR_MS) {
+      const slot = ((instant - firstColumnMs) / HOUR_MS) % (dayCount * 24);
+      emptyHours[Math.floor(slot / 24)]![slot % 24] = 0;
+    }
+  }
   const rows = new Map<string | null, (number | null)[][]>();
   const put = (dayIndex: number, hour: number, agents: UsageAgentCalendar['hours'][number]['agents']) => {
     for (const entry of agents) {
       if (!entry.metrics.busyMs) continue;
-      const hours = rows.get(entry.agentId) ?? Array.from({ length: dayCount }, (_, index) => Array.from({ length: 24 }, (_, clockHour) => {
-        const instant = firstDayMs + index * DAY_MS + clockHour * HOUR_MS;
-        return calendar.coverage.busy === 'complete_for_supplied_facts'
-          && (byWeekday || instant >= startMs && instant + HOUR_MS <= endMs) ? 0 : null;
-      }));
+      const hours = rows.get(entry.agentId) ?? emptyHours.map(hours => hours.slice());
       hours[dayIndex]![hour] = entry.metrics.busyMs / 60_000;
       rows.set(entry.agentId, hours);
     }
@@ -270,7 +277,6 @@ export function projectUsageScoreModel(calendar: UsageAgentCalendar, day: string
   }
   if (rows.size === 0) return null;
   const total = (hours: (number | null)[][]) => hours.flat().reduce<number>((sum, value) => sum + (value ?? 0), 0);
-  const firstColumnMs = byWeekday ? resolveUsageBucketBounds('week', firstDayMs, offset).bucketStartMs : firstDayMs;
   return { weekStart: resolveUsageCalendarInstant(firstColumnMs, offset).date, dayCount, byWeekday,
     endDate: resolveUsageCalendarInstant(endMs - 1, offset).date, encoding: 'minutes',
     rows: [...rows.entries()].sort((a, b) => total(b[1]) - total(a[1])).map(([agentId, hours]) => ({ agentId, hours })) };
