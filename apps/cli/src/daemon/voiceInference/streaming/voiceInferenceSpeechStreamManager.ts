@@ -149,7 +149,7 @@ function errorResponse(error: unknown, retryable?: boolean): DaemonVoiceInferenc
 }
 
 function streamError(
-  errorCode: 'stream_not_found' | 'invalid_stream_state',
+  errorCode: 'stream_not_found' | 'invalid_stream_state' | 'stream_capacity_exceeded',
   error: string,
 ): DaemonVoiceInferenceError {
   return {
@@ -249,6 +249,8 @@ export function createVoiceInferenceSpeechStreamManager(
   const maxAdmittedFrames = Math.max(1, Math.trunc(options.maxAdmittedFrames ?? 64));
   const maxAdmittedBytes = Math.max(2, Math.trunc(options.maxAdmittedBytes ?? 2 * 1024 * 1024));
   const activeApplicationAttemptIds = new Set<string>();
+  const hasPendingCredit = (session: StreamSession, pcmBytes: number) =>
+    session.pendingFrames < maxAdmittedFrames && session.pendingBytes + pcmBytes <= maxAdmittedBytes;
   let disposePromise: Promise<void> | null = null;
   let disposed = false;
   const pendingStarts = new Map<string, Pick<BaseStreamSession,
@@ -590,9 +592,8 @@ export function createVoiceInferenceSpeechStreamManager(
           : streamError('invalid_stream_state', 'daemon_voice_inference_stream_invalid_pcm');
       }
       // Live capture uses pending credit, not the file-transfer upload limit.
-      if (session.pendingFrames >= maxAdmittedFrames
-        || session.pendingBytes + pcm.byteLength > maxAdmittedBytes) {
-        return streamError('invalid_stream_state', 'daemon_voice_inference_stream_invalid_pcm');
+      if (!hasPendingCredit(session, pcm.byteLength)) {
+        return streamError('stream_capacity_exceeded', 'daemon_voice_inference_stream_capacity_exceeded');
       }
       let resolve!: CompatibilityChunk['resolve'];
       const result = new Promise<DaemonVoiceInferenceSttStreamChunkResponse>(done => { resolve = done; });
@@ -652,12 +653,11 @@ export function createVoiceInferenceSpeechStreamManager(
         return streamError('invalid_stream_state', 'daemon_voice_inference_stream_noncontiguous_seq');
       }
       const pcm = normalizePcm16Bytes(input.pcm16Bytes);
-      if (
-        !pcm
-        || session.pendingFrames >= maxAdmittedFrames
-        || session.pendingBytes + pcm.byteLength > maxAdmittedBytes
-      ) {
+      if (!pcm) {
         return streamError('invalid_stream_state', 'daemon_voice_inference_stream_invalid_pcm');
+      }
+      if (!hasPendingCredit(session, pcm.byteLength)) {
+        return streamError('stream_capacity_exceeded', 'daemon_voice_inference_stream_capacity_exceeded');
       }
       session.admittedSeq = input.seq;
       session.admittedTotalBytes += pcm.byteLength;

@@ -184,6 +184,7 @@ export const DaemonVoiceInferenceErrorCodeSchema = lazyZodSchema(() => z.enum([
   'cancelled',
   'stream_not_found',
   'invalid_stream_state',
+  'stream_capacity_exceeded',
   'internal_error',
 ]));
 export type DaemonVoiceInferenceErrorCode = z.infer<typeof DaemonVoiceInferenceErrorCodeSchema>;

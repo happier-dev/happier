@@ -432,7 +432,9 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
     expect(received).toEqual([0, 1]);
     const gap = append(3);
     const tail = append(4);
-    await expect(append(5)).resolves.toMatchObject({ ok: false, errorCode: 'invalid_stream_state' });
+    expect(DaemonVoiceInferenceSttStreamChunkResponseSchema.parse(await append(5))).toMatchObject({
+      ok: false, errorCode: 'stream_capacity_exceeded', retryable: true,
+    });
     await manager.cancel({ streamId: started.streamId, generation: started.generation });
     await expect(Promise.all([gap, tail])).resolves.toMatchObject([
       { ok: false, error: 'daemon_voice_inference_stream_not_open' },
@@ -447,6 +449,36 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
     await manager.cancel({ streamId: fresh.streamId, generation: fresh.generation });
     await expect(stranded).resolves.toMatchObject({ ok: false, error: 'daemon_voice_inference_stream_not_open' });
     expect(received).toEqual([0, 1]);
+  });
+
+  it('reports PCM credit exhaustion and accepts the same sequence when credit returns', async () => {
+    const processing = deferred<{ events: [] }>();
+    nativeRuntime = { ...nativeRuntime, createStreamingTranscriptionSession: async () => ({
+      appendPcm16: async ({ seq }) => seq === 0 ? processing.promise : { events: [] },
+      finish: async () => ({ text: '', language: null, events: [] }),
+      cancel: async () => {}, close: async () => {},
+    }) };
+    const manager = createVoiceInferenceSpeechStreamManager({
+      streamRoot: await createTempStreamRoot(), voiceInferenceWorker: worker,
+      maxAdmittedFrames: 2, maxAdmittedBytes: 4,
+    });
+    managers.push(manager);
+    const started = await manager.start({ requestId: 'pcm-credit', packId, language: 'en',
+      streamingMode: 'runtime', format: DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT });
+    if (!started.ok) throw new Error('Stream did not start');
+    const append = (seq: number, length = 2) => manager.appendPcm16Bytes({
+      streamId: started.streamId, generation: started.generation, seq, pcm16Bytes: new Uint8Array(length),
+    });
+    const first = append(0, 4);
+    try {
+      expect(DaemonVoiceInferenceSttStreamChunkResponseSchema.parse(await append(1))).toMatchObject({
+        ok: false, errorCode: 'stream_capacity_exceeded', retryable: true,
+      });
+    } finally {
+      processing.resolve({ events: [] });
+    }
+    await expect(first).resolves.toMatchObject({ ok: true, ackSeq: 0 });
+    await expect(append(1)).resolves.toMatchObject({ ok: true, ackSeq: 1 });
   });
 
   it.each(['pcm', 'compatibility'] as const)('keeps native %s recognition live beyond the file-upload byte limit', async (ingress) => {
