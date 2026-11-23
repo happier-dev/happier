@@ -2,7 +2,7 @@ import * as privacyKit from 'privacy-kit';
 import type { Prisma } from '@prisma/client';
 import type { PluginCollectionSharingAddressV1, PluginCollectionSharingErrorV1, PluginCollectionSharingGetRequestV1,
     PluginCollectionSharingResourceV1, PluginCollectionSharingPutRequestV1, PluginCollectionSharingListRequestV1,
-    PluginCollectionSharingListResponseV1 } from '@happier-dev/protocol/plugins/data/collectionSharingV1';
+    PluginCollectionSharingListResponseV1, PluginCollectionSharingIdentityV1 } from '@happier-dev/protocol/plugins/data/collectionSharingV1';
 import type { PluginCollectionContentEnvelopeV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 import { assertPluginCollectionContentEnvelopeForModeV1, PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 import type { Tx } from '@/storage/inTx';
@@ -17,7 +17,7 @@ import { mutatePluginCollectionInTx } from './mutation';
 import { readPluginsFeatureEnv } from '@/app/features/catalog/readFeatureEnv';
 import { diagnosePluginCollectionReadRefusal } from './readRefusal';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
-import { resourceTeamShareScopeV1, type ResourceTeamShareScopeV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
+import { resourceTeamShareScopeV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
 
 export class CollectionSharingError extends Error {
     constructor(readonly code: PluginCollectionSharingErrorV1) { super(code); this.name = 'CollectionSharingError'; }
@@ -26,13 +26,13 @@ export type CollectionActorInput = PluginCollectionSharingAddressV1 & Readonly<{
 export function collectionIdentityWhere(input: PluginCollectionSharingAddressV1) {
     return { accountId: input.ownerAccountId, pluginId: input.pluginId, collectionId: input.collectionId, rowId: input.rowId, deletedAt: null };
 }
-export function collectionSharingReadSelect(actorAccountId: string) {
+export function collectionSharingReadSelect(actorAccountId: string, includeBody = true) {
     return { ...collectionAccessFactsSelect(actorAccountId), id: true, rowId: true, pluginId: true, collectionId: true,
-        schemaVersion: true, contractDigest: true, revision: true, contentEnvelope: true,
-        projections: { select: { fieldId: true, typedEncodedValue: true, rowRevision: true } },
-        keyEnvelopes: { where: { recipientAccountId: actorAccountId }, select: {
+        schemaVersion: true, contractDigest: true, revision: includeBody, contentEnvelope: includeBody,
+        projections: includeBody ? { select: { fieldId: true, typedEncodedValue: true, rowRevision: true } } : false,
+        keyEnvelopes: includeBody ? { where: { recipientAccountId: actorAccountId }, select: {
             recipientAccountId: true, encryptedDataKey: true, recipientContentPublicKeyFingerprint: true,
-        } } } as const;
+        } } : false } as const;
 }
 export async function resolveCollectionSharingContextInTx(tx: Tx, input: CollectionActorInput) {
     const row = await tx.pluginCollectionRow.findFirst({ where: collectionIdentityWhere(input), select: collectionSharingReadSelect(input.actorAccountId) });
@@ -46,16 +46,24 @@ export async function resolveCollectionSharingContextInTx(tx: Tx, input: Collect
 }
 export type CollectionSharingContext = Awaited<ReturnType<typeof resolveCollectionSharingContextInTx>>;
 
+function assertCurrentCollectionSharingRow(
+    row: Pick<CollectionSharingContext['row'], 'contractDigest' | 'schemaVersion'>,
+    request: PluginCollectionSharingGetRequestV1,
+    current: Awaited<ReturnType<typeof resolveCurrentContract>>,
+) {
+    if (row.contractDigest !== current.storageContract.contractDigest || row.schemaVersion !== current.storageContract.schemaVersion) {
+        throw diagnosePluginCollectionReadRefusal(new CollectionSharingError('collection_update_required'),
+            'shared_row_writer_mismatch', request, current.storageContract);
+    }
+}
+
 /** A grant is admitted before contract, body or revision disclosure. */
 export async function readSharedCollectionResourceInTx(tx: Tx, input: CollectionActorInput & Readonly<{ request: PluginCollectionSharingGetRequestV1 }>,
     context?: Pick<CollectionSharingContext, 'row' | 'access'>, current?: Awaited<ReturnType<typeof resolveCurrentContract>>, caller?: RecipientReadinessRow | null): Promise<PluginCollectionSharingResourceV1> {
     const admitted = context ?? await resolveCollectionSharingContextInTx(tx, input);
     const { row, access } = admitted;
     const resolved = current ?? await resolveCurrentContract({ accountId: input.ownerAccountId, request: input.request }, tx);
-    if (row.contractDigest !== resolved.storageContract.contractDigest || row.schemaVersion !== resolved.storageContract.schemaVersion) {
-        throw diagnosePluginCollectionReadRefusal(new CollectionSharingError('collection_update_required'),
-            'shared_row_writer_mismatch', input.request, resolved.storageContract);
-    }
+    assertCurrentCollectionSharingRow(row, input.request, resolved);
     const materialized = materializeDirectCollectionRow({ current: resolved, row });
     let encryptedDataKey: string | null = null;
     if (materialized.content.t === 'encrypted') {
@@ -99,33 +107,21 @@ export function putSharedCollectionResource(actorAccountId: string, request: Plu
 /** Counts and pages share the candidate access arms; scope is independent of read admission.
  * A selected Team is one arm bounded by its exact rows; otherwise each received grant arm
  * is its own index-servable query and callers merge them. */
-async function sharedCollectionCandidatesInTx(tx: Tx, actorAccountId: string, sharedWithTeamId?: string): Promise<Readonly<{
-    arms: readonly Prisma.PluginCollectionRowWhereInput[]; scopes: ReadonlyMap<string, ResourceTeamShareScopeV1>; groupIds: ReadonlySet<string | null>;
-}>> {
-    const scopes = new Map<string, ResourceTeamShareScopeV1>();
-    const groupIds = new Set<string | null>();
+async function sharedCollectionCandidatesInTx(tx: Tx, actorAccountId: string, sharedWithTeamId?: string): Promise<readonly Prisma.PluginCollectionRowWhereInput[]> {
     if (sharedWithTeamId && !await resolveGrantableTeamForActorInTx(tx, { actorAccountId, teamId: sharedWithTeamId })) {
-        return { arms: [], scopes, groupIds };
+        return [];
     }
-    const selected = sharedWithTeamId ? await Promise.all([
-        tx.pluginCollectionGrant.findMany({ where: { principalKind: 'team', teamId: sharedWithTeamId }, select: { rowDbId: true } }),
-        tx.pluginCollectionGrant.findMany({ where: { principalKind: 'group', teamGroup: { teamId: sharedWithTeamId } }, select: { rowDbId: true, teamGroupId: true } }),
-    ]) : null;
-    const teamRows = new Set(selected?.[0].map(row => row.rowDbId));
-    const groupRows = new Set(selected?.[1].map(row => row.rowDbId));
-    selected?.[1].forEach(row => groupIds.add(row.teamGroupId));
-    const ids = [...new Set([...teamRows, ...groupRows])];
-    for (const id of ids) {
-        const scope = resourceTeamShareScopeV1({ team: teamRows.has(id), group: groupRows.has(id) });
-        if (scope) scopes.set(id, scope);
-    }
-    if (selected && ids.length === 0) return { arms: [], scopes, groupIds };
-    // A selected Team never enumerates the reader's grants to unrelated rows.
-    const candidateRows = selected ? { rowDbId: { in: ids } } : {};
     const access = resourceGrantPageAccessArms(actorAccountId, (arm, grantWhere): Prisma.PluginCollectionRowWhereInput =>
-        ({ grants: { some: { principalKind: arm, ...grantWhere, ...candidateRows } } }));
-    return { scopes, groupIds, arms: sharedWithTeamId ? [{ deletedAt: null, id: { in: ids }, OR: [access.owned, ...access.received] }]
-        : access.received.map(arm => ({ deletedAt: null, ...arm })) };
+        ({ grants: { some: { principalKind: arm, ...grantWhere } } }));
+    if (!sharedWithTeamId) return access.received.map(arm => ({ deletedAt: null, ...arm }));
+    return [{
+        deletedAt: null,
+        grants: { some: { OR: [
+            { principalKind: 'team', teamId: sharedWithTeamId },
+            { principalKind: 'group', teamGroup: { teamId: sharedWithTeamId } },
+        ] } },
+        OR: [access.owned, ...access.received],
+    }];
 }
 
 /** Existing Collection rows/grants own discovery; no declaration or inventory registry is read. */
@@ -133,7 +129,7 @@ export async function countTeamSharedCollectionsInTx(tx: Tx, input: Readonly<{ a
     ok: true; collections: readonly Readonly<{ collection: Pick<PluginCollectionSharingAddressV1, 'pluginId' | 'collectionId'>; count: number }>[];
 }>> {
     // A selected Team is a single bounded arm.
-    const [where] = (await sharedCollectionCandidatesInTx(tx, input.actorAccountId, input.sharedWithTeamId)).arms;
+    const [where] = await sharedCollectionCandidatesInTx(tx, input.actorAccountId, input.sharedWithTeamId);
     const rows = where ? await tx.pluginCollectionRow.groupBy({ by: ['pluginId', 'collectionId'], where, _count: { _all: true } }) : [];
     return { ok: true as const, collections: rows.map(row => ({ collection: { pluginId: row.pluginId, collectionId: row.collectionId }, count: row._count._all })) };
 }
@@ -143,39 +139,51 @@ export function listSharedCollectionResources(actorAccountId: string, request: P
     return inReadSnapshot(async tx => {
         if (request.cursor && !/^[A-Za-z0-9_-]+$/.test(request.cursor)) throw new CollectionSharingError('collection_cursor_invalid');
         const limit = request.limit ?? PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1;
+        const includeBody = request.projection !== 'identity';
         const candidates = await sharedCollectionCandidatesInTx(tx, actorAccountId, request.sharedWithTeamId);
         const pageWhere = { pluginId: request.pluginId, collectionId: request.collectionId, ...(request.cursor ? { id: { gt: request.cursor } } : {}) };
         // Several arms merge their page-sized keyset positions before one content read.
-        const positions = candidates.arms.length <= 1 ? null : mergeResourceGrantArmPages(await Promise.all(candidates.arms.map(arm =>
+        const positions = candidates.length <= 1 ? null : mergeResourceGrantArmPages(await Promise.all(candidates.map(arm =>
             tx.pluginCollectionRow.findMany({ where: { ...pageWhere, AND: [arm] }, select: { id: true }, orderBy: { id: 'asc' }, take: limit + 1 }))),
         (left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0, limit + 1);
-        const scope = positions === null ? candidates.arms[0] : positions.length ? { id: { in: positions.map(row => row.id) } } : undefined;
+        const scope = positions === null ? candidates[0] : positions.length ? { id: { in: positions.map(row => row.id) } } : undefined;
         const rows = scope ? await tx.pluginCollectionRow.findMany({ where: { ...pageWhere, AND: [scope] },
-            select: collectionSharingReadSelect(actorAccountId), orderBy: { id: 'asc' }, take: limit + 1 }) : [];
+            select: collectionSharingReadSelect(actorAccountId, includeBody), orderBy: { id: 'asc' }, take: limit + 1 }) : [];
         const page = rows.slice(0, limit);
-        const caller = page.some(row => row.account.encryptionMode === 'e2ee')
+        const caller = includeBody && page.some(row => row.account.encryptionMode === 'e2ee')
             ? await tx.account.findUnique({ where: { id: actorAccountId }, select: RECIPIENT_READINESS_SELECT }) : null;
         const currentByOwner = new Map<string, Awaited<ReturnType<typeof resolveCurrentContract>>>();
         const resources: PluginCollectionSharingResourceV1[] = [];
+        const identities: PluginCollectionSharingIdentityV1[] = [];
         for (const row of page) {
             const access = resolveResourceGrantAccessFromFacts(collectionGrantFacts(row), actorAccountId);
             if (!access) continue;
             const address = { ownerAccountId: row.accountId, pluginId: row.pluginId, collectionId: row.collectionId, rowId: row.rowId };
+            const readRequest = { ...address, readerContext: request.readerContext };
             let current = currentByOwner.get(row.accountId);
             if (!current) {
-                current = await resolveCurrentContract({ accountId: row.accountId, request: { ...address, readerContext: request.readerContext } }, tx);
+                current = await resolveCurrentContract({ accountId: row.accountId, request: readRequest }, tx);
                 currentByOwner.set(row.accountId, current);
             }
-            const resource = await readSharedCollectionResourceInTx(tx, { actorAccountId, ...address,
-                request: { ...address, readerContext: request.readerContext } }, { row, access }, current, caller);
-            const sharedWithTeamScope = request.sharedWithTeamId === undefined ? undefined : access.level === 'owner'
-                ? candidates.scopes.get(row.id) : resourceTeamShareScopeV1({
+            const sharedWithTeamScope = request.sharedWithTeamId === undefined ? undefined : resourceTeamShareScopeV1(access.level === 'owner'
+                ? {
+                    team: row.grants.some(grant => grant.principalKind === 'team' && grant.teamId === request.sharedWithTeamId),
+                    group: row.grants.some(grant => grant.principalKind === 'group' && grant.teamGroup?.teamId === request.sharedWithTeamId),
+                } : {
                     team: access.matchedGrants.some(grant => grant.kind === 'team' && grant.teamId === request.sharedWithTeamId),
-                    group: access.matchedGrants.some(grant => grant.kind === 'group' && grant.teamGroupId !== undefined
-                        && candidates.groupIds.has(grant.teamGroupId)),
+                    group: row.grants.some(grant => grant.principalKind === 'group' && grant.teamGroup?.teamId === request.sharedWithTeamId
+                        && access.matchedGrants.some(matched => matched.kind === 'group' && matched.teamGroupId === grant.teamGroupId)),
                 });
-            resources.push({ ...resource, ...(sharedWithTeamScope ? { sharedWithTeamScope } : {}) });
+            const scopeField = sharedWithTeamScope === undefined ? {} : { sharedWithTeamScope };
+            if (!includeBody) {
+                assertCurrentCollectionSharingRow(row, readRequest, current);
+                identities.push({ ownerAccountId: row.accountId, rowId: row.rowId, ...scopeField });
+            } else {
+                const resource = await readSharedCollectionResourceInTx(tx, { actorAccountId, ...address,
+                    request: readRequest }, { row, access }, current, caller);
+                resources.push({ ...resource, ...scopeField });
+            }
         }
-        return { resources, nextCursor: rows.length > limit ? page.at(-1)!.id : null };
+        return { resources, ...(!includeBody ? { identities } : {}), nextCursor: rows.length > limit ? page.at(-1)!.id : null };
     });
 }

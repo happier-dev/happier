@@ -1,14 +1,11 @@
-import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { PLUGIN_COLLECTION_SHARING_ACTION_IDS_BY_OPERATION_V1 as ids } from '@happier-dev/protocol/plugins/data/collectionSharingActionIdsV1';
-import { encodePluginCollectionLogicalValueV1 } from '@happier-dev/protocol/plugins/data/collectionLogicalCodecV1';
 import { normalizePluginAccountCollectionContractV1, PLUGIN_COLLECTION_CONTRACT_HTTP_PATH_V1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 import {
     PLUGIN_COLLECTION_SHARING_HTTP_PATHS_V1 as paths,
     PluginCollectionSharingListRequestV1Schema,
     PluginCollectionSharingListResponseV1Schema,
-    PluginCollectionSharingResourceV1Schema,
 } from '@happier-dev/protocol/plugins/data/collectionSharingV1';
 
 import { act, createDeferred, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
@@ -39,16 +36,7 @@ const contract = normalizePluginAccountCollectionContractV1({ pluginId: 'example
 } });
 const collectionRef = { pluginId: contract.pluginId, collectionId: contract.collectionId,
     schemaVersion: contract.schemaVersion, contractDigest: contract.contractDigest };
-const nativeRow = (id: string, note: string) => {
-    const encoded = encodePluginCollectionLogicalValueV1({ contract, value: { id, note },
-        isValidLogicalValue: (value): value is { id: string; note: string } => typeof value.id === 'string' && typeof value.note === 'string',
-        encryptionMode: 'plain', material: null, randomBytes });
-    if (encoded.status !== 'encoded') throw new Error(encoded.reason);
-    return PluginCollectionSharingResourceV1Schema.parse({ pluginId: contract.pluginId, collectionId: contract.collectionId,
-        ownerAccountId: 'owner', rowId: id, access: 'view', encryptionMode: 'plain', encryptedDataKey: null,
-        row: { rowId: id, revision: 1, content: encoded.content, projection: encoded.projection } });
-};
-const logicalRow = (id: string, note: string) => ({ ownerAccountId: 'owner', access: 'view', rowId: id, revision: 1, value: { id, note } });
+const identityRow = (rowId: string) => ({ ownerAccountId: 'owner', rowId });
 let serverId: string;
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 let credentialReplacement: HomeCredentialWriteRollback | null = null;
@@ -72,14 +60,41 @@ afterEach(async () => {
 });
 
 describe('useTeamSharedCollections', () => {
-    it('withdraws decoded rows when Home credentials replace the retained caller Account', async () => {
+    it('pages Collection addresses with a single identity request', async () => {
+        const scope = createServerAccountScope(serverId, 'member')!;
+        const requests: unknown[] = [];
+        homes.answer(serverId, paths.sharedWithMe, { select: raw => {
+            requests.push(raw);
+            return { body: {
+                resources: [],
+                identities: [{ ownerAccountId: 'owner', rowId: 'first' }],
+                nextCursor: null,
+            } };
+        } });
+        const hook = await renderHook(() => useTeamSharedCollections({
+            scope, address: { serverId, teamId: 'team-a' }, collectionRef, enabled: true, pageSize: 1,
+        }));
+        await waitForHomeGovernance(() => expect(requests).toHaveLength(1));
+        expect(requests).toEqual([{
+            pluginId: contract.pluginId, collectionId: contract.collectionId,
+            readerContext: collectionRef, sharedWithTeamId: 'team-a', limit: 1, projection: 'identity',
+        }]);
+        await waitForHomeGovernance(() => expect(hook.getCurrent().rows).toEqual([
+            { ownerAccountId: 'owner', rowId: 'first' },
+        ]));
+        expect(homes.requestsFor(paths.get)).toHaveLength(0);
+        expect(homes.requestsFor(paths.census)).toHaveLength(0);
+        await hook.unmount();
+    });
+
+    it('withdraws addresses when Home credentials replace the retained caller Account', async () => {
         const scope = createServerAccountScope(serverId, 'member')!;
         homes.answer(serverId, paths.sharedWithMe, { body: PluginCollectionSharingListResponseV1Schema.parse({
-            resources: [nativeRow('first', 'Account A private value')], nextCursor: null,
+            resources: [], identities: [identityRow('first')], nextCursor: null,
         }) });
         const hook = await renderHook(() => useTeamSharedCollections({ scope, address: { serverId, teamId: 'team-a' },
             collectionRef, enabled: true, pageSize: 1 }));
-        await waitForHomeGovernance(() => expect(hook.getCurrent().rows).toEqual([logicalRow('first', 'Account A private value')]));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().rows).toEqual([identityRow('first')]));
         const reads = homes.requestsFor(paths.sharedWithMe).length;
         expect(reads).toBe(1);
         await act(async () => {
@@ -94,15 +109,16 @@ describe('useTeamSharedCollections', () => {
         await hook.unmount();
     });
 
-    it('decodes native logical pages for the selected Team and releases hidden or absent collection demand', async () => {
+    it('pages addresses for the selected Team and releases hidden or absent collection demand', async () => {
         const scope = createServerAccountScope(serverId, 'member')!;
         const requests: ReturnType<typeof PluginCollectionSharingListRequestV1Schema.parse>[] = [];
-        let firstNote = 'First private value';
+        let firstRowId = 'first';
         homes.answer(serverId, paths.sharedWithMe, { select: raw => {
             const input = PluginCollectionSharingListRequestV1Schema.parse(raw);
             requests.push(input);
             return { body: PluginCollectionSharingListResponseV1Schema.parse({
-                resources: input.cursor ? [nativeRow('second', 'Second private value')] : [nativeRow('first', firstNote)],
+                resources: [],
+                identities: [identityRow(input.cursor ? 'second' : firstRowId)],
                 nextCursor: input.cursor ? null : 'first-cursor',
             }) };
         } });
@@ -113,27 +129,27 @@ describe('useTeamSharedCollections', () => {
         expect(requests).toHaveLength(0);
         await hook.rerender({ enabled: true, teamId: 'team-a', hasCollection: true });
         await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
-        expect(hook.getCurrent().rows).toEqual([logicalRow('first', firstNote)]);
+        expect(hook.getCurrent().rows).toEqual([identityRow(firstRowId)]);
         expect(requests).toEqual([{ pluginId: contract.pluginId, collectionId: contract.collectionId,
-            readerContext: collectionRef, sharedWithTeamId: 'team-a', limit: 1 }]);
+            readerContext: collectionRef, sharedWithTeamId: 'team-a', limit: 1, projection: 'identity' }]);
         await act(async () => { await hook.getCurrent().loadMore(); });
-        expect(hook.getCurrent().rows).toEqual([logicalRow('first', firstNote), logicalRow('second', 'Second private value')]);
+        expect(hook.getCurrent().rows).toEqual([identityRow(firstRowId), identityRow('second')]);
         expect(hook.getCurrent().hasMore).toBe(false);
         expect(requests[1]).toEqual({ ...requests[0], cursor: 'first-cursor' });
         const loadedReads = requests.length;
         await act(async () => { publishHomeAccountChange(serverId, ['unrelated'], { teamSharedResourcesAffect: false }); });
         await flushHookEffects();
         expect(requests).toHaveLength(loadedReads);
-        firstNote = 'Changed logical value';
+        firstRowId = 'replacement';
         await act(async () => { publishHomeAccountChange(serverId, ['collection'], { teamSharedResourcesAffect: true }); });
         await waitForHomeGovernance(() => expect(hook.getCurrent().rows).toEqual([
-            logicalRow('first', firstNote), logicalRow('second', 'Second private value'),
+            identityRow(firstRowId), identityRow('second'),
         ]));
         expect(requests).toHaveLength(loadedReads + 2);
         await hook.rerender({ enabled: true, teamId: 'team-b', hasCollection: true });
         await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
         expect(requests.at(-1)).toEqual({ ...requests[0], sharedWithTeamId: 'team-b' });
-        expect(hook.getCurrent().rows).toEqual([logicalRow('first', firstNote)]);
+        expect(hook.getCurrent().rows).toEqual([identityRow(firstRowId)]);
         await hook.rerender({ enabled: false, teamId: 'team-b', hasCollection: true });
         expect(hook.getCurrent().rows).toEqual([]);
         const hiddenReads = requests.length;
@@ -146,21 +162,23 @@ describe('useTeamSharedCollections', () => {
         await hook.unmount();
     });
 
-    it('keeps native pending and refusal outcomes visible and recovers to an empty logical page', async () => {
+    it('keeps native pending and refusal outcomes visible and recovers to an empty page', async () => {
         const scope = createServerAccountScope(serverId, 'member')!;
         const pending = createDeferred<void>();
         homes.answer(serverId, paths.sharedWithMe, { respondAfter: pending.promise,
-            body: PluginCollectionSharingListResponseV1Schema.parse({ resources: [nativeRow('first', 'Private value')], nextCursor: null }) });
+            body: PluginCollectionSharingListResponseV1Schema.parse({ resources: [], identities: [identityRow('first')], nextCursor: null }) });
         const hook = await renderHook(() => useTeamSharedCollections({ scope, address: { serverId, teamId: 'team-a' },
             collectionRef, enabled: true, pageSize: 1 }));
         expect(hook.getCurrent().status).toBe('loading');
         await act(async () => { pending.resolve(); });
-        await waitForHomeGovernance(() => expect(hook.getCurrent().rows).toEqual([logicalRow('first', 'Private value')]));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().rows).toEqual([identityRow('first')]));
         homes.answer(serverId, paths.sharedWithMe, { status: 404, body: { error: 'collection_unavailable' } });
         await act(async () => { await hook.getCurrent().reload(); });
         expect(hook.getCurrent().status).toBe('error');
         expect(hook.getCurrent().error?.code).toBe('collection_unavailable');
-        homes.answer(serverId, paths.sharedWithMe, { body: PluginCollectionSharingListResponseV1Schema.parse({ resources: [], nextCursor: null }) });
+        homes.answer(serverId, paths.sharedWithMe, { body: PluginCollectionSharingListResponseV1Schema.parse({
+            resources: [], identities: [], nextCursor: null,
+        }) });
         await act(async () => { await hook.getCurrent().reload(); });
         expect(hook.getCurrent()).toMatchObject({ status: 'ready', rows: [], error: null, hasMore: false });
         await hook.unmount();

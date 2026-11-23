@@ -214,6 +214,7 @@ export type ActivePluginCollectionClientV1<
     TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition> = PluginAccountCollectionValue<PluginAccountCollectionDefinition>,
 > = Readonly<{
     sharing: PluginCollectionSharing<TValue>;
+    listSharedIdentities: ReturnType<typeof createPluginCollectionSharingClientV1<TValue>>['sharedIdentities'];
     /**
      * Derive this collection's Account-mode-aware identity value for one field
      * the admitted contract declares as a mode-derived identity. The contract,
@@ -1207,7 +1208,7 @@ export function createActivePluginCollectionClient<
     };
 
     const withSharing = async <T>(options: ActivePluginCollectionOperationOptionsV1 | undefined,
-        run: (client: PluginCollectionSharing<TValue>) => Promise<T>): Promise<T> => {
+        run: (client: ReturnType<typeof createPluginCollectionSharingClientV1<TValue>>) => Promise<T>): Promise<T> => {
         const prepared = await prepare(options);
         if (prepared.status !== 'ready') throw new PluginError({ code: prepared.reason, message: 'Collection sharing is unavailable', details: { outcome: 'refused' } });
         const operation = prepared.operation;
@@ -1251,6 +1252,7 @@ export function createActivePluginCollectionClient<
 
     return Object.freeze({
         sharing,
+        listSharedIdentities: request => withSharing(undefined, client => client.sharedIdentities(request)),
         identityTag,
         get,
         query,

@@ -19,6 +19,7 @@ import {
 type OperationKind = 'read' | 'mutation';
 type OperationOutcome = 'refused' | 'failed' | 'uncertain';
 type OperationRefusal = ReturnType<typeof PluginCollectionSharingErrorV1Schema.parse>;
+type ListOptions = Readonly<Pick<PluginCollectionSharingListRequestV1, 'cursor' | 'limit' | 'sharedWithTeamId'>>;
 
 
 /** Transport and key custody belong to each realm; logical sharing has one owner. */
@@ -76,6 +77,14 @@ export function createPluginCollectionSharingClientV1<TValue extends PluginColle
     }
     return response.body;
   };
+  const list = async (input: ListOptions, projection?: PluginCollectionSharingListRequestV1['projection']) =>
+    parse(PluginCollectionSharingListResponseV1Schema, await request(paths.sharedWithMe, {
+      ...identity, readerContext: contractRef,
+      ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+      ...(input.limit === undefined ? {} : { limit: input.limit }),
+      ...(input.sharedWithTeamId === undefined ? {} : { sharedWithTeamId: input.sharedWithTeamId }),
+      ...(projection === undefined ? {} : { projection }),
+    }));
   const open = async (resource: PluginCollectionSharingResourceV1, checkCurrent = true) => {
     validateIdentity(resource);
     if (resource.row.rowId !== resource.rowId) throw error('collection_content_unavailable', 'failed');
@@ -148,11 +157,8 @@ export function createPluginCollectionSharingClientV1<TValue extends PluginColle
       validateIdentity(resource, target);
       return (await open(resource, false)).logical;
     },
-    sharedWithMe: async (input: Readonly<Pick<PluginCollectionSharingListRequestV1, 'cursor' | 'limit' | 'sharedWithTeamId'>> = {}) => {
-      const result = parse(PluginCollectionSharingListResponseV1Schema,
-        await request(paths.sharedWithMe, { ...identity, readerContext: contractRef,
-          ...(input.cursor === undefined ? {} : { cursor: input.cursor }), ...(input.limit === undefined ? {} : { limit: input.limit }),
-          ...(input.sharedWithTeamId === undefined ? {} : { sharedWithTeamId: input.sharedWithTeamId }) }));
+    sharedWithMe: async (input: ListOptions = {}) => {
+      const result = await list(input);
       const rows = await Promise.all(result.resources.map(async resource => {
         const opened = await open(resource);
         await prepareRecipients(opened);
@@ -162,6 +168,11 @@ export function createPluginCollectionSharingClientV1<TValue extends PluginColle
         };
       }));
       return { rows, ...(result.nextCursor === null ? {} : { nextCursor: result.nextCursor }) };
+    },
+    sharedIdentities: async (input: ListOptions) => {
+      const result = await list(input, 'identity');
+      if (result.identities === undefined || result.resources.length > 0) throw error('collection_content_unavailable', 'failed');
+      return { rows: [] as const, identities: result.identities, ...(result.nextCursor === null ? {} : { nextCursor: result.nextCursor }) };
     },
     listGrants: async (rowId: string) => {
       const target = address(options.accountId, rowId);

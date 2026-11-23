@@ -59,6 +59,10 @@ export const PluginCollectionSharingResourceV1Schema = lazyZodSchema(() => z.str
   sharedWithTeamScope: z.optional(ResourceTeamShareScopeV1Schema),
 }));
 export type PluginCollectionSharingResourceV1 = z.infer<typeof PluginCollectionSharingResourceV1Schema>;
+export const PluginCollectionSharingIdentityV1Schema = lazyZodSchema(() => z.pick(PluginCollectionSharingResourceV1Schema, {
+  ownerAccountId: true, rowId: true, sharedWithTeamScope: true,
+}));
+export type PluginCollectionSharingIdentityV1 = z.infer<typeof PluginCollectionSharingIdentityV1Schema>;
 export const PluginCollectionSharingPutRequestV1Schema = lazyZodSchema(() => z.strictObject({
   ...address(), writerContext: PluginCollectionContractRefV1Schema, expectedRevision: PluginCollectionRevisionV1Schema,
   content: PluginCollectionContentEnvelopeV1Schema, projection: PluginCollectionProjectionV1Schema,
@@ -68,10 +72,12 @@ export const PluginCollectionSharingListRequestV1Schema = lazyZodSchema(() => z.
   ...identity(), readerContext: PluginCollectionContractRefV1Schema, cursor: z.optional(z.string()),
   sharedWithTeamId: z.optional(z.string().check(z.minLength(1))),
   limit: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1))),
+  projection: z.optional(z.literal('identity')),
 }));
 export type PluginCollectionSharingListRequestV1 = z.infer<typeof PluginCollectionSharingListRequestV1Schema>;
 export const PluginCollectionSharingListResponseV1Schema = lazyZodSchema(() => z.strictObject({
   resources: z.array(PluginCollectionSharingResourceV1Schema), nextCursor: z.nullable(z.string()),
+  identities: z.optional(z.array(PluginCollectionSharingIdentityV1Schema)),
 }));
 export type PluginCollectionSharingListResponseV1 = z.infer<typeof PluginCollectionSharingListResponseV1Schema>;
 export const PluginCollectionSharingErrorV1Schema = lazyZodSchema(() => z.union([

@@ -2,14 +2,15 @@ import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginCollectionContractRefV1Schema, type PluginCollectionContractRefV1 } from './collectionContractRefV1.js';
 import { AccountDataCollectionValueV1Schema } from './collectionLogicalValueV1.js';
-import { PluginCollectionSharingAddressV1Schema, PluginCollectionSharingGrantsResponseV1Schema,
+import { PluginCollectionSharingAddressV1Schema, PluginCollectionSharingGrantsResponseV1Schema, PluginCollectionSharingIdentityV1Schema,
+  type PluginCollectionSharingIdentityV1,
   PluginCollectionSharingListRequestV1Schema, PluginCollectionSharingMutationResponseV1Schema,
   PluginCollectionSharingPutRequestV1Schema, PluginCollectionSharingResourceV1Schema,
   PluginCollectionSharingRevokeGrantRequestV1Schema, PluginCollectionSharingSetGrantRequestV1Schema } from './collectionSharingV1.js';
 import { PLUGIN_COLLECTION_SHARING_ACTION_IDS_BY_OPERATION_V1 as ids, type PluginCollectionSharingActionIdV1 } from './collectionSharingActionIdsV1.js';
 
 const listInput = lazyZodSchema(() => z.strictObject({ collectionRef: PluginCollectionContractRefV1Schema,
-  ...z.pick(PluginCollectionSharingListRequestV1Schema, { cursor: true, limit: true, sharedWithTeamId: true }).shape }));
+  ...z.pick(PluginCollectionSharingListRequestV1Schema, { cursor: true, limit: true, sharedWithTeamId: true, projection: true }).shape }));
 const getInput = lazyZodSchema(() => z.strictObject({ collectionRef: PluginCollectionContractRefV1Schema,
   ...z.pick(PluginCollectionSharingAddressV1Schema, { ownerAccountId: true, rowId: true }).shape }));
 const putInput = lazyZodSchema(() => z.strictObject({ collectionRef: PluginCollectionContractRefV1Schema,
@@ -28,6 +29,7 @@ const rowOutput = lazyZodSchema(() => z.strictObject({
 }));
 const listOutput = lazyZodSchema(() => z.strictObject({
   rows: z.array(z.extend(rowOutput, { sharedWithTeamScope: PluginCollectionSharingResourceV1Schema.shape.sharedWithTeamScope })),
+  identities: z.optional(z.array(PluginCollectionSharingIdentityV1Schema)),
   nextCursor: z.optional(z.string()),
 }));
 const grantsOutput = lazyZodSchema(() => z.pick(PluginCollectionSharingGrantsResponseV1Schema, { ownerAccountId: true, access: true, grants: true }));
@@ -48,8 +50,10 @@ export type PluginCollectionSharingActionRequestV1 = {
 type LogicalRow = z.infer<typeof rowOutput>;
 type GrantResult = z.infer<typeof grantsOutput>;
 type Operand<T> = Omit<T, 'collectionRef'>;
+type ListOperand = Omit<Operand<z.infer<typeof listInput>>, 'projection'>;
 export type PluginCollectionSharingActionClientV1 = Readonly<{
-  sharedWithMe: (input: Operand<z.infer<typeof listInput>>) => Promise<Readonly<{ rows: readonly LogicalRow[]; nextCursor?: string }>>;
+  sharedWithMe: (input: ListOperand) => Promise<Readonly<{ rows: readonly LogicalRow[]; nextCursor?: string }>>;
+  sharedIdentities: (input: ListOperand) => Promise<Readonly<{ rows: readonly never[]; identities: readonly PluginCollectionSharingIdentityV1[]; nextCursor?: string }>>;
   get: (input: Operand<z.infer<typeof getInput>>) => Promise<LogicalRow>;
   put: (input: Operand<z.infer<typeof putInput>>) => Promise<LogicalRow>;
   listGrants: (rowId: string) => Promise<Readonly<Omit<GrantResult, 'grants'> & { grants: readonly GrantResult['grants'][number][] }>>;
@@ -65,7 +69,10 @@ export function createPluginCollectionSharingActionExecuteV1(options: Readonly<{
   return async (request: PluginCollectionSharingActionRequestV1) => {
     const client = await options.resolveClient(request.input.collectionRef, request.signal);
     switch (request.actionId) {
-      case ids.list: { const { collectionRef: _, ...input } = request.input; return client.sharedWithMe(input); }
+      case ids.list: {
+        const { collectionRef: _, projection, ...input } = request.input;
+        return projection === 'identity' ? client.sharedIdentities(input) : client.sharedWithMe(input);
+      }
       case ids.get: { const { collectionRef: _, ...input } = request.input; return client.get(input); }
       case ids.put: { const { collectionRef: _, ...input } = request.input; return client.put(input); }
       case ids.listGrants: return client.listGrants(request.input.rowId);

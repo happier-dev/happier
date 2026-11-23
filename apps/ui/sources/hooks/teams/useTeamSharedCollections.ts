@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import type { PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugins/data/collectionContractRefV1';
 import { PLUGIN_COLLECTION_SHARING_ACTION_IDS_BY_OPERATION_V1 as ids } from '@happier-dev/protocol/plugins/data/collectionSharingActionIdsV1';
 import { PluginCollectionSharingActionOutputSchemasV1 } from '@happier-dev/protocol/plugins/data/collectionSharingActionsV1';
-import type { PluginCollectionSharingAddressV1 } from '@happier-dev/protocol/plugins/data/collectionSharingV1';
+import type { PluginCollectionSharingAddressV1, PluginCollectionSharingIdentityV1 } from '@happier-dev/protocol/plugins/data/collectionSharingV1';
 
 import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -12,7 +12,7 @@ import { runTeamAction } from '@/sync/ops/teams/teamActionClient';
 
 import { useTeamPagedList, type TeamPagedList } from './useTeamPagedList';
 
-export type TeamSharedCollectionRow = ReturnType<typeof PluginCollectionSharingActionOutputSchemasV1[typeof ids.list]['parse']>['rows'][number];
+export type TeamSharedCollectionRow = PluginCollectionSharingIdentityV1;
 
 export function useTeamSharedCollectionRowOpener(input: Readonly<{
     scope: ServerAccountScope | null;
@@ -52,12 +52,15 @@ export function useTeamSharedCollections(input: Readonly<{
             if (!scope || !address || !collectionRef) return null;
             const result = await runTeamAction({
                 scope, actionId: ids.list, signal,
-                input: { collectionRef, sharedWithTeamId: address.teamId, limit: pageSize, ...(cursor === null ? {} : { cursor }) },
-                parse: value => PluginCollectionSharingActionOutputSchemasV1[ids.list].parse(value),
+                input: { collectionRef, sharedWithTeamId: address.teamId, limit: pageSize, projection: 'identity',
+                    ...(cursor === null ? {} : { cursor }) },
+                parse: value => {
+                    const page = PluginCollectionSharingActionOutputSchemasV1[ids.list].parse(value);
+                    if (page.identities === undefined || page.rows.length > 0) throw new Error('Missing identity projection');
+                    return { items: page.identities, nextCursor: page.nextCursor ?? null };
+                },
             });
-            return result.kind === 'failed' ? result : {
-                kind: 'succeeded', value: { items: result.value.rows, nextCursor: result.value.nextCursor ?? null },
-            };
+            return result;
         },
     });
 }

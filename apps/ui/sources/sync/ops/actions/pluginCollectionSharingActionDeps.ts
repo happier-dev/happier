@@ -16,7 +16,7 @@ export function createUiPluginCollectionSharingActionDeps(
                 code: resolved.status === 'rejected' ? resolved.code : resolved.reason,
                 message: 'Collection sharing is unavailable', details: { outcome: 'refused' },
             });
-            return resolved.client.sharing;
+            return { ...resolved.client.sharing, sharedIdentities: resolved.client.listSharedIdentities };
         },
     })(request) };
 }

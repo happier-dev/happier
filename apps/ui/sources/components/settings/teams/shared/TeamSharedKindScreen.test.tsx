@@ -9,12 +9,10 @@ import { TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1 } from '@happier-dev/protoco
 import { TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1, teamSharedResourceSummaryRowKeyV1, type TeamSharedResourceSummaryRowV1 } from '@happier-dev/protocol/teams/teamShareableResourceKindV1';
 import { randomBytes } from 'node:crypto';
 import { PLUGIN_COLLECTION_SHARING_ACTION_IDS_BY_OPERATION_V1 as collectionActionIds } from '@happier-dev/protocol/plugins/data/collectionSharingActionIdsV1';
-import { encodePluginCollectionLogicalValueV1 } from '@happier-dev/protocol/plugins/data/collectionLogicalCodecV1';
 import { normalizePluginAccountCollectionContractV1, PLUGIN_COLLECTION_CONTRACT_HTTP_PATH_V1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 import {
   PLUGIN_COLLECTION_SHARING_HTTP_PATHS_V1 as collectionPaths,
   PluginCollectionSharingListResponseV1Schema,
-  PluginCollectionSharingResourceV1Schema,
 } from '@happier-dev/protocol/plugins/data/collectionSharingV1';
 import { PluginAccountAvailabilityIntentReadResponseV1Schema } from '@happier-dev/protocol/plugins/availability/v1';
 import { SharedSavedSecretListOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
@@ -373,15 +371,7 @@ describe('Team shared Collection rows', () => {
   };
   const contract = normalizePluginAccountCollectionContractV1({ pluginId, contribution: declaration });
   const ref = { pluginId, collectionId: contract.collectionId, schemaVersion: contract.schemaVersion, contractDigest: contract.contractDigest };
-  const sharedRow = (id: string) => {
-    const encoded = encodePluginCollectionLogicalValueV1({ contract, value: { id, note: 'Release steps' },
-      isValidLogicalValue: (value): value is { id: string; note: string } => typeof value.id === 'string',
-      encryptionMode: 'plain', material: null, randomBytes });
-    if (encoded.status !== 'encoded') throw new Error(encoded.reason);
-    return PluginCollectionSharingResourceV1Schema.parse({ pluginId, collectionId: ref.collectionId,
-      ownerAccountId: 'account-mara', rowId: id, access: 'view', encryptionMode: 'plain', encryptedDataKey: null,
-      sharedWithTeamScope: 'group', row: { rowId: id, revision: 1, content: encoded.content, projection: encoded.projection } });
-  };
+  const sharedRow = { ownerAccountId: 'account-mara', rowId: 'release-checklist', sharedWithTeamScope: 'group' };
 
   /** The Home serves the Team, its admitted Collection and one Group-shared row; availability is the Account projection. */
   async function collectionHome(sharedRowDestination: string | undefined) {
@@ -393,7 +383,7 @@ describe('Team shared Collection rows', () => {
     await harness.setActionPolicy(serverId, collectionActionIds.list, 'ui', 'allowed');
     harness.answer(serverId, PLUGIN_COLLECTION_CONTRACT_HTTP_PATH_V1, { body: { access: 'readOnly', contract } });
     harness.answer(serverId, collectionPaths.sharedWithMe, { body: PluginCollectionSharingListResponseV1Schema.parse({
-      resources: [sharedRow('release-checklist')], nextCursor: null }) });
+      resources: [], identities: [sharedRow], nextCursor: null }) });
     const scope = createServerAccountScope(serverId, ACCOUNT_ID)!;
     const manifest = { schemaVersion: 2, id: pluginId, version, displayName: 'Checklists',
       engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 },
@@ -437,8 +427,10 @@ describe('Team shared Collection rows', () => {
     const screen = await renderCollection(serverId, navigation);
     await waitForHomeGovernance(() => expect(ids(screen)).toContain(ROW));
     expect(harness.requestsFor(collectionPaths.sharedWithMe)).toEqual([expect.objectContaining({
-      serverId, input: expect.objectContaining({ pluginId, collectionId: ref.collectionId, sharedWithTeamId: 'team-1' }),
+      serverId, input: expect.objectContaining({ pluginId, collectionId: ref.collectionId, sharedWithTeamId: 'team-1', projection: 'identity' }),
     })]);
+    expect(harness.requestsFor(collectionPaths.get)).toHaveLength(0);
+    expect(harness.requestsFor(collectionPaths.census)).toHaveLength(0);
     expect(screen.getTextContent()).toContain('release-checklist');
     expect(screen.getTextContent()).toContain(t('teams.overview.shared.throughGroup'));
     expect(screen.getTextContent()).not.toContain(t('common.unavailable'));

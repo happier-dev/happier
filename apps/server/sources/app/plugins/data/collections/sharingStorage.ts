@@ -12,7 +12,12 @@ import { markAccountsChanged } from '@/app/changes/markAccountChanged';
 import { buildPluginDomainAccountChangeEntityId } from '@happier-dev/protocol/changes/pluginDomain';
 
 export function collectionAccessFactsSelect(actorAccountId?: string) {
-    return { id: true, accountId: true, account: { select: { encryptionMode: true } }, ...resourceGrantRelationsSelect(actorAccountId) } as const;
+    const { grants } = resourceGrantRelationsSelect(actorAccountId);
+    return { id: true, accountId: true, account: { select: { encryptionMode: true } }, grants: {
+        ...grants, select: { ...grants.select, teamGroup: {
+            select: { ...grants.select.teamGroup.select, teamId: true },
+        } },
+    } } as const;
 }
 async function readFactsBatch(tx: Tx, rowDbIds: readonly string[], actorAccountId?: string) {
     return tx.pluginCollectionRow.findMany({ where: { id: { in: [...rowDbIds] }, deletedAt: null }, select: collectionAccessFactsSelect(actorAccountId) });

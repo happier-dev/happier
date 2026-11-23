@@ -10074,6 +10074,13 @@ rewrite message content or introduce a second transcript.
 
 ### Collection readers and answering-client routing (0.3 development)
 
+Unreleased 0.3 Collection sharing list requests can opt into the `identity`
+projection. The existing list Action and HTTP route return addressed rows and
+their applicable Team share scope without Collection bodies or key envelopes.
+Exact reads still use the Collection reader. Callers that omit the projection
+continue to receive logical rows. Load matching UI, Home and Protocol sources
+for the new projection because earlier development schemas refuse the field.
+
 Independently upgraded apps retain their compiled Collection reader refs. A
 current writer admits an exact compatible reader through Data's existing access
 resolver or refuses that Collection with `collection_update_required`; the app

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { Prisma } from '@prisma/client';
 import tweetnacl from 'tweetnacl';
@@ -12,14 +12,15 @@ import { createDiscussion } from '@/app/discussions/mutations';
 import { listDiscussions } from '@/app/discussions/queries';
 import { readTeamSharedResourcesSummaryInTx } from '@/app/teams/sharedResources';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
-import { db, getDbProviderFromEnv, initDbMysql, initDbPostgres } from '@/storage/db';
+import { createDbMaintenanceClient, db, getDbProviderFromEnv, initDbMysql, initDbPostgres } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { recordDriverStatements, type DriverStatementEvent } from '@/testkit/driverStatements';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { materializePluginCollectionContractsFromManifestTx } from './contracts';
 import { mutatePluginCollection } from './mutation';
 import { setCollectionGrant, revokeCollectionGrant, readCollectionRecipientCensus, commitCollectionRecipientKeys, listCollectionGrants } from './sharingAccessService';
-import { readSharedCollectionResource, putSharedCollectionResource, listSharedCollectionResources } from './sharingResourceService';
+import { countTeamSharedCollectionsInTx, readSharedCollectionResource, putSharedCollectionResource, listSharedCollectionResources } from './sharingResourceService';
 
 function json(value: unknown): Prisma.InputJsonValue {
     return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -40,6 +41,46 @@ describe('Collection sharing database contract', () => {
         await db.$connect();
     }, 120_000);
     afterAll(async () => { if (sqlite) await sqlite.close(); else await db.$disconnect(); });
+
+    it.skipIf(provider !== 'postgres')('aggregates a Team Collection without reading the matching grant identities', async () => {
+        const databaseUrl = process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL;
+        if (!databaseUrl) throw new Error('Use the disposable PostgreSQL DB-contract harness');
+        const statements: DriverStatementEvent[] = [];
+        const client = await createDbMaintenanceClient('postgres', databaseUrl, {
+            onDriverStatement: recordDriverStatements(event => statements.push(event)),
+        });
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const team = await db.team.create({ data: { name: 'Collection aggregate' } });
+        const pluginId = `example.sharing.aggregate.${randomUUID()}`;
+        const collectionId = 'documents';
+        const contract = await db.pluginCollectionContract.create({ data: {
+            pluginId, collectionId, schemaVersion: 1, contractDigest: randomBytes(32).toString('base64url'),
+            normalizedSchema: {}, indexes: [], relations: [], privacyProjection: {},
+        } });
+        try {
+            await db.teamMembership.createMany({ data: [owner, viewer].map(account => ({
+                accountId: account.id, teamId: team.id, role: 'member',
+            })) });
+            const row = await db.pluginCollectionRow.create({ data: { accountId: owner.id, pluginId, collectionId,
+                rowId: 'shared', revision: 1, contractId: contract.id, contractDigest: contract.contractDigest,
+                schemaVersion: 1, contentEnvelope: { t: 'plain', v: {} } } });
+            await db.pluginCollectionGrant.create({ data: { rowDbId: row.id, principalKind: 'team', teamId: team.id,
+                accessLevel: 'view', createdByAccountId: owner.id } });
+            expect(await client.$transaction(tx => countTeamSharedCollectionsInTx(tx, {
+                actorAccountId: viewer.id, sharedWithTeamId: team.id,
+            }))).toEqual({ ok: true, collections: [{ collection: { pluginId, collectionId }, count: 1 }] });
+            const reads = statements.filter(event => /^SELECT\b/i.test(event.query));
+            expect(reads.some(event => /COUNT\(/i.test(event.query) && event.query.includes('"PluginCollectionRow"'))).toBe(true);
+            expect(reads.filter(event => /^SELECT\s+[^()]+\bFROM "(?:public"\.)?"PluginCollectionGrant"/i.test(event.query))).toEqual([]);
+            expect(reads.filter(event => event.query.includes('"contentEnvelope"'))).toEqual([]);
+        } finally {
+            await client.$disconnect();
+            await db.team.delete({ where: { id: team.id } });
+            await db.account.deleteMany({ where: { id: { in: [owner.id, viewer.id] } } });
+            await db.pluginCollectionContract.delete({ where: { id: contract.id } });
+        }
+    });
 
     it('preserves private relation edges for editor content writes and refuses target changes', async () => {
         const pluginId = `example.sharing.relations.${randomUUID()}`;
@@ -159,6 +200,14 @@ describe('Collection sharing database contract', () => {
             const scoped = { pluginId, collectionId: ref.collectionId, readerContext: ref, sharedWithTeamId: team.id };
             expect(await listSharedCollectionResources(owner.id, scoped)).toMatchObject({ resources: [{ rowId: address.rowId, sharedWithTeamScope: 'team_and_group' }] });
             expect(await listSharedCollectionResources(groupGuest.id, scoped)).toMatchObject({ resources: [{ rowId: address.rowId, sharedWithTeamScope: 'group' }] });
+            const identities = { ...scoped, projection: 'identity' as const };
+            expect(await listSharedCollectionResources(groupGuest.id, identities)).toEqual({
+                resources: [], identities: [{ ownerAccountId: owner.id, rowId: address.rowId, sharedWithTeamScope: 'group' }], nextCursor: null,
+            });
+            expect(await listSharedCollectionResources(directGuest.id, identities)).toEqual({
+                resources: [], identities: [{ ownerAccountId: owner.id, rowId: address.rowId }], nextCursor: null,
+            });
+            expect(await listSharedCollectionResources(teamGuest.id, identities)).toEqual({ resources: [], identities: [], nextCursor: null });
             expect(await listSharedCollectionResources(owner.id, { ...scoped, sharedWithTeamId: undefined }))
                 .toMatchObject({ resources: [] });
             const { countTeamSharedCollectionsInTx } = await import('./sharingResourceService');
