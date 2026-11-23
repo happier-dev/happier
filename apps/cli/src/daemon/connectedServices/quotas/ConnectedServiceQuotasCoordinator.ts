@@ -1587,12 +1587,12 @@ export class ConnectedServiceQuotasCoordinator {
       if (inFlight) return await this.joinRecoveryCreditConsume(input, inFlight, true);
     }
     const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: NodeJS.Timeout | undefined;
     let pendingReceipt: ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1 | undefined;
     let admittedSettlement: Promise<ConnectedServiceQuotaRecoveryCreditConsumeResult> | undefined;
     const timeout = new Promise<ConnectedServiceQuotaRecoveryCreditConsumeResult>((resolve) => {
       if (this.fetchTimeoutMs === null) return;
-      timer = setTimeout(() => {
+      timer = setTimeout<[]>(() => {
         controller.abort('quota-recovery-credit-consume-timeout');
         resolve({ ...unavailable('timeout'), ...(pendingReceipt ? { receipt: pendingReceipt } : {}) });
       }, this.fetchTimeoutMs);
