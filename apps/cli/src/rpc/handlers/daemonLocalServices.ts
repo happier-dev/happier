@@ -24,6 +24,10 @@ import { MACHINE_SERVICE_FRONTDOOR_ACTION_IDS } from '@happier-dev/protocol/loca
 import { assertLocalServiceReadCustody } from '@/daemon/local/services/credentialAdmission';
 import { buildActionExecutorContextForRpc } from './_actionDispatchAdapter';
 import { createLocalServiceLauncherSnapshotReader } from '@/daemon/local/services/launch/snapshotReader';
+import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
+import type { RequesterSessionAccountContextCustody } from '@/daemon/sessionEncryption/requesterSessionAccountContextCustody';
+import { retainRequesterSessionRuntimeContext } from '@/daemon/sessionEncryption/requesterSessionRuntimeContextLifetime';
+import { readDefaultSessionIdFromRpcInput } from './registerActionSpecRpcHandlers';
 
 export type DaemonLocalServicesMachineRpcRoutes = Pick<DaemonLocalServicePreviewSnapshotHandlerOptions,
     'projectManagedServices' | 'machineId' | 'serverId'> & Readonly<{
@@ -39,7 +43,51 @@ export type DaemonLocalServicesMachineRpcRoutes = Pick<DaemonLocalServicePreview
     localServicesPublicPreview?: LocalServicePublicPreviewRoutes | null;
     /** Receiving host constructs the full credential-scoped policy executor with genuine ingress. */
     resolveLauncherActionExecutor?: RegisterActionSpecRpcHandlersParams['resolveActionExecutor'];
+    /** Machine core's Session custody, lent to an admitted guest's own Session (see withGuestSession). */
+    sessionAccounts?: Pick<RequesterSessionAccountContextCustody, 'resolveSessionAccountContext' | 'releaseSessionAccountContext'>;
 }>;
+
+/** The Session a Services call names: an Action's own `sessionId` or invoking Session, a launcher read's or
+ * watch's Session scope, or its Start review's request. */
+function readServiceCallSessionId(raw: unknown): string | undefined {
+    const targeted = TargetedActionRpcRequestV1Schema.safeParse(raw);
+    if (targeted.success) return readDefaultSessionIdFromRpcInput(targeted.data.input) ?? targeted.data.defaultSessionId;
+    const field = (value: unknown, key: string): unknown => value && typeof value === 'object' ? Reflect.get(value, key) : undefined;
+    return readDefaultSessionIdFromRpcInput(field(field(raw, 'launcherProjection'), 'request'))
+        ?? readDefaultSessionIdFromRpcInput(field(field(raw, 'startReview'), 'request'))
+        ?? readDefaultSessionIdFromRpcInput(raw);
+}
+
+/**
+ * The one admission of a guest's Services call on this Machine (owner rulings 2026-11-23 "A guest
+ * with Use on a shared Machine can start Services there" and "tell once, never block"). A person
+ * Home admitted to this Machine (its `machineAdmission`: Use or higher) whose personal call names a
+ * Session running here as them acts with the custody that Session already holds; nothing new
+ * travels. Everyone else is left exactly as received, so the executor's existing refusal
+ * (`custodian_only`) and its cause stand.
+ */
+async function withGuestSession<TRequest, TResponse>(
+    accounts: DaemonLocalServicesMachineRpcRoutes['sessionAccounts'],
+    raw: TRequest, context: RpcHandlerContext | undefined,
+    handler: RpcHandler<TRequest, TResponse>,
+): Promise<TResponse> {
+    const admission = context?.machineAdmission;
+    const sessionId = accounts && admission && admission.actorAccountId !== admission.custodianAccountId
+        && !context?.callerInputAuthorization && !context?.requesterSessionBootstrap ? readServiceCallSessionId(raw) : undefined;
+    if (!accounts || !context || !admission || !sessionId) return await handler(raw, context);
+    const held = await accounts.resolveSessionAccountContext(sessionId, undefined, context.signal).catch(() => null);
+    if (held?.bootstrap.attribution.accountId !== admission.actorAccountId) {
+        await accounts.releaseSessionAccountContext(held);
+        return await handler(raw, context);
+    }
+    const releaseOperation = retainRequesterSessionRuntimeContext(held);
+    try {
+        return await handler(raw, { ...context, requesterSessionBootstrap: held.bootstrap });
+    } finally {
+        releaseOperation();
+        await accounts.releaseSessionAccountContext(held);
+    }
+}
 
 function requireInventoryRoutes(
     options: DaemonLocalServicesMachineRpcRoutes,
@@ -84,6 +132,8 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
     const assertRequesterRead = (context?: RpcHandlerContext) => assertLocalServiceReadCustody({
         accountId: options.accountId, machineId: options.machineId ?? '', context,
     }, 'machine_inventory');
+    const guestSessionRpc: RpcHandlerRegistrar = { registerHandler: (method, handler) => rpc.registerHandler(method,
+        (raw, context) => withGuestSession(options.sessionAccounts, raw, context, handler)) };
     const readLauncher = (ingress?: RpcHandlerContext, requesterOnly?: true) => createLocalServiceLauncherSnapshotReader({
         feed: requireLauncherRoutes(options), accountId: options.accountId, machineId: options.machineId ?? '',
         serverId: options.serverId, ingress, ...(requesterOnly ? { readScope: 'requester_managed_services' as const } : {}),
@@ -134,7 +184,7 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
         // daemon's inventory registry actually changes. Clients share one observation lifetime
         // per Machine and re-arm snapshot reads on each answer, so nothing polls.
         if (options.localServicesInventory.watchSnapshot) {
-            rpc.registerHandler(
+            guestSessionRpc.registerHandler(
                 RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH,
                 async (raw: unknown, context): Promise<DaemonLocalServiceInventoryWatchResponseV1 | DaemonLocalServiceInventoryLauncherWatchResponseV1> => {
                     const request = DaemonLocalServiceInventoryWatchRequestV1Schema.parse(raw);
@@ -183,7 +233,7 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
     }
 
     if (options.localServicesLauncher) {
-        rpc.registerHandler(
+        guestSessionRpc.registerHandler(
             RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT,
             async (raw: unknown, context): Promise<DaemonLocalServiceLauncherSnapshotResponseV1> => {
                 const request = DaemonLocalServiceLauncherSnapshotRequestV1Schema.parse(raw);
@@ -233,7 +283,7 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
 
         if (options.localServicesLauncher.startTarget && options.resolveLauncherActionExecutor) {
             registerActionSpecRpcHandlers({
-                rpcHandlerManager: rpc,
+                rpcHandlerManager: guestSessionRpc,
                 actionIds: ['localServices.launcher.start'],
                 resolveActionExecutor: options.resolveLauncherActionExecutor,
                 ...(options.machineId ? { targetMachineId: options.machineId, defaultMachineTarget: true } : {}),
@@ -296,8 +346,9 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
         if (options.resolveLauncherActionExecutor) registerActionSpecRpcHandlers({
             rpcHandlerManager: {
                 registerHandler(method, handler) {
-                    controlHandlers.set(method, handler);
-                    rpc.registerHandler(method, handler);
+                    const admitted: typeof handler = (raw, context) => withGuestSession(options.sessionAccounts, raw, context, handler);
+                    controlHandlers.set(method, admitted);
+                    rpc.registerHandler(method, admitted);
                 },
             },
             actionIds: Object.keys(LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS),

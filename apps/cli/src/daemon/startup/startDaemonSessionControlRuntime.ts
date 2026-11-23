@@ -9269,6 +9269,7 @@ export async function startDaemonSessionControlRuntime(
     accountId:
       readPreviewAccountIdFromToken(params.credentials.token) ?? undefined,
     projectManagedServices,
+    sessionAccounts: { resolveSessionAccountContext, releaseSessionAccountContext },
     resolveLauncherActionExecutor: ({ ingress }) => ({
       execute: async (actionId, input, context) => {
         if (
@@ -9282,11 +9283,13 @@ export async function startDaemonSessionControlRuntime(
             error: 'machine_admission_required',
           };
         const requester = readRequesterAccountActionContext(ingress.callerInputAuthorization);
+        // An admitted guest's own Session custody, lent once by the Services ingress (withGuestSession).
+        const session = requester ? null : ingress.requesterSessionBootstrap ?? null;
         const selected = await resolveLocalServiceActionCredentials({
           credentials: params.credentials,
           readCredentials: () => readStoredCredentialsForServerId(params.serverId),
           actorAccountId: ingress.machineAdmission.actorAccountId,
-          requester,
+          requester: requester ?? session,
         });
         if (!selected.ok)
           return { ok: false, errorCode: selected.errorCode, error: selected.errorCode };
@@ -9299,11 +9302,13 @@ export async function startDaemonSessionControlRuntime(
           credentials,
           machineId: params.machineId,
           serverId: params.serverId,
-          serverApiUrl: requester?.serverHttpBaseUrl ?? params.serverBaseUrl,
+          serverApiUrl: requester?.serverHttpBaseUrl ?? session?.serverHttpBaseUrl ?? params.serverBaseUrl,
           ...(requester ? { admittedAccountEncryptionMode: requester.accountEncryptionCurrentness.mode,
-            savedSecretOperationContext: requester.savedSecretOperationContext } : {}),
+            savedSecretOperationContext: requester.savedSecretOperationContext }
+            : session ? { admittedAccountEncryptionMode: session.accountEncryptionMode,
+              savedSecretOperationContext: session.savedSecretOperationContext } : {}),
           ...(ingress.requesterSessionBootstrap ? { requesterSessionBootstrap: ingress.requesterSessionBootstrap } : {}),
-          readCredentials: async () => requester ? requester.credentials
+          readCredentials: async () => requester ? requester.credentials : session ? session.credentials
             : await readStoredCredentialsForServerId(params.serverId),
           ...(apiMachineForSessions ? { runActionOperation: request => {
             const context: import('@/rpc/handlers/_actionDispatchAdapter').RpcActionExecutorContext = { ...request.context,
@@ -9413,11 +9418,15 @@ export async function startDaemonSessionControlRuntime(
         lifetimeSignal: shutdownCancellationDomains.daemonWorkSignal,
       }),
       cleanupRequesterMachineResources: async ({ requesterAccountId }) => {
-        await Promise.all([
+        // A running Service is open-ended access: the withdrawn person's own Services end here.
+        const services = listProjectServices().filter(service => service.kind === 'workspace'
+          && service.requester.accountId === requesterAccountId);
+        const [stopped] = await Promise.all([
+          Promise.all(services.map(service => service.stop())),
           pluginRuntimeController.retireHostResourceWatches(requesterAccountId),
           params.cleanupRequesterServiceForwards?.(requesterAccountId),
         ]);
-        return { kind: 'settled' };
+        return { kind: stopped.every(({ status }) => status === 'stopped' || status === 'accepted') ? 'settled' : 'incomplete' };
       },
       resolveInstallationId: () =>
         readInstallationIdentityIfExistsSync()?.installationId ?? null,

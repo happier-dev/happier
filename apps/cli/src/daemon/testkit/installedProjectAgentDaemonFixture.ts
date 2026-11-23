@@ -53,7 +53,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
   controller?: PluginReloadController,
   requesterOptions?: Partial<Pick<Parameters<typeof createRequesterSessionRuntimeContext>[0], 'resolveQualifiedConnectedAccountV4Support'>>
   & { reattachedFromDiskMarker?: true }
-    & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'resolveCurrentMachineExecutionOriginContext' | 'resolveSessionSpawnDirectTargetTransport' | 'processEnv' | 'openTeamCredentialProviderBinding' | 'liveStreamCaptureRegistry' | 'onComputerRoutesReady' | 'admissionDrain' | 'isShuttingDown'>>
+    & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'resolveCurrentMachineExecutionOriginContext' | 'resolveSessionSpawnDirectTargetTransport' | 'processEnv' | 'openTeamCredentialProviderBinding' | 'liveStreamCaptureRegistry' | 'onComputerRoutesReady' | 'admissionDrain' | 'isShuttingDown' | 'onMachineAccessLossReceiverReady'>>
     & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'credentials' | 'externalActionAccountId' | 'agentIsolation' | 'managedProviderOperationAuthority'
       | 'releaseSessionOwnedNativeBindings' | 'getApiMachineForSessions' | 'onLocalServicesRoutesReady' | 'resolveServerFeaturesSnapshot' | 'currentMachineHost' | 'externalSessionHostOperationOwner' | 'runtimeActionExecute' | 'projectProviderModelsForAccount'>>
     & Pick<NonNullable<Parameters<typeof createInstalledProjectAgentLaunchFixture>[0]>, 'machineAccess' | 'accountActionCredentials' | 'serverId' | 'homeServerIdentityId' | 'accountSettings' | 'machineRpcMethods' | 'agentIsolationEnabled'>
@@ -165,6 +165,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
     openTeamCredentialProviderBinding: requesterOptions?.openTeamCredentialProviderBinding,
     liveStreamCaptureRegistry: requesterOptions?.liveStreamCaptureRegistry,
     onComputerRoutesReady: requesterOptions?.onComputerRoutesReady,
+    onMachineAccessLossReceiverReady: requesterOptions?.onMachineAccessLossReceiverReady,
     releaseSessionOwnedNativeBindings: requesterOptions?.releaseSessionOwnedNativeBindings,
     onLocalServicesRoutesReady: requesterOptions?.onLocalServicesRoutesReady,
     resolveServerFeaturesSnapshot: requesterOptions?.resolveServerFeaturesSnapshot,

@@ -52,13 +52,15 @@ export async function assertLocalServiceReadCustody(
         && context.workspaceSyncSourceExecution?.originalActionEnvelope
         ? readRequesterAccountActionContext(context.callerInputAuthorization) : null;
     const privateMove = requester?.authorization.binding.accountId === admission?.actorAccountId && await requester?.isCurrent();
+    // The Services ingress lent an admitted guest their own Session's custody: they read as that Session's Account.
+    const ownSession = !!admission && context.requesterSessionBootstrap?.attribution.accountId === admission.actorAccountId;
     const requesterOnly = readScope === 'requester_managed_services' && admission
-        && admission.actorAccountId !== input.accountId && !privateMove;
+        && admission.actorAccountId !== input.accountId && !privateMove && !ownSession;
     if (!input.accountId || !admission || admission.machineId !== input.machineId || context.signal.aborted
         || !context.verifyMachineAdmissionCurrent) {
         throw new Error('requester_credentials_unavailable');
     }
-    if (admission.actorAccountId !== input.accountId && !privateMove && !requesterOnly) {
+    if (admission.actorAccountId !== input.accountId && !privateMove && !requesterOnly && !ownSession) {
         if (readScope === 'machine_inventory') {
             throw new RpcError('requester_credentials_unavailable', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
         }

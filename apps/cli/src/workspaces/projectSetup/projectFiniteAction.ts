@@ -145,7 +145,9 @@ function readProjectRuntimeRequesterBindingRefusal(runtime: ProjectFiniteActionR
             ? readAdmittedRequesterAccountReadRuntime({ ingress, serverId: runtime.serverId, machineId: runtime.machineId,
                 installationId: admission.installationId, isInstalledCurrent: runtime.isCurrent ?? (() => true) }) : null;
         if (requester && requester.accountId === runtime.accountId && requester.serverHttpBaseUrl === runtime.serverHttpBaseUrl) return null;
-    } else if (runtime.credentials && admission.actorAccountId === runtime.accountId && admission.custodianAccountId === runtime.accountId) return null;
+    } else if (runtime.credentials && admission.actorAccountId === runtime.accountId
+        // The caller's own Session custody, already admitted by its ingress owner, or the owner's own Account.
+        && (admission.custodianAccountId === runtime.accountId || runtime.sessionCustody?.accountId === runtime.accountId)) return null;
     return failure('project_requester_credentials_unavailable');
 }
 
