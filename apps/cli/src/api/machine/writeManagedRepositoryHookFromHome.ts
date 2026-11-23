@@ -7,11 +7,10 @@ import {
     type ManagedPluginWebhookRequestV1,
     type ManagedPluginWebhookResultV1,
 } from '@happier-dev/protocol/plugins/webhooks/managedRepositoryWebhookRpcV1';
-import { GITHUB_EVENT_SETUP_ACTIONS_V1 } from '@happier-dev/protocol/automations/event-setup-result';
 import {
-    GITHUB_AUTOMATION_EVENT_LOCAL_IDS,
-    readGithubManagedRepositoryHookSource,
-} from '@happier-dev/plugins-scm-github';
+    GITHUB_EVENT_SETUP_ACTIONS_V1,
+    GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1,
+} from '@happier-dev/protocol/automations/event-setup-result';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import {
@@ -36,7 +35,7 @@ export function registerManagedRepositoryHookFromHome(input: Readonly<{
             const { binding, storedDefinitionEnvelope } = request;
             if (binding.triggerKind !== 'pluginEvent'
                 || binding.eventRef.pluginId !== GITHUB_EVENT_SETUP_ACTIONS_V1.pluginId
-                || binding.eventRef.localId !== GITHUB_AUTOMATION_EVENT_LOCAL_IDS.push) return unavailable;
+                || binding.eventRef.localId !== GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1) return unavailable;
             try {
                 const credentials = await input.readCredentials();
                 if (!credentials) return unavailable;
@@ -52,6 +51,8 @@ export function registerManagedRepositoryHookFromHome(input: Readonly<{
                 if (opened.kind !== 'available') return unavailable;
                 const definition = createStoredReadSchema(AutomationEventTriggerDefinitionStoredPayloadV1Schema).safeParse(opened.definition);
                 if (!definition.success) return unavailable;
+                const { readGithubManagedRepositoryHookSource } = await import('@happier-dev/plugins-scm-github/managed-repository-webhook');
+                signal.throwIfAborted();
                 const source = readGithubManagedRepositoryHookSource(definition.data.sourceInstanceId, definition.data.sourceConfig);
                 if (!source || source.repositoryId !== request.repositoryId) return unavailable;
                 const lease = await acquireExecutableAuthoritativePluginRuntimeRegistryLease({ signal });

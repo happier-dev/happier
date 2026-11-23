@@ -57,12 +57,14 @@ test('daemon startup does not evaluate the MCP SDK before an MCP operation', () 
 });
 
 test('daemon startup keeps GitHub management code and database drivers behind invocation', () => {
+  const entries = [...imports, ...startupImports('api/apiMachine.ts')];
   const deferred = new Set([
     '@happier-dev/plugins-scm-github',
+    '@happier-dev/plugins-scm-github/managed-repository-webhook',
     '@happier-dev/databases/connection/mysql',
     '@happier-dev/databases/connection/postgresql',
   ]);
-  assert.deepEqual(imports.filter(edge => deferred.has(edge.specifier)), []);
+  assert.deepEqual(entries.filter(edge => deferred.has(edge.specifier)), []);
 });
 
 test('Session host startup does not evaluate the holder implementation before a Session or handover', () => {
