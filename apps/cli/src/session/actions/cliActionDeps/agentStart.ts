@@ -78,7 +78,7 @@ export function createCliAgentStartContext(
     // Scope admission consumes the same validated caller, not Agent launch
     // selections. Catalog hydration repeats requester authority round trips
     // without contributing any fact to the fresh Home subtree decision.
-    const scopeOnly = options?.purpose === 'session_scope' || options?.purpose === 'workflow_run';
+    const scopeOnly = options?.purpose === 'session_scope' || options?.purpose === 'workflow_scope';
     const readsWorkPolicy = options?.purpose !== 'session_scope';
     const requiresBoundStartPolicy = readsWorkPolicy && (Boolean(params.readAgentStartPolicy)
       || (params.actionsSettingsProvider ? !params.actionsSettingsProvider.getAccountSettings : !params.credentials));

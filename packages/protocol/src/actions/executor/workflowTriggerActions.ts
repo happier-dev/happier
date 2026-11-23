@@ -592,7 +592,11 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       const materialized = creatingSession ? await materializeWorkflowDefinitionAuthorityV1(materialization)
         : await materializeWorkflowAcceptedSnapshotV1({ ...materialization, admission: { kind: 'user' } });
       if (!materialized.ok) refuse(materialized.error.code, materialized.error);
-      const authority = admittedSession?.authority ?? await resolveActionAgentStartContextV1(deps, caller, sessionId);
+      // A Workflow with no Agent-start leaves only needs the Session's work policy.
+      // Role-bearing leaves still use the full Agent-start snapshot.
+      const authority = admittedSession?.authority ?? await resolveActionAgentStartContextV1(
+        deps, caller, sessionId, materialized.agentStartLeaves.length === 0 ? { purpose: 'workflow_scope' } : undefined,
+      );
       caller.signal?.throwIfAborted();
       if (authority && 'ok' in authority) refuse(authority.errorCode, authority.details);
       if (!authority) refuse('target_unavailable');

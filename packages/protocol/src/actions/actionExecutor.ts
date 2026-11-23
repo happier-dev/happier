@@ -2575,7 +2575,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       hostReviewedChild: _parentReviewedChild, admittedHostReviewedChildren: _parentReviewedChildren,
       actionAutomationAdmission: _parentAutomationAdmission,
       prepareAdmittedExecutionOrigin: _parentExecutionOrigin,
-      invocationServices: _parentServices, executeHostReviewedChildAction: _parentHostChildAction, ...caller } = context;
+      invocationServices: _parentServices, executeHostReviewedChildAction: _parentHostChildAction,
+      workflowAgentStartScope: _parentTriggerStart, ...caller } = context;
     return caller;
   };
 
@@ -3192,8 +3193,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ? parseAgentPermissionIntentV1Alias(permission.effectiveCallerMode) : null;
       // Materialization consumes the permission owner's effective fact. Keep
       // the original context intact for its signed origination/approval proof.
+      const triggerWrite = isWorkflowTriggerMutationActionId(actionId);
       const resolved = ceiling ? await resolveActionAgentStartContextV1(deps,
-        { ...ctx, callerPermissionMode: permission.effectiveCallerMode }) : null;
+        { ...ctx, callerPermissionMode: permission.effectiveCallerMode }, undefined,
+        triggerWrite ? { purpose: 'workflow_scope' } : undefined) : null;
       if (resolved && 'ok' in resolved) return resolved;
       if (!resolved || !ceiling) {
         return actionId.startsWith('workflow.definition.')
@@ -3203,7 +3206,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           : actionStartTargetUnavailableV1(ctx, 'agent_start_context', !ceiling
             ? 'caller_permission_unavailable' : 'agent_start_context_unavailable');
       }
-      ctx = { ...ctx, agentStartContext: { ...resolved, callerPermissionCeiling: ceiling } };
+      const startContext = { ...resolved, callerPermissionCeiling: ceiling };
+      ctx = triggerWrite && !ctx.agentStartContext ? { ...ctx, workflowAgentStartScope: startContext }
+        : { ...ctx, agentStartContext: startContext };
     }
     const composedReview = actionId === 'review.start' && requiresReviewWorkflowCompositionV1(admittedInput as ReviewStartInput);
     const agentStartAction = !composedReview && isAgentStartActionInvocationV1(actionId, readRecord(admittedInput));

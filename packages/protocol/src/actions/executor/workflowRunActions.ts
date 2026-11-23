@@ -1530,7 +1530,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       admitRun: async ({ permissionCeiling }) => admitActionAgentStartV1(args.context, {
         kind: 'workflow_run', facts: { machineId: projectTarget.machineId, directory: projectTarget.directory,
           permissionMode: permissionCeiling }, ...(originSessionId ? { targetSessionId: originSessionId } : {}),
-      }, await resolveActionAgentStartContextV1(deps, args.context, undefined, { purpose: 'workflow_run' })),
+      }, await resolveActionAgentStartContextV1(deps, args.context, undefined, { purpose: 'workflow_scope' })),
       admitLeaf: async (leaf, facts) => {
         const resolvedAgentContext = await readAgentStartContext();
         const resolved = resolvedAgentContext && !('ok' in resolvedAgentContext) && facts.role ? { ...resolvedAgentContext,

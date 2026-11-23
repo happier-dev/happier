@@ -1035,6 +1035,8 @@ export type ActionExecutorContext = Readonly<{
 
   /** Host-resolved caller, baseline and roles; never accepted from Action input. */
   agentStartContext?: AgentStartContextV1;
+  /** Workflow trigger admission's caller and work policy before the recipe needs any launch facts. */
+  workflowAgentStartScope?: AgentStartContextV1;
   /** Live lead Session configuration stamped by its host, never Action input. */
   sessionRoleConfiguration?: SessionRoleConfigurationV1;
   /** Admission output retained only within this executor invocation/replay. */
@@ -2233,7 +2235,7 @@ export type ActionExecutorDeps = Readonly<{
    * custody refusal to concrete child selection without an applied baseline.
    */
   resolveAgentStartContext?: (context: ActionExecutorContext,
-    options?: Readonly<{ purpose?: 'session_scope' | 'workflow_run' | 'attached_execution_run'; executionRunChildSelection?: ExecutionRunStartRequest['childSelection'] }>) => Promise<AgentStartContextV1 | ReturnType<typeof actionStartTargetUnavailableV1> | null>;
+    options?: Readonly<{ purpose?: 'session_scope' | 'workflow_scope' | 'attached_execution_run'; executionRunChildSelection?: ExecutionRunStartRequest['childSelection'] }>) => Promise<AgentStartContextV1 | ReturnType<typeof actionStartTargetUnavailableV1> | null>;
   /** Live Session role owner; checked again after deferred approval/prepared invocation. */
   getCurrentWorkspaceWrites?: () => 'allow' | 'deny' | undefined;
   /**

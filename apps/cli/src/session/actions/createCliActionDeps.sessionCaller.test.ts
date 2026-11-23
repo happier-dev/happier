@@ -1265,7 +1265,7 @@ describe('daemon Account Action Session caller context', () => {
       const context: ActionExecutorContext = { surface: 'agent', authority: 'account_automation',
         actionCaller: { kind: 'session', sessionId, starterDepth: callerDepth, turnDepth: callerDepth },
         defaultSessionId: sessionId, callerPermissionMode: 'default' };
-      const resolved = await createCliActionDeps(params).resolveAgentStartContext!(context, { purpose: 'workflow_run' });
+      const resolved = await createCliActionDeps(params).resolveAgentStartContext!(context, { purpose: 'workflow_scope' });
       expect(resolved).toMatchObject({ workDepthLimit, roles: {},
         baseline: { machineId: 'caller-machine', directory: '/caller/repo' } });
       if (!resolved || 'ok' in resolved) throw new Error('Expected scoped Run admission without an Agent baseline');

@@ -572,7 +572,9 @@ export function spawnStartFactsV1(input: Readonly<SpawnStartFactsInput>): AgentS
 }
 export async function resolveActionAgentStartContextV1(deps: Pick<ActionExecutorDeps, 'resolveAgentStartContext'> & Partial<Pick<ActionExecutorDeps, 'sessionList' | 'sessionRead'>>, context: ActionExecutorContext, targetSessionId?: string | readonly string[],
     options?: Parameters<NonNullable<ActionExecutorDeps['resolveAgentStartContext']>>[1]): Promise<Awaited<ReturnType<NonNullable<ActionExecutorDeps['resolveAgentStartContext']>>>> {
-    let resolved = context.agentStartContext ?? await measureActionStartPhaseV1(context, 'agent_start_context',
+    let resolved = context.agentStartContext
+      ?? (options?.purpose === 'workflow_scope' ? context.workflowAgentStartScope : undefined)
+      ?? await measureActionStartPhaseV1(context, 'agent_start_context',
       async () => await deps.resolveAgentStartContext?.(context, options) ?? null);
     if (resolved && 'ok' in resolved) return resolved;
     if (context.actionCaller?.kind === 'session') {

@@ -3036,6 +3036,37 @@ describe('workflow trigger Automation composition', () => {
     await actions.removeForWorkflow(workflow);
     expect([...rows.values()]).toMatchObject([{ scopeSessionId: 'session-two', workflowDefinitionId: null }]);
   });
+  it('saves an Action-only Workflow trigger with the Session scope and still enforces its work depth', async () => {
+    const source = WorkflowDefinitionV1Schema.parse({ version: 1, inputs: [], blocks: [
+      { kind: 'action', id: 'read-policy', actionId: 'actions.policy.get', input: {
+        profiles: { kind: 'literal', value: true },
+      } },
+    ] });
+    const { deps, rows, executor } = fixture(source);
+    const { agentStartContext, ...agent } = ownCaller;
+    const caller: ActionExecutorContext = { ...agent, actionCaller: agentStartContext.caller, callerPermissionMode: 'default',
+      authority: 'account_automation', defaultSessionId: agentStartContext.caller.sessionId, actionsSettings: triggerAdmissionWaiver };
+    let workDepthLimit = 0;
+    // The remote Session can resolve its work policy without returning a launch baseline.
+    const resolveAgentStartContext: NonNullable<ActionExecutorDeps['resolveAgentStartContext']> = async (_context, options) =>
+      options?.purpose === 'workflow_scope' ? { ...agentStartContext, baseline: project, workDepthLimit }
+        : { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
+          details: { code: 'target_unavailable', reason: 'caller_agent_unavailable' } };
+    const actions = createWorkflowTriggerActions({ ...deps, resolveAgentStartContext,
+      resolveMaterializer: async () => ({ effects: { resolveTargetAvailability: async () => true,
+        readActionContract: async id => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(id)))) } }),
+    });
+    const request = { workflow, project, trigger };
+    const boundary = executor(actions, { resolveAgentStartContext });
+    await expect(boundary.execute('workflow.trigger.add', request, caller))
+      .resolves.toMatchObject({ ok: false, errorCode: 'work_depth_exceeded' });
+    expect(rows.size).toBe(0);
+    workDepthLimit = 4;
+    await expect(boundary.execute('workflow.trigger.add', request, caller))
+      .resolves.toMatchObject({ ok: true, result: { set: { triggers: [{ enabled: true }] } } });
+    expect(rows.size).toBe(1);
+  });
+
   it('admits a manual deferred panel without preapproving its trigger authoring or exceeding Run depth', async () => {
     const { deps } = fixture();
     const source = WorkflowDefinitionV1Schema.parse({ version: 1, defaults: {}, blocks: [
