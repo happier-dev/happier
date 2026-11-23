@@ -12,7 +12,7 @@ import { execFileWithDeadline, isPidPresent, ExecFileTerminationError } from '@h
 import { create as createTar } from 'tar';
 import type { AgentInstallJobOutcome } from '@happier-dev/protocol';
 import { PluginAgentContributionV2Schema, PluginManifestV2Schema } from '@happier-dev/protocol';
-import { PLUGIN_MANIFEST as antigravityManifest } from '@happier-dev/plugins-antigravity/manifest';
+import { PLUGIN_MANIFEST as kiroManifest } from '@happier-dev/plugins-kiro/manifest';
 import cliTestConfig from '../../../vitest.config';
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 import type { ResolvedInstallableContribution } from '@/plugins/projection/registry/types';
@@ -599,7 +599,7 @@ test.skipIf(process.platform === 'win32').each(['local', 'qualified', 'cross-plu
         }],
       },
     } satisfies ResolvedInstallableContribution;
-    const declaration = PluginManifestV2Schema.parse(antigravityManifest).contributes.agents.find((agent) => agent.id === 'antigravity');
+    const declaration = PluginManifestV2Schema.parse(kiroManifest).contributes.agents.find((agent) => agent.id === 'kiro');
     if (!declaration || !('runtime' in declaration) || declaration.runtime.kind !== 'acp') throw new Error('Missing canonical ACP declaration fixture');
     const rich = { provenance: 'external' as const, definition: declaration };
     owner = createAgentInstallJobOwner({
@@ -642,7 +642,7 @@ test('a declared unsupported dependency fails before the agent CLI acquires anyt
     manualInstallKind: 'none', manualInstallRecipes: null, acceptsJavaScriptFileOverride: false,
   };
   const releaseBoundary = vi.fn(async () => { throw new Error('No acquisition was authorized'); });
-  const declaration = PluginManifestV2Schema.parse(antigravityManifest).contributes.agents.find((agent) => agent.id === 'antigravity');
+  const declaration = PluginManifestV2Schema.parse(kiroManifest).contributes.agents.find((agent) => agent.id === 'kiro');
   if (!declaration || !('runtime' in declaration) || declaration.runtime.kind !== 'acp') throw new Error('Missing canonical ACP declaration fixture');
   owner = createAgentInstallJobOwner({
     readRegistry: () => ({
