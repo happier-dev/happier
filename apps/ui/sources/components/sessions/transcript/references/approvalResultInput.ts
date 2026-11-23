@@ -1,4 +1,7 @@
 import { readSessionMessageProvenance } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { ApprovalExecutionV2Schema, ApprovalRequestV2StatusSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { readActionFailurePresentationV1 } from '@happier-dev/protocol/actions/actionFailurePresentation';
+import { formatApprovalStatusLabel } from '@/components/approvals/approvalStatusLabel';
 import { resolveActionTitle } from '@/text/actionTitles';
 import { t } from '@/text';
 
@@ -27,21 +30,32 @@ export function readApprovalResultArtifactId(
  * The transcript row and the queued (pending) row both read it, so the payload shows nowhere a person reads.
  * Null for every other message, including a person's own words that happen to look like a payload.
  */
-export function readApprovalResultReceiptText(
+export function readApprovalResultReceipt(
   message: Readonly<{ localId?: string | null; text: string; meta?: unknown }>,
-): string | null {
-  if (readApprovalResultArtifactId(message) === null) return null;
-  let actionId: unknown;
+) {
+  const artifactId = readApprovalResultArtifactId(message);
+  if (artifactId === null) return null;
+  let payload: { actionId?: unknown; status?: unknown; execution?: unknown } | null;
   try {
-    actionId = (JSON.parse(message.text) as { actionId?: unknown } | null)
-      ?.actionId;
+    payload = JSON.parse(message.text);
   } catch {
-    actionId = undefined;
+    payload = null;
   }
-  return t('message.approvalResult', {
-    action: resolveActionTitle(
-      typeof actionId === 'string' ? actionId : '',
-      null,
-    ),
-  });
+  const action = resolveActionTitle(typeof payload?.actionId === 'string' ? payload.actionId : '', null);
+  const parsedStatus = ApprovalRequestV2StatusSchema.safeParse(payload?.status);
+  const status = parsedStatus.success ? parsedStatus.data : null;
+  if (status === 'approved' || status === 'executed') {
+    return { artifactId, status, text: t('message.approvalResult', { action }) };
+  }
+  const execution = ApprovalExecutionV2Schema.safeParse(payload?.execution);
+  const refusal = execution.success && !execution.data.ok
+    ? readActionFailurePresentationV1(execution.data.errorCode, execution.data.details) : null;
+  return { artifactId, status, text: [status && formatApprovalStatusLabel(status), action, refusal?.message]
+    .filter(Boolean).join(' · ') };
+}
+
+export function readApprovalResultReceiptText(
+  message: Parameters<typeof readApprovalResultReceipt>[0],
+): string | null {
+  return readApprovalResultReceipt(message)?.text ?? null;
 }

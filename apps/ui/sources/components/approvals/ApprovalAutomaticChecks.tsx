@@ -6,7 +6,7 @@ import {
   type ApprovalAutomaticChecksV1,
 } from '@happier-dev/protocol/approvals/approvalAutomaticChecks';
 
-import type { ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import type { ApprovalRequest, ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -51,6 +51,33 @@ export function readApprovalAutomaticChecksForRequest(
   return checks;
 }
 
+function readFailedApprovalAutomaticCheck(checks: ApprovalAutomaticChecksV1) {
+  return checks.results.find(result => result.outcome === 'failed' || result.outcome === 'unavailable');
+}
+
+/** The retained check result owns the exact Run for a declined request's receipt. */
+export function readDeclinedApprovalCheckRunId(approval: ApprovalRequest): string | null {
+  if (approval.v !== 2 || approval.status !== 'rejected') return null;
+  const checks = readApprovalAutomaticChecksForRequest(approval);
+  return checks?.phase === 'refused' ? readFailedApprovalAutomaticCheck(checks)?.runId ?? null : null;
+}
+
+export function ApprovalCheckRunLink(props: Readonly<{
+  runId: string | null;
+  serverId?: string | null;
+  onOpenRoute?: ((route: string) => void) | null;
+  testID?: string;
+}>) {
+  const { runId, serverId, onOpenRoute } = props;
+  if (!runId || !onOpenRoute) return null;
+  return <TextLinkButton
+    label={t('workflows.triggers.checks.openRun')}
+    size="meta"
+    testID={props.testID}
+    onPress={() => onOpenRoute(createWorkflowRunRoute(runId, serverId))}
+  />;
+}
+
 export function readApprovalAutomaticChecksDecision(
   checks: ApprovalAutomaticChecksV1 | null | undefined,
 ): ApprovalAutomaticChecksDecision {
@@ -74,7 +101,7 @@ export function readApprovalAutomaticChecksDecision(
 
 /** Whether the checks have anything to tell: a pending consent, a running check, a failure, or a visible Skip. */
 export function readApprovalAutomaticChecksShown(checks: ApprovalAutomaticChecksV1): boolean {
-  const failed = checks.results.some((result) => result.outcome === 'failed' || result.outcome === 'unavailable');
+  const failed = readFailedApprovalAutomaticCheck(checks) !== undefined;
   return (checks.phase === 'consent' && checks.consents.some((consent) => consent.decision === 'pending'))
     || checks.phase === 'checking'
     || ((checks.phase === 'override' || checks.phase === 'refused') && failed)
@@ -88,7 +115,7 @@ export function readApprovalAutomaticChecksShown(checks: ApprovalAutomaticChecks
  */
 export function readApprovalAutomaticChecksCarryRefusal(checks: ApprovalAutomaticChecksV1 | null | undefined): boolean {
   return checks?.phase === 'refused'
-    && checks.results.some((result) => result.outcome === 'failed' || result.outcome === 'unavailable');
+    && readFailedApprovalAutomaticCheck(checks) !== undefined;
 }
 
 /**
@@ -221,11 +248,7 @@ export const ApprovalAutomaticChecks = React.memo(
     const ownerLabel =
       useApprovalAccountLabel(props.serverId, pendingOwner, 'sentence') ??
       resolveUnknownAccountActorName('sentence');
-    const failed =
-      checks.results.find(
-        (result) =>
-          result.outcome === 'failed' || result.outcome === 'unavailable',
-      ) ?? null;
+    const failed = readFailedApprovalAutomaticCheck(checks);
     const skippedConsents = checks.consents.filter(
       (consent) => consent.decision === 'skip',
     );
@@ -252,13 +275,7 @@ export const ApprovalAutomaticChecks = React.memo(
     });
     const checkingStartedMs = checkingRunSummary?.state === 'running' ? Date.parse(checkingRunSummary.createdAt) : Number.NaN;
     const openRun = (runId: string | null) =>
-      runId && props.onOpenRoute ? (
-        <TextLinkButton
-          label={t('workflows.triggers.checks.openRun')}
-          size="meta"
-          onPress={() => props.onOpenRoute?.(createWorkflowRunRoute(runId, props.serverId))}
-        />
-      ) : null;
+      <ApprovalCheckRunLink runId={runId} serverId={props.serverId} onOpenRoute={props.onOpenRoute} />;
 
     let body: React.ReactNode = null;
     if (pending) {

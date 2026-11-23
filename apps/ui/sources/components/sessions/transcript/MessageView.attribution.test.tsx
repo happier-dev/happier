@@ -36,7 +36,7 @@ const { upsertServerProfile } = await import('@/sync/domains/server/serverProfil
 const { storage } = await import('@/sync/domains/state/storage');
 const { createWorkflowInvocationIndexFixture, createWorkflowRunSummaryFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
 const { workflowRunRowFromSummary } = await import('@/sync/store/domains/workflowRuns');
-const { createWorkflowInvocationRoute } = await import('@/sync/domains/workflows/workflowRunRoute');
+const { createWorkflowInvocationRoute, createWorkflowRunRoute } = await import('@/sync/domains/workflows/workflowRunRoute');
 const { createReadOnlySessionTranscriptSource } = await import('./source/readOnlySessionTranscriptSource');
 const { SessionTranscriptSourceProvider } = await import('./source/SessionTranscriptSourceContext');
 const { MessageView, MessageViewWithSessionCommon } = await import('./MessageView');
@@ -77,6 +77,62 @@ afterEach(() => {
 });
 
 describe('MessageView Account attribution', () => {
+    it('shows a denied check receipt and opens its exact Run in the requesting Session', async () => {
+        const { buildApprovalDecisionResult } = await import('@happier-dev/protocol/actions/executor/approvalResults');
+        const { formatApprovalStatusLabel } = await import('@/components/approvals/approvalStatusLabel');
+        const { t } = await import('@/text');
+        const sessionId = 'requesting-session';
+        const serverId = 'home';
+        const artifactId = 'check-denied';
+        const actionId = 'session.title.set';
+        const selected = { phase: 'before', actionIds: [actionId], mode: 'wait', onFailure: 'ask',
+            automationId: 'automation-freeze', triggerId: 'trigger-freeze', triggerRevision: 1,
+            workflowId: 'artifact-release-freeze', workflowRevision: 3, ownerAccountId: 'account-mara' };
+        const run = { automationId: selected.automationId, triggerId: selected.triggerId, runId: 'run-freeze' };
+        const approval = ApprovalRequestV2Schema.parse({
+            v: 2, status: 'rejected', createdAtMs: 1, updatedAtMs: 3, createdBy: { surface: 'agent', sessionId },
+            requestedSurface: 'agent', actionId, summary: 'Rename the Session',
+            executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent', actionId,
+                caller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 }, serverId, requestId: 'rename-session' },
+            actionArgs: { sessionId, title: 'New title' },
+            decision: { kind: 'reject', decidedAtMs: 3 },
+            automaticChecks: {
+                phase: 'override', humanApprovalRequired: true, humanDecision: { kind: 'approve', decidedAtMs: 2 },
+                subjects: [], selectionStatus: 'ready', notices: [], selected: [selected],
+                consents: [{ automationId: run.automationId, triggerId: run.triggerId, decision: 'allow' }],
+                runs: [run], results: [{ ...run, outcome: 'failed', reason: 'content_unavailable' }],
+            },
+        });
+        const observed = buildApprovalDecisionResult(approval);
+        if (!observed.ok) throw new Error('Expected a delivered decision result');
+        const { provenance, request } = buildTrustedHostSessionInputAdmissionV1('mcp');
+        const message: UserTextMessage = {
+            kind: 'user-text', id: 'denied-result', localId: `approval-result:${artifactId}`, createdAt: 4,
+            text: JSON.stringify({ artifactId, actionId, ...observed.result as object }),
+            meta: {
+                ...withSessionInputAuthorityV1({}, { ...request, permission: { admittedPermissionCeiling: 'read-only' } }),
+                [SESSION_MESSAGE_PROVENANCE_META_KEY]: provenance,
+            },
+        };
+        const requests = listTranscriptApprovalArtifactsForSession([{
+            id: artifactId, isDecrypted: true, header: buildApprovalRequestArtifactHeaderV1(approval), body: JSON.stringify(approval),
+            title: approval.summary, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 3,
+        }], { serverId, sessionId }, { settledPresentations: TRANSCRIPT_SETTLED_APPROVAL_PRESENTATIONS });
+        const navigate = vi.fn();
+        const source = createReadOnlySessionTranscriptSource({ sessionId, serverId, messages: [message],
+            reducerState: null, metadata: null, agentState: null });
+        const screen = await renderBareScreen(<SessionTranscriptSourceProvider source={{ ...source, navigate }}>
+            <MessageView sessionId={sessionId} serverId={serverId} metadata={null} message={message} approvalRequests={requests} />
+        </SessionTranscriptSourceProvider>);
+
+        expect(screen.getTextContent()).toContain(formatApprovalStatusLabel('rejected'));
+        expect(screen.getTextContent()).toContain('content_unavailable');
+        expect(screen.getTextContent()).not.toContain(formatApprovalStatusLabel('approved'));
+        expect(screen.getTextContent()).toContain(t('workflows.triggers.checks.openRun'));
+        await screen.pressByTestIdAsync('transcript-approval-result-open-run');
+        expect(navigate).toHaveBeenCalledWith(createWorkflowRunRoute(run.runId, serverId));
+    });
+
     it.each(['host result', 'another approval', 'person message', 'originating tool'] as const)(
         'shows the originless Machine pet receipt only at its retained host result (%s)', async (carrier) => {
             const sessionId = 'pet-session';

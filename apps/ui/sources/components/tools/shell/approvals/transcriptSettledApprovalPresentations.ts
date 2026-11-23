@@ -6,6 +6,7 @@ import { readPetImportConfirmationV1 } from '@happier-dev/protocol/pets/importAc
 import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
 import { presentsApprovalVisualTranscriptOccurrence } from '@/components/approvals/approvalVisualTranscriptOccurrence';
 import { readApprovedSavedSkillResult } from '@/components/tools/renderers/system/savedSkillResultModel';
+import { readDeclinedApprovalCheckRunId } from '@/components/approvals/ApprovalAutomaticChecks';
 import { presentsSettledBrowserToolApproval } from '@/components/sessions/transcript/references/browserActionPhrase';
 
 export const presentsSettledPetImportApproval: ApprovalSettledPresentation =
@@ -28,6 +29,8 @@ export const TRANSCRIPT_SETTLED_APPROVAL_PRESENTATIONS: readonly ApprovalSettled
     // An approved Browser open stays while its operation is still preparing, connecting or failed.
     (approval) => readBrowserOpenAcceptance(approval) !== null,
     presentsSettledBrowserToolApproval,
+    // The Session's delivered refusal links to the recorded failed check.
+    (approval) => readDeclinedApprovalCheckRunId(approval) !== null,
     // A declined request keeps its review at its originating call; failures retain their attention owner.
     (approval) => (approval.status === 'rejected' || approval.status === 'canceled')
         && approval.origin?.kind === 'transcript_tool_call',

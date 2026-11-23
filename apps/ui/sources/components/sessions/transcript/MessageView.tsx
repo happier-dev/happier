@@ -22,7 +22,8 @@ import { ToolTimelineRow } from '@/components/tools/shell/views/ToolTimelineRow'
 import { selectDeliveredTranscriptApprovalRequest, selectToolApprovalRequestsForMessages } from '@/components/tools/shell/views/toolApprovalPromptMatching';
 import { ApprovalPromptCard } from '@/components/tools/shell/approvals/ApprovalPromptCard';
 import { presentsSettledPetImportApproval } from '@/components/tools/shell/approvals/transcriptSettledApprovalPresentations';
-import { readApprovalResultArtifactId } from './references/approvalResultInput';
+import { readApprovalResultReceipt } from './references/approvalResultInput';
+import { ApprovalCheckRunLink, readDeclinedApprovalCheckRunId } from '@/components/approvals/ApprovalAutomaticChecks';
 import { buildMessageRouteId } from "@happier-dev/session-core/messages";
 import { readUnsupportedContentMeta } from "@happier-dev/session-core/messages";
 import {
@@ -731,9 +732,11 @@ function RenderBlock(props: {
               serverId={props.serverId} messageId={props.message.id} createdAt={props.message.createdAt} />
           </>;
         }
-        const artifactId = readApprovalResultArtifactId(props.message);
-        const request = artifactId === null ? undefined : selectDeliveredTranscriptApprovalRequest(props.approvalRequests, artifactId);
+        const receipt = readApprovalResultReceipt(props.message);
+        const request = receipt ? selectDeliveredTranscriptApprovalRequest(props.approvalRequests, receipt.artifactId) : undefined;
         return <TranscriptTextNoticeRow message={props.message} sessionId={props.sessionId} serverId={props.serverId}
+          displayText={receipt?.text}
+          declinedCheckRunId={receipt?.status === 'rejected' && request ? readDeclinedApprovalCheckRunId(request.approval) : null}
           approvalReceipt={request && presentsSettledPetImportApproval(request.approval) ? request : undefined} />;
       }
       return (
@@ -858,6 +861,7 @@ function TranscriptTextNoticeRow(props: Readonly<{
   tone?: 'failure';
   displayText?: string;
   approvalReceipt?: OpenApprovalArtifactForSession;
+  declinedCheckRunId?: string | null;
 }>) {
   const transcriptSource = useSessionTranscriptSource();
   const find = useTranscriptFindRow(props.message.id);
@@ -904,6 +908,10 @@ function TranscriptTextNoticeRow(props: Readonly<{
           sessionId={props.sessionId}
           serverId={props.serverId}
           createdAt={props.message.createdAt}
+          footer={props.declinedCheckRunId ? <ApprovalCheckRunLink
+            runId={props.declinedCheckRunId} serverId={props.serverId ?? transcriptSource.serverId}
+            onOpenRoute={transcriptSource.navigate} testID="transcript-approval-result-open-run"
+          /> : undefined}
         />
       )}
     </TranscriptJumpAttention>
