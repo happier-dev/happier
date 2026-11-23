@@ -216,7 +216,9 @@ this run** in its Run now composer. Change the Agent/model or whether the
 role runs in a session or background run, then review before starting.
 **Use your role** removes the run-local choice. A test or rehearsal is a real
 execution, not a simulation. The accepted run freezes the resolved choices;
-later Account or workflow edits do not rewrite them.
+later Account or workflow edits do not rewrite them. A saved Workflow's
+default Role lives at `defaults.roleId`. The start review shows the Role
+by name and keeps the Roles control visible for changes to this Run.
 
 `workflow.run.start` accepts these choices as `roleOverrides`; the shared
 role resolver applies them above workflow pins, session choices and Account
@@ -242,7 +244,8 @@ that saved Workflow or contains an inline prompt or Action. A referenced
 Workflow is read when the daemon claims the occurrence, so saving a change
 changes what future claims execute. An admitted Run keeps its frozen definition.
 It can start a new Session, continue an existing Session, or run detached work,
-depending on the authored target.
+depending on the authored target. A detached **Background run** step runs
+outside the Session transcript and keeps its result on the Workflow Run.
 
 For Workflows backed by saved definitions in current 0.3 development source,
 **Runs in: existing session** writes into
@@ -302,7 +305,11 @@ An enabled Workflow must keep at least one enabled machine assignment — a
 Run freezes the assignments it was admitted with, so a Run with no machine
 could never start. You can save a paused draft with no assignments and assign
 machines before enabling it; removing or disabling the last enabled assignment
-of a running Workflow is refused until you pause it first.
+of a running Workflow is refused until you pause it first. If someone saved
+a newer trigger revision while you were editing, reopen the trigger and
+review that revision before saving again. An Agent editing a saved Workflow
+can only make changes within its own permission ceiling. A requested increase
+beyond that ceiling is refused and leaves the saved recipe intact.
 
 ### Schedule a service job from an Environment
 
@@ -889,7 +896,10 @@ Pause prevents later work from being admitted while accepted work settles.
 Cancel records durable intent but is not a receipt that an offline process
 stopped. Recovery may reattach an owner-supported execution or require an
 explicit same-conversation or fresh-agent continuation; ambiguous effects are
-never silently replayed.
+never silently replayed. If contact is lost while starting, Happier looks up
+that exact Run and can retry admission with the same reviewed request. If it
+still cannot confirm the outcome, pressing Start again rejoins the same
+request. **Run workflow again** explicitly starts a new Run.
 
 In unreleased 0.3 development source, an interrupted invocation's offered
 fresh-agent retry can use its frozen original input. It does not rebuild that
@@ -961,7 +971,9 @@ that Team; the owner's private Runs stay excluded.
 Open the **Built-in** section of Workflows. Session-bound recipes offer
 **Choose a session…**; the others offer **Run now**, with workspace and inputs
 reviewed in the run composer. Built-in definitions are read-only; copy one into
-an unsaved draft when you want to change its recipe.
+an unsaved draft when you want to change its recipe. The **Examples** picker
+also opens editable starters, such as Ask once and Morning digest. Review and
+save the draft to keep it. Choosing an example does not start a Run.
 
 ### Keep going until done
 
@@ -1121,7 +1133,9 @@ new run to continue.”
 
 Every automatic Run records the stable trigger identity and revision plus an
 immutable bounded cause. Editing or removing the current trigger therefore does
-not rewrite what historical Runs say happened.
+not rewrite what historical Runs say happened. In **Inbox**, repeated failed
+Action attempts for the same work item appear as one **Failed N×** row at
+the latest failure. Open it to see the individual attempts.
 
 In unreleased 0.3 development source, **History** in an Account schedule popover
 or a saved Workflow's trigger row opens History filtered to that trigger.

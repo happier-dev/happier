@@ -4331,7 +4331,9 @@ added to the server-visible structure or plaintext metadata in E2EE mode.
 recipient envelopes in `WorkflowRunDataKeyEnvelope`. Caller Account material
 opens only that caller's recipient envelope; the private binding retains the
 owner Account, Run, purpose and, for progress, exact invocation identity.
-Plain Runs need no client encryption material or recipient-key rows.
+Plain Runs need no client encryption material or recipient-key rows. A
+Team-visible Run still requires both current access to its frozen Team
+audience and an openable recipient envelope for encrypted content.
 
 The Workflow content codec shares the plain/encrypted envelope shape with
 Automations, but does not borrow Automation's per-field byte ceiling. Accepted
