@@ -23,8 +23,9 @@ export function describeMachineShareTrust(
         lead: t('machines.sharing.recipientTrustLead', { machine }),
         detail: t('machineDetailPage.security.admin.isolationUnknown'),
     };
+    // Isolation off (owner ruling 2026-11-23): the share step tells the owner, each time, that the people they add work as them.
     return placement === 'daemon' ? {
-        lead: t(recipient ? 'machines.sharing.recipientTrustLead' : 'machines.sharing.fallback.lead', { machine }),
+        lead: t(recipient ? 'machines.sharing.recipientTrustLead' : 'machines.sharing.fallback.ownerLead', { machine }),
         detail: recipient
             ? `${t('machines.sharing.fallback.lead', { machine })} ${t('machines.sharing.fallback.detail', { machine })}`
             : t('machines.sharing.fallback.detail', { machine }),

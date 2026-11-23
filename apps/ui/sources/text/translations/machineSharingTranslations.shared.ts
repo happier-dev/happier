@@ -14,7 +14,9 @@ export type MachineSharingCopy = Readonly<{
     unpublished: string; custodianOnly: string; upgradeRequired: string; unpublishedTag: string; unpublishedMember: string;
     destinations: Readonly<{ yours: string; created: string; shared: string; sharedWithoutOwner: string; owner: string; ownerOnly: string; pendingKey: string; sharedPurposeUnsupported: string }>;
     /** Guest execution without separate users: the people added run as the owner. */
-    fallback: Readonly<{ lead: string; detail: string; offer: string; turnOn: string; previewing: string;
+    fallback: Readonly<{ lead: string;
+        /** Said to the owner when sharing a Machine whose isolation is off: the people added work as them. */
+        ownerLead: string; detail: string; offer: string; turnOn: string; previewing: string;
         reviewUsers: string; reviewFolders: string; reviewSessions: string; reviewAdmin: string; confirm: string;
         applying: string; alreadyOn: string; changed: string; reviewAgain: string; failed: string; locked: string;
         unknown: string; unavailable: string; approval: string;
@@ -55,7 +57,7 @@ export function createMachineSharingTranslations(copy: MachineSharingCopy) {
         unpublishedTag: copy.unpublishedTag,
         unpublishedMember: (parameters: Readonly<{ machine: string; person: string }>) => format(copy.unpublishedMember, parameters),
         fallback: {
-            lead: machine(copy.fallback.lead), detail: machine(copy.fallback.detail), offer: machine(copy.fallback.offer),
+            lead: machine(copy.fallback.lead), ownerLead: machine(copy.fallback.ownerLead), detail: machine(copy.fallback.detail), offer: machine(copy.fallback.offer),
             turnOn: copy.fallback.turnOn, previewing: machine(copy.fallback.previewing), reviewUsers: machine(copy.fallback.reviewUsers),
             reviewFolders: copy.fallback.reviewFolders, reviewSessions: machine(copy.fallback.reviewSessions),
             reviewAdmin: machine(copy.fallback.reviewAdmin), confirm: copy.fallback.confirm, applying: machine(copy.fallback.applying),

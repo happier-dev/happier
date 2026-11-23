@@ -171,6 +171,9 @@ describe('Machine sharing through the canonical controller and sheet', () => {
                     { ...base, metadata: { ...base.metadata!, platform, ...(agentIsolation ? { agentIsolation } : {}) } },
                 ], true, { sourceServerId: scope.serverId }));
                 expect(current?.guestExecution).toMatchObject({ placement, canEnableSeparateUsers: offer });
+                // Isolation off: the share step tells the owner the people they add work as them; otherwise it says nothing of the kind.
+                if (placement === 'daemon') expect.soft(screen.getTextContent()).toContain(t('machines.sharing.fallback.ownerLead', { machine: 'Devbox' }));
+                else expect.soft(screen.getTextContent()).not.toContain(t('machines.sharing.fallback.ownerLead', { machine: 'Devbox' }));
                 if (placement === 'member') {
                     expect.soft(screen.getTextContent()).toContain(t('machines.sharing.memberUsersLead', { machine: 'Devbox' }));
                     expect.soft(createMachineShareAdapter({ machineName: 'Devbox', online: true, controller: current! }).notes)
