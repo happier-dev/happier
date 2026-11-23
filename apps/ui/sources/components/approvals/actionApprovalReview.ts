@@ -15,6 +15,7 @@ import { readResourceProposalApproval } from './resourceProposal/readResourcePro
 import { readPromptDocUpdateApproval } from './promptDocApprovalModel';
 import { readCapabilityEnableApproval } from '@/components/sessions/capabilities/capabilityEnableApproval';
 import { readApprovalFileSource } from './approvalFileSource';
+import { readApprovalAutomaticChecksDecision } from './approvalAutomaticChecksDecision';
 import { readDeploymentReviewApproval } from './DeploymentReviewApprovalFacts';
 import { readActionApprovalConfirmLabel } from './actionApprovalPresentation';
 import { readPluginInstallApprovalChange } from './pluginInstallApprovalFacts';
@@ -114,6 +115,7 @@ export function readActionApprovalReview(request: ApprovalRequest, retainedOpera
     const requiresReview = confidentialAction || confidentialInputs !== null || isComputerApprovalAction(request.actionId)
         || capabilityEnable !== null || promptDocUpdate !== null || docEditProposal !== null || resourceProposal !== null
         || visualPreview !== null || petImport !== null || request.handoffTargetReplacementApproval !== undefined
+        || (request.v === 2 && readApprovalAutomaticChecksDecision(request.automaticChecks) !== null)
         || Boolean(spec?.approvalNarrowing || spec?.approvalInputCustody === 'live_only'
             || spec?.approvalResultCustody === 'live_only')
         || readPluginInstallApprovalPendingReview(request.preview) !== null

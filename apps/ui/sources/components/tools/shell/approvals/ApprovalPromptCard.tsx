@@ -27,7 +27,7 @@ import { BrowserOpenApprovalProgress } from '@/components/approvals/BrowserOpenO
 import { readBrowserOpenAcceptance } from '@/sync/domains/browser/firstUse/browserFirstUse';
 import { alertApprovalFailure, isApprovalReplayRouteUnavailable, useApprovalDecisionHandler, useApprovalHome } from './useApprovalDecisionHandler';
 import { ServiceOutputDisclosure } from '@/components/sessions/localServices/ServiceOutputDisclosure';
-import { presentApprovalFailureOutcome, resolveApprovalActionTitle } from './approvalFailureOutcome';
+import { presentActionFailureOutcome, presentApprovalFailureOutcome, resolveApprovalActionTitle } from './approvalFailureOutcome';
 import { useFailedApprovalDismissal } from './failedApprovalDismissal';
 import { ActionApprovalFieldsCard, ApprovalTechnicalDetails } from '@/components/approvals/ActionApprovalFieldsCard';
 import { DiscussionDraftAnswer, readDiscussionDraftApproval } from '@/components/approvals/discussionDraftApproval';
@@ -94,10 +94,11 @@ function usePromptAutomaticChecksPresentation(
     unavailable: boolean,
 ) {
     const { binding } = useServerCredentialAccountScopeBinding(serverId);
-    return useApprovalAutomaticChecksPresentation({
+    const presentation = useApprovalAutomaticChecksPresentation({
         request: isTargetActionApproval(approval) || approval.v === 2 ? approval : null,
         serverId, artifactId, unavailable, scope: binding?.isCurrent() ? binding.scope : null,
     });
+    return { ...presentation, accountLifetime: binding };
 }
 
 function useRequesterDecisionPresentation(
@@ -155,23 +156,53 @@ function TargetActionApprovalPromptCard(props: ApprovalPromptCardProps<TargetAct
         approvalHome.serverId, decisionDisabled);
     const actionFields = React.useMemo(() => describeApprovalRequestFields(props.approval), [props.approval]);
     const automaticChecks = readApprovalAutomaticChecksForRequest(props.approval);
+    const failure = React.useMemo(() => {
+        const execution = readApprovalExecutionFailure(props.approval);
+        return execution ? presentActionFailureOutcome(execution, undefined, t('approvals.failureNoReason')) : null;
+    }, [props.approval]);
+    const checksCarryRefusal = readApprovalAutomaticChecksCarryRefusal(automaticChecks);
     const checks = useApprovalAutomaticChecksControls({ checks: automaticChecks, decide, unavailable: decisionDisabled,
         isDeciding, setIsDeciding });
     const openChecksRoute = React.useMemo(() => transcriptSource.navigate
         ? (route: string) => navigateWithBlurOnWeb(() => transcriptSource.navigate?.(route)) : undefined, [transcriptSource]);
     const onDecision = React.useCallback(async (decision: 'approve' | 'reject') => {
         if (decisionDisabled || isDeciding) return;
+        let settledOnCard = false;
         try {
             setIsDeciding(true);
-            if (!await decide(decision, { onExecution: () => setRecordedArtifactId(props.artifact.id) })) {
+            if (!await decide(decision, { onExecution: execution => {
+                settledOnCard = execution !== null;
+                setRecordedArtifactId(props.artifact.id);
+            } })) {
                 Modal.alert(t('common.error'), t('approvals.decisionError'));
             } else setRecordedArtifactId(props.artifact.id);
         } catch (error) {
-            alertApprovalFailure(error);
+            if (!settledOnCard) alertApprovalFailure(error);
         } finally {
             setIsDeciding(false);
         }
-    }, [decisionDisabled, decide, isDeciding]);
+    }, [decisionDisabled, decide, isDeciding, props.artifact.id]);
+    const consentWithDecision = checks.decision?.kind === 'consent' && !decisionRecorded && !requesterDecision.withheld;
+    const checksCard = automaticChecks ? (
+        <ApprovalAutomaticChecks checks={automaticChecks} actionTitle={props.approval.summary} serverId={approvalHome.serverId}
+            {...automaticChecksPresentation} failureReason={failure?.reason ?? null}
+            onOpenRoute={openChecksRoute} testID="approval-prompt-automatic-checks" />
+    ) : null;
+    const decisionFooter = (
+        <ApprovalDecisionFooter
+            {...(checks.decision?.kind === 'consent' ? { testIDPrefix: 'approval-prompt-consent',
+                approveLabel: t('workflows.triggers.checks.allow'), rejectLabel: t('workflows.triggers.checks.skip'),
+                approveHidden: !automaticChecksPresentation.canAllow }
+                : checks.decision?.kind === 'override' ? { approveLabel: t('workflows.triggers.checks.approveAnyway'),
+                    rejectLabel: t('workflows.triggers.checks.deny') } : {})}
+            disabled={accessDisabled}
+            decisionDisabled={approvalRouteUnavailable}
+            disabledReason={approvalDisabledReason}
+            isDeciding={isDeciding}
+            onApprove={() => { void (checks.decision?.kind === 'consent' ? checks.answerConsent('allow') : onDecision('approve')); }}
+            onReject={() => { void (checks.decision?.kind === 'consent' ? checks.answerConsent('skip') : onDecision('reject')); }}
+        />
+    );
     return (
         <ApprovalPromptChrome
             testID="approval-prompt-card"
@@ -189,27 +220,17 @@ function TargetActionApprovalPromptCard(props: ApprovalPromptCardProps<TargetAct
                         title={t('workflows.triggers.checks.cancel')} disabled={decisionDisabled} loading={isDeciding}
                         onPress={() => { void checks.cancelChecks(); }} />
                 </View>
-            ) : (
-                <ApprovalDecisionFooter
-                    {...(checks.decision?.kind === 'consent' ? { testIDPrefix: 'approval-prompt-consent',
-                        approveLabel: t('workflows.triggers.checks.allow'), rejectLabel: t('workflows.triggers.checks.skip'),
-                        approveHidden: !automaticChecksPresentation.canAllow }
-                        : checks.decision?.kind === 'override' ? { approveLabel: t('workflows.triggers.checks.approveAnyway'),
-                            rejectLabel: t('workflows.triggers.checks.deny') } : {})}
-                    disabled={accessDisabled}
-                    decisionDisabled={approvalRouteUnavailable}
-                    disabledReason={approvalDisabledReason}
-                    isDeciding={isDeciding}
-                    onApprove={() => { void (checks.decision?.kind === 'consent' ? checks.answerConsent('allow') : onDecision('approve')); }}
-                    onReject={() => { void (checks.decision?.kind === 'consent' ? checks.answerConsent('skip') : onDecision('reject')); }}
-                />
-            )) : undefined}
+            ) : consentWithDecision ? (
+                <View style={styles.consentDecision}>{checksCard}{decisionFooter}</View>
+            ) : decisionFooter) : undefined}
         >
-            {automaticChecks ? (
-                <ApprovalAutomaticChecks checks={automaticChecks} actionTitle={props.approval.summary} serverId={approvalHome.serverId}
-                    {...automaticChecksPresentation}
-                    onOpenRoute={openChecksRoute} testID="approval-prompt-automatic-checks" />
+            {consentWithDecision ? null : checksCard}
+            {failure?.reason && !checksCarryRefusal ? (
+                <View testID="approval-prompt-execution-failure" accessibilityRole="alert">
+                    <Text style={styles.previewText}>{failure.reason}</Text>
+                </View>
             ) : null}
+            {failure && failure.technicalDetails.length > 0 ? <ApprovalTechnicalDetails lines={failure.technicalDetails} /> : null}
             {actionFields.rows.length > 0 ? (
                 <ActionApprovalFieldsCard presentation={actionFields} serverId={approvalHome.serverId}
                     collapsed={(props.chrome ?? 'card') === 'inline' && props.approval.status === 'open'} />
@@ -426,6 +447,12 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
         : projectCommand || computerAction ? null
             : !props.approval.summary ? t('approvals.untitled')
                 : sameWords(props.approval.summary.trim(), cardTitle) ? null : props.approval.summary;
+    const consentWithDecision = checksDecision?.kind === 'consent' && !decisionRecorded && !requesterDecision.withheld;
+    const checksCard = automaticChecks ? (
+        <ApprovalAutomaticChecks checks={automaticChecks} actionTitle={actionTitle} serverId={approvalHome.serverId}
+            {...automaticChecksPresentation} failureReason={failureOutcome?.reason ?? null}
+            onOpenRoute={openChecksRoute} testID="approval-prompt-automatic-checks" />
+    ) : null;
     return (
         <ApprovalPromptChrome
             testID="approval-prompt-card"
@@ -459,18 +486,21 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
                         onPress={() => { void onCancelChecks(); }} />
                 </View>
             ) : checksDecision?.kind === 'consent' ? (
-                <ApprovalDecisionFooter
-                    testIDPrefix="approval-prompt-consent"
-                    approveLabel={t('workflows.triggers.checks.allow')}
-                    rejectLabel={t('workflows.triggers.checks.skip')}
-                    approveHidden={!automaticChecksPresentation.canAllow}
-                    disabled={accessDisabled}
-                    decisionDisabled={approvalRouteUnavailable}
-                    disabledReason={approvalDisabledReason}
-                    isDeciding={isDeciding}
-                    onApprove={() => { void onTriggerConsent('allow'); }}
-                    onReject={() => { void onTriggerConsent('skip'); }}
-                />
+                <View style={styles.consentDecision}>
+                    {checksCard}
+                    <ApprovalDecisionFooter
+                        testIDPrefix="approval-prompt-consent"
+                        approveLabel={t('workflows.triggers.checks.allow')}
+                        rejectLabel={t('workflows.triggers.checks.skip')}
+                        approveHidden={!automaticChecksPresentation.canAllow}
+                        disabled={accessDisabled}
+                        decisionDisabled={approvalRouteUnavailable}
+                        disabledReason={approvalDisabledReason}
+                        isDeciding={isDeciding}
+                        onApprove={() => { void onTriggerConsent('allow'); }}
+                        onReject={() => { void onTriggerConsent('skip'); }}
+                    />
+                </View>
             ) : (
                 <ApprovalDecisionFooter
                     approveLabel={checksDecision?.kind === 'override' ? t('workflows.triggers.checks.approveAnyway')
@@ -490,11 +520,7 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
                 />
             )}
         >
-            {automaticChecks ? (
-                <ApprovalAutomaticChecks checks={automaticChecks} actionTitle={actionTitle} serverId={approvalHome.serverId}
-                    {...automaticChecksPresentation} failureReason={failureOutcome?.reason ?? null}
-                    onOpenRoute={openChecksRoute} testID="approval-prompt-automatic-checks" />
-            ) : null}
+            {consentWithDecision ? null : checksCard}
             {!computerAction && previewSummary && previewSummary !== cardSubtitle?.trim() && !sameWords(previewSummary, cardTitle)
                 && !(failureOutcome && repeatsActionName(previewSummary)) ? (
                 <Text style={styles.previewText}>{previewSummary}</Text>
@@ -590,6 +616,9 @@ const styles = StyleSheet.create((theme) => ({
         fontSize: 12,
         lineHeight: 17,
         color: theme.colors.text.secondary,
+    },
+    consentDecision: {
+        gap: theme.space.s8,
     },
     // A running check offers only Cancel, on the decision row's trailing edge.
     checksFooter: {

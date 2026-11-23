@@ -3,7 +3,7 @@ import {
   type TranscriptAccountActor,
 } from '@happier-dev/session-core/messages';
 
-import { useActiveServerAccountScope, useUser } from '@/sync/store/hooks';
+import { useActiveServerAccountScope, useFriend, useUser } from '@/sync/store/hooks';
 import {
   areServerAccountScopesEqual,
   type ServerAccountScope,
@@ -26,12 +26,15 @@ export function useKnownAccountActor(
   // The scope owner has verified local aliases against the applied canonical Home.
   const qualifiedServerId = viewerScope?.serverId ?? serverId;
   const id = accountId?.trim() || undefined;
-  const profile = useUser(id);
+  const profileMatchesHome = areServerAccountScopesEqual(viewerScope, profileScope);
+  const knownUser = useUser(id);
+  const friend = useFriend(profileMatchesHome && !knownUser ? id : undefined);
+  const profile = knownUser ?? friend;
   const actor =
     id &&
     qualifiedServerId &&
     profile?.id === id &&
-    areServerAccountScopesEqual(viewerScope, profileScope)
+    profileMatchesHome
       ? qualifyTranscriptAccountActor(
           {
             v: 1,

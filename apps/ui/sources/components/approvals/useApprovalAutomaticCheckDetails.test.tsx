@@ -88,12 +88,13 @@ describe('approval check detail demand', () => {
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
     storage.setState({ profileScope: { serverId: focusedHome, accountId: 'focused-account' } });
     const readsBefore = home.requests.length;
+    const runIds = [runId];
     const hook = await renderHook((props: { reviewWorkflowId: string | null }) => useApprovalAutomaticCheckDetails({
-      runId, serverId, reviewWorkflowId: props.reviewWorkflowId,
+      runIds, serverId, reviewWorkflowId: props.reviewWorkflowId,
     }), { initialProps: { reviewWorkflowId: null as string | null } });
     await waitForHomeGovernance(() => expect(hook.getCurrent().progress).not.toBeNull());
     expect(home.requests.length).toBe(readsBefore);
-    expect(hook.getCurrent().runSummary).toEqual(summary);
+    expect(hook.getCurrent().summaries.get(runId)).toEqual(summary);
     expect(hook.getCurrent().review.status).toBe('idle');
     await hook.rerender({ reviewWorkflowId: workflowId });
     await waitForHomeGovernance(() => expect(hook.getCurrent().review.definition).toEqual(definition));
@@ -106,7 +107,7 @@ describe('approval check detail demand', () => {
     const finished = { ...summary, state: 'failed' as const, revision: summary.revision + 1,
       finishedAt: '2026-09-08T10:01:04.000Z', updatedAt: '2026-09-08T10:01:04.000Z' };
     await act(async () => storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(finished)], scope));
-    expect(hook.getCurrent().runSummary).toEqual(finished);
+    expect(hook.getCurrent().summaries.get(runId)).toEqual(finished);
     expect(hook.getCurrent().progress).toBeNull();
     expect(hook.getCurrent().review.status).toBe('idle');
     expect(home.requests.length).toBe(readsAfterOpen);

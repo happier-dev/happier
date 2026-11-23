@@ -29,6 +29,9 @@ import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/appro
 import { buildDiscussionRequesterApprovalArtifact } from '@/dev/testkit/fixtures/discussionRequesterApprovalArtifact';
 import { createSessionSurfaceNoteDocumentV1 } from '@happier-dev/protocol/sessions/board';
 import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { UserProfileSchema } from '@happier-dev/protocol/social/friends';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -42,7 +45,7 @@ let webLocks: ReturnType<typeof installWebLockManagerMock> | undefined;
 const daemonRpc = vi.hoisted(() => vi.fn<Parameters<typeof createServerScopedMachineRpcBoundaryMock>[0]>());
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => createServerScopedMachineRpcBoundaryMock(daemonRpc));
 const runtimePermissionDecisionSpy = vi.fn(async () => {});
-const routerPushSpy = vi.fn();
+const routerPushSpy = vi.hoisted(() => vi.fn());
 function createApprovalTestSource() {
     return createTestSessionTranscriptSource({
         sessionId: 'session-1', navigate: routerPushSpy,
@@ -76,7 +79,11 @@ vi.mock('expo-router', async () => {
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+    return createTextModuleMock({ translate: (key, params) => {
+        if (key === 'workflows.triggers.checks.consentFacts' && params && 'name' in params) return `Set up by ${params.name}`;
+        if (key === 'workflows.triggers.checks.consentTitle' && params && 'workflow' in params) return String(params.workflow);
+        return key;
+    } });
 });
 
 vi.mock('@/components/ui/text/Text', () => ({
@@ -90,6 +97,7 @@ vi.mock('@/modal', async () => {
 
 await loadSyncSingletonForTests();
 const { ApprovalPromptCard } = await import('./ApprovalPromptCard');
+const { ApprovalPromptRoomContext } = await import('./ApprovalPromptChrome');
 const { storage } = await import('@/sync/domains/state/storage');
 const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
 const initialState = storage.getState();
@@ -491,6 +499,43 @@ describe('ApprovalPromptCard', () => {
         expect(screen.getTextContent()).toContain('Agent wants to inspect active sessions');
     });
 
+    it('keeps the named check, its author, and Review steps together in the Session approval tray', async () => {
+        const author = UserProfileSchema.parse({ id: 'author-1', name: 'Mara', firstName: 'Mara', lastName: null,
+            username: 'mara', avatar: null, bio: null, status: 'friend', publicKey: null });
+        storage.setState({ profileScope: { serverId: homeId, accountId: 'account-1' } });
+        storage.getState().applyFriends([author]);
+        const request = daemonApprovalRequest();
+        const trigger = { automationId: 'automation-release', triggerId: 'trigger-release' };
+        const approval = ApprovalRequestV2Schema.parse({ ...request, automaticChecks: {
+            phase: 'consent', humanApprovalRequired: false, subjects: [], selectionStatus: 'ready', notices: [],
+            selected: [{ ...trigger, phase: 'before', actionIds: [request.actionId], mode: 'wait', onFailure: 'ask',
+                triggerRevision: 1, workflowId: 'builtin:open-a-pull-request', workflowRevision: 1, ownerAccountId: author.id }],
+            consents: [{ ...trigger, decision: 'pending' }], runs: [], results: [],
+        } });
+        await seedApproval(approval);
+        const previous = getAppliedActiveServerSnapshot();
+        const available = isAppliedActiveServerRuntimeAvailable();
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        try {
+            const screen = await renderWithSessionTranscriptSource(
+                <ApprovalPromptRoomContext.Provider value={{ boundFor: () => 90, report: () => undefined }}>
+                    <ApprovalPromptCard artifact={approvalArtifact(homeId)} approval={approval} sessionId="session-1" canApprove chrome="inline" />
+                </ApprovalPromptRoomContext.Provider>, createApprovalTestSource());
+
+            const facts = screen.findByTestId('approval-prompt-card-facts');
+            expect(facts).not.toBeNull();
+            expect(facts?.findAll(node => node.props.testID === 'approval-prompt-automatic-checks:consent')).toHaveLength(0);
+            expect(facts?.findAll(node => node.props.testID === 'approval-prompt-consent-approve')).toHaveLength(0);
+            expect(screen.findByTestId('approval-prompt-consent-approve')).not.toBeNull();
+            expect(screen.getTextContent()).toContain('workflows.builtins.openAPullRequest.title');
+            expect(screen.getTextContent()).toContain('Set up by Mara');
+            expect(screen.findByTestId('approval-prompt-automatic-checks:review')).not.toBeNull();
+            await screen.unmount();
+        } finally {
+            publishAppliedActiveServerSnapshot(previous, available);
+        }
+    });
+
     it('withholds requester-bound decisions from the Bot Session owner', async () => {
         const artifact = buildDiscussionRequesterApprovalArtifact({
             id: 'approval-1', serverId: homeId, serverIdentityId: 'srv_stable-home-a',
@@ -534,9 +579,9 @@ describe('ApprovalPromptCard', () => {
         });
     });
 
-    it('renders a contributed Action approval with its canonical decision controls', async () => {
+    it.each(['open', 'failed'] as const)('renders a contributed Action approval when %s', async (status) => {
         const approval = TargetActionApprovalRequestV1Schema.parse({
-            v: 1, kind: 'plugin_target_action', status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            v: 1, kind: 'plugin_target_action', status, createdAtMs: 1, updatedAtMs: 1,
             createdBy: { surface: 'agent', sessionId: 'session-1' }, requestedSurface: 'agent',
             qualifiedActionId: 'dev.leads-fixture/actions/update-stage', input: { leadId: 'verdant', stage: 'qualified' },
             sourceCustody: { kind: 'managed', immutableGenerationId: 'fixture-generation', installSource: 'npm' },
@@ -545,16 +590,26 @@ describe('ApprovalPromptCard', () => {
                 caller: { kind: 'session', sessionId: 'session-1', starterDepth: 0, turnDepth: 0 },
                 serverId: homeId, sessionId: 'session-1', actionId: 'action.invoke', requestId: 'request-1' },
             summary: 'Update this lead’s stage?',
+            ...(status === 'failed' ? {
+                decision: { kind: 'approve', decidedAtMs: 2 },
+                execution: { executedAtMs: 3, ok: false, errorCode: 'approval_execution_failed' },
+            } : {}),
         });
         const screen = await renderWithSessionTranscriptSource(<ApprovalPromptCard
             artifact={{ id: 'target-approval', header: { title: approval.summary, kind: 'target_action_approval.v1',
-                approvalStatus: 'open', sessionId: 'session-1', serverId: homeId } }}
+                approvalStatus: status, sessionId: 'session-1', serverId: homeId } }}
             approval={approval} sessionId="session-1" canApprove chrome="inline"
         />, createApprovalTestSource());
         expect(screen.findByTestId('approval-prompt-card')).toBeTruthy();
         expect(screen.getTextContent()).toContain('Update this lead’s stage?');
-        expect(screen.findByTestId('approval-prompt-approve')).toBeTruthy();
-        expect(screen.findByTestId('approval-prompt-reject')).toBeTruthy();
+        if (status === 'open') {
+            expect(screen.findByTestId('approval-prompt-approve')).toBeTruthy();
+            expect(screen.findByTestId('approval-prompt-reject')).toBeTruthy();
+        } else {
+            expect(screen.findByTestId('approval-prompt-approve')).toBeNull();
+            expect(screen.findByTestId('approval-prompt-execution-failure')).toBeTruthy();
+            expect(screen.getTextContent()).not.toContain('approval_execution_failed');
+        }
     });
 
     function declinedSignIn(status: 'rejected' | 'canceled'): ApprovalRequest {

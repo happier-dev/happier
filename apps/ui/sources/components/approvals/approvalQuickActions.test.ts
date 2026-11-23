@@ -19,6 +19,15 @@ describe('readApprovalQuickActions', () => {
         expect(quickActionsFor(artifact)).toEqual({ artifactId: artifact.id, serverId: 'request-home',
             actionId: 'approval.request.decide', decisions: ['reject', 'approve'] });
         expect(readApprovalQuickActions(readOpenApprovalInboxEntry(artifact), '')).toBeNull();
+        const held = ApprovalRequestV2Schema.parse({ ...request, automaticChecks: {
+            phase: 'override', humanApprovalRequired: true, subjects: [], selectionStatus: 'ready', notices: [],
+            selected: [{ automationId: 'release-checks', triggerId: 'before-rename', ownerAccountId: 'author',
+                triggerRevision: 1, workflowId: 'rename-checks', workflowRevision: 1, phase: 'before', actionIds: [request.actionId],
+                mode: 'wait', onFailure: 'ask' }], consents: [],
+            runs: [{ automationId: 'release-checks', triggerId: 'before-rename', runId: 'check-run' }],
+            results: [{ automationId: 'release-checks', triggerId: 'before-rename', runId: 'check-run', outcome: 'failed' }],
+        } });
+        expect(quickActionsFor({ ...artifact, header: buildApprovalRequestArtifactHeaderV1(held), body: JSON.stringify(held) })).toBeNull();
         for (const unavailable of [
             { ...artifact, body: null },
             { ...artifact, body: '{broken' },
