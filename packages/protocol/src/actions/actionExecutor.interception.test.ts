@@ -49,6 +49,63 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 }
 
 describe('createActionExecutor execution interception', () => {
+  it.each([
+    { surface: 'voice', authority: 'account_automation', pendingPhases: ['checking', 'override'] },
+    { surface: 'ui', authority: 'present_user', pendingPhases: ['checking'] },
+  ] as const)('notifies the retained $surface presenter when a before-check asks for a person', async ({ surface, authority, pendingPhases }) => {
+    const actionId = 'connectedServices.authentication.beginConnect';
+    let stored: Parameters<NonNullable<ActionExecutorDeps['approvalsCreate']>>[0]['request'] | null = null;
+    const port = createActionAutomationPortV1({
+      accountId: 'actor',
+      seed: async () => ({ v: 1, rows: [{
+        automationId: 'review', triggerId: 'before', triggerRevision: 1, workflowId: 'workflow', workflowRevision: 1,
+        ownerAccountId: 'actor', actionIds: [actionId], phase: 'before', mode: 'wait', onFailure: 'ask',
+      }] }),
+      start: async () => ({ runs: [{ automationId: 'review', triggerId: 'before', runId: 'check' }], notices: [] }),
+      settle: async () => {},
+    });
+    type PendingApproval = Parameters<NonNullable<ActionExecutorDeps['approvalsWaitForDecision']>>[0];
+    const notifyPresenter = vi.fn<(pending: PendingApproval) => void>();
+    const approvalsWaitForDecision = vi.fn(async (pending: PendingApproval) => {
+      // The mounted waiter presents the original request before awaiting a decision.
+      notifyPresenter(pending);
+      return { decision: 'reject' as const, request: pending.request };
+    });
+    const connectedServiceAction = vi.fn();
+    const executor = createActionExecutor({
+      actionAutomations: { ...port, wait: async () => ({ state: 'failed', errorCode: 'command_failed' }) },
+      approvalsCreate: async ({ request }) => { stored = request; return { artifactId: 'approval' }; },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => { stored = request; return { ok: true }; },
+      approvalsNotifyBlockingPending: notifyPresenter,
+      approvalsWaitForDecision,
+      isApprovalExecutionOriginCurrent: async () => true,
+      connectedServiceAction,
+    });
+    try {
+      const result = await executor.execute(actionId, {
+        machineId: 'machine', service: { pluginId: 'example.accounts', localId: 'service' }, modeId: 'password',
+      }, {
+        surface, authority, actionCaller: { kind: 'host' },
+        serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'actor', actionRequestId: 'before-check',
+        defaultSessionMachineId: 'machine',
+        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [actionId]: [surface] } }),
+      });
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+      expect(stored).toMatchObject({ status: 'open', automaticChecks: { phase: 'override', humanApprovalRequired: false } });
+      expect(notifyPresenter.mock.calls).toEqual(pendingPhases.map(phase => [
+        expect.objectContaining({
+          artifactId: 'approval',
+          request: phase === 'override' ? stored : expect.objectContaining({
+            automaticChecks: expect.objectContaining({ phase, humanApprovalRequired: false }),
+          }),
+        }),
+      ]));
+      expect(approvalsWaitForDecision).toHaveBeenCalledOnce();
+      expect(connectedServiceAction).not.toHaveBeenCalled();
+    } finally { port.dispose(); }
+  });
+
   it.each((['skipped', 'unavailable'] as const).flatMap(outcome =>
     (['host', 'workflowRun'] as const).map(callerKind => ({ outcome, callerKind }))))(
     'settles a before-wait admission with no Run as $outcome for $callerKind', async ({ outcome, callerKind }) => {

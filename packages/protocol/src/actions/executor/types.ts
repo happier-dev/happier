@@ -3113,6 +3113,8 @@ export type ActionExecutorDeps = Readonly<{
     | Readonly<{ actionId: ActionId; signal: AbortSignal; surface: 'plugin'; isCurrent(): boolean | Promise<boolean>;
         /** Internal occurrence retirement, distinct from the invoking caller's withdrawal. */
         isRetired?(): boolean }>;
+  /** Notify the mounted observer when an existing waiter now needs a human decision. */
+  approvalsNotifyBlockingPending?: (args: Parameters<NonNullable<ActionExecutorDeps['approvalsWaitForDecision']>>[0]) => void;
   approvalsWaitForDecision?: (args: Readonly<{
     artifactId: string;
     request: ApprovalRequest;

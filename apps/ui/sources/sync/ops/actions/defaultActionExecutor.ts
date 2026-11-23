@@ -287,7 +287,7 @@ import { ScopeActionInputSchemas } from '@happier-dev/protocol/actions/scopeActi
 import { requireOneShotAccountSettingsMutationApplied } from '@/sync/engine/settings/syncSettings';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { isVoiceHistoryActionId } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
-import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
 import { resolveAgentIdForPermissionUi } from '@/agents/catalog/resolve';
 import { resolveSessionPermissionBehavior } from '@/sync/ops/sessionPermissionAnswers';
@@ -795,7 +795,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   /** Native/process task transport for local client Actions; admission stays with this executor. */
   homeRuntimeRunner?: SystemTaskRunner;
   /** Mounted presentation only; the existing blocking executor retains input and decision custody. */
-  onBlockingApprovalPending?: (input: Readonly<{ artifactId: string; scope: import('@/sync/domains/scope/serverAccountScope').ServerAccountScope;
+  onBlockingApprovalPending?: (input: Readonly<{ artifactId: string; scope: ServerAccountScope;
     signal?: AbortSignal; voiceApprovalGuidance?: VoiceApprovalGuidance }>) => void;
   /** Exact mounted invocation whose intent must remain live through shared approval. */
   hostActionApprovalLifetime?: Readonly<{ actionId: ActionId; signal: AbortSignal; surface: 'ui' }>;
@@ -1384,6 +1384,17 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   const executePluginPermissionGrantAction = createPluginPermissionGrantHttpActionExecutor(accountContext ? { request: accountContext.request } : undefined);
   const executePluginWebhookAction = createPluginWebhookEndpointHttpActionExecutor(accountContext ? { request: accountContext.request } : undefined);
   const approvalCoordinator = getSharedBlockingApprovalCoordinator();
+  const notifyBlockingApprovalPending = (
+    { artifactId, request, signal }: Readonly<{ artifactId: string; request: ApprovalRequest; signal?: AbortSignal | undefined }>,
+    scope: ServerAccountScope,
+    humanDecisionRequired: boolean,
+  ) => {
+    if (signal?.aborted || !opts?.onBlockingApprovalPending) return;
+    const voiceApprovalGuidance = request.v === 2 && humanDecisionRequired
+      ? resolveVoiceApprovalGuidance(request.executionOriginV1) : undefined;
+    opts.onBlockingApprovalPending({ artifactId, scope,
+      ...(signal ? { signal } : {}), ...(voiceApprovalGuidance ? { voiceApprovalGuidance } : {}) });
+  };
   const capturedFamilyPorts = accountContext ? createCapturedScopeFamilyPorts(accountContext, opts?.discussionAttachmentSources, onPublicLinkIssued) : null;
   const machineAccessAction = opts?.machineAccessAction ?? capturedFamilyPorts?.machineAccessAction;
   const ownedWorkflowAction = !opts?.workflowAction && accountContext ? createUiWorkflowAction({ account: accountContext,
@@ -5121,12 +5132,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         if (!accountLifetime.isCurrent()) throw scopeChanged();
       };
       assertCurrent();
-      if (!signal?.aborted && opts?.onBlockingApprovalPending) {
-        const voiceApprovalGuidance = request.v === 2 && request.status === 'open' && request.automaticChecks?.humanApprovalRequired !== false
-          ? resolveVoiceApprovalGuidance(request.executionOriginV1) : undefined;
-        opts.onBlockingApprovalPending({ artifactId, scope: accountLifetime.scope,
-          ...(signal ? { signal } : {}), ...(voiceApprovalGuidance ? { voiceApprovalGuidance } : {}) });
-      }
+      const humanDecisionRequired = request.v === 2 && request.status === 'open'
+        && request.automaticChecks?.humanApprovalRequired !== false;
+      notifyBlockingApprovalPending({ artifactId, request, signal }, accountLifetime.scope, humanDecisionRequired);
       const decision = await approvalCoordinator.waitForDecision({
         artifactId,
         request,
@@ -5154,6 +5162,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       });
       return { ...decision, request: StoredApprovalRequestSchema.parse(decision.request) };
     },
+
+    approvalsNotifyBlockingPending: accountContext && opts?.onBlockingApprovalPending ? args => {
+      const { accountLifetime } = accountContext;
+      if (accountLifetime.isCurrent()) notifyBlockingApprovalPending(args, accountLifetime.scope, true);
+    } : undefined,
 
     promptDocGet: async (args) => withPromptLibraryStore((store) => readPromptDocInLibrary({ store, ...args }), args.signal),
     promptDocCreate: async ({ signal, ...request }) => withPromptLibraryStore((store) => createPromptDocInLibrary({ store, request: resolvePromptDocCreateActionInputV1(request), signal }), signal),

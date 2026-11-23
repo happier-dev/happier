@@ -4129,6 +4129,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             if (continued.kind === 'pending') {
               if (!pendingDecision) return { ok: true,
                 result: { kind: 'approval_request_created', artifactId: created.artifactId, actionId } };
+              if (continued.request.executionOriginV1.surface === 'voice'
+                && continued.request.status === 'open' && continued.request.automaticChecks?.phase === 'override') {
+                deps.approvalsNotifyBlockingPending?.({ artifactId: created.artifactId,
+                  request: continued.request, serverId: normalizeId(ctx.serverId) || null,
+                  ...(ctx.signal ? { signal: ctx.signal } : {}) });
+              }
               const decision = await pendingDecision;
               if (decision.decision !== 'approve') {
                 const errorCode = decision.decision === 'reject' ? 'approval_rejected' : 'approval_canceled';
