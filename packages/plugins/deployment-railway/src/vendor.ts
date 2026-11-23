@@ -28,7 +28,7 @@ export async function provision(engine: Engine, selection: Selection & { workspa
   if (!isRecord(template) || template.serializedConfig == null) throw new PluginError({ code: 'provider_response_invalid' });
   const input = { templateId: templateId(template), serializedConfig: template.serializedConfig,
     projectId, environmentId, workspaceId };
-  const scope = { projectId, railwayEnvironmentId: environmentId, workspaceId };
+  const scope = { providerAccountId: projectId, railwayEnvironmentId: environmentId, workspaceId };
   context.signal.throwIfAborted();
   try {
     const { templateDeployV2: receipt } = await query(`mutation($input: TemplateDeployV2Input!) {

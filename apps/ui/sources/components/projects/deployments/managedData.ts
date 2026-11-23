@@ -44,10 +44,10 @@ export type ManagedDataOperation = ManagedDataTarget['operations'][number];
 
 export function readManagedDataAdoptionReceipt(value: unknown) {
   if (!isRecord(value) || value.status !== 'adoption_required') return null;
-  const { workflowId, workspaceId, projectId, railwayEnvironmentId } = value;
-  if (typeof workflowId !== 'string' || !workflowId || typeof projectId !== 'string' || !projectId
+  const { workflowId, workspaceId, providerAccountId, railwayEnvironmentId } = value;
+  if (typeof workflowId !== 'string' || !workflowId || typeof providerAccountId !== 'string' || !providerAccountId
     || typeof railwayEnvironmentId !== 'string' || !railwayEnvironmentId) return null;
-  return { workflowId, scope: { projectId, railwayEnvironmentId,
+  return { workflowId, scope: { providerAccountId, railwayEnvironmentId,
     ...(typeof workspaceId === 'string' && workspaceId ? { workspaceId } : {}) } };
 }
 

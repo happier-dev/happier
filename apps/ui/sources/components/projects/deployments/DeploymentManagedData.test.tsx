@@ -35,7 +35,7 @@ const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
 const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
 afterEach(standardCleanup);
 
-function connectedProfile(service: { pluginId: string; localId: string }, accountId: string, organizationId: string) {
+function connectedProfile(service: { pluginId: string; localId: string }, accountId: string, organizationId?: string) {
   return QualifiedConnectedAccountProfileV4Schema.parse({ ref: { service, accountId },
     status: 'connected', authenticationModeId: 'token', configurationReady: true, configurationRevision: 'configuration',
     revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', providerIdentity: { organizationId }, scopes: [] });
@@ -331,17 +331,17 @@ it('hands a creation workflow to explicit service selection before confirming it
   const service = { pluginId: 'com.example.workflow-account', localId: 'account' };
   const execution = { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } } as const;
   const string = { type: 'string', minLength: 1 } as const;
-  const scope = { workspaceId: 'workspace-id', projectId: 'project-id', railwayEnvironmentId: 'preview-id' };
+  const scope = { workspaceId: 'workspace-id', providerAccountId: 'project-id', railwayEnvironmentId: 'preview-id' };
   const scopeFields = [
     { path: 'workspaceId', title: 'Workspace', widget: 'text', required: true },
-    { path: 'projectId', title: 'Project', widget: 'text', required: true },
+    { path: 'providerAccountId', title: 'Project', widget: 'text', required: true },
     { path: 'railwayEnvironmentId', title: 'Environment', widget: 'text', required: true },
   ] as const;
-  const scopeProperties = { workspaceId: string, projectId: string, railwayEnvironmentId: string };
+  const scopeProperties = { workspaceId: string, providerAccountId: string, railwayEnvironmentId: string };
   const choices = [{ value: 'database-old', label: 'Orders · database-old' }, { value: 'database-new', label: 'Orders · database-new' }];
   const operands = (role: 'projects.link' | 'projects.provision') => {
     const base = roleSchema(role);
-    return { ...base, properties: { ...base.properties, ...scopeProperties, ...(role === 'projects.link' ? { serviceId: string } : {}) },
+    return { ...base, properties: { ...scopeProperties, ...base.properties, ...(role === 'projects.link' ? { serviceId: string } : {}) },
       required: [...base.required ?? [], ...Object.keys(scopeProperties), ...(role === 'projects.link' ? ['serviceId'] : [])] };
   };
   const common = { execution, surfaces: ['ui'] as const, hostAccess: ['manage'],
@@ -367,10 +367,10 @@ it('hands a creation workflow to explicit service selection before confirming it
     activate: api => plugin.activateAccount(api, execution.account), accountLifetime: account.accountLifetime, publishProjection: true });
   const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
   storage.setState({ profileScope: account.accountLifetime.scope,
-    profile: { ...storage.getState().profile, connectedAccountsV4: [connectedProfile(service, 'management-token', scope.workspaceId)] } });
+    profile: { ...storage.getState().profile, connectedAccountsV4: [connectedProfile(service, 'management-token')] } });
   const calls: unknown[] = [];
   const links: unknown[] = [];
-  const providerIdentity = { providerAccountId: scope.workspaceId, providerResourceId: `${scope.projectId}/database-new`, providerEnvironment: scope.railwayEnvironmentId };
+  const providerIdentity = { providerAccountId: scope.providerAccountId, providerResourceId: 'database-new', providerEnvironment: scope.railwayEnvironmentId };
   const providerEnvironment = { kind: 'native', selection: {} };
   homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
     environment: detail.environment, targetLinks: [] } });
@@ -410,7 +410,7 @@ it('hands a creation workflow to explicit service selection before confirming it
     expect(link()).toBeUndefined();
     expect(screen.getTextContent()).toContain('workflow-123');
     expect(screen.findByTestId('managed-data.adoption')).not.toBeNull();
-    expect(field('projectId')).toBeUndefined();
+    expect(field('providerAccountId')).toBeUndefined();
     expect(field('railwayEnvironmentId')).toBeUndefined();
     expect(field('serviceId')!.props.input.serviceId).toBeUndefined();
     expect(field('serviceId')!.props.resolveFieldOptions(field('serviceId')!.props.fields[0])).toEqual(choices);

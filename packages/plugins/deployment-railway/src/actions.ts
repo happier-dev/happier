@@ -19,7 +19,7 @@ const base = DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema;
 export const closed = (properties: Record<string, PluginJsonSchema>, required = Object.keys(properties)): PluginJsonSchema =>
   ({ type: 'object', properties, required, additionalProperties: false });
 
-const scope = { projectId: text, railwayEnvironmentId: text, workspaceId: text };
+const scope = { providerAccountId: text, railwayEnvironmentId: text, workspaceId: text };
 const selection = { ...scope, serviceId: text };
 const status = (...values: string[]): PluginJsonSchema => ({ type: 'string', enum: values });
 const item = closed({ id: text, name: text });
@@ -36,7 +36,7 @@ const linkResult = closed({ serviceName: text, engine: status('postgres', 'mysql
 const common = { execution, scopes: ['global'] as const, surfaces: ['cli', 'plugin', 'ui', 'agent'] as const, placementBindings: [],
   hostAccess: [networkAccess, ACCOUNT_PURPOSE], connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: ACCOUNT_PURPOSE }] } as const;
 
-type SelectionInput = Scope & { workspaceId: string; projectId: string; railwayEnvironmentId: string };
+type SelectionInput = Scope & { workspaceId: string; providerAccountId: string; railwayEnvironmentId: string };
 type ServiceInput = SelectionInput & { serviceId: string };
 type Runner<T> = (input: T, context: PluginAccountActionContext) => Promise<JsonValue>;
 type AccountAction = PluginActionDefinition<Extract<PluginActionDeclaration, { execution: { target: 'account' } }>>;
@@ -48,13 +48,13 @@ function action<T>(title: string, fields: Record<string, PluginJsonSchema>, resu
     dangerLevel: options.write ? 'writesRemote' as const : 'safe' as const,
     ...(options.write ? { confirmation: { title } } : {}),
     ...(options.fields ? { inputHints: { fields: options.fields } } : {}),
-    inputSchema: deploymentTargetRoleWithNativeSelectorV1(closed({ ...base.properties, ...fields },
+    inputSchema: deploymentTargetRoleWithNativeSelectorV1(closed({ ...fields, ...base.properties },
       [...(base.required ?? []), ...Object.keys(fields).filter(key => !options.optional?.includes(key) && !base.required?.includes(key))]), nativeSelectorSchema),
     run: (input: JsonValue, context: PluginAccountActionContext) => run(input as T, context),
   };
 }
 
-const coordinates = (input: SelectionInput) => ({ workspaceId: input.workspaceId, projectId: input.projectId,
+const coordinates = (input: SelectionInput) => ({ workspaceId: input.workspaceId, projectId: input.providerAccountId,
   environmentId: input.railwayEnvironmentId });
 const serviceCoordinates = (input: ServiceInput) => ({ ...coordinates(input), serviceId: input.serviceId });
 
@@ -88,19 +88,19 @@ export function engineActions(engine: Engine): Record<string, AccountAction> {
   const label = engines[engine].label;
   const fields = [
     { path: 'workspaceId', title: 'Railway workspace', inputType: { pluginId, localId: engine + '-workspace' }, widget: 'select', required: true },
-    { path: 'projectId', title: 'Railway project', inputType: { pluginId, localId: engine + '-project' }, widget: 'select', required: true, optionsDraftDependencies: ['workspaceId'],
+    { path: 'providerAccountId', title: 'Railway project', inputType: { pluginId, localId: engine + '-project' }, widget: 'select', required: true, optionsDraftDependencies: ['workspaceId'],
       visibleWhen: { op: 'truthy', path: 'workspaceId' } },
     { path: 'railwayEnvironmentId', title: 'Railway environment', inputType: { pluginId, localId: engine + '-environment' },
-      widget: 'select', required: true, optionsDraftDependencies: ['projectId'],
-      visibleWhen: { op: 'truthy', path: 'projectId' } },
+      widget: 'select', required: true, optionsDraftDependencies: ['providerAccountId'],
+      visibleWhen: { op: 'truthy', path: 'providerAccountId' } },
     { path: 'serviceId', title: label + ' service', inputType: { pluginId, localId: engine + '-service' },
-      widget: 'select', required: true, optionsDraftDependencies: ['projectId', 'railwayEnvironmentId'],
+      widget: 'select', required: true, optionsDraftDependencies: ['providerAccountId', 'railwayEnvironmentId'],
       visibleWhen: { op: 'truthy', path: 'railwayEnvironmentId' } },
   ] as const;
   return {
     [ids.list]: action<SelectionInput & { cursor?: string }>(`Find Railway ${label} databases`, { ...scope, cursor: text }, listResult,
       async (input, context) => {
-        const page = await railway(context).project.readEnvironmentServicesPage(input.projectId, input.railwayEnvironmentId,
+        const page = await railway(context).project.readEnvironmentServicesPage(input.providerAccountId, input.railwayEnvironmentId,
           input.cursor ?? null, engines[engine].template).catch(readFailure);
         return { databases: page.choices, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
       }, { fields: fields.slice(0, 3), optional: ['cursor'] }),
@@ -108,13 +108,13 @@ export function engineActions(engine: Engine): Record<string, AccountAction> {
       (input, context) => provision(engine, coordinates(input), context), { write: true, fields: fields.slice(0, 3) }),
     [ids.link]: action<ServiceInput>(`Inspect Railway ${label} database for adoption`, selection, linkResult, async (input, context) => {
       const service = await inspect(engine, serviceCoordinates(input), context);
-      const project = encodeURIComponent(input.projectId);
+      const project = encodeURIComponent(input.providerAccountId);
       const serviceId = encodeURIComponent(service.id);
       const environment = encodeURIComponent(input.railwayEnvironmentId);
       // The data presentation speaks the deployment template's engine vocabulary, as every database page reads it.
-      return { engine: engines[engine].template, serviceName: service.name, providerIdentity: { providerAccountId: input.projectId,
+      return { engine: engines[engine].template, serviceName: service.name, providerIdentity: { providerAccountId: input.providerAccountId,
         providerResourceId: service.id, providerEnvironment: input.railwayEnvironmentId },
-      providerEnvironment: { kind: 'native', selection: { projectId: input.projectId,
+      providerEnvironment: { kind: 'native', selection: { projectId: input.providerAccountId,
         environmentId: input.railwayEnvironmentId, serviceId: service.id } },
       providerConsole: { label: 'Open in Railway', url: `https://railway.com/project/${project}/service/${serviceId}?environmentId=${environment}` } };
     }, { fields }),
@@ -128,7 +128,7 @@ export function engineActions(engine: Engine): Record<string, AccountAction> {
     [ids.options]: {
       ...common, title: `List Railway ${label} picker options`, readOnly: true, dangerLevel: 'safe' as const,
       inputSchema: closed({ credentialRef: base.properties!.credentialRef!, credentialPrincipal: base.properties!.credentialPrincipal!,
-        fieldPath: status('workspaceId', 'projectId', 'railwayEnvironmentId', 'serviceId'), ...scope, cursor: text, query: { type: 'string' } },
+        fieldPath: status('workspaceId', 'providerAccountId', 'railwayEnvironmentId', 'serviceId'), ...scope, cursor: text, query: { type: 'string' } },
       ['credentialRef', 'credentialPrincipal', 'fieldPath']),
       resultSchema: closed({ options: { type: 'array', items: closed({ value: text, label: text }) }, nextCursor: text }, ['options']),
       run: (input: JsonValue, context: PluginAccountActionContext) => options(engine, input as OptionsInput, context),
@@ -136,8 +136,8 @@ export function engineActions(engine: Engine): Record<string, AccountAction> {
   };
 }
 
-type OptionsInput = { fieldPath: 'workspaceId' | 'projectId' | 'railwayEnvironmentId' | 'serviceId';
-  workspaceId?: string; projectId?: string; railwayEnvironmentId?: string; query?: string; cursor?: string };
+type OptionsInput = { fieldPath: 'workspaceId' | 'providerAccountId' | 'railwayEnvironmentId' | 'serviceId';
+  workspaceId?: string; providerAccountId?: string; railwayEnvironmentId?: string; query?: string; cursor?: string };
 function required(value: string | undefined, requiredDraftPath: string) {
   if (!value) throw new PluginError({ code: 'missing_option_dependency', details: { requiredDraftPath } });
   return value;
@@ -150,7 +150,7 @@ async function options(engine: Engine, input: OptionsInput, context: PluginAccou
     if (input.fieldPath === 'workspaceId') {
       return { choices: await project.readWorkspaceChoices(), nextCursor: null };
     }
-    if (input.fieldPath === 'projectId') {
+    if (input.fieldPath === 'providerAccountId') {
       const workspaceId = required(input.workspaceId, 'workspaceId');
       // Machine Railway selects the exact granted project during OAuth setup.
       const material = await context.services.connectedAccounts.materialize(ACCOUNT_PURPOSE,
@@ -162,7 +162,7 @@ async function options(engine: Engine, input: OptionsInput, context: PluginAccou
       if (!binding) throw new PluginError({ code: 'credential_unavailable' });
       return { choices: [{ id: projectId, name: binding.target.displayName }], nextCursor: null };
     }
-    const projectId = required(input.projectId, 'projectId');
+    const projectId = required(input.providerAccountId, 'providerAccountId');
     if (input.fieldPath === 'railwayEnvironmentId') return project.readEnvironmentsPage(projectId, after);
     return project.readEnvironmentServicesPage(projectId, required(input.railwayEnvironmentId, 'railwayEnvironmentId'), after,
       engines[engine].template);

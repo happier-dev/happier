@@ -227,7 +227,7 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
       {adoption ? <ItemGroup testID="managed-data.adoption" title={t('projects.deployments.managedData.adoptionTitle')}
         description={t('projects.deployments.managedData.adoptionBody')}>
         <Item title={t('projects.deployments.managedData.adoptionWorkflow')} detail={adoption.workflowId} wrapDetail mode="info" />
-        <Item title={t('projects.deployments.managedData.adoptionProject')} detail={adoption.scope.projectId} wrapDetail mode="info" />
+        <Item title={t('projects.deployments.managedData.adoptionProject')} detail={adoption.scope.providerAccountId} wrapDetail mode="info" />
         <Item title={t('projects.deployments.managedData.adoptionEnvironment')} detail={adoption.scope.railwayEnvironmentId} wrapDetail mode="info" />
       </ItemGroup> : null}
       <ItemGroup header="none">

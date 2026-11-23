@@ -4,7 +4,7 @@ import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import * as entry from './index.js';
 
 const credentialRef = { service: { pluginId: 'happier.machine.railway', localId: 'railway-account' }, accountId: 'connected' };
-const selection = { projectId: 'project-one', railwayEnvironmentId: 'production', workspaceId: 'workspace-one' };
+const selection = { providerAccountId: 'project-one', railwayEnvironmentId: 'production', workspaceId: 'workspace-one' };
 const databaseService = { serviceId: 'database-one', serviceName: 'Database', deletedAt: null,
   service: { templateId: 'pg-template' } };
 const instance = { ...databaseService, environmentId: 'production',
@@ -34,7 +34,7 @@ async function host(...replies: readonly unknown[]) {
 }
 
 describe('activated Railway managed database actions', () => {
-  it('creates one template workflow and returns no adoptable service or vendor payload', async () => {
+  it('creates a template using the selected project as the provider coordinate and carries it into adoption', async () => {
     const h = await host({ data: { template: { id: 'pg-template', serializedConfig: 'opaque-config' },
       environment: { id: 'production', projectId: 'project-one' }, project: { id: 'project-one', workspaceId: 'workspace-one' } } },
       { data: { templateDeployV2: { projectId: 'project-one', workflowId: 'workflow-one', password: 'private-value' } } });

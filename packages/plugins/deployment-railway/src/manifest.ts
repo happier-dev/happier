@@ -43,7 +43,7 @@ export const plugin = definePlugin({
       [resourceId(ids.options), { ...common, runtime: createDeploymentTargetOptionsResource({ pluginId, localId: ids.options },
         'deployment.railway.data.options', draft => ({
           ...(typeof draft.workspaceId === 'string' ? { workspaceId: draft.workspaceId } : {}),
-          ...(typeof draft.projectId === 'string' ? { projectId: draft.projectId } : {}),
+          ...(typeof draft.providerAccountId === 'string' ? { providerAccountId: draft.providerAccountId } : {}),
           ...(typeof draft.railwayEnvironmentId === 'string' ? { railwayEnvironmentId: draft.railwayEnvironmentId } : {}),
         })) }],
       [resourceId(ids.list), { ...common, scope: 'surface' as const, runtime: list }],
