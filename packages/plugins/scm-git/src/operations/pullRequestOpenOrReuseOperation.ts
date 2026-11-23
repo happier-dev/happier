@@ -340,6 +340,7 @@ export function createGitPullRequestOpenOrReuseOperation(
                     provider: resolvedProvider,
                     base: resolvedBaseBranch,
                     head: resolvedHeadBranch,
+                    ...(requestedHeadRepositoryNameWithOwner ? { headRepositoryNameWithOwner: requestedHeadRepositoryNameWithOwner } : {}),
                     state: 'open',
                     runtimeServices: readRuntimeServices(),
                 });

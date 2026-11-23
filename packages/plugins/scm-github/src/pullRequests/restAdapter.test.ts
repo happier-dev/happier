@@ -34,6 +34,39 @@ function jsonResponse(body: unknown, init?: Readonly<{
 }
 
 describe('GitHub REST pull request adapter', () => {
+  it('finds the exact same-repository draft by head when GitHub ignores a bare branch filter', async () => {
+    const provider = { ...githubProvider, nameWithOwner: 'happier-dev/triage-qa-sandbox' };
+    const headBranch = 'qa/large-pr-2026-11-20';
+    const pull = (number: number, ref: string, draft: boolean, headRepository = provider.nameWithOwner) => ({
+      number,
+      title: `QA pull request ${number}`,
+      html_url: `https://github.com/${provider.nameWithOwner}/pull/${number}`,
+      state: 'open',
+      draft,
+      base: { ref: 'main' },
+      head: { ref, repo: { full_name: headRepository } },
+    });
+    const adapter = createGithubRestAdapter({
+      resolveToken: async () => ({ kind: 'available', token: 'redacted-test-token' }),
+      fetcher: async (url) => {
+        const head = new URL(url).searchParams.get('head');
+        const draft = pull(118, headBranch, true);
+        if (head === `happier-dev:${headBranch}`) return jsonResponse([draft]);
+        if (head === `qa-fork:${headBranch}`) return jsonResponse([pull(117, headBranch, true, 'qa-fork/triage-qa-sandbox')]);
+        return jsonResponse([pull(141, 'qa/unrelated-browser-run', false), draft]);
+      },
+    });
+
+    await expect(adapter.getPullRequest({ provider, reference: { headBranch } }))
+      .resolves.toMatchObject({ number: 118, state: 'draft', headBranch });
+    await expect(adapter.listPullRequests({ provider, head: headBranch, state: 'open' }))
+      .resolves.toMatchObject([{ number: 118, state: 'draft', headBranch }]);
+
+    const forkHead = { provider, head: headBranch, headRepositoryNameWithOwner: 'qa-fork/triage-qa-sandbox' };
+    await expect(adapter.listPullRequests(forkHead))
+      .resolves.toMatchObject([{ number: 117, headRepositoryNameWithOwner: 'qa-fork/triage-qa-sandbox' }]);
+  });
+
   it('keeps host-admitted accounts separate even when credential bytes match', async () => {
     const otherProvider = { ...githubProvider, id: 'scm.github.other' };
     let requests = 0;
@@ -259,7 +292,7 @@ describe('GitHub REST pull request adapter', () => {
     ]);
 
     expect(requests).toHaveLength(1);
-    expect(requests[0]?.url).toBe('https://api.github.com/repos/happier-dev/happier/pulls?state=open&base=main&head=feature%2Frest');
+    expect(requests[0]?.url).toBe('https://api.github.com/repos/happier-dev/happier/pulls?state=open&base=main&head=happier-dev%3Afeature%2Frest');
     expect(requests[0]?.init?.headers).toMatchObject({
       Accept: 'application/vnd.github+json',
       Authorization: ['Bearer', 'redacted-test-token'].join(' '),
@@ -346,7 +379,7 @@ describe('GitHub REST pull request adapter', () => {
       head: 'feature/rest',
     })).resolves.toEqual([]);
     expect(requestedHosts).toEqual(['ghe.internal.test']);
-    expect(requests[0]?.url).toBe('https://ghe.internal.test/api/v3/repos/happier-dev/happier/pulls?state=open&head=feature%2Frest');
+    expect(requests[0]?.url).toBe('https://ghe.internal.test/api/v3/repos/happier-dev/happier/pulls?state=open&head=happier-dev%3Afeature%2Frest');
     expect(requests[0]?.init?.headers).toMatchObject({ Authorization: 'Bearer redacted-enterprise-token' });
   });
 

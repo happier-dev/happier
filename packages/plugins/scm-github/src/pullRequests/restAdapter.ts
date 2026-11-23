@@ -136,8 +136,8 @@ function requireNameWithOwner(provider: ScmHostingProviderRef): string {
   return value.split('/').map((segment) => encodeURIComponent(segment)).join('/');
 }
 
-function readNameWithOwnerSegments(provider: ScmHostingProviderRef): readonly [string, string] | null {
-  const value = provider.nameWithOwner?.trim();
+function readNameWithOwnerSegments(nameWithOwner: string | undefined): readonly [string, string] | null {
+  const value = nameWithOwner?.trim();
   if (!value) return null;
   const segments = value.split('/');
   if (segments.length !== 2 || !segments[0]?.trim() || !segments[1]?.trim()) return null;
@@ -157,7 +157,15 @@ function pullsUrl(input: ScmHostingProviderPullRequestListInput): string {
     state: mapGithubRestState(input.state),
   });
   if (input.base) params.set('base', input.base);
-  if (input.head) params.set('head', input.head);
+  if (input.head) {
+    if (input.head.includes(':')) {
+      params.set('head', input.head);
+    } else {
+      const repository = readNameWithOwnerSegments(input.headRepositoryNameWithOwner ?? input.provider.nameWithOwner);
+      if (!repository) throw createGithubCommandFailedError('GitHub head repository owner/name is unavailable');
+      params.set('head', `${repository[0]}:${input.head}`);
+    }
+  }
   return `${apiBaseUrl(input.provider)}/repos/${requireNameWithOwner(input.provider)}/pulls?${params.toString()}`;
 }
 
@@ -246,7 +254,7 @@ function readPullRequestNumberFromProviderUrl(provider: ScmHostingProviderRef, u
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== 'https:' || parsed.hostname.toLowerCase() !== resolveProviderHost(provider)) return null;
-    const nameWithOwner = readNameWithOwnerSegments(provider);
+    const nameWithOwner = readNameWithOwnerSegments(provider.nameWithOwner);
     if (!nameWithOwner) return null;
     const segments = parsed.pathname.split('/').filter(Boolean);
     if (segments.length < 4) return null;
@@ -319,7 +327,7 @@ export function createGithubRestAdapter(params?: Readonly<{
   }
 
   async function readMergedCommitSha(input: ScmHostingProviderPullRequestGetInput, number: number): Promise<string | null> {
-    const repository = readNameWithOwnerSegments(input.provider);
+    const repository = readNameWithOwnerSegments(input.provider.nameWithOwner);
     if (repository === null) return null;
     const auth = await resolveRequestAuth(input.provider, input.runtimeServices, input.signal);
     const result = await sendGithubGraphqlRequest({

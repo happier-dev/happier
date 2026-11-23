@@ -524,7 +524,9 @@ describe('git pull request open-or-reuse operation', () => {
             headRepositoryNameWithOwner: 'someone/happier-fork',
             isCrossRepository: true,
         });
-        const listPullRequests = vi.fn(async () => [forkPullRequest]);
+        const listPullRequests = vi.fn(async (input: Readonly<{ headRepositoryNameWithOwner?: string }>) =>
+            input.headRepositoryNameWithOwner === 'someone/happier-fork' ? [forkPullRequest] : [],
+        );
         const createPullRequestHook = vi.fn();
         const operation = createGitPullRequestOpenOrReuseOperation({
             cache: createPrStatusCache({ now: () => 1000 }),

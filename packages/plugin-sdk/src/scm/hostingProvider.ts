@@ -252,6 +252,8 @@ export type HostingProviderPullRequestListInput = Readonly<{
     provider: ScmHostingProviderRef;
     base?: string;
     head: string;
+    /** Repository of the head branch when it differs from the selected provider repository. */
+    headRepositoryNameWithOwner?: string;
     state?: ScmPullRequestState;
 }>;
 
