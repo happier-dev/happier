@@ -490,15 +490,15 @@ describe('describeMachineDestinationWorkerFacts', () => {
         expect(describeMachineDestinationWorkerFacts(refused('draining'))).toBe(t('projectWorkers.draining'));
         expect(describeMachineDestinationWorkerFacts(refused('forbidden'))).toBe(t('projectWorkers.accessRefused'));
         expect(describeMachineDestinationWorkerFacts(refused('memory_insufficient'), subject))
-            .toBe(t('projectWorkers.tooSmall', { script: 'test', need: '8 GB' }));
+            .toBe(t('projectWorkers.tooSmall', { script: 'test', need: '8 GiB' }));
         const observedMemory = { totalBytes: 4 * 1024 ** 3, availableBytes: 1024 ** 3 };
-        const interpolation = { script: 'test', need: '8 GB', available: '4 GB' };
+        const interpolation = { script: 'test', need: '8 GiB', available: '4 GiB' };
         const tooSmall = describeMachineDestinationWorkerFacts(refused('memory_insufficient', observedMemory), subject);
         expect(tooSmall).toBe(t('projectWorkers.tooSmall', interpolation));
         // The numeric fact is the contract, not the translated wording. Comparing
         // only t(...) would miss a locale that also drops the available argument.
-        expect(tooSmall).toContain('4 GB');
-        expect(tooSmall).not.toContain('1 GB');
+        expect(tooSmall).toContain('4 GiB');
+        expect(tooSmall).not.toContain('1 GiB');
         expect(describeMachineDestinationWorkerFacts(refused('memory_unavailable'), subject))
             .toBe(t('projectWorkers.memoryUnavailable'));
         expect(describeMachineDestinationWorkerFacts(resolveMachineDestinationPurposeEligibility('finite', { ownership: 'owned' })))

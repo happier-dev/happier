@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { flattenTestStyle, renderScreen } from '@/dev/testkit';
 import { installUiListsCommonModuleMocks } from './uiListsTestHelpers';
 
 /**
@@ -43,6 +43,10 @@ installUiListsCommonModuleMocks({
 
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => {}) }));
+const { Item } = await import('./Item');
+const { ListPresentationProvider } = await import('./listPresentation');
+const { View } = await import('react-native');
+
 async function paintedLines(
     element: React.ReactElement,
     text: string,
@@ -58,8 +62,6 @@ async function paintedLines(
 
 describe('itemTextClamp is the clamp Item actually paints', () => {
     it('lets page preference labels and consequences grow with their content, including compact density', async () => {
-        const { Item } = await import('./Item');
-        const { ListPresentationProvider } = await import('./listPresentation');
         const title = 'Automatically include sessions started outside Happier on this machine';
         const detail = 'Only session metadata is discovered. Session contents stay on your machine until you open a session.';
         const page = (text: string) => paintedLines(
@@ -76,9 +78,6 @@ describe('itemTextClamp is the clamp Item actually paints', () => {
     });
 
     it('does not hide page copy when a title has a badge or the description is a primitive fragment', async () => {
-        const { Item } = await import('./Item');
-        const { ListPresentationProvider } = await import('./listPresentation');
-        const { View } = await import('react-native');
         const title = 'Include sessions started outside Happier automatically';
         const detail = 'Discovery reads metadata only and leaves session contents on this computer.';
         const page = (text: string) => paintedLines(
@@ -93,9 +92,6 @@ describe('itemTextClamp is the clamp Item actually paints', () => {
     });
 
     it('keeps explicit page line limits and compact grouped rows authoritative', async () => {
-        const { Item } = await import('./Item');
-        const { ListPresentationProvider } = await import('./listPresentation');
-        const { View } = await import('react-native');
         const title = 'A deliberately summarized collection row';
         const detail = 'A detail that its caller deliberately summarizes';
 
@@ -131,7 +127,6 @@ describe('itemTextClamp is the clamp Item actually paints', () => {
     });
 
     it('paints the title clamp the rule reports, with and without a subtitle', async () => {
-        const { Item } = await import('./Item');
         const { resolveItemTitleMaxLines } = await import('./itemTextClamp');
 
         expect(await paintedLines(<Item title="Title" showChevron={false} />, 'Title'))
@@ -141,7 +136,6 @@ describe('itemTextClamp is the clamp Item actually paints', () => {
     });
 
     it('paints the subtitle clamp the rule reports for each of its branches', async () => {
-        const { Item } = await import('./Item');
         const { resolveItemSubtitleMaxLines } = await import('./itemTextClamp');
 
         const flat = 'One line of detail';
@@ -164,9 +158,7 @@ describe('itemTextClamp is the clamp Item actually paints', () => {
     });
 
     it('lets a status subtitle (one led by a status mark) wrap to two lines instead of cutting it', async () => {
-        const { Item } = await import('./Item');
         const { resolveItemSubtitleMaxLines, ITEM_STATUS_SUBTITLE_MAX_LINES } = await import('./itemTextClamp');
-        const { View } = await import('react-native');
         const status = 'Happier 0.2.10 on this machine · 0.2.12 available';
         const dot = <View testID="presence" style={{ width: 7, height: 7 }} />;
 
@@ -179,9 +171,6 @@ describe('itemTextClamp is the clamp Item actually paints', () => {
     });
 
     it('keeps the status mark on the first line of a wrapped status subtitle', async () => {
-        const { Item } = await import('./Item');
-        const { View } = await import('react-native');
-        const { flattenTestStyle } = await import('@/dev/testkit');
         const status = 'Happier 0.2.10 on this machine · 0.2.12 available';
         const screen = await renderScreen(
             <Item title="devbox" subtitle={status} subtitleLeading={<View testID="presence" style={{ width: 7, height: 7 }} />} showChevron={false} />,
@@ -189,20 +178,17 @@ describe('itemTextClamp is the clamp Item actually paints', () => {
         const text = screen.tree.findAllByType('Text' as never).find((node: { props: Record<string, unknown> }) => node.props.children === status)!;
         const lineHeight = flattenTestStyle(text.props.style).lineHeight as number;
         const mark = screen.tree.findAll((node: { props: Record<string, unknown> }) => node.props.testID === 'presence')[0]!;
-        // The mark's slot is one subtitle line tall and sits at the top of the text, whatever the line count.
+        // The mark aligns with the first line and its slot can grow for a taller mark.
         const slot = flattenTestStyle(mark.parent!.props.style);
         const row = flattenTestStyle(mark.parent!.parent!.props.style);
-        expect(slot.height).toBe(lineHeight);
+        expect(slot.minHeight).toBe(lineHeight);
         expect(row.alignItems).toBe('flex-start');
     });
     it('draws a status mark that carries its own word even when the line has no text', async () => {
-        const { Item } = await import('./Item');
-        const { View } = await import('react-native');
         const screen = await renderScreen(<Item title="acme-site" subtitleLeading={<View testID="state" />} showChevron={false} />);
         expect(screen.tree.findAll((node: { props: Record<string, unknown> }) => node.props.testID === 'state')).toHaveLength(1);
     });
     it('keeps the separator before a middle-ellipsis suffix visible: a run of its own cannot start with a collapsible space', async () => {
-        const { Item } = await import('./Item');
         const screen = await renderScreen(<Item title="NLDW4-5-40-40 · 0da8" subtitle="No work" titleEllipsizeMode="middle" showChevron={false} />);
         const runs = screen.tree.findAllByType('Text' as never)
             .map((node: { props: Record<string, unknown> }) => node.props.children)

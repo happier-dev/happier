@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { flattenTestStyle, renderScreen } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
@@ -93,7 +93,7 @@ describe('SelectionListOptionRow accessory ownership', () => {
       const style = node?.props.style;
       const resolved =
         typeof style === 'function' ? style({ pressed: false }) : style;
-      return (resolved as { opacity?: number } | undefined)?.opacity;
+      return flattenTestStyle(resolved).opacity;
     };
     const render = (option: Parameters<typeof PlanOptionRow>[0]['option']) =>
       renderScreen(

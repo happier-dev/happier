@@ -33,10 +33,10 @@ it('settles an absent credential through the real scope resolver and exposes Hom
     await vi.waitFor(() => expect(screen.findByTestId('settings-account-security-signed-out')).not.toBeNull());
     expect(screen.findByTestId('settings-account-security-home-switching')).toBeNull();
     // No authenticated Security reader is allowed to run after the resolver
-    // settles absence. The shared presenter retains the canonical /server escape.
+    // settles absence. The shared presenter opens the Home step of setup.
     expect(harness.requestsFor('/v1/account/security')).toHaveLength(0);
     await screen.pressByTestIdAsync('settings-account-security-signed-out-action');
-    expect(routerPush).toHaveBeenCalledWith('/server');
+    expect(routerPush).toHaveBeenCalledWith('/?step=home');
 });
 
 it('keeps unreadable device credentials distinct from sign-out and retries through the scope owner', async () => {
