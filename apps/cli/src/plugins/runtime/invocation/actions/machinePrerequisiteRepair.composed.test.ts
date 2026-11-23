@@ -21,13 +21,15 @@ vi.mock('@/persistence', async original => ({ ...await original<typeof import('@
 }));
 
 describe('bundled Machine prerequisite repair parity', () => {
-  it.each(['agent', 'mcp', 'cli'] as const)('admits guidance and retains installer approval on %s', async surface => {
+  it.each(['agent', 'mcp', 'cli'] as const)('admits active prerequisite repairs and retires the Docker docs Action on %s', async surface => {
     const manifests = [DEVCONTAINER_PLUGIN.manifest, DOCKER_SANDBOXES_PLUGIN.manifest, CRABBOX_PLUGIN.manifest];
     // The person can require confirmation on CLI as well as automated surfaces.
     // Exercise that existing policy instead of assuming CLI's default asks.
     const actionsSettings = normalizeActionsSettingsV1({ v: 1, actions: Object.fromEntries([
       { pluginId: DEVCONTAINER_PLUGIN.manifest.id, localId: 'install-cli' },
       { pluginId: CRABBOX_PLUGIN.manifest.id, localId: 'install' },
+      { pluginId: DOCKER_SANDBOXES_PLUGIN.manifest.id, localId: 'install-runtime' },
+      { pluginId: DOCKER_SANDBOXES_PLUGIN.manifest.id, localId: 'sign-in' },
     ].map(action => [formatQualifiedPluginActionId(action), { approvalRequiredSurfaces: [surface] }])) });
     const bundled = loadCurrentBundledPluginLocatorResult();
     const contributes = createResolvedContributionRegistry(projectLoadedPluginContributes({ loadResult: {
@@ -48,25 +50,25 @@ describe('bundled Machine prerequisite repair parity', () => {
         // normal prompt contract instead of opening a real CLI prompt.
         requestCurrentIntent: async () => ({ status: 'rejected', code: 'plugin_action_current_intent_rejected' }),
       }) });
-      const results = [];
-      for (const [pluginId, localId, input] of [
-        [DEVCONTAINER_PLUGIN.manifest.id, 'runtime-install-docs', { runtime: 'docker' }],
-        [DOCKER_SANDBOXES_PLUGIN.manifest.id, 'install-docs', {}],
-      ] as const) {
-        results.push(await executor.execute('action.invoke', { action: { pluginId, localId }, input }, { surface, actionsSettings }));
-      }
+      const invoke = (pluginId: string, localId: string, input: Record<string, unknown> = {}) =>
+        executor.execute('action.invoke', { action: { pluginId, localId }, input }, { surface, actionsSettings });
+      await expect(invoke(DEVCONTAINER_PLUGIN.manifest.id, 'runtime-install-docs', { runtime: 'docker' }))
+        .resolves.toMatchObject({ ok: true, result: { url: 'https://installation.example.test/' } });
       for (const [pluginId, localId] of [
         [DEVCONTAINER_PLUGIN.manifest.id, 'install-cli'], [CRABBOX_PLUGIN.manifest.id, 'install'],
+        [DOCKER_SANDBOXES_PLUGIN.manifest.id, 'install-runtime'],
       ] as const) {
         // Declining ordinary confirmation must not execute a native install.
-        results.push(await executor.execute('action.invoke', { action: { pluginId, localId }, input: {} }, { surface, actionsSettings }));
+        await expect(invoke(pluginId, localId))
+          .resolves.toMatchObject({ ok: false, errorCode: 'plugin_action_current_intent_rejected' });
       }
-      expect(results).toMatchObject([
-        { ok: true, result: { url: 'https://installation.example.test/' } },
-        { ok: true, result: { url: 'https://installation.example.test/' } },
-        { ok: false, errorCode: 'plugin_action_current_intent_rejected' },
-        { ok: false, errorCode: 'plugin_action_current_intent_rejected' },
-      ]);
+      if (surface === 'cli') {
+        await expect(invoke(DOCKER_SANDBOXES_PLUGIN.manifest.id, 'sign-in'))
+          .resolves.toMatchObject({ ok: false, errorCode: 'plugin_action_current_intent_rejected' });
+      }
+      await expect(invoke(DOCKER_SANDBOXES_PLUGIN.manifest.id, 'install-docs'))
+        .resolves.toMatchObject({ ok: false, errorCode: 'contributed_action_unavailable' });
+      expect(executeClientAction).toHaveBeenCalledOnce();
     } finally { await fixture.dispose(); }
   });
 });

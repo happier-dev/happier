@@ -215,15 +215,16 @@ it.each([
     { differentBytes: true, conflictingRights: false },
     { differentBytes: false, conflictingRights: true },
 ])('isolates ambient and mounted client Actions with module bytes differing=$differentBytes and rights conflicting=$conflictingRights', async ({ differentBytes, conflictingRights }) => {
-    const pluginId = 'happier.machine.docker-sandboxes';
-    const target = { artifactId: 'docker-sandboxes-machine-native', exportName: 'activate', platform: 'web' as const };
-    const contributes = PluginContributesV2Schema.parse({ actions: [{ id: 'install-docs', title: 'Get Docker Sandboxes',
+    const pluginId = 'acme.repair';
+    const localId = 'show-prerequisites';
+    const target = { artifactId: 'repair', exportName: 'activate', platform: 'web' as const };
+    const contributes = PluginContributesV2Schema.parse({ actions: [{ id: localId, title: 'Show prerequisites',
         scopes: ['global'], surfaces: ['ui', 'plugin'], placementBindings: ['commandPalette'], dangerLevel: 'safe',
         execution: { target: 'client', client: { artifactId: target.artifactId, exportName: target.exportName },
             platforms: ['web', 'ios', 'android'] } }] });
-    const bundledOccurrence = JSON.stringify(['@happier-dev/plugins-machine-docker-sandboxes', pluginId, '0.0.0']);
-    const sourceOrigin = { serverIdentityId: 'srv_docker', sourceRef: { machineId: 'controller', pluginId,
-        sourceCustody: { kind: 'development' as const, registeredRootId: '/fixture/plugins/machine-docker-sandboxes' } } };
+    const bundledOccurrence = JSON.stringify(['@acme/repair', pluginId, '0.0.0']);
+    const sourceOrigin = { serverIdentityId: 'srv_repair', sourceRef: { machineId: 'controller', pluginId,
+        sourceCustody: { kind: 'development' as const, registeredRootId: '/fixture/plugins/repair' } } };
     const cache = createPluginReactNativeBundleCache();
     const bundledIdentity = { ...identity, pluginId, artifactId: target.artifactId };
     const mountedIdentity = { ...bundledIdentity, artifactDigest: differentBytes
@@ -231,7 +232,7 @@ it.each([
         : bundledIdentity.artifactDigest };
     for (const [exactIdentity, answer] of [[bundledIdentity, 'bundled'], [mountedIdentity, differentBytes ? 'mounted' : 'bundled']] as const) {
         cache.putInstalledArtifact({ identity: exactIdentity, format: 'plainJs', bytes: new TextEncoder().encode(
-            `exports.activate = function(api) { api.actions.register('install-docs', async function() { return '${answer}'; }); };`,
+            `exports.activate = function(api) { api.actions.register('${localId}', async function() { return '${answer}'; }); };`,
         ) });
     }
     const common = { pluginId, contributes, target, hostUiApiRange: '^1.1.0', cache, moduleReference: { exportName: 'activate' },
@@ -243,7 +244,7 @@ it.each([
             execution: { target: 'client', client: { artifactId: target.artifactId, exportName: target.exportName }, platforms: ['web'] } }] }) : contributes,
         executionOrigin: sourceOrigin, occurrenceId: `${pluginId}:42`, authority: { serverId: 'home', machineId: 'controller' } };
     const composition = createPluginUiClientExecutableComposition();
-    const address = (activation: typeof bundled | typeof mounted) => ({ family: 'actions' as const, pluginId, localId: 'install-docs',
+    const address = (activation: typeof bundled | typeof mounted) => ({ family: 'actions' as const, pluginId, localId,
         target, executionOrigin: activation.executionOrigin, occurrenceId: activation.occurrenceId });
     try {
         const results = (await composition.reconcile([bundled, mounted])).map(attempt => attempt.result);

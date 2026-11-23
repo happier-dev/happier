@@ -28,6 +28,12 @@ function fixture(run: ExecService['run'], version = '0.46.0') {
 }
 
 describe('activated Docker Sandboxes public role boundary', () => {
+  it('leaves sandbox navigation to the core Machine page', () => {
+    expect(DOCKER_SANDBOXES_PLUGIN.manifest.contributes.ui?.views ?? []).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ container: 'appPage', target: { kind: 'machine' } }),
+    ]));
+  });
+
   it('preserves authored failure details from Check through the public action', async () => {
     const refusal = new PluginError({ code: 'host_access_denied', message: 'Allow the native process', details: { phase: 'admission' } });
     const boundary = fixture(async () => { throw refusal; });

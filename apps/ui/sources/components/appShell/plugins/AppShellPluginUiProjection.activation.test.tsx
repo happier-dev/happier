@@ -167,13 +167,13 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     managedRepair?: boolean;
     artifactLabel?: string;
     scopedGrants?: PluginActionPresentUserAuthorizationFacts['scopedGrants'] } = {}) {
-    const pluginId = options.managedRepair ? 'happier.machine.docker-sandboxes' : 'acme.executable-continuity';
-    const actionId = options.managedRepair ? 'install-docs' : 'hold';
-    const artifactId = options.managedRepair ? 'docker-sandboxes-machine-native' : 'continuity';
+    const pluginId = options.managedRepair ? 'happier.devcontainer' : 'acme.executable-continuity';
+    const actionId = options.managedRepair ? 'runtime-install-docs' : 'hold';
+    const artifactId = options.managedRepair ? 'runtime-install' : 'continuity';
     const occurrenceId = options.managedRepair ? `${pluginId}:42` : defaultOccurrenceId;
     const executionOrigin = options.managedRepair
         ? { serverIdentityId, sourceRef: { machineId: 'machine-live', pluginId,
-            sourceCustody: { kind: 'development' as const, registeredRootId: '/fixture/plugins/machine-docker-sandboxes' } } }
+            sourceCustody: { kind: 'development' as const, registeredRootId: '/fixture/plugins/devcontainer' } } }
         : origin;
     pluginBoundary.pending = createDeferred<string>();
     pluginBoundary.cleanups = 0;
@@ -239,7 +239,7 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
         api.actions.register('${actionId}', async function(input, context) {
             globalThis.executableContinuityFixture.signal = context.signal;
             if (${options.managedRepair === true}) {
-                await context.ui.executeAction('links.openExternal', { url: 'https://docs.docker.com/ai/sandboxes/install/' }, { signal: context.signal });
+                await context.ui.executeAction('links.openExternal', { url: 'https://docs.docker.com/engine/install/' }, { signal: context.signal });
             }
             if (${options.searchProvider === true}) return { items: [{ id: 'match', title: input.query,
                 command: { kind: 'openSurface', destination: 'details' } }], truncated: false };
@@ -286,7 +286,7 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     daemon.projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
         installedPackagesById: { [pluginId]: { id: pluginId, displayName: pluginId, version: '1.0.0', enabled: true,
             occurrenceId: occurrenceId, executionOrigin, sourceCustody: executionOrigin.sourceRef.sourceCustody,
-            source: { kind: options.managedRepair ? 'bundled' : 'localPath', locator: options.managedRepair ? '@happier-dev/plugins-machine-docker-sandboxes' : `/fixture/plugins/${pluginId}` } } },
+            source: { kind: options.managedRepair ? 'bundled' : 'localPath', locator: options.managedRepair ? '@happier-dev/plugins-devcontainer' : `/fixture/plugins/${pluginId}` } } },
         agentsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
         actionsById: { [`${pluginId}/${actionId}`]: { ...projectedAction, pluginId, available: true,
             occurrenceId: occurrenceId, executionOrigin,
@@ -295,9 +295,9 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
                 appliedGeneration: options.coldDaemon || options.managedRepair ? null : occurrenceId, targetGenerationMode: 'current' },
                 resourceSelections: [], scopedGrants: options.scopedGrants ?? [], serviceAvailability: [], operatingSystemAuthorization: [] } } },
         familiesById: { pluginUi: { family: 'pluginUi', entriesById: {
-            ...(options.managedRepair ? { [`reactNativeBundle:${pluginId}:sandboxes-machine-native`]: {
-                id: `reactNativeBundle:${pluginId}:sandboxes-machine-native`, pluginId, contributionKind: 'reactNativeBundle',
-                contributionId: 'sandboxes-machine-native', occurrenceId, executionOrigin,
+            ...(options.managedRepair ? { [`reactNativeBundle:${pluginId}:runtime-install-renderer`]: {
+                id: `reactNativeBundle:${pluginId}:runtime-install-renderer`, pluginId, contributionKind: 'reactNativeBundle',
+                contributionId: 'runtime-install-renderer', occurrenceId, executionOrigin,
                 generatedOwnerKind: 'renderer', artifactGraph, artifactSelectionOwner: 'daemonProjection',
                 entry: { artifactId, exportName: 'renderSurface' },
                 runtime: { decision: { state: 'load', reason: 'compatible' }, loadPolicy: { source: 'installedArtifact' }, cacheIdentity: { artifactDigest }, cacheKey: artifactDigest },
@@ -338,7 +338,7 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     daemon.projection = PluginProjectionV2Schema.parse({ ...combined,
         installedPackagesById: { [pluginId]: combined.installedPackagesById[pluginId] }, actionsById: { [`${pluginId}/${actionId}`]: firstAction },
         familiesById: { pluginUi: { family: 'pluginUi', entriesById: {
-            ...(options.managedRepair ? { [`reactNativeBundle:${pluginId}:sandboxes-machine-native`]: ownPluginUi.entriesById[`reactNativeBundle:${pluginId}:sandboxes-machine-native`] } : {}),
+            ...(options.managedRepair ? { [`reactNativeBundle:${pluginId}:runtime-install-renderer`]: ownPluginUi.entriesById[`reactNativeBundle:${pluginId}:runtime-install-renderer`] } : {}),
             [`reactNativeBundle:${pluginId}:${actionId}`]: firstBundle,
             ...(options.searchProvider ? { [`searchProvider:${pluginId}:entries`]: {
                 id: `searchProvider:${pluginId}:entries`, pluginId, occurrenceId: occurrenceId,
@@ -457,7 +457,7 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     const dispatch = () => dispatchPluginSurfaceAction({ action: { pluginId, localId: actionId }, input: null, clientAction: { sessionId: 'session-continuity' },
         resolveContributedAction: identity => createPluginUiProjectedActionResolver(readObserved()?.pluginUiProjection?.actionsById)(identity) });
     const fixture = { lifetime, machine, peerMachine, materialization, snapshot, address, composition, screen, dispatch,
-        repairAction: { action: { pluginId, localId: actionId }, input: {} },
+        repairAction: { action: { pluginId, localId: actionId }, input: { runtime: 'docker' } },
         readObserved, readMounted, readMountedController, readMountedLifetime, unmountDemand, presentDemand, readObservedAt: () => observedAt,
         readManagedPresentation: () => managedPresentation };
     if (options.waitForAdmission === false) return { ...fixture, registration: null };
@@ -689,7 +689,7 @@ it('dispatches a controller prerequisite repair through the mounted managed cata
     if (!binding) throw new Error('Missing routed repair lifetime');
     const result = await fixture.readManagedPresentation()?.repair(fixture.repairAction, binding);
     expect(result).toEqual({ ok: true, result: 'install reviewed' });
-    expect(opened).toHaveBeenCalledExactlyOnceWith('https://docs.docker.com/ai/sandboxes/install/');
+    expect(opened).toHaveBeenCalledExactlyOnceWith('https://docs.docker.com/engine/install/');
 });
 
 it('withdraws executable authority before AppShell unmount cleanup yields to a successor', async () => {

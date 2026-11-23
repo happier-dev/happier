@@ -3,7 +3,7 @@ import { Buffer } from 'node:buffer';
 import { machinePresentationLabel, machineCheckPresentation } from './ui/translations.js';
 import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { defineProtocolJsonValue, defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolJsonValue, defineProtocolLiteral, defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
 import {
   observeMachineProvisionerNativeRead,
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
@@ -221,13 +221,6 @@ export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
         });
         return null;
       },
-    },
-    'install-docs': { title: { key: 'machineDocker.page.getApp', fallback: 'Get Docker Sandboxes' },
-      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], dangerLevel: 'safe',
-      execution: { target: 'client', client: { artifactId: 'docker-sandboxes-machine-native', exportName: 'activate' },
-        platforms: ['web', 'ios', 'android'] },
-      inputSchema: defineProtocolObject({}, { policy: 'closed' }),
-      resultSchema: defineProtocolUnion([defineProtocolLiteral(null), defineProtocolObject({ url: defineProtocolString() }, { policy: 'closed' })]),
     },
     check: { ...actionDefaults, title: 'Check Docker Sandboxes', dangerLevel: 'safe',
       inputSchema: DOCKER_SANDBOXES_ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
