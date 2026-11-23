@@ -32,7 +32,7 @@ export type UsageWidgetBodyModel = Readonly<{
     freshness: PluginUiResourceSnapshot['freshness']; updatingPreviousPeriod: boolean;
     /** The shown facts' own read is in flight. Another source still outstanding is that source's state, not this. */
     refreshing: boolean;
-    refresh(callerContext?: ActionExecutorContext): Promise<void>;
+    refresh(callerContext?: ActionExecutorContext, options?: { failedOnly: true }): Promise<void>;
 }>;
 const EMPTY_SNAPSHOT: PluginUiResourceSnapshot = Object.freeze({ freshness: 'unknown', pending: 'idle', subscription: 'ended' });
 type UsageWidgetBodySnapshot = Readonly<Pick<PluginUiResourceSnapshot, 'freshness' | 'error'> & {
@@ -241,7 +241,9 @@ function useUsageWidgetQueryModelSelection<T>(resource: UsageWidgetResource | nu
     const sourceError = slice?.sources.find(source => source.errorCode);
     const error = React.useMemo(() => snapshot.error ?? (sourceError
         ? { code: sourceError.errorCode!, message: sourceError.errorCode! } : null), [snapshot.error, sourceError]);
-    const refresh = React.useCallback(async (callerContext?: ActionExecutorContext) => { if (lifetime?.isCurrent()) await entry?.refresh({ callerContext }); }, [entry, lifetime]);
+    const refresh = React.useCallback(async (callerContext?: ActionExecutorContext, options?: { failedOnly: true }) => {
+        if (lifetime?.isCurrent()) await entry?.refresh({ callerContext, failedOnly: options?.failedOnly });
+    }, [entry, lifetime]);
     // The batch may still be reading private detail or allowance after accounting
     // settles. Those sources keep their own pending state; they do not re-read
     // the already shown accounting. Before the first progress snapshot, retain

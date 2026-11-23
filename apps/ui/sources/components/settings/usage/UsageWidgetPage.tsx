@@ -602,16 +602,17 @@ function resolveUsagePageNotice(
   startSession: () => void,
 ): UsagePageNotice | null {
   const { pending, failure, newerServer, partial } = facts;
-  // The page Retry also recovers Views. A refusal without a Retry yields to the Views recovery.
-  if (failure && (!layouts || (failure.retryable && retry))) {
+  // A refusal is disclosed independently. This line owns recovery for the unread data and Views.
+  if (failure?.reason) {
     // When the saved views could not be read either, the one notice says both: its Retry rereads both (J-B8).
     const reason = layouts ? [failure.reason, t('usage.board.page.viewsReadFailed')].join(' · ') : failure.reason;
     return { testID: 'usage-page.header.failed', reason, tone: failure.quiet && !layouts ? 'neutral' : 'warning',
       // The page still shows what arrived: on a phone the line says "Partial" with Details beside its Retry (#9).
-      short: t('usage.board.charts.coveragePartialShort'),
+      ...(!layouts ? { short: t('usage.board.charts.coveragePartialShort') } : {}),
       // The one Retry, which also rereads the views and Sessions that failed: bodies with nothing to draw only
       // say they were not read (`UsageBodyReadFailed`).
-      ...(failure.retryable && retry ? { action: { label: t('common.retry'), onPress: retry, testID: 'usage-page.header.retry' } } : {}) };
+      ...(failure.retryable && retry ? { action: { label: t('common.retry'), onPress: retry, testID: 'usage-page.header.retry' } }
+        : layouts ? { action: { label: t('common.retry'), onPress: layouts.retry, testID: 'usage-page.header.viewsRetry' } } : {}) };
   }
   if (layouts) {
     return { testID: 'usage-page.header.viewsFailed', reason: t('usage.board.page.viewsReadFailed'), tone: 'warning',
@@ -691,16 +692,10 @@ function UsagePageHeader(
         </View>
       </SurfaceFreshnessOnSheetProvider>
     );
-    if (scopeRefusal && !layouts) return (
-      <SurfaceFreshnessOnSheetProvider>
-        <View style={styles.headerLine}>
-          <UsageScopeRefusalLine testID="usage-page.header.scopeRefused" code={scopeRefusal.code} onChangeScope={onChangeScope} />
-        </View>
-      </SurfaceFreshnessOnSheetProvider>
-    );
     const resolved = resolveUsagePageNotice(props.appsShown ? { ...props.facts, nothingRecorded: false } : props.facts,
       retry, history, layouts, startSession);
-    if (!resolved && olderReadAtMs === null && !olderSource) return null;
+    const showFreshness = !!resolved || olderReadAtMs !== null || olderSource !== null;
+    if (!scopeRefusal && !showFreshness) return null;
     const testID = resolved?.testID ?? 'usage-page.header.freshness';
     // The short word stands in only when the sentence is longer; Details is offered only when opening adds text.
     const shortened = phone && resolved?.short && resolved.short !== resolved.reason ? resolved.short : null;
@@ -720,7 +715,8 @@ function UsagePageHeader(
     return (
       <SurfaceFreshnessOnSheetProvider>
         <View style={styles.headerLine}>
-        <SurfaceFreshnessLine
+        {scopeRefusal && <UsageScopeRefusalLine testID="usage-page.header.scopeRefused" codes={scopeRefusal.codes} onChangeScope={onChangeScope} />}
+        {showFreshness && <SurfaceFreshnessLine
           // A phone's notice is a line, never an ellipsis: its date (and "older reading") and the words share one
           // line when they fit and stack when they do not, so nothing is cut before Details and Retry (#9, 11-21 #17).
           presentation={phone || expanded ? 'line' : 'inline'}
@@ -732,7 +728,7 @@ function UsagePageHeader(
           {...(resolved?.busy ? { busy: true } : {})}
           {...(detail ? { actions: resolved?.action ? [detail, resolved.action] : [detail] }
             : resolved?.action ? { action: resolved.action } : {})}
-        />
+        />}
         </View>
       </SurfaceFreshnessOnSheetProvider>
     );

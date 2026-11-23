@@ -7,7 +7,11 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { UsageAccountingMetricSchema, type UsageAccountingMetric, type UsageHistoryReadState, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageBuiltinWidgetIdV1 } from '@happier-dev/protocol/widgets';
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import {
+  canRetryUsageCoverageFailure, isUsageCoverageFailure, isUsageQuotaOwnershipUnproven, needsNewerServer,
+  usagePageReadFamily, usageScopeRefusalCode,
+} from '@/sync/api/account/usageReadFailure';
+export { canRetryUsageCoverageFailure, isUsageCoverageFailure, isUsageQuotaOwnershipUnproven } from '@/sync/api/account/usageReadFailure';
 import {
   readUsageAccountingReadAtMs,
   readUsageOldestAccountingObservation,
@@ -654,11 +658,12 @@ export function UsageBodyReadFailed(props: Readonly<{
   const gaps = resourceFailure ? [] : readUsageCoverageGaps(props.slice, props.sources);
   const failed = resourceFailure || gaps.some(gap => gap.status === 'error');
   const hidden = pageHasDetail && failed && !resourceFailure && usageCoverageLineMode(gaps, true) === 'hidden';
-  const refusalCode = resourceFailure
-    ? usageScopeRefusalCode({ source: 'accounting', status: 'error', errorCode: props.errorCode })
-    : readUsageScopeRefusal(gaps)?.code;
-  const retry = useUsageRetryCommand(props.onRetry, !hidden && !refusalCode);
-  if (refusalCode) return hidden ? null : <UsageScopeRefusalLine testID={`${props.testID}.scopeRefused`} code={refusalCode} />;
+  const visibleGaps = pageHasDetail ? gaps.filter(gap => !isUsagePageReadSource(gap.source)) : gaps;
+  const refusal = readUsageScopeRefusal(resourceFailure
+    ? [{ source: 'accounting', status: 'error', errorCode: props.errorCode }] : visibleGaps);
+  const canRetry = resourceFailure ? !refusal : visibleGaps.some(canRetryUsageCoverageFailure) || gaps.length === 0;
+  const retry = useUsageRetryCommand(props.onRetry, !hidden && canRetry);
+  if (hidden && readUsageScopeRefusal(gaps) && !gaps.some(canRetryUsageCoverageFailure)) return null;
   if (hidden)
     return (
       <SurfaceStateCard
@@ -671,15 +676,18 @@ export function UsageBodyReadFailed(props: Readonly<{
       />
     );
   return (
-    <SurfaceStateCard
-      testID={`${props.testID}.${resourceFailure ? 'error' : 'unavailable'}`}
-      kind={failed ? 'error' : 'unavailable'}
-      layout="inline"
-      {...(resourceFailure ? { diagnosticCode: props.errorCode } : { size: 'line' as const, replacesContent: false })}
-      title={t('usage.board.page.readFailedTitle')}
-      reason={t('usage.board.page.readFailedReason')}
-      action={{ label: t('common.retry'), onPress: retry }}
-    />
+    <>
+      {refusal && <UsageScopeRefusalLine testID={`${props.testID}.scopeRefused`} codes={refusal.codes} />}
+      {(!refusal || canRetry) && <SurfaceStateCard
+        testID={`${props.testID}.${resourceFailure ? 'error' : 'unavailable'}`}
+        kind={failed ? 'error' : 'unavailable'}
+        layout="inline"
+        {...(resourceFailure ? { diagnosticCode: props.errorCode } : { size: 'line' as const, replacesContent: false })}
+        title={t('usage.board.page.readFailedTitle')}
+        reason={t('usage.board.page.readFailedReason')}
+        {...(canRetry ? { action: { label: t('common.retry'), onPress: retry } } : {})}
+      />}
+    </>
   );
 }
 
@@ -780,11 +788,6 @@ export function readUsageCoverageGaps(
 
 type UsageCoverageStatus = Pick<UsageQuerySourceState, 'source' | 'status' | 'errorCode'>;
 
-export function isUsageCoverageFailure(source: UsageCoverageStatus): boolean {
-  return source.status === 'error' || source.source === 'work' && source.errorCode === 'work_evidence_failed'
-    || source.status === 'stale' && source.errorCode !== undefined && usagePageReadFamily(source.source) === 'quota';
-}
-
 function isUsageWorkOffline(source: UsageQuerySourceState): boolean {
   return source.source === 'work' && source.errorCode === 'machine_offline';
 }
@@ -854,40 +857,21 @@ export function describeUsageHistoryRead(state: UsageHistoryReadState | null): R
  * failure to retry: it is worded as needing a newer server and offers no Retry. Other components keep the
  * ordinary failure wording rather than being relabelled.
  */
-function needsNewerServer(gap: Pick<UsageQuerySourceState, 'status' | 'updateRequired'>): boolean {
-  return gap.status === 'error' && gap.updateRequired?.component === 'server';
-}
-
-export function isUsageQuotaOwnershipUnproven(state: UsageQuerySourceState): boolean {
-  return usagePageReadFamily(state.source) === 'quota' && state.errorCode === 'ownership_unproven';
-}
-
-function usageScopeRefusalCode(state: UsageCoverageStatus) {
-  if (!isUsageCoverageFailure(state)) return null;
-  switch (state.errorCode) {
-    case 'denied':
-    case 'permission_denied':
-    case 'unauthorized':
-    case 'forbidden':
-    case RPC_ERROR_CODES.FORBIDDEN:
-    case 'not_found':
-      return state.errorCode;
-    default:
-      return null;
-  }
-}
-
 function readUsageScopeRefusal(states: readonly UsageCoverageStatus[]) {
+  const codes = new Set<NonNullable<ReturnType<typeof usageScopeRefusalCode>>>();
+  let canChangePageScope = false;
   for (const state of states) {
     const code = usageScopeRefusalCode(state);
-    if (code) return { code, canChangePageScope: usagePageReadFamily(state.source) !== 'quota' };
+    if (!code) continue;
+    codes.add(code);
+    canChangePageScope ||= usagePageReadFamily(state.source) !== 'quota';
   }
-  return null;
+  return codes.size ? { codes: [...codes], canChangePageScope } : null;
 }
 
 export function UsageScopeRefusalLine(props: Readonly<{
   testID: string;
-  code: NonNullable<ReturnType<typeof usageScopeRefusalCode>>;
+  codes: readonly NonNullable<ReturnType<typeof usageScopeRefusalCode>>[];
   onChangeScope?: () => void;
 }>) {
   return (
@@ -906,14 +890,10 @@ export function UsageScopeRefusalLine(props: Readonly<{
       <TechnicalDetailsDisclosure
         title={t('approvals.technicalDetails')}
         testID={`${props.testID}.technicalDetails`}
-        lines={[{ key: 'code', label: t('approvals.failureTechnicalLabels.causeCode'), value: props.code }]}
+        lines={props.codes.map(code => ({ key: code, label: t('approvals.failureTechnicalLabels.causeCode'), value: code }))}
       />
     </>
   );
-}
-
-export function canRetryUsageCoverageFailure(state: UsageQuerySourceState): boolean {
-  return isUsageCoverageFailure(state) && !needsNewerServer(state) && !isUsageQuotaOwnershipUnproven(state) && !usageScopeRefusalCode(state);
 }
 
 /** One wording owner for the page's Sources chooser and the failed or pending line. */
@@ -954,10 +934,6 @@ export function usageCoverageLineMode(gaps: readonly UsageCoverageStatus[], page
 /** The page header's one "Still reading …" fact: every source any view's read still waits on, named once. */
 const USAGE_PAGE_READ_SOURCES: ReadonlySet<string> = new Set(['accounting', 'quota', 'work', 'how_you_work']);
 
-function usagePageReadFamily(source: string): string {
-  return source.startsWith('quota:') ? 'quota' : source;
-}
-
 function isUsagePageReadSource(source: string): boolean {
   return USAGE_PAGE_READ_SOURCES.has(usagePageReadFamily(source));
 }
@@ -984,11 +960,10 @@ export function describeUsagePageNewerServerSources(slices: readonly Pick<UsageQ
 export function readUsagePageFailure(slices: readonly Pick<UsageQueryResultSlice, 'sources' | 'howYouWork'>[]) {
   const failures = readUsagePageFailures(slices);
   const scopeRefusal = readUsageScopeRefusal(failures);
-  if (scopeRefusal) return { scopeRefusal, reason: t('usage.board.page.scopeReadRefused'), quiet: true, retryable: false, retainedQuotaAsOfMs: null };
   const retryable = failures.filter(canRetryUsageCoverageFailure);
   const ownershipUnproven = failures.some(isUsageQuotaOwnershipUnproven);
-  if (!retryable.length && !ownershipUnproven) return null;
-  const quiet = failures.every(source => source.source === 'work');
+  if (!scopeRefusal && !retryable.length && !ownershipUnproven) return null;
+  const quiet = !ownershipUnproven && retryable.every(source => source.source === 'work');
   const names = [...new Set(retryable.map(source => usageSourceTitle(usagePageReadFamily(source.source))))].join(', ');
   const witnessed = readUsagePageWitnessedNames(slices);
   const reason = [
@@ -1000,7 +975,7 @@ export function readUsagePageFailure(slices: readonly Pick<UsageQueryResultSlice
   const quotaTimes = retryable.flatMap(source => usagePageReadFamily(source.source) === 'quota' && source.asOfMs !== undefined ? [source.asOfMs] : []);
   // An ownership refusal is retried by an explicit reread (the owner's same-material recovery), so the notice offers the
   // page's one Retry for it too (acceptance 11-22 #20).
-  return { scopeRefusal: null, reason, quiet, retryable: retryable.length > 0 || ownershipUnproven, retainedQuotaAsOfMs: quotaTimes.length ? Math.min(...quotaTimes) : null };
+  return { scopeRefusal, reason, quiet, retryable: retryable.length > 0 || ownershipUnproven, retainedQuotaAsOfMs: quotaTimes.length ? Math.min(...quotaTimes) : null };
 }
 
 /**
@@ -1021,7 +996,7 @@ function readUsagePageWitnessedNames(slices: readonly Pick<UsageQueryResultSlice
 /** Said alone only when no page read failed; otherwise the failed fact carries it. */
 export function describeUsagePagePartialSources(slices: readonly Pick<UsageQueryResultSlice, 'sources' | 'howYouWork'>[]): string | null {
   const names = readUsagePageWitnessedNames(slices);
-  if (!names.length || readUsagePageFailures(slices).some(state => !needsNewerServer(state))) return null;
+  if (!names.length || readUsagePageFailures(slices).some(canRetryUsageCoverageFailure)) return null;
   return t('usage.board.page.coverageWitnessed', { sources: names.join(', ') });
 }
 
@@ -1083,31 +1058,25 @@ export function UsageCoverageLine(
   props: Readonly<{
     slice: UsageQueryResultSlice;
     sources: readonly string[];
-    onRetry?: (callerContext?: ActionExecutorContext) => void | Promise<unknown>;
+    onRetry?: (callerContext?: ActionExecutorContext, options?: { failedOnly: true }) => void | Promise<unknown>;
     testID: string;
   }>,
 ) {
   const pageHasDetail = useUsageWidgetPageHasCoverageDetail();
-  const gaps = readUsageCoverageGaps(props.slice, props.sources);
-  const mode = usageCoverageLineMode(gaps, pageHasDetail);
-  const failed = mode === 'failed' || gaps.some(gap => isUsageCoverageFailure(gap) && !needsNewerServer(gap));
-  const refusal = readUsageScopeRefusal(gaps);
-  const canRetry = !refusal && gaps.some(canRetryUsageCoverageFailure) && !!props.onRetry;
-  const retry = useUsageRetryCommand(callerContext => props.onRetry?.(callerContext), mode !== 'hidden' && canRetry);
+  const allGaps = readUsageCoverageGaps(props.slice, props.sources);
+  const mode = usageCoverageLineMode(allGaps, pageHasDetail);
+  const visibleGaps = mode === 'failed'
+    ? allGaps.filter(gap => isUsageCoverageFailure(gap) && !isUsagePageReadSource(gap.source)) : allGaps;
+  const refusal = readUsageScopeRefusal(visibleGaps);
+  const gaps = visibleGaps.filter(gap => !usageScopeRefusalCode(gap));
+  const failed = gaps.some(gap => isUsageCoverageFailure(gap) && !needsNewerServer(gap));
+  const canRetry = gaps.some(canRetryUsageCoverageFailure) && !!props.onRetry;
+  const retry = useUsageRetryCommand((callerContext, options) => props.onRetry?.(callerContext, options), mode !== 'hidden' && canRetry);
   if (mode === 'hidden') return null;
-  if (refusal) return <UsageScopeRefusalLine testID={props.testID} code={refusal.code} />;
-  if (mode === 'failed') {
-    // One short line: what failed, with its Retry; the detail is in Sources.
-    const names = [...new Set(gaps.filter(isUsageCoverageFailure).map(gap => usageSourceTitle(gap.source)))].join(', ');
-    return (
-      <SurfaceFreshnessLine
-        testID={props.testID}
-        tone="warning"
-        reason={t('usage.board.page.coverageFailed', { sources: names })}
-        {...(canRetry ? { action: { label: t('common.retry'), onPress: retry } } : {})}
-      />
-    );
-  }
+  // On a page only local failures are here. Shared sources have their recovery in the page notice.
+  const reason = mode === 'failed'
+    ? t('usage.board.page.coverageFailed', { sources: [...new Set(gaps.map(gap => usageSourceTitle(gap.source)))].join(', ') })
+    : usageCoverageSummary(props.slice, props.sources);
   const pending = gaps.every(
     (gap) => gap.status === 'pending' || gap.status === 'not_loaded',
   );
@@ -1121,15 +1090,16 @@ export function UsageCoverageLine(
     null,
   );
   return (
-    <SurfaceFreshnessLine
-      testID={props.testID}
-      busy={pending}
-      tone={failed ? 'warning' : 'neutral'}
-      reason={[...(asOf === null ? [] : [t('usage.board.page.oldestSourceUpdate', { time: formatUsageObservedAt(asOf) })]), usageCoverageSummary(props.slice, props.sources)].join(' · ')}
-      {...(canRetry
-        ? { action: { label: t('common.retry'), onPress: retry } }
-        : {})}
-    />
+    <>
+      {refusal && <UsageScopeRefusalLine testID={gaps.length ? `${props.testID}.scopeRefused` : props.testID} codes={refusal.codes} />}
+      {gaps.length > 0 && <SurfaceFreshnessLine
+        testID={props.testID}
+        busy={pending}
+        tone={failed ? 'warning' : 'neutral'}
+        reason={[...(asOf === null ? [] : [t('usage.board.page.oldestSourceUpdate', { time: formatUsageObservedAt(asOf) })]), reason].join(' · ')}
+        {...(canRetry ? { action: { label: t('common.retry'), onPress: retry } } : {})}
+      />}
+    </>
   );
 }
 

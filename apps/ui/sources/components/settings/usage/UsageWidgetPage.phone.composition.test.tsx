@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { UsageAnalyticsQueryBatchRequestSchema, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { UsageAnalyticsQueryBatchRequestSchema, type UsageAnalyticsQueryRequest, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+
+import { getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
@@ -43,7 +45,7 @@ vi.mock('socket.io-client', async (importOriginal) =>
   ).createSocketIoClientBoundary(importOriginal),
 );
 
-const { publishAppliedActiveServerSnapshot } =
+const { publishAppliedActiveServerRuntimeAvailability, publishAppliedActiveServerSnapshot } =
   await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
 const { retireActiveServerAccountScopeLifetime } =
   await import('@/sync/domains/scope/activeServerAccountScope');
@@ -60,6 +62,7 @@ const { WidgetAreaLayoutBar } =
   await import('@/components/widgets/area/WidgetAreaLayoutBar');
 const { UsageFilterBar } = await import('./UsageFilterBar');
 const { UsageWidgetPage } = await import('./UsageWidgetPage');
+const { UsageBodyReadFailed, UsageCoverageLine, usageSourceTitle } = await import('./widgets/usageBodyKit');
 const { SurfaceFreshnessLine } =
   await import('@/components/ui/surfaces/SurfaceFreshnessLine');
 const { t } = await import('@/text');
@@ -121,6 +124,11 @@ async function renderUsagePage(
   beforeRender?: (serverId: string) => Promise<void>,
   sessionId?: string,
   sources?: string[],
+  failures?: {
+    savedViewsUnread: boolean;
+    viewsReads: number;
+    batch: (queries: readonly UsageAnalyticsQueryRequest[]) => Response;
+  },
 ) {
   const artifacts = createArtifactStoreBoundary({
     ownerAccountId: () => 'account-a',
@@ -141,14 +149,20 @@ async function renderUsagePage(
         : request.path === '/v1/kv/bulk'
           ? Response.json({ values: [] })
           : request.path === '/v2/usage/query-batch'
-            ? refuseRead
+            ? failures ? failures.batch(UsageAnalyticsQueryBatchRequestSchema.parse(request.body).queries)
+              : refuseRead
               ? Response.json({ v: 1, results: UsageAnalyticsQueryBatchRequestSchema.parse(request.body).queries.map(query => ({ query, error: 'not_found' })) })
               : undefined
           : request.path === '/v2/usage/query'
             ? readFails
               ? Response.json({ error: 'unavailable' }, { status: 503 })
               : Response.json(response)
-            : (artifacts.handle(request.url.toString(), {
+            : request.path === '/v1/artifacts' && request.method === 'GET'
+                && request.url.searchParams.get('kind') === 'widget_area_layout' && failures
+              ? (++failures.viewsReads, failures.savedViewsUnread
+                ? Response.json({ error: 'database_transaction_timeout' }, { status: 503 })
+                : artifacts.handle(request.url.toString(), { method: request.method }) ?? undefined)
+              : (artifacts.handle(request.url.toString(), {
                 method: request.method,
               }) ?? createEmptyAccountBootstrapHttpResponse(request.path, {
                 method: request.method,
@@ -165,32 +179,33 @@ async function renderUsagePage(
     server.serverUrl,
   ))!;
   await beforeRender?.(server.id);
-  const screen = await renderScreen(
+  const chrome = (<UsageWidgetPage
+    sessionId={sessionId}
+    initialFilters={{
+      layoutId,
+      period: '7days',
+      metric: layoutId === 'costs' ? 'cost' : 'tokens',
+      costMode: 'auto',
+      focus: null,
+      scope: sources ? { period: { relative: '7days' }, agents: [], machines: [], projects: [], sources, session: null, costBasis: 'auto' } : undefined,
+    }}
+  />);
+  const renderOptions = {
+    createNodeMock: (node: React.ReactElement<{ testID?: string }>) => node.props.testID === 'usage-page'
+      ? { getInnerViewRef: () => visibleContentGeometry } : visibleContentGeometry,
+  };
+  if (failures) publishAppliedActiveServerRuntimeAvailability(true);
+  const screen = failures ? await (await import('@/dev/testkit/harness/mountedCurrentUiContext')).renderMountedCurrentUiContext(chrome, renderOptions) : await renderScreen(
     <InjectedAuthProvider credentials={credentials}>
       <MainAppTabStateProvider>
         <AppPaneProvider>
           <CurrentUiContextProvider>
-            <UsageWidgetPage
-              sessionId={sessionId}
-              initialFilters={{
-                layoutId,
-                period: '7days',
-                metric: layoutId === 'costs' ? 'cost' : 'tokens',
-                costMode: 'auto',
-                focus: null,
-                scope: sources ? { period: { relative: '7days' }, agents: [], machines: [], projects: [], sources, session: null, costBasis: 'auto' } : undefined,
-              }}
-            />
+            {chrome}
           </CurrentUiContextProvider>
         </AppPaneProvider>
       </MainAppTabStateProvider>
     </InjectedAuthProvider>,
-    {
-      createNodeMock: (node) =>
-        node.props.testID === 'usage-page'
-          ? { getInnerViewRef: () => visibleContentGeometry }
-          : visibleContentGeometry,
-    },
+    renderOptions,
   );
   await act(async () => {
     screen.findByTestId('usage-page')!.props.onLayout?.({
@@ -286,6 +301,95 @@ it.each([
   await screen.pressByTestIdAsync('usage-page.header.scopeRefused.changeScope');
   expect(expanded(chooser)).toBe(true);
   expect(expanded(otherChooser)).not.toBe(true);
+});
+
+it.each([
+  { label: 'refusal only', refused: true, transient: false, views: false },
+  { label: 'transient only', refused: false, transient: true, views: false },
+  { label: 'refusal and transient in one batch', refused: true, transient: true, views: false },
+  { label: 'refusal and unread Views', refused: true, transient: false, views: true },
+  { label: 'transient and unread Views', refused: false, transient: true, views: true },
+  { label: 'refusal, transient and unread Views', refused: true, transient: true, views: true },
+])('J-B30 Usage page keeps each outcome and one recovery for $label', async ({ refused, transient, views }) => {
+  Object.assign(viewport, { width: 1440, height: 900 });
+  vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Macintosh)', maxTouchPoints: 0 });
+  let recover = false;
+  const batches: UsageAnalyticsQueryRequest[][] = [];
+  const isRefused = (query: UsageAnalyticsQueryRequest) => refused && query.includeSeries === true;
+  const failures = {
+    savedViewsUnread: views,
+    viewsReads: 0,
+    batch(queries: readonly UsageAnalyticsQueryRequest[]) {
+      batches.push([...queries]);
+      return Response.json({ v: 1, results: queries.map(query => isRefused(query)
+        ? { query, error: 'not_found' }
+        : transient && !recover ? { query, error: 'usage_query_failed' } : { query, value: accounting }) });
+    },
+  };
+  const screen = await renderUsagePage('overview', accounting, undefined, undefined, ['codex-native'], failures);
+  const retries = () => screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityLabel === t('common.retry'));
+  const notices = () => screen.findAllByType(SurfaceFreshnessLine)
+    .filter(line => line.props.testID?.startsWith('usage-page.header.')).map(line => line.props.reason);
+  const refusal = t('usage.board.page.scopeReadRefused');
+  const viewsFailed = t('usage.board.page.viewsReadFailed');
+  const readFailed = t('usage.board.page.coverageFailed', { sources: usageSourceTitle('accounting') });
+  await waitForHomeGovernance(() => {
+    if (refused) expect(notices()).toContain(refusal);
+    if (views) expect(notices().some(reason => reason?.includes(viewsFailed))).toBe(true);
+    if (transient) expect(notices().some(reason => reason?.includes(readFailed))).toBe(true);
+    expect(retries()).toHaveLength(transient || views ? 1 : 0);
+  });
+  if (refused && transient) expect(batches.some(batch => batch.some(isRefused) && batch.some(query => !isRefused(query)))).toBe(true);
+  if (refused) {
+    expect(screen.findHostByTestId('usage-page.header.scopeRefused.changeScope')).not.toBeNull();
+    expect(screen.getTextContent()).not.toContain('denied');
+    await screen.pressByTestIdAsync('usage-page.header.scopeRefused.technicalDetails.header');
+    expect(screen.getTextContent()).toContain('denied');
+  }
+  if (!transient && !views) return;
+  const lastBatch = batches.length;
+  const lastViewsReads = failures.viewsReads;
+  recover = true;
+  failures.savedViewsUnread = false;
+  await screen.pressByTestIdAsync(transient ? 'usage-page.header.retry' : 'usage-page.header.viewsRetry');
+  await waitForHomeGovernance(() => {
+    if (transient) expect(batches.length).toBeGreaterThan(lastBatch);
+    if (views) expect(failures.viewsReads).toBeGreaterThan(lastViewsReads);
+    expect(retries()).toHaveLength(0);
+  });
+  expect(batches.slice(lastBatch).flat().some(isRefused)).toBe(false);
+  if (refused) expect(notices()).toContain(refusal);
+});
+
+it('J-B30 a host without a Usage header discloses a refusal and recovers a sibling', async () => {
+  home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-tile.test', accountId: 'account-a' }] });
+  const server = home.homes.a!;
+  publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+  publishAppliedActiveServerRuntimeAvailability(true);
+  const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+  const query = normalizeUsageQuery({});
+  const slice = {
+    key: getUsageQueryKey(query), requestedQuery: query, shownQuery: query, pending: false,
+    sources: [
+      { source: 'accounting', status: 'error', errorCode: 'denied' },
+      { source: 'quota', status: 'error', errorCode: 'quota_read_failed' },
+    ] as const,
+  };
+  const onRetry = vi.fn();
+  const render = async (variant: 'line' | 'body') => {
+    const Component = variant === 'line' ? UsageCoverageLine : UsageBodyReadFailed;
+    return renderMountedCurrentUiContext(<Component slice={{ ...slice, sources: [...slice.sources] }} sources={['accounting', 'quota']}
+      testID={'mixed.' + variant} onRetry={onRetry} />);
+  };
+  for (const variant of ['line', 'body'] as const) {
+    const screen = await render(variant);
+    expect(screen.getTextContent()).toContain(t('usage.board.page.scopeReadRefused'));
+    const retries = screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityLabel === t('common.retry'));
+    expect(retries).toHaveLength(1);
+    await act(async () => { retries[0]!.props.onPress(); });
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    onRetry.mockClear();
+  }
 });
 
 it('only shows the quiet refusal for a fixed shared Session', async () => {

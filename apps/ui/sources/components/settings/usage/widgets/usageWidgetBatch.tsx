@@ -574,7 +574,7 @@ export function useUsageWidgetPageRetry(): (() => void) | null {
     const batch = React.useContext(UsageWidgetBatchContext);
     const entry = batch?.resource.entry ?? null;
     const lifetime = batch?.resource.lifetime ?? null;
-    return React.useMemo(() => entry ? () => { if (lifetime?.isCurrent()) void entry.refresh(); } : null, [entry, lifetime]);
+    return React.useMemo(() => entry ? () => { if (lifetime?.isCurrent()) void entry.refresh({ failedOnly: true }); } : null, [entry, lifetime]);
 }
 
 /**

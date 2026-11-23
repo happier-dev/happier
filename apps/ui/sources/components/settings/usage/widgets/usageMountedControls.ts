@@ -6,9 +6,9 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 /** A mounted Details disclosure owns its exact-read demand until it closes. */
 export const UsageExactHistoryDemandContext = React.createContext<(() => () => void) | null>(null);
 
-export function useUsageRetryCommand(onRetry: (callerContext?: ActionExecutorContext) => unknown, enabled: boolean): () => void {
+export function useUsageRetryCommand(onRetry: (callerContext?: ActionExecutorContext, options?: { failedOnly: true }) => unknown, enabled: boolean): () => void {
     const commands = useCurrentUiContextLocalCommands(enabled ? [{ key: 'retry', title: t('common.retry'),
-        invoke: async (_input, callerContext) => { await onRetry(callerContext); } }] : []);
+        invoke: async (_input, callerContext) => { await onRetry(callerContext, { failedOnly: true }); } }] : []);
     return React.useCallback(() => { void commands.invoke('retry'); }, [commands.invoke]);
 }
 
