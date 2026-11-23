@@ -4,7 +4,7 @@ import { getCurrentAuth } from '@/auth/context/currentAuth';
 
 import type { ActionExecutorContext} from '@happier-dev/protocol/actions/executor/types';
 import type { ActionId} from '@happier-dev/protocol/actions/actionIds';
-import { readActionFailureCauseV1, readActionFailurePresentationV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionOutcomeUnknownErrorCodeV1, readActionFailureCauseV1, readActionFailurePresentationV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ApprovalRequest} from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { TargetActionApprovalRequestV1} from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import type { ExecutionRunHostActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/executionRunHostActionApprovalRequestV1';
@@ -48,7 +48,7 @@ export function isApprovalDecisionStale(error: unknown): boolean {
 function readApprovalDecisionAvailability(code: unknown, cause: unknown) {
     const failure = readActionFailureCauseV1(cause);
     const transient = readTransientAvailabilityFailure(code) ?? readTransientAvailabilityFailure(failure.errorCode);
-    const uncertain = code === 'approval_execution_outcome_unknown'
+    const uncertain = isActionOutcomeUnknownErrorCodeV1(code)
         || (transient?.effectMayHaveApplied ?? (code === 'unavailable' && failure.httpStatus === 503));
     return { failure, transient, uncertain };
 }
