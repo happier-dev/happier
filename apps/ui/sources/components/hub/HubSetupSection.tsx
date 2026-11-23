@@ -10,7 +10,7 @@ import { HomePairingPanel } from '@/components/auth/pairing/HomePairingPanel';
 import { useHomesJourneySetupItems } from '@/components/homes/journeys/useHomesJourneySetupItems';
 import { useConnectServicesSetupItem } from '@/components/settings/connectedServices/home/useConnectServicesSetupItem';
 import { useFirstAgentSetupItem } from '@/components/machines/agents/useFirstAgentSetupItem';
-import { useVoiceSetupBlock } from '@/voice/settings/setup/VoiceSetupItem';
+import { retryableLazy } from '@/components/ui/performance/retryableLazy';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { usePluginAdministrationSummary } from '@/components/settings/plugins/model/pluginAdministrationSummary';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -28,6 +28,7 @@ import { t } from '@/text';
 
 import type { HubSectionProps } from './hubSectionProps';
 import { useHomeSetupDismissals } from './layout/useHomeSetupDismissals';
+import { useHasHomeArrived } from './homeArrival';
 import { useHomeHubBuiltinWidgetShown } from './layout/useHomeHubArtifactLayout';
 import { homeHasMachine } from '@/components/machines/add/machineAddPaths';
 import { AddMachinePanel } from './setup/AddMachinePanel';
@@ -287,7 +288,10 @@ function HubSetupTiles(props: HubSectionProps & Readonly<{ onMachineSetupOpenCha
     // A composer machine with no agent yet (lab agent-setup H1): the agents owner decides; it leads the row.
     const firstAgentItem = useFirstAgentSetupItem({ phone });
     // "Set up voice" (lab voice-moments SA): the Voice setup owner decides; null once Voice is set up.
-    const voiceItem = useVoiceSetupBlock({ layout: tileLayout });
+    // Its hooks run in their own host, so this row's other inputs never re-run Voice readiness and a
+    // Voice change redraws only its tile.
+    const voice = useHostedSetupBlock();
+    const voiceItem = voice.item;
     // "Personalize Happier" (lab personalize H1): after the steps that connect real work on a
     // computer, first on a phone where there are fewer of them. Its owner decides; null once done.
     const personalizeItem = usePersonalizeSetupItem({ hidden, onDismiss: dismiss });
@@ -337,8 +341,88 @@ function HubSetupTiles(props: HubSectionProps & Readonly<{ onMachineSetupOpenCha
         ...(servicesItem && !capacityWidgetShown ? [servicesItem] : []),
         ...(askHappierItem ? [askHappierItem] : []),
     ];
-    if (allItems.length === 0) return null;
-    return <HubSetupGridView items={allItems} phone={phone} menu={props.menu} onOpenChange={handleOpenChange} />;
+    const voiceHost = <VoiceSetupBlockHost layout={tileLayout} store={voice.store} />;
+    if (allItems.length === 0) return voiceHost;
+    return <>{voiceHost}<HubSetupGridView items={allItems} phone={phone} menu={props.menu} onOpenChange={handleOpenChange} /></>;
+}
+
+type HostedSetupBlockStore = Readonly<{
+    get(): SetupBlockItem | null;
+    set(item: SetupBlockItem | null): void;
+    subscribe(listener: () => void): () => void;
+}>;
+
+function createHostedSetupBlockStore(): HostedSetupBlockStore {
+    let item: SetupBlockItem | null = null;
+    const listeners = new Set<() => void>();
+    return {
+        get: () => item,
+        set(next) {
+            if (next === item) return;
+            item = next;
+            for (const listener of listeners) listener();
+        },
+        subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    };
+}
+
+/**
+ * The row's view of a block owned by its own host: a stable grid item that changes only when the
+ * block appears, leaves, changes span or gains/loses a panel. The tile and panel read the host's
+ * latest block themselves.
+ */
+function useHostedSetupBlock(): Readonly<{ store: HostedSetupBlockStore; item: SetupBlockItem | null }> {
+    const [store] = React.useState(createHostedSetupBlockStore);
+    const readShape = React.useCallback(() => {
+        const item = store.get();
+        return item ? `${item.id}\u0000${item.span ?? ''}\u0000${item.renderPanel ? 1 : 0}${item.registerPresentation ? 1 : 0}${item.requestClose ? 1 : 0}` : '';
+    }, [store]);
+    const shape = React.useSyncExternalStore(store.subscribe, readShape, readShape);
+    const item = React.useMemo((): SetupBlockItem | null => {
+        const current = store.get();
+        if (!shape || !current) return null;
+        return {
+            id: current.id,
+            ...(current.span !== undefined ? { span: current.span } : {}),
+            renderTile: (controls) => <HostedSetupBlockTile store={store} controls={controls} />,
+            ...(current.renderPanel ? { renderPanel: (controls: Readonly<{ close: () => void }>) => <HostedSetupBlockPanel store={store} controls={controls} /> } : {}),
+            // Presentation and dismissal enter the host's latest block, never a captured one.
+            ...(current.registerPresentation ? { registerPresentation: (controls: Parameters<NonNullable<SetupBlockItem['registerPresentation']>>[0]) =>
+                store.get()?.registerPresentation?.(controls) ?? (() => {}) } : {}),
+            ...(current.requestClose ? { requestClose: () => store.get()?.requestClose?.() } : {}),
+        };
+    }, [shape, store]);
+    return { store, item };
+}
+
+const VoiceSetupBlock = retryableLazy(async () => ({
+    default: (await import('@/voice/settings/setup/VoiceSetupItem')).VoiceSetupBlockProjection,
+}));
+
+function VoiceSetupBlockHost(props: Readonly<{
+    layout: 'card' | 'row' | 'wide';
+    store: HostedSetupBlockStore;
+}>) {
+    const admitted = useHasHomeArrived();
+
+    // A focus change after arrival retains the open setup panel and its local state.
+    return admitted ? <React.Suspense fallback={null}>
+        <VoiceSetupBlock layout={props.layout} publish={props.store.set} />
+    </React.Suspense> : null;
+}
+
+function useHostedSetupBlockItem(store: HostedSetupBlockStore): SetupBlockItem | null {
+    return React.useSyncExternalStore(store.subscribe, store.get, store.get);
+}
+
+function HostedSetupBlockTile(props: Readonly<{ store: HostedSetupBlockStore; controls: Parameters<SetupBlockItem['renderTile']>[0] }>) {
+    const item = useHostedSetupBlockItem(props.store);
+    return <>{item ? item.renderTile(props.controls) : null}</>;
+}
+
+function HostedSetupBlockPanel(props: Readonly<{ store: HostedSetupBlockStore; controls: Readonly<{ close: () => void }> }>) {
+    const item = useHostedSetupBlockItem(props.store);
+    return <>{item?.renderPanel ? item.renderPanel(props.controls) : null}</>;
 }
 
 /** "Get set up" as drawn: the title, ⋯, and the set-up blocks (the `/dev/home` fixture draws it too). */

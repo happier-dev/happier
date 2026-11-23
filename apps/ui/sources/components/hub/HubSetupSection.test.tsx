@@ -292,6 +292,35 @@ describe('HubSetupSection on Home (tiles)', () => {
         expect(screen.findByTestId('hub-setup.addName')).toBeNull();
         expect((await renderSection()).findByTestId('hub-setup.addName')).toBeNull();
     });
+    it('starts Voice setup after the ready Home presentation and retains it on focus changes', async () => {
+        const { FeaturesResponseSchema } = await import('@happier-dev/protocol/features/payload/featuresResponseSchema');
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const { presentReadyHome } = await import('./homeArrival');
+        const queryPermission = vi.fn(async () => ({ state: 'prompt' as const }));
+        vi.stubGlobal('navigator', { permissions: { query: queryPermission } });
+        const snapshot = {
+            status: 'ready' as const,
+            features: FeaturesResponseSchema.parse({ features: { voice: { enabled: true } } }),
+        };
+        state.featureSnapshot.mockResolvedValue(snapshot);
+        const screen = await renderSection();
+        await act(async () => { primeServerFeaturesSnapshot({ snapshot }); });
+        expect(queryPermission).not.toHaveBeenCalledWith({ name: 'microphone' });
+        expect(screen.findByTestId('hub-setup.voice.action')).toBeNull();
+
+        let withdraw: (() => void) | undefined;
+        try {
+            await act(async () => { withdraw = presentReadyHome(); });
+            await vi.waitFor(async () => {
+                await flushHookEffects();
+                expect(queryPermission).toHaveBeenCalledWith({ name: 'microphone' });
+                expect(screen.findByTestId('hub-setup.voice.action')).not.toBeNull();
+            }, { timeout: 10_000 });
+        } finally {
+            await act(async () => { withdraw?.(); });
+        }
+        expect(screen.findByTestId('hub-setup.voice.action')).not.toBeNull();
+    });
     it('does not invent a recovery key for a plaintext Account', async () => {
         const screen = await renderSection();
         expect(screen.findByTestId('hub-setup.recoveryKey')).toBeNull();
