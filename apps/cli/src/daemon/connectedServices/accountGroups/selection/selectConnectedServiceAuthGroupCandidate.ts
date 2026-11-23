@@ -44,6 +44,8 @@ export type ConnectedServiceAuthGroupQuotaSnapshot = Readonly<{
   meters?: ReadonlyArray<ConnectedServiceAuthGroupQuotaMeterSnapshot>;
   exhausted?: boolean;
   planUnavailable?: boolean;
+  /** Provider credit headroom (Codex credits, Claude extra usage); absent when the account reports none. */
+  creditsAvailable?: boolean;
 }>;
 
 export type ConnectedServiceAuthGroupMemberRuntimeState = Readonly<{
