@@ -7520,10 +7520,10 @@ describe('plugin-surface action branch selection', () => {
                 ActionApprovalRequestCreatedResultSchema.parse({ kind: 'approval_request_created', artifactId,
                     actionId: 'workspace.materialize' }));
             const refusal = new PluginError({ code: 'channels_connection_required', message: 'Set up Channels first', retryable: false,
-                details: { privateProviderFact: 'must-not-cross' },
+                details: { connectionStatus: 'required' },
                 remediation: { kind: 'openSettings', path: '/settings/plugins/happier.channels/connections' } });
             const failed = { ok: false as const, errorCode: refusal.code, error: refusal.message,
-                retryable: refusal.retryable, data: refusal.data };
+                retryable: refusal.retryable, data: { ...refusal.data, privateProviderFact: 'must-not-cross' } };
             let finishPreparation!: () => void;
             const preparation = new Promise<void>(resolve => { finishPreparation = resolve; });
             let publishNextApproval!: () => void;
@@ -7697,9 +7697,12 @@ describe('plugin-surface action branch selection', () => {
                         .find(value => value.snapshot.requestId === observedRequestId);
                     expect(admitted).toBeDefined();
                     const { requestActionOperationStop } = await import('@/components/inbox/actionOperations/requestActionOperationStop');
-                    const { Modal } = await import('@/modal');
-                    vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
-                    expect(await requestActionOperationStop(admitted!)).toEqual({ kind: 'requested' });
+                    nestedActionConfirmation.onShow = confirm => confirm();
+                    try {
+                        expect(await requestActionOperationStop(admitted!)).toEqual({ kind: 'requested' });
+                    } finally {
+                        nestedActionConfirmation.onShow = null;
+                    }
                     expect(caller.signal.aborted).toBe(false);
                 }
                 finishPreparation();
@@ -7763,10 +7766,9 @@ describe('plugin-surface action branch selection', () => {
                 } else {
                     expect(newSessionNavigation).not.toHaveBeenCalled();
                     expect(result).toMatchObject(settlement === 'typed refusal'
-                        ? { code: 'unavailable', diagnostics: [refusal.code] }
+                        ? { code: refusal.code, diagnostics: [refusal.code], details: { connectionStatus: 'required' }, remediation: refusal.data.remediation }
                         : { code: 'timeout', diagnostics: ['plugin_ui_action_outcome_unknown'] });
-                    // The host envelope exposes retryability; recovery destinations remain on the
-                    // canonical contributed failure consumed by the dispatch outcome.
+                    // The host preserves the public author payload and drops private carrier fields.
                     expect(result).toMatchObject({ retryable: false });
                     expect(JSON.stringify(result)).not.toContain('must-not-cross');
                 }
