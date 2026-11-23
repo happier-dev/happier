@@ -11,6 +11,7 @@ import { createWorkflowRunStorageClient } from '@/daemon/workflows/workflowRunSt
 import { createWorkflowRunStorageTestkit } from '@/daemon/workflows/workflowRunStorage.testkit';
 import { SessionFollowRunOccurrenceSchema } from '@/daemon/sessions/sessionActivityChangedContract';
 import * as daemonTransport from '@/daemon/controlHttp';
+import * as sessionMessage from '@/session/services/sendSessionMessage';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -384,6 +385,12 @@ it.each([
     metadata: JSON.stringify({ path: '/work', host: 'host', machineId: 'receiver-machine' }) };
   const pending = new Map<string, { body: unknown; suppressed: boolean }>();
   let muted = true;
+  let muteReads = 0;
+  let pendingPosts = 0;
+  let pendingRefusal: 'forbidden' | 'target_unavailable' | 'home_unavailable' | undefined;
+  const unavailableCause = { phase: 'session.input.target_lookup', errorClass: 'HttpStatusError',
+    errorCode: 'session_input_target_unavailable', httpStatus: 400 };
+  const send = vi.spyOn(sessionMessage, 'sendSessionMessage');
   let routePresent = true;
   let returnDifferentOriginal = false;
   let sourceCurrent = true;
@@ -400,7 +407,10 @@ it.each([
     if (path === '/v2/account/session-follow-rules') return { status: 200, data: { rules: [] } };
     if (path === '/v2/account/session-follow-preferences') return { status: 200,
       data: { assigned: false, direct: false, team: false, group: false } };
-    if (path.endsWith('/delivery-mutes')) return { status: 200, data: { scopes: muted ? [{ kind: 'source', source }] : [] } };
+    if (path.endsWith('/delivery-mutes')) {
+      muteReads++;
+      return { status: 200, data: { scopes: muted ? [{ kind: 'source', source }] : [] } };
+    }
     if (path === `/v2/sessions/${destinationSessionId}`) return { status: 200, data: { session: sourceRow } };
     if (path === '/v2/sessions' || path === '/v2/sessions/archived') return { status: 200, data: { sessions: [], hasNext: false, nextCursor: null } };
     throw new Error(`Unexpected GET ${path}`);
@@ -418,10 +428,24 @@ it.each([
         ...(kind === 'execution_run' ? { expectedTerminalEventId: null } : { expectedRevision: 3 }) }] : [] } };
     if (path === '/v2/sessions/lookup-by-tags') return { status: 200, data: { sessions: [] } };
     if (path.endsWith('/pending')) {
+      pendingPosts++;
+      if (pendingRefusal) {
+        throw Object.assign(new Error('Pending admission refused'), {
+          isAxiosError: true,
+          response: pendingRefusal === 'forbidden'
+            ? { status: 403, data: { error: 'forbidden' } }
+            : pendingRefusal === 'target_unavailable'
+              ? { status: 400, data: { error: 'invalid-params', code: 'session_input_target_unavailable', failureCause: unavailableCause } }
+              : { status: 503, data: { error: 'transaction-unavailable', retryAfterMs: 1000 } },
+        });
+      }
       if (typeof body !== 'object' || body === null || !('localId' in body) || typeof body.localId !== 'string') throw new Error('Missing Pending identity');
       const suppressed = pending.get(body.localId)?.suppressed ?? muted;
       pending.set(body.localId, { body, suppressed });
-      if (suppressed) return { status: 400, data: { error: 'session_input_muted' } };
+      if (suppressed) throw Object.assign(new Error('Pending admission suppressed'), {
+        isAxiosError: true,
+        response: { status: 400, data: { error: 'invalid-params', code: 'session_input_muted' } },
+      });
       return { status: 200, data: { didWrite: true, message: { localId: body.localId, seq: 1 } } };
     }
     throw new Error(`Unexpected POST ${path}`);
@@ -446,6 +470,10 @@ it.each([
       await Promise.all(hints.splice(0));
     };
     await deliver();
+    await expect(send.mock.results.at(-1)?.value).resolves.toMatchObject({
+      ok: true, suppressed: true, admissionResult: { status: 'rejected', code: 'session_input_muted' },
+    });
+    expect({ muteReads, pendingPosts }).toEqual({ muteReads: 0, pendingPosts: 1 });
     const oldLocalId = deriveSessionFollowInputLocalIdV1({ destinationSessionId, original });
     expect(pending.size).toBe(1);
     expect(pending.get(oldLocalId)?.suppressed).toBe(true);
@@ -476,6 +504,25 @@ it.each([
       event: occurrence.event, delivery: permissionOccurrence ? 'wake' : 'next_turn' })));
     await deliver();
     expect(pending.size).toBe(2);
+    if (kind === 'execution_run' && entry === 'notification' && eventKind === 'finished') {
+      pendingRefusal = 'forbidden';
+      await deliver();
+      await expect(send.mock.results.at(-1)?.value).resolves.toMatchObject({
+        ok: false, code: 'admission_rejected', admissionResult: { status: 'rejected', code: 'session_input_unauthorized' },
+      });
+      pendingRefusal = 'target_unavailable';
+      await deliver();
+      await expect(send.mock.results.at(-1)?.value).resolves.toMatchObject({
+        ok: false, code: 'admission_rejected',
+        admissionResult: { status: 'rejected', code: 'session_input_target_unavailable', failureCause: unavailableCause },
+      });
+      pendingRefusal = 'home_unavailable';
+      await deliver();
+      await expect(send.mock.results.at(-1)?.value).resolves.toMatchObject({
+        ok: false, code: 'timeout',
+        admissionResult: { status: 'outcomeUnknown', code: 'account_admission_acknowledgement_failed' },
+      });
+    }
     routePresent = false;
     await deliver();
     expect(pending.size).toBe(2);

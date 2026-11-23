@@ -65,20 +65,26 @@ function scopeRequest(client: AxiosInstance, config: AxiosRequestConfig | undefi
   };
   return {
     config: scopedConfig,
-    settle: (response: Promise<AxiosResponse<unknown>>) => settle(response, () => executionProof === undefined
-      ? Object.entries(config?.headers ?? {}).some(([name, value]) =>
-        name.toLowerCase() === EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER && carriesExecutionAuthorization(value))
-      : executionProof !== false),
+    settle: (response: Promise<AxiosResponse<unknown>>) => settle(response, () => {
+      const signed = executionProof === undefined
+        ? Object.entries(config?.headers ?? {}).some(([name, value]) =>
+          name.toLowerCase() === EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER && carriesExecutionAuthorization(value))
+        : executionProof !== false;
+      return signed ? requestUrl ?? client.getUri(config) : undefined;
+    }),
   };
 }
 
-function assertCredentialResponseAllowed(status: number, payload: unknown, isSigned: () => boolean): void {
+function assertCredentialResponseAllowed(status: number, payload: unknown, readSignedRequestUrl: () => string | undefined): void {
   assertCredentialRequestRedirectAllowed(status);
   if (status === 431) throw createHttpStatusError(status, 'request_headers_too_large', 'request_headers_too_large');
-  if (isAuthenticationStatus(status) && isSigned()) throw createSignedHomeAuthorizationHttpError(status, payload);
+  if (isAuthenticationStatus(status)) {
+    const signedRequestUrl = readSignedRequestUrl();
+    if (signedRequestUrl !== undefined) throw createSignedHomeAuthorizationHttpError(status, payload, signedRequestUrl);
+  }
 }
 
-async function settle(response: Promise<AxiosResponse<unknown>>, isSigned: () => boolean): Promise<AxiosResponse<unknown>> {
+async function settle(response: Promise<AxiosResponse<unknown>>, readSignedRequestUrl: () => string | undefined): Promise<AxiosResponse<unknown>> {
   let result: AxiosResponse<unknown>;
   try {
     result = await response;
@@ -92,11 +98,11 @@ async function settle(response: Promise<AxiosResponse<unknown>>, isSigned: () =>
     if (status !== null) {
       const response = typeof error === 'object' && error !== null && 'response' in error ? error.response : undefined;
       const data = typeof response === 'object' && response !== null && 'data' in response ? response.data : undefined;
-      assertCredentialResponseAllowed(status, data, isSigned);
+      assertCredentialResponseAllowed(status, data, readSignedRequestUrl);
     }
     throw error;
   }
-  assertCredentialResponseAllowed(result.status, result.data, isSigned);
+  assertCredentialResponseAllowed(result.status, result.data, readSignedRequestUrl);
   return result;
 }
 

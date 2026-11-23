@@ -1,7 +1,11 @@
 import { readActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ExternalActionAuthorizationRefusalPhaseSchema, ExternalActionHttpErrorSchema,
     type ExternalActionAuthorizationRefusalPhase } from '@happier-dev/protocol/actions/externalActionHttpError';
+import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_VERIFY_HTTP_PATH_TEMPLATE_V1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { HttpStatusError } from './httpStatusError';
+
+const verifyPath = new RegExp(`^${EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_VERIFY_HTTP_PATH_TEMPLATE_V1.replace(':actionId', '[^/]+')}$`);
+type SignedHomeRefusalCode = 'action_forbidden' | 'credential_scope_denied' | 'invalid_token';
 
 /** Redacted recovery for a signed request whose admitted HTTP purpose was not matched. */
 export function readHomeAuthorizationRefusalDetails(phase: string): Readonly<{
@@ -22,11 +26,13 @@ function signedRefusalReason(status: 401 | 403, phase?: ExternalActionAuthorizat
 
 /** Carries the public Action failure and HTTP status without Axios request data. */
 export class SignedHomeAuthorizationHttpError extends HttpStatusError {
-    readonly code = 'action_forbidden';
+    get code(): SignedHomeRefusalCode {
+        return this.failure.errorCode;
+    }
 
     constructor(
         status: 401 | 403,
-        readonly failure: ActionExecuteFailure,
+        readonly failure: ActionExecuteFailure & { errorCode: SignedHomeRefusalCode },
         readonly authorizationRefusal: ExternalActionAuthorizationRefusalPhase | undefined,
     ) {
         super(status, failure.error);
@@ -35,9 +41,15 @@ export class SignedHomeAuthorizationHttpError extends HttpStatusError {
 }
 
 /** Project Home's closed refusal phase after the transport identifies the signed request. */
-export function createSignedHomeAuthorizationHttpError(status: 401 | 403, payload: unknown): SignedHomeAuthorizationHttpError {
+export function createSignedHomeAuthorizationHttpError(status: 401 | 403, payload: unknown, requestUrl?: string): SignedHomeAuthorizationHttpError {
     const parsed = ExternalActionHttpErrorSchema.safeParse(payload);
     const response = parsed.success ? parsed.data : undefined;
+    const path = requestUrl === undefined ? undefined : URL.parse(requestUrl, 'http://localhost')?.pathname;
+    const responseCode = response?.error;
+    const errorCode = path && verifyPath.test(path) && (
+        (status === 403 && responseCode === 'credential_scope_denied')
+        || (status === 401 && responseCode === 'invalid_token')
+    ) ? responseCode : 'action_forbidden';
     const parsedPhase = ExternalActionAuthorizationRefusalPhaseSchema.safeParse(
         payload && typeof payload === 'object' && 'authorizationRefusal' in payload ? payload.authorizationRefusal : undefined,
     );
@@ -51,6 +63,7 @@ export function createSignedHomeAuthorizationHttpError(status: 401 | 403, payloa
     });
     return new SignedHomeAuthorizationHttpError(status, {
         ...forbidden(signedRefusalReason(status, phase)), ...(details === undefined ? {} : { details }), failureCause,
+        errorCode,
     }, phase);
 }
 

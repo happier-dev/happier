@@ -203,12 +203,6 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
       const selected = resolveFollowDeliveryV1({ policies: [route.policy], event: occurrence.event });
       if (!selected.selected || !await current()) continue;
       const source = occurrence.original.source;
-      const muted = await readSessionDeliveryMutedScopes({ token: input.credentials.token,
-        receiver: { kind: 'session', sessionId: route.destinationSessionId }, serverHttpBaseUrl: input.serverHttpBaseUrl,
-        signal: input.signal });
-      // Confirmed mute must reach Pending's discarded-original settlement.
-      // Unknown policy still holds until its existing availability release.
-      if (!muted) continue;
       const delivery = { v: 1 as const, original: occurrence.original, event: occurrence.event,
         delivery: selected.session.wake ? 'wake' as const : 'next_turn' as const };
       const relation = { relation: route.relation, attachedAt: route.attachedAt, source,

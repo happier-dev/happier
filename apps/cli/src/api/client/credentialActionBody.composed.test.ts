@@ -3,11 +3,16 @@ import nacl from 'tweetnacl';
 import { expect, it } from 'vitest';
 import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
   EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
-  EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
+  EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER, bindExternalActionExecutionAuthorizationVerifyHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { decodeExternalActionHttpBodyV1, verifyExternalActionMachineRequestV1, EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1,
   EXTERNAL_ACTION_HTTP_BODY_HEADER_V1, EXTERNAL_ACTION_HTTP_READ_BODY_MARKER_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createExternalActionAuthorizedRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { MANAGED_POLICY_PROOF_HEADER } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
+import { runExternalActionPhase } from '@/daemon/externalActions/externalActionPhase';
+import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
+import { createCliWidgetInputActionDepsV1 } from '@/session/actions/widgetInputActionDeps';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { waitFailureDispositionV1 } from '@happier-dev/protocol/actions/executor/waitAction';
 import axios from './credentialAxios';
 
 it('sends a large signed mutation through the default HTTP parser without oversized proof headers', async () => {
@@ -202,6 +207,7 @@ it.each([
   { status: 401, phase: 'effect_family', acceptStatus: false, unsigned: false },
   { status: 401, phase: 'verification_purpose', acceptStatus: false, unsigned: false, configuredError: 'authentication_failed' },
   { status: 403, phase: 'effect_family', acceptStatus: true, unsigned: false },
+  { status: 403, phase: 'effect_family', acceptStatus: true, unsigned: false, resource: '/resource' },
   { status: 404, phase: 'verification_purpose', acceptStatus: true, unsigned: false },
   { status: 401, phase: 'verification_purpose', acceptStatus: true, unsigned: true },
 ] as const)('keeps the Home refusal phase and sends one request (%j)', async ({
@@ -220,18 +226,50 @@ it.each([
   try {
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('Expected loopback listener');
-    const request = axios.get(`http://127.0.0.1:${address.port}/resource`, {
+    const path = 'resource' in fixture ? fixture.resource
+      : bindExternalActionExecutionAuthorizationVerifyHttpPathV1('notifications.notify_me');
+    const request = axios.post(`http://127.0.0.1:${address.port}${path}`, {}, {
       headers: unsigned ? { Authorization: 'Bearer fixture' } : { [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: 'fixture' },
       ...(acceptStatus ? { validateStatus: () => true } : {}),
     });
     if (unsigned || status === 404) {
       await expect(request).resolves.toMatchObject({ status });
     } else {
-      await expect(request).rejects.toMatchObject({
-        ok: false, errorCode: 'action_forbidden', error: `action_forbidden (home_signed_authorization_rejected:${phase})`,
+      const errorCode = 'configuredError' in fixture || 'resource' in fixture ? 'action_forbidden'
+        : status === 403 ? 'credential_scope_denied' : 'invalid_token';
+      const error = await request.then(() => { throw new Error('Expected signed Home refusal'); }, (reason: unknown) => reason);
+      expect(error).toMatchObject({
+        ok: false, code: errorCode, errorCode, error: `action_forbidden (home_signed_authorization_rejected:${phase})`,
         response: { status },
         failureCause: { phase: `home.authorization.${phase}`, httpStatus: status },
       });
+      const verification = await runExternalActionPhase('root_verify', 'controller', () => { throw error; });
+      expect(verification).toMatchObject({
+        ok: false, executionFailure: { errorCode, failureCause: { phase: `home.authorization.${phase}` } },
+      });
+      if (verification.ok || !verification.executionFailure) throw new Error('Expected relayed Home refusal');
+      const failure = verification.executionFailure;
+      if (errorCode === 'invalid_token') expect(mapUnknownErrorToControlError(error)).toMatchObject({ code: 'not_authenticated' });
+      if (errorCode === 'credential_scope_denied') {
+        expect(waitFailureDispositionV1(failure)).toBe('permission_denied');
+        const scope = { serverId: 'home', accountId: 'owner' };
+        const surface = { pluginId: 'acme.widget', localId: 'choice' };
+        const field = { path: 'choice', title: 'Choice', widget: 'select' as const, optionsSourceId: 'fixture.choices' };
+        const widget = createCliWidgetInputActionDepsV1({ ...scope,
+          getDeps: () => ({ ...createUnavailableActionTransportDeps(), widgetAccountScope: () => scope,
+            // The catalog port relays the failure already produced at the Home HTTP boundary above.
+            widgetCatalog: { list: async () => [], readInstalledDescriptor: async () => failure },
+          }), readCandidates: async () => [{ surface, availability: 'available', inputs: { fields: [field] },
+            sizeDeclaration: { sizes: ['full'], defaultSize: 'full' } }], validateSession: async () => false,
+        });
+        const options = await widget.widgetInputs!.resolve({
+          ref: { surface: { ...scope, owner: { kind: 'home' } }, instanceId: 'choice' },
+          instance: { v: 1, id: 'choice', definition: { kind: 'installed', surface },
+            bindings: { choice: { kind: 'value', value: 'selected' } } },
+          context: { surface: 'cli' },
+        });
+        expect(options).toEqual({ status: 'denied', fields: [{ path: 'choice', status: 'denied', reasonCode: 'credential_scope_denied' }] });
+      }
     }
     expect(requests).toBe(1);
   } finally {
