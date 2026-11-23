@@ -147,12 +147,15 @@ it.each([
         });
         expect(welcome()).toBeTruthy();
         expect(login()).toBeTruthy();
+        const held = login().closest<HTMLElement>('[style*="opacity: 0"]');
+        expect(held?.contains(welcome())).toBe(true);
         expect(readOpeningSeenAt()).toBeNull();
         if (canPaint) expect(readBuildReady()).toBe(true);
         animate.mockClear();
         clock.mockReturnValue(1000);
         await act(async () => commitLayout());
         expect(readOpeningSeenAt()).toEqual(expect.any(Number));
+        expect(login().closest('[style*="opacity: 0;"]')).toBeNull();
         if (!canPaint) {
             expect(scene()).toBeNull();
             expect(animate).not.toHaveBeenCalled();

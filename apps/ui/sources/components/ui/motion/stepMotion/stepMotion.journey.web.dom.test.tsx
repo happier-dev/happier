@@ -15,7 +15,7 @@ import { isHomeArrivalMotionPending } from '@/components/hub/homeArrival';
 
 import { StepEntranceBody } from './StepEntranceBody';
 import { StepMotionLayer } from './StepMotionLayer';
-import { holdFirstArrivalStep, playBuild, runStepMove, skipStepMotion, StepMotionStage, useOpeningBuildGlyphs } from './StepMotionStage';
+import { holdFirstArrivalStep, playBuild, runStepMove, skipStepMotion, StepMotionStage, useOpeningBuildGlyphs, usePrepareStepBuild } from './StepMotionStage';
 import { stepMotionTiming } from './stepMotionTiming';
 import { useStepFocal } from './useStepFocal';
 
@@ -452,6 +452,58 @@ it.each(['new-layer', 'same-layer'] as const)('continues the cold-link opening w
     }
 });
 
+it.each([false, true])('keeps Welcome → Approve choreography available after the opening (compact: %s)', async (compact) => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    vi.stubGlobal('CSS', { escape: (id: string) => id });
+    setReducedMotionPreferenceOverride(false);
+    const originalAnimate = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'animate');
+    Object.defineProperty(HTMLElement.prototype, 'animate', {
+        configurable: true, value: () => ({ onfinish: null, cancel() {} }),
+    });
+    const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 390, 600));
+    const container = document.body.appendChild(document.createElement('div'));
+    const root = createRoot(container);
+    let startOpening = false;
+    let finishOpening: (() => void) | undefined;
+    function Journey({ opening }: { opening: boolean }) {
+        usePrepareStepBuild(opening);
+        finishOpening = useOpeningBuildGlyphs()?.finish;
+        const [approve, setApprove] = React.useState(false);
+        return startOpening ? <StepMotionLayer layerKey="workflow" stepKey={approve ? 'approve' : 'welcome'} compact={compact}>
+            {approve ? <h1>Approve</h1> : <button data-testid="already-use-happier" onClick={() => runStepMove({
+                layer: 'workflow', kind: 'step', fromWelcome: true, commit: () => setApprove(true),
+            })}>I already use Happier</button>}
+        </StepMotionLayer> : null;
+    }
+    try {
+        await act(async () => root.render(<StepMotionStage><Journey opening /></StepMotionStage>));
+        await act(async () => { await vi.dynamicImportSettled(); });
+        startOpening = true;
+        await act(async () => root.render(<StepMotionStage><Journey opening /></StepMotionStage>));
+        let build: ReturnType<typeof playBuild> | undefined;
+        await act(async () => { build = playBuild({ layer: 'workflow', choreography: 'opening', interactive: true }); });
+        expect(finishOpening).toBeTypeOf('function');
+        await act(async () => finishOpening?.());
+        expect(await build).toBe('settled');
+        await act(async () => root.render(<StepMotionStage><Journey opening={false} /></StepMotionStage>));
+
+        const door = container.querySelector('button')!;
+        await act(async () => { pointerDown(door, 1); click(door, 1); });
+        expect(container.querySelector('h1')?.textContent).toBe('Approve');
+        expect(stageMotion).toMatchObject({ kind: 'transition', durationS: stepMotionTiming.forwardS });
+        const layers = typeof stageScene === 'function' ? stageScene(stepMotionTiming.forwardS * 0.4) : stageScene;
+        expect(layers.some(layer => layer.kind === 'traveller')).toBe(!compact);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+        bounds.mockRestore();
+        if (originalAnimate) Object.defineProperty(HTMLElement.prototype, 'animate', originalAnimate);
+        else Reflect.deleteProperty(HTMLElement.prototype, 'animate');
+        setReducedMotionPreferenceOverride(null);
+        vi.unstubAllGlobals();
+    }
+});
+
 it('settles an opening build through the entrance animation when the layer has no layout', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     setReducedMotionPreferenceOverride(false);
@@ -556,6 +608,62 @@ it('moves between retained standalone routes and restores the opener through the
     } finally {
         await act(async () => root.unmount());
         container.remove();
+        setReducedMotionPreferenceOverride(null);
+        vi.unstubAllGlobals();
+    }
+});
+
+it('keeps the cold recovery shell painted while Back replaces it with Welcome', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    vi.stubGlobal('CSS', { escape: (id: string) => id });
+    setReducedMotionPreferenceOverride(false);
+    const originalAnimate = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'animate');
+    Object.defineProperty(HTMLElement.prototype, 'animate', {
+        configurable: true, value: () => ({ onfinish: null, cancel() {} }),
+    });
+    const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 800, 600));
+    const container = document.body.appendChild(document.createElement('div'));
+    const root = createRoot(container);
+    let replace = () => {};
+    function Recovery() {
+        const atmosphere = React.useRef<HTMLDivElement>(null);
+        const readAtmosphere = React.useCallback(() => atmosphere.current ?? undefined, []);
+        return <>
+            <div ref={atmosphere} aria-hidden>Recovery planet</div>
+            <StepMotionLayer layerKey="workflow" stepKey="recovery" webAtmosphere={readAtmosphere}>
+                <h1>Password recovery</h1>
+                <button onClick={() => runStepMove({
+                    layer: 'workflow', kind: 'back', toWelcome: true, preserveShell: true, commit: replace,
+                })}>Back</button>
+            </StepMotionLayer>
+        </>;
+    }
+    function Journey() {
+        const [route, setRoute] = React.useState<'recovery' | 'loading' | 'welcome'>('recovery');
+        replace = () => setRoute('loading');
+        return route === 'recovery' ? <Recovery /> : route === 'loading'
+            ? <button onClick={() => setRoute('welcome')}>Load Welcome</button>
+            : <StepMotionLayer layerKey="workflow" stepKey="welcome"><h1>Welcome</h1></StepMotionLayer>;
+    }
+    try {
+        await act(async () => root.render(<StepMotionStage><Journey /></StepMotionStage>));
+        await act(async () => { await vi.dynamicImportSettled(); });
+        await act(async () => container.querySelector('button')!.click());
+        expect(container.textContent).toBe('Load Welcome');
+        const frozen = [...document.querySelectorAll<HTMLElement>('body > [aria-hidden="true"]')].find(node => node.inert);
+        expect(frozen?.textContent).toContain('Recovery planet');
+        expect(frozen?.textContent).toContain('Password recovery');
+        await act(async () => container.querySelector('button')!.click());
+        expect(document.activeElement).toBe(container.querySelector('h1'));
+        expect(container.textContent).toBe('Welcome');
+        await act(async () => skipStepMotion());
+        expect(frozen?.isConnected).toBe(false);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+        bounds.mockRestore();
+        if (originalAnimate) Object.defineProperty(HTMLElement.prototype, 'animate', originalAnimate);
+        else Reflect.deleteProperty(HTMLElement.prototype, 'animate');
         setReducedMotionPreferenceOverride(null);
         vi.unstubAllGlobals();
     }

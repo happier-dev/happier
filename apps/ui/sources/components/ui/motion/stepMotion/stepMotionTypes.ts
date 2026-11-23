@@ -12,6 +12,8 @@ export type StepMove<T = void> = Readonly<{
     commit: () => T;
     fromWelcome?: boolean;
     toWelcome?: boolean;
+    /** Keep the outgoing signed-out shell painted across a cold route replacement. */
+    preserveShell?: boolean;
     onSettled?: (outcome: StepBuildResult) => void;
 }>;
 

@@ -173,10 +173,14 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
     const contentLayout = useMemo(() => phase === 'preparing'
         ? { target: layoutTarget, onLayout: onFirstLayout } : null, [layoutTarget, onFirstLayout, phase]);
     const Scene = scene?.FirstOpenScene;
+    const holdingDestination = decision === 'in-app' && phase === 'preparing';
     return (
         <View style={bootPending ? [StyleSheet.absoluteFillObject, { opacity: 0 }] : { flex: 1, position: 'relative' }}
             pointerEvents={bootPending ? 'none' : undefined}>
-            <Animated.View style={{ flex: 1, opacity }}>
+            <Animated.View style={{ flex: 1, opacity: holdingDestination ? 0 : opacity }}
+                pointerEvents={holdingDestination ? 'none' : undefined}
+                aria-hidden={holdingDestination || undefined}
+                importantForAccessibility={holdingDestination ? 'no-hide-descendants' : undefined}>
                 <FirstOpenContentLayout.Provider value={contentLayout}>
                     <FirstOpenWelcomeEpoch.Provider value={typeof phase === 'object' ? phase.epoch : replicaClosed ? null : replica}>
                         <FirstOpenOwnsWelcomePaint.Provider value={playing ? welcomePaint : null}>

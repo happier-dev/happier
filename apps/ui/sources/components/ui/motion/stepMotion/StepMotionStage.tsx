@@ -36,7 +36,7 @@ type PendingMove = {
     complete?: (outcome: StepBuildResult) => void;
     cancelled: boolean;
     layoutReady: boolean;
-    homePaintFrame?: number;
+    destinationPaintFrame?: number;
     beforeAuth?: boolean;
 };
 type StagePaint = Readonly<{
@@ -168,7 +168,7 @@ function createStepMotionStage(
         const abandoned = pending;
         pending = null;
         abandoned.cancelled = true;
-        if (abandoned.homePaintFrame !== undefined) cancelAnimationFrame(abandoned.homePaintFrame);
+        if (abandoned.destinationPaintFrame !== undefined) cancelAnimationFrame(abandoned.destinationPaintFrame);
         abandoned.freeze?.release();
         requestRenderer(false);
         abandoned.complete?.('skipped');
@@ -389,8 +389,10 @@ function createStepMotionStage(
             freeze?.release();
         };
         if (freeze?.clone) {
-            if (reversing) paintIncomingWeb(freeze.clone, freeze.rect, freeze.webLeaves ?? [], freeze.webFocal);
-            else {
+            if (reversing) {
+                paintIncomingWeb(freeze.clone, freeze.rect, freeze.webLeaves ?? [], freeze.webFocal);
+                if (freeze.webBackdrop) animate(freeze.webBackdrop, frames.map(frame => ({ opacity: frame.arrive })));
+            } else {
                 paintOutgoingWeb(freeze.clone, freeze.rect, freeze.webLeaves ?? [], freeze.control,
                     animation.grammar === 'morph' ? undefined : releaseFreeze);
                 for (const chrome of freeze.webChrome ?? []) animate(chrome, frames.map(frame => ({ opacity: frame.chrome })));
@@ -463,13 +465,13 @@ function createStepMotionStage(
         publish({ animation, duration, freeze, freezeOpacity, scene, releaseFreeze, finish: () => finish('settled') });
     }
 
-    function afterHomePaint(move: PendingMove, action: () => void) {
-        if (move.homePaintFrame !== undefined) cancelAnimationFrame(move.homePaintFrame);
+    function afterDestinationPaint(move: PendingMove, action: () => void) {
+        if (move.destinationPaintFrame !== undefined) cancelAnimationFrame(move.destinationPaintFrame);
         // Layout effects run before paint. Leave one browser rendering opportunity for the
         // retained destination while the outgoing copy still supplies the visible pixels.
-        move.homePaintFrame = requestAnimationFrame(() => {
-            move.homePaintFrame = requestAnimationFrame(() => {
-                move.homePaintFrame = undefined;
+        move.destinationPaintFrame = requestAnimationFrame(() => {
+            move.destinationPaintFrame = requestAnimationFrame(() => {
+                move.destinationPaintFrame = undefined;
                 if (pending === move) action();
             });
         });
@@ -646,7 +648,7 @@ function createStepMotionStage(
             if (pending.kind === 'step' || pending.kind === 'back') layer.focus(pending.returnTo?.testID, pending.kind === 'step');
             if (pending.freeze?.webBackdrop) {
                 const move = pending;
-                afterHomePaint(move, () => {
+                afterDestinationPaint(move, () => {
                     if (layers.has(layer)) enter(layer);
                 });
                 return;
@@ -657,7 +659,7 @@ function createStepMotionStage(
             if (Platform.OS === 'web' || pending.grammar === 'fade' || alreadyLaidOut) enter(layer);
         },
         revealHomeRetry() {
-            if (pending?.kind === 'home') afterHomePaint(pending, settle);
+            if (pending?.kind === 'home') afterDestinationPaint(pending, settle);
         },
         laidOut(layer: StepMotionLayerHandle) {
             laidOutLayers.add(layer);
@@ -696,6 +698,9 @@ function createStepMotionStage(
                 buildPrepared = false;
                 reportBuildReady = undefined;
                 prepareOpeningRenderer(false);
+                // The opening painted with its own surface. Warm the step renderer now
+                // so the first move does not have to wait for its first draw.
+                if (!glyphReady && !readReducedMotionPreference() && Array.from(layers).some(layer => layer.warmOnMount)) warm();
                 syncPresentation();
             };
         },
@@ -775,9 +780,8 @@ function createStepMotionStage(
             };
             pending = next;
             syncPresentation();
-            // The web capture has its own opaque page until the outgoing ink is gone. Home's
-            // real shell can attach behind it without ever lending its chrome to the old step.
-            const backdrop = move.kind === 'home' && Platform.OS === 'web' ? colors().page : undefined;
+            // Keep the old planet and chrome painted while a replacement shell mounts beneath them.
+            const backdrop = Platform.OS === 'web' && (move.kind === 'home' || move.preserveShell) ? colors().page : undefined;
             if (presentation && grammar !== 'fade') {
                 const freeze = presentation.freezeStepLayer(outgoing, grid, move.kind === 'back' ? undefined : anchor, chrome, backdrop);
                 if (freeze instanceof Promise) {

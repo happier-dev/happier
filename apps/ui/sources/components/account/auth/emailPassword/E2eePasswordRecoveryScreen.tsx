@@ -14,6 +14,8 @@ import { usePortableHomeLinkTarget } from '@/components/teams/join/teamJoinTarge
 import { Text } from '@/components/ui/text/Text';
 import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
 import { StepForm, stepFieldLabelStyle } from '@/components/onboarding/unauthShell/StepFormParts';
+import { FIRST_RUN_WORKFLOW_LAYER } from '@/components/ui/motion/stepMotion/StepMotionLayer';
+import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { StepMark } from '@/components/onboarding/unauthShell/StepMark';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
@@ -77,8 +79,19 @@ export const E2eePasswordRecoveryScreen = React.memo(function E2eePasswordRecove
     const auth = useAuth();
     const router = useRouter();
     const leaveRecovery = () => {
-        if (router.canGoBack()) router.back();
-        else router.replace('/');
+        if (router.canGoBack()) {
+            router.back();
+        } else if (auth.isAuthenticated) {
+            router.replace('/');
+        } else {
+            runStepMove({
+                layer: FIRST_RUN_WORKFLOW_LAYER,
+                kind: 'back',
+                toWelcome: true,
+                preserveShell: true,
+                commit: () => router.replace('/'),
+            });
+        }
     };
     // Acquiring the Home a recovery link names — observing it and proving its
     // stable identity before this device records it — belongs to the portable
