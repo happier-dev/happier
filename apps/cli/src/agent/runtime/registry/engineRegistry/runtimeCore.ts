@@ -48,7 +48,7 @@ import {
     type NativeAgentRuntimeLeaseIdentity,
     type NativeAgentSessionContextLeaseFactory,
 } from '@/agent/runtime/bridges/executionRun/nativeAgentExecutionRun';
-import { selectExecutionRunSessionAdapter } from '@/agent/runtime/bridges/executionRun/retainedInteractionEligibility';
+import { decideExecutionRunRolePolicy } from '@/agent/runtime/bridges/executionRun/rolePolicy';
 import { createLazyExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/hostRuntime/lazy';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import { resolveAgentSessionRealtimeVoiceAuthority } from '@/agent/runtime/session/realtime/resolveAgentSessionRealtimeVoiceAuthority';
@@ -77,7 +77,6 @@ import { createExecutionRunCodedError } from '@/agent/runtime/bridges/executionR
 import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
 import type { PublicAcpHostLaunchResolver } from '@/agent/acp/runtime/publicSession/createPublicAcpSession';
 import { readSessionWorkspaceWritesV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
-import { supportsAgentWorkspaceWriteDenial } from '@happier-dev/protocol/plugins/contributions/agentSessionCapabilities';
 import { createHostTerminalTranscriptFollowService } from '@/agent/runtime/session/terminal/transcriptFollow';
 import { HostTerminalTranscriptFollowAdmissionError } from '@/agent/runtime/session/terminal/contract';
 import { createExternalSessionTerminalFollowProjector } from '@/session/external/terminalFollowProjection';
@@ -640,7 +639,9 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                         const executionRunContextV1 = detachedSessionPrimary
                             ? nativeAgentRuntime.sessions?.executionRunContextV1
                             : undefined;
-                        const adapterSelection = selectExecutionRunSessionAdapter({
+                        const rolePolicy = decideExecutionRunRolePolicy({
+                                executionRunCapabilities,
+                                workspaceWrites: options.workspaceWrites,
                                 scope: options.scope,
                                 hasParentSessionCustody: host !== undefined && host !== null,
                                 agentExposesSessionRuntime: Boolean(nativeAgentRuntime.sessions),
@@ -650,10 +651,8 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                 runClass: options.start?.runClass ?? null,
                                 retentionPolicy: options.start?.retentionPolicy ?? null,
                             });
-                        const workspaceWriteCapabilities = adapterSelection === 'native_execution_run'
-                            ? executionRunCapabilities
-                            : effectiveSessionCapabilities;
-                        if (options.workspaceWrites === 'deny' && !supportsAgentWorkspaceWriteDenial(workspaceWriteCapabilities)) {
+                        const adapterSelection = rolePolicy.surface;
+                        if (rolePolicy.status === 'refused') {
                             throw createExecutionRunCodedError('role_policy_unenforceable', 'Agent cannot enforce the role workspace-write policy');
                         }
                         if (
