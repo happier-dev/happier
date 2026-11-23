@@ -43,17 +43,17 @@ function readBlobs(git, oids) {
 }
 
 /** Share Git-tree files, resolutions and export tables for one gate attempt. */
-export function createRevisionViewReader(repo) {
+export function createRevisionViewReader(repo, { trackedOnly = false } = {}) {
   const git = gitIn(repo);
   const views = new Map();
   return rev => {
     const tree = git(['rev-parse', '--verify', `${rev}^{tree}`]).trim();
-    if (!views.has(tree)) views.set(tree, buildRevisionView(repo, git, tree));
+    if (!views.has(tree)) views.set(tree, buildRevisionView(repo, git, tree, trackedOnly));
     return views.get(tree);
   };
 }
 
-function buildRevisionView(repo, git, rev) {
+function buildRevisionView(repo, git, rev, trackedOnly) {
   ts ??= require('typescript');
   const blobs = new Map();
   for (const record of nul(git(['ls-tree', '-r', '-z', '--full-tree', rev]))) {
@@ -136,9 +136,10 @@ function buildRevisionView(repo, git, rev) {
       const resolved = ts.resolveModuleName(specifier, resolve(repo, file), options, host,
         resolutionCaches.get(options)).resolvedModule;
       const target = resolved && repoPath(resolved.resolvedFileName);
-      if (!resolved) result = trackedAsset(file, specifier, options) || ignoredOnDisk(file, specifier, options)
+      if (!resolved) result = trackedAsset(file, specifier, options) || (!trackedOnly && ignoredOnDisk(file, specifier, options))
         ? { kind: 'external' } : { kind: 'missing' };
       else if (blobs.has(target)) result = { kind: 'file', path: target };
+      else if (trackedOnly) result = { kind: 'missing' };
     }
     resolutions.set(key, result);
     return result;
@@ -308,17 +309,47 @@ function buildRevisionView(repo, git, rev) {
       ts.forEachChild(node, visit);
     };
     visit(source);
-    return imports;
+    return { source, imports };
+  };
+  // Check bare calls only when the packet also changes an imported local producer.
+  // A one-file binder distinguishes an omitted import from a local or parameter shadow.
+  const findMissingBindings = (source, imports, changed, found) => {
+    const producers = imports.filter(({ target }) => target.kind === 'file' && changed.has(target.path));
+    if (!producers.length) return;
+    const candidates = new Map();
+    const visit = node => {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+        const name = node.expression.text;
+        const producer = producers.find(({ target }) => exportsName(target.path, name) === true);
+        if (producer) candidates.set(node.expression, producer.specifier);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    if (!candidates.size) return;
+    const options = { noResolve: true, noLib: true, types: [] };
+    const host = ts.createCompilerHost(options);
+    host.getSourceFile = name => name === source.fileName ? source : undefined;
+    const checker = ts.createProgram([source.fileName], options, host).getTypeChecker();
+    for (const [identifier, specifier] of candidates) {
+      if (checker.getSymbolAtLocation(identifier)) continue;
+      const name = identifier.text;
+      found.set(`${source.fileName}\0binding\0${name}`, `missing binding: ${label(`${source.fileName} calls ${name} from ${specifier}`)}`);
+    }
   };
   // Findings keyed per missing name, so an inherited break never masks a new one in the same import.
-  const findings = roots => {
+  const findings = (roots, { localOnly = false, changed = new Set() } = {}) => {
     const found = new Map();
     prefetch(roots);
-    const planned = roots.filter(file => blobs.has(file)).map(file => [file, importsOf(file)
-      .map(entry => ({ ...entry, target: resolveImport(file, entry.specifier) }))]);
+    const planned = roots.filter(file => blobs.has(file)).map(file => {
+      const { source, imports } = importsOf(file);
+      return [source, imports.filter(({ specifier }) => !localOnly || specifier.startsWith('.') || specifier.startsWith('@/'))
+        .map(entry => ({ ...entry, target: resolveImport(file, entry.specifier) }))];
+    });
     prefetchExportClosure([...new Set(planned.flatMap(([, imports]) => imports
       .filter(({ target, names }) => target.kind === 'file' && names.length).map(({ target }) => target.path)))]);
-    for (const [file, imports] of planned) {
+    for (const [source, imports] of planned) {
+      const file = source.fileName;
       for (const { specifier, names, target } of imports) {
         if (target.kind === 'missing') {
           found.set(`${file}\0${specifier}\0`, `missing module: ${label(`${file} -> ${specifier}`)}`);
@@ -328,9 +359,11 @@ function buildRevisionView(repo, git, rev) {
         for (const name of names) if (exportsName(target.path, name) === false)
           found.set(`${file}\0${specifier}\0${name}`, `missing export: ${label(`${file} imports { ${name} } from ${specifier}`)}`);
       }
+      if (localOnly) findMissingBindings(source, imports, changed, found);
     }
     return found;
   };
+
   return { blobs, read, prefetch, resolveImport, optionsFor, workspaces, exportsOf, findings };
 }
 
@@ -340,6 +373,18 @@ export function commitChangedPaths({ repo, base, tree }) {
   const paths = [];
   for (let index = 0; index < records.length; index += 2) paths.push({ status: records[index], path: records[index + 1] });
   return paths;
+}
+
+/** Check only packet sources here. Reverse-importer discovery stays in the post-commit report. */
+export function commitLocalImportClosure({ repo, base, tree, readView }) {
+  const roots = commitChangedPaths({ repo, base, tree })
+    .filter(({ status, path }) => status !== 'D' && COMMIT_SOURCE_PATH.test(path)).map(({ path }) => path);
+  if (!roots.length) return { findings: [] };
+  const options = { localOnly: true, changed: new Set(roots) };
+  const fresh = readView(tree).findings(roots, options);
+  if (!fresh.size) return { findings: [] };
+  const inherited = readView(base).findings(roots, options);
+  return { findings: [...fresh].filter(([key]) => !inherited.has(key)).map(([, message]) => message).sort() };
 }
 
 export function commitProducerClosure({ repo, base, tree, readView = createRevisionViewReader(repo), paths }) {

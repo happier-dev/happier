@@ -9,7 +9,7 @@ import { bundledPluginManifestAssetRelativePath } from '../../apps/cli/scripts/b
 import { commitSourceSyntax } from './commitSourceSyntax.mjs';
 import { commitPluginManifests } from './commitPluginManifests.mjs';
 import { commitLockfile } from './commitLockfile.mjs';
-import { commitProducerClosure, createRevisionViewReader, gitIn } from './commitProducerClosure.mjs';
+import { commitLocalImportClosure, commitProducerClosure, createRevisionViewReader, gitIn } from './commitProducerClosure.mjs';
 import { commitExtensionBoundaries } from './commitExtensionBoundaries.mjs';
 import { commitImportCycles } from './commitImportCycles.mjs';
 import { APPROVAL_DTO_PATH, commitTreeEntryLoads, EntryLoadAdmissionRequired, EntryLoadAdmissionUnavailable,
@@ -53,7 +53,7 @@ async function judgeCommit({ repo, base, tree, cacheDir, compareAdmittedEntryLoa
     }
   };
   const refused = (check, findings) => ({ verdict: 'refused', check, findings, notes });
-  const readView = createRevisionViewReader(repo);
+  const readView = createRevisionViewReader(repo, { trackedOnly: phase === 'commit' });
   if (phase === 'post-commit') {
     const closure = await judge('producer closure', () => commitProducerClosure({ repo, base, tree, readView }));
     if (closure.findings.length) return refused('producer closure', closure.findings);
@@ -65,6 +65,8 @@ async function judgeCommit({ repo, base, tree, cacheDir, compareAdmittedEntryLoa
   }
   const syntax = await judge('syntax', () => commitSourceSyntax({ repo, base, tree }));
   if (syntax.findings.length) return refused('syntax', syntax.findings);
+  const imports = await judge('local import closure', () => commitLocalImportClosure({ repo, base, tree, readView }));
+  if (imports.findings.length) return refused('local import closure', imports.findings);
   const cycles = await judge('import cycles', () => commitImportCycles({ repo, base, tree, cacheDir: join(cacheDir, 'import-cycles'), readView }));
   if (cycles.findings.length) return refused('eager import cycle through a changed module (a TDZ at load)', cycles.findings);
 
