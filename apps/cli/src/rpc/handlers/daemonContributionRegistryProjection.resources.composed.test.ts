@@ -56,10 +56,11 @@ it('keeps declared reads across retained activation replacement and identifies a
             ok: false, code: 'plugin_resource_not_found', reason: 'not_found',
         });
         const refusals = diagnostics.mock.calls.filter(([message]) => message === '[PLUGIN RESOURCE] Read refused');
+        expect(refusals).toHaveLength(2);
         expect(refusals).toContainEqual(['[PLUGIN RESOURCE] Read refused', {
             callerPluginId: pluginId, resourcePluginId: pluginId, resourceId: 'no-longer-declared',
             expectedCallerOccurrenceId: occurrenceId, generation: successor.generation,
-            code: 'plugin_resource_not_found', reason: 'not_found',
+            code: 'plugin_resource_not_found', reason: 'not_found', stage: 'plugin_resources.read',
         }]);
         expect(JSON.stringify(refusals)).not.toContain('private resource contents');
     } finally {

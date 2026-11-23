@@ -2633,6 +2633,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
         const refuse = (failure: Extract<ReturnType<typeof DaemonPluginUiResourceReadResponseSchema.parse>, { ok: false }>, generation?: number) => {
             // Identity only: never include Resource bytes, contextual input or error text.
             logger.infoFile('[PLUGIN RESOURCE] Read refused', {
+                stage: 'plugin_resources.read',
                 ...(context?.transportRequestId ? { requestId: context.transportRequestId } : {}),
                 callerPluginId: declaredRequest.callerPluginId,
                 resourcePluginId: declaredRequest.resource.pluginId,
