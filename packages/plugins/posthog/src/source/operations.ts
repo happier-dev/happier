@@ -83,7 +83,6 @@ import {
     type PosthogApiOrigin,
 } from '../connect/origin.js';
 import { POSTHOG_CONNECTED_ACCOUNT_PURPOSE } from '../posthogContracts.js';
-import { POSTHOG_PLUGIN_ID } from '../posthogContracts.js';
 import {
     POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1,
     PosthogSampledEventsInputV1Schema,
@@ -1098,15 +1097,6 @@ async function resolveInvokedInstance(
 const UUID_PATTERN
     = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 
-function isMountedPosthogUiRead(context: PosthogSourceContext): boolean {
-    // The dispatcher stamps the handler-visible surface with the authenticated
-    // invoking origin: a mounted detail-body read arrives as `ui`, while the
-    // aggregate-owned get is `plugin`.
-    return context.surface === 'ui'
-        && context.caller?.kind === 'plugin'
-        && context.caller.pluginId === POSTHOG_PLUGIN_ID;
-}
-
 /** One authoritative read of one local ref through one exact configured instance. */
 async function readPosthogSourceEntry(
     input: unknown,
@@ -1268,15 +1258,8 @@ export function createPosthogSourceEntryReader(
     );
 }
 
-export const getPosthogSourceEntry: PosthogSourceEntryReader = async (input, context) => (
-    isMountedPosthogUiRead(context)
-        ? await runPosthogBoundedInvocation(
-            context,
-            undefined,
-            async (signal) => (await readPosthogSourceEntry(input, context, signal)).observation,
-        )
-        : (await readPosthogSourceEntry(input, context, context.signal)).observation
-);
+export const getPosthogSourceEntry: PosthogSourceEntryReader = async (input, context) =>
+    (await readPosthogSourceEntry(input, context, context.signal)).observation;
 
 /** Overview consumes the same join; aggregate get exposes only its shared observation. */
 export const readPosthogNativeOverview = async (
