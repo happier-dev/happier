@@ -47,33 +47,37 @@ async function main() {
   const record = (item) => fs.appendFile(seenPath, JSON.stringify(item) + '\n');
   const watchers = new Map();
   const observedRoots = new Set();
-  let changed = false;
+  let pending = new Set();
   let notify;
   let watchError;
-  const markChanged = () => { changed = true; notify?.(); };
-  function observe(directory, relevant) {
+  function observe(directory, source, relevant) {
+    const subscription = { source, relevant };
     const existing = watchers.get(directory);
-    if (existing) { existing.filters.push(relevant); return; }
-    const filters = [relevant];
+    if (existing) { existing.subscriptions.push(subscription); return; }
+    const subscriptions = [subscription];
     const watcher = watch(directory, (_event, filename) => {
-      if (filename === null || filters.some((filter) => filter(String(filename)))) markChanged();
+      for (const { source, relevant } of subscriptions) {
+        if (filename === null || relevant(String(filename))) pending.add(source);
+      }
+      if (pending.size > 0) notify?.();
     });
-    watcher.on('error', (error) => { watchError = error; markChanged(); });
-    watchers.set(directory, { watcher, filters });
+    watcher.on('error', (error) => { watchError = error; notify?.(); });
+    watchers.set(directory, { watcher, subscriptions });
   }
   const read = async (file) => {
     try { return await fs.readFile(file, 'utf8'); } catch (error) { if (error.code === 'ENOENT') return ''; throw error; }
   };
-  async function scan(initial) {
+  async function scan(initial, changed) {
     let wake = false;
     const silent = initial && baseline;
     // Establish report baselines before emitting initial board headings. A caller
     // can act on delivered output immediately without racing report initialization.
     for (const root of roots) {
+      if (!initial && !changed.has(root)) continue;
       let entries;
       try {
         if (!observedRoots.has(root)) {
-          observe(root, (filename) => filename.endsWith('.md'));
+          observe(root, root, (filename) => filename.endsWith('.md'));
           observedRoots.add(root);
         }
         entries = await fs.readdir(root, { withFileTypes: true });
@@ -97,6 +101,7 @@ async function main() {
       }
     }
     for (const board of boards) {
+      if (!initial && !changed.has(board)) continue;
       const content = await read(board);
       const headings = content.match(/^### [^\r\n]*/gm) ?? [];
       for (const heading of headings) {
@@ -125,21 +130,22 @@ async function main() {
     return wake;
   }
   let expired = false;
-  const timer = setTimeout(() => { expired = true; markChanged(); }, heartbeat);
+  const timer = setTimeout(() => { expired = true; notify?.(); }, heartbeat);
   try {
-    for (const board of boards) observe(path.dirname(board), (filename) => filename === path.basename(board));
+    for (const board of boards) observe(path.dirname(board), board, (filename) => filename === path.basename(board));
     for (const root of roots) {
       // Watch the parent too so a not-yet-created default lanes directory can appear.
-      try { observe(path.dirname(root), (filename) => filename === path.basename(root)); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      try { observe(path.dirname(root), root, (filename) => filename === path.basename(root)); } catch (error) { if (error.code !== 'ENOENT') throw error; }
     }
     if (await scan(true)) return;
     for (;;) {
       if (watchError) throw watchError;
       if (expired) { process.stdout.write('HEARTBEAT\n'); return; }
-      if (!changed) await new Promise((resolve) => { notify = resolve; });
+      if (pending.size === 0) await new Promise((resolve) => { notify = resolve; });
       notify = undefined;
-      changed = false;
-      if (await scan(false)) return;
+      const changed = pending;
+      pending = new Set();
+      if (changed.size > 0 && await scan(false, changed)) return;
     }
   } finally {
     clearTimeout(timer);

@@ -19,7 +19,7 @@ async function fixture(t) {
   return { root, board, second, seen };
 }
 function start(t, fixture, extra = [], heartbeat = 10000, wakeOnBacklog = true, names = ['Programme', 'LANE']) {
-  const child = spawn(process.execPath, [watcher, '--board', fixture.board, '--board', fixture.second,
+  const child = spawn(process.execPath, [...(fixture.preload ? ['--import', fixture.preload] : []), watcher, '--board', fixture.board, '--board', fixture.second,
     ...names.flatMap((name) => ['--name', name]), '--seen', fixture.seen, '--heartbeat-ms', String(heartbeat),
     ...(wakeOnBacklog ? ['--wake-on-backlog'] : []), ...extra],
   { cwd: fixture.root, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -280,4 +280,35 @@ test('a tagged broadcast wakes only watchers whose --affects matches; untagged b
   const other = heading('ALL leads', 'RULING', 'nl1 again');
   await fs.appendFile(f.board, `\n${other}\naffects: nl1\n`);
   assert.deepEqual(await start(t, f).done, [other]);
+});
+
+test('a board event rereads only the changed board and skips unchanged lane reports', { timeout: 15000 }, async (t) => {
+  const f = await fixture(t);
+  const report = path.join(f.root, 'lanes', 'lane.md');
+  const trace = path.join(f.root, 'reads.jsonl');
+  f.preload = path.join(f.root, 'trace.mjs');
+  await fs.writeFile(report, 'STATUS: IN_PROGRESS\n');
+  await fs.writeFile(f.preload, `
+    import fs from 'node:fs/promises';
+    import { appendFileSync } from 'node:fs';
+    const readFile = fs.readFile;
+    fs.readFile = function (file, ...args) {
+      appendFileSync(${JSON.stringify(trace)}, JSON.stringify(file) + '\\n');
+      return readFile.call(this, file, ...args);
+    };
+  `);
+  const ready = heading('Other, Programme', 'CLAIM', 'watching');
+  const work = heading('Programme', 'ASK', 'new board work');
+  await fs.writeFile(f.board, ready + '\n');
+  const run = start(t, f);
+  await run.line();
+  const next = f.board + '.tmp';
+  await fs.writeFile(next, work + '\n' + ready + '\n');
+  await fs.rename(next, f.board);
+  assert.deepEqual(await run.done, [ready, work]);
+
+  const reads = (await fs.readFile(trace, 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.equal(reads.filter((file) => file === report).length, 1, 'unchanged report reads');
+  assert.equal(reads.filter((file) => file === f.second).length, 1, 'unchanged board reads');
+  assert.equal(reads.filter((file) => file === f.board).length, 2, 'changed board reads');
 });
