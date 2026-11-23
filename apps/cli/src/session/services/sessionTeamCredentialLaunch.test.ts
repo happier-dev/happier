@@ -440,7 +440,7 @@ describe('Session Team launch composition', () => {
     expect(reads).toBe(1);
   });
 
-  it('keeps a stale explicit revision distinct from an unavailable source projection', async () => {
+  it('refuses a stale brokered selection when the current source cannot project its models', async () => {
     await expect(normalizeSessionTeamCredentialLaunch({ options: { ...options, connectedServices: undefined,
       teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: resource.id,
         teamId: resource.teamId, expectedResourceRevision: 6, deliveryMode: 'brokered' }],
@@ -448,10 +448,10 @@ describe('Session Team launch composition', () => {
       readCatalog: async () => [{ ...resource, providerModels: [],
         readiness: { kind: 'broker_unavailable', reason: 'projection_unavailable' }, recoveryAction: 'retry',
       }],
-    })).rejects.toMatchObject({ code: 'resource_changed', phase: 'resource_selection' });
+    })).rejects.toMatchObject({ code: 'broker_unavailable', phase: 'readiness' });
   });
 
-  it('keeps a stale explicit revision distinct from a current exhausted allowance', async () => {
+  it('enforces the current brokered allowance when the chosen revision is stale', async () => {
     await expect(normalizeSessionTeamCredentialLaunch({ options: { ...options, connectedServices: undefined,
       teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: resource.id,
         teamId: resource.teamId, expectedResourceRevision: 6, deliveryMode: 'brokered' }],
@@ -459,7 +459,7 @@ describe('Session Team launch composition', () => {
       readCatalog: async () => [{ ...resource,
         readiness: { kind: 'limit_reached', metric: 'inference_requests', resetsAtUtc: '2026-10-26T00:00:00.000Z' },
       }],
-    })).rejects.toMatchObject({ code: 'resource_changed', phase: 'resource_selection' });
+    })).rejects.toMatchObject({ code: 'team_credential_usage_limit', phase: 'readiness' });
   });
 
   it('does not apply a brokered allowance to an offered direct model route', async () => {
@@ -494,10 +494,14 @@ describe('Session Team launch composition', () => {
     expect(result.teamModelRow?.selection.resourceId).toBe('explicit-resource');
   });
 
-  it.each([{ teamId: 'team-other', expectedResourceRevision: 7 }, { teamId: 'team-a', expectedResourceRevision: 6 }])(
-    'refuses a fresh explicit model binding whose Team or revision was not offered', async witness => {
+  it.each([
+    { teamId: 'team-other', expectedResourceRevision: 7, deliveryMode: 'brokered' },
+    { teamId: 'team-a', expectedResourceRevision: 8, deliveryMode: 'brokered' },
+    { teamId: 'team-a', expectedResourceRevision: 6, deliveryMode: 'direct' },
+    { teamId: 'team-a', expectedResourceRevision: 6, deliveryMode: 'vendor-native' },
+  ] as const)('refuses a fresh explicit model binding with an invalid currentness witness (%j)', async witness => {
       await expect(normalizeSessionTeamCredentialLaunch({ options: { ...options, teamCredentialBindings: [{ v: 1,
-        slot: { kind: 'provider_model' }, resourceId: resource.id, deliveryMode: 'brokered', ...witness }] },
+        slot: { kind: 'provider_model' }, resourceId: resource.id, ...witness }] },
         agentId: 'codex', agentTargetKey: target, contributions: readCurrentContributionRegistry(), applications,
         readCatalog: async () => [resource] })).rejects.toMatchObject({ code: 'resource_changed', phase: 'resource_selection' });
     },

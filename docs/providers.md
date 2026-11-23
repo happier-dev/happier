@@ -2951,8 +2951,10 @@ Session binding admission. It uses the declared Agent/Provider application
 and an exact currently offered Team model row, not a personal Provider
 connection or a model-name inference. Explicit model-source choices retain
 precedence; an unavailable or ambiguous model source is refused rather than
-falling back to native authentication. A Team model source with no selected
-model refuses with `team_credential_model_selection_required` and asks the
+falling back to native authentication. A fresh brokered Start can use a newer
+revision of the same Team resource when the current entitled catalog still offers
+the selected model and route. Session creation and broker open use the current
+revision for Home admission. A Team model source with no selected model refuses with `team_credential_model_selection_required` and asks the
 person to choose a Team model; the daemon does not infer one. Pool member
 rotation preserves the selection while its resource and exact model remain
 available. Catalog, broker and reconnect refusals retain their existing typed

@@ -81,13 +81,15 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
   const fresh = !options.existingSessionId && !options.resume;
   const explicitModelResource = explicitModelBinding?.resourceId
     ? resources.find(candidate => candidate.id === explicitModelBinding.resourceId) : undefined;
-  // Check the caller's identity/revision witness before projecting readiness:
-  // an exhausted current resource must not disguise a genuinely stale choice.
+  // A fresh brokered launch uses the current offer for the selected Team
+  // model. Direct and native delivery still require the selected revision.
   if (model?.providerConnectionId == null
     && explicitModelBinding && explicitModelBinding.resourceId !== null
     && (!explicitModelResource
       || (explicitModelBinding.teamId !== undefined && explicitModelBinding.teamId !== explicitModelResource.teamId)
-      || (fresh && explicitModelBinding.expectedResourceRevision !== explicitModelResource.resourceRevision))) {
+      || (fresh && explicitModelBinding.expectedResourceRevision !== explicitModelResource.resourceRevision
+        && (explicitModelBinding.deliveryMode !== 'brokered'
+          || explicitModelBinding.expectedResourceRevision > explicitModelResource.resourceRevision)))) {
     throw new SessionTeamCredentialLaunchUnavailableError(explicitModelResource ? 'resource_changed' : 'resource_unavailable', 'resource_selection');
   }
   const purposeSelections: PurposeTeamResourceSelectionForSession[] = selectedPurposes.map(({ scope, selection }) => {

@@ -22,7 +22,11 @@ import { ProviderBrokerOpenResponseV1Schema, ProviderBrokerAdmissionFailureCodeV
 import { createProviderBrokerMachineCarrierTunnelOpen } from '@/daemon/peer/iroh/providerBrokerMachineCarrierTunnelOpen';
 import type { DaemonMachineIrohRuntime } from '@/daemon/peer/iroh/daemonMachineIrohRuntime';
 import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
-import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunch';
+import {
+  normalizeSessionTeamCredentialLaunch,
+  readSessionTeamCredentialResourceCatalog,
+  SessionTeamCredentialLaunchUnavailableError,
+} from '@/session/services/sessionTeamCredentialLaunch';
 import { logger } from '@/ui/logger';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER, writeProviderBrokerApplicationFailure } from './providerBrokerApplicationServer';
@@ -592,7 +596,7 @@ describe('Session Team credential Provider binding', () => {
     expect(openBroker).not.toHaveBeenCalled();
   });
 
-  it('opens one exact broker/tunnel from one admitted catalog and closes Session custody once', async () => {
+  it.each([0, 1])('opens a fresh Team Session once after %i share revision bumps', async revisionBumps => {
     const closeOrder: string[] = [];
     const retire = vi.fn(async () => { closeOrder.push('retire'); });
     const close = vi.fn(async () => undefined);
@@ -619,15 +623,44 @@ describe('Session Team credential Provider binding', () => {
       materialize: vi.fn(materializeBrokerAuthoritySpawnEnv),
     };
 
+    const worker = lease(adapter);
+    const { kind: _kind, ...selectedModel } = row.selection;
+    const homeDomainAction = vi.fn(async () => ({
+      resources: [{
+        id: row.selection.resourceId, teamId: row.selection.teamId, resourceRevision: row.selection.expectedResourceRevision,
+        displayName: { content: { t: 'plain', v: 'Shared Pool' }, recipientEnvelope: null },
+        readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
+        directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
+        sourcePresentation: { kind: 'connected_service', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } },
+        connectedServiceSelections: [], providerModels: [row],
+      }],
+      nextCursor: null,
+    }));
+    const launch = await normalizeSessionTeamCredentialLaunch({
+      options: {
+        directory: '/tmp/happier-team-broker-test',
+        modelSelection: { v: 2, updatedAt: 1, ref: { source: 'team_resource', ...selectedModel,
+          expectedResourceRevision: selectedModel.expectedResourceRevision - revisionBumps } },
+      },
+      agentId: 'codex', agentTargetKey: selectedModel.agentTargetKey, applications: [row.application],
+      contributions: worker.registry.contributes,
+      readCatalog: scope => readSessionTeamCredentialResourceCatalog({ ...scope, homeDomainAction }),
+    });
+    const binding = launch.options.teamCredentialBindings?.[0];
+    if (!binding) throw new Error('Expected the admitted Team model binding');
+    expect(binding.expectedResourceRevision).toBe(selectedModel.expectedResourceRevision);
+
     const opened = await openSessionTeamCredentialProviderBinding({
       sessionId: 'session-1', machineId: 'worker-1', agentId: 'codex',
-      agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'gpt-5',
-      binding: { v: 1, slot: { kind: 'provider_model' }, resourceId: 'resource-1', expectedResourceRevision: 3, deliveryMode: 'brokered' },
-      lease: lease(adapter), materializationBaseDir: '/tmp/happier-team-broker-test',
+      agentTargetKey: selectedModel.agentTargetKey, modelId: selectedModel.modelId, binding,
+      lease: worker, materializationBaseDir: '/tmp/happier-team-broker-test',
       signal, readCatalog, openBroker, openTunnel,
     });
 
-    expect(openBroker).toHaveBeenCalledOnce();
+    expect(homeDomainAction).toHaveBeenCalledOnce();
+    expect(openBroker).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      expectedResourceRevision: selectedModel.expectedResourceRevision,
+    }), signal);
     expect(readCatalog).toHaveBeenCalledOnce();
     expect(openTunnel).toHaveBeenCalledWith(expect.objectContaining({
       brokerOpen: brokerOpened,
