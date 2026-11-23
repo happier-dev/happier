@@ -9,6 +9,13 @@ the contributed Action's current safe read declaration, and invokes it as the
 original caller. Matching development daemons and clients are needed for this
 path. An older daemon refuses the child, leaving the draft available to retry.
 
+The existing mounted Draft Edit request also accepts an optional `triggerEdit`
+for staging a Machine Event before setup or selectively removing an unsaved
+trigger row. It carries the authoring source and transition, and the mounted
+draft validates the revision as for other edits. Matching 0.3 development
+Protocol, daemon and client builds understand the new request. Existing edit
+requests, responses and saved Workflow formats keep their shapes.
+
 ## Next-prompt permission staging (unreleased 0.3)
 
 `session.permission_mode.set` accepts `applyTiming: next_prompt` and routes that invocation to a connected Happier client. The client writes the existing Session draft field. The private continuation carries the Agent's admitted permission inputs for this Action so the receiving executor can enforce its ceiling.

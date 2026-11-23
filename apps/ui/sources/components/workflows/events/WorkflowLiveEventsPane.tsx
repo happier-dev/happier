@@ -48,6 +48,7 @@ import {
 type WorkflowCompanionCaller = Readonly<{ context: ActionExecutorContext; invocation: CurrentUiContextCommandInvocation }>;
 export type WorkflowCompanionAddTrigger = (when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent,
   caller?: WorkflowCompanionCaller) => Promise<string | undefined>;
+export type WorkflowCompanionUndoTrigger = (clientId: string, caller?: WorkflowCompanionCaller) => Promise<boolean>;
 
 /**
  * The editor's Live events companion (S2, D11): the same feed, rows and detail body as the Events tab, beside the
@@ -63,7 +64,7 @@ export const WorkflowLiveEventsPane = React.memo(
       /** The trigger editor's answer to whether a row an add created is still there (Undo takes it away). */
       hasTriggerRow: ((clientId: string) => boolean) | null;
       canUndoAddedTrigger?: (clientId: string) => boolean;
-      onUndoAddedTrigger?: (clientId: string) => void;
+      onUndoAddedTrigger?: WorkflowCompanionUndoTrigger;
       /** Closes the companion; `null` where the host's own title and close already stand above. */
       onClose: (() => void) | null;
       /** `sheet`: the phone sheet, which carries the open row's actions in a bar at its foot (S2). */
@@ -102,13 +103,8 @@ export const WorkflowLiveEventsPane = React.memo(
       (key: string) => {
         const clientId = addedRows.get(key);
         if (clientId !== undefined && isAdded(key)) {
-          return <View style={styles.actions}>
-            <InlineStatus tone="success" label={t('workflows.events.added')} />
-            {onUndoAddedTrigger && canUndoAddedTrigger?.(clientId) ? (
-              <RoundButton title={t('workflows.editor.undo')} size="small" display="inverted"
-                testID={`${props.testID}:undo-add`} onPress={() => onUndoAddedTrigger(clientId)} />
-            ) : null}
-          </View>;
+          return <AddedLiveEvent eventKey={key} active={props.active} clientId={clientId} testID={props.testID}
+            onUndo={canUndoAddedTrigger?.(clientId) ? onUndoAddedTrigger : undefined} />;
         }
         return <LiveEventBody
           projection={feed.projection}
@@ -183,6 +179,31 @@ export const WorkflowLiveEventsPane = React.memo(
     );
   },
 );
+
+function AddedLiveEvent({ eventKey, active, clientId, testID, onUndo }: Readonly<{
+  eventKey: string;
+  active: boolean;
+  clientId: string;
+  testID: string;
+  onUndo?: WorkflowCompanionUndoTrigger;
+}>) {
+  useCurrentUiContextLocalCommands(active && onUndo ? [{
+    key: 'undo-add-to-mounted-workflow', title: t('workflows.editor.removeTrigger'), invoke: async (_input, context, invocation) => {
+      try {
+        return await onUndo(clientId, { context, invocation });
+      } catch (error) {
+        return { ok: false, code: 'denied', ...(error instanceof WorkflowActionError && error.code ? { errorCode: error.code } : {}) };
+      }
+    },
+  }] : [], { contextKey: eventKey });
+  return (
+    <View style={styles.actions}>
+      <InlineStatus tone="success" label={t('workflows.events.added')} />
+      {onUndo ? <RoundButton title={t('workflows.editor.undo')} size="small" display="inverted"
+        testID={`${testID}:undo-add`} onPress={() => { void onUndo(clientId); }} /> : null}
+    </View>
+  );
+}
 
 type LiveEventProps = Readonly<{
   projection: WorkflowActivityProjection;

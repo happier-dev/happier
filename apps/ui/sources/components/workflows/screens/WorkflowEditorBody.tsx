@@ -1,7 +1,7 @@
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { useWorkflowNavigation, selectWorkflowNavigationItem } from '../navigation/workflowNavigation';
 import { useWorkflowPageNavigationShown, WorkflowPageNavigation, WorkflowCompanionNavigation } from '../navigation/WorkflowNavigationViews';
-import { WorkflowLiveEventsPane, type WorkflowCompanionAddTrigger } from '../events/WorkflowLiveEventsPane';
+import { WorkflowLiveEventsPane, type WorkflowCompanionAddTrigger, type WorkflowCompanionUndoTrigger } from '../events/WorkflowLiveEventsPane';
 import { useMountedScopeActionCommand } from '@/components/approvals/useMountedScopeActionCommand';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -452,7 +452,7 @@ export type WorkflowEditorBodyProps = Readonly<{
     /** Whether the row an add created is still one of the triggers (Undo takes it away), from the trigger editor. */
     hasTriggerRow?: (clientId: string) => boolean;
     canUndoAddedTrigger?: (clientId: string) => boolean;
-    onUndoAddedTrigger?: (clientId: string) => void;
+    onUndoAddedTrigger?: WorkflowCompanionUndoTrigger;
     /** The document's reading presentation (04 §4.11), for a read-only workflow. */
     documentPresentation?: WorkflowDocumentPresentation;
     /** Options for Action-step fields with an `optionsSourceId`, for the workflow's Where Machine. */

@@ -49,10 +49,25 @@ export const WorkflowDraftSettingsV1Schema = lazyZodSchema(() => z.strictObject(
   executionTarget: z.enum(['session', 'detached_run']), triggers: WorkflowDraftTriggerSnapshotV1Schema,
 }));
 export const WorkflowDraftSettingsPatchV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.partial(WorkflowDraftSettingsV1Schema)));
+const WorkflowDraftMachineEventSeedV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('machine'), key: z.string().check(z.minLength(1)), machineId: z.string().check(z.minLength(1)),
+  event: z.enum(['online', 'offline']), sourceRevision: z.number().check(z.int(), z.nonnegative()),
+  occurredAt: z.number(), coverage: z.enum(['live', 'retained']),
+}));
+const WorkflowDraftTriggerEditV1Schema = lazyZodSchema(() => {
+  const clientId = z.string().check(z.minLength(1));
+  return z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('stageMachineEvent'), clientId, nativeEvent: WorkflowDraftMachineEventSeedV1Schema }),
+    z.strictObject({ kind: z.literal('removeAdded'), clientId }),
+  ]);
+});
 export const WorkflowDraftEditInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...draftAddress, expectedDraftRevision: z.number().check(z.int(), z.nonnegative()),
   ops: z.optional(z.array(WorkflowDefinitionEditOpV1Schema)), settings: z.optional(WorkflowDraftSettingsPatchV1Schema),
-}).check(z.refine(input => (input.ops?.length ?? 0) > 0 || Object.keys(input.settings ?? {}).length > 0)));
+  triggerEdit: z.optional(WorkflowDraftTriggerEditV1Schema),
+}).check(z.refine(input => input.triggerEdit !== undefined
+  ? input.ops === undefined && input.settings === undefined
+  : (input.ops?.length ?? 0) > 0 || Object.keys(input.settings ?? {}).length > 0)));
 export const WorkflowReviewDraftSetInputV1Schema = lazyZodSchema(() => {
   const address = { ...draftAddress, runId: WorkflowRunIdV1Schema, expectedContentRevision: WorkflowDecimalV1Schema };
   return z.union([
@@ -138,13 +153,14 @@ function createWorkflowAuthoringActionSpecs() {
 }, {
   id: 'workflow.authoring.draft.edit', approval: {result: 'required'}, title: 'Edit mounted Workflow draft',
   cli: { commands: [{ path: ['workflow', 'authoring', 'draft', 'edit'], visibility: 'canonical' }] },
-  description: 'Apply canonical Workflow edit ops and/or a settings patch (description, projectTarget, executionTarget, triggers) to the open draft at expectedDraftRevision as one undoable change. A stale revision is refused. Changed blocks are highlighted. Does not save or run.',
+  description: 'Apply canonical Workflow edit ops, a settings patch, or a trigger row edit to the open draft at expectedDraftRevision as one undoable change. triggerEdit can stage a Machine event before setup or remove a single unsaved row by clientId. A stale revision is refused. Does not save or run.',
   safety: 'safe', sideEffectClass: 'external', executionPlacement: 'client', placements: [], surfaces: mountedSurfaces,
   bindings: { mcpToolName: 'workflow_authoring_draft_edit', voiceClientToolName: 'editWorkflowDraft' },
   inputSchema: WorkflowDraftEditInputV1Schema, outputSchema: WorkflowDraftMutationResultV1Schema,
   inputHints: { fields: [...addressHints, { path: 'expectedDraftRevision', title: 'Observed draft revision', widget: 'number', required: true },
     { path: 'ops', title: 'Canonical Workflow edit operations', widget: 'json', required: false },
-    { path: 'settings', title: 'Mounted draft settings patch', widget: 'json', required: false }] },
+    { path: 'settings', title: 'Mounted draft settings patch', widget: 'json', required: false },
+    { path: 'triggerEdit', title: 'Pending Machine event or selective removal', widget: 'json', required: false }] },
   examples: { mcp: { argsExample: editExample }, voice: { argsExample: editExample } },
 }, {
   id: 'workflow.authoring.draft.undo', approval: {result: 'required'}, title: 'Undo Workflow draft change',

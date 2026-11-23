@@ -1360,19 +1360,68 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(readBodyProps()!.hasTriggerRow!(clientId)).toBe(true);
     });
 
-    it('undoes the companion Machine Add while preserving a later title edit', async () => {
-        await serveMountedDraftActionHome();
-        await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
-        const nativeEvent = { kind: 'machine', key: 'machine-online', machineId: 'machine-a', event: 'online',
-            sourceRevision: 1, occurredAt: 10, coverage: 'retained' } as const;
-        let clientId = '';
-        await act(async () => { clientId = (await readBodyProps()!.onAddTriggerWhen!({ kind: 'pluginEvent', value: null }, { nativeEvent })) ?? ''; });
+    it.each(['press', 'agent'] as const)('admits pending Machine Add and selective Undo through the draft owner (%s)', async entry => {
+        const { WORKFLOW_AUTHORING_ACTION_ID } = await import('@happier-dev/protocol/actions/workflowAuthoringActionIds');
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const boundary = await serveMountedDraftActionHome();
+        await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        const executor = createDefaultActionExecutor();
+        const context = { surface: 'agent' as const, authority: 'account_automation' as const,
+            serverId: boundary.scope.serverId, runtimeAccountId: boundary.scope.accountId };
+        const editTrigger = async (triggerEdit: unknown, expectedDraftRevision?: number) => {
+            const draft = readBodyProps()!.mountedDraftActions!.getSnapshot()!;
+            return executor.execute(WORKFLOW_AUTHORING_ACTION_ID.draftEdit, { scope: draft.scope, draftId: draft.draftId,
+                expectedDraftRevision: expectedDraftRevision ?? draft.draftRevision, triggerEdit }, context);
+        };
+        const add = async (event: 'online' | 'offline') => {
+            const nativeEvent = { kind: 'machine', machineId: 'machine-a', event,
+                key: event, sourceRevision: 1, occurredAt: 10, coverage: 'retained' } as const;
+            if (entry === 'press') {
+                return (await readBodyProps()!.onAddTriggerWhen!({ kind: 'pluginEvent', value: null }, { nativeEvent })) ?? '';
+            }
+            const clientId = `agent-${event}`;
+            expect(await editTrigger({ kind: 'stageMachineEvent', clientId, nativeEvent }))
+                .toMatchObject({ ok: true, result: { status: 'applied' } });
+            return clientId;
+        };
+        let first = '';
+        let second = '';
+        await act(async () => {
+            first = await add('online');
+            second = await add('offline');
+        });
+        const previous = readBodyProps()!.mountedDraftActions!.getSnapshot()!.draftRevision;
         await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Keep this title' }); });
-        expect(readBodyProps()!.canUndoAddedTrigger?.(clientId)).toBe(true);
-        await act(async () => { readBodyProps()!.onUndoAddedTrigger!(clientId); });
-        expect(readBodyProps()!.hasTriggerRow!(clientId)).toBe(false);
+        expect(await editTrigger({ kind: 'removeAdded', clientId: first }, previous))
+            .toMatchObject({ ok: true, result: { status: 'refused', reason: 'stale_draft_revision' } });
+        expect(readBodyProps()!.canUndoAddedTrigger?.(first)).toBe(true);
+        await act(async () => {
+            if (entry === 'press') await readBodyProps()!.onUndoAddedTrigger!(first);
+            else expect(await editTrigger({ kind: 'removeAdded', clientId: first }))
+                .toMatchObject({ ok: true, result: { status: 'applied' } });
+        });
+        expect(readBodyProps()!.hasTriggerRow!(first)).toBe(false);
+        expect(readBodyProps()!.hasTriggerRow!(second)).toBe(true);
         expect(readBodyProps()!.draftStore.get().name).toBe('Keep this title');
         expect(readBodyProps()!.saveStatus).toEqual({ kind: 'unsaved' });
+        expect(boundary.updates).toHaveLength(0);
+        expect(boundary.automationCreates).toHaveLength(0);
+    });
+
+    it('keeps a pending Machine Add out of the draft when Edit is disabled', async () => {
+        const { WORKFLOW_AUTHORING_ACTION_ID } = await import('@happier-dev/protocol/actions/workflowAuthoringActionIds');
+        const boundary = await serveMountedDraftActionHome(undefined, true, undefined, {
+            actionsSettingsV1: { v: 1, actions: { [WORKFLOW_AUTHORING_ACTION_ID.draftEdit]: { enabled: false } } },
+        });
+        await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        const nativeEvent = { kind: 'machine', key: 'machine-online', machineId: 'machine-a', event: 'online',
+            sourceRevision: 1, occurredAt: 10, coverage: 'retained' } as const;
+        await act(async () => {
+            expect(await readBodyProps()!.onAddTriggerWhen!({ kind: 'pluginEvent', value: null }, { nativeEvent })).toBeUndefined();
+        });
+        expect(readBodyProps()!.history!.undoLabel).toBeNull();
+        expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
+        expect(boundary.automationCreates).toHaveLength(0);
     });
 
     it('records a Machine event awaiting setup in the mounted draft, with one Undo and Redo', async () => {
