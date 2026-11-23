@@ -127,7 +127,7 @@ export function createNativeAgentAccountUsageService(params: Readonly<{
     signal: AbortSignal;
 }>): NativeAgentAccountUsageService {
     const pendingSnapshots = new Map<string, PendingSnapshot>();
-    let automaticRetryTimer: ReturnType<typeof setTimeout> | null = null;
+    let automaticRetryTimer: NodeJS.Timeout | null = null;
     let disposed = false;
 
     const clearAutomaticRetryTimer = (): void => {
@@ -207,7 +207,7 @@ export function createNativeAgentAccountUsageService(params: Readonly<{
         ) {
             return;
         }
-        automaticRetryTimer = setTimeout(() => {
+        automaticRetryTimer = setTimeout<[]>(() => {
             automaticRetryTimer = null;
             if (!disposed) void flushPendingSnapshots(undefined, { automatic: true });
         }, AUTOMATIC_RETRY_DELAY_MS);

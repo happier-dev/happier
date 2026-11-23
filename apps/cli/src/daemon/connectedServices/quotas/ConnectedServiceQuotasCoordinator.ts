@@ -3625,7 +3625,7 @@ export class ConnectedServiceQuotasCoordinator {
     const controller = new AbortController();
     const signal = input.signal ? AbortSignal.any([input.signal, controller.signal]) : controller.signal;
     const timeoutHandle = this.fetchTimeoutMs === null ? undefined
-      : setTimeout(() => controller.abort('quota-group-probe-deadline'), this.fetchTimeoutMs);
+      : setTimeout<[]>(() => controller.abort('quota-group-probe-deadline'), this.fetchTimeoutMs);
     timeoutHandle?.unref?.();
     const completedProfileIds = new Set<string>();
     try {
@@ -4495,7 +4495,7 @@ export class ConnectedServiceQuotasCoordinator {
       for (const view of groupViewsByKey.values()) {
         input.signal?.throwIfAborted();
         const controller = new AbortController();
-        const timeoutHandle = this.fetchTimeoutMs === null ? undefined : setTimeout(
+        const timeoutHandle = this.fetchTimeoutMs === null ? undefined : setTimeout<[]>(
           () => controller.abort('qualified-quota-group-targets-deadline'),
           this.fetchTimeoutMs,
         );

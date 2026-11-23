@@ -28,7 +28,7 @@ export async function invokeQuota(input: Readonly<{
   const signal = input.signal && controller
     ? AbortSignal.any([input.signal, controller.signal])
     : input.signal ?? controller?.signal;
-  const timeoutHandle = fetchTimeoutMs === null ? undefined : setTimeout(() => {
+  const timeoutHandle = fetchTimeoutMs === null ? undefined : setTimeout<[]>(() => {
     controller?.abort(new Error('Connected-service quota fetch timed out'));
     input.onTimeout();
   }, fetchTimeoutMs);
