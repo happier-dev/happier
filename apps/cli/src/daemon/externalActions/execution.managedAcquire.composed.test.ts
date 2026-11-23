@@ -34,6 +34,7 @@ import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExec
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { sealExternalActionRequesterAccountContextV1, sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { ACTION_OPERATION_RPC_METHODS_V2, ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1,
   ActionOperationRevisionEphemeralV1Schema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 
@@ -341,6 +342,16 @@ it.each([[false, false], [true, false], [true, true]])('keeps delegated Session 
     } } },
     resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId: 'machine' }),
   });
+  // The controller's Home features read is the same network boundary as its other Home reads.
+  const controllerFetch = globalThis.fetch;
+  vi.stubGlobal('fetch', async (...args: Parameters<typeof fetch>) => {
+    const request = args[0];
+    const url = new URL(typeof request === 'string' ? request : request instanceof URL ? request.href : request.url);
+    if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated') return Response.json({ features: {},
+      capabilities: { serverIdentity: { serverIdentityId: homeId }, guestCli: { source: 'public-release', line: '0.3', channel: 'stable' },
+        encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' } } });
+    return controllerFetch(...args);
+  });
   const serverId = configuration.activeServerId;
   await updateSettings(settings => ({ ...settings, servers: { ...settings.servers, [serverId]: {
     ...settings.servers?.[serverId], id: serverId, name: 'Managed Session Home', serverUrl, webappUrl: serverUrl,
@@ -389,11 +400,13 @@ it.each([[false, false], [true, false], [true, true]])('keeps delegated Session 
     const path = new URL(String(args[0])).pathname;
     homePaths.push(`GET ${path}`);
     if (path === '/v1/account/profile') return { status: 200, data: { id: 'controller-owner' } };
+    // The custodian's Action automation index is a Home read with no rows here.
+    if (path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
     // A controller credential cannot read the member's source Session policy.
     if (path === '/v2/sessions/member-session') return { status: 403, data: { error: 'forbidden' } };
     return readHome(...args);
   });
-  onTestFailed(() => { if (!hasContinuation) expect(homePaths, JSON.stringify(homePaths)).toContain('POST /v1/machines/presets/get'); });
+  onTestFailed(() => { if (!hasContinuation || sourceAdmitted) expect(homePaths, JSON.stringify(homePaths)).toContain('POST /v1/machines/presets/get'); });
   vi.mocked(axios.post).mockImplementation(async (...args) => {
     const path = new URL(String(args[0])).pathname;
     homePaths.push(`POST ${path}`);
@@ -426,16 +439,10 @@ it.each([[false, false], [true, false], [true, true]])('keeps delegated Session 
   } } });
   expect(homePaths).not.toContain('POST /v1/machines/presets/get');
   const result = await invoke();
-  if (sourceAdmitted) {
-    // The signed source admission replaces the controller's refusal; the
-    // controller never re-admits with a read of the member's Session policy.
-    expect(result, JSON.stringify(result)).not.toMatchObject({ kind: 'response', response: { execution: {
-      errorCode: 'approval_context_unavailable' } } });
-    expect(result).toMatchObject({ kind: 'response' });
-    expect(homePaths).not.toContain('GET /v2/sessions/member-session');
-    return;
-  }
-  if (hasContinuation) {
+  // The signed source admission replaces the controller's refusal; a stamped
+  // continuation proceeds like delegated compute to the Home preset read, and
+  // the controller never re-admits with a read of the member's Session policy.
+  if (hasContinuation && !sourceAdmitted) {
     expect(result, JSON.stringify(result)).toMatchObject({ kind: 'response', response: { execution: {
       ok: false, errorCode: 'approval_context_unavailable',
     } } });
@@ -457,12 +464,15 @@ it.each([[false, false], [true, false], [true, true]])('keeps delegated Session 
   if (!(manager instanceof RpcHandlerManager)) throw new Error('Missing installed operation observer');
   // Observe through the real read handler in the same member scope Home admitted.
   // Foreign requester operations are not published to the custodian's socket.
-  expect(await manager.invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.get,
+  const settled = await manager.invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.get,
     { operationId: accepted.operationId, waitForTerminal: true }, { signal: h.signal,
       rpcContext: { machineAdmission: { actorAccountId: root.binding.accountId, custodianAccountId: root.binding.custodianAccountId,
         machineId: root.binding.machineId, installationId: root.binding.installationId, role: 'use', encryptionMode: 'plain' },
         verifyMachineAdmissionCurrent: async () => h.f.isHomeCurrent() },
-    })).toMatchObject({ kind: 'found', operation: { state: 'failed', error: { errorCode: 'credential_unavailable' } } });
-  expect(homePaths.filter(path => path === 'POST /v1/machines/presets/get')).toHaveLength(1);
+    });
+  // A stamped continuation passes the controller's Session-start preflight on the
+  // signed source admission alone and reaches the same Home preset read.
+  expect(homePaths.filter(path => path === 'POST /v1/machines/presets/get'), JSON.stringify({ homePaths, settled })).toHaveLength(1);
   expect(homePaths).not.toContain('GET /v2/sessions/member-session');
+  expect(settled).toMatchObject({ kind: 'found', operation: { state: 'failed', error: { errorCode: 'credential_unavailable' } } });
 }, 120_000);

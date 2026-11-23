@@ -354,11 +354,14 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
     let sessionActionOrigin: SessionActionRpcOriginV1;
     try { sessionActionOrigin = resolveSessionRoleRpcOrigin(context); }
     catch { return refuse('session_action_origin_invalid'); }
-    // The controller of a managed acquire holds no access to this requester's
-    // private Agent-start policy. Admit here once, before Home signs: the signed
-    // origin carries the stamp and the root signs the Role-projected input, so
-    // this executor, the controller and the guest consume it without re-admitting.
-    if (requiresMachineAuthorization && operation.actionId === 'machines.managed.acquire'
+    // The controller of a managed acquire or preset Session spawn holds no access
+    // to this requester's private Agent-start policy. Admit here once, before Home
+    // signs: the signed origin carries the stamp and the root signs the
+    // Role-projected input, so this executor, the controller and the guest
+    // consume it without re-admitting.
+    const presetSessionStart = operation.actionId === 'session.spawn_new'
+      && readRecord(readRecord(operation.input).sessionPlacement).kind === 'preset';
+    if (requiresMachineAuthorization && (operation.actionId === 'machines.managed.acquire' || presetSessionStart)
       && isAgentStartActionInvocationV1(operation.actionId, readRecord(operation.input))) {
       const reviewer = params.createExecutor(getCurrentTurnWorkDepth, isCallerCurrent);
       if (!reviewer.prepare) return refuse('external_authorization_preparation_failed');

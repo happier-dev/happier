@@ -95,6 +95,7 @@ import { SessionSpawnNewInputV2Schema, SessionSpawnNewTargetedAuthoringInputV2Sc
   projectSessionSpawnNewActionAuthoringInputV2, type SessionSpawnNewInputV2,
   type SessionSpawnNewTargetedAuthoringInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { materializeSessionCreationActionInput } from '@happier-dev/protocol/actions/executor/sessionSpawn';
+import { readSessionOriginAgentStartAdmissionV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import type { ActionExecuteResult } from '@happier-dev/protocol';
 import { type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ExternalActionExecutionAuthorizationRequestV1, ExternalActionRequesterHttpProjectionV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -2708,7 +2709,10 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
     context: params.context, signal: params.signal,
     expectedOrigin: { actionId: params.actionId, requestId, accountId: root.accountId,
       serverIdentityId: root.serverIdentityId, machineId: target.machineId },
-    isCurrent: () => params.authorization.requesterHttpProjection?.isCurrent() ?? Promise.resolve(false),
+    // A signed source admission stands for the admitted child; only this
+    // continuation's own cancel ends it (Home verifies each child mint).
+    isCurrent: () => params.authorization.requesterHttpProjection?.isCurrent()
+      ?? Promise.resolve(Boolean(readSessionOriginAgentStartAdmissionV1(params.context)) && !params.signal?.aborted),
     observeRecordedApprovalExecution: params.observeRecordedApprovalExecution });
   try {
     const response = await axios.post<unknown>(`${params.serverHttpBaseUrl}${path}`, body, {

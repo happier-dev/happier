@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse, normalizeActionsSettingsV1, MACHINE_POOL_ACTION_IDS_V1, type ApprovalRequest } from '@happier-dev/protocol';
 
 import { createCliActionExecutor } from './createCliActionExecutor';
+import { retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/verifiedExternalActionRequester';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
 import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
@@ -282,5 +283,31 @@ describe('runtime Actions policy binding', () => {
       v: 1, actions: { 'session.message.send': { enabled: false } },
     } });
     expect(provider.getActionsSettings().actions['session.message.send']?.enabled).toBe(false);
+  });
+});
+
+describe('controller custody of another Account\'s Session Agent start', () => {
+  // Home-signed delegated preset Session spawn root; only the fields the
+  // controller reads are present (the signature is verified at ingress).
+  const presetRoot = (stamped: boolean) => retainVerifiedExternalActionRequester({ isCurrent: async () => true, authorization: ({ v: 1, token: 'home-signed-member-root', binding: {
+    serverIdentityId: 'home', accountId: 'member', custodianAccountId: 'owner', accountEncryptionMode: 'plain',
+    authentication: { kind: 'account', tokenEpoch: 0 }, actionId: 'session.spawn_new', requestId: 'member-spawn',
+    machineId: 'controller', installationId: 'installation', target: { kind: 'machine', machineId: 'controller' },
+    sessionActionSource: { machineId: 'source', installationId: 'source-installation' },
+    sessionPresetAcquisition: { admission: { delegated: true } },
+    sessionActionOrigin: { v: 1, caller: { kind: 'session', sessionId: 'member-session', starterDepth: 0, turnDepth: 0 },
+      sourceTurnId: 'turn', requestId: 'member-spawn', callerPermissionMode: 'default',
+      ...(stamped ? { agentStartAdmission: { workDepth: 1 } } : {}) },
+  } }) as unknown as Parameters<typeof retainVerifiedExternalActionRequester>[0]['authorization'] });
+
+  it.each([false, true])('admits a delegated preset Session spawn only with the signed source admission (stamped=%s)', async stamped => {
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 0 })).toString('base64url')}.signature`;
+    const executor = createCliActionExecutor({ token, sessionId: '', mode: 'plain', ctx: null,
+      pluginActionExecutionOwner: 'current_process', actionsSettingsProvider: { getActionsSettings: () => allowed } });
+    const result = await executor.execute('session.spawn_new', { directory: '/repo' }, {
+      surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'session', sessionId: 'member-session', starterDepth: 0, turnDepth: 0 },
+      externalActionExecutionAuthorization: presetRoot(stamped) });
+    if (stamped) expect(result).not.toMatchObject({ errorCode: 'approval_context_unavailable' });
+    else expect(result).toMatchObject({ ok: false, errorCode: 'approval_context_unavailable' });
   });
 });

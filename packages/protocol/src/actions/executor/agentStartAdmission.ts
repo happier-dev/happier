@@ -48,11 +48,22 @@ export function readAdmittedAgentStartV1(actionId: string, context: ActionExecut
         && context.executionRunWorkflowRunId === context.actionCaller.runId) {
         return context.agentStartWorkDepth === undefined ? undefined : { workDepth: context.agentStartWorkDepth };
     }
-    const binding = context.externalActionExecutionAuthorization?.binding;
-    const origin = binding && 'authentication' in binding && binding.actionId === actionId ? binding.sessionActionOrigin : undefined;
-    return origin?.agentStartAdmission && context.actionCaller?.kind === 'session'
-        && sameStrictJsonValue(context.actionCaller, origin.caller)
-        && isAgentStartActionInvocationV1(actionId, input) ? origin.agentStartAdmission : undefined;
+    return context.externalActionExecutionAuthorization?.binding.actionId === actionId
+        && isAgentStartActionInvocationV1(actionId, input) ? readSessionOriginAgentStartAdmissionV1(context) : undefined;
+}
+
+/**
+ * The source host's signed Agent-start admission for the exact Session caller
+ * its Home-signed origin names. Hosts continuing that admitted root (the
+ * controller's Session start and child dispatch) consume it instead of the
+ * requester's own credentials.
+ */
+export function readSessionOriginAgentStartAdmissionV1(context: ActionExecutorContext | undefined):
+    Readonly<{ workDepth: number; workspaceWrites?: 'allow' | 'deny' }> | undefined {
+    const binding = context?.externalActionExecutionAuthorization?.binding;
+    const origin = binding && 'authentication' in binding ? binding.sessionActionOrigin : undefined;
+    return origin?.agentStartAdmission && context?.actionCaller?.kind === 'session'
+        && sameStrictJsonValue(context.actionCaller, origin.caller) ? origin.agentStartAdmission : undefined;
 }
 
 /** Only fresh Session creation admits a Profile; resume keeps its stored session selection. */

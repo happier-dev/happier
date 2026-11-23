@@ -12,7 +12,7 @@ import { carriesNonLocalRequesterAuthority, isCustodianMachineAdmission } from '
 import { executeScmSourceReadForRequester } from '@/scm/hostingProviders/resolveRefForHost';
 import type { MachineVitalsSampleV1 } from "@happier-dev/protocol/machines/vitals/machineVitalsSampleV1";
 import { createOwnServerDeploymentRuntimeForHost } from "@/deployments/targets/ownServer/ownServerDeploymentHostRuntime";
-import { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from "@happier-dev/protocol/actions/executor/agentStartAdmission";
+import { actionStartTargetUnavailableV1, measureActionStartPhaseV1, readSessionOriginAgentStartAdmissionV1 } from "@happier-dev/protocol/actions/executor/agentStartAdmission";
 import { DiscussionAgentPublisherResponseV1Schema } from "@happier-dev/protocol/discussions/api";
 import { prepareApprovedDiscussionAgentPublication, type DiscussionAgentPublisherPrivateRequestV1 } from "@/discussions/discussionAgentPublisher";
 import { createApprovedDiscussionAgentPublisher } from "@/discussions/approvedDiscussionAgentPublisher";
@@ -965,7 +965,10 @@ resolveServerFeaturesSnapshot?: () =>
               !root.accountEncryptionMode
             )
               return false;
-            if (root.sessionActionOrigin) {
+            // A signed source admission already decided this Agent start with the
+            // requester's policy; the controller consumes it instead of requiring
+            // the requester's own credentials. Home still verifies the child mint.
+            if (root.sessionActionOrigin && !readSessionOriginAgentStartAdmissionV1(context)) {
               const requesterHttp = context.externalActionExecutionAuthorization?.requesterHttpProjection;
               const admission = context.machineAdmission;
               // The captured HTTP owner already applies accepted-continuation

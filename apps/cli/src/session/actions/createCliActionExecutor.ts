@@ -183,6 +183,10 @@ export function createCliActionHost(params: CliActionExecutorParams):
       && binding.managedAcquireDelegation === true
       && (!isAgentStartActionInvocationV1(actionId, readRecord(input)) || binding.sessionActionOrigin.agentStartAdmission)
       && readRetainedVerifiedExternalActionRequester(context?.externalActionExecutionAuthorization)) return null;
+    // A delegated preset Session spawn rides the same signed source admission.
+    if (actionId === 'session.spawn_new' && binding.actionId === actionId
+      && binding.sessionPresetAcquisition?.admission?.delegated === true && binding.sessionActionOrigin.agentStartAdmission
+      && readRetainedVerifiedExternalActionRequester(context?.externalActionExecutionAuthorization)) return null;
     // Receiving Machine admission grants effect placement, not the requester's
     // private Action policy or approval Artifact writes. The existing Account
     // projection reads facts only; it cannot authorize borrowing custodian policy.
