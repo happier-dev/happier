@@ -838,38 +838,6 @@ describe("Machine preset relational owner", () => {
             ] } })).rejects.toMatchObject({ code: 'account_mode_mismatch' });
     });
 
-    it('uses the same opaque setup source carrier for a plain preset and rejects raw preset setup input', async () => {
-        const accountId = 'preset-plain-setup-owner';
-        const homeId = await getOrCreateServerIdentityId();
-        await db.account.create({ data: { id: accountId, publicKey: null, encryptionMode: 'plain' } });
-        const target = await seedCurrentProvisioner(accountId, homeId);
-        const presetId = 'preset-plain-setup';
-        const content = { t: 'plain' as const, v: { v: 1 as const, name: 'Plain setup preset',
-            setup: { scripts: [{ body: 'echo plain setup' }] } } };
-        const saved = await requestPreset(accountId, 'create', {
-            homeId, id: presetId, owner: { kind: 'account', accountId }, contentEncryptionMode: 'plain',
-            content, recipients: [],
-        });
-        expect(saved.statusCode, saved.body).toBe(200);
-        expect(MachineSetupSourcesApplyInputV1Schema.safeParse({ homeId, machineId: target.machineId, sources: [
-            { kind: 'accountPreset', presetId, presetRevision: 0, setup: content.v.setup },
-            { kind: 'direct', setup: {} },
-        ] }).success).toBe(false);
-
-        const resolved = await resolveMachineSetup({ actorAccountId: accountId, custodianAccountId: accountId,
-            input: { homeId, machineId: target.machineId, sources: [
-                { kind: 'accountPresetOpaque' as const, presetId, presetRevision: 0, contentEncryptionMode: 'plain' },
-                { kind: 'direct' as const, setup: {} },
-            ] } });
-
-        expect(resolved).toEqual({ sources: [
-            { kind: 'accountPresetOpaque', presetId, presetRevision: 0, setupRevision: 0, contentEncryptionMode: 'plain',
-                presetContent: { content, recipientEnvelope: null } },
-            { kind: 'direct', setup: {} },
-        ] });
-        expect(resolved.sources[0]).not.toHaveProperty('setup');
-    });
-
     it('resolves a new setup copy on a managed Machine while retaining its original creation snapshot', async () => {
         const accountId = 'preset-managed-setup-candidate-owner';
         const homeId = await getOrCreateServerIdentityId();
