@@ -17456,7 +17456,9 @@ describe('installed Session widget through the mounted plugin controller', () =>
                 packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } },
             packageAssets: [], uiArtifacts: [] });
         const { PluginAvailabilityMaterializationsReadActionOutputV1Schema, PluginAvailabilityIntentsListActionOutputV1Schema } = await import('@happier-dev/protocol/plugins/availability');
-        const census = [createPlainMachineRowFixture({ id: 'machine_1', accountId: 'account-a' })];
+        const checkoutMachine = createHydratedPlainMachineFixture({ id: 'machine_1', accountId: 'account-a',
+            machine: { activeAt: Date.now() } });
+        const census = [createPlainMachineRowFixture({ id: checkoutMachine.id, accountId: 'account-a', machine: checkoutMachine })];
         await pluginSurfaceAccountLifetime.setScope({ serverId: 'server-a', accountId: 'account-a' }, (path, init) => {
             if (path === '/v1/machines') return Response.json(census);
             if (path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body,

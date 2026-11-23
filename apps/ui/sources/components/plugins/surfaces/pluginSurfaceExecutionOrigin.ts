@@ -258,7 +258,19 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
     const unverified = selection.state.kind === 'unavailable'
         && selection.state.reasons.includes('unknown')
         && selection.candidates.length > 0;
-    const loading = selection.loading || projectionDemand.phase === 'loading'
+    // The checkout's exact read can publish its source before AppShell and
+    // Administration publish the corresponding supplier. During that handoff
+    // an empty election is still pending for this placement.
+    const checkoutProjection = active && projectTarget && contextualTarget === projectTarget
+        && selection.state.kind === 'unavailable' && selection.state.reasons.includes('no_materialization')
+        && projectionDemand.phase === 'ready' && params.entry
+        ? projectionDemand.inputs?.pluginUiProjection : null;
+    const checkoutSource = checkoutProjection?.installedPackagesById[params.pluginId]?.executionOrigin;
+    const awaitingCheckoutSupplier = !!(checkoutSource && projectTarget && params.entry
+        && checkoutProjection?.surfacePlacementsById[params.entry.id]
+        && checkoutSource.serverIdentityId === projectTarget.serverIdentityId
+        && getPluginMachineExecutionOriginRef(checkoutSource).machineId === projectTarget.machineId);
+    const loading = selection.loading || projectionDemand.phase === 'loading' || awaitingCheckoutSupplier
         || (selection.state.kind === 'selected' && selectedSupply?.phase === 'establishing');
     const retry = React.useCallback(async () => {
         const targets = [...new Map(selection.candidates.map(candidate => {
