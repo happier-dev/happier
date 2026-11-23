@@ -17940,6 +17940,15 @@ describe('installed Session widget through the mounted plugin controller', () =>
         await screen.unmount();
     });
 
+    async function revealWidgetRepairReason(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string, pluginId: string) {
+        const details = `${testID}-state-details-toggle`;
+        await waitForHomeGovernance(async () => {
+            await flushHookEffects();
+            expect(screen.findByTestId(details), surfaceFixtureDiagnostics(screen, pluginId)).not.toBeNull();
+        });
+        await screen.pressByTestIdAsync(details);
+    }
+
     it('requires Connect when a stale caller substitutes a missing existing-purpose selection', async () => {
         const { readWidgetDescriptor } = await import('@/components/widgets/widgetCatalog');
         const { widgetProjectionEntry } = await import('@/dev/testkit/fixtures/pluginWidgetProjectionFixtures');
@@ -18010,10 +18019,13 @@ describe('installed Session widget through the mounted plugin controller', () =>
         };
         const screen = await renderScreen(render({}));
         await flushHookEffects();
-        await vi.waitFor(() => expect(screen.findByTestId('private-preview-state-diagnostic-widget_viewer_connection_missing')).not.toBeNull());
+        await revealWidgetRepairReason(screen, 'private-preview', surface.pluginId);
+        expect(screen.findByTestId('private-preview-state-details-code')?.props.children).toBe('widget_viewer_connection_missing');
+        expect(screen.findByTestId('private-preview-connect')).not.toBeNull();
         await screen.update(render({ connection: saved }));
         await flushHookEffects();
-        expect(screen.findByTestId('private-preview-state-diagnostic-widget_viewer_connection_missing')).not.toBeNull();
+        expect(screen.findByTestId('private-preview-state-details-code')?.props.children).toBe('widget_viewer_connection_missing');
+        expect(screen.findByTestId('private-preview-connect')).not.toBeNull();
         expect(contributionProjectionDescribeMock).not.toHaveBeenCalled();
         expect(resourceReadMock).not.toHaveBeenCalled();
         expect(reactNativeSurfaceProps).toHaveLength(0);
@@ -18032,7 +18044,6 @@ describe('installed Session widget through the mounted plugin controller', () =>
         const { WidgetSurface } = await import('@/components/widgets/surface/WidgetSurface');
         const { readWidgetDescriptor } = await import('@/components/widgets/widgetCatalog');
         const { storage } = await import('@/sync/domains/state/storage');
-        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
         const { publicAuthoringDefinition } = await import('../../../../../../packages/plugin-sdk/examples/public-authoring/definition');
         const { renderSurface } = await import('../../../../../../packages/plugin-sdk/examples/public-authoring/ui/reviewPanelPortable');
         const { normalizePluginUiProjection } = await import('@/sync/domains/plugins/ui/projection');
@@ -18262,25 +18273,16 @@ describe('installed Session widget through the mounted plugin controller', () =>
         const screen = await renderScreen(render());
         await flushHookEffects();
         if (repair !== 'none') {
-            if (repair === 'lost') {
-                await vi.waitFor(async () => {
-                    await flushHookEffects();
-                    expect(screen.findByTestId('public-widget-state-diagnostic-widget_session_unavailable'),
-                        surfaceFixtureDiagnostics(screen, pluginId)).not.toBeNull();
-                });
-            }
+            await revealWidgetRepairReason(screen, 'public-widget', pluginId);
             await waitForHomeGovernance(async () => {
                 await flushHookEffects();
                 expect(screen.findByTestId('public-widget-inputs-repair')).not.toBeNull();
             });
             const action = screen.findByTestId('public-widget-inputs-repair');
             await act(async () => { action!.props.onPress(); });
-            const expected = repair === 'missing'
-                ? { status: 'selection_required', reasonCode: 'widget_input_missing' }
-                : repair === 'invalid'
-                    ? { status: 'invalid', reasonCode: 'widget_input_schema_invalid' }
-                    : { status: 'unavailable', reasonCode: 'widget_session_unavailable' };
-            expect(screen.findByTestId(`public-widget-state-diagnostic-${expected.reasonCode}`)).not.toBeNull();
+            const expectedReason = repair === 'missing' ? 'widget_input_missing'
+                : repair === 'invalid' ? 'widget_input_schema_invalid' : 'widget_session_unavailable';
+            expect(screen.findByTestId('public-widget-state-details-code')?.props.children).toBe(expectedReason);
             expect(onRepairInputs).toHaveBeenCalledWith(expect.objectContaining({
                 kind: repair === 'lost' ? 'session_unavailable' : 'input',
                 field: expect.objectContaining({ path: 'session' }),
