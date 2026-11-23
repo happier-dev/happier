@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,18 @@ import {
     PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
     type PluginWebhookEndpointCheckCorrespondenceInputV1,
 } from "@happier-dev/protocol";
+
+import { createPluginHttpFixture } from "@happier-dev/plugin-sdk/testing";
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from "@happier-dev/protocol/connect/connectedServiceUxDiagnostics";
+import { GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1 } from "@happier-dev/protocol/automations/event-setup-result";
+import { AutomationTriggerIdSchema } from "@happier-dev/protocol/automations/automationTriggerIdentity";
+import { AutomationSourceSelectorIdV1Schema } from "@happier-dev/protocol/automations/automationEventDeclarationV1";
+import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from "@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent";
+import { readGithubManagedRepositoryHookSource, writeGithubManagedRepositoryWebhook } from "../../../../../../packages/plugins/scm-github/src/githubManagedRepositoryWebhook";
+import { createGithubRepositorySourceConfig, GITHUB_CONNECTED_ACCOUNT_SERVICE } from "../../../../../../packages/plugins/scm-github/src/observations/githubProviderContracts";
+import type { ForwardManagedPluginWebhookOperation } from "@/app/api/socket/managedPluginWebhookDispatcher";
+import { registerManagedPluginWebhookForEndpoint } from "./registerManagedPluginWebhookForEndpoint";
+import { removeUnusedManagedRepositoryWebhook } from "./removeUnusedManagedRepositoryWebhook";
 
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
@@ -235,6 +247,8 @@ describe("Account webhook endpoint with the shipped GitHub producer", () => {
         });
         await harness.resetDbTables([
             () => db.accountChange.deleteMany(),
+            () => db.automationTrigger.deleteMany(),
+            () => db.automation.deleteMany(),
             () => db.pluginWebhookEndpointOperation.deleteMany(),
             () => db.pluginWebhookCredential.deleteMany(),
             () => db.pluginWebhookDelivery.deleteMany(),
@@ -303,6 +317,95 @@ describe("Account webhook endpoint with the shipped GitHub producer", () => {
             sourceInstanceId: ROUTING_SOURCE_INSTANCE_ID,
         });
         expect(endpoint.deliveries).toHaveLength(1);
+    });
+
+    it("keeps a saved deployment push on polling until GitHub accepts the hook and delivers a signed event", async () => {
+        const accountId = await seedAccount();
+        const repositoryId = ROUTING_SOURCE_INSTANCE_ID.split(":").at(-1)!;
+        const automationId = "managed-push";
+        const triggerId = AutomationTriggerIdSchema.parse("managed-push-trigger");
+        const sourceSelectorId = AutomationSourceSelectorIdV1Schema.parse(randomUUID());
+        const eventRef = { pluginId: MANIFEST.pluginId, localId: GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1 };
+        const credentialRef = { service: GITHUB_CONNECTED_ACCOUNT_SERVICE, accountId: "fixture-github" };
+        const repository = { id: Number(repositoryId), name: "example", full_name: "fixture/example", owner: { login: "fixture" } };
+        const sourceConfig = { v: 1, repository: createGithubRepositorySourceConfig(repository), credentialRef };
+        const definitionEnvelope = sealAutomationTriggerDefinitionStoredEnvelopeV1({
+            mode: "plain",
+            binding: { v: 1, automationId, triggerId, triggerRevision: 0, triggerKind: "pluginEvent", eventRef, sourceSelectorId },
+            definition: { v: 1, sourceInstanceId: ROUTING_SOURCE_INSTANCE_ID, sourceConfig,
+                displayLabel: repository.full_name, filter: null, maximumObservationAgeMs: null },
+        });
+        await db.automation.create({ data: {
+            id: automationId, accountId, name: "Deploy on push", enabled: true, templateCiphertext: "{}",
+            triggers: { create: { id: triggerId, kind: "pluginEvent", enabled: true, revision: 0,
+                eventPluginId: eventRef.pluginId, eventLocalId: eventRef.localId, sourceSelectorId, sourceContractVersion: 1,
+                observationTransport: "checkpointedPull", watcherMachineId: MACHINE_ID, watcherPluginId: MANIFEST.pluginId,
+                watcherMachineInstallationId: MACHINE_INSTALLATION_ID, watcherMaterializationId: MATERIALIZATION_ID,
+                definitionEnvelope: JSON.stringify(definitionEnvelope) } },
+        } });
+
+        const hookId = "123";
+        let providerAllowsWrite = false;
+        let registration: { url: string; secret: string } | undefined;
+        const writes: string[] = [];
+        const http = createPluginHttpFixture({ async request(request) {
+            const path = new URL(request.url).pathname;
+            if (request.method === "POST") {
+                expect(path).toBe("/repos/fixture/example/hooks");
+                writes.push(request.method);
+                if (!providerAllowsWrite) return { status: 403, headers: {}, body: new TextEncoder().encode("{}") };
+                const body = JSON.parse(new TextDecoder().decode(request.body));
+                expect(body).toMatchObject({ active: true, events: ["push"], config: { content_type: "json", insecure_ssl: "0" } });
+                registration = { url: body.config.url, secret: body.config.secret };
+                return { status: 201, headers: {}, body: new TextEncoder().encode(JSON.stringify({ id: Number(hookId) })) };
+            }
+            if (request.method === "DELETE") {
+                expect(path).toBe(`/repos/fixture/example/hooks/${hookId}`);
+                writes.push(request.method);
+                return { status: 204, headers: {}, body: new Uint8Array() };
+            }
+            expect(path).toBe(`/repositories/${repositoryId}`);
+            return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify(repository)) };
+        } });
+        const materialize = async () => ({ kind: "httpHeaders" as const, headers: { Authorization: "Bearer fixture" } });
+        const forward: ForwardManagedPluginWebhookOperation = async ({ target, operation }) => {
+            expect(target).toEqual({ accountId, machineId: MACHINE_ID, installationId: MACHINE_INSTALLATION_ID });
+            const source = readGithubManagedRepositoryHookSource(ROUTING_SOURCE_INSTANCE_ID, sourceConfig);
+            if (!source) throw new Error("Expected a bound GitHub repository source");
+            return writeGithubManagedRepositoryWebhook({
+                plugin: { id: MANIFEST.pluginId, version: MANIFEST.version }, invokedAtMs: Date.now(),
+                requestId: operation.operationId, signal: new AbortController().signal,
+                services: { http, connectedAccounts: { getBinding: async () => null, materialize, materializeListedAccount: materialize } },
+            }, operation.kind === "register"
+                ? { kind: "register", ...source, publicUrl: operation.publicUrl, signingSecret: operation.signingSecret }
+                : { kind: "remove", ...source, hookId: operation.hookId });
+        };
+        const setup = { accountId, automationId, triggerId, triggerRevision: 0, repositoryId, publicBaseUrl: PUBLIC_SERVER_URL, forward };
+        const readTrigger = () => db.automationTrigger.findUniqueOrThrow({ where: { id: triggerId } });
+        await expect(registerManagedPluginWebhookForEndpoint({ ...setup, triggerRevision: 1 }))
+            .resolves.toEqual({ kind: "polling", code: "endpoint_unavailable" });
+        expect(writes).toEqual([]);
+        await expect(registerManagedPluginWebhookForEndpoint(setup)).resolves.toEqual({
+            kind: "polling", code: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialScopeMissing,
+        });
+        const trigger = await readTrigger();
+        expect(trigger).toMatchObject({ observationTransport: "checkpointedPull", webhookEndpointId: expect.any(String) });
+
+        providerAllowsWrite = true;
+        await expect(registerManagedPluginWebhookForEndpoint(setup)).resolves.toEqual({ kind: "pendingVerification" });
+        expect(await readTrigger()).toMatchObject({ observationTransport: "checkpointedPull" });
+        if (!registration) throw new Error("GitHub did not receive hook registration");
+        const rawBody = Buffer.from(JSON.stringify({ ref: "refs/heads/main", repository }));
+        await expect(ingestPluginWebhookV1({
+            opaqueRouteId: readOpaqueRouteId(registration.url), rawBody,
+            headers: { "x-github-event": "push", "x-github-delivery": "managed-push-proof", "x-github-hook-id": hookId,
+                "x-hub-signature-256": `sha256=${createHmac("sha256", registration.secret).update(rawBody).digest("hex")}` },
+        })).resolves.toMatchObject({ kind: "accepted" });
+        const promoted = await readTrigger();
+        expect(promoted).toMatchObject({ observationTransport: "durablePush", webhookEndpointId: trigger.webhookEndpointId });
+        await db.automationTrigger.delete({ where: { id: triggerId } });
+        await expect(removeUnusedManagedRepositoryWebhook({ accountId, consumer: promoted, forward })).resolves.toEqual({ kind: "removed" });
+        expect(writes).toEqual(["POST", "POST", "DELETE"]);
     });
 
     it("keeps every readiness projection unconfirmed until a verified delivery proves the provider was configured", async () => {
