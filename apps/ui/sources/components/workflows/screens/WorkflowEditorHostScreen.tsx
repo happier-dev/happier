@@ -1,5 +1,4 @@
 import { useSession } from '@/sync/domains/state/storage';
-import { SessionDraftHydrationBoundary } from '@/components/sessions/drafts/SessionDraftHydrationBoundary';
 // Load the canonical read projection before a cold editor publishes a delete acknowledgement.
 import { affectsSelectedWorkflowDefinition } from '../library/workflowLibraryReads';
 import * as React from 'react';
@@ -270,15 +269,15 @@ function workflowEditorSourceKey(source: WorkflowEditorSource): string {
 }
 
 export function WorkflowEditorHostScreen(props: Readonly<{ source: WorkflowEditorSource; accountLifetime?: ServerAccountScopeLifetime | null }>): React.ReactElement {
-    // Workflow definition drafts/seeds are local to this editor; its embedded
-    // New Session composer admits its own repository address separately.
+    // The Workflow editor owns definition hydration and draft custody. The
+    // embedded New Session composer admits its own repository address.
     const { source } = props;
     const starterKey = source.kind === 'new' && source.definitionDraftSeedId === undefined ? source.exampleKey : undefined;
     const starter = starterKey === undefined ? undefined : WORKFLOW_STARTER_EXAMPLES_V1.find(entry => entry.key === starterKey);
-    return <WorkflowAccountLifetimeProvider value={props.accountLifetime}><SessionDraftHydrationBoundary addresses={[]}>
+    return <WorkflowAccountLifetimeProvider value={props.accountLifetime}>
         {starter === undefined ? <WorkflowEditorHostScreenReady {...props} />
             : <WorkflowStarterRoute key={starter.key} {...props} starter={starter} />}
-    </SessionDraftHydrationBoundary></WorkflowAccountLifetimeProvider>;
+    </WorkflowAccountLifetimeProvider>;
 }
 
 function WorkflowStarterRoute(props: React.ComponentProps<typeof WorkflowEditorHostScreenReady> & Readonly<{

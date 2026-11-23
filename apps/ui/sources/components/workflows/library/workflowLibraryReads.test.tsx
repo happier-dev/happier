@@ -616,9 +616,13 @@ describe('unified Workflow Library', () => {
             executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ v: 2, templateVersion: 1,
                 workflow: { t: 'plain', v: { workspace: { directory: '/repo' }, executionTarget: { kind: 'session' }, inlineDefinition: content } }, triggerEvidence: null }),
         }));
-        home.answer(serverId, 'POST /v3/automations/query', { select: input => ({ body: {
-            automations: input && typeof input === 'object' && 'scope' in input && input.scope === 'account_inline' ? triggers : [], nextCursor: null,
-        } }) });
+        const { selectWorkflowAutomationDetailsFixture, selectWorkflowAutomationListFixture } =
+            await import('@/dev/testkit/harness/workflowAutomationHttpBoundary');
+        home.answer(serverId, 'POST /v3/automations/query', { select: input => ({ body:
+            input && typeof input === 'object' && 'details' in input && input.details === true
+                ? selectWorkflowAutomationDetailsFixture(triggers, input)
+                : selectWorkflowAutomationListFixture(triggers, input),
+        }) });
         const lastRun = createWorkflowAutomationLastRunSummaryFixture({ id: 'account-last-run', state: 'running',
             attentionRequired: true, invocationAttentionRequired: true });
         home.answer(serverId, route, { select: input => {
@@ -649,12 +653,12 @@ describe('unified Workflow Library', () => {
         expect(hook.getCurrent().editor.popover).toBeNull();
         const inventories = () => home.requests.filter(request => request.path.startsWith('/v1/artifacts?') || request.path.startsWith('/v3/automations?') || request.path === '/v3/automations/query');
         expect(artifactInventoryReads()).toHaveLength(1);
-        expect(inventories()).toHaveLength(4); // One definition page, its existing enrichment, the selected Account-inline page and the Account census for retained triggers.
+        expect(inventories()).toHaveLength(3); // One definition page, its existing enrichment and one Account census.
         expect(home.requestsFor(route)).toHaveLength(2); // Existing source and Automation summary batches, never per row.
         const recordReads = home.requests.slice(readStart).filter(request => request.path.startsWith('/v1/artifacts') || request.path.startsWith('/v3/automations'));
         // Every record read is counted, so N singleton detail reads cannot hide. The list is
         // header-only (rows carry `previewSteps`), so it opens no definition bodies.
-        expect(recordReads).toHaveLength(6);
+        expect(recordReads).toHaveLength(5);
         expect(recordReads.filter(request => request.path === '/v1/artifacts/read')).toHaveLength(0);
         const before = home.requests.length;
         await act(async () => hook.getCurrent().setView('running'));
@@ -1057,8 +1061,10 @@ describe('Workflow library reads through real Account Actions and HTTP', () => {
         const account = await captureLazyActionAccountContext(serverB);
         try {
             const ref = 'plugin:example.recipe/review';
-            const admitted = await listWorkflowDefinitions({ workflow: ref, accountLifetime: account.accountLifetime });
-            expect(admitted.pluginWorkflows?.[0]?.title).toBe('B admitted plugin');
+            const admitted = await listWorkflowDefinitions({
+                cursor: `${WORKFLOW_DEFINITION_PLUGIN_CURSOR_PREFIX_V1}0`, accountLifetime: account.accountLifetime,
+            });
+            expect(admitted.pluginWorkflows?.find(workflow => workflow.workflow === ref)?.title).toBe('B admitted plugin');
             const { useTriggerThenOptions } = await import('../triggers/useTriggerThenOptions');
             const sets = [WorkflowTriggerSetV1Schema.parse({ automationId: 'addressed-plugin-habit', revision: 1,
                 enabled: true, health: 'available', target: { kind: 'workflow', ref }, triggers: [] })];

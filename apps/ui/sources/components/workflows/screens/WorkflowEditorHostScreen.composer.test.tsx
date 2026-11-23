@@ -83,7 +83,7 @@ const { clearActiveUnsavedChangesGuard } = await import('@/utils/navigation/runG
 const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
 const { getStorage } = await import('@/sync/domains/state/storageStore');
 const { ModalProvider } = await import('@/modal');
-const { AuthProvider } = await import('@/auth/context/AuthContext');
+const { AuthProvider, InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
 const { createWorkflowDefinition, updateWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
 const { apiSocket } = await import('@/sync/api/session/apiSocket');
@@ -102,14 +102,23 @@ function runKeyCensus(runId: string) {
         recipients: [], visibleTeamId: null, ownerAccountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } });
 }
 
-async function renderScreen(element: React.ReactElement, options: Parameters<typeof renderTestScreen>[1] = {}) {
+async function renderScreen(element: React.ReactElement, options: Parameters<typeof renderTestScreen>[1] & { signedInShell?: boolean } = {}) {
     const Wrapper = options.wrapper;
     // The application shell owns an established modal host before a destination can open Start.
-    const screen = await renderTestScreen(<></>, { ...options, wrapper: ({ children }) => (
-        <AuthProvider initialCredentials={routeBoundary.credentials}><ModalProvider>
-            {Wrapper ? <Wrapper>{children}</Wrapper> : children}
-        </ModalProvider></AuthProvider>
-    ) });
+    const screen = await renderTestScreen(<></>, {
+        ...options,
+        createNodeMock: element => {
+            const host = options.createNodeMock?.(element);
+            // The native scroll port exists on real modal bodies, even when the renderer has no viewport.
+            return element.type === 'ScrollView' ? { scrollTo() {}, ...host } : host ?? null;
+        },
+        wrapper: ({ children }) => {
+            const content = <ModalProvider>{Wrapper ? <Wrapper>{children}</Wrapper> : children}</ModalProvider>;
+            return options.signedInShell
+                ? <InjectedAuthProvider credentials={routeBoundary.credentials}>{content}</InjectedAuthProvider>
+                : <AuthProvider initialCredentials={routeBoundary.credentials}>{content}</AuthProvider>;
+        },
+    });
     await screen.update(element);
     return screen;
 }
@@ -403,7 +412,9 @@ describe('editor workflow composer', () => {
             </>;
             }}</WorkspaceProvider></AppPaneProvider>;
         }
-        const screen = await renderScreen(<Host />);
+        // The handoff originates in an already authenticated shell. The synthetic
+        // browser host must preserve that same Account while exposing its URL.
+        const screen = await renderScreen(<Host />, { signedInShell: admission === 'shell' || admission === 'route' });
         if (admission === 'route') {
             // Expo can commit its new scene before its browser-history mirror.
             // The parent still projects the preceding unhosted /new location.
@@ -791,14 +802,14 @@ describe('editor workflow composer', () => {
                 const root = createWorkflowInvocationIndexFixture({ id: 'root', runId: request.runId, lifecycle: 'completed', contentRevision: '1' });
                 const leaf = createWorkflowInvocationIndexFixture({ id: 'review', runId: request.runId, parentRecordId: root.id,
                     sequence: '1', lifecycle: 'completed', contentRevision: '1', updatedAt: '2026-09-08T10:00:02.000Z' });
-                const index = request.cursor === undefined ? root : leaf;
+                const index = request.cursor === undefined && request.invocationId === undefined ? root : leaf;
                 const detail = (await import('@happier-dev/protocol/workflows/workflowProgressV1')).WorkflowInvocationDetailV1Schema.parse({ index, parentRevision: 1,
-                    progress: { kind: 'happier.workflow-progress.v1', blockKind: request.cursor === undefined ? 'root' : 'wait',
-                        invocationPath: { blockId: request.cursor === undefined ? '$root' : 'review', scope: [] }, attempt: '0',
-                        logicalInvocationRecordId: index.id, ...(request.cursor === undefined ? {} : { result: 'Saved result' }) } });
+                    progress: { kind: 'happier.workflow-progress.v1', blockKind: index === root ? 'root' : 'wait',
+                        invocationPath: { blockId: index === root ? '$root' : 'review', scope: [] }, attempt: '0',
+                        logicalInvocationRecordId: index.id, ...(index === root ? {} : { result: 'Saved result' }) } });
                 return { body: { invocations: [index], parentRevision: 1, keyCensus: runKeyCensus(request.runId),
-                    progressEnvelopesByInvocationId: { [index.id]: storedProgress(detail, 'account-a') },
-                    ...(request.cursor === undefined ? { nextCursor: 'second-page' } : {}) } };
+                    ...(_progress === true ? { progressEnvelopesByInvocationId: { [index.id]: storedProgress(detail, 'account-a') } } : {}),
+                    ...(index === root ? { nextCursor: 'second-page' } : {}) } };
             }
             if (operation === 'run-key.census' && 'runId' in fields && typeof fields.runId === 'string') return { body: runKeyCensus(fields.runId) };
             throw new Error(`Unexpected test-run storage request: ${String(operation)}`);
@@ -839,12 +850,14 @@ describe('editor workflow composer', () => {
         expect(router.push).not.toHaveBeenCalled();
         expect(definitionWrites()).toHaveLength(0);
         await vi.waitFor(() => expect(screen.findByTestId('workflow-editor-test-review-status')).not.toBeNull());
-        expect(screen.findByTestId('workflow-editor-test-review-duration')).not.toBeNull();
+        await vi.waitFor(() => expect(screen.findByTestId('workflow-editor-test-review-duration')).not.toBeNull());
         expect(screen.findByTestId('workflow-editor-test-review-output-body')).not.toBeNull();
         expect(screen.getTextContent()).toContain('Saved result');
         expect(home.requestsFor(storageRoute).map(request => request.input).filter(input => input && typeof input === 'object'
             && 'operation' in input && input.operation === 'invocations.list')).toEqual([
-            expect.objectContaining({ progressEnvelopes: true }), expect.objectContaining({ progressEnvelopes: true, cursor: 'second-page' }),
+            expect.objectContaining({ knownContentRevisions: {} }),
+            expect.objectContaining({ knownContentRevisions: {}, cursor: 'second-page' }),
+            expect.objectContaining({ progressEnvelopes: true, invocationId: 'review' }),
         ]);
         expect(home.requestsFor(storageRoute).filter(({ input }) => input && typeof input === 'object'
             && 'operation' in input && input.operation === 'invocations.get')).toHaveLength(0);
@@ -1276,7 +1289,7 @@ describe('editor workflow composer', () => {
 
     it('reads a builtin through the editor with settings, Run now and Duplicate instead of Save', async () => {
         const { getBuiltinWorkflowCatalogV1} = await import('@happier-dev/protocol/workflows/builtins/catalog');
-        const builtin = getBuiltinWorkflowCatalogV1().find(entry => entry.requiresOriginSession !== true)!;
+        const builtin = getBuiltinWorkflowCatalogV1().find(entry => entry.id === 'builtin:plan-with-a-panel')!;
         const screen = await renderScreen(<AppPaneProvider><WorkflowBuiltinEditorHostScreen workflow={builtin.id} intent="run" /></AppPaneProvider>, {
             createNodeMock: () => ({ measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(600, 100, 160, 40) }),
         });
@@ -1511,12 +1524,12 @@ describe('editor workflow composer', () => {
         if (!extraActionChips) throw new Error('Missing workflow composer action chips');
         expect(extraActionChips.some((chip: { key: string }) => chip.key === 'workflow-step-engine')).toBe(false);
         const panel = screen.root.findByType(AgentInputChipPickerPanel);
-        const option = panel.props.options.find((candidate: { id: string; disabled?: boolean }) => candidate.id !== 'roles' && !candidate.disabled);
-        expect(option).toBeDefined();
+        const option = panel.props.options.find((candidate: {
+            renderDetailContent?: unknown; onSelectImmediate?: unknown; disabled?: boolean;
+        }) => !candidate.disabled && candidate.onSelectImmediate && candidate.renderDetailContent);
+        expect(option, 'A selectable Agent with its model and options panel').toBeDefined();
         if (!option) throw new Error('Missing selectable workflow Agent option');
-        const onSelectImmediate = option.onSelectImmediate;
-        if (!onSelectImmediate) throw new Error('Missing workflow Agent option handler');
-        await act(async () => onSelectImmediate());
+        await screen.pressByTestIdAsync(`agent-input-chip-picker.option:${option.id}`);
         const body = screen.root.findByType(WorkflowEditorBody);
         const readStep = () => {
             const block = body.props.draftStore.get().blocks[0];
@@ -1531,7 +1544,6 @@ describe('editor workflow composer', () => {
             execution: { ...readStep().execution, sessionConfigOptionOverrides: { v: 1, updatedAt: 1,
                 overrides: { budget: { value: 42, updatedAt: 1 } } } } }] }));
         const { NewSessionEngineOptionDetail } = await import('@/components/sessions/new/components/NewSessionEngineOptionDetail');
-        await screen.pressByTestIdAsync(`agent-input-chip-picker.option:${option.id}`);
         const detail = screen.root.findByType(NewSessionEngineOptionDetail);
         const onSelectionChange = detail.props.onSelectionChange;
         if (!onSelectionChange) throw new Error('Missing workflow engine detail selection handler');

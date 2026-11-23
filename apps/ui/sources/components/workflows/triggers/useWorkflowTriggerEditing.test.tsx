@@ -1063,8 +1063,10 @@ describe('workflow trigger editing lifetime', () => {
             expect(links, JSON.stringify(links)).toMatchObject({ ok: true, result: { kind: 'ready', sessionId: 'session-a', bindings: [] } });
             await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
             expect(hook.getCurrent().pullRequestLinks).toEqual([]);
-            listReply = async () => { throw new Error('Replacement collection unavailable'); };
-            await act(async () => (await import('@/sync/api/plugins/data/pluginCollectionChangeWatch')).resetActivePluginCollectionChanges());
+            // Take down only the Channels collection behind the native Action.
+            // The Session and Account trigger queries both remain available.
+            home.answer(serverId, '/v1/plugins/data/query', { status: 503, body: { error: 'unavailable' } });
+            await act(async () => hook.getCurrent().read.retry());
             await waitForHomeGovernance(() => expect(hook.getCurrent().pullRequestLinks)
                 .toEqual({ status: 'unavailable', code: 'target_unavailable' }));
             expect(hook.getCurrent().status).toBe('ready');

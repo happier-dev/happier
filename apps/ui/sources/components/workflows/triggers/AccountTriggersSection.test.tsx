@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto';
+import { t } from '@/text';
 import * as React from 'react';
 import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { act } from 'react-test-renderer';
@@ -1162,6 +1163,29 @@ describe('Account Workflow Library and settings', () => {
         expect(rows[0]?.workflowDefinitionId).toBe(definitionId);
         await hook.unmount();
     });
+    it('lists the captured built-in trigger in Triggered and keeps its existing settings reachable', async () => {
+        // Account C, reload #164: this accepted Action receipt was missing from the Library.
+        const set = WorkflowTriggerSetV1Schema.parse(capturedBuiltinTriggerSet);
+        serve(set);
+        const library = await renderHook(() => {
+            const view = useWorkflowLibraryView(true);
+            return { ...view, editor: useAccountWorkflowEditor({ read: view.accountWorkflows }) };
+        });
+        await waitForHomeGovernance(() => expect(library.getCurrent().libraryCoverage).toBe('complete'));
+        await act(async () => library.getCurrent().setView('triggered'));
+        const row = library.getCurrent().visibleLibraryRows.find(row => 'accountTrigger' in row
+            && row.accountTrigger.automationId === set.automationId);
+        expect(row).toMatchObject({
+            accountTrigger: { triggers: [expect.objectContaining({ enabled: false })] },
+            triggerSummary: t('workflows.triggers.summary.hourlyAt', { minute: 15 }),
+            openTarget: { kind: 'accountTrigger', automationId: set.automationId, triggerId: set.triggers[0]!.id },
+        });
+        if (!row || row.openTarget.kind !== 'accountTrigger') throw new Error('Expected the captured built-in trigger');
+        const target = row.openTarget;
+        await act(async () => library.getCurrent().editor.open(target, { current: null }));
+        expect(library.getCurrent().editor.popover).not.toBeNull();
+    });
+
     it('shows the captured built-in trigger on its ordinary catalog page and opens its editor', async () => {
         const set = WorkflowTriggerSetV1Schema.parse(capturedBuiltinTriggerSet);
         serve(set);

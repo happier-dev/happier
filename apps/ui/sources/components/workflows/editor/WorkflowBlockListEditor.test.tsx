@@ -367,6 +367,7 @@ async function renderList(harness: Harness, options: Readonly<{
     onChange?: (next: unknown) => void;
     onSelect?: (id: string | null) => void;
     selectedBlockId?: string | null;
+    composerScope?: React.ComponentProps<Harness['WorkflowBlockListEditor']>['composerScope'];
     highlightedBlockIds?: readonly string[];
     presentation?: Record<string, unknown>;
     resolveActionFieldOptions?: ResolveSessionActionFieldOptions;
@@ -382,7 +383,7 @@ async function renderList(harness: Harness, options: Readonly<{
         list: { kind: 'root' },
         blocks: options.draft.blocks,
         depth: 0,
-        composerScope: MACHINE_COMPOSER_SCOPE,
+        composerScope: options.composerScope ?? MACHINE_COMPOSER_SCOPE,
         composerCustody: harness.createWorkflowAuthoringComposerCustody(options.draft.draftId),
         selectedBlockId: options.selectedBlockId ?? null,
         highlightedBlockIds: options.highlightedBlockIds,
@@ -980,6 +981,7 @@ it('reads a step’s engine and changes as its own chips, and opens the rest fro
     ]);
     const draft = harness.setWorkflowStepExecutionField(base, 'engine', 'agentTarget', AGENT_TARGET);
     const opened = vi.fn();
+    const anchor = { measureInWindow: vi.fn() };
     const screen = await renderScreen(React.createElement(harness.WorkflowBlockListEditor, {
         draft,
         list: { kind: 'root' },
@@ -992,7 +994,7 @@ it('reads a step’s engine and changes as its own chips, and opens the rest fro
         onChange: () => {},
         onSelect: () => {},
         onCustomize: opened,
-    }));
+    }), { createNodeMock: node => node.props.collapsable === false ? anchor : null });
 
     const engineChip = (stepId: string) => screen.findHostByTestId(`workflow-editor-step-${stepId}-engine-agentTarget`);
     // Set for this step: the bordered chip says so; inherited: the quiet chip says nothing more.
@@ -1006,7 +1008,7 @@ it('reads a step’s engine and changes as its own chips, and opens the rest fro
     expect(screen.findHostByTestId('workflow-editor-step-engine-changed-review')).toBeNull();
     expect(screen.getTextContent()).not.toContain('workflows.page.blocks.workflowDefaults');
     await screen.pressByTestIdAsync('workflow-editor-step-engine-customize');
-    expect(opened).toHaveBeenCalledWith('engine', expect.anything(), expect.anything());
+    expect(opened).toHaveBeenCalledExactlyOnceWith('engine', { current: anchor });
     // At rest a text step's footer says nothing ("Returns text" is authoring machinery, DESIGN-5 M1).
     expect(screen.findHostByTestId('workflow-editor-step-engine-returns')).toBeNull();
     expect(screen.getTextContent()).not.toContain('workflows.input.label');
@@ -1193,7 +1195,8 @@ describe('workflow block list editor', () => {
             { kind: 'step', id: 'analyze', document: { text: 'Analyze', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
         ]);
         const changes: Array<ReturnType<typeof buildDraft>> = [];
-        const screen = await renderList(harness, { draft, onChange: (next) => changes.push(next as ReturnType<typeof buildDraft>) });
+        const screen = await renderList(harness, { draft, onChange: (next) => changes.push(next as ReturnType<typeof buildDraft>),
+            composerScope: { kind: 'machine', machineId: null, serverId: MACHINE_COMPOSER_SCOPE.serverId } });
 
         await chooseAdd(screen, 'workflow-editor-add-root', [
             'workflow-editor-add-root-action', 'workflow-editor-add-root-action:notifications.notify_me',
@@ -1216,6 +1219,7 @@ describe('workflow block list editor', () => {
         const changes: Array<ReturnType<typeof buildDraft>> = [];
         // The Action step is selected: its "more settings" disclosure belongs to the selected step (round 1116 S6).
         const screen = await renderList(harness, { draft, selectedBlockId: 'notify',
+            composerScope: { kind: 'machine', machineId: null, serverId: MACHINE_COMPOSER_SCOPE.serverId },
             onChange: (next) => changes.push(next as ReturnType<typeof buildDraft>) });
 
         // Action: one row per declared field, bound or not; options nobody set wait behind one
@@ -1253,11 +1257,10 @@ describe('workflow block list editor', () => {
     });
 
     /**
-     * 04 §5.3 E20: a review Action's engine field offers exactly what the
-     * review-engine inventory returns for this Machine — never a static enum —
-     * and a newly set multi-select starts as an empty selection, not text.
+     * Plan 03's ordered roster replaces engineIds, retaining each participant's
+     * per-selection input through the Action's canonical JSON field.
      */
-    it('binds a review Action engine field through the inventory options source', async () => {
+    it('binds a review Action roster with independent engine and required-person selections', async () => {
         const harness = await loadHarness();
         const draft = buildDraft(harness, [
             { kind: 'action', id: 'review', actionId: 'review.start', input: {} },
@@ -1276,18 +1279,18 @@ describe('workflow block list editor', () => {
             },
         });
 
-        await screen.pressByTestIdAsync('workflow-editor-action-review-field-engineIds-set');
-        expect(changes.at(-1)?.blocks[0]).toMatchObject({ input: { engineIds: { kind: 'literal', value: [] } } });
+        await screen.pressByTestIdAsync('workflow-editor-action-review-field-reviewers-set');
+        expect(changes.at(-1)?.blocks[0]).toMatchObject({ input: { reviewers: { kind: 'literal', value: '' } } });
         await screen.unmount();
 
         // The bound field is edited on its selected step (DESIGN-6 N5: values read as values at rest).
         const remainingInventoryOptions = harness.buildSessionActionFieldOptionsResolver({
             'review.engines.available': [{ value: 'acme-reviewer', label: 'Acme reviewer' }],
         });
-        restorePopoverGlobals = withPopoverWebGlobals();
         const bound = await renderList(harness, {
             draft: changes.at(-1)!,
             selectedBlockId: 'review',
+            onChange: (next) => changes.push(next as ReturnType<typeof buildDraft>),
             resolveActionFieldOptions: (field) => {
                 asked.push(field.optionsSourceId);
                 return remainingInventoryOptions(field);
@@ -1298,16 +1301,17 @@ describe('workflow block list editor', () => {
                 },
             } : null,
         });
-        expect(asked).toContain('review.engines.available');
-        const { HappierInputField } = await import('@happier-dev/plugin-ui/presentation');
-        const engineChoices = bound.findByTestId('workflow-editor-action-review-field-engineIds')!
-            .findByType(HappierInputField)
-            .find(node => typeof node.type === 'string' && (node.props.role ?? node.props.accessibilityRole) === 'button'
-                && typeof node.props.onPress === 'function');
-        await act(async () => { await invokeTestInstanceHandler(engineChoices, 'onPress'); });
-        await act(async () => { reportPopoverContentLayout(bound, { width: 320, height: 240 }); });
-        await flushHookEffects({ cycles: 2, frames: 1 });
-        expect(bound.getTextContent()).toContain('Acme reviewer');
+        // Authored JSON is a typed selection, not an inventory lookup for one engine.
+        expect(asked).toEqual([]);
+        const { ReviewStartInputFieldsSchema } = await import('@happier-dev/protocol/reviews/reviewStart');
+        const roster = ReviewStartInputFieldsSchema.shape.reviewers.parse([
+            { kind: 'engine', engineId: 'acme-reviewer', modelId: 'chosen-model' },
+            { kind: 'person', principal: { kind: 'account', accountId: 'reviewer-account' }, required: true },
+        ]);
+        const editor = bound.findByTestId('workflow-editor-action-review-field-reviewers')!
+            .find(node => typeof node.type === 'string' && typeof node.props.onChangeText === 'function');
+        await act(async () => { await invokeTestInstanceHandler(editor, 'onChangeText', JSON.stringify(roster)); });
+        expect(changes.at(-1)?.blocks[0]).toMatchObject({ input: { reviewers: { kind: 'literal', value: roster } } });
     });
 
     /**
@@ -1875,23 +1879,23 @@ describe('document anatomy (DESIGN-4)', () => {
         await screen.pressByTestIdAsync('workflow-editor-workflow-review-open');
         expect(routerMock.spies.push).toHaveBeenCalledWith(expect.stringContaining(encodeURIComponent('builtin:review-and-converge')));
         // An unset input is "+ Set" (or its default), never an empty literal editor with a source select.
-        expect(screen.findByTestId('workflow-editor-workflow-review-input-engines-set')).not.toBeNull();
-        expect(screen.findHostByTestId('workflow-editor-workflow-review-input-engines-input-0-value-trigger')).toBeNull();
-        expect(screen.findHostByTestId('workflow-editor-workflow-review-input-maxRounds-input-0-value-trigger')).toBeNull();
+        expect(screen.findByTestId('workflow-editor-workflow-review-input-reviewers-set')).not.toBeNull();
+        expect(screen.findHostByTestId('workflow-editor-workflow-review-input-reviewers-input-0-value-trigger')).toBeNull();
+        expect(screen.findHostByTestId('workflow-editor-workflow-review-input-then-input-0-value-trigger')).toBeNull();
         // A declared default reads as the value the child will use, named by the built-in's own label.
-        const rounds = screen.findByTestId('workflow-editor-workflow-review-input-maxRounds');
-        expect(JSON.stringify(rounds?.findAll((node) => typeof node.props?.children === 'string').map((node) => node.props.children))).toContain('3');
+        const disposition = screen.findByTestId('workflow-editor-workflow-review-input-then');
+        expect(JSON.stringify(disposition?.findAll((node) => typeof node.props?.children === 'string').map((node) => node.props.children))).toContain('report');
         // Pressing the default binds it, ready to edit.
-        await screen.pressByTestIdAsync('workflow-editor-workflow-review-input-maxRounds-set');
-        expect(changes.at(-1)?.blocks[0]).toMatchObject({ input: { maxRounds: { kind: 'literal', value: 3 } } });
+        await screen.pressByTestIdAsync('workflow-editor-workflow-review-input-then-set');
+        expect(changes.at(-1)?.blocks[0]).toMatchObject({ input: { then: { kind: 'literal', value: 'report' } } });
         await screen.unmount();
 
         // Reading, an optional input nobody set and without a default is left out.
         const reading = await renderList(harness, { draft, presentation: { editable: false } });
-        expect(reading.findHostByTestId('workflow-editor-workflow-review-input-diffFingerprint')).toBeNull();
+        expect(reading.findHostByTestId('workflow-editor-workflow-review-input-steps')).toBeNull();
         // A field nobody set reads as nothing, required or not: a read-only built-in never says "Not set".
-        expect(reading.findHostByTestId('workflow-editor-workflow-review-input-engines')).toBeNull();
-        expect(reading.findHostByTestId('workflow-editor-workflow-review-input-maxRounds')).not.toBeNull();
+        expect(reading.findHostByTestId('workflow-editor-workflow-review-input-reviewers')).toBeNull();
+        expect(reading.findHostByTestId('workflow-editor-workflow-review-input-then')).not.toBeNull();
         // A set literal reads as the value itself, without quotes (DESIGN-6 N5).
         expect(reading.getTextContent()).toContain('Read the changelog');
         expect(reading.getTextContent()).not.toContain('“Read the changelog”');
@@ -2299,15 +2303,15 @@ describe('document anatomy (DESIGN-4)', () => {
         await selected.unmount();
         // An empty value well says what goes in it, never a blank grey box (DESIGN-7 N5).
         const nested = buildDraft(harness, [{ kind: 'workflow', id: 'review', name: 'Review', workflowRef: 'builtin:review-and-converge',
-            input: { engines: { kind: 'literal', value: '' } } }] as never);
+            input: { reviewers: { kind: 'literal', value: '' } } }] as never);
         const editing = await renderList(harness, { draft: nested, selectedBlockId: 'review' });
-        expect(editing.findHostByTestId('workflow-editor-workflow-review-input-engines-input-0-literal')?.props.placeholder)
+        expect(editing.findHostByTestId('workflow-editor-workflow-review-input-reviewers-input-0-literal')?.props.placeholder)
             .toBe('workflows.condition.literalPlaceholder');
         await editing.unmount();
         // At rest a blank required value reads as unset and keeps its "Required" marker (DESIGN-7 N24).
         const resting = await renderList(harness, { draft: nested });
-        expect(resting.findHostByTestId('workflow-editor-workflow-review-input-engines-required')).not.toBeNull();
-        expect(resting.findHostByTestId('workflow-editor-workflow-review-input-engines-value')
+        expect(resting.findHostByTestId('workflow-editor-workflow-review-input-reviewers-required')).not.toBeNull();
+        expect(resting.findHostByTestId('workflow-editor-workflow-review-input-reviewers-value')
             ?.findAll((node) => node.props?.children === 'workflows.page.blocks.notSet').length).toBeGreaterThan(0);
     });
 
