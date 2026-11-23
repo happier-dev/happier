@@ -66,14 +66,16 @@ describe('Team setup F: viewer-scoped resource demand', () => {
   });
   afterAll(async () => { await fixture?.stop(); });
 
-  async function useSelectedSource() {
+  async function useSelectedSource(scope: 'source' | 'project') {
     const detail = await owner.execute('projects.sources.read', { serverId: fixture.serverId, sourceId });
     if (!detail.ok) throw new Error(`Selected Source unavailable (${detail.errorCode})`);
     expect(detail.ok).toBe(true);
     expect(ProjectSourcesReadOutputV1Schema.parse(detail.result).ok).toBe(true);
     const launched = await owner.executeReviewed('session.spawn_new', { executionTarget: machine.target,
-      projectContext: { projectRef: { serverId: fixture.serverId, projectKey: 'f-resource-selected-project' },
-        sourceRef: { serverId: fixture.serverId, sourceId } },
+      projectContext: {
+        ...(scope === 'project' ? { projectRef: { serverId: fixture.serverId, projectKey: 'f-resource-selected-project' } } : {}),
+        sourceRef: { serverId: fixture.serverId, sourceId },
+      },
       directory: { kind: 'path', path: machine.workspaceDir },
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
       terminal: { mode: 'plain' } });
@@ -89,7 +91,7 @@ describe('Team setup F: viewer-scoped resource demand', () => {
     });
   }
 
-  it('TS.F.summaryDemand returns the selected Team Source count without opening resources', async () => {
+  it('TS.F.summaryDemand counts without opening resources, then starts a Session with only the selected Source', async () => {
     await fixture.assertKnownGoodSessionControl(owner, machine);
     fixture.takeRequestObservations();
     const summary = await owner.execute('teams.sharedResources.summary' as ActionId, { v: 1, teamId });
@@ -102,7 +104,7 @@ describe('Team setup F: viewer-scoped resource demand', () => {
     const summaryPath = getActionSpec('teams.sharedResources.summary' as ActionId).serverTransport?.path;
     expect(observations.filter(row => row.path === summaryPath)).toHaveLength(1);
     expect(observations.filter(row => /\/(?:artifacts|machines|sessions|projects\/sources)(?:\/|$)/.test(row.path))).toEqual([]);
-    await useSelectedSource();
+    await useSelectedSource('source');
   });
 
   it('TS.F.kindPaging uses the existing Source list Action and includes Team ownership without a self-grant', async () => {
@@ -116,7 +118,7 @@ describe('Team setup F: viewer-scoped resource demand', () => {
     expect(result.ok).toBe(true);
     expect(result.sources.map(source => source.id)).toEqual([sourceId]);
     expect(result.coverage).toEqual({ complete: true, nextCursor: null });
-    await useSelectedSource();
+    await useSelectedSource('project');
   });
 
   it('TS.F.kindPaging uses actual Group membership for admins and withdraws access on the next read', async () => {
@@ -195,6 +197,6 @@ describe('Team setup F: viewer-scoped resource demand', () => {
         { kind: 'projectSources', status: 'available', count: admitted ? 2 : 1 },
       ]) });
     }
-    await useSelectedSource();
+    await useSelectedSource('project');
   });
 });
