@@ -551,6 +551,7 @@ describe('Run a workflow trigger inputs', () => {
     it.each([true, false])('rebinds This turn only with a portable Home and retains an unchanged Session turn (portable identity=%s)', async (hasPortableIdentity) => {
         const { WorkflowTriggerBlock } = await import('./WorkflowTriggerBlock');
         const { buildTriggerDefinition } = await import('./sessionTriggerForm');
+        const { SegmentedTabBar } = await import('@/components/ui/navigation/SegmentedTabBar');
         const sessions = ['turn-source', 'turn-destination'].map(id => createPlainSessionCurrentProjectionRecordFixture({ id, active: true,
             metadata: { machineId: 'machine-1', path: '/repo', host: 'host', name: id } }));
         const batch = createSessionReadBatchHttpBoundary(request => {
@@ -580,19 +581,31 @@ describe('Run a workflow trigger inputs', () => {
             startOptions={[]} onSelectStart={vi.fn()} onChangeWhen={change} onRemove={vi.fn()}
             machineId={null} serverId={served.homes.turns!.profileId} />);
         const menu = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'turn-workflow-session')!;
-        await act(async () => { menu().props.onOpenChange(true); });
-        await waitForHomeGovernance(() => expect(menu().props.items).toContainEqual(expect.objectContaining({ id: 'turn-destination' })));
+        const activePolicy = () => screen.findAllByType(SegmentedTabBar)
+            .find(node => node.props.tabs.some(tab => tab.id === 'thisTurn'))?.props.activeTabId;
+        const originalWhen = { kind: 'turnEnds', subject, sourceTurnId: 'turn-a' } as const;
+        const effectiveWhen = () => change.mock.lastCall?.[0] ?? originalWhen;
+        const browseSessions = async () => {
+            await act(async () => { menu().props.onOpenChange(true); });
+            // The subject chooser can open directly on Sessions or first ask for the subject kind.
+            if (menu().props.items.some((item: { id: string }) => item.id === 'scope-session')) {
+                await act(async () => { menu().props.onSelect('scope-session'); });
+            }
+            await waitForHomeGovernance(() => expect(menu().props.items).toContainEqual(expect.objectContaining({ id: 'turn-destination' })));
+        };
+        await browseSessions();
         await act(async () => { menu().props.onSelect('turn-source'); });
-        expect(change.mock.lastCall?.[0]).toEqual({ kind: 'turnEnds', subject, sourceTurnId: 'turn-a' });
-        await act(async () => { menu().props.onOpenChange(true); });
-        await waitForHomeGovernance(() => expect(menu().props.items).toContainEqual(expect.objectContaining({ id: 'turn-destination' })));
+        expect(effectiveWhen()).toEqual(originalWhen);
+        expect(activePolicy()).toBe('thisTurn');
+        await browseSessions();
         await act(async () => { menu().props.onSelect('turn-destination'); });
-        const rebound = change.mock.lastCall![0];
         if (!hasPortableIdentity) {
-            expect(rebound).toEqual({ kind: 'turnEnds', subject, sourceTurnId: 'turn-a' });
+            expect(effectiveWhen()).toEqual(originalWhen);
+            expect(activePolicy()).toBe('thisTurn');
             await screen.unmount();
             return;
         }
+        const rebound = effectiveWhen();
         const reboundSubject = { ...subject, sessionId: 'turn-destination' };
         expect(rebound).toMatchObject({ subject: reboundSubject });
         expect(buildTriggerDefinition({ when: rebound, enabled: true, sessionId: null })).toEqual({
