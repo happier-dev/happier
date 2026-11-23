@@ -410,7 +410,7 @@ async function closeSessionPublisherBindingInTx(
     tx: Tx,
     params: CloseSessionPublisherParams,
     now: () => Date,
-): Promise<PresenceInTxResult<CloseSessionPublisherResult>> {
+): Promise<SessionRecipientPublicationResult<CloseSessionPublisherResult>> {
     const session = await tx.session.findUnique({
         where: { id: params.binding.sessionId },
         select: withSessionContentSelect({
