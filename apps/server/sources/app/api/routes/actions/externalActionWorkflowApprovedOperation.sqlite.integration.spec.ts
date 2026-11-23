@@ -87,11 +87,13 @@ it('binds native backup Workflow provenance to the assigned publisher and select
         deploymentNativeAdmission: native })).toBe(false);
 }, 120_000);
 
-it.each(['ask', 'trigger-template', 'e2ee', 'teardown', 'move-link'] as const)('issues normal Workflow native provenance before receiver approval (%s)', async intent => {
+it.each(['ask', 'trigger-template', 'e2ee', 'teardown', 'move-link', 'move-link-plain'] as const)('issues normal Workflow native provenance before receiver approval (%s)', async intent => {
     const [publisher, receiver] = server.machines;
-    const moveLink = intent === 'move-link';
+    const moveLink = intent === 'move-link' || intent === 'move-link-plain';
     const controller = moveLink ? publisher : receiver;
     const project = await server.createDeploymentProject();
+    // Fixture content is plain, so the sibling Environment's project is created before any E2EE switch.
+    const siblingProject = moveLink ? await server.createDeploymentProject() : project;
     const environment = await db.deploymentEnvironment.create({ data: {
         projectSourceId: project.projectSourceId, createdByAccountId: server.accountId,
         protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
@@ -120,7 +122,7 @@ it.each(['ask', 'trigger-template', 'e2ee', 'teardown', 'move-link'] as const)('
     const secret = new Uint8Array(32).fill(7);
     const material = { type: 'dataKey' as const, machineKey: secret };
     const contentBinding = createSignedAccountContentBinding(tweetnacl.box.keyPair.fromSecretKey(secret).publicKey);
-    const mode = intent === 'e2ee' || moveLink ? 'e2ee' : 'plain';
+    const mode = intent === 'e2ee' || intent === 'move-link' ? 'e2ee' : 'plain';
     const machineContentBefore = mode === 'e2ee' ? await db.machine.findMany({
         where: { id: { in: server.machines.map(machine => machine.id) } },
         select: { id: true, metadata: true, daemonState: true, dataEncryptionKey: true },
@@ -183,16 +185,44 @@ it.each(['ask', 'trigger-template', 'e2ee', 'teardown', 'move-link'] as const)('
                 externalActionOrigin: { homeId: server.homeId, actionId, requestId,
                     requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin: workflowActionOrigin },
             } }) };
-        if (moveLink && envelope.v === 2) {
+        let delivered = 0;
+        if (moveLink) {
             server.setReceiver(controller.id, async packet => {
+                delivered++;
                 expect(packet.executionAuthorization?.binding).toMatchObject({ actionId, machineId: controller.id,
                     installationId: controller.installationId, workflowActionOrigin, deploymentLinkAdmission: { environmentId: environment.id,
                         replacement: { replacesLinkId: link.id, expectedTargetLinkRevision: link.revision,
                             machines: [{ machineId: receiver.id, installationId: receiver.installationId }] } } });
-                return createExternalActionDaemonDispatchResponse(prepareExternalActionResponseV2({ binding, request: envelope,
-                    executedMachineId: controller.id, material, randomBytes: length => new Uint8Array(randomBytes(length)),
-                    execution: { ok: false, errorCode: 'deployment_executor_unavailable', error: 'deployment_executor_unavailable' } }));
+                const execution = { ok: false, errorCode: 'deployment_executor_unavailable', error: 'deployment_executor_unavailable' } as const;
+                return createExternalActionDaemonDispatchResponse(envelope.v === 2 ? prepareExternalActionResponseV2({ binding, request: envelope,
+                    executedMachineId: controller.id, material, randomBytes: length => new Uint8Array(randomBytes(length)), execution })
+                    : prepareExternalActionResponseEnvelopeV1({ v: 1, actionId, requestId: envelope.requestId, execution }));
             });
+            // A Run's Link naming another Environment's runtime Link is refused before delivery.
+            const siblingEnvironment = await db.deploymentEnvironment.create({ data: { ...siblingProject.environmentContent,
+                projectSourceId: siblingProject.projectSourceId, createdByAccountId: server.accountId, protection: 'nonProduction',
+                purpose: 'standard', deployerMode: 'managers', controllerMachineId: controller.id, buildMachineId: publisher.id } });
+            const siblingLink = await db.deploymentTargetLink.create({ data: { ...siblingProject.runtimeContent,
+                environmentId: siblingEnvironment.id, createdByAccountId: server.accountId, role: 'runtime',
+                sourceKind: 'host', hostTargetId: 'own-server', targetKind: 'ownServer', state: 'deployed' } });
+            const siblingRequestId = `${runId}/${randomUUID()}/0`;
+            const siblingInput = { ...input, requestKey: `${randomUUID()}:link`, replacesLinkId: siblingLink.id,
+                expectedTargetLinkRevision: siblingLink.revision };
+            const siblingBinding = { ...binding, requestId: siblingRequestId };
+            const siblingEnvelope = mode === 'e2ee' ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                binding: siblingBinding, input: siblingInput, material, randomBytes: length => new Uint8Array(randomBytes(length)) })
+                : ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: siblingRequestId, target, input: siblingInput });
+            const siblingOrigin = { runId, requestId: siblingRequestId };
+            const sibling = await fetch(`${server.baseUrl}/v1/actions/${actionId}`, { method: 'POST',
+                headers: { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' },
+                body: JSON.stringify({ v: 1, machineId: publisher.id, envelope: siblingEnvelope, workflowActionOrigin: siblingOrigin,
+                    installationProof: signMachineInstallationProof({ privateKey: publisher.keys.secretKey, payload: {
+                        version: 1, accountId: server.accountId, machineId: publisher.id, installationId: publisher.installationId,
+                        externalActionOrigin: { homeId: server.homeId, actionId, requestId: siblingRequestId,
+                            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(siblingEnvelope), origin: siblingOrigin },
+                    } }) }) });
+            expect(sibling.status).toBe(403);
+            expect(delivered).toBe(0);
         }
         const path = moveLink ? `/v1/actions/${actionId}` : bindExternalActionExecutionAuthorizationHttpPathV1(actionId);
         const response = await fetch(`${server.baseUrl}${path}`, {
@@ -205,7 +235,9 @@ it.each(['ask', 'trigger-template', 'e2ee', 'teardown', 'move-link'] as const)('
             refusalCode = failure.success ? 'code' in failure.data ? failure.data.code : failure.data.error : 'unrecognized_http_error';
         }
         expect(response.status, refusalCode).toBe(200);
-        if (moveLink && envelope.v === 2) {
+        if (moveLink) {
+            expect(delivered).toBe(1);
+            if (envelope.v === 1) return;
             expect(openExternalActionResponseV2({ envelope: await response.json(), binding, request: envelope, material }))
                 .toMatchObject({ ok: false, errorCode: 'deployment_executor_unavailable' });
             return;

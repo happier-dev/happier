@@ -120,6 +120,68 @@ describe('current runtime membership replacement', () => {
         });
     });
 
+    it('refuses a replacement naming a revoked, stale-revision or sibling-Environment destination at the one Link writer', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const source = await inTx(tx => createProjectSourceInTx(tx, owner.id,
+            { serverId, requestKey: crypto.randomUUID(), name: 'Move destination' }));
+        if (!source.ok) throw new Error(source.error);
+        const machines = await Promise.all(['Source', 'Destination', 'Revoked'].map(host => db.machine.create({ data: {
+            id: crypto.randomUUID(), accountId: owner.id, installationId: crypto.randomUUID(),
+            metadata: encodePlainMachineStoredContent({ host, platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+        } })));
+        const [current, destination, revoked] = machines.map(machine => ({ machineId: machine.id, installationId: machine.installationId! }));
+        const content = async (kind: string) => {
+            const created = await createArtifact({ actorUserId: owner.id, artifactId: crypto.randomUUID(),
+                header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind, title: 'Move destination' })),
+                body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: '{}' })),
+                dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+            if (!created.ok) throw new Error(created.error);
+            return { contentArtifactId: created.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        };
+        const environments = await Promise.all([0, 1].map(async () => db.deploymentEnvironment.create({ data: {
+            projectSourceId: source.source.id, createdByAccountId: owner.id, protection: 'nonProduction', purpose: 'standard',
+            deployerMode: 'managers', controllerMachineId: current!.machineId, ...await content('deployment-environment.v1') } })));
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const send = (environmentId: string, payload: Record<string, unknown>) => app.inject({ method: 'POST',
+                url: `/v1/deployments/environments/${environmentId}/targets`, headers: { 'x-test-user-id': owner.id }, payload });
+            const first = await Promise.all(environments.map(async environment => {
+                const created = await send(environment.id, { serverId, environmentId: environment.id, targetId: 'own-server',
+                    role: 'runtime', expectedRevision: environment.revision, requestKey: crypto.randomUUID(), machines: [current],
+                    ...await content('deployment-target-link.v1') });
+                expect(created.statusCode, created.body).toBe(200);
+                return created.json() as { revision: number; targetLinkId: string; targetLinkRevision: number };
+            }));
+            const [link, sibling] = first;
+            const environment = environments[0]!;
+            const move = { serverId, environmentId: environment.id, targetId: 'own-server', role: 'runtime',
+                expectedRevision: link!.revision, replacesLinkId: link!.targetLinkId,
+                expectedTargetLinkRevision: link!.targetLinkRevision, machines: [destination],
+                ...await content('deployment-target-link.v1') };
+            const unchanged = async () => expect((await db.deploymentEnvironment.findUniqueOrThrow({
+                where: { id: environment.id } })).runtimeTargetLinkId).toBe(link!.targetLinkId);
+            await db.machine.update({ where: { id: revoked!.machineId }, data: { revokedAt: new Date() } });
+            const revokedMove = await send(environment.id, { ...move, requestKey: crypto.randomUUID(), machines: [revoked] });
+            expect(revokedMove.statusCode, revokedMove.body).not.toBe(200);
+            await unchanged();
+            const stale = await send(environment.id, { ...move, requestKey: crypto.randomUUID(),
+                expectedTargetLinkRevision: link!.targetLinkRevision + 1 });
+            expect(stale.statusCode, stale.body).not.toBe(200);
+            await unchanged();
+            const siblingMove = await send(environment.id, { ...move, requestKey: crypto.randomUUID(),
+                replacesLinkId: sibling!.targetLinkId, expectedTargetLinkRevision: sibling!.targetLinkRevision });
+            expect(siblingMove.statusCode, siblingMove.body).not.toBe(200);
+            await unchanged();
+            expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environments[1]!.id } })).runtimeTargetLinkId)
+                .toBe(sibling!.targetLinkId);
+            const exact = await send(environment.id, { ...move, requestKey: crypto.randomUUID() });
+            expect(exact.statusCode, exact.body).toBe(200);
+            expect(await inTx(tx => readDeploymentTargetInTx(tx, environment.id, exact.json().targetLinkId)))
+                .toMatchObject({ predecessorTargetLinkId: link!.targetLinkId, machines: [destination!.machineId] });
+        });
+    });
+
     it('replaces preview child DATA provider content in place while preserving the captured teardown link identity', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, {

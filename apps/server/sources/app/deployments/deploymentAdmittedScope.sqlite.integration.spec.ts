@@ -9,7 +9,8 @@ import {
   type LightSqliteHarness,
 } from '@/testkit/lightSqliteHarness';
 import { isDeploymentEnvironmentHttpReadInAdmittedScopeInTx, isDeploymentReadOperandInAdmittedScopeInTx,
-  readDeclaredDeploymentPreparationHttpRead, readDeploymentPreparationHttpReadPurpose } from './deploymentPreparationAuthorization';
+  readDeclaredDeploymentPreparationHttpRead, readDeploymentLinkPreparationHttpPurpose,
+  readDeploymentPreparationHttpReadPurpose } from './deploymentPreparationAuthorization';
 
 // The admitted deployment scope is the one decider for declared read operands.
 // Bindings are cast from fixtures: only the admission operands are read here.
@@ -169,5 +170,37 @@ describe('admitted deployment read scope (real SQLite)', () => {
         id: 'x',
       }),
     ).toBeNull();
+  });
+
+  it('spends a Link root only on a write carrying exactly its recorded replacement', async () => {
+    const environmentId = 'environment-link';
+    const replacement = { replacesLinkId: 'source-link', expectedTargetLinkRevision: 2,
+      machines: [{ machineId: 'destination', installationId: 'destination-installation' }] };
+    const root = (recorded?: typeof replacement) => ({
+      serverIdentityId: `srv_${'d'.repeat(32)}`, accountId: 'account', custodianAccountId: 'account',
+      authentication: { kind: 'account', tokenEpoch: 0 }, machineId: 'controller', installationId: 'installation',
+      actionId: 'deployments.targets.link', requestId: 'request', requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: 'controller' },
+      deploymentLinkAdmission: { environmentId, owner: { kind: 'account' as const, accountId: 'account' },
+        ...(recorded ? { replacement: recorded } : {}) },
+    }) satisfies ExternalActionExecutionAuthorizationBindingV1;
+    const write = (binding: ExternalActionExecutionAuthorizationBindingV1, body: Record<string, unknown>) =>
+      readDeploymentLinkPreparationHttpPurpose(db, binding, 'deployments.targets.link', {
+        method: 'POST', path: `/v1/deployments/environments/${environmentId}/targets`, body,
+      }, actionId => actionId === 'deployments.targets.link');
+    const body = { serverId: 'srv', environmentId, expectedRevision: 3, requestKey: 'request', targetId: 'own-server',
+      role: 'runtime', ...replacement };
+    expect(await write(root(replacement), body)).toBe(true);
+    expect(await write(root(replacement), { ...body, replacesLinkId: 'sibling-link' })).toBe(false);
+    expect(await write(root(replacement), { ...body, expectedTargetLinkRevision: 1 })).toBe(false);
+    expect(await write(root(replacement), { ...body,
+      machines: [{ machineId: 'destination', installationId: 'another-installation' }] })).toBe(false);
+    expect(await write(root(replacement), { ...body, machines: [...replacement.machines,
+      { machineId: 'sibling', installationId: 'sibling-installation' }] })).toBe(false);
+    // A root admitted without a replacement cannot retarget an existing Link at write time.
+    expect(await write(root(), body)).toBe(false);
+    const { replacesLinkId: _replaced, expectedTargetLinkRevision: _revision, ...firstLink } = body;
+    expect(await write(root(), firstLink)).toBe(true);
+    expect(await write(root(replacement), firstLink)).toBe(false);
   });
 });
