@@ -37,9 +37,9 @@ it('reaches Investigate from a receipt surface under the app shell without mount
         expect(getMountedWorkReadAddresses().some(address => address.actionId === 'inbox.get')).toBe(false);
         expect(hook.getCurrent().outcome).toBeNull();
         await act(async () => { await hook.getCurrent().investigate(); });
-        // This Home has no configured Triage: the shared owner must return its typed refusal,
-        // rather than the page silently doing nothing because no Inbox model owns it.
-        expect(hook.getCurrent().outcome).toEqual({ kind: 'unavailable', code: 'catalogUnavailable' });
+        // This Home publishes no failure-actions contribution. The shell owner still
+        // settles Investigate with a typed refusal without mounting the Inbox.
+        expect(hook.getCurrent().outcome).toEqual({ kind: 'unavailable', code: 'failure_actions_unavailable' });
         await hook.rerender({ ...subject, deploymentId: 'another-failed-receipt' });
         expect(hook.getCurrent().outcome).toBeNull();
         expect(hook.getCurrent().pending).toBe(false);
