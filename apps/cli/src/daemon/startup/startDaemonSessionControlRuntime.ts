@@ -1598,6 +1598,7 @@ export async function startDaemonSessionControlRuntime(
         ConnectedServiceTemporaryThrottleRetryScheduler['cancel']
       >[0],
     ) => ReturnType<ConnectedServiceTemporaryThrottleRetryScheduler['cancel']>;
+    restoreReattachedSessionTargetRelays: () => Promise<void>;
     reconcileReattachedConnectedServiceCredentialProjection: () => Promise<void>;
     reconcileConnectedServicesProjection: (
       notification: ConnectedServicesProjectionNotification,
@@ -3166,8 +3167,6 @@ export async function startDaemonSessionControlRuntime(
         } };
     })(),
   });
-  // Runners this daemon reattached after a restart reach their targets again through their restored relays.
-  void sparedHeldAgents.restoreRelays(params.trackedSessionsByKey.values());
   let onChildExited: (pid: number, exit: ChildExit) => Promise<void> = async () => {};
   // Assigned once the managed-service durability owner exists; exits before that retire at startup.
   let retireEndedRunnerOwnedState: () => Promise<void> = async () => {};
@@ -16184,6 +16183,7 @@ export async function startDaemonSessionControlRuntime(
         ConnectedServiceTemporaryThrottleRetryScheduler['cancel']
       >[0],
     ) => await temporaryThrottleScheduler.cancel(input),
+    restoreReattachedSessionTargetRelays: () => sparedHeldAgents.restoreRelays(params.trackedSessionsByKey.values()),
     reconcileReattachedConnectedServiceCredentialProjection,
     reconcileConnectedServicesProjection,
     awaitAgentSessionOpen: async (input) =>

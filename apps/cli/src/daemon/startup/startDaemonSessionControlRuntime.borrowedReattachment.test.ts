@@ -133,8 +133,10 @@ describe('startup borrowed-terminal reattachment', () => {
         envScope.patch({ HAPPIER_HOME_DIR: fixtureHome });
         reloadConfiguration();
         const attachResponse = createDeferred<void>();
-        // A Home response arrives after the startup composition has settled.
+        let targetReadStarted = false;
+        // Machine transport is bound after the startup composition has settled.
         vi.mocked(fetchSessionByIdCompat).mockImplementationOnce(async () => {
+            targetReadStarted = true;
             await attachResponse.promise;
             return metadata === undefined ? null : { ...createSessionRecordFixture({ id: boundary.sessionId, metadata: JSON.stringify(metadata), metadataVersion: 1 }),
                 encryptionMode: 'plain' };
@@ -149,7 +151,7 @@ describe('startup borrowed-terminal reattachment', () => {
         };
         // Observe the real target-open refusal at its console boundary. The default
         // adapter has no admitted provider here; restoration must still reach it.
-        const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+        const output = vi.spyOn(console, 'error').mockImplementation(() => {});
         const token = `e30.${Buffer.from(JSON.stringify({ sub: 'relay-owner' })).toString('base64url')}.fixture`;
         let runtime: Awaited<ReturnType<typeof startDaemonSessionControlRuntime>> | undefined;
         try {
@@ -167,7 +169,10 @@ describe('startup borrowed-terminal reattachment', () => {
                 startupTerminalRecovery: { disconnectedTerminalHostCandidates: [], unresolvedTerminalHostSessionIds: [] },
                 beforeShutdown: async () => {}, onHappySessionWebhook: async () => {}, requestShutdown: () => {}, processEnv: {},
             });
+            expect(targetReadStarted).toBe(false);
+            const restoration = runtime.restoreReattachedSessionTargetRelays();
             attachResponse.resolve();
+            await restoration;
             await vi.waitFor(() => expect(output.mock.calls.flatMap(args => args.flatMap(argument =>
                 typeof argument === 'object' && argument !== null && 'code' in argument
                     ? [argument.code] : []))).toContain('admission_unavailable'));

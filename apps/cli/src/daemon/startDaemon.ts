@@ -2607,6 +2607,7 @@ export async function startDaemon(
       retryTemporaryThrottleNow,
       readTemporaryThrottleRecovery,
       cancelTemporaryThrottleRecovery,
+      restoreReattachedSessionTargetRelays,
       reconcileReattachedConnectedServiceCredentialProjection,
       reconcileConnectedServicesProjection,
       awaitAgentSessionOpen,
@@ -4798,6 +4799,8 @@ export async function startDaemon(
           stopMachineIrohAcceptor = machineSyncRuntime.stopMachineIrohAcceptor;
           resumeQuiescedMachineConnectionPublications =
             machineSyncRuntime.resumeMachineConnectionPublications;
+          // Restored targets subscribe through the bound Machine transport and use its provider authority.
+          void restoreReattachedSessionTargetRelays();
           void settleDaemonOptionalCapability(
             'connected_service_reconcile',
             reconcileReattachedConnectedServiceCredentialProjection(),
