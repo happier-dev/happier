@@ -2927,11 +2927,13 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             token: string | null;
             version: number;
             policy: Readonly<Record<string, unknown>>;
+            preferredLanguage?: string;
         }>): void => {
             setActiveAccountSettingsSnapshot({
                 source: 'network',
                 settings: accountSettingsParse({
                     attentionDeliveryPolicyV1: params.policy,
+                    preferredLanguage: params.preferredLanguage,
                     ...(params.token === null ? {} : {
                         secrets: [{
                             id: accountSecretId,
@@ -2991,6 +2993,18 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             api.actions.register('send', async (input, context) => {
                 if (input.operation === 'preferences') {
                     return context.services.notifications.preferences('review-ready');
+                }
+                if (input.operation === 'watchPreferences') {
+                    const updates = [];
+                    const watch = context.services.notifications.watchPreferences('review-ready', preference => {
+                        updates.push(preference.enabled);
+                    });
+                    try {
+                        await fetch('https://notification-watch.invalid/');
+                        return updates;
+                    } finally {
+                        watch.dispose();
+                    }
                 }
                 return context.services.notifications.send({
                     clientRequestId: input.clientRequestId,
@@ -3366,9 +3380,30 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                     })],
                 },
             });
+            const originalFetch = globalThis.fetch;
+            globalThis.fetch = async (input, init) => {
+                if (input !== 'https://notification-watch.invalid/') return originalFetch(input, init);
+                setNotificationAccountSnapshot({
+                    token: 'configured-webhook-token', version: 5, preferredLanguage: 'fr',
+                    policy: { channels: { webhook: { enabled: false } } },
+                });
+                setNotificationAccountSnapshot({
+                    token: 'configured-webhook-token', version: 6, preferredLanguage: 'fr',
+                    policy: { channels: { webhook: { enabled: true } } },
+                });
+                return new Response();
+            };
+            try {
+                await expect(runtimeRegistry.targetActionInvocations?.invoke({
+                    pluginId: 'acme.notification.action', localId: 'send',
+                    input: { operation: 'watchPreferences' }, surface: 'cli',
+                })).resolves.toEqual({ status: 'executed', value: [true] });
+            } finally {
+                globalThis.fetch = originalFetch;
+            }
             setNotificationAccountSnapshot({
                 token: 'configured-webhook-token',
-                version: 5,
+                version: 7,
                 policy: {
                     channels: {
                         webhook: { enabled: true },
@@ -3378,7 +3413,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
 
             setNotificationAccountSnapshot({
                 token: 'configured-webhook-token',
-                version: 6,
+                version: 8,
                 policy: {
                     events: {
                         'acme.notification.action/review-ready-event': { enabled: false },
@@ -3404,7 +3439,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             });
             setNotificationAccountSnapshot({
                 token: 'configured-webhook-token',
-                version: 7,
+                version: 9,
                 policy: {
                     channels: {
                         webhook: { enabled: true },
@@ -3414,7 +3449,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
 
             setNotificationAccountSnapshot({
                 token: null,
-                version: 8,
+                version: 10,
                 policy: {
                     channels: {
                         webhook: { enabled: true },

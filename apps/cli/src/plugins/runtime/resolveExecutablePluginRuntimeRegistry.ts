@@ -505,7 +505,7 @@ import {
     getActiveAccountSettingsSnapshot,
     getActiveAccountSettingsSnapshotLifetimeToken,
     resolveActiveAccountConfiguredExternalSessionSourceRevision,
-    subscribeActiveAccountSettingsSnapshot,
+    subscribeActiveAccountSettingsKeys,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createExplicitManagedProviderOperationClaimId, resolveExplicitManagedProviderOperationClaimId, createManagedProviderBrokerOperationClaimId, qualifyManagedProviderRequestAuthUses, isSharedProviderAdmission } from './providerBindings/operationClaims';
 import type { PluginRuntimeGenerationAuthority, PluginContributionRuntimeLifecycle, ResolvedExecutablePluginRuntimeRegistry, PluginRuntimeMachineAdmissionTransport } from './composition/executableTypes';
@@ -3942,7 +3942,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     if (scopedActionRuntime) {
                         return Object.freeze({ dispose: () => {} });
                     }
-                    const unsubscribe = subscribeActiveAccountSettingsSnapshot(() => {
+                    const unsubscribe = subscribeActiveAccountSettingsKeys({ settings: ['attentionDeliveryPolicyV1'] }, () => {
                         preference.listener();
                     });
                     return Object.freeze({ dispose: unsubscribe });
