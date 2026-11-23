@@ -89,7 +89,7 @@ import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRu
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
-import { createProductionDaemonWorkspaceSyncRuntime } from '@/daemon/startup/createProductionDaemonWorkspaceSyncRuntime';
+import { createStartedProductionDaemonWorkspaceSyncRuntime as createProductionDaemonWorkspaceSyncRuntime } from '@/daemon/startup/createProductionDaemonWorkspaceSyncRuntime.testkit';
 import { createWorkspaceSyncNativeProcessTestBoundary } from '@/daemon/startup/createProductionDaemonWorkspaceSyncRuntime.testkit';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';

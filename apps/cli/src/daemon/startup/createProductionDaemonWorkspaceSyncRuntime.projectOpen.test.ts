@@ -32,7 +32,7 @@ import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/r
 import { createPlainProjectAccountRefRow, createProjectAccountRowsHttpBoundary, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 import { readProjectAccountRows, withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { openProject } from '@/workspaces/activation/openProject';
-import { createProductionDaemonWorkspaceSyncRuntime } from './createProductionDaemonWorkspaceSyncRuntime';
+import { createStartedProductionDaemonWorkspaceSyncRuntime as createProductionDaemonWorkspaceSyncRuntime } from './createProductionDaemonWorkspaceSyncRuntime.testkit';
 import { acquireWorkspaceSyncTestScmRuntime, createWorkspaceSyncNativeProcessTestBoundary } from './createProductionDaemonWorkspaceSyncRuntime.testkit';
 
 it('routes admitted native Project Open through retained requester custody before host checkout preparation', async () => {

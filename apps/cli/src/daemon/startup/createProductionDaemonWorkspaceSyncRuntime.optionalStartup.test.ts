@@ -8,7 +8,7 @@ import { ProjectAccountRowV1Schema } from '@happier-dev/protocol/projects/projec
 import { readProjectAccountRows, type ActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { createPlainProjectAccountRefRow, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 import { createWorkspaceSyncRelationshipCredentialCustody } from '../sessionEncryption/requesterSessionCredentials';
-import { createProductionDaemonWorkspaceSyncRuntime } from './createProductionDaemonWorkspaceSyncRuntime';
+import { createStartedProductionDaemonWorkspaceSyncRuntime as createProductionDaemonWorkspaceSyncRuntime } from './createProductionDaemonWorkspaceSyncRuntime.testkit';
 import { createWorkspaceSyncNativeProcessTestBoundary } from './createProductionDaemonWorkspaceSyncRuntime.testkit';
 
 describe('optional Workspace Sync startup', () => {

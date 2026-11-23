@@ -535,7 +535,8 @@ export async function assertCurrentWorkspaceCopyPreview(input: Readonly<{
  * The production composition boundary for Lane 08. It constructs one root
  * owner, target authority, broker/manager lifecycle, controller, and handoff
  * adapter for the registered daemon machine. Predecessor files remain untouched
- * and are never part of startup or sync admission. Engine startup is best-effort: the
+ * and are never part of startup or sync admission. Call start after publishing
+ * the Machine transport used by recovery. Engine startup is best-effort: the
  * same runtime remains installed so a later command or settings update can
  * retry after an artifact or process failure.
  */
@@ -2544,36 +2545,44 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
   relationshipOwner = createInstalledRelationshipOwner();
 
   let authorityTail = Promise.resolve();
-  const privateRecovery = recoverPrivateExecutions().catch(() => {
-    factories.warn('[DAEMON RUN] Private Workspace Sync recovery is unavailable', { code: 'workspace_sync_unavailable' });
-  });
-  const reconcileAuthority = (): void => {
-    authorityTail = authorityTail
-      .catch(() => undefined)
-      .then(async () => {
-        // Durable requester identity is recovered before the installed Account
-        // graph supplies ordinary lazy native captures for those same links.
-        await privateRecovery;
-        const snapshot = factories.getProjectSnapshot();
-        if (snapshot) await recoverManagedRelationships(snapshot);
-        await targetAuthority.reconcileRetainedBootstraps();
+  let privateRecovery: Promise<unknown> = Promise.resolve();
+  let startup: Promise<void> | undefined;
+  let unsubscribe: (() => void) | undefined;
+  // Construction installs the service; recovery begins only after the daemon
+  // publishes the Machine transport used by retained SOURCE relationships.
+  const start = (): void => {
+    if (startup) return;
+    privateRecovery = recoverPrivateExecutions().catch(() => {
+      factories.warn('[DAEMON RUN] Private Workspace Sync recovery is unavailable', { code: 'workspace_sync_unavailable' });
+    });
+    const reconcileAuthority = (): void => {
+      authorityTail = authorityTail
+        .catch(() => undefined)
+        .then(async () => {
+          // Durable requester identity is recovered before the installed Account
+          // graph supplies ordinary lazy native captures for those same links.
+          await privateRecovery;
+          const snapshot = factories.getProjectSnapshot();
+          if (snapshot) await recoverManagedRelationships(snapshot);
+          await targetAuthority.reconcileRetainedBootstraps();
+        });
+      void authorityTail.catch((error) => {
+        factories.warn('[DAEMON RUN] Failed to reconcile workspace sync target bootstrap ownership', error);
       });
-    void authorityTail.catch((error) => {
-      factories.warn('[DAEMON RUN] Failed to reconcile workspace sync target bootstrap ownership', error);
+    };
+    unsubscribe = factories.subscribeProjectSnapshot(() => reconcileAuthority());
+    reconcileAuthority();
+    startup = privateRecovery.then(async () => {
+      await runtime.start().catch((error) => {
+        const code = readWorkspaceSyncRuntimeErrorCode(error) ?? 'workspace_sync_unavailable';
+        publishReadiness({ state: 'unavailable', errorCode: code });
+        factories.warn(
+          '[DAEMON RUN] Workspace sync engine is initially unavailable; commands and settings changes may retry it',
+          { code, message: redactBugReportSensitiveText(error instanceof Error ? error.message : 'Workspace Sync startup failed') },
+        );
+      });
     });
   };
-  const unsubscribe = factories.subscribeProjectSnapshot(() => reconcileAuthority());
-  reconcileAuthority();
-  const startup = privateRecovery.then(async () => {
-    await runtime.start().catch((error) => {
-      const code = readWorkspaceSyncRuntimeErrorCode(error) ?? 'workspace_sync_unavailable';
-      publishReadiness({ state: 'unavailable', errorCode: code });
-      factories.warn(
-        '[DAEMON RUN] Workspace sync engine is initially unavailable; commands and settings changes may retry it',
-        { code, message: redactBugReportSensitiveText(error instanceof Error ? error.message : 'Workspace Sync startup failed') },
-      );
-    });
-  });
 
   const committedRelationshipOwner = relationshipOwner;
   const installedRelationshipLifecycleOwner = (relationshipId: string) => {
@@ -3582,6 +3591,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
   const activitySources = [runtime.managedWorkspaceSync.activity ?? missingActivity,
     targetAuthority.activity ?? missingActivity];
   return {
+    start,
     handoffAdapter: runtime.handoffAdapter,
     readProcessRoots: () => runtime.readProcessRoots(),
     activity: {
@@ -3662,10 +3672,10 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     stop: () => {
       if (stopPromise) return stopPromise;
       stopPromise = (async () => {
-        unsubscribe();
+        unsubscribe?.();
         await authorityTail.catch(() => undefined);
         const failures: unknown[] = [];
-        await startup.catch((error: unknown) => { failures.push(error); });
+        await startup?.catch((error: unknown) => { failures.push(error); });
         await runtime.stop().catch((error: unknown) => { failures.push(error); });
         await targetAuthority.releaseAllRetainedBootstraps().catch((error: unknown) => {
           failures.push(error);

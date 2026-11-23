@@ -1197,6 +1197,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
           }
         } };
       const composed = await createProductionDaemonWorkspaceSyncRuntime(productionInput, overrides);
+      composed.start();
       syncRuntimes.push(composed); return composed;
     };
     workerWorkspaceSync = await composeSync(target.machineId);

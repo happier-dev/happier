@@ -671,6 +671,7 @@ describe('production handoff -> Mutagen manager -> broker -> controller -> nativ
           credentials: { token: 'test-token', encryption: null },
           openMachineCarrierTunnel,
         }, productionFactories));
+        sourceWorkspaceRuntime.start();
 
         const alphaPayload = `alpha-to-beta-${topology}-non-empty\n`;
         await writeFile(join(sourceRoot, 'alpha-to-beta.txt'), alphaPayload);

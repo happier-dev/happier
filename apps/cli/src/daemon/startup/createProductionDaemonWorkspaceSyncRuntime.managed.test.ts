@@ -15,7 +15,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { runWorkspaceEffectWorker } from '@/workspaces/activation/workspaceEffectWorker';
 import { startPrivateProjectSyncChannel } from '@/workspaces/activation/privateProjectCheckoutProcess';
 import { isManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { createProductionDaemonWorkspaceSyncRuntime } from './createProductionDaemonWorkspaceSyncRuntime';
+import { createStartedProductionDaemonWorkspaceSyncRuntime as createProductionDaemonWorkspaceSyncRuntime } from './createProductionDaemonWorkspaceSyncRuntime.testkit';
 import { prepareManagedSessionProjectFilesSync } from './prepareManagedSessionProjectFilesSync';
 import { acquireWorkspaceSyncTestScmRuntime, createWorkspaceSyncNativeProcessTestBoundary } from './createProductionDaemonWorkspaceSyncRuntime.testkit';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';

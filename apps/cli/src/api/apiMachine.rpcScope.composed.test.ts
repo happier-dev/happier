@@ -376,6 +376,7 @@ describe('installed Machine filesystem requester custody', () => {
             }),
             ...(native ? { createPeerIdentityValidator: () => createWorkspaceSyncPeerIdentityValidator({ resolveExecutable: () => binaries.custody! }) } : {}),
         });
+        runtime.start();
         onTestFinished(() => runtime.stop());
         registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: f.rpcHandlerManager, service: runtime.workspaceSync });
         installedDatabase.current = createInstalledMachineRpcDatabaseBoundary({ machineId: 'machine', ownerAccountId: 'requester',

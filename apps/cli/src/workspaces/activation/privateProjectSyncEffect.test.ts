@@ -127,6 +127,7 @@ it.each([false, true])('reuses a committed native finite seed across admitted ch
         }; },
       }, { ...processBoundary.factories, getProjectSnapshot: () => null, subscribeProjectSnapshot: () => () => {},
         resolveRootOwnershipDirectory: () => join(parent, 'controller-locks') });
+      runtime.start();
       try {
         const baselineRequest = { sessionId: 'retained-session', targetWorkspace: { v: 2 as const, kind: 'managed' as const,
           serverId: 'home', workspaceId: 'native', managedId: 'guest', controller, rootPath: root } };

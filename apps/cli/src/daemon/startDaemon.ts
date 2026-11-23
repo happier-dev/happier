@@ -4746,6 +4746,7 @@ export async function startDaemon(
           }
           apiMachineForSessions = attemptedApiMachineForSessions;
           machineRpcRouteAttachments.attachApiMachineForSessions(apiMachineForSessions);
+          workspaceSyncRuntimeCustody.get()?.start();
           attemptedApiMachineForSessions?.registerDeploymentChildRoutes(daemonWorkSignal, managedMachinePolicyAdapter.snapshotAdmitted);
           machineActivity.notifyChanged();
           syncActivity.notifyChanged();

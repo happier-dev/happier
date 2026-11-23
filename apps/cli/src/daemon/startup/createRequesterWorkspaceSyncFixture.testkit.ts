@@ -1,5 +1,8 @@
 import axios from 'axios';
 import { ApiMachineClient, type ApiMachineClientLifecycleDependencies } from '@/api/apiMachine';
+import { ApiClient } from '@/api/api';
+import { createDaemonMachineBootstrapRuntime } from './createDaemonMachineBootstrapRuntime';
+import { bootstrapMachineSyncRuntime, retireMachineSyncRuntimeAttempt } from '../machine/bootstrapMachineSyncRuntime';
 import { createDaemonExternalActionExecution, createRequesterAccountOperationContext, requiresPortableSessionSpawnServerIdentity } from '@/daemon/externalActions/execution';
 import { createProcessOwnershipRuntime } from '@/daemon/processes/ownership/processOwnershipRuntime';
 import { createLeftBehindPass } from '@/daemon/processes/leftBehind/leftBehindPass';
@@ -128,6 +131,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
   prepareActiveServerDirectory?: Parameters<typeof composeBindChildSourcePhaseTestRuntime>[0]['prepareActiveServerDirectory'];
 }>) {
   const { role, socketIo } = options;
+  let recoveredTargetClient: ApiMachineClient | null | undefined;
   const sourceCustodianAccountId = options.sourceCustodianAccountId ?? 'requester';
   const accountMode = options.accountMode ?? 'plain';
   const targetCustodianAccountId = options.targetCustodianAccountId ?? 'member-a';
@@ -421,6 +425,12 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
     } : {}),
     // Installed daemons provide this transport for local targets too.
     callWorkspaceTargetPhase: (descriptor, context) => {
+        // Match startDaemon's unpublished client during the bootstrap-order test.
+        const client = recoveredTargetClient === undefined ? installed.machine : recoveredTargetClient;
+        if (!client) {
+          targetRpcDiagnostics.push({ message: 'Source target client unpublished', data: {} });
+          throw Object.assign(new Error('Workspace target authority is unavailable'), { code: 'peer_unavailable' });
+        }
         targetRpcDiagnostics.push({ message: 'Source target-phase descriptor', data: { method: descriptor.method,
           originalEnvelopePresent: context?.workspaceSyncSourceRouting?.originalActionEnvelope !== undefined,
           sourceRootMatches: context?.callerInputAuthorization && context.workspaceSyncSourceRouting
@@ -433,7 +443,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
           methodMatches: descriptor.method === readWorkspaceSyncTargetMethod(descriptor.routing.phase),
           requestMatches: context?.workspaceSyncSourceRouting?.sourceContext ? doesWorkspaceSyncTargetRequestMatchRouting(
             descriptor.request, { ...descriptor.routing, targetContext: context.workspaceSyncSourceRouting.sourceContext }) : null } });
-        return installed.machine.callWorkspaceSyncTargetPhase({ ...descriptor,
+        return client.callWorkspaceSyncTargetPhase({ ...descriptor,
           credentials: installed.bootstrap.credentials, context: buildActionExecutorContextForRpc({ ...context,
             serverId: installed.serverId }) });
     },
@@ -997,8 +1007,44 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
         inputDigest: computeActionInputApprovalDigestV1('workspace.sync.relationship.create', invocation.request.actionInput) });
   };
   return { installed, fixture, identity, member, rows, custodianRows, custodianRef, custodianBefore,
-    restartSourceParent: async () => {
-      await fixture.restartSourceParent();
+    restartSourceParent: async (throughMachineBootstrap = false) => {
+      const construct: Parameters<typeof fixture.restartSourceParent>[0] = throughMachineBootstrap ? async create => {
+        recoveredTargetClient = null;
+        let production: Awaited<ReturnType<typeof create>> | undefined;
+        const bootstrap = createDaemonMachineBootstrapRuntime({
+          api: await ApiClient.create(installed.bootstrap.credentials), credentials: installed.bootstrap.credentials,
+          resolveCurrentServerIdentityId: () => installed.homeServerIdentityId,
+          controlPort: 41233, runtimeId: 'recovered-sync', publicReleaseChannel: 'dev', startupSource: 'manual',
+          serviceLabel: undefined, transferRuntimeStatePublisher: null,
+          spawnSession: async () => { throw new Error('Unexpected Session'); },
+          spawnSessionForInternalResume: async () => { throw new Error('Unexpected Session'); },
+          stopSession: async () => true, awaitAgentSessionOpen: async () => { throw new Error('Unexpected Session'); },
+          isSessionAlreadyRunning: async () => false, loadLocalSessionMetadataForHandoff: async () => null,
+          beforeShutdown: async () => {}, requestShutdown() {}, directPeerServerLifecycle: null,
+          // These hosts are not entered by client construction.
+          directTransferRegistryHost: {} as never, daemonServerWorkScheduler: {} as never,
+          setDaemonServerWorkOnline() {}, onMachineConnectionOnline: async () => {},
+          reconcileConnectedServicesProjection: async () => {}, isShuttingDown: () => false,
+          createWorkspaceSyncRuntime: async () => { production = await create(); return production; },
+        });
+        const machine = { id: installed.machineId, encryptionMode: 'plain' as const,
+          metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
+        const attempt = await bootstrapMachineSyncRuntime({ ...bootstrap, machine, machineId: machine.id,
+          preferredHost: 'test-host', happyHomeDir: configuration.happyHomeDir, happyLibDir: configuration.happyHomeDir,
+          filesystemAccessPolicy: { kind: 'osUser' }, takeoverRequested: false,
+          connectedServiceRefreshLoopHandle: null, connectedServiceQuotasLoopHandle: null });
+        const client = attempt.apiMachineForSessions;
+        if (!client) throw new Error('Machine bootstrap did not publish a client');
+        onTestFinished(async () => { await retireMachineSyncRuntimeAttempt(attempt); await bootstrap.beforeShutdown(); });
+        // bootstrapMachineSyncRuntime connects the client before publishing it.
+        // Reuse this fixture's authenticated Home socket boundary at that step.
+        Reflect.set(client, 'socket', sourceSocket);
+        // startDaemon publishes its Session client only after bootstrap returns.
+        recoveredTargetClient = client;
+        if (!production) throw new Error('Sync runtime was not constructed');
+        return production;
+      } : undefined;
+      await fixture.restartSourceParent(construct);
       registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: diagnosticRegistrarFor(rpc), service: fixture.parent.workspaceSync });
       registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: diagnosticRegistrarFor(installed.rpcHandlerManager), service: fixture.parent.workspaceSync });
     },

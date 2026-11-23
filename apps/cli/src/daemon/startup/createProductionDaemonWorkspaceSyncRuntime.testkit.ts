@@ -48,6 +48,13 @@ import { createProductionDaemonWorkspaceSyncRuntime, type ProductionDaemonWorksp
 
 const contentPolicyInput = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
 
+/** Direct-runtime fixtures already have their Machine transport installed. */
+export async function createStartedProductionDaemonWorkspaceSyncRuntime(...args: Parameters<typeof createProductionDaemonWorkspaceSyncRuntime>) {
+  const runtime = await createProductionDaemonWorkspaceSyncRuntime(...args);
+  runtime.start();
+  return runtime;
+}
+
 // The real daemon-applied registry outlives each workspace fixture. Keep its
 // private store valid while the singleton is warm; never shut down or delete a
 // serving registry's home between tests. Process/OS temp cleanup owns this home.
@@ -495,7 +502,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
     pluginRuntimeLease = await acquireWorkspaceSyncTestScmRuntime(options.onCompositionPhase);
   }
   const workerAdmissions = new Map<string, ReturnType<typeof createProjectWorkerAdmission>>();
-  async function compose(machineId: string) {
+  async function compose(machineId: string, construct?: (create: () => ReturnType<typeof createProductionDaemonWorkspaceSyncRuntime>) => ReturnType<typeof createProductionDaemonWorkspaceSyncRuntime>) {
     const workerAdmission = createProjectWorkerAdmission({ machineId, admissionDrain: createDaemonAdmissionDrain(),
       readPolicy: async () => options.workerRunAtMost === undefined ? { status: 'unavailable' }
         : { status: 'ready', policy: { accepting: true, runAtMost: options.workerRunAtMost }, source: 'stored', metadataVersion: 1 } });
@@ -756,8 +763,10 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
       }
       options.onCompositionPhase?.(`Production runtime construction for ${machineId}`);
       await options.prepareActiveServerDirectory?.(productionInput.activeServerDir);
-      return await createProductionDaemonWorkspaceSyncRuntime(productionInput, overrides);
+      const create = () => createProductionDaemonWorkspaceSyncRuntime(productionInput, overrides);
+      return await (construct ? construct(create) : create());
     });
+    production.start();
     productions.push(production);
     return production;
   }
@@ -832,9 +841,9 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
     },
     sourceRef, childRef, childInstallationId, targetRef, projection, managedChild, callWorkspaceSourcePhase, parentRpcHandlers: handlers,
     get targetParent() { return targetParent; },
-    restartSourceParent: async () => {
+    restartSourceParent: async (construct?: Parameters<typeof compose>[1]) => {
       await parent.stop();
-      parent = await compose(sourceRef.machineId);
+      parent = await compose(sourceRef.machineId, construct);
       handlers.clear();
       await registerSeedExport(registrar);
       registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: registrar, service: parent.workspaceSync });

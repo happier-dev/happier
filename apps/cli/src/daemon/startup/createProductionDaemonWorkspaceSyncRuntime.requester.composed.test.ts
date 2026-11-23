@@ -962,6 +962,39 @@ it.skipIf(process.platform !== 'linux').each(['its own', 'another relationship\'
   }
 });
 
+it.skipIf(process.platform !== 'linux').each([
+  { label: 'requester-owned TARGET reachable', unreachable: false, targetCustodianAccountId: 'member-a' },
+  { label: 'requester-owned TARGET unreachable', unreachable: true, targetCustodianAccountId: 'member-a' },
+  { label: 'SOURCE-custodian-owned TARGET reachable', unreachable: false, targetCustodianAccountId: 'requester' },
+])('recovers a retained SOURCE through the real machine bootstrap construction order ($label)', async ({ unreachable, targetCustodianAccountId }) => {
+  executionBoundary.member = false;
+  let refuseTarget = false;
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo, remoteTarget: true,
+    workerCleanCopy: true, originalActionHomeHttp: true, targetCustodianAccountId, readTargetRpcResponse: () => {
+      if (refuseTarget) throw Object.assign(new Error('TARGET transport unavailable'), { code: 'peer_unavailable' });
+    } });
+  const created = await setup.executeNativeRelationshipAction();
+  expect(created).toMatchObject({ ok: true, result: { created: true } });
+  if (!created.ok) throw new Error('Initial Worker copy failed');
+  const { relationshipId } = WorkspaceSyncRelationshipCreateResultV1Schema.parse(created.result);
+  setup.targetRpcDiagnostics.length = 0;
+  refuseTarget = unreachable;
+  await setup.restartSourceParent(true);
+  const controller = setup.fixture.parentManagedWorkspaceSync;
+  if (!(controller instanceof WorkspaceSyncController)) throw new Error('Recovered SOURCE controller is unavailable');
+  const relationship = await vi.waitFor(async () => {
+    const entry = (await controller.listRelationships({})).relationships
+      .find(value => value.definition.relationshipId === relationshipId);
+    expect(['watching', 'error']).toContain(entry?.status.state);
+    return entry;
+  }, { timeout: 60_000, interval: 100 });
+  expect(relationship?.status, JSON.stringify({ status: relationship?.status,
+    unpublished: setup.targetRpcDiagnostics.filter(entry => entry.message === 'Source target client unpublished').length,
+    targetCalls: setup.targetRpcDiagnostics.filter(entry => entry.message === 'Source target-phase descriptor').length })).toMatchObject(unreachable
+    ? { state: 'error', errorCode: 'peer_unavailable' } : { state: 'watching' });
+  expect(setup.targetRpcDiagnostics.some(entry => entry.message === 'Source target-phase descriptor')).toBe(true);
+});
+
 it.skipIf(process.platform !== 'linux')('preflights the shared Manage destination through the source Action before creating its worker copy', async () => {
   executionBoundary.member = false;
   const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo, remoteTarget: true,
