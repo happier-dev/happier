@@ -98,9 +98,6 @@ export async function bindNewManagedMachineCreationScope(input: Readonly<{
         const effect = input.draft.archiveEffect;
         const selected = readManagedCreationScopeRule(machine, input.source);
         if (selected?.effect === effect) return { kind: 'bound', binding: selected.binding };
-        // A shared controller's admitted creator receives the acquisition choice,
-        // not ordinary retention-edit or manual power authority.
-        if (machine.custodianAccountId !== input.scope.accountId) return incomplete('permission_denied');
         const actionId = 'machines.managed.retention.update';
         const request = { homeId: machine.homeId, managedId: machine.id, expectedIntentRevision: machine.intentRevision,
             creationScopeRetention: effect === 'keep' ? null : { effect } };

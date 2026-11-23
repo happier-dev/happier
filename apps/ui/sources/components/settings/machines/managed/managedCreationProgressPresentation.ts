@@ -4,7 +4,6 @@ import {
 } from '@/components/inbox/actionOperations/actionOperationPresentation';
 import { describeManagedLifecycleState } from '@/components/settings/machines/managed/managedLifecyclePresentation';
 import { describeManagedInstallationFailure } from './managedCreationPresentation';
-import { describeManagedAcquisitionRefusal } from './managedNativeFailurePresentation';
 import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
@@ -48,19 +47,19 @@ export function describeManagedCreationProgress(
       )
     : null;
   const failed = progress.kind === 'failed' || operation?.state === 'failed' || operation?.state === 'cancelled';
-  // A refusal before any phase ran (the controller offline, no permission) is the cause in its own words; once an
-  // installation phase ran, the installer's sentence stays diagnostic detail.
-  const admissionRefusal = progress.kind === 'failed' && operation?.progress?.kind !== 'phase'
-    ? describeManagedAcquisitionRefusal(progress.code) : null;
-  const failureMessage = (operation?.error && (progress.kind !== 'failed' || progress.code === operation.error.errorCode)
+  const failureMessage = operation?.error && (progress.kind !== 'failed' || progress.code === operation.error.errorCode)
     ? describeManagedInstallationFailure(operation.error, operation.progress)
     : progress.kind === 'failed'
       ? resolveActionExecutionErrorMessage({ code: progress.code, failureCause: progress.failureCause },
         resolveSystemTaskFailureMessage({ code: progress.code }) ?? '') || null
-      : null) ?? admissionRefusal;
+      : null;
+  const phaseProgress = operation?.progress?.kind === 'phase' ? operation.progress : null;
+  const stageState: ManagedCreationProgressStep['state'] = operation?.state === 'succeeded' ? 'done'
+    : failed ? 'failed' : observedStatus?.tone === 'active' ? 'running' : 'upcoming';
+  const operationStage = phaseProgress ? { id: phaseProgress.phase, label: phaseProgress.label, state: stageState } : null;
   const steps: ManagedCreationProgressStep[] = [];
   if (progress.kind === 'session_starting') {
-    const phase = operation?.progress?.kind === 'phase' ? operation.progress.phase : undefined;
+    const phase = operationStage?.id;
     // Setup needs the files, so the copy comes first; its step is reserved before it starts, so nothing moves.
     const ids: readonly ManagedCreationProgressStep['id'][] = options?.projectFiles || phase === 'project_files_copy'
       ? ['create', 'install', 'copy', 'setup', 'ready'] : ['create', 'install', 'setup', 'ready'];
@@ -73,10 +72,8 @@ export function describeManagedCreationProgress(
     // Only the observed phase is claimed: earlier effects may have been skipped or prepared.
     // Session success completes Ready; its receiver owns settling the required bound Setup.
     if (current >= 0 || operation?.state === 'succeeded') {
-      const currentState: ManagedCreationProgressStep['state'] = operation?.state === 'succeeded' ? 'done'
-        : failed ? 'failed' : observedStatus?.tone === 'active' ? 'running' : 'upcoming';
       for (const [index, id] of ids.entries()) {
-        steps.push({ id, state: index === current ? currentState
+        steps.push({ id, state: index === current ? stageState
           : id === 'ready' && operation?.state === 'succeeded' ? 'done' : 'upcoming' });
       }
     }
@@ -102,5 +99,5 @@ export function describeManagedCreationProgress(
         (observedStatus && observedStatus.tone !== 'active')
       ? 'neutral'
       : 'active';
-  return { setup, operation, observedStatus, failed, failureMessage, label, tone, steps };
+  return { setup, operation, observedStatus, failed, failureMessage, label, tone, steps, operationStage };
 }

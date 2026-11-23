@@ -25,7 +25,7 @@ import type { SessionPlacementSelectionV1 } from '@happier-dev/protocol/sessions
 import type { ConnectedServiceBindingsV2, SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol';
 import { mergeSessionTeamCredentialBindingIntents } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { ConnectedServicesDefaultUnavailableError, materializeSessionSpawnConnectedServicesDefaults, readAgentPurposeDefaults, type ResolveSpawnConnectedServicesTeamResourceCatalog } from '@/session/services/spawnConnectedServicesDefaults';
-import { readSessionSpawnModelChoice } from '@happier-dev/protocol/actions/executor/sessionSpawn';
+import { readSessionSpawnConfigurationSource, readSessionSpawnModelChoice, resolveSessionSpawnIsolationWorkKind } from '@happier-dev/protocol/actions/executor/sessionSpawn';
 import { readSessionSpawnMemberDefaults } from './readSessionSpawnMemberDefaults';
 
 type SpawnDefaultSelections = Pick<SessionSpawnNewInputV2,
@@ -55,7 +55,7 @@ export function resolveSessionSpawnIsolation(
   let policy: MachineIsolationPolicyV1 | null;
   try { policy = readMachineIsolationPolicyV1(openedMetadata ?? {}); }
   catch { return isolationUnavailable('machine_isolation_policy_unreadable'); }
-  if (input.sourceContext || input.configuration?.providerSessionResume) return null;
+  if (readSessionSpawnConfigurationSource(input) === 'retained') return null;
   const selectedSandbox = selectedPlacement?.kind === 'machine' ? selectedPlacement.configuredSandbox : undefined;
   if (!policy) return selectedSandbox ? isolationUnavailable('machine_isolation_sandbox_unavailable') : null;
   const binding = context?.externalActionExecutionAuthorization?.binding;
@@ -70,7 +70,7 @@ export function resolveSessionSpawnIsolation(
   if (!run && !bot && (input.identity?.bot || input.identity?.createdAsBot)) {
     return isolationUnavailable('machine_isolation_bot_origin_unavailable');
   }
-  const workKind = run ? 'automationsWorkflows' : bot ? 'botsChannels' : 'sessions';
+  const workKind = resolveSessionSpawnIsolationWorkKind({ workflowRun: run, bot });
   if (input.isolationOverride) {
     const manage = context?.machineAdmission?.role === 'manage' || binding?.admittedMachineRole === 'manage';
     const interactive = context !== undefined
@@ -164,7 +164,7 @@ export async function resolveSessionSpawnManagedDefaults(input: SpawnDefaultSele
   const policy = getOrganizationPolicySessionDefaults(params.organizationPolicy);
   const memberDefaults = readSessionSpawnMemberDefaults(input.agentTarget, purposes);
   const captured = params.capturedContext ? { context: params.capturedContext, unavailableDefaults: params.unavailableDefaults }
-    : input.sourceContext || input.configuration?.providerSessionResume
+    : readSessionSpawnConfigurationSource(input) === 'retained'
       ? { context: buildManagedSessionDefaultsContext({}), unavailableDefaults: params.unavailableDefaults }
       : await loadManagedSessionDefaultsContextV1({ ...input.projectContext,
     primaryTeamId: input.primaryTeamId, sharedTeamIds: [...sharedTeamIds], memberDefaults, policyDefaults: policy,

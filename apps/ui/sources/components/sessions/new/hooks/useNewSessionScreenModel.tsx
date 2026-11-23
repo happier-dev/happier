@@ -1,3 +1,4 @@
+import { resolveSessionSpawnIsolationWorkKind } from '@happier-dev/protocol/actions/executor/sessionSpawn';
 import { useMachineFavorites } from '@/sync/store/settingsWriters';
 import { sessionModelPickerValueFromRef, isTeamCredentialProviderModelPickerValue } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { qualifiedPurposeKey, type QualifiedConnectedAccountPurposeBindingV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
@@ -3212,7 +3213,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const offersNoFolder = executionTarget?.kind === 'machine' && !directoryIntentFixed;
     // The work this draft starts, for the isolation owner: the picker rows and the outcome line read the same kind.
     const isBotDraft = Boolean(effectiveCurrentAuthoringDraft.initialSessionFacts?.bot);
-    const isolationWorkKind = isBotDraft ? 'botsChannels' : 'sessions';
+    const isolationWorkKind = resolveSessionSpawnIsolationWorkKind({ bot: isBotDraft });
     const { pathPopover: composerPathPopover, machinePopover, resumePopover } = useNewSessionInputPopovers({
         isolationWorkKind,
         managedPlacementPreset,

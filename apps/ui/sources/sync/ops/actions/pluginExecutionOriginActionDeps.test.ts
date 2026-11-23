@@ -90,7 +90,7 @@ describe('answering-client plugin origin preferences', () => {
         storage.setState({ profileScope: scope, settingsScope: scope, settingsVersion: version, isDataReady: true,
             machines: { machine }, machineListByServerId: { [connection.home.id]: [machine] },
             machineListStatusByServerId: { [connection.home.id]: 'idle' },
-            settings: { ...storage.getState().settings, machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: {} } } });
+            settings: { ...storage.getState().settings } });
         const binding = normalizePluginUiDestinationBindingV1({ pluginId, destinationId: 'home', rendererId: 'home',
             container: 'appPage', target: { kind: 'app' } });
         if (!binding) throw new Error('Destination fixture missing');
@@ -200,10 +200,10 @@ describe('answering-client plugin origin preferences', () => {
             expect(raw).toEqual(retainedAccountSettings);
             await hook.rerender();
             const remembered = storage.getState().settings.machineAdministrationTargetsLocalV1;
-            await act(async () => { storage.setState({ settings: { ...storage.getState().settings,
-                machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: { [pluginId]: {
-                    serverIdentityId: 'srv_elsewhere', sourceRef: { ...origin.sourceRef, machineId: 'another-device' },
-                } } } } }); });
+            const obsoleteSelections = { machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: { [pluginId]: {
+                serverIdentityId: 'srv_elsewhere', sourceRef: { ...origin.sourceRef, machineId: 'another-device' },
+            } } } };
+            await act(async () => { storage.setState({ settings: { ...storage.getState().settings, ...obsoleteSelections } }); });
             expect(hook.getCurrent().selectedOrigin).toEqual(origin);
             expect(storage.getState().settings.machineAdministrationTargetsLocalV1).toBe(remembered);
             const offlineMachine = { ...machine, active: false, activeAt: 0 };

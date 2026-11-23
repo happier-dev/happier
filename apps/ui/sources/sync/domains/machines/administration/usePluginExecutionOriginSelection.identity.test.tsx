@@ -633,7 +633,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
         const machine = createMachineFixture({ id: 'machine-source', active: true, activeAt: Date.now() });
         await publishMachineSnapshot({ profileScope: scope, settingsScope: scope, isDataReady: true,
             machines: {}, machineListByServerId: { [home.id]: [machine] }, machineListStatusByServerId: { [home.id]: 'idle' },
-            settings: { ...storage.getState().settings, machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: {} } } });
+            settings: { ...storage.getState().settings } });
         const pluginId = 'acme.source';
         const report: PluginMachineMaterializationV1 = { serverIdentityId, machineId: machine.id,
             materializationId: `daemon-selected:${pluginId}`, pluginId, version: '0.0.0', sourceClass: 'localPath',
@@ -699,7 +699,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
         const machine = createMachineFixture({ id: 'machine-source', active: true, activeAt: Date.now() });
         await publishMachineSnapshot({ profileScope: scope, settingsScope: scope, isDataReady: true,
             machines: {}, machineListByServerId: { [home.id]: [machine] }, machineListStatusByServerId: { [home.id]: 'idle' },
-            settings: { ...storage.getState().settings, machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: {} } } });
+            settings: { ...storage.getState().settings } });
         const origin = { serverIdentityId, sourceRef: { machineId: machine.id, pluginId: 'acme.source',
             sourceCustody: { kind: 'development' as const, registeredRootId: 'source-root' } } };
         const source = { origin, version: '1.0.0', occurrenceId: 'source-occurrence', serverId: home.id };
@@ -797,7 +797,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
         const machine = createMachineFixture({ id: 'machine-origin-admission', active: true, activeAt: Date.now() });
         await publishMachineSnapshot({ profileScope: scope, settingsScope: scope, isDataReady: true,
             machines: {}, machineListByServerId: { [home.id]: [machine] }, machineListStatusByServerId: { [home.id]: 'idle' },
-            settings: { ...storage.getState().settings, machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: {} } } });
+            settings: { ...storage.getState().settings } });
         const origin = { serverIdentityId, sourceRef: { machineId: machine.id, pluginId: 'acme.admission',
             sourceCustody: { kind: 'development' as const, registeredRootId: 'admission-root' } } };
         const candidates = [{ source: { origin, version: '1.0.0', occurrenceId: 'admission-occurrence', serverId: home.id },
@@ -844,7 +844,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
         const other = createMachineFixture({ id: 'machine-origin-other', active: true, activeAt: Date.now(), presenceProtocolVersion: 1 });
         await publishMachineSnapshot({ profileScope: scope, settingsScope: scope, isDataReady: true,
             machines: {}, machineListByServerId: { [home.id]: [machine, other] }, machineListStatusByServerId: { [home.id]: 'idle' },
-            settings: { ...storage.getState().settings, machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: {} } } });
+            settings: { ...storage.getState().settings } });
         const origin = { serverIdentityId, sourceRef: { machineId: machine.id, pluginId: 'acme.held',
             sourceCustody: { kind: 'development' as const, registeredRootId: 'held-root' } } };
         const candidates = [{ source: { origin, version: '1.0.0', occurrenceId: 'held-occurrence', serverId: home.id },
@@ -892,7 +892,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
         machine.metadata = { ...machine.metadata!, displayName: 'Before' };
         await publishMachineSnapshot({ profileScope: scope, settingsScope: scope, isDataReady: true,
             machines: {}, machineListByServerId: { [home.id]: [machine] }, machineListStatusByServerId: { [home.id]: 'idle' },
-            settings: { ...storage.getState().settings, machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: {} } } });
+            settings: { ...storage.getState().settings } });
         const origin = { serverIdentityId, sourceRef: { machineId: machine.id, pluginId: 'acme.presence',
             sourceCustody: { kind: 'development' as const, registeredRootId: 'presence-root' } } };
         const source = { origin, version: '1.0.0', occurrenceId: 'presence-occurrence', serverId: home.id };

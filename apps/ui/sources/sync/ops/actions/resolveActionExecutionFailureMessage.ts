@@ -15,6 +15,7 @@ import { readTeamCreationPolicyRefusalV1 } from '@happier-dev/protocol/teams';
 import { teamsCreateRefusalText } from '@/components/settings/teams/collection/teamsCreateGuidanceText';
 
 import { t } from '@/text';
+import { describeManagedAcquisitionRefusal } from './managedAcquisitionFailureCopy';
 import { discussionFailureLabel } from '@/components/discussions/discussionFailureLabel';
 import { getSessionInputFailureLabelKey } from '@/components/sessions/pending/pendingMessageVisualState';
 import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
@@ -282,7 +283,8 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     if (sessionInputLabel) return t(sessionInputLabel);
     if (code === 'feature_policy_disabled') return t('settingsVoice.pages.conversations.agentFeatureRequired', { feature: t('settingsFeatures.expVoiceAgent') });
     if (code === 'account_mode_mismatch' || code === 'recipient_mode_unsupported') return t('secrets.catalog.status.recipient_mode_unsupported');
-    if (code === 'credential_unavailable') return t('session.startFailure.cause.credential_unavailable');
+    const managedRefusal = typeof code === 'string' ? describeManagedAcquisitionRefusal(code) : null;
+    if (managedRefusal) return managedRefusal;
     const deploymentRefusal = code === 'template_domain_required' ? readDeploymentRefusalRecoveryV1(code, record.details) : null;
     if (deploymentRefusal) return deploymentRefusal.remedy;
     // The Home refused the target Machine as offline (its admission's typed availability diagnostic, carried as the

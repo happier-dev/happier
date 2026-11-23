@@ -699,7 +699,6 @@ describe('classification-aware account settings history restore', () => {
         const post = mocks.serverFetch.mock.calls.find(([path, init]) => path === '/v2/account/settings' && init?.method === 'POST');
         expect(JSON.parse(String(post?.[1]?.body)).content).toEqual({ t: 'plain', v: {
             sessionReplayMaxSeedChars: 120000,
-            machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: origins },
             profiles: LATEST_BASELINE.profiles, schemaVersion: ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
         } });
     });

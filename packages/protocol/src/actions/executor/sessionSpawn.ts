@@ -17,6 +17,7 @@ import { deriveDeploymentPrepareSessionCreationIdentityV1 } from '../../sessions
 import { buildBackendTargetKeyV2, type PersistedBackendTargetRefV2 } from '../../backends/targets/backendTargetRefV2.js';
 import { readAuthoredSessionModelSelection } from '../../teams/credentials/sessionBindingIntentV1.js';
 import { createPersonalSessionModelSelection, type SessionModelSelection } from '../../providers/selection/v2.js';
+import type { MachineIsolationPolicyV1 } from '../../machines/machineIsolationV1.js';
 import type { AgentStartContextV1 } from '../../account/settings/admitAgentStartV1.js';
 
 type SpawnConfigurationInput = Pick<SessionSpawnNewActionInputV2,
@@ -27,9 +28,14 @@ function selectsNewSessionProject(input: SpawnConfigurationInput): boolean {
     && input.sourceContext === undefined && input.configuration?.providerSessionResume === undefined;
 }
 
+/** Project the work kind after the caller has established its run or Bot origin. */
+export function resolveSessionSpawnIsolationWorkKind(input: Readonly<{ workflowRun?: boolean; bot?: boolean }>): keyof MachineIsolationPolicyV1['workKinds'] {
+  return input.workflowRun ? 'automationsWorkflows' : input.bot ? 'botsChannels' : 'sessions';
+}
+
 /** Retained and ordinary attached Sessions consume captured choices, rather than current defaults. */
 export function readSessionSpawnConfigurationSource(
-  input: SpawnConfigurationInput, parentSessionId?: string | null,
+  input: Pick<SpawnConfigurationInput, 'sourceContext' | 'configuration'> & Partial<SpawnConfigurationInput>, parentSessionId?: string | null,
 ): 'retained' | 'parent' | 'defaults' {
   if (input.sourceContext !== undefined || input.configuration?.providerSessionResume !== undefined) return 'retained';
   return parentSessionId && !selectsNewSessionProject(input) && !input.roleId && !input.discussionParticipant ? 'parent' : 'defaults';

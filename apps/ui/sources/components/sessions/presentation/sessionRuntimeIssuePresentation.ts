@@ -13,6 +13,7 @@ import {
 
 import { presentSessionAgentAuthRequired } from './sessionAgentAuthRequiredPresentation';
 import { t, type TranslationKey } from '@/text';
+import { describeManagedAcquisitionRefusal } from '@/sync/ops/actions/managedAcquisitionFailureCopy';
 import { teamCredentialReconnectPresentation } from '@/components/settings/teams/credentials/sourceHealthPresentation';
 import { resourceStateLabel } from '@/components/settings/teams/credentials/readinessPresentation';
 import { formatMoment } from '@/utils/datetime/formatMoment';
@@ -155,6 +156,8 @@ function resolveSessionStartupFailureCause(
     if (startup) return t(`session.startFailure.cause.${startup}`);
     const requester = readRequesterSessionRuntimeRefusalCode(code);
     if (requester) return t(`session.startFailure.cause.${requester}`);
+    const managedRefusal = typeof code === 'string' ? describeManagedAcquisitionRefusal(code) : null;
+    if (managedRefusal) return managedRefusal;
     const preparation = readSessionPreparationFailureCode(code);
     // Native vendor codes retain their producer's typed cause without implying Agent sign-in.
     if (!preparation) return failureCause?.failureReason === 'authentication_required'

@@ -139,11 +139,11 @@ describe('persistence', () => {
         expect(JSON.parse(store.get('local-settings')!)).not.toHaveProperty('sessionLastMobileSurfaceBySessionId');
     });
 
-    it('recovers known pending preferences with retired fields while admitting new deltas strictly', () => {
+    it('ignores the retired Machine Administration setting in saved and new pending deltas', () => {
         const canonical = { v: 1, pluginExecutionOriginsByPluginId: {} };
         const retained = { ...canonical, targetsByKey: { plugins: { machineId: 'old' } } };
         store.set('pending-settings', JSON.stringify({ machineAdministrationSelectionsV1: retained }));
-        expect(loadPendingSettings()).toEqual({ machineAdministrationSelectionsV1: canonical });
+        expect(loadPendingSettings()).toEqual({});
         expect(parsePendingSettings({ machineAdministrationSelectionsV1: retained })).toEqual({});
     });
 

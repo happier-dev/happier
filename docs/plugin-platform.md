@@ -7297,9 +7297,7 @@ Automatically initialized Administration targets use that same navigation owner;
 choosing a target deliberately still records a preference.
 `plugins.execution_origin.list` reports
 `selectionSource: 'auto' | 'pinned' | null`, also available in the chip's selection
-data. Retired
-`machineAdministrationSelectionsV1.pluginExecutionOriginsByPluginId` values
-remain inert stored data: no migration ledger, pruning or dual writer.
+data. The device owns the execution origin preference.
 A source-backed occurrence carries its
 real source custody instead of an invented portable materialization. Invocation
 freshly resolves the same exact target and revalidates after approval. Machine-free

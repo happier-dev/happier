@@ -3,7 +3,10 @@ import type { MachineProvisionerNativeCauseV1, ProviderObservationV1 } from '@ha
 import type { HomeEnrollmentCarrierFailure } from '@happier-dev/protocol/ssh/commandFailure';
 import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { describeManagedAcquisitionRefusal } from '@/sync/ops/actions/managedAcquisitionFailureCopy';
 import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+
+export { describeManagedAcquisitionRefusal } from '@/sync/ops/actions/managedAcquisitionFailureCopy';
 import { MACHINE_PRESET_TEAM_KEY_PENDING } from '@/sync/domains/machines/presets/machinePresetReadFailure';
 import { t } from '@/text';
 
@@ -64,26 +67,6 @@ function describeManagedHomeCarrierFailureDiagnostic(code: string, cause?: HomeE
 export function describeManagedObservationDiagnostic(observation: Pick<ProviderObservationV1, 'reason' | 'nativeCause' | 'carrierFailure'>): string {
     return describeManagedHomeCarrierFailureDiagnostic(
         describeManagedNativeFailureDiagnostic(observation.reason ?? 'provider_unavailable', observation.nativeCause), observation.carrierFailure);
-}
-
-/**
- * The typed use-time refusal of a managed acquisition in one sentence, or `null` for a code it does not know.
- * A preset's availability card and a failed creation's step read the same words; the machine list says the
- * controller one too.
- */
-export function describeManagedAcquisitionRefusal(code: string): string | null {
-    switch (code) {
-        case 'permission_denied': return t('session.startFailure.cause.permission_denied');
-        case 'controller_unavailable': return t('managedMachines.controller.requiredUnnamed');
-        case 'credential_unavailable': return t('session.startFailure.cause.credential_unavailable');
-        case 'provider_unavailable': return t('session.startFailure.cause.provider_unavailable');
-        case 'controller_retired': return t('session.startFailure.cause.controller_retired');
-        case 'request_conflict': return t('session.startFailure.cause.request_conflict');
-        case 'intent_changed': return t('session.startFailure.cause.intent_changed');
-        case 'managed_not_found': return t('session.startFailure.cause.managed_not_found');
-        case 'enrollment_retired': return t('session.startFailure.cause.enrollment_retired');
-        default: return null;
-    }
 }
 
 /** A preset's availability card presents the typed use-time refusal, never the controller label or inventory read. */

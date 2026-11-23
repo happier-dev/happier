@@ -196,7 +196,7 @@ describe('plugin surface execution requirement', () => {
         storage.setState({ profileScope: scope, settingsScope: scope, isDataReady: true,
             machines: { [machineId]: machine }, machineListByServerId: { [connection.home.id]: [machine] },
             machineListStatusByServerId: { [connection.home.id]: 'idle', srv_surface_source: 'idle' },
-            settings: { ...storage.getState().settings, machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: {} } } });
+            settings: { ...storage.getState().settings } });
         function Wrapper({ children }: React.PropsWithChildren) {
             return React.createElement(AppShellPluginUiProjectionValueProvider, { value: {
                 pluginUiProjection: committedProjection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
@@ -511,8 +511,9 @@ describe('plugin surface execution requirement', () => {
             await act(async () => storage.setState({ settings: { ...storage.getState().settings,
                 machineAdministrationTargetsLocalV1: {} } }));
             const savedPreferences = { v: 1 as const, pluginExecutionOriginsByPluginId: { [pluginId]: savedOtherOrigin } };
+            const retiredAccountSettings = { machineAdministrationSelectionsV1: savedPreferences };
             await act(async () => storage.setState({ settingsVersion: 1, settings: { ...storage.getState().settings,
-                machineAdministrationSelectionsV1: savedPreferences } }));
+                ...retiredAccountSettings } }));
             let contextualMachineId = machineId;
             const contextual = await renderHook(() => usePluginSurfaceExecutionOrigin({ pluginId, projection: multiProjection,
                 entry: pageEntry, enabled: true, contextualTarget: { serverIdentityId: 'srv_surface_source', machineId: contextualMachineId } }), { wrapper: ContextualWrapper });
@@ -538,7 +539,7 @@ describe('plugin surface execution requirement', () => {
                 JSON.stringify({ state: contextual.getCurrent().selection.state, canExecute: contextual.getCurrent().selection.canExecute,
                     lifetimeCurrent: lifetime.isCurrent(), scope, settingsScope: storage.getState().settingsScope,
                     machines: storage.getState().machines })).toBe(otherMachineId);
-            expect(storage.getState().settings.machineAdministrationSelectionsV1).toBe(savedPreferences);
+            expect(storage.getState().settings).toMatchObject(retiredAccountSettings);
             expect(await invoke('plugins.execution_origin.set', { pluginId, contextualTarget,
                 origin: { ...savedOtherOrigin, sourceRef: { ...savedOtherOrigin.sourceRef, machineId: 'absent' } } })).toEqual({ status: 'unavailable' });
             await act(async () => { expect(await invoke('plugins.execution_origin.clear', { pluginId, contextualTarget })).toEqual({ status: 'applied' }); });
@@ -550,7 +551,7 @@ describe('plugin surface execution requirement', () => {
                 machineListByServerId: { [connection.home.id]: [machine, otherMachine] } }); });
             await act(async () => { expect(await contextual.getCurrent().selection.selectOrigin(savedOtherOrigin)).toMatchObject({ status: 'applied' }); });
             expect(contextual.getCurrent().selection.resolveExecutionOrigin()?.machineTarget.target.machineId).toBe(otherMachineId);
-            expect(storage.getState().settings.machineAdministrationSelectionsV1).toBe(savedPreferences);
+            expect(storage.getState().settings).toMatchObject(retiredAccountSettings);
             await act(async () => { await contextual.getCurrent().selection.clearOrigin(); });
             expect(contextual.getCurrent().selectedSupply?.machineId).toBe(machineId);
             const stalePicker = contextual.getCurrent().selection.selectOrigin;
@@ -570,7 +571,7 @@ describe('plugin surface execution requirement', () => {
             await act(async () => {
                 clearMachineAdministrationTargetObservation(scope, `plugin.lastRunOn:${pluginId}`);
                 storage.setState({ settings: { ...storage.getState().settings,
-                    machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: {} } } });
+                    ...{ machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: {} } } } });
             });
             committedProjection = initialProjection;
             await hook.rerender();

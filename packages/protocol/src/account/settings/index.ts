@@ -214,13 +214,10 @@ export {
 } from './accountSettingsHistoryRestoreV1.js';
 
 export {
-  DEFAULT_MACHINE_ADMINISTRATION_SELECTIONS_V1,
   MACHINE_ADMINISTRATION_SELECTION_KEY_MAX_LENGTH_V1,
   MACHINE_ADMINISTRATION_SELECTION_MAX_ENTRIES_V1,
-  MachineAdministrationSelectionsV1Schema,
   MachineAdministrationTargetsV1Schema,
   MachineAdministrationTargetV1Schema,
-  type MachineAdministrationSelectionsV1,
   type MachineAdministrationTargetsV1,
   type MachineAdministrationTargetV1,
 } from './machineAdministrationSelectionsV1.js';

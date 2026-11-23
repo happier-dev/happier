@@ -30,6 +30,13 @@ describe('Session sandbox creation progress', () => {
     });
   });
 
+  it('names a controller refusal carried inside an Action failure', () => {
+    expect(describeManagedCreationProgress('Guest', { kind: 'failed', code: 'action_failed',
+      failureCause: { phase: 'machines.managed.acquire', errorClass: 'ManagedMachineControllerError',
+        errorCode: 'controller_unavailable', httpStatus: null },
+    }).failureMessage).toBe(t('managedMachines.controller.requiredUnnamed'));
+  });
+
   it.each([
     ['machines.managed.acquire', ['running', 'upcoming', 'upcoming', 'upcoming']],
     ['ssh.installCli.upload', ['upcoming', 'running', 'upcoming', 'upcoming']],
@@ -77,6 +84,7 @@ describe('Session sandbox creation progress', () => {
     const presentation = describeManagedCreationProgress('Guest', { kind: 'session_starting', operationAddress,
       operation: { ...operation, state, progress: { kind: 'phase', phase: 'setup', label: 'Setup' } } });
     expect(presentation.steps.map(step => step.state)).toEqual(['upcoming', 'upcoming', 'failed', 'upcoming']);
+    expect(presentation.operationStage).toEqual({ id: 'setup', label: 'Setup', state: 'failed' });
     expect(presentation.failed).toBe(true);
   });
 });

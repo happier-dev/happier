@@ -131,10 +131,6 @@ import {
 } from './sessionPendingQueueDeliveryTiming.js';
 import { SESSION_PERMISSION_MODES } from '../../sessions/metadata/sessionPermissionModes.js';
 import {
-  DEFAULT_MACHINE_ADMINISTRATION_SELECTIONS_V1,
-  MachineAdministrationSelectionsV1Schema,
-} from './machineAdministrationSelectionsV1.js';
-import {
   DEFAULT_WORKSPACE_FILE_VIEWER_PREFERENCES_V1,
   WORKSPACE_FILE_VIEWER_PREFERENCES_V1_MAX_ENCODED_BYTES,
   WorkspaceFileViewerPreferencesV1Schema,
@@ -1519,7 +1515,6 @@ const ACCOUNT_SETTING_CANDIDATES = {
         semanticDomain: 'provider default model selections', classification: 'preference',
         maximumSerializedValueBytes: ACCOUNT_SETTINGS_MAX_PROVIDER_SUBTREE_BYTES, structuralBoundsOwner: 'domainOwned',
     }),
-    machineAdministrationSelectionsV1: accountCatalogDefinition(z._default(MachineAdministrationSelectionsV1Schema, DEFAULT_MACHINE_ADMINISTRATION_SELECTIONS_V1), DEFAULT_MACHINE_ADMINISTRATION_SELECTIONS_V1, { semanticDomain: 'machine administration selections', classification: 'preference', maximumSerializedValueBytes: 64 * 1024 }),
     machineRetentionDefaultsV1: accountCatalogDefinition(MachineRetentionDefaultsV1Schema, DEFAULT_MACHINE_RETENTION_DEFAULTS_V1, { semanticDomain: 'managed machine category defaults', classification: 'preference', maximumSerializedValueBytes: ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES }),
     managedMachineDeletionReminderLeadTimeMs: accountPreference(z.number().check(z.int(), z.nonnegative()), 2 * 24 * 60 * 60 * 1_000, 'managed machine deletion reminder lead time'),
     managedMachineCreationEnabled: accountCatalogDefinition(z._default(z.boolean(), true), true, { semanticDomain: 'managed machine acquisition', classification: 'policy', maximumSerializedValueBytes: 5 }),

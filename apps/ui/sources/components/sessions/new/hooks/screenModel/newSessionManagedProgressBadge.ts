@@ -57,7 +57,7 @@ export function buildNewSessionManagedProgressBadge(
     const receipt = readManagedMachineSelectionReceipt(selection);
     const machineName = readManagedMachineSelectionName(selection) ?? t('common.machine');
     const origin = managedCreationOrigin(receipt);
-    const { setup, operation, observedStatus, failed, failureMessage, label, tone } = describeManagedCreationProgress(machineName, progress);
+    const { setup, operation, observedStatus, failed, failureMessage, label, tone, operationStage } = describeManagedCreationProgress(machineName, progress);
     const failureDiagnostic = failed ? progress.kind === 'failed' && progress.diagnosticDetail
         ? progress.diagnosticDetail : operation?.error
             ? describeManagedActionFailureDiagnostic(operation.error.errorCode, operation.error.details, operation.requestId, operation.error.failureCause) : undefined : undefined;
@@ -73,10 +73,7 @@ export function buildNewSessionManagedProgressBadge(
     const stages: ManagedProgressModel['stages'] = setup ? [...joinedStages, { id: 'setup', label: t('managedMachines.creation.setup'),
         state: setup.state === 'failed' ? 'failed' : setup.state === 'succeeded' || setup.state === 'skipped' ? 'done'
             : setup.state === 'running' && (!observedStatus || observedStatus.tone === 'active') ? 'running' : 'upcoming' }]
-        : operation?.progress?.kind === 'phase'
-        ? [{ id: operation.progress.phase, label: operation.progress.label,
-            state: operation.state === 'failed' ? 'failed' : operation.state === 'succeeded' ? 'done'
-                : observedStatus?.tone === 'active' ? 'running' : 'upcoming' }]
+        : operationStage ? [operationStage]
         // This device runs the Account recipe and reports no operation: its row's facts are the stages.
         : localRecipe ? rowStages(draft.retainedMachine?.machine, true, managedCreationHomeName(selection.selection.homeId))
         : [];

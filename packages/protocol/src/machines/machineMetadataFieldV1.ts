@@ -15,6 +15,11 @@ export type MachineMetadataFieldDefinitionV1<T> = Readonly<{
   defaultValue: () => T;
   equal: (left: T, right: T) => boolean;
 }>;
+type MachineMetadataMutationDefinitionV1<T> = MachineMetadataFieldDefinitionV1<T> | Readonly<{
+  project(metadata: Record<string, unknown>): T;
+  apply(metadata: Record<string, unknown>, value: T): Record<string, unknown>;
+  equal(left: T, right: T): boolean;
+}>;
 export type MachineMetadataFieldValueV1<T> =
   | Readonly<{ status: 'ready'; policy: T; source: 'default' | 'stored' }>
   | Readonly<{ status: 'invalid' | 'unavailable' }>;
@@ -42,13 +47,16 @@ export type MachineMetadataFieldMutationResultV1<T> =
 export async function mutateMachineMetadataFieldV1<T>(
   mutation: Readonly<{ expectedMetadataVersion: number; expectedPolicy: T; policy: T; comparison: 'field' | 'revision' }>,
   port: MachineMetadataFieldPortV1,
-  definition: MachineMetadataFieldDefinitionV1<T>,
+  definition: MachineMetadataMutationDefinitionV1<T>,
   options?: Readonly<{ signal?: AbortSignal; seed?: Readonly<{ field: string; value: unknown }> }>,
 ): Promise<MachineMetadataFieldMutationResultV1<T>> {
   if (options?.signal?.aborted) return { status: 'cancelled' as const };
+  const read = (metadata: Record<string, unknown>): MachineMetadataFieldValueV1<T> => 'field' in definition
+    ? readMachineMetadataFieldV1(metadata, definition)
+    : { status: 'ready', source: 'stored', policy: definition.project(metadata) };
   let snapshot = await readMachineMetadataSnapshotV1(port);
   while (snapshot.status === 'ready') {
-    const current = readMachineMetadataFieldV1(snapshot.metadata, definition);
+    const current = read(snapshot.metadata);
     if (current.status !== 'ready') return current;
     if (mutation.comparison === 'revision' && snapshot.metadataVersion !== mutation.expectedMetadataVersion) {
       return { status: 'conflict' as const, policy: current.policy, metadataVersion: snapshot.metadataVersion };
@@ -68,17 +76,19 @@ export async function mutateMachineMetadataFieldV1<T>(
     if (options?.signal?.aborted) return { status: 'cancelled' as const };
     let answer: Awaited<ReturnType<MachineMetadataFieldPortV1['compareAndSwap']>>;
     try {
-      answer = await port.compareAndSwap({ metadata: { ...snapshot.metadata, [definition.field]: mutation.policy,
+      const updated = 'field' in definition ? { ...snapshot.metadata, [definition.field]: mutation.policy }
+        : definition.apply(snapshot.metadata, mutation.policy);
+      answer = await port.compareAndSwap({ metadata: { ...updated,
         ...(seedMissing ? { [seed.field]: seed.value } : {}) }, expectedMetadataVersion: snapshot.metadataVersion });
     } catch { answer = { status: 'outcomeUnknown' }; }
     if (answer.status === 'conflict') {
       snapshot = { ...answer, status: 'ready' };
       if (mutation.comparison === 'field') continue;
-      const observed = readMachineMetadataFieldV1(answer.metadata, definition);
+      const observed = read(answer.metadata);
       return observed.status === 'ready' ? { status: 'conflict' as const, policy: observed.policy, metadataVersion: answer.metadataVersion } : observed;
     }
     if (answer.status === 'applied') {
-      const observed = readMachineMetadataFieldV1(answer.metadata, definition);
+      const observed = read(answer.metadata);
       return observed.status === 'ready' && definition.equal(observed.policy, mutation.policy)
         && (!seed || answer.metadata[seed.field] !== undefined)
         ? { status: 'applied' as const, policy: observed.policy, metadataVersion: answer.metadataVersion }
@@ -88,7 +98,7 @@ export async function mutateMachineMetadataFieldV1<T>(
     // An accepted write can lose its ACK. Observe once, never replay it.
     const observation = await readMachineMetadataSnapshotV1(port);
     if (observation.status === 'ready') {
-      const observed = readMachineMetadataFieldV1(observation.metadata, definition);
+      const observed = read(observation.metadata);
       if (observed.status === 'ready' && definition.equal(observed.policy, mutation.policy)
         && (!seed || observation.metadata[seed.field] !== undefined)) {
         return { status: 'satisfied' as const, policy: observed.policy, metadataVersion: observation.metadataVersion };

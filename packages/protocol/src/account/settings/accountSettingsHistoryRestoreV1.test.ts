@@ -217,13 +217,9 @@ describe('applyAccountSettingsHistoryRestoreV1', () => {
       targetsByKey: { agents: { serverIdentityId: 'srv_home', machineId: 'machine-one' } }, pluginExecutionOriginsByPluginId: origins } };
     expect(applyAccountSettingsHistoryRestoreV1({}, history)).toEqual({ status: 'applied', raw: {
       schemaVersion: ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION, sessionReplayMaxSeedChars: 120000,
-      machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: origins },
     } });
     for (const malformed of [
       { sessionAgentSpawnPolicyV1: { allowCrossMachine: 'yes' } },
-      { machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: {
-        'acme.plugin': { serverIdentityId: 'not-an-origin' },
-      } } },
       { sessionReplayMaxSeedChars: '1024' },
     ]) expect(applyAccountSettingsHistoryRestoreV1({}, malformed)).toEqual({ status: 'invalid', reason: 'invalidValue' });
   });

@@ -165,22 +165,17 @@ describe('AccountSettingMutationV1', () => {
     expect(normalizeTransferredAccountSettingsHistoryV1(raw, { activeTransferredRoots: [] }))
       .toEqual({ status: 'unchanged', cleanupPending: true, raw });
   });
-  it('projects retained Settings fields for validation while keeping sparse writes and new inputs strict', () => {
+  it('keeps retired Machine Administration data opaque on sparse writes and rejects edits to the retired key', () => {
     const selections = { v: 1, pluginExecutionOriginsByPluginId: {},
       targetsByKey: { agents: { serverIdentityId: 'srv_home', machineId: 'machine-1' } } };
     const raw = { machineAdministrationSelectionsV1: selections, neighbor: { keep: true } };
-    expect(accountSettingsParse(raw).machineAdministrationSelectionsV1)
-      .toEqual({ v: 1, pluginExecutionOriginsByPluginId: {} });
+    expect(accountSettingsParse(raw)).not.toHaveProperty('machineAdministrationSelectionsV1');
     expect(applyAccountSettingMutationV1(raw, {
       operations: [{ op: 'set', key: 'workDepthLimit', value: 4 }],
     })).toEqual({ status: 'applied', raw: { ...raw, workDepthLimit: 4 } });
     expect(applyAccountSettingMutationV1({}, {
       operations: [{ op: 'set', key: 'machineAdministrationSelectionsV1', value: selections }],
-    })).toEqual({ status: 'invalid', reason: 'invalidValue' });
-    expect(applyAccountSettingMutationV1({ ...raw, machineAdministrationSelectionsV1: {
-      ...selections, pluginExecutionOriginsByPluginId: { 'acme.plugin': { serverIdentityId: 'local-profile' } },
-    } }, { operations: [{ op: 'set', key: 'workDepthLimit', value: 4 }] }))
-      .toEqual({ status: 'invalid', reason: 'invalidValue' });
+    })).toEqual({ status: 'invalid', reason: 'unknownKey' });
   });
   it('keeps MCP strict enforcement as a boolean preference separate from catalog entities', () => {
     expect(accountSettingsParse({})).toMatchObject({ mcpServersStrictMode: false });

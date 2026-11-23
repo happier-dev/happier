@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildRequesterSessionCreationContext, resolveRequesterSessionSpawnDisposition } from './requesterSessionSpawnPreparation';
+import { buildRequesterSessionCreationContext, readRequesterSessionSpawnDisposition, resolveRequesterSessionSpawnDisposition } from './requesterSessionSpawnPreparation';
 import { encodeBase64 } from '@/encryption/base64';
 
 describe('requester Session spawn credential disposition', () => {
@@ -14,6 +14,14 @@ describe('requester Session spawn credential disposition', () => {
             v: 1, disposition: 'ordinary_requester', credentials: { token: 'bob-token', secret: encodeBase64(secret, 'base64') },
         });
     });
+    it('uses ready published custody for an owned Machine without reopening the grant list', async () => {
+        await expect(readRequesterSessionSpawnDisposition({
+            accountId: 'alice', machineId: 'machine',
+            publishedAccess: { custodian: { accountId: 'alice' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+            readAccess: async () => { throw new Error('Addressed access unavailable'); },
+        })).resolves.toEqual({ kind: 'own' });
+    });
+
     it('uses current addressed access for cold Homes and never treats pending, refused or substituted access as custodian execution', () => {
         const custodian = { accountId: 'alice', displayName: 'Alice' };
         const access = { machineId: 'machine', custodian,

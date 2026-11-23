@@ -11,7 +11,6 @@ import { ACCOUNT_CONNECTED_SERVICES_SETTING_ANALYTICS } from './accountConnected
 import { ACCOUNT_CORE_SETTING_ANALYTICS } from './accountCoreSettingDefinitions';
 import { ACCOUNT_DISPLAY_SETTING_ANALYTICS } from './accountDisplaySettingDefinitions';
 import { ACCOUNT_KEYBOARD_SHORTCUT_SETTING_ANALYTICS } from './accountKeyboardShortcutSettingDefinitions';
-import { ACCOUNT_MACHINE_ADMINISTRATION_SETTING_ANALYTICS } from './accountMachineAdministrationSettingDefinitions';
 import { ACCOUNT_PERMISSION_SETTING_ANALYTICS } from './accountPermissionSettingDefinitions';
 import { ACCOUNT_PET_SETTING_ANALYTICS } from './accountPetSettingDefinitions';
 import { ACCOUNT_PROFILES_SETTING_ANALYTICS } from './accountProfilesSettingDefinitions';
@@ -37,7 +36,6 @@ export const ACCOUNT_SETTING_ANALYTICS: ReturnType<typeof mergeAccountSettingAna
     ACCOUNT_CORE_SETTING_ANALYTICS,
     ACCOUNT_DISPLAY_SETTING_ANALYTICS,
     ACCOUNT_KEYBOARD_SHORTCUT_SETTING_ANALYTICS,
-    ACCOUNT_MACHINE_ADMINISTRATION_SETTING_ANALYTICS,
     ACCOUNT_PERMISSION_SETTING_ANALYTICS,
     ACCOUNT_PET_SETTING_ANALYTICS,
     ACCOUNT_PROFILES_SETTING_ANALYTICS,

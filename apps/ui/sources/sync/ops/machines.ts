@@ -5,35 +5,21 @@
 import type {
     BugReportMachineDiagnosticsSnapshot} from '@happier-dev/protocol/bugs/reports/machineDiagnostics';
 import type {
-    MachineUpdateMetadataRequest,
-    MachineUpdateMetadataResponse} from '@happier-dev/protocol/machines/metadataUpdate';
-import type {
     SpawnSessionNonceResolution,
 } from '@happier-dev/protocol/sessions/spawnSessionNonce';
 import { BugReportMachineDiagnosticsSnapshotSchema, type BugReportLogSelection } from '@happier-dev/protocol/bugs/reports/machineDiagnostics';
 import { MACHINE_RPC_POLL_INTERVAL_MS } from './machineRpcPollInterval';
-import { parseMachinePublishedMetadataV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
-import { decodePlainMachineStoredContent, encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { normalizeSpawnSessionNonceResolution, settleSpawnSessionNonce } from '@happier-dev/protocol/sessions/spawnSessionNonce';
 import { RPC_ERROR_CODES, RPC_METHODS, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpc';
 
-import type { MachineMetadata } from '../domains/state/storageTypes';
 import { clearCreatedSpawnAttemptCustodyForSession } from '../domains/session/spawn/spawnAttemptNonceStore';
 import { readSpawnSessionRpcTimeoutMsFromEnv } from '../domains/session/spawn/spawnSessionRpcTimeout';
 import { storage } from '../domains/state/storage';
-import { apiSocket } from '../api/session/apiSocket';
 import { isPlainObject } from './_shared';
-import { mergeMachineMetadataForVersionMismatch } from './machineMetadataMerge';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
-import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { stopSessionViaDaemonMachineRpc } from './sessionStopStrategy';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import {
-    MACHINE_ENCRYPT_RAW_ATTRIBUTION_EVENTS,
-    measureMachineEncryptRawAttribution,
-    readMachineEncryptionContextInput,
-} from '@/sync/encryption/machineEncryption';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { delay } from '@/utils/timing/time';
 
@@ -464,146 +450,7 @@ export async function machineReadSessionLogTail(
 }
 
 /**
- * Update machine metadata with optimistic concurrency control and automatic retry
- */
-export async function machineUpdateMetadata(
-    machineId: string,
-    metadata: MachineMetadata,
-    expectedVersion: number,
-    maxRetries: number = 3
-): Promise<{ version: number; metadata: string }> {
-    let currentVersion = expectedVersion;
-    let currentMetadata = parseMachinePublishedMetadataV1(metadata);
-    let retryCount = 0;
-
-    const sync = getSyncSingleton();
-    const sourceServer = getActiveServerSnapshot();
-    const sourceAccountId = storage.getState().profile.id;
-    const assertScopeCurrent = () => {
-        const current = getActiveServerSnapshot();
-        if (current.serverId !== sourceServer.serverId || current.generation !== sourceServer.generation
-            || storage.getState().profile.id !== sourceAccountId) {
-            throw Object.assign(new Error('Machine metadata target changed'), { code: 'machine_target_changed' });
-        }
-    };
-    const refreshUnappliedWrite = async () => {
-        assertScopeCurrent();
-        await sync.refreshMachines();
-        assertScopeCurrent();
-        const latest = storage.getState().machines[machineId];
-        if (!latest?.metadata || latest.availability?.kind === 'locked') throw new Error(`Machine encryption unavailable for ${machineId}`);
-        currentVersion = latest.metadataVersion;
-        currentMetadata = parseMachinePublishedMetadataV1(mergeMachineMetadataForVersionMismatch({ latest: latest.metadata, intended: currentMetadata }));
-        retryCount++;
-    };
-
-    while (retryCount < maxRetries) {
-        assertScopeCurrent();
-        const machine = storage.getState().machines[machineId];
-        if (!machine || machine.availability?.kind === 'locked' || (machine.access && machine.access.accessState !== 'ready')) {
-            throw new Error(`Machine encryption unavailable for ${machineId}`);
-        }
-        const storageMode = machine.access?.resourceMode ?? machine.storageMode ?? 'e2ee';
-        const encryption = sync.encryption;
-        const machineEncryption = storageMode === 'plain' ? null : encryption?.getMachineEncryption(machineId);
-        const expectedDataEncryptionKey = storageMode === 'plain'
-            ? readMachineEncryptionContextInput({ ...machine, dataEncryptionKey: machine.dataEncryptionKey ?? MACHINE_PLAIN_DATA_KEY_MARKER }, sourceAccountId).expectedDataEncryptionKey
-            : encryption?.getMachineDataEncryptionKey(machineId);
-        if (expectedDataEncryptionKey === undefined || (storageMode === 'e2ee' && !machineEncryption)) {
-            throw new Error(`Machine encryption unavailable for ${machineId}`);
-        }
-        const isContextCurrent = () => {
-            const current = storage.getState().machines[machineId];
-            return Boolean(current) && sync.encryption === encryption && current?.availability?.kind !== 'locked'
-                && (!current?.access || current.access.accessState === 'ready')
-                && (current?.access?.resourceMode ?? current?.storageMode ?? 'e2ee') === storageMode
-                && (storageMode === 'plain'
-                    ? readMachineEncryptionContextInput({ ...current, dataEncryptionKey: current?.dataEncryptionKey ?? MACHINE_PLAIN_DATA_KEY_MARKER }, sourceAccountId).expectedDataEncryptionKey === expectedDataEncryptionKey
-                    : encryption?.getMachineEncryption(machineId) === machineEncryption
-                        && encryption?.getMachineDataEncryptionKey(machineId) === expectedDataEncryptionKey);
-        };
-        const storedMetadata = storageMode === 'plain'
-            ? encodePlainMachineStoredContent(currentMetadata)
-            : await measureMachineEncryptRawAttribution(
-                MACHINE_ENCRYPT_RAW_ATTRIBUTION_EVENTS.metadataWrite,
-                async () => await machineEncryption!.encryptRaw(currentMetadata),
-            );
-        assertScopeCurrent();
-        if (!isContextCurrent()) {
-            await refreshUnappliedWrite();
-            continue;
-        }
-
-        const request = {
-            machineId,
-            metadata: storedMetadata,
-            expectedVersion: currentVersion,
-            expectedDataEncryptionKey,
-        } satisfies MachineUpdateMetadataRequest;
-        const result = await apiSocket.emitWithAck<MachineUpdateMetadataResponse>(
-            'machine-update-metadata',
-            request,
-        );
-        assertScopeCurrent();
-
-        if ('error' in result) {
-            throw Object.assign(
-                new Error('Machine metadata update requires a compatible client.'),
-                {
-                    code: result.error,
-                    retryable: false as const,
-                    requirement: result.requirement,
-                },
-            );
-        }
-
-        if (result.result === 'success') {
-            const currentMachine = storage.getState().machines[machineId] ?? null;
-            if (currentMachine && isContextCurrent() && currentMachine.metadataVersion <= result.version) {
-                storage.getState().applyMachines([{
-                    ...currentMachine,
-                    metadata: currentMetadata,
-                    metadataVersion: result.version,
-                }]);
-            }
-            return {
-                version: result.version,
-                metadata: result.metadata
-            };
-        } else if (result.result === 'key-mismatch' || !isContextCurrent()) {
-            await refreshUnappliedWrite();
-        } else if (result.result === 'version-mismatch') {
-            // Get the latest version and metadata from the response
-            currentVersion = result.version;
-            const latestMetadata = storageMode === 'plain'
-                ? decodePlainMachineStoredContent(result.metadata) as MachineMetadata
-                : await machineEncryption!.decryptRaw(result.metadata) as MachineMetadata;
-            if (!isContextCurrent()) {
-                await refreshUnappliedWrite();
-                continue;
-            }
-
-            currentMetadata = mergeMachineMetadataForVersionMismatch({
-                latest: latestMetadata,
-                intended: currentMetadata,
-            });
-
-            retryCount++;
-
-            // If we've exhausted retries, throw error
-            if (retryCount >= maxRetries) {
-                throw new Error(`Failed to update after ${maxRetries} retries due to version conflicts`);
-            }
-
-            // Otherwise, loop will retry with updated version and merged metadata
-        } else {
-            throw new Error(result.message || 'Failed to update machine metadata');
-        }
-    }
-
-    throw new Error(`Failed to update after ${maxRetries} retries due to version or encryption conflicts`);
-}
-
-/**
  * Abort the current session operation
  */
+
+export { machineUpdateMetadata } from './machineFinitePolicy';

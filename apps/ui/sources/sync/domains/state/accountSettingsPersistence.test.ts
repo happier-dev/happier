@@ -150,9 +150,7 @@ describe('accountSettingsPersistence', () => {
                 targetsByKey: { plugins: { machineId: 'retired-machine' } },
             },
         });
-        expect(mod.loadPendingAccountSettings(scopeA)).toEqual({
-            machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: {} },
-        });
+        expect(mod.loadPendingAccountSettings(scopeA)).toEqual({});
         expect(mod.loadPendingAccountSettings(sameServerDifferentAccount)).toEqual({});
     });
 

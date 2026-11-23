@@ -4,6 +4,7 @@ import { type MachineUpdateMetadataRequest, type MachineUpdateMetadataResponse }
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { AccessibleMachineAccessV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import type { MachineMetadata } from '@/sync/domains/state/storageTypes';
@@ -49,6 +50,7 @@ async function fixture(mode: 'plain' | 'e2ee') {
     // replies reach the real finite-policy and Action admission owners too.
     const homeId = await homes.addHome({ name: 'Metadata Home', serverUrl: 'https://machine-metadata.test',
         accountId: 'account-a', accountEncryptionMode: mode, credentials });
+    homes.answer(homeId, '/v1/account/encryption/currentness', { body: createAccountEncryptionCurrentnessFixtureForCredentials(credentials) });
     const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
     await restoreConnectionToActiveServer(credentials);
     await vi.waitFor(() => expect(readySocket?.connected).toBe(true));
@@ -77,10 +79,10 @@ async function fixture(mode: 'plain' | 'e2ee') {
     return { sync, metadata, homeId, dataEncryptionKey };
 }
 
-function answerMachineMetadata(homeId: string, metadata: string, dataEncryptionKey: string) {
+function answerMachineMetadata(homeId: string, metadata: string, dataEncryptionKey: string, metadataVersion = 4) {
     const machine = createPlainMachineRowFixture({ id: 'm1', accountId: 'account-a' });
     homes.answer(homeId, '/v1/machines/m1', { body: { machine: {
-        ...machine, metadata, metadataVersion: 4, dataEncryptionKey,
+        ...machine, metadata, metadataVersion, dataEncryptionKey,
         access: AccessibleMachineAccessV1Schema.parse({ ...machine.access,
             resourceMode: dataEncryptionKey === MACHINE_PLAIN_DATA_KEY_MARKER ? 'plain' : 'e2ee' }),
     } } });
@@ -113,6 +115,18 @@ describe('machineUpdateMetadata', () => {
         webLocks.restore();
     });
 
+    it('observes a completed rename once after losing its acknowledgement', async () => {
+        const { metadata, homeId, dataEncryptionKey } = await fixture('plain');
+        respond = async request => {
+            answerMachineMetadata(homeId, request.metadata, dataEncryptionKey, 5);
+            throw new Error('metadata ACK lost');
+        };
+        const { machineUpdateMetadata } = await import('./machines');
+        await expect(machineUpdateMetadata('m1', metadata, 4)).resolves.toMatchObject({ version: 5 });
+        expect(sent).toHaveLength(1);
+        expect(decodePlainMachineStoredContent(sent[0]!.metadata)).toMatchObject({ displayName: 'New Name' });
+    });
+
     it('encrypts E2EE metadata and applies the updated metadata locally on success', async () => {
         const { sync, metadata, dataEncryptionKey } = await fixture('e2ee');
         const cipher = sync.encryption?.getMachineEncryption('m1');
@@ -123,7 +137,7 @@ describe('machineUpdateMetadata', () => {
         syncPerformanceTelemetry.configure({ enabled: true });
         syncPerformanceTelemetry.reset();
         const { machineUpdateMetadata } = await import('./machines');
-        await expect(machineUpdateMetadata('m1', metadata, 4)).resolves.toEqual({ version: 5, metadata: serverBytes });
+        await expect(machineUpdateMetadata('m1', metadata, 4)).resolves.toEqual({ version: 5 });
         expect(sent).toHaveLength(1);
         expect(sent[0]).toMatchObject({ machineId: 'm1', expectedVersion: 4, expectedDataEncryptionKey: dataEncryptionKey });
         expect(() => decodePlainMachineStoredContent(sent[0]!.metadata)).toThrow();
@@ -268,7 +282,7 @@ describe('machineUpdateMetadata', () => {
             serverId: homeId, machineId: 'm1',
             expectedPolicy: { accepting: true, runAtMost: null }, expectedMetadataVersion: 4,
             policy: { accepting: false, runAtMost: 2 },
-        }, { surface: 'ui', serverId: homeId, expectedAccountId: accountId })).toEqual({ ok: true,
+        }, { surface: 'ui', serverId: homeId, expectedAccountId: accountId })).toMatchObject({ ok: true,
             result: acknowledgement === 'confirmed'
                 ? { status: 'applied', policy: { accepting: false, runAtMost: 2 }, metadataVersion: 5 }
                 : { status: 'outcomeUnknown' } });

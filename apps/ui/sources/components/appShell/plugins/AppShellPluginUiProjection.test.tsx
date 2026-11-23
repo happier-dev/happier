@@ -3891,7 +3891,6 @@ describe('AppShellPluginUiProjectionProvider', () => {
             retainedSettings.machineAdministrationSelectionsV1.pluginExecutionOriginsByPluginId[pluginId],
         );
         await act(async () => { persistentStorage.setState(state => ({ settingsScope: accountLifetime.scope, settings: { ...state.settings,
-            machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: {} },
             machineAdministrationTargetsLocalV1: clearPluginMachineExecutionOriginPreference(state.settings.machineAdministrationTargetsLocalV1, pluginId),
         } })); });
         projectionDescribeSpy.mockImplementation(async (machineId: string) => {
@@ -3990,8 +3989,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
         expect(readExecution().selection.canExecute).toBe(false);
         expect(readExecution().selection.resolveExecutionOrigin()).toBeNull();
         expect(readExecution().isExecutionOriginCurrent()).toBe(false);
-        expect(persistentStorage.getState().settings.machineAdministrationSelectionsV1.pluginExecutionOriginsByPluginId[pluginId])
-            .toEqual(retainedSettings.machineAdministrationSelectionsV1.pluginExecutionOriginsByPluginId[pluginId]);
+        expect(persistentStorage.getState().settings).not.toHaveProperty('machineAdministrationSelectionsV1');
         await act(async () => { persistentStorage.setState(state => ({ settings: { ...state.settings,
             machineAdministrationTargetsLocalV1: clearPluginMachineExecutionOriginPreference(state.settings.machineAdministrationTargetsLocalV1, pluginId),
         } })); });

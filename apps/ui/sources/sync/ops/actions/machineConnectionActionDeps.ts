@@ -112,18 +112,10 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
             if (!machine?.metadata || machine.availability?.kind === 'locked') {
                 return { ok: false, errorCode: 'machine_metadata_unavailable', error: 'machine_metadata_unavailable' };
             }
-            const { displayName, windowsRemoteSessionLaunchMode } = request.patch;
-            if (windowsRemoteSessionLaunchMode !== undefined && machine.metadata.platform !== 'win32') {
+            if (request.patch.windowsRemoteSessionLaunchMode !== undefined && machine.metadata.platform !== 'win32') {
                 return { ok: false, errorCode: 'machine_platform_mismatch', error: 'machine_platform_mismatch' };
             }
-            const { windowsRemoteSessionLaunchMode: _priorMode, windowsRemoteSessionConsole: _legacy, ...metadataWithoutMode } = machine.metadata;
-            const metadata = windowsRemoteSessionLaunchMode === undefined ? machine.metadata : metadataWithoutMode;
-            const result = await machineUpdateMetadata(request.machineId, {
-                ...metadata,
-                ...(displayName !== undefined ? { displayName: displayName?.trim() || undefined } : {}),
-                ...(windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode } : {}),
-            }, request.expectedVersion ?? machine.metadataVersion);
-            return { version: result.version };
+            return machineUpdateMetadata(request.machineId, request.patch, request.expectedVersion ?? machine.metadataVersion, context.signal);
         },
         machineManagedInstallationRespond: createManagedMachineInstallationRespond(options.account),
         machineAddSshTaskAction: createMachineAddSshTaskAction(options.runner),

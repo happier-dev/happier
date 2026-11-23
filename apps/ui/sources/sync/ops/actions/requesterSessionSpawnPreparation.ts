@@ -3,6 +3,7 @@ import { MachineAccessGrantsListResultV1Schema } from '@happier-dev/protocol/mac
 import type { SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
 import type { LazyActionAccountContext } from './actionAccountContext';
@@ -14,10 +15,11 @@ type RequesterSessionSpawnDisposition = Readonly<{ kind: 'own' }>
 export async function readRequesterSessionSpawnDisposition(params: Readonly<{
     accountId: string;
     machineId: string;
-    isShared: boolean | undefined;
+    publishedAccess: Machine['access'];
     readAccess(): Promise<unknown>;
 }>): Promise<RequesterSessionSpawnDisposition> {
-    if (params.isShared === false) return { kind: 'own' };
+    if (params.publishedAccess?.accessState === 'ready'
+        && params.publishedAccess.custodian.accountId === params.accountId) return { kind: 'own' };
     return resolveRequesterSessionSpawnDisposition({ ...params, access: await params.readAccess() });
 }
 

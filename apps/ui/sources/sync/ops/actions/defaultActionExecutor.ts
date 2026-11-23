@@ -1039,7 +1039,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if (accountContext.serverId !== serverId) return { type: 'error' as const, code: 'permission_denied' as const, retryable: false as const };
       if (!scopedController && !machineAccessAction) return { type: 'error' as const, code: 'target_unavailable' as const, retryable: true as const };
       const disposition = scopedController ? null : await readRequesterSessionSpawnDisposition({ accountId: accountContext.accountId,
-        machineId: input.executionTarget.machineId, isShared: machine?.isShared,
+        machineId: input.executionTarget.machineId, publishedAccess: machine?.access,
         readAccess: () => machineAccessAction!({ actionId: 'machines.access.grants.list',
           input: { serverId, machineId: input.executionTarget.machineId }, context: context ?? {}, ...(signal ? { signal } : {}) }) });
       accountContext.assertCurrent();
@@ -1555,7 +1555,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       const machineId = parsed.data.executionTarget.machineId;
       const machine = resolveServerScopedMachine(storage.getState(), accountContext.serverId, machineId);
       const disposition = await readRequesterSessionSpawnDisposition({ accountId: accountContext.accountId, machineId,
-        isShared: machine?.isShared, readAccess: () => machineAccessAction({ actionId: 'machines.access.grants.list',
+        publishedAccess: machine?.access, readAccess: () => machineAccessAction({ actionId: 'machines.access.grants.list',
           input: { serverId: accountContext.serverId, machineId }, context, ...(context.signal ? { signal: context.signal } : {}) }) });
       accountContext.assertCurrent();
       if (disposition.kind !== 'requester') return defaultPreview;

@@ -686,9 +686,6 @@ describe('machine administration target demand', () => {
             storage.setState((state) => ({ settings: {
                 ...state.settings,
                 machineAdministrationTargetsLocalV1: { agents: local },
-                machineAdministrationSelectionsV1: {
-                    v: 1, pluginExecutionOriginsByPluginId: {},
-                },
             } }));
             const hook = await renderHook(() => useMachineAdministrationTargetSelection('agents', {
                 enabled: false, allowSoleCandidate: false,
