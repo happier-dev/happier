@@ -37,7 +37,7 @@ export type GithubRepositoryEventsClassificationV1<TObservation> =
     checkpoint: GithubRepositoryEventsCursorV1;
   }>;
 
-const GITHUB_REPOSITORY_EVENT_TIMELINE_LIMIT = 300;
+export const GITHUB_REPOSITORY_EVENTS_TIMELINE_LIMIT = 300;
 const GITHUB_REPOSITORY_EVENTS_RETENTION_WINDOW_MS = 30 * 24 * 60 * 60 * 1_000;
 
 function validateTimestamp(value: number): number {
@@ -70,7 +70,7 @@ export function parseGithubRepositoryEventsCursor(value: unknown): GithubReposit
   }
   const current = parsed.data;
   const seenEventIds = current.seenEventIds.map((eventId) => validateEventId(eventId));
-  if (seenEventIds.length > GITHUB_REPOSITORY_EVENT_TIMELINE_LIMIT
+  if (seenEventIds.length > GITHUB_REPOSITORY_EVENTS_TIMELINE_LIMIT
     || new Set(seenEventIds).size !== seenEventIds.length) {
     throw new RangeError('GitHub repository event checkpoint has an invalid seen-event set');
   }
@@ -86,8 +86,8 @@ export function parseGithubRepositoryEventsCursor(value: unknown): GithubReposit
 }
 
 function validateTimeline<TObservation>(events: readonly GithubRepositoryTimelineEntryV1<TObservation>[]): void {
-  if (events.length > GITHUB_REPOSITORY_EVENT_TIMELINE_LIMIT) {
-    throw new RangeError('GitHub repository event timelines cannot exceed 300 entries');
+  if (events.length > GITHUB_REPOSITORY_EVENTS_TIMELINE_LIMIT) {
+    throw new RangeError(`GitHub repository event timelines cannot exceed ${GITHUB_REPOSITORY_EVENTS_TIMELINE_LIMIT} entries`);
   }
   const eventIds = new Set<string>();
   for (const event of events) {
@@ -225,7 +225,7 @@ export function classifyGithubRepositoryEvents<TEvent, TObservation>(
   const priorSeen = new Set(input.cursor.seenEventIds.map(validateEventId));
   const currentIds = new Set(orderedEvents.map(({ eventId }) => eventId));
   const hasPriorOverlap = [...priorSeen].some((eventId) => currentIds.has(eventId));
-  const currentTimelineIsNewerThanBaseline = orderedEvents.length === GITHUB_REPOSITORY_EVENT_TIMELINE_LIMIT
+  const currentTimelineIsNewerThanBaseline = orderedEvents.length === GITHUB_REPOSITORY_EVENTS_TIMELINE_LIMIT
     && orderedEvents.every(({ createdAtMs }) => createdAtMs > input.cursor.observedAtMs);
   const continuityHorizonOutlastedRetention = input.observedAtMs - input.cursor.observedAtMs
     > GITHUB_REPOSITORY_EVENTS_RETENTION_WINDOW_MS;

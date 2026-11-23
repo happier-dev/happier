@@ -64,6 +64,7 @@ import {
   type GithubRepositorySourceConfigV1,
 } from './githubProviderContracts.js';
 import {
+  GITHUB_REPOSITORY_EVENTS_PAGE_SIZE,
   GithubRepositoryEventsHistoryGapError,
   pollGithubRepositoryEvents,
   type GithubRepositoryEventsPollResultV1,
@@ -99,7 +100,6 @@ const storedRepositoryEventsContinuitySchema = createProtocolStoredReadSchema(de
   repositoryId: defineProtocolString(),
   historyGap: defineProtocolLiteral(true).optional(),
 }, { policy: 'closed' }));
-const REPOSITORY_EVENTS_PAGE_SIZE = 100;
 const DEFAULT_SOURCE_POLL_INTERVAL_MS = 60_000;
 const DEFAULT_RECONCILIATION_INTERVAL_MS = 60_000;
 const DEFAULT_RETRY_DELAY_MS = 1_000;
@@ -240,7 +240,7 @@ function createRepositoryEventsUrl(repository: GithubRepositorySourceConfigV1): 
     `/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/events`,
     GITHUB_API_ORIGIN,
   );
-  url.searchParams.set('per_page', String(REPOSITORY_EVENTS_PAGE_SIZE));
+  url.searchParams.set('per_page', String(GITHUB_REPOSITORY_EVENTS_PAGE_SIZE));
   return url.toString();
 }
 
@@ -274,7 +274,7 @@ function validateRepositoryEventsPageUrl(
       throw new GithubRepositoryEventsHistoryGapError('GitHub repository Events next-page URL has an unsupported query');
     }
   }
-  if (readSingleQueryValue(url, 'per_page') !== String(REPOSITORY_EVENTS_PAGE_SIZE)) {
+  if (readSingleQueryValue(url, 'per_page') !== String(GITHUB_REPOSITORY_EVENTS_PAGE_SIZE)) {
     throw new GithubRepositoryEventsHistoryGapError('GitHub repository Events next-page URL changed its page size');
   }
   const page = readSingleQueryValue(url, 'page');

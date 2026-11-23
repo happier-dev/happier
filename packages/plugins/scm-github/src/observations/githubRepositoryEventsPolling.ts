@@ -1,4 +1,5 @@
 import {
+  GITHUB_REPOSITORY_EVENTS_TIMELINE_LIMIT,
   orderGithubRepositoryEventTimeline,
   type GithubRepositoryTimelineEntryV1,
 } from './githubRepositoryEventsCursor.js';
@@ -33,8 +34,7 @@ export type GithubRepositoryEventsPollResultV1<TObservation> =
     pollIntervalMs: number | null;
   }>;
 
-const GITHUB_REPOSITORY_EVENTS_TIMELINE_LIMIT = 300;
-const GITHUB_REPOSITORY_EVENTS_PAGE_SIZE = 100;
+export const GITHUB_REPOSITORY_EVENTS_PAGE_SIZE = 100;
 const GITHUB_REPOSITORY_EVENTS_MAX_PAGES = GITHUB_REPOSITORY_EVENTS_TIMELINE_LIMIT
   / GITHUB_REPOSITORY_EVENTS_PAGE_SIZE;
 
@@ -96,7 +96,7 @@ export async function pollGithubRepositoryEvents<TObservation>(input: Readonly<{
     }
     events.push(...page.events);
     if (events.length > GITHUB_REPOSITORY_EVENTS_TIMELINE_LIMIT) {
-      throw new GithubRepositoryEventsHistoryGapError('GitHub repository Events exceeded its 300-entry timeline bound');
+      throw new GithubRepositoryEventsHistoryGapError(`GitHub repository Events exceeded its ${GITHUB_REPOSITORY_EVENTS_TIMELINE_LIMIT}-entry timeline bound`);
     }
     nextUrl = page.nextUrl;
     isInitialPage = false;

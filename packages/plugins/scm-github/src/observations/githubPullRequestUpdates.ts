@@ -5,7 +5,7 @@ import type { GithubApiClientV1, GithubApiMediaClientV1 } from './githubApiClien
 import type { GithubChannelProviderConfigV1 } from './githubProviderContracts.js';
 import { readGithubPositiveDecimal } from './githubProviderContracts.js';
 import { readValidatedGithubFollowUpPage } from '../triage/scan/link.js';
-import { pollGithubRepositoryEvents } from './githubRepositoryEventsPolling.js';
+import { GITHUB_REPOSITORY_EVENTS_PAGE_SIZE, pollGithubRepositoryEvents } from './githubRepositoryEventsPolling.js';
 import { readGithubCheckOutcomeV1 } from '../triage/checkOutcome.js';
 import type { GithubCheckObservationV1 } from '../triage/checks.js';
 import { readGithubFailureContext } from '../actions/evidence.js';
@@ -121,7 +121,7 @@ async function pushEvidence(input: Readonly<{ client: GithubApiClientV1; config:
   const repositoryId = readGithubPositiveDecimal(nativeRepository.id, 'head repository ID');
   const repository = typeof nativeRepository.full_name === 'string' ? nativeRepository.full_name : repositoryId === input.config.repository.repositoryId ? input.config.repository.nameWithOwner : null;
   if (repository === null || !/^[^/]+\/[^/]+$/u.test(repository)) return null;
-  const timeline = await pollGithubRepositoryEvents({ initialUrl: `https://api.github.com/repos/${repository.split('/').map(encodeURIComponent).join('/')}/events?per_page=100`, etag: null,
+  const timeline = await pollGithubRepositoryEvents({ initialUrl: `https://api.github.com/repos/${repository.split('/').map(encodeURIComponent).join('/')}/events?per_page=${GITHUB_REPOSITORY_EVENTS_PAGE_SIZE}`, etag: null,
     getPage: async ({ url }) => {
       input.signal.throwIfAborted();
       const response = await input.client.request({ url });
