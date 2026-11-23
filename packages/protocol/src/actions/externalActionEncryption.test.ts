@@ -57,21 +57,31 @@ describe('whole external Action encryption', () => {
     expect(open(withoutScope)).toBeNull();
   });
 
-  it('carries a terminal read session as a non-content operand and rejects a substituted terminal', () => {
+  it('seals an own-Machine terminal read byte-identically to the envelope before the session operand', () => {
     const readBinding = { ...binding, actionId: 'machines.terminal.read' };
     const input = { serverId: 'srv_test', machineId: 'machine-1', terminalId: 'terminal-a', byteOffset: 0 };
     const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
       binding: readBinding, input, material, randomBytes });
+    // Sealed by the protocol at ebf567707ae^ with the same binding, input, key and random bytes.
+    expect(JSON.stringify(request)).toBe(JSON.stringify({"v":2,"requestId":"reused-request","target":{"kind":"machine","machineId":"machine-1"},"payload":{"t":"encrypted","c":"oRsCAgICAgICAgICAgICAgICAgICAgICAgJZ6a5+zxn1dFLcN0DF0LBhYSlqvdQsh7auPpzc6LwEN3wHishhXaCA9b8mfO6x59ZiiI5R4qTcs8W3XOt40iioBGO1rb0HC7IoEmrIJ5KlhEk8StQWdpYLu/uxxO/RWm55Ordzd4Lde+d8ZQ39wnyAVh44hsUAJHNhT16a3jKEwHVlhKTF2JuHMN17l19mJpsPHeNccK+YLEY8VOOFsAEMZQvOeLROsdPrus/f1dq6Ms8amlzO+9PBrP5kqK1xzhhD1NxEPUXwZuHbKfUrBF4XUHA37cS4HfY3VNy0DYtRa7s39pyrzcvExGy7jtbCbyFZb9VFtAcOVKmvy69yb8Pci0tU2e0hBEGkVqVrqR23K27s2Qke6iCD3iT43FmJwaEqCQYGIoDetLNbmAAIFXaDM8rnEBbwMhSHenrg64h9PdvBPO3OvBaT8tI8MQc5aEq2kkmXvQ8HeFtINlldTAU75tTxywppnN6d8JxlsiRb"}}));
+    // A receiver accepts that old-shape envelope; without the operand it can never bind a session root.
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      envelope: request, binding: readBinding, material })).toEqual({ input });
+  });
+
+  it('carries the terminal session operand only when the sender opts in, and rejects a substituted terminal', () => {
+    const readBinding = { ...binding, actionId: 'machines.terminal.read' };
+    const input = { serverId: 'srv_test', machineId: 'machine-1', terminalId: 'terminal-a', byteOffset: 0 };
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: readBinding, input, material, randomBytes, terminalSession: true });
     expect(request.terminalId).toBe('terminal-a');
     const open = (envelope: unknown) => openExternalActionRequestV2({
       projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding: readBinding, material });
     expect(open(request)).toEqual({ input });
     expect(open({ ...request, terminalId: 'terminal-b' })).toBeNull();
-    const { terminalId: _terminal, ...withoutOperand } = request;
-    expect(open(withoutOperand)).toBeNull();
-    // Writes keep per-request admission and carry no session operand.
+    // Writes never carry the operand, even when the sender opts in.
     expect(sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
-      binding: { ...binding, actionId: 'machines.terminal.write' },
+      binding: { ...binding, actionId: 'machines.terminal.write' }, terminalSession: true,
       input: { serverId: 'srv_test', machineId: 'machine-1', terminalId: 'terminal-a', event: { t: 'text', data: 'x' } },
       material, randomBytes })).not.toHaveProperty('terminalId');
   });

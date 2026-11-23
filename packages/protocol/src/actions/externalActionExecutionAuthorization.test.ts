@@ -978,3 +978,29 @@ it('keeps per-request admission for writes and own-Machine reads', () => {
     expect(ExternalActionExecutionAuthorizationV1Schema.safeParse({ v: 1, token: 'proof', binding }).success).toBe(false);
   }
 });
+
+it('binds no session from an old-shape V2 read and refuses a session root presented without its operand', () => {
+  const actionId = 'machines.terminal.read';
+  const target = { kind: 'machine', machineId: 'shared-machine' } as const;
+  const seal = (requestId: string, terminalId: string, terminalSession?: true) => sealExternalActionRequestV2({
+    projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+    binding: { serverIdentityId: 'srv_home', accountId: 'viewer', actionId, requestId, target, authentication: { kind: 'account', tokenEpoch: 1 } },
+    input: { serverId: 'srv_home', machineId: target.machineId, terminalId, byteOffset: 0 },
+    material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(9) }, randomBytes: n => new Uint8Array(n).fill(2),
+    ...(terminalSession ? { terminalSession } : {}) });
+  const project = (envelope: ReturnType<typeof seal>) => projectExternalActionTerminalSessionBindingV1({ actionId, envelope,
+    accountId: 'viewer', custodianAccountId: 'custodian', authenticationKind: 'account' });
+  // Old-shape envelope: per-page admission, exactly as before the operand existed.
+  expect(project(seal('old-shape', 'terminal-a'))).toBeUndefined();
+  const first = seal('first-page', 'terminal-a', true);
+  expect(project(first)).toEqual({ terminalId: 'terminal-a' });
+  const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'proof', binding: {
+    accountId: 'viewer', custodianAccountId: 'custodian', authentication: { kind: 'account', tokenEpoch: 1 },
+    serverIdentityId: 'srv_home', machineId: target.machineId, installationId: 'installation', actionId, admittedMachineRole: 'use',
+    requestId: first.requestId, target, accountEncryptionMode: 'e2ee', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(first),
+    terminalSession: { terminalId: 'terminal-a' } } }).binding;
+  const bound = (envelope: ReturnType<typeof seal>) => isExternalActionAuthorizationBoundToEnvelope(root, { actionId, machineId: target.machineId, envelope });
+  expect(bound(seal('later-page', 'terminal-a', true))).toBe(true);
+  expect(bound(seal('later-page', 'terminal-a'))).toBe(false);
+  expect(bound(seal('later-page', 'terminal-b', true))).toBe(false);
+});

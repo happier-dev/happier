@@ -165,6 +165,8 @@ export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
   registryThemeContent?: z.infer<typeof ExternalActionRequestEnvelopeV1Schema>['registryThemeContent'];
   sessionSpawnAdmission?: ExternalActionRequestEnvelopeV2['sessionSpawnAdmission'];
   pluginInvocation?: ExternalActionRequestEnvelopeV2['pluginInvocation'];
+  /** Sender knows the target Machine is another Account's: only then can a terminal session root exist. */
+  terminalSession?: true;
 }>): ExternalActionRequestEnvelopeV2 {
   const operands = { ...(params.workflowPreparation ? { workflowPreparation: params.workflowPreparation } : {}),
     ...(params.resourceContinuation ? { resourceContinuation: params.resourceContinuation } : {}),
@@ -196,8 +198,9 @@ export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
   const discussionId = projectExternalActionDiscussionIdV1(payload.actionId, payload.input);
   const machineRuntimeDemand = params.projectMachineRuntimeDemand(payload.actionId, payload.input, payload.target);
   const browserSessionId = projectExternalActionBrowserSessionIdV1(payload.actionId, payload.input);
-  const terminalId = projectExternalActionTerminalSessionEnvelopeIdV1({ actionId: payload.actionId,
-    envelope: { v: 1, requestId: payload.requestId, target: payload.target, input: payload.input } });
+  // Opt-in keeps every other envelope byte-identical, so receivers that predate this operand still accept it.
+  const terminalId = params.terminalSession ? projectExternalActionTerminalSessionEnvelopeIdV1({ actionId: payload.actionId,
+    envelope: { v: 1, requestId: payload.requestId, target: payload.target, input: payload.input } }) : undefined;
   const envelope: ExternalActionRequestEnvelopeV2 = { v: 2, requestId: payload.requestId, target: payload.target,
     ...(browserSessionId === undefined ? {} : { browserSessionId }),
     ...(terminalId === undefined ? {} : { terminalId }),
@@ -276,8 +279,10 @@ export function openExternalActionRequestV2(params: Readonly<{
     phase = 'browser_session_admission';
     if (projectExternalActionBrowserSessionIdV1(decoded.data.actionId, decoded.data.input) !== envelope.browserSessionId) return refused();
     phase = 'terminal_session_admission';
-    if (projectExternalActionTerminalSessionEnvelopeIdV1({ actionId: decoded.data.actionId, envelope: { v: 1,
-      requestId: decoded.data.requestId, target: decoded.data.target, input: decoded.data.input } }) !== envelope.terminalId) return refused();
+    // Absent: an ordinary per-request read that can never bind or use a terminal session root.
+    if (envelope.terminalId !== undefined && projectExternalActionTerminalSessionEnvelopeIdV1({ actionId: decoded.data.actionId,
+      envelope: { v: 1, requestId: decoded.data.requestId, target: decoded.data.target, input: decoded.data.input } })
+      !== envelope.terminalId) return refused();
     phase = 'machine_runtime_demand';
     if (params.projectMachineRuntimeDemand(decoded.data.actionId, decoded.data.input, decoded.data.target)
       !== envelope.machineRuntimeDemand) return refused();

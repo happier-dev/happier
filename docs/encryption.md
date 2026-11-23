@@ -6416,9 +6416,12 @@ of one page. For each later page Home checks that root's signature and binding,
 the request's own Account credential and token epoch, and runs one current
 Machine access lookup (current grants, the same custodian and installation, and
 the current role). It runs no new admission or mint, and a removed or narrowed
-grant takes effect at the next page. In a V2 envelope the terminal id is a
-plaintext operand (`terminalId`, an opaque per-PTY id); the receiving Machine
-checks it against the sealed input. Writes keep per-request admission, and the
+grant takes effect at the next page. A V2 read that opts into a session carries
+the terminal id as a plaintext operand (`terminalId`, an opaque per-PTY id),
+which receivers check against the sealed input. No app sender opts in until the
+Machine-side continuation that consumes the root lands; envelopes without the
+operand stay ordinary per-request reads that cannot bind or use a session root.
+Writes keep per-request admission, and the
 Machine refuses a session root for finite output, which then falls back to it.
 This creates
 neither an Agent nor a borrowed custodian credential. The original-caller refusal
