@@ -794,12 +794,14 @@ it('the Describe step keeps the owed registry sources read, and the suggestion s
   }
 });
 
-it('a questions round asks in the step: the footer waits for an answer, then one more run brings the cards (journey-deploy F2)', async () => {
+it.each([false, true])('answers a question in the step and starts one more run (initial cards: %s)', async skippable => {
   const questions = { kind: 'questions', questions: [{ id: 'purpose', type: 'text', prompt: 'What should visitors do?', required: true }] };
   let round = 0;
   suggestionBoundary({ executionRunWait: async () => {
     round++;
-    return { ok: true, status: 'succeeded', result: terminal(round === 1 ? { recommendations: [], questions } : { recommendations: [recommendation] }) };
+    return { ok: true, status: 'succeeded', result: terminal(round === 1
+      ? { recommendations: skippable ? [recommendation] : [], questions }
+      : { recommendations: [recommendation] }) };
   } });
   const { fixture, screen } = await openDescribe('auto-questions');
   try {
@@ -810,6 +812,7 @@ it('a questions round asks in the step: the footer waits for an answer, then one
     await waitForHomeGovernance(() => expect(screen.findByTestId('app-shell-question-purpose-text')).toBeTruthy());
     expect(screen.findByTestId('newApp.auto.questions'), 'the questions sit in the step, not a stacked dialog').toBeTruthy();
     expect(screen.findByTestId('app-shell-question-submit'), 'the dialog footer owns the answer action').toBeNull();
+    expect(Boolean(screen.findByTestId('newApp.auto.skipQuestions'))).toBe(skippable);
     expect(screen.findByTestId('newApp.auto.suggestAgain')?.props.disabled, 'nothing to send until it is answered').toBe(true);
     execute.mockClear();
     await act(async () => screen.changeTextByTestId('app-shell-question-purpose-text', 'Order bread'));

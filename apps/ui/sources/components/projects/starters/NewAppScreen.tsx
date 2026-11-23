@@ -44,7 +44,6 @@ import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { resolveMachineActionCandidates } from '@/utils/sessions/resolveMachineActionCandidates';
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import { openSessionAuthoringAction } from '@/sync/ops/actions/sessionAuthoringActions';
 import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
@@ -72,7 +71,7 @@ import { NewAppAutoAdjust } from './auto/NewAppAutoAdjust';
 import type { TransientQuestionAnswerState } from '@/components/appShell/plugins/TransientQuestionForm';
 import { useNewAppAutoSuggestions, type NewAppAutoChosen } from './auto/useNewAppAutoSuggestions';
 import { DEFAULT_PROJECT_REPOSITORY_PROVIDER_KIND_V1 } from '@happier-dev/protocol/projects/starters/createV1';
-import { applyDeploySuggestion } from './applyDeploySuggestion';
+import { applyDeploySuggestion, openStarterBuildSession } from './applyDeploySuggestion';
 import type { NewAppSuggestionContext } from './newAppPresentation';
 import { useNewAppForges, type ForgeOwnerFact } from './useNewAppForges';
 import { isRepositoryAddressCandidate } from '@/components/projects/sources/projectSourceAddress';
@@ -444,21 +443,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     ): Promise<boolean> => {
       const lifetime = captureActiveServerAccountScopeLifetime();
       if (!scope || !lifetime) return false;
-      // The existing New session owner takes it from here: the description is the first message, in the
-      // new checkout, with the person's agent and model defaults (P60-R2: no second Session path).
-      const opened = await openSessionAuthoringAction({
-        seed: {
-          placement: {
-            kind: 'exactTarget',
-            serverId: scope.serverId,
-            machineId: outcome.handoff.machineId,
-            directory: outcome.handoff.directory,
-          },
-          prompt: outcome.handoff.initialMessage,
-          ...(name.trim() ? { sessionName: name.trim() } : {}),
-        },
-      }, lifetime);
-      return opened.kind === 'opened';
+      return openStarterBuildSession(outcome.handoff, scope.serverId, name, lifetime);
     },
     [name, scope],
   );

@@ -5,7 +5,7 @@ import type { ProjectStarterCreateInputV1 } from '@happier-dev/protocol/projects
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { openSessionAuthoringAction } from '@/sync/ops/actions/sessionAuthoringActions';
-import { readStarterCreateOutcome, type StarterCreateOutcome } from './newAppDraft';
+import { readStarterCreateOutcome, type StarterCreateOutcome, type StarterSessionHandoff } from './newAppDraft';
 
 const executeAction = createFrontDoorActionExecute();
 
@@ -20,6 +20,22 @@ export type ApplyDeploySuggestionOutcome =
     | Readonly<{ kind: 'needsCreateInput' }>
     | Readonly<{ kind: 'created'; creation: Extract<StarterCreateOutcome, { kind: 'created' }>; sessionOpened: boolean }>
     | Readonly<{ kind: 'failed'; code: string; creation?: StarterCreateOutcome }>;
+
+/** Opens the first-message draft in the new checkout for every starter creation path. */
+export async function openStarterBuildSession(
+    handoff: StarterSessionHandoff,
+    serverId: string,
+    sessionName: string | undefined,
+    lifetime: ServerAccountScopeLifetime,
+): Promise<boolean> {
+    const name = sessionName?.trim();
+    const opened = await openSessionAuthoringAction({ seed: {
+        placement: { kind: 'exactTarget', serverId, machineId: handoff.machineId, directory: handoff.directory },
+        prompt: handoff.initialMessage,
+        ...(name ? { sessionName: name } : {}),
+    } }, lifetime);
+    return opened.kind === 'opened';
+}
 
 /** Both dialog and Session cards route through the existing create or deployment journey. */
 export async function applyDeploySuggestion(params: Readonly<{
@@ -57,11 +73,6 @@ export async function applyDeploySuggestion(params: Readonly<{
     if (creation.kind !== 'created') return { kind: 'failed', creation,
         code: creation.kind === 'failed' ? creation.code : creation.kind };
 
-    const opened = await openSessionAuthoringAction({ seed: {
-        placement: { kind: 'exactTarget', serverId: params.serverId,
-            machineId: creation.handoff.machineId, directory: creation.handoff.directory },
-        prompt: creation.handoff.initialMessage,
-        ...(create.sessionName?.trim() ? { sessionName: create.sessionName.trim() } : {}),
-    } }, create.lifetime);
-    return { kind: 'created', creation, sessionOpened: opened.kind === 'opened' };
+    const sessionOpened = await openStarterBuildSession(creation.handoff, params.serverId, create.sessionName, create.lifetime);
+    return { kind: 'created', creation, sessionOpened };
 }

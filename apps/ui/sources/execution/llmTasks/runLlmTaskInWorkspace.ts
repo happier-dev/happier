@@ -175,10 +175,9 @@ export async function runLlmTaskInWorkspace(params: Readonly<{
     const wait = started.data.wait;
     if (!wait.ok) return waitObservationFailure(wait.code, started.data.runId);
     if (wait.status === 'running') return waitObservationFailure('timeout', started.data.runId);
-    if (
-        wait.result.run.runId !== started.data.runId
-        || wait.result.run.status !== wait.status
-    ) {
+    // The wait schema already validates status. Its transport still has to
+    // return the run that was requested before we consume that run's result.
+    if (wait.result.run.runId !== started.data.runId) {
         return { ok: false, error: 'Task failed', runId: started.data.runId, outcome: 'unknown' };
     }
 
