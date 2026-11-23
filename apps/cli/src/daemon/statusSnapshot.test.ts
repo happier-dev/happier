@@ -20,6 +20,7 @@ const {
         serviceLabel: string;
         // Optional on the persisted record, and the readiness fact is what separates a working
         // daemon from a live one that cannot serve a single machine RPC.
+        controlToken?: string;
         lastHeartbeatAt?: number;
         machineControlReady?: boolean;
     }>> => ({
@@ -195,15 +196,39 @@ describe('readDaemonStatusSnapshot', () => {
         expect(snapshot.daemon.healthy).toBe(false);
     });
 
+    it('withholds readiness from a predecessor publication whose PID has been reused', async () => {
+        readDaemonStateMock.mockResolvedValueOnce({
+            pid: process.pid,
+            httpPort: 53288,
+            startupSource: 'background-service',
+            serviceLabel: 'com.happier.cli.daemon.default',
+            controlToken: 'predecessor-control-token',
+            machineControlReady: true,
+        });
+        // The PID is live, but its predecessor's authenticated control endpoint is gone.
+        vi.stubGlobal('fetch', vi.fn(async () => {
+            throw new TypeError('connection refused', { cause: { code: 'ECONNREFUSED' } });
+        }));
+
+        const { readDaemonStatusSnapshot } = await import('./statusSnapshot');
+
+        const snapshot = await readDaemonStatusSnapshot();
+
+        expect(snapshot.daemon.running).toBe(true);
+        expect(snapshot.daemon.healthy).toBeNull();
+    });
+
     it('reports a daemon that completed machine-control registration as healthy', async () => {
         readDaemonStateMock.mockResolvedValueOnce({
             pid: process.pid,
             httpPort: 53288,
             startupSource: 'background-service',
             serviceLabel: 'com.happier.cli.daemon.default',
+            controlToken: 'current-control-token',
             lastHeartbeatAt: Date.now(),
             machineControlReady: true,
         });
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }))));
 
         const { readDaemonStatusSnapshot } = await import('./statusSnapshot');
 

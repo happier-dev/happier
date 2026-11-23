@@ -69,7 +69,7 @@ export async function probeDaemonAuthenticatedControl(input: Readonly<{
 }
 
 export type DaemonPublicationPresenceInspection = Readonly<
-  | { status: 'running'; hiddenPid: boolean }
+  | { status: 'running'; hiddenPid: boolean; machineControlReady?: boolean }
   | { status: 'not_running' | 'unverified' }
 >;
 
@@ -78,13 +78,16 @@ export async function inspectDaemonPublicationPresence(input: Readonly<{
   pid: number;
   httpPort: number;
   controlToken?: string;
+  machineControlReady?: boolean;
   timeoutMs: number;
 }>): Promise<DaemonPublicationPresenceInspection> {
   const pidPresent = isPidPresent(input.pid);
   const liveness = input.controlToken
     ? await probeDaemonAuthenticatedControl({ ...input, controlToken: input.controlToken })
     : 'control_not_running';
-  if (liveness === 'running') return { status: 'running', hiddenPid: !pidPresent };
+  if (liveness === 'running') {
+    return { status: 'running', hiddenPid: !pidPresent, machineControlReady: input.machineControlReady };
+  }
   // An unrelated HTTP responder is not a busy daemon, even if the recycled PID
   // now names another Happier daemon. A refused listener remains distinct.
   if (liveness === 'foreign_control') return { status: 'not_running' };
@@ -94,6 +97,14 @@ export async function inspectDaemonPublicationPresence(input: Readonly<{
   // at this owner so status, start and stop consume the same evidence.
   const owner = await classifyDaemonLifecycleProcessByPid(input.pid).catch(() => ({ kind: 'unknown' as const }));
   if (owner.kind === 'not_daemon') return { status: 'not_running' };
-  if (owner.kind === 'daemon') return { status: 'running', hiddenPid: false };
+  if (owner.kind === 'daemon') {
+    // Process classification can establish presence, but a recycled PID can name
+    // another daemon. Only the publication's own control token can confirm readiness.
+    return {
+      status: 'running',
+      hiddenPid: false,
+      machineControlReady: input.machineControlReady === false ? false : undefined,
+    };
+  }
   return { status: liveness === 'unreachable' ? 'unverified' : 'not_running' };
 }

@@ -237,14 +237,11 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
             if (state.httpPort) {
                 console.log(`  HTTP Port: ${state.httpPort}`);
             }
-            // "Running" above says nothing about whether the daemon can
-            // serve anything. This line is the daemon's own last word on that, so a live
-            // process with an incomplete machine-control registration stops reading as healthy.
-            console.log(`  Machine RPCs: ${state.machineControlReady === true
+            console.log(`  Machine RPCs: ${inspection.machineControlReady === true
                 ? chalk.green('registered')
-                : state.machineControlReady === false
+                : inspection.machineControlReady === false
                     ? chalk.red('not registered — this daemon cannot serve machine RPCs')
-                    : chalk.gray('(unknown — daemon reported no readiness)')}`);
+                    : chalk.gray('(unknown — readiness unconfirmed)')}`);
         } else if (inspection.status === 'starting') {
             console.log(chalk.yellow('⚠️  Daemon is starting or control status is unknown'));
             console.log(`  PID: ${'pid' in inspection ? inspection.pid : inspection.state.pid}`);

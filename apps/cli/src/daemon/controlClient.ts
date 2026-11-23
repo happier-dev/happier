@@ -273,7 +273,11 @@ export type DaemonRunningInspection =
   | { status: 'not-running' }
   | { status: 'starting'; pid: number }
   | { status: 'starting'; state: NonNullable<Awaited<ReturnType<typeof readDaemonState>>> }
-  | { status: 'running'; state: NonNullable<Awaited<ReturnType<typeof readDaemonState>>> };
+  | {
+    status: 'running';
+    state: NonNullable<Awaited<ReturnType<typeof readDaemonState>>>;
+    machineControlReady?: boolean;
+  };
 
 async function inspectDaemonLockStartupProgress(): Promise<{ status: 'starting'; pid: number } | null> {
   const owner = await inspectDaemonLockOwner();
@@ -305,7 +309,9 @@ export async function inspectDaemonRunningStateAndCleanupStaleState(): Promise<D
   const observedLock = readDaemonLockSnapshot();
   const presence = await inspectPublishedDaemonPresence(state);
   if (presence.status === 'running') {
-    return state.httpPort === 0 ? { status: 'starting', state } : { status: 'running', state };
+    return state.httpPort === 0
+      ? { status: 'starting', state }
+      : { status: 'running', state, machineControlReady: presence.machineControlReady };
   }
   if (presence.status === 'unverified') return { status: 'starting', state };
   // A different successor may own the lock before publishing. The stale PID's
@@ -1740,7 +1746,7 @@ export async function stopDaemon(params: {
 }
 
 export async function inspectPublishedDaemonPresence(
-  state: Readonly<{ pid: number; httpPort: number; controlToken?: string }>,
+  state: Readonly<{ pid: number; httpPort: number; controlToken?: string; machineControlReady?: boolean }>,
 ): Promise<DaemonPublicationPresenceInspection> {
   return await inspectDaemonPublicationPresence({ ...state, timeoutMs: resolveDaemonPingTimeoutMs() });
 }

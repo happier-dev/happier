@@ -6,6 +6,7 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { configuration } from '@/configuration';
 import { resolveActiveServerAuthReadiness } from '@/auth/resolveActiveServerAuthReadiness';
 import { readDaemonState } from '@/persistence';
+import { inspectPublishedDaemonPresence } from '@/daemon/controlClient';
 import { resolveDaemonServiceInstallationSnapshotFromEnv } from '@/daemon/service/cli';
 
 export type DaemonStatusSnapshot = NonNullable<DoctorSnapshot['daemonStatus']>;
@@ -34,16 +35,13 @@ export async function readDaemonStatusSnapshot(): Promise<DaemonStatusSnapshot> 
 
   const pid = typeof daemonState?.pid === 'number' ? daemonState.pid : null;
   const daemonRunning = pid != null && isPidPresent(pid);
-  // Process presence and service health are separate questions and this snapshot answers both
-  // separately. `running` stays exactly what it was — a PID probe — because start, repair and
-  // stale-state paths need to know a process is there. `healthy` is the daemon's own last word
-  // on whether it can serve a machine RPC; a probe cannot derive it, so when the daemon has not
-  // published it the answer is unknown rather than a guess in either direction.
-  const daemonHealthy = !daemonRunning
-    ? false
-    : typeof daemonState?.machineControlReady === 'boolean'
-      ? daemonState.machineControlReady
-      : null;
+  // A ready publication must still belong to the listener that wrote it.
+  // Preserve the PID-based observation for callers that need local process presence.
+  let daemonHealthy: boolean | null = daemonRunning ? daemonState?.machineControlReady ?? null : false;
+  if (daemonHealthy === true && daemonState) {
+    const presence = await inspectPublishedDaemonPresence(daemonState).catch(() => null);
+    daemonHealthy = presence?.status === 'running' ? presence.machineControlReady ?? null : null;
+  }
   const machineId = readiness.machineId;
   const accountId = (() => {
     const token = readiness.credentials?.token ?? '';
