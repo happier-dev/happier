@@ -63,6 +63,15 @@ func managedWireMiddleware(runtimeDir string, project bool) gin.HandlerFunc {
 			c.Next()
 			return
 		}
+		if route == responses {
+			const appServer = "happier_cli"
+			userAgent := c.GetHeader("User-Agent")
+			if c.GetHeader("Originator") == appServer && strings.HasPrefix(userAgent, appServer+"/") {
+				// The pinned SDK identifies Codex by User-Agent when shaping
+				// native integer schemas. Keep its tool schema rules as the owner.
+				c.Request.Header.Set("User-Agent", userAgent+" (Codex)")
+			}
+		}
 		record := wireRequest{Method: route.Method, Path: route.Path, Upstream: []*wireStream{}, responses: route == responses}
 		ctx := httptransport.WithDecorator(c.Request.Context(), func(next http.RoundTripper) http.RoundTripper {
 			if project {

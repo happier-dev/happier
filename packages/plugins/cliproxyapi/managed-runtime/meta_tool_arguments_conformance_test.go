@@ -14,18 +14,19 @@ import (
 
 func TestManagedMetaResponsesNormalizesNativeToolArguments(t *testing.T) {
 	for _, fixture := range []struct {
-		name, arguments, want string
+		name, tool, userAgent string
+		arguments, want       string
 		terminalOnly          bool
 		nonStreaming          bool
 		numbers               []projectedNumber
 	}{
-		{"normalized with projection off", `{"session_id":44069,"yield_time_ms":30000.0}`, `{"session_id":44069,"yield_time_ms":30000}`, false, false, nil},
-		{"fragmented mixed spellings", `{"session_id":44069.0, "yield_time_ms":30000.0,"max_output_tokens":30000.5,"number":30000.0,"nested":{"yield_time_ms":30000.0},"text":"PRIVATE_STRING_ARGUMENT","numeric_string":"123456","empty":null}`,
+		{"Happier app-server shell with projection off", "exec_command", "happier_cli/0.162.1", `{"cmd":"echo fixture","yield_time_ms":1000.0}`, `{"cmd":"echo fixture","yield_time_ms":1000}`, false, false, nil},
+		{"Happier app-server poll with mixed spellings", "write_stdin", "happier_cli/0.162.1", `{"session_id":44069.0, "yield_time_ms":30000.0,"max_output_tokens":30000.5,"number":30000.0,"nested":{"yield_time_ms":30000.0},"text":"PRIVATE_STRING_ARGUMENT","numeric_string":"123456","empty":null}`,
 			`{"session_id":44069, "yield_time_ms":30000,"max_output_tokens":30000.5,"number":30000.0,"nested":{"yield_time_ms":30000.0},"text":"PRIVATE_STRING_ARGUMENT","numeric_string":"123456","empty":null}`, false, false,
 			[]projectedNumber{{"/max_output_tokens", "decimal-with-fraction"}, {"/nested/yield_time_ms", "decimal-with-fraction"}, {"/number", "decimal-with-fraction"}, {"/session_id", "decimal-with-fraction"}, {"/yield_time_ms", "decimal-with-fraction"}}},
-		{"nested numbers in terminal response", `{"session_id":44069,"yield_time_ms":30000,"nested":[true,{"a/b~c":-1.25e2},5e-2]}`, "", true, false,
+		{"nested numbers in terminal response", "write_stdin", "codex_cli_rs/0.162.1", `{"session_id":44069,"yield_time_ms":30000,"nested":[true,{"a/b~c":-1.25e2},5e-2]}`, "", true, false,
 			[]projectedNumber{{"/nested/1/a~1b~0c", "decimal-with-fraction"}, {"/nested/2", "exponent"}, {"/session_id", "integer"}, {"/yield_time_ms", "integer"}}},
-		{"non-streaming downstream response", `{"session_id":44069,"yield_time_ms":30000.0}`, `{"session_id":44069,"yield_time_ms":30000}`, true, true,
+		{"non-streaming downstream response", "write_stdin", "codex_cli_rs/0.162.1", `{"session_id":44069,"yield_time_ms":30000.0}`, `{"session_id":44069,"yield_time_ms":30000}`, true, true,
 			[]projectedNumber{{"/session_id", "integer"}, {"/yield_time_ms", "decimal-with-fraction"}}},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
@@ -49,13 +50,16 @@ func TestManagedMetaResponsesNormalizesNativeToolArguments(t *testing.T) {
 					return nil, fmt.Errorf("Meta fixture received an invalid request")
 				}
 				for _, tool := range body.Tools {
-					if tool.Name == "write_stdin" && tool.Parameters.Properties["session_id"].Type == "integer" && tool.Parameters.Properties["yield_time_ms"].Type == "integer" &&
-						tool.Parameters.Properties["max_output_tokens"].Type == "integer" &&
-						tool.Parameters.Properties["number"].Type == "number" {
-						return metaToolArgumentsFixtureResponse(request, fixture.arguments, fixture.terminalOnly), nil
+					if tool.Name == fixture.tool {
+						props := tool.Parameters.Properties
+						if props["yield_time_ms"].Type != "integer" || props["max_output_tokens"].Type != "integer" ||
+							(fixture.tool == "write_stdin" && (props["session_id"].Type != "integer" || props["number"].Type != "number")) {
+							t.Error("Meta did not receive the expected integer and number parameter types")
+						}
+						return metaToolArgumentsFixtureResponse(request, fixture.tool, fixture.arguments, fixture.terminalOnly), nil
 					}
 				}
-				return nil, fmt.Errorf("Meta fixture did not receive the native tool's integer parameter schema")
+				return nil, fmt.Errorf("Meta fixture did not receive the native tool")
 			})
 			gateway, err := NewGateway(cfg, testRuntimeIdentity(), broker, upstream)
 			if err != nil {
@@ -65,14 +69,17 @@ func TestManagedMetaResponsesNormalizesNativeToolArguments(t *testing.T) {
 			defer stopGateway(t, cancel, result)
 			_ = awaitManagedHealthIdentity(t, cfg)
 
-			body := strings.NewReader(fmt.Sprintf(`{"model":"muse-spark-1.3","stream":%t,"input":"poll the command","tools":[{"type":"function","name":"write_stdin","parameters":{"type":"object","properties":{"session_id":{"type":"number"},"yield_time_ms":{"type":"number"},"max_output_tokens":{"type":"number"},"number":{"type":"number"}}}}]}`, !fixture.nonStreaming))
+			body := strings.NewReader(fmt.Sprintf(`{"model":"muse-spark-1.3","stream":%t,"input":"poll the command","tools":[{"type":"function","name":"exec_command","parameters":{"type":"object","properties":{"cmd":{"type":"string"},"yield_time_ms":{"type":"number"},"max_output_tokens":{"type":"number"}}}},{"type":"function","name":"write_stdin","parameters":{"type":"object","properties":{"session_id":{"type":"number"},"yield_time_ms":{"type":"number"},"max_output_tokens":{"type":"number"},"number":{"type":"number"}}}}]}`, !fixture.nonStreaming))
 			request, err := http.NewRequest(http.MethodPost, fmt.Sprintf("http://%s:%d/v1/responses", cfg.Host, cfg.Port), body)
 			if err != nil {
 				t.Fatal(err)
 			}
 			request.Header.Set("Content-Type", "application/json")
 			request.Header.Set("Authorization", "Bearer "+cfg.DownstreamBearer)
-			request.Header.Set("User-Agent", "codex_cli_rs/0.162.1")
+			request.Header.Set("User-Agent", fixture.userAgent)
+			if strings.HasPrefix(fixture.userAgent, "happier_cli/") {
+				request.Header.Set("Originator", "happier_cli")
+			}
 			response, err := http.DefaultClient.Do(request)
 			if err != nil {
 				t.Fatal(err)
@@ -92,7 +99,7 @@ func TestManagedMetaResponsesNormalizesNativeToolArguments(t *testing.T) {
 					t.Fatal("arguments changed in the non-streaming Responses body")
 				}
 			} else {
-				assertNativeToolArguments(t, payload, want, fixture.terminalOnly)
+				assertNativeToolArguments(t, payload, fixture.tool, want, fixture.terminalOnly)
 			}
 			downstreamNumbers := append([]projectedNumber(nil), fixture.numbers...)
 			for i := range downstreamNumbers {
@@ -171,13 +178,13 @@ func assertResponsesNumberProjection(t *testing.T, cfg Config, numbers, downstre
 	}
 }
 
-func metaToolArgumentsFixtureResponse(request *http.Request, arguments string, terminalOnly bool) *http.Response {
-	item := fmt.Sprintf(`{"id":"fc_1","type":"function_call","call_id":"call_1","name":"write_stdin","status":"completed","arguments":%q}`, arguments)
+func metaToolArgumentsFixtureResponse(request *http.Request, tool, arguments string, terminalOnly bool) *http.Response {
+	item := fmt.Sprintf(`{"id":"fc_1","type":"function_call","call_id":"call_1","name":%q,"status":"completed","arguments":%q}`, tool, arguments)
 	var stream strings.Builder
 	if !terminalOnly {
-		stream.WriteString("data: " + `{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call_1","name":"write_stdin","arguments":"","status":"in_progress"}}` + "\n\n")
-		first, second, _ := strings.Cut(arguments, "30")
-		for _, delta := range []string{first + "30", second} {
+		fmt.Fprintf(&stream, "data: "+`{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call_1","name":%q,"arguments":"","status":"in_progress"}}`+"\n\n", tool)
+		middle := len(arguments) / 2
+		for _, delta := range []string{arguments[:middle], arguments[middle:]} {
 			fmt.Fprintf(&stream, "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"output_index\":0,\"delta\":%q}\n\n", delta)
 		}
 		fmt.Fprintf(&stream, "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_1\",\"output_index\":0,\"arguments\":%q}\n\n", arguments)
@@ -192,7 +199,7 @@ func metaToolArgumentsFixtureResponse(request *http.Request, arguments string, t
 	}
 }
 
-func assertNativeToolArguments(t *testing.T, body, want string, terminalOnly bool) {
+func assertNativeToolArguments(t *testing.T, body, tool, want string, terminalOnly bool) {
 	t.Helper()
 	type toolCall struct {
 		Name      string `json:"name"`
@@ -225,12 +232,12 @@ func assertNativeToolArguments(t *testing.T, body, want string, terminalOnly boo
 			}
 		case "response.output_item.done":
 			sawItem = true
-			if event.Item.Name != "write_stdin" || event.Item.Arguments != want {
+			if event.Item.Name != tool || event.Item.Arguments != want {
 				t.Fatal("tool name or arguments changed in the output_item.done event")
 			}
 		case "response.completed":
 			sawCompleted = true
-			if len(event.Response.Output) != 1 || event.Response.Output[0].Name != "write_stdin" || event.Response.Output[0].Arguments != want {
+			if len(event.Response.Output) != 1 || event.Response.Output[0].Name != tool || event.Response.Output[0].Arguments != want {
 				t.Fatal("tool name or arguments changed in the completed response")
 			}
 		}

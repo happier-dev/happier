@@ -2767,6 +2767,10 @@ deltas and completion snapshots have separate observations. The projection
 omits argument values and keeps CommercialMode enabled. Capture the file while
 the instance is live and clear the selector after the replay.
 
+The managed HTTP Responses gateway recognizes the native app-server's
+`happier_cli` originator and User-Agent so the embedded SDK applies its existing
+Codex tool schema rules. The Meta executor sends its own User-Agent to Muse.
+
 On the managed Muse HTTP Responses route, the 0.3 development wrapper uses the
 function schema sent upstream to emit whole-number values within the native
 64-bit integer range as integer JSON tokens for top-level parameters declared
