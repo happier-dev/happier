@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { MACHINE_RPC_POLL_INTERVAL_MS } from '@/sync/ops/machineRpcPollInterval';
 import { machineAgentInventoryStore } from '../machineAgentInventoryStore';
@@ -14,6 +15,7 @@ import { buildMachineAgentInventoryKey, MachineAgentInventoryItemSchema } from '
 import { AgentInstallJobSchema, DaemonAgentInstallCancelRequestSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallStartRequestSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createAccountTokenForTests, createHomeGovernanceHarness } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createExternalActionAccountHttpBoundary, type ExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { MachineReadBatchRequestV1Schema, MachineReadBatchResponseV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
@@ -21,6 +23,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { t } from '@/text';
 
 const boundary = vi.hoisted(() => ({ rpc: vi.fn(), credentialListeners: new Set<(event: { serverId: string; kind: 'credentials_removed'; serverUrl: string }) => void>() }));
 vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
@@ -44,6 +47,7 @@ import '../useMachineAgents';
 import { cancelAgentInstallJob, ensureMachineAgentInstallJobs, readAgentInstallJob, readMachineAgentInstallJobs, startAgentInstallJob, subscribeAgentInstallJob, subscribeMachineAgentInstallJobs, waitForAgentInstallJob } from './installJobStore';
 
 const homes = createHomeGovernanceHarness();
+let mountedCancelBoundary: ExternalActionAccountHttpBoundary | undefined;
 async function addJobHome(options: { serverUrl: string; accountId?: string }) {
     const id = await homes.addHome({ ...options, name: 'Install jobs', serverIdentityId: `srv_install_jobs_${new URL(options.serverUrl).hostname}`,
         accountId: options.accountId ?? 'store-account', currentAccount: true });
@@ -53,6 +57,8 @@ beforeEach(async () => {
     await homes.reset();
     setRuntimeFetch(async (input, init) => {
         const url = new URL(String(input));
+        const mountedResponse = await mountedCancelBoundary?.handle(url, init);
+        if (mountedResponse) return mountedResponse;
         const home = homes.findByServerUrl(url.origin);
         if (home && url.pathname === '/v1/machines/read-batch') {
             const request = MachineReadBatchRequestV1Schema.parse(JSON.parse(String(init?.body)));
@@ -92,6 +98,7 @@ afterEach(() => {
     vi.useRealTimers();
     standardCleanup();
     boundary.rpc.mockReset();
+    mountedCancelBoundary = undefined;
     storage.setState(storage.getInitialState(), true);
 });
 
@@ -275,7 +282,8 @@ describe('agent install job owner', () => {
     });
     it('keeps two configured definitions distinct through admission, hydration, hooks and cancellation', async () => {
         vi.useFakeTimers();
-        const server = await addJobHome({ serverUrl: 'https://definition-install-jobs.example.test' });
+        const serverUrl = 'https://definition-install-jobs.example.test';
+        const server = await addJobHome({ serverUrl });
         const a = { serverId: server.id, accountId: 'store-account', machineId: 'definitions-machine', agentId: 'custom-acp', definitionId: 'definition-a' };
         const b = { ...a, definitionId: 'definition-b' };
         const key = serverAccountScopedResourceKey(a, 'machine-agents', a.machineId);
@@ -306,6 +314,19 @@ describe('agent install job owner', () => {
                 done: cancelled.has(request.jobId), outcome: cancelled.has(request.jobId)
                     ? { kind: 'failed', code: 'cancelled', stepId: 'cli', message: 'Cancelled' } : null };
         });
+        homes.answer(server.id, '/v2/account/settings', { body: { content: { t: 'plain', v: {
+            actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'machines.agents.install.cancel': ['ui'] } },
+        } }, version: 1 } });
+        mountedCancelBoundary = await createExternalActionAccountHttpBoundary({
+            serverUrl, serverIdentityId: `srv_install_jobs_${new URL(serverUrl).hostname}`,
+            accountId: a.accountId, machineId: a.machineId, installationId: 'installation',
+            actionId: 'machines.agents.install.cancel', tokenEpoch: 0, requesterInvocation: 'optional',
+            execute(input) {
+                const { machineId: _machineId, ...operands } = input as { machineId: string };
+                return boundary.rpc({ method: RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL,
+                    payload: DaemonAgentInstallCancelRequestSchema.parse(operands) });
+            },
+        });
         const discovering = ensureMachineAgentInstallJobs(a);
         const first = startAgentInstallJob(a, 'install', { consent: { vendorRecipe: false } });
         const second = startAgentInstallJob(b, 'install', { consent: { vendorRecipe: false } });
@@ -320,6 +341,13 @@ describe('agent install job owner', () => {
         expect.soft(readAgentInstallJob(a)).toMatchObject({ jobId: 'job-definition-a', startedAtMs: 100, steps: [{ bytesDone: 4 }] });
         expect.soft(readAgentInstallJob(b)).toMatchObject({ jobId: 'job-definition-b', startedAtMs: 100, steps: [{ bytesDone: 8 }] });
         expect.soft(new Set(readMachineAgentInstallJobs(a).keys())).toEqual(new Set([buildMachineAgentInventoryKey(a), buildMachineAgentInventoryKey(b)]));
+        const { AgentAddingProgress } = await import('@/components/settings/agents/add/AgentAddingProgress');
+        const screen = await renderScreen(React.createElement(AgentAddingProgress, {
+            name: 'Configured Agent', definitionId: a.definitionId, serverId: a.serverId,
+            machines: [{ machineId: a.machineId, name: 'Development', platform: 'linux', arch: 'x64', offline: false }],
+            installOn: [a.machineId], testID: 'adding-agent', onRetryInstall: async () => {},
+        }));
+        const row = `adding-agent.machine.${a.machineId}`;
         const aHook = await renderHook(() => useAgentInstallJob(a));
         const bHook = await renderHook(() => useAgentInstallJob(b));
         expect.soft(aHook.getCurrent().job?.jobId).toBe('job-definition-a');
@@ -328,13 +356,22 @@ describe('agent install job owner', () => {
         const bInventory = machineAgentInventoryStore.read(key).agents[1];
         const bNotified = vi.fn();
         const unsubscribe = subscribeAgentInstallJob(b, bNotified);
-        await act(async () => { await cancelAgentInstallJob(a); });
+        expect(screen.getTextContent()).toContain(t('capabilities.agentAdd.adding.downloading'));
+        expect(screen.getTextContent()).not.toContain(t('capabilities.agentAdd.adding.installed'));
+        await screen.pressByTestIdAsync(`${row}.cancel`);
+        await act(async () => { await vi.waitFor(() => expect(readAgentInstallJob(a)?.outcome?.kind).toBe('failed')); });
         expect.soft(cancelled).toEqual(new Set(['job-definition-a']));
         expect.soft(aHook.getCurrent().job?.outcome).toMatchObject({ kind: 'failed', code: 'cancelled' });
         expect.soft(bHook.getCurrent().job).toBe(bJob);
         expect.soft(machineAgentInventoryStore.read(key).agents[1]).toBe(bInventory);
         expect.soft(machineAgentInventoryStore.read(key).agents[0]?.job?.outcome).toMatchObject({ code: 'cancelled' });
         expect.soft(bNotified).not.toHaveBeenCalled();
+        expect(screen.getTextContent()).toContain(t('capabilities.agentAdd.adding.cancelled'));
+        expect(screen.findByTestId(`${row}.cancel`)).toBeNull();
+        expect(screen.findByTestId(`${row}.retry`)).not.toBeNull();
+        expect(screen.getTextContent()).not.toContain(t('capabilities.agentAdd.adding.installed'));
+        expect(boundary.rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START)).toHaveLength(2);
+        await screen.unmount();
         unsubscribe();
         await act(async () => {
             for (const listener of boundary.credentialListeners) listener({ serverId: server.id,
