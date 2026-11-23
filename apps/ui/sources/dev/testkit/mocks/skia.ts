@@ -17,6 +17,10 @@ export function createSkiaModuleMock() {
         decodable: true, svgDecodable: false, pixelsAvailable: true, rasterAvailable: true,
         encodes: 0, rasterizations: 0, sourceReads: [] as string[],
         pictures: [] as RecordedSkiaPicture[],
+        // Platform video decoder: frames arrive after a seek settles, upright per the container's rotation.
+        videoOpenable: true, videoRotation: 0 as 0 | 90 | 180 | 270, videoSize: { width: 8, height: 6 }, videoDurationMs: 60_000,
+        emptyPollsAfterSeek: 1,
+        videos: [] as Array<{ uri: string; seeks: number[]; polls: number; disposed: boolean }>,
     };
     const paint = () => ({ setAntiAlias() {}, setAlphaf() {}, setBlendMode() {}, setStyle() {}, setColor() {},
         setStrokeWidth() {}, setStrokeCap() {}, setStrokeJoin() {}, dispose() {} });
@@ -30,6 +34,8 @@ export function createSkiaModuleMock() {
                 : null;
         },
         encodeToBytes: () => { boundary.encodes++; return new Uint8Array([137, 80]); },
+        encodeToBase64: () => { boundary.encodes++; return `${tag}${width}x${height}`; },
+        makeNonTextureImage: () => image(`${tag} cpu`, width, height),
     });
     type TestImage = ReturnType<typeof image>;
     const source = image('source');
@@ -41,6 +47,7 @@ export function createSkiaModuleMock() {
             if (svg.hasFonts) boundary.log.push('svg text');
         },
         translate: (x: number, y: number) => boundary.log.push(`translate ${x},${y}`),
+        rotate: (degrees: number) => boundary.log.push(`rotate ${degrees}`),
         drawImageRect: (raster: TestImage) => {
             boundary.log.push(raster.tag);
             draws.push({ kind: 'image', tag: raster.tag });
@@ -93,6 +100,23 @@ export function createSkiaModuleMock() {
                 const drawing = canvas();
                 return { getCanvas: () => drawing, makeImageSnapshot: () => image('untouched', width, height), flush() {} };
             } },
+            Video: async (uri: string) => {
+                if (!boundary.videoOpenable) throw new Error('Video could not be opened');
+                const record = { uri, seeks: [] as number[], polls: 0, disposed: false };
+                boundary.videos.push(record);
+                let pending = boundary.emptyPollsAfterSeek;
+                return {
+                    duration: () => boundary.videoDurationMs, framerate: () => 30, rotation: () => boundary.videoRotation,
+                    size: () => boundary.videoSize, play() {}, pause() {}, setVolume() {},
+                    seek: (milliseconds: number) => { record.seeks.push(milliseconds); pending = boundary.emptyPollsAfterSeek; },
+                    nextImage: () => {
+                        record.polls++;
+                        if (pending-- > 0) return null;
+                        return image('frame', boundary.videoSize.width, boundary.videoSize.height);
+                    },
+                    dispose: () => { record.disposed = true; },
+                };
+            },
             Typeface: { MakeFreeTypeFaceFromData: () => ({}) },
             Font: () => ({ getTextWidth: () => 10, dispose() {} }),
             Paint: paint, Color: (value: string) => value,

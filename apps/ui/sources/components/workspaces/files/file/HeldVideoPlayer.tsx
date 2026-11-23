@@ -12,7 +12,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
 
 import type { FilePageMediaInfo } from './filePageMediaFacts';
-import { readVideoFrame, type MediaPlayerVideoControls } from './videoFrameAccess';
+import { readHeldPlayerFrame, type MediaPlayerVideoControls } from './videoFrameAccess';
 
 const FULLSCREEN_OPTIONS = { enable: true } as const;
 
@@ -62,13 +62,10 @@ export function HeldVideoPlayer(
       },
       readFrame: async (options = {}) => {
         lifetime.signal.throwIfAborted();
-        // Expo's web VideoView exposes its HTMLVideoElement through this public ref.
-        const element: unknown = view.current?.nativeRef.current;
-        if (typeof HTMLVideoElement === 'undefined' || !(element instanceof HTMLVideoElement)) {
-          throw new DOMException('Canvas frame access requires the web player.', 'NotSupportedError');
-        }
-        return readVideoFrame(element, options, lifetime.signal, props.chrome === 'none'
-          ? () => { if (playing) player.play(); else player.pause(); } : undefined);
+        // Expo's web VideoView exposes its HTMLVideoElement through this public ref; native decodes the same source.
+        return readHeldPlayerFrame({ element: view.current?.nativeRef.current, uri: props.uri, currentTimeSeconds: player.currentTime,
+          options, lifetime: lifetime.signal, ...(props.chrome === 'none'
+            ? { restorePlayback: () => { if (playing) player.play(); else player.pause(); } } : {}) });
       },
       playback: {
         play: () => { player.play(); if (props.chrome === 'none') publishIntent(true); },
@@ -85,7 +82,7 @@ export function HeldVideoPlayer(
       },
     });
     return () => { lifetime.abort(); ended?.remove(); listeners.clear(); onVideoControls(null); };
-  }, [onVideoControls, player, props.chrome]);
+  }, [onVideoControls, player, props.chrome, props.uri]);
   React.useEffect(() => {
     const subscription = player.addListener('statusChange', (event) => {
       setStatus(event.status);
