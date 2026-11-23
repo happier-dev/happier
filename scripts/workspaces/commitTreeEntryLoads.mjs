@@ -21,6 +21,7 @@ const DAEMON_ENTRY = 'apps/cli/src/daemon/startDaemon.ts';
 const REQUIRED_RUNTIME_GRAPHS = new Set([CLI_GRAPH, DAEMON_GRAPH]);
 const TEST_OR_DOC = /(?:^|\/)(?:__tests__|__snapshots__|docs)\/|\.(?:test|spec)\.[cm]?[jt]sx?$|\.mdx?$/iu;
 const GENERATED = 'apps/server/generated';
+export const APPROVAL_DTO_PATH = 'packages/plugin-sdk/src/actions/dtos/approvalsActionDtos.generated.ts';
 // Route composition of the tree's server (P03 ORCH 2026-11-18): the entry graphs stop at the server's import probe,
 // so an Action a route names but the packet's Protocol lacks (1f986f64d8a: review.get) passed them. This graph
 // composes the server's routes on a bare app (no database, no listener) through the server's own registration
@@ -233,8 +234,8 @@ export async function withAdmittedCommitEntryPhase({ repo, base, tree, phase, en
       throw new Error('HEAD changed the reachable entry points during admission; retry against current HEAD');
     }
   };
-  if (!projects.length) return await run(assertCovered, (combined, output) =>
-    regenerateCommitProjections({ repo, tree: combined, output }, env));
+  if (!projects.length) return await run(assertCovered, (combined, output, projections) =>
+    regenerateCommitProjections({ repo, tree: combined, output, projections }, env));
   const child = await spawnEntryLoadCommand({ repo, projects, env, stdio: ['pipe', 'pipe', 'inherit'],
     payload: [process.execPath, self, '--entry-load-commit-session'] });
   const terminal = waitForTreeChild(child);
@@ -266,7 +267,7 @@ export async function withAdmittedCommitEntryPhase({ repo, base, tree, phase, en
     return await run(request => {
       assertCovered(request);
       return send(request);
-    }, (combined, output) => send({ repo, tree: combined, projectionOutput: output }));
+    }, (combined, output, projections) => send({ repo, tree: combined, projectionOutput: output, projections }));
   } finally {
     child.stdin.end();
     output.close();
@@ -343,8 +344,8 @@ async function withMountedCommitTree({ repo, tree, installDir, root, env, signal
   }
 }
 
-/** Derive only the daemon's Action projections, using the combined tree's canonical generator. */
-async function regenerateCommitProjections({ repo, tree, output }, env, signal) {
+/** Derive the requested projections using the combined tree's canonical generators. */
+async function regenerateCommitProjections({ repo, tree, output, projections }, env, signal) {
   return await withMountedCommitTree({ repo, tree, installDir: repo, root: defaultRoot(), env, signal,
     timings: {}, waitForDependencies: false }, async ({ dir }) => {
     const { sourceBuildNodeArgs } = await import(new URL('apps/stack/scripts/utils/proc/sourceBuildNodeArgs.mjs', tooling).href);
@@ -359,8 +360,28 @@ async function regenerateCommitProjections({ repo, tree, output }, env, signal) 
       if (status !== 0) throw new Error(`Action projection generation exited ${status}: ${stderr.trim()}`);
     };
     if (existsSync(featurePolicy)) await run([featurePolicy]);
-    await run(sourceBuildNodeArgs({ repoDir: dir, scriptPath: generator,
-      args: ['--daemon-projections', '--daemon-output-root', output] }));
+    if (projections.cli) {
+      await run(sourceBuildNodeArgs({ repoDir: dir, scriptPath: generator,
+        args: ['--daemon-projections', '--daemon-output-root', output] }));
+      const { readBundledPluginPublicationFailures } = await import('./bundledPluginPublicationFailure.mjs');
+      const selectedFailures = readBundledPluginPublicationFailures(output)
+        .filter(({ packageName }) => projections.plugins.includes(packageName.replace(/^@happier-dev\/plugins-/u, '')));
+      if (selectedFailures.length) throw new Error(`bundled plugin manifest generation failed: ${JSON.stringify(selectedFailures)}`);
+    }
+    if (projections.approvals) {
+      const dtoGenerator = pathToFileURL(join(dir, 'packages/plugin-sdk/scripts/generateActionTypeMap.mjs')).href;
+      await run(['--input-type=module', '--eval', `
+        import { prepareActionTypeMap } from ${JSON.stringify(dtoGenerator)};
+        import { mkdir, writeFile } from 'node:fs/promises';
+        import { dirname } from 'node:path';
+        const [source, target] = process.argv.slice(1);
+        const { outputs } = await prepareActionTypeMap();
+        const text = outputs.get(source);
+        if (text === undefined) throw new Error('Canonical Action DTO generator omitted ' + source);
+        await mkdir(dirname(target), { recursive: true });
+        await writeFile(target, text);
+      `, join(dir, APPROVAL_DTO_PATH), join(output, APPROVAL_DTO_PATH)]);
+    }
     return {};
   });
 }

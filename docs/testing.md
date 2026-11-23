@@ -739,7 +739,9 @@ focused runs are served in arrival order and later focused runs cannot starve it
 (P03 ORCH, 2026-11-17). The commit gate admits affected runtime entry loads as
 `gate-entry-loads` before taking the commit lock. The broker learns memory by command and project selection.
 While locked, the gate composes
-the frozen packet against the current ref and checks the exact tree once.
+the frozen packet against the current ref, regenerates affected approvals DTOs
+and bundled-plugin declarations or manifests from that tree, and checks the
+result once.
 Changed-source syntax, new eager import cycles, dependency imports and
 exports, plugin manifests, workspace and lockfile sanity, and affected
 runtime loads protect HEAD. An affected CLI or daemon entry must load even

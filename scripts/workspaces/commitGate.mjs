@@ -14,7 +14,7 @@ import { commitLockfile } from './commitLockfile.mjs';
 import { commitProducerClosure, createRevisionViewReader, gitIn } from './commitProducerClosure.mjs';
 import { commitExtensionBoundaries } from './commitExtensionBoundaries.mjs';
 import { commitImportCycles } from './commitImportCycles.mjs';
-import { commitTreeEntryLoads, EntryLoadAdmissionUnavailable,
+import { APPROVAL_DTO_PATH, commitTreeEntryLoads, EntryLoadAdmissionUnavailable,
   withAdmittedCommitEntryPhase } from './commitTreeEntryLoads.mjs';
 
 
@@ -139,6 +139,20 @@ function cliProjectionOwned(git, revision, path) {
   catch { return false; }
 }
 
+function packetProjectionInputs(git, packet) {
+  const paths = git(['diff', '--name-only', '--no-renames', '-z', packet.base, packet.tree]).split('\0');
+  const plugins = new Set(paths.flatMap(path => {
+    const plugin = /^packages\/plugins\/([^/]+)\/src\/manifest\.ts$/u.exec(path)?.[1];
+    return plugin ? [plugin] : [];
+  }));
+  return {
+    plugins,
+    fieldTitles: paths.includes('packages/protocol/src/actions/schemaInputHints.ts'),
+    approvals: paths.some(path => /^packages\/protocol\/src\/(?:approvals\/[^/]+|actions\/specs\/approvals)\.ts$/u.test(path)
+      && !/\.(?:test|spec|d)\.ts$/u.test(path)),
+  };
+}
+
 function unnamedPostBaseRemovals(git, base, head, tree, message) {
   const pathsChanged = (from, to) => git(['diff', '--name-only', '--no-renames', '-z', from, to]).split('\0').filter(Boolean);
   const changedSinceBase = new Set(pathsChanged(base, head));
@@ -172,12 +186,12 @@ function unnamedPostBaseRemovals(git, base, head, tree, message) {
 }
 
 /** Compose the frozen delta against the exact locked parent in a private index. */
-async function composeLockedPacket({ git, packet, head, regenerate, scratchRoot = tmpdir() }) {
+async function composeLockedPacket({ git, packet, head, regenerate, projections, scratchRoot = tmpdir() }) {
   const scratch = await mkdtemp(join(scratchRoot, 'replay-index-'));
   const env = { ...process.env, GIT_INDEX_FILE: join(scratch, 'index'), GIT_LITERAL_PATHSPECS: '1' };
   const gitIndex = (args, options) => git(args, { ...options, env: options?.env ?? env });
   const writeTree = () => gitIndex(['write-tree']).trim();
-  let replayedTree;
+  let conflicts = [];
   try {
     git(['merge-base', '--is-ancestor', packet.base, head]);
     const patch = git(['diff', '--binary', '--full-index', '--no-renames', packet.base, packet.tree], { encoding: 'buffer' });
@@ -190,9 +204,9 @@ async function composeLockedPacket({ git, packet, head, regenerate, scratchRoot 
         gitIndex(['apply', '--cached', '--3way'], { input: patch });
       } catch (cause) {
         const stages = gitIndex(['ls-files', '--unmerged', '-z']).split('\0').filter(Boolean);
-        const conflicts = [...new Set(stages.map(record => record.slice(record.indexOf('\t') + 1)))];
+        conflicts = [...new Set(stages.map(record => record.slice(record.indexOf('\t') + 1)))];
         if (!conflicts.length) throw cause;
-        const source = conflicts.filter(path => !cliProjectionOwned(git, packet.base, path) && !cliProjectionOwned(git, head, path));
+        const source = conflicts.filter(path => path !== APPROVAL_DTO_PATH && !cliProjectionOwned(git, packet.base, path) && !cliProjectionOwned(git, head, path));
         if (source.length) throw new Error(`patch conflicts in source: ${source.join(', ')}`);
         // Take HEAD's projections temporarily. Every clean source hunk is already
         // in the index. The generator will replace projections in that combined tree.
@@ -200,44 +214,52 @@ async function composeLockedPacket({ git, packet, head, regenerate, scratchRoot 
         const restored = gitIndex(['ls-tree', '-r', '-z', head, '--', ...conflicts])
           .replace(/(\d+) \S+ ([a-f0-9]+)\t/gu, '$1 $2\t');
         if (restored) gitIndex(['update-index', '-z', '--index-info'], { input: restored });
-
-        const combined = replayedTree = writeTree();
-        const output = join(scratch, 'projections');
-        await regenerate(combined, output);
-        const cliOutput = join(output, CLI_PROJECTION_ROOT);
-        const emitted = new Map((existsSync(cliOutput) ? readdirSync(cliOutput, { recursive: true, withFileTypes: true }) : [])
-          .filter(entry => entry.isFile())
-          .map(entry => {
-            const file = join(entry.parentPath, entry.name);
-            return [relative(output, file).split(sep).join('/'), file];
-          }));
-        const missing = conflicts.filter(path => !emitted.has(path));
-        if (missing.length) throw new Error(`canonical generator did not emit conflicting paths: ${missing.join(', ')}`);
-        const tracked = new Map(gitIndex(['ls-tree', '-r', '-z', combined, '--', CLI_PROJECTION_ROOT])
-          .split('\0').filter(Boolean).map(record => [record.slice(record.indexOf('\t') + 1), record.split(' ', 1)[0]]));
-        for (const path of conflicts) {
-          const mode = tracked.get(path) ?? '100644';
-          if (!['100644', '100755'].includes(mode)) throw new Error(`cannot regenerate non-regular projection: ${path}`);
-          tracked.set(path, mode);
-        }
-        const records = [];
-        for (const [path, mode] of tracked) {
-          const outputFile = emitted.get(path);
-          if (!outputFile || !['100644', '100755'].includes(mode)
-            || !cliProjectionOwned(git, combined, path) && !conflicts.includes(path)) continue;
-          const blob = gitIndex(['hash-object', '-w', '--stdin'], { input: readFileSync(outputFile) }).trim();
-          records.push(`${mode} ${blob}\t${path}\0`);
-        }
-        gitIndex(['update-index', '-z', '--index-info'], { input: records.join('') });
-        console.error(`commit gate: regenerated ${conflicts.length} conflicting CLI projection(s)`);
       }
+    }
+    const replayedTree = writeTree();
+    const cliConflict = conflicts.some(path => path !== APPROVAL_DTO_PATH);
+    const cli = cliConflict || projections.fieldTitles || projections.plugins.size > 0;
+    const approvals = projections.approvals || conflicts.includes(APPROVAL_DTO_PATH);
+    if (cli || approvals) {
+      const output = join(scratch, 'projections');
+      await regenerate(replayedTree, output, { cli, approvals, plugins: [...projections.plugins] });
+      const emitted = new Map((existsSync(output) ? readdirSync(output, { recursive: true, withFileTypes: true }) : [])
+        .filter(entry => entry.isFile()).map(entry => {
+          const file = join(entry.parentPath, entry.name);
+          return [relative(output, file).split(sep).join('/'), file];
+        }));
+      const required = new Set(conflicts);
+      if (approvals) required.add(APPROVAL_DTO_PATH);
+      const missing = [...required].filter(path => !emitted.has(path));
+      if (missing.length) throw new Error(`canonical generator did not emit projections: ${missing.join(', ')}`);
+      const tracked = new Map(gitIndex(['ls-tree', '-r', '-z', replayedTree, '--', CLI_PROJECTION_ROOT, APPROVAL_DTO_PATH])
+        .split('\0').filter(Boolean).map(record => [record.slice(record.indexOf('\t') + 1), record.split(' ', 1)[0]]));
+      const selected = path => {
+        if (required.has(path)) return true;
+        if (cliConflict && tracked.has(path) && cliProjectionOwned(git, replayedTree, path)) return true;
+        if (projections.fieldTitles && tracked.has(path) && path.startsWith(`${manifestAssetRoot}/declarations/`)) return true;
+        for (const plugin of projections.plugins) {
+          if (path === `${CLI_PROJECTION_ROOT}/${bundledPluginManifestAssetRelativePath(plugin)}`
+            || path.startsWith(`${manifestAssetRoot}/declarations/${plugin}.`)) return true;
+        }
+        return false;
+      };
+      const records = [];
+      for (const [path, outputFile] of emitted) {
+        if (!selected(path)) continue;
+        const mode = tracked.get(path) ?? '100644';
+        if (!['100644', '100755'].includes(mode)) throw new Error(`cannot regenerate non-regular projection: ${path}`);
+        const blob = gitIndex(['hash-object', '-w', '--stdin'], { input: readFileSync(outputFile) }).trim();
+        records.push(`${mode} ${blob}\t${path}\0`);
+      }
+      if (records.length) gitIndex(['update-index', '-z', '--index-info'], { input: records.join('') });
     }
     gitIndex(['diff', '--cached', '--check', head, '--', '.', ':(exclude)patches/*.patch'], {
       env: { ...env, GIT_LITERAL_PATHSPECS: '0' },
     });
     const tree = writeTree();
     if (tree === git(['rev-parse', `${head}^{tree}`]).trim()) throw new Error('Packet is already present at HEAD');
-    return { base: head, tree, replayedTree: replayedTree ?? tree };
+    return { base: head, tree, replayedTree };
   } catch (cause) {
     throw new CommitGateUnavailable('frozen packet no longer applies to HEAD; refresh the patch', cause.stderr?.toString().trim() || cause);
   } finally {
@@ -252,6 +274,7 @@ async function composeLockedPacket({ git, packet, head, regenerate, scratchRoot 
  */
 export async function finalizeGatedCommit({ repo, ref = 'HEAD', label, packet, createCommit, replayScratchRoot, message, dry = false }) {
   const git = gitIn(repo);
+  const projections = packetProjectionInputs(git, packet);
   const admissionAt = performance.now();
   try {
     return await withAdmittedCommitEntryPhase({ repo, ...packet, phase: 'commit' }, (compareAdmittedEntryLoads, regenerate) => {
@@ -262,7 +285,9 @@ export async function finalizeGatedCommit({ repo, ref = 'HEAD', label, packet, c
         console.error(`commit gate: lock wait ${Math.round(lockedAt - queuedAt)} ms`);
         try {
           const head = git(['rev-parse', '--verify', ref]).trim();
-          const exact = head === packet.base ? packet : await composeLockedPacket({ git, packet, head, regenerate, scratchRoot: replayScratchRoot });
+          const exact = head === packet.base && !projections.approvals && !projections.fieldTitles && !projections.plugins.size
+            ? packet
+            : await composeLockedPacket({ git, packet, head, regenerate, projections, scratchRoot: replayScratchRoot });
           if (head !== packet.base && message !== undefined) {
             const started = performance.now();
             const removals = unnamedPostBaseRemovals(git, packet.base, head, exact.replayedTree, message);
@@ -301,7 +326,7 @@ async function finalizeFrozenPacket({ repo, candidate, message, patch, ref, dry 
   const tree = git(['rev-parse', `${candidate}^{tree}`]).trim();
   return await finalizeGatedCommit({
     repo, ref, label: 'commit-partial', packet: { base, tree }, dry, replayScratchRoot: dirname(resolve(patch)), message: readFileSync(message, 'utf8'),
-    createCommit: exact => exact.base === base ? candidate : git(['commit-tree', exact.tree, '-p', exact.base, '-F', message]).trim(),
+    createCommit: exact => exact.base === base && exact.tree === tree ? candidate : git(['commit-tree', exact.tree, '-p', exact.base, '-F', message]).trim(),
   });
 }
 

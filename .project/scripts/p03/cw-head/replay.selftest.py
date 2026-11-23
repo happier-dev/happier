@@ -137,6 +137,66 @@ writeFileSync(out, JSON.stringify(['first', 'second'].map(file => readFileSync(f
 test_old_action_packet()
 
 
+def test_projection_producers_land_current_outputs():
+    with tempfile.TemporaryDirectory(prefix="p03-projection-writer-") as temp:
+        repo = Path(temp)
+        git = lambda *args: subprocess.check_output(["git", *args], cwd=repo, text=True)
+        git("init", "-qb", "main")
+        git("config", "user.name", "Fixture")
+        git("config", "user.email", "fixture@example.invalid")
+        titles = "packages/protocol/src/actions/schemaInputHints.ts"
+        manifest = "packages/plugins/test/src/manifest.ts"
+        approvals = "packages/protocol/src/approvals/approvalRequestV2.ts"
+        dto = "packages/plugin-sdk/src/actions/dtos/approvalsActionDtos.generated.ts"
+        declaration = "apps/cli/assets/bundled-plugin-manifests/declarations/test.summary.json"
+        bundled = "apps/cli/assets/bundled-plugin-manifests/test.json"
+
+        def write(path, text):
+            target = repo / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text)
+
+        write("apps/cli/scripts/build-owned/generateBundledPluginEntries.ts", rf'''
+import {{ mkdirSync, readFileSync, writeFileSync }} from 'node:fs';
+import {{ dirname, join }} from 'node:path';
+for (const [producer, projection] of [[{titles!r}, {declaration!r}], [{manifest!r}, {bundled!r}]]) {{
+  const out = join(process.argv.at(-1), projection);
+  mkdirSync(dirname(out), {{ recursive: true }});
+  writeFileSync(out, readFileSync(producer, 'utf8').match(/= (\d+);/)[1] + '\n');
+}}
+''')
+        write("packages/plugin-sdk/scripts/generateActionTypeMap.mjs", rf'''
+import {{ readFileSync }} from 'node:fs';
+import {{ resolve }} from 'node:path';
+export const prepareActionTypeMap = () => ({{ outputs: new Map([[resolve({dto!r}), readFileSync({approvals!r})]]) }});
+''')
+        (repo / "node_modules").symlink_to(WRAPPER.parents[4] / "node_modules", target_is_directory=True)
+        (repo / ".git/info/exclude").write_text("node_modules\n")
+        write("packages/cli-common/sourceRuntimeEntries.mjs", "export const resolveWorkspaceSource = () => {};\n")
+        write("packages/protocol/src/plugins/manifest/ingest.ts", "export const ingestPluginManifestV2 = () => ({ ok: true });\n")
+        write("packages/plugin-sdk/src/manifest.ts", "export const parsePluginManifest = () => ({ ok: true });\n")
+        for path in (titles, manifest, approvals, dto, declaration, bundled):
+            write(path, "export const value = 0;\n" if path.endswith(".ts") else '0\n')
+        git("add", ".")
+        git("commit", "-qm", "fixture base")
+        for producer in (titles, manifest, approvals):
+            write(producer, "export const value = 1;\n")
+        patch = repo / "own.patch"
+        patch.write_text(git("diff", "--binary", "--full-index", "HEAD", "--", titles, manifest, approvals))
+        msg = repo / "message"
+        msg.write_text("fix: update projection producers\n")
+        env = {**os.environ, "P03_GATE_CACHE": str(repo / "cache"), "P03_COMMIT_KICK": "true"}
+        result = subprocess.run(["bash", str(WRAPPER), str(msg), "-", str(patch)],
+                                cwd=repo, env=env, capture_output=True, text=True)
+        assert result.returncode == 0, result.stdout + result.stderr
+        for path in (dto, declaration, bundled):
+            assert git("show", f"HEAD:{path}") == ("export const value = 1;\n" if path == dto else "1\n"), path
+        print("PASS projection producers")
+
+
+test_projection_producers_land_current_outputs()
+
+
 def test_stale_packet_preserves_post_base_workspace_writes():
     with tempfile.TemporaryDirectory(prefix="p03-stale-writer-") as temp:
         repo = Path(temp)
