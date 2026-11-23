@@ -186,21 +186,24 @@ describe('the PostHog selected-evidence Composer reference', () => {
         expect(candidate?.candidate.id).not.toContain('account-1');
         expect(candidate?.candidate.id).not.toContain('https://eu.posthog.com');
 
-        const alteredFilter = {
-            ...exactFrozenQuery,
-            include: ['exception', 'navigation'],
-        } as unknown as PosthogFrozenIssueEventsRequestV1;
-        expect(createPosthogEvidenceCandidate({
-            instance: configuredInstance(),
-            localRef: {
-                kindId: 'error-issue',
-                collisionScope: 'posthog:https://eu.posthog.com:00000000-0000-4000-8000-0000000000d1',
-                entryId: ENTRY_ID,
-            },
-            selected: selectedEvent(),
-            frozenRequest: alteredFilter,
-            selectedAbsoluteOffset: 0,
-        })).toBeNull();
+        for (const override of [
+            { include: ['exception', 'navigation'] },
+            { filterTestAccounts: true },
+            { onlyAppFrames: true },
+        ]) {
+            const alteredRequest = { ...exactFrozenQuery, ...override } as unknown as PosthogFrozenIssueEventsRequestV1;
+            expect(createPosthogEvidenceCandidate({
+                instance: configuredInstance(),
+                localRef: {
+                    kindId: 'error-issue',
+                    collisionScope: 'posthog:https://eu.posthog.com:00000000-0000-4000-8000-0000000000d1',
+                    entryId: ENTRY_ID,
+                },
+                selected: selectedEvent(),
+                frozenRequest: alteredRequest,
+                selectedAbsoluteOffset: 0,
+            })).toBeNull();
+        }
     });
 
     it.each([

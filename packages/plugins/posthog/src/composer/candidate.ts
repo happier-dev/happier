@@ -116,12 +116,9 @@ export function posthogEvidenceCandidateLabel(uuid: string): string {
     return `PostHog occurrence ${uuid}`;
 }
 
-function encodeCandidate(value: DecodedPosthogEvidenceCandidate): string | null {
-    if (!isPosthogIssueEventsInclude(value.include)
-        || value.filterTestAccounts !== false
-        || value.onlyAppFrames !== false) {
-        return null;
-    }
+function encodeCandidate(
+    value: Omit<DecodedPosthogEvidenceCandidate, 'filterTestAccounts' | 'onlyAppFrames' | 'include'>,
+): string | null {
     const id = [
         CANDIDATE_PREFIX,
         value.sourceInstanceId,
@@ -243,9 +240,6 @@ export function createPosthogEvidenceCandidate(
         entryId: input.localRef.entryId,
         from: input.frozenRequest.from,
         to: input.frozenRequest.to,
-        filterTestAccounts: input.frozenRequest.filterTestAccounts,
-        onlyAppFrames: input.frozenRequest.onlyAppFrames,
-        include: POSTHOG_ISSUE_EVENTS_INCLUDE,
         originalLimit: input.frozenRequest.limit,
         frozenOffset: input.frozenRequest.offset,
         selectedOffset: input.selectedAbsoluteOffset,
