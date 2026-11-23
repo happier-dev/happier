@@ -678,8 +678,8 @@ describe('ApprovalPromptCard', () => {
         expect(screen.findByTestId('approval-prompt-approve')).toBeNull();
         const text = screen.getTextContent();
         expect(text).toContain('approvals.failureFileWrite');
-        // The effect summary reads once, as the subtitle.
-        expect(text.match(/Write \. in mqa2-c14-clone\./g)).toHaveLength(1);
+        // A failure is one compact row: the request's own summary is not repeated under it.
+        expect(text).not.toContain('Write . in mqa2-c14-clone.');
         // The executor's own words and its code wait in Details, collapsed.
         expect(text).not.toContain('EISDIR');
         expect(text).not.toContain('filesystem_operation_failed');
@@ -781,6 +781,21 @@ describe('ApprovalPromptCard', () => {
         expect(text).toContain('approvals.failureNotRun');
         expect(text).not.toContain('approvals.failureFileWrite');
         expect(text).toContain('approvals.staleFailure');
+    });
+
+    it('reads a settled failure as one compact row: outcome and reason on one line, no repeated description, Dismiss at its end', async () => {
+        const approval = ApprovalRequestSchema.parse({ ...failedWriteFile(), status: 'failed',
+            execution: { executedAtMs: 3, ok: false, errorCode: 'approval_stale', error: 'approval_stale' } });
+        const screen = await renderCard(approval, { chrome: 'inline' });
+        // The outcome and why share one truncating line.
+        const line = screen.findAll((node) => node.props?.numberOfLines === 1 && typeof node.props.children === 'string'
+            && node.props.children.includes('approvals.failureNotRun'));
+        expect(line.at(0)?.props.children).toContain('approvals.staleFailure');
+        // The live request already says what the Action does; the failure does not repeat it, nor its reason below.
+        expect(screen.getTextContent()).not.toContain('Write . in mqa2-c14-clone.');
+        expect(screen.findByTestId('approval-prompt-execution-failure')).toBeNull();
+        expect(screen.getTextContent().match(/approvals\.staleFailure/g)).toHaveLength(1);
+        expect(screen.findByTestId('approval-prompt-dismiss')).toBeTruthy();
     });
 
     it('heads a non-stale pre-effect failure as not run', async () => {

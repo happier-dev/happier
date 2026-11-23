@@ -37,9 +37,9 @@ export const ApprovalDecisionFooter = React.memo(function ApprovalDecisionFooter
     const primaryAnswerRef = usePendingPromptPrimaryFocus(props.requestId ?? null, !approveDisabled && !props.disabledReason);
 
     if (props.onDismiss) {
-        // The bar's secondary pill (Reject's own weight) keeps the lone action on the card's text column; its plain
-        // text form insets the word from that column.
-        return <ApprovalDecisionBar size="small"
+        // A settled failure is one compact row; Dismiss is its quiet trailing word, the plain form a list row's Deny
+        // takes (UI refinements, 2026-11-23).
+        return <ApprovalDecisionBar size="small" quiet
             reject={{ label: t('approvals.dismiss'), testID: `${testIDPrefix}-dismiss`, onPress: props.onDismiss }} />;
     }
 

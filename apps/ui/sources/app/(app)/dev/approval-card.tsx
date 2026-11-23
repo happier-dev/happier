@@ -6,7 +6,7 @@ import {
   ApprovalCardSpecimen,
 } from '@/components/dev/approvals/ApprovalCardSpecimen';
 
-/** Dev-only: the composer's approval tray. `?scene=open|facts|failed&room=<px>`. */
+/** Dev-only: the composer's approval tray. `?scene=open|facts|failed|earlierFailures&room=<px>`. */
 export default function ApprovalCardDevScreen() {
   const params = useLocalSearchParams<{ scene?: string; room?: string }>();
   const scene =

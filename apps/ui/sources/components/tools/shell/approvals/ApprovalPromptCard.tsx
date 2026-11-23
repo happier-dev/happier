@@ -436,11 +436,16 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
 
     // A Computer ask is asked by its one act line ("Click in Safari?"); its card starts at where.
     const requestTitle = projectCommandTitle ?? proposalLabels?.title ?? (computerAction ? readComputerActLine(computerAction) : actionTitle);
-    // A failed approval leads with its outcome; what was approved follows once, as its summary.
-    const cardTitle = petImport?.outcome ? requestTitle : failureOutcome?.headline ?? requestTitle;
+    // A settled failure is one compact row (UI refinements, 2026-11-23): what failed and why on one truncating line, then
+    // Details. The live request beside it already says what the Action does, so the failure does not repeat that.
+    const settledFailure = failureOutcome !== null && props.approval.status !== 'open' && !petImport?.outcome;
+    const failureReasonInline = settledFailure && failureOutcome?.reason && !checksCarryRefusal ? failureOutcome.reason : null;
+    const cardTitle = petImport?.outcome ? requestTitle
+        : failureOutcome ? (failureReasonInline ? `${failureOutcome.headline} · ${failureReasonInline}` : failureOutcome.headline)
+            : requestTitle;
     // A summary that only repeats the title says nothing more: the card reads it once.
     // The failure headline names the action, so a summary that only repeats that name is not a second line.
-    const failureSummary = failureOutcome && !projectCommand && !petImport?.outcome ? props.approval.summary?.trim() || null : null;
+    const failureSummary = failureOutcome && !settledFailure && !projectCommand && !petImport?.outcome ? props.approval.summary?.trim() || null : null;
     const sameWords = (left: string, right: string) => left.replace(/[.\s]+$/, '').toLowerCase() === right.replace(/[.\s]+$/, '').toLowerCase();
     const repeatsActionName = (text: string) => sameWords(text, requestTitle);
     const cardSubtitle = failureOutcome ? (failureSummary && !repeatsActionName(failureSummary) ? failureSummary : null)
@@ -458,7 +463,7 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
             testID="approval-prompt-card"
             chrome={chrome}
             title={cardTitle}
-            titleNumberOfLines={failureOutcome ? 2 : 1}
+            titleNumberOfLines={settledFailure ? 1 : failureOutcome ? 2 : 1}
             tone={failureOutcome ? 'danger' : undefined}
             icon={failureOutcome ? 'warning-circle' : undefined}
             subtitle={cardSubtitle}
@@ -522,7 +527,7 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
         >
             {consentWithDecision ? null : checksCard}
             {!computerAction && previewSummary && previewSummary !== cardSubtitle?.trim() && !sameWords(previewSummary, cardTitle)
-                && !(failureOutcome && repeatsActionName(previewSummary)) ? (
+                && !settledFailure && !(failureOutcome && repeatsActionName(previewSummary)) ? (
                 <Text style={styles.previewText}>{previewSummary}</Text>
             ) : null}
             {draftAnswer !== null ? (
@@ -531,11 +536,11 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
             {confidentialOutcome ? (
                 <Text testID="approval-prompt-confidential-outcome" style={styles.previewText}>{confidentialOutcome}</Text>
             ) : null}
-            {(!petImport?.outcome && failureOutcome?.reason && !checksCarryRefusal) || failureOutcome?.serviceStartFailure?.recovery ? (
+            {(!petImport?.outcome && failureOutcome?.reason && !checksCarryRefusal && !failureReasonInline) || failureOutcome?.serviceStartFailure?.recovery ? (
                 // The outcome is one paragraph: why it failed and its output, set apart from what was
                 // approved below, so "Review output" never reads as the caption of the command block.
                 <View style={styles.failureGroup}>
-                    {failureOutcome?.reason && !checksCarryRefusal ? (
+                    {failureOutcome?.reason && !checksCarryRefusal && !failureReasonInline ? (
                         <View testID="approval-prompt-execution-failure" accessibilityRole="alert">
                             <Text style={styles.previewText}>{failureOutcome.reason}</Text>
                         </View>

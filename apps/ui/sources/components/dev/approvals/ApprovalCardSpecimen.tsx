@@ -19,13 +19,13 @@ const NO_PERMISSIONS = Object.freeze([]);
 const NO_LOCATIONS = new Map<string, null>();
 const noop = () => {};
 
-export const APPROVAL_CARD_SCENES = ['open', 'facts', 'failed'] as const;
+export const APPROVAL_CARD_SCENES = ['open', 'facts', 'failed', 'earlierFailures'] as const;
 export type ApprovalCardScene = (typeof APPROVAL_CARD_SCENES)[number];
 
 const PAGE = 'https://en.wikipedia.org/wiki/Price_point';
 
 /** The waiting and failed Browser open an Agent asks for, and a request with a longer list of facts. */
-function sceneApproval(scene: ApprovalCardScene, scope: ServerAccountScope): ApprovalRequest {
+function sceneApproval(scene: Exclude<ApprovalCardScene, 'earlierFailures'>, scope: ServerAccountScope): ApprovalRequest {
   // A current request, as an Agent's ask is stored today: it carries the origin it replays from.
   const origin = (actionId: string) => ({
     v: 1 as const,
@@ -87,6 +87,22 @@ function sceneApproval(scene: ApprovalCardScene, scope: ServerAccountScope): App
   } as ApprovalRequest;
 }
 
+/** The tray's requests: one per scene, or for `earlierFailures` two settled failures above a waiting request. */
+function sceneRequests(scene: ApprovalCardScene, scope: ServerAccountScope): readonly OpenApprovalAttentionArtifactForSession[] {
+  const entry = (id: string, approval: ApprovalRequest): OpenApprovalAttentionArtifactForSession => ({
+    artifact: { id: `dev-approval-card-${id}`, header: { title: null, serverId: scope.serverId } },
+    approval,
+  } as OpenApprovalAttentionArtifactForSession);
+  if (scene !== 'earlierFailures') return [entry(scene, sceneApproval(scene, scope))];
+  const notRun = {
+    ...sceneApproval('facts', scope),
+    status: 'failed',
+    decision: { kind: 'approve', decidedAtMs: 2 },
+    execution: { executedAtMs: 3, ok: false, errorCode: 'approval_stale', error: 'approval_stale' },
+  } as ApprovalRequest;
+  return [entry('failed', sceneApproval('failed', scope)), entry('not-run', notRun), entry('open', sceneApproval('open', scope))];
+}
+
 function useSpecimenTranscriptSource(): SessionTranscriptSource {
   const router = useRouter();
   return React.useMemo(
@@ -115,7 +131,7 @@ function useSpecimenTranscriptSource(): SessionTranscriptSource {
 /**
  * Dev-only: the composer's approval tray at the foot of the page, as a phone shows it, drawn by the real tray and the
  * real approval card. `scene=open` a waiting Browser open, `facts` a request with a longer list of facts, `failed` an
- * approved Browser open whose effect was refused. `room` is the height the composer leaves the tray.
+ * approved Browser open whose effect was refused, `earlierFailures` two settled failures folded above a waiting request. `room` is the height the composer leaves the tray.
  */
 export function ApprovalCardSpecimen(
   props: Readonly<{ scene: ApprovalCardScene; roomPx: number }>,
@@ -126,17 +142,7 @@ export function ApprovalCardSpecimen(
     readonly OpenApprovalAttentionArtifactForSession[]
   >(
     () =>
-      scope
-        ? [
-            {
-              artifact: {
-                id: `dev-approval-card-${props.scene}`,
-                header: { title: null, serverId: scope.serverId },
-              },
-              approval: sceneApproval(props.scene, scope),
-            },
-          ]
-        : [],
+      scope ? sceneRequests(props.scene, scope) : [],
     [props.scene, scope],
   );
   if (!scope) return null;
