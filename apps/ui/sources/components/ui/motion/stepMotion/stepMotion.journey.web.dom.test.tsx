@@ -651,8 +651,8 @@ it('keeps the cold recovery shell painted while Back replaces it with Welcome', 
         await act(async () => container.querySelector('button')!.click());
         expect(container.textContent).toBe('Load Welcome');
         const frozen = [...document.querySelectorAll<HTMLElement>('body > [aria-hidden="true"]')].find(node => node.inert);
-        expect(frozen?.textContent).toContain('Recovery planet');
-        expect(frozen?.textContent).toContain('Password recovery');
+        expect(frozen?.textContent ?? '').toContain('Recovery planet');
+        expect(frozen?.textContent ?? '').toContain('Password recovery');
         await act(async () => container.querySelector('button')!.click());
         expect(document.activeElement).toBe(container.querySelector('h1'));
         expect(container.textContent).toBe('Welcome');
