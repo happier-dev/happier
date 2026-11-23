@@ -559,6 +559,14 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   const originalDelivery = recordedAnswer?.artifactId === props.artifactId ? recordedAnswer.delivery : undefined;
   const deliveryFailure = originalDelivery?.status === 'rejected'
     ? presentActionFailureOutcome({ errorCode: originalDelivery.code, error: originalDelivery.code, failureCause: originalDelivery.failureCause }) : null;
+  // The result's delivery is the receipt's own fact, said in the Session ask-record words; a delivered result stays quiet.
+  const heldCause = originalDelivery?.status === 'held' && originalDelivery.failureCause && 'errorCode' in originalDelivery.failureCause
+    ? originalDelivery.failureCause.errorCode : null;
+  const deliveryReceipt = deliveryFailure ? { detail: t('session.askRecord.notSent'), subtitle: deliveryFailure.reason ?? undefined }
+    : originalDelivery?.status === 'held' ? { detail: t('session.askRecord.waitsForYou'),
+      subtitle: heldCause === 'held_by_person' ? t('errors.sessionHeldByPerson') : undefined }
+      : originalDelivery?.status === 'outcomeUnknown'
+        ? { detail: t('session.askRecord.unsure'), subtitle: t('session.askRecord.unsureHint') } : null;
   const executionFailureResult = builtInExecutionFailure ?? (parsed.kind === 'host_action'
     || parsed.request.status !== 'failed' && parsed.request.status !== 'outcome_unknown'
     || parsed.request.execution?.ok !== false
@@ -643,9 +651,9 @@ export function useApprovalReview(props: ApprovalReviewInput) {
         mode="info"
         showChevron={false}
       />
-      {deliveryFailure ? (
+      {deliveryReceipt ? (
         <Item testID="approvals.result-delivery" title={t('runs.delivery.title')}
-          detail={t('session.askRecord.notSent')} subtitle={deliveryFailure.reason ?? undefined}
+          detail={deliveryReceipt.detail} subtitle={deliveryReceipt.subtitle}
           subtitleLines={0} mode="info" showChevron={false} />
       ) : null}
       {/* Executed means the open was accepted; the bound operation says whether the page opened. */}

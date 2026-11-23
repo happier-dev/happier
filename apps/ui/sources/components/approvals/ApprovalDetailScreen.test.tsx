@@ -1784,6 +1784,31 @@ describe('ApprovalDetailScreen', () => {
     await screen.unmount();
   });
 
+  it.each([
+    ['held for a person-stopped Session', { status: 'held', localId: 'approval-result:original', code: 'session_input_target_unavailable',
+      failureCause: { phase: 'session.input.admission', errorClass: 'Error', errorCode: 'held_by_person', httpStatus: null } },
+    'session.askRecord.waitsForYou', 'errors.sessionHeldByPerson'],
+    ['of unknown outcome', { status: 'outcomeUnknown', localId: 'approval-result:original', code: 'session_input_outcome_unknown' },
+      'session.askRecord.unsure', 'session.askRecord.unsureHint'],
+  ] as const)('says a result delivery %s beside the executed Action, from its receipt', async (_name, delivery, detail, subtitle) => {
+    const artifact = await createDaemonRoutedApprovalArtifact('session.stop');
+    const request = ApprovalRequestV2Schema.parse(JSON.parse(artifact.body));
+    const execution = { executedAtMs: 3, ok: true, result: {} } as const;
+    const settled = ApprovalRequestV2Schema.parse({ ...request, automaticChecks: undefined, status: 'executed', updatedAtMs: 3,
+      decision: { kind: 'approve', decidedAtMs: 2 }, execution });
+    currentArtifact = artifact;
+    remoteArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(settled), body: JSON.stringify(settled) };
+    daemonReply = { ok: true, result: { status: 'executed', execution, delivery } };
+    const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId={artifact.id} />);
+    await screen.pressByTestIdAsync('approvals.approve');
+    await vi.waitFor(() => expect(approvalItem(screen, 'approvals.status')?.props.detail).toBe('approvals.status.executed'));
+    // Two facts from two owners: the Action executed; its result's delivery is what the receipt says.
+    expect(approvalItem(screen, 'approvals.result-delivery')?.props.detail).toBe(detail);
+    expect(approvalItem(screen, 'approvals.result-delivery')?.props.subtitle).toBe(subtitle);
+    await screen.unmount();
+  });
+
   it('preserves and presents the typed Workflow refusal from a settled Setup approval', async () => {
     await prepareApprovalFixture();
     const request = ApprovalRequestV2Schema.parse({
