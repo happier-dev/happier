@@ -26,6 +26,19 @@ const segmentedIn = (element: ReactNode) =>
   );
 
 describe('one typed field decides how a fixed choice is drawn, for every form', () => {
+  it('keeps an authored short select segmented when it declares a placeholder', async () => {
+    const render = (value?: string) => <HappierInputField field={{ ...metric, placeholder: 'Choose a metric' }}
+      value={value} selection={value} options={two} frame="none" theme={theme}
+      onChange={() => {}} testID="metric" />;
+    const view = mountThroughReactNativeWeb(render());
+    const radios = () => [...view.container.querySelectorAll('[data-testid="metric.segmented"] [role="radio"]')];
+    try {
+      expect(radios().map(radio => radio.getAttribute('aria-checked'))).toEqual(['false', 'false']);
+      await view.render(render('cost'));
+      expect(radios().map(radio => radio.getAttribute('aria-checked'))).toEqual(['false', 'true']);
+    } finally { view.unmount(); }
+  });
+
   it('lets a suggested string choice be selected or replaced with a new name', async () => {
     const changes = vi.fn();
     function Profile() {
@@ -128,27 +141,6 @@ describe('one typed field decides how a fixed choice is drawn, for every form', 
       expect(trigger(view)?.getAttribute('aria-disabled')).not.toBe('true');
       await view.render(render('failed'));
       expect(trigger(view)?.getAttribute('aria-disabled')).toBe('true');
-    } finally { view.unmount(); }
-  });
-  it('uses standard placeholder ink for an inherited choice and value ink once it is set', async () => {
-    const options = [...two, { value: 'sessions', label: 'Sessions' }, { value: 'steers', label: 'Steers' }, { value: 'busy', label: 'Busy' }];
-    const render = (value: string | undefined, placeholder?: string) => <HappierInputField
-      field={{ ...metric, ...(placeholder ? { placeholder } : {}) }}
-      value={value} selection={value} options={options} frame="none" theme={theme}
-      onChange={() => {}} testID="metric" />;
-    const view = mountThroughReactNativeWeb(render(undefined));
-    const color = (label: string) => {
-      const node = [...view.container.querySelectorAll<HTMLElement>('[data-testid="metric.trigger"] *')]
-        .find(element => element.childElementCount === 0 && element.textContent === label);
-      expect(node).toBeDefined();
-      return window.getComputedStyle(node!).color;
-    };
-    try {
-      const placeholderColor = color('Choose…');
-      await view.render(render(undefined, 'Cost (This page)'));
-      expect(color('Cost (This page)')).toBe(placeholderColor);
-      await view.render(render('cost', 'Cost (This page)'));
-      expect(color('Cost')).not.toBe(placeholderColor);
     } finally { view.unmount(); }
   });
   it('keeps the declared all answer and explains why its empty inventory cannot be opened', async () => {

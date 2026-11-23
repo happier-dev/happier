@@ -4,22 +4,26 @@ import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentU
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { readInputPath } from '@happier-dev/protocol/inputs';
+import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type {
   WidgetInputBindingsV1,
   WidgetLayoutGroupV1,
   WidgetSurfaceRefV1,
 } from '@happier-dev/protocol/widgets';
-import { isSameWidgetDefinitionV1, widgetCandidateDefinitionV1 } from '@happier-dev/protocol/widgets';
+import { composeWidgetGroupContextV1, isSameWidgetDefinitionV1, projectWidgetBindingInputV1, widgetCandidateDefinitionV1 } from '@happier-dev/protocol/widgets';
 
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { WidgetSetupPopover } from '@/components/widgets/add/WidgetSetupPopover';
-import type { WidgetSetupSubmitResult } from '@/components/widgets/add/widgetSetupModel';
+import type { WidgetSetupField, WidgetSetupSubmitResult } from '@/components/widgets/add/widgetSetupModel';
 import {
   buildWidgetCandidateSetup,
   runWidgetSetupCommand,
+  WIDGET_SESSION_CONTEXT_SLOT,
   widgetDefinitionOfCandidate,
+  widgetProvidedContext,
   type WidgetSurfaceContext,
 } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { resolveWidgetInstanceTitle, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
@@ -28,11 +32,50 @@ import { t } from '@/text';
 
 import {
   buildWidgetGroupInputsCandidate,
+  describeWidgetBindingValue,
   describeWidgetGroupInputsBinding,
 } from './widgetGroupInputs';
 import { WIDGET_GROUP_ICON } from './widgetGroupMenu';
 
 const NO_FIELDS: readonly never[] = [];
+
+/** Read the children’s bindings through the same context composition and projection as execution. */
+function readInheritedGroupFields(
+  group: WidgetLayoutGroupV1,
+  candidates: readonly (WidgetCandidate | null)[],
+  surfaceOwner: WidgetSurfaceRefV1['owner'] | undefined,
+  context: WidgetSurfaceContext,
+  labels: WidgetBindingValueLabels,
+): ReadonlyMap<string, (NonNullable<WidgetSetupField['inherited']> & { value: JsonValue }) | null> {
+  const composed = composeWidgetGroupContextV1({ providedContext: widgetProvidedContext(context), surfaceOwner, groupBindings: group.context });
+  const readings = new Map<string, (NonNullable<WidgetSetupField['inherited']> & { value: JsonValue }) | null>();
+  for (const [index, { instance }] of group.children.entries()) {
+    const fields = candidates[index]?.inputs?.fields.filter(field => field.contextMode !== 'own'
+      && !field.connectedAccountOptions && !group.context?.[field.path] && instance.bindings[field.path]?.kind === 'context');
+    if (!fields?.length) continue;
+    const projected = projectWidgetBindingInputV1({ instance, fields, context: composed, viewerValues: {} });
+    for (const field of fields) {
+      const binding = instance.bindings[field.path];
+      if (binding?.kind !== 'context') continue;
+      const value = readInputPath(projected, field.path) as JsonValue | undefined;
+      const prior = readings.get(field.path);
+      if (value === undefined || prior === null || prior && !sameStrictJsonValue(prior.value, value)) {
+        readings.set(field.path, null);
+        continue;
+      }
+      const groupBinding = group.context?.[binding.slot];
+      const surfaceSlot = groupBinding?.kind === 'context' ? groupBinding.slot : binding.slot;
+      const offer = context.slots?.[surfaceSlot];
+      const session = surfaceSlot === WIDGET_SESSION_CONTEXT_SLOT ? context.session : undefined;
+      const valueLabel = groupBinding?.kind === 'value'
+        ? labels[binding.slot] ?? describeWidgetBindingValue(value) : session?.label ?? offer?.value?.label;
+      const sourceLabel = groupBinding?.kind === 'value' ? t('widgetFrame.followingGroup')
+        : session ? t('widgetAdd.thisSession') : offer?.label;
+      readings.set(field.path, prior ?? (valueLabel && sourceLabel ? { value, valueLabel, sourceLabel } : null));
+    }
+  }
+  return readings;
+}
 
 /**
  * A group's Inputs… (lab wginputs I): the A4 Set up step — the same header, field rows, value
@@ -129,10 +172,13 @@ export function useWidgetGroupInputsEditor(
           t('widgetAdd.saveFailed'),
         ),
     });
+    const inherited = readInheritedGroupFields(group, input.candidates, scope?.owner, context, labels);
     return {
       ...setup,
-      // Missing group overrides leave the widget's surface context in effect.
-      fields: setup.fields.map(entry => ({ ...entry, inheritUnbound: true })),
+      fields: setup.fields.map(entry => {
+        const reading = inherited.get(entry.field.path);
+        return reading ? { ...entry, inherited: { valueLabel: reading.valueLabel, sourceLabel: reading.sourceLabel } } : entry;
+      }),
       initial: { bindings },
       title: t('widgetFrame.groupInputsTitle', { group: input.title }),
       hint: t('widgetFrame.groupInputsHint'),
@@ -153,6 +199,7 @@ export function useWidgetGroupInputsEditor(
     group,
     input.title,
     input.candidates,
+    labels,
     scope,
     setInputs,
     testID,

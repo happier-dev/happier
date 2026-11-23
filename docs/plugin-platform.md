@@ -9296,9 +9296,11 @@ still passes exact-target, input and read-authority admission.
 Group input discovery uses the child that declares each follow-able field;
 child-owned and credential fields are not group inputs. The editor and saved-group
 Add pane send that child's definition to the ordinary options admission owner. In the
-group editor, an unbound field with a resolved surface value shows that value
-and its origin as placeholder text. Saving a group input persists only the
-explicit bindings. If the shared Action refuses a binding because a following
+group editor, an unset field shows an inherited value only when the following
+children resolve to one value in the composed group context. The existing
+placeholder carries the reading in text and popup inputs. A short segmented
+choice carries it in the row’s secondary line. Saving a group input persists
+only the explicit bindings. If the shared Action refuses a binding because a following
 widget’s inputs would become invalid, the editor names that widget.
 
 Home and widget areas render groups through one UI owner,

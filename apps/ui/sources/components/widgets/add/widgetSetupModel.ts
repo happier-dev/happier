@@ -44,8 +44,8 @@ export type WidgetSetupContextOffer = Readonly<{
 export type WidgetSetupField = Readonly<{
     field: InputFieldHint;
     follow?: WidgetSetupContextOffer;
-    /** This setup leaves an unbound input to the surface. The offer is a placeholder, never a draft value. */
-    inheritUnbound?: true;
+    /** The group's opening reading for children that follow it. This never supplies a draft value. */
+    inherited?: Readonly<{ valueLabel: string; sourceLabel: string }>;
     /**
      * The value is each viewer's own (a connected account on a shared surface): every viewer reads
      * with their own connection for this purpose, so the step shows it and never asks for it.

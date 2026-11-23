@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierInputField, HappierPressable, happierPageTextMetrics, resolveHappierActionFieldPresentation } from '@happier-dev/plugin-ui/presentation';
+import { HappierInputField, HappierPressable, happierPageTextMetrics, resolveHappierActionFieldPresentation, resolveHappierChoiceControl } from '@happier-dev/plugin-ui/presentation';
 import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readInputOptionValue } from '@happier-dev/protocol/inputs';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
@@ -77,10 +77,10 @@ export function WidgetSetupFieldRow(props: Readonly<{
     return <InputFieldRow {...props} />;
 }
 
-function rowSubtitle(props: Readonly<{ entry: WidgetSetupField; row: WidgetSetupRow }>): string | undefined {
+function rowSubtitle(props: Readonly<{ entry: WidgetSetupField; row: WidgetSetupRow }>, inherited?: string): string | undefined {
     if (props.row.kind === 'invalid') return t('widgetAdd.invalidReason');
     if (props.row.kind === 'needed' && props.entry.neededHint) return props.entry.neededHint;
-    return props.entry.field.description;
+    return inherited ?? props.entry.field.description;
 }
 
 function NeededTag(): React.ReactElement {
@@ -228,19 +228,7 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
     const { theme } = useUnistyles();
     const presentationTheme = usePluginUiTheme(theme);
     const { entry, row } = props;
-    const follow = entry.follow;
     const choices = entry.field.widget === 'select' || entry.field.widget === 'multiselect';
-    const inherited = (row.kind === 'needed' || choices) && entry.inheritUnbound && follow?.values.length === 1
-        ? t('widgetAdd.inheritedValue', { value: follow.values[0]!.label, source: follow.label })
-        : undefined;
-    const field = React.useMemo(() => {
-        if (inherited !== undefined) return { ...entry.field, placeholder: inherited };
-        // A list input that declares no placeholder would draw as a blank block: say what to type in it.
-        if (entry.field.widget === 'text_list' && entry.field.placeholder === undefined) {
-            return { ...entry.field, placeholder: t(entry.field.listSeparator === 'newline' ? 'widgetAdd.listOnePerLine' : 'widgetAdd.listCommaSeparated') };
-        }
-        return entry.field;
-    }, [entry.field, inherited]);
     const value = props.plainValue ?? (row.kind === 'follows' ? entry.follow?.values[0]?.value : undefined);
     const selection = choices ? value : undefined;
     const choicesOptions = row.kind === 'choices' ? row.choices : props.options;
@@ -251,7 +239,21 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
         ...(option.disabled ? { disabled: true } : {}),
         testID: `${props.testID}.option.${index}`,
     })), [choicesOptions, props.testID]);
-    const presentation = resolveHappierActionFieldPresentation(field, value, selection);
+    const presentation = resolveHappierActionFieldPresentation(entry.field, value, selection);
+    const inherited = row.kind === 'needed' && props.plainValue === undefined && entry.inherited
+        ? t('widgetAdd.inheritedValue', { value: entry.inherited.valueLabel, source: entry.inherited.sourceLabel })
+        : undefined;
+    const inheritedSubtitle = inherited !== undefined && entry.field.allowCustomValue !== true
+        && resolveHappierChoiceControl(presentation, options) === 'segmented' ? inherited : undefined;
+    const placeholder = inheritedSubtitle === undefined ? inherited : undefined;
+    const field = React.useMemo(() => {
+        if (placeholder !== undefined) return { ...entry.field, placeholder };
+        // A list input that declares no placeholder would draw as a blank block: say what to type in it.
+        if (entry.field.widget === 'text_list' && entry.field.placeholder === undefined) {
+            return { ...entry.field, placeholder: t(entry.field.listSeparator === 'newline' ? 'widgetAdd.listOnePerLine' : 'widgetAdd.listCommaSeparated') };
+        }
+        return entry.field;
+    }, [entry.field, placeholder]);
     // The shared field exposes no focus handle, so the row hands the keyboard to the first control
     // the field drew (web only; a native keyboard arrives with the person's own tap).
     const controlHost = React.useRef<View>(null);
@@ -262,7 +264,7 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
     }, [props.autoOpen, props.focusRequest]);
     const subtitle = row.kind === 'invalid' && !entry.follow && row.label
         ? `${row.label} · ${rowSubtitle(props)}`
-        : choices || (row.kind === 'needed' && entry.neededHint) ? rowSubtitle(props) : field.description;
+        : choices || (row.kind === 'needed' && entry.neededHint) ? rowSubtitle(props, inheritedSubtitle) : field.description;
     const titleAccessory = row.kind === 'needed' && field.required ? <NeededTag /> : undefined;
     // The shared field decides how a fixed choice is drawn (two to four short ones are a segmented
     // control, anything else one compact choice field); the row only places them: beside the title when

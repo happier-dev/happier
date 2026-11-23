@@ -1,7 +1,8 @@
 import * as React from 'react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { HappierSegmentedChoice } from '@happier-dev/plugin-ui/presentation';
 import {
   composeWidgetGroupContextV1, createWidgetActionInputResolverV1, createWidgetAreaActionPortV1, createWidgetSurfaceArtifactPortV1,
   resolveWidgetBindingsV1, type WidgetInputBindingsV1, type WidgetLayoutGroupV1,
@@ -11,7 +12,7 @@ import { createWorkBoardArtifactBoundary } from '@/dev/testkit/harness/workBoard
 import type { WidgetCandidate } from '../widgetCatalog';
 import type { WidgetSetupSubmitResult } from '../add/widgetSetupModel';
 import { WidgetSetupStep } from '../add/WidgetSetupStep';
-import { runWidgetSetupCommand } from '../surface/widgetSurfaceSetup';
+import { runWidgetSetupCommand, type WidgetSurfaceContext } from '../surface/widgetSurfaceSetup';
 import { WidgetSetupPopover } from '../add/WidgetSetupPopover';
 import { useWidgetGroupInputsEditor } from './useWidgetGroupInputsEditor';
 
@@ -174,6 +175,86 @@ it('shows inherited values as placeholders without setting group overrides', asy
   expect(screen.findByTestId('edit.field.basis.control.trigger')?.props.accessibilityLabel).toBe('Cost basis: common.choose');
   await screen.pressByTestIdAsync('edit.submit');
   expect(setInputs).toHaveBeenCalledWith({ period: { kind: 'value', value: 'Today' } });
+});
+
+describe('group inherited readings', () => {
+  const definition = { kind: 'builtin', id: 'fixture' } as const;
+  const candidate: WidgetCandidate = {
+    key: 'summary', title: 'Summary', pluginName: 'Usage', sharedPluginName: false,
+    icon: 'squares-four', homeDefault: 'available', target: 'app', definition,
+    inputs: { fields: [
+      { path: 'period', title: 'Period', widget: 'text', contextMode: 'follow' },
+      { path: 'projects', title: 'Projects', widget: 'multiselect', contextMode: 'follow',
+        options: [{ value: 'one', label: 'One' }, { value: 'two', label: 'Two' }] },
+      { path: 'basis', title: 'Cost basis', widget: 'select', contextMode: 'follow',
+        options: [{ value: 'auto', label: 'Automatic' }, { value: 'reported', label: 'Reported' }] },
+    ] },
+  };
+  const slots = {
+    period: { label: 'This page', value: { value: 'Today', label: 'Today' } },
+    calendar: { label: 'This calendar', value: { value: 'Yesterday', label: 'Yesterday' } },
+    basis: { label: 'This page', value: { value: 'auto', label: 'Automatic' } },
+    projects: { label: 'This page', value: { value: [], label: 'All projects' } },
+    work: { label: 'This project area', value: { value: ['one', 'two'], label: '2 projects' } },
+  } satisfies NonNullable<WidgetSurfaceContext['slots']>;
+  const follow = (slot: string) => ({ kind: 'context', slot } as const);
+  const pin = (value: string) => ({ kind: 'value', value } as const);
+  const inherited = (value: string, source: string) => `widgetAdd.inheritedValue(value=${value},source=${source})`;
+
+  const mount = async (children: readonly WidgetInputBindingsV1[], bindings: WidgetInputBindingsV1 = {}) => {
+    const setInputs = vi.fn(async (): Promise<WidgetSetupSubmitResult> => ({ ok: true }));
+    const hook = await renderHook(() => useWidgetGroupInputsEditor({
+      group: { kind: 'group', id: 'group', width: 'full', frameStyle: 'card', dividers: 'hairline',
+        context: bindings, children: children.map((child, index) => ({
+          kind: 'widget', instance: { v: 1, id: `child-${index}`, definition, bindings: child },
+        })) },
+      candidates: children.map(() => candidate), title: 'Usage',
+      scope: { serverId: 'home', accountId: 'actor', owner: { kind: 'home' } },
+      context: { slots }, testID: 'group', setInputs,
+    }));
+    await act(async () => hook.getCurrent().editInputs!.onPress());
+    const popover = hook.getCurrent().popover;
+    if (!React.isValidElement<React.ComponentProps<typeof WidgetSetupPopover>>(popover) || popover.type !== WidgetSetupPopover) {
+      throw new Error('Missing widget setup popover');
+    }
+    const screen = await renderScreen(<WidgetSetupStep setup={popover.props.setup()} phone={false} testID="edit"
+      onDone={popover.props.onDone ?? popover.props.onRequestClose} />);
+    return { screen, setInputs };
+  };
+
+  it('shows the same-slot inherited reading under the short choice and saves no overrides', async () => {
+    const { screen, setInputs } = await mount([{ basis: follow('basis') }]);
+    expect(screen.getTextContent()).toContain(inherited('Automatic', 'This page'));
+    const control = screen.findByType(HappierSegmentedChoice);
+    expect(control.props.segments.map((segment: { selected: boolean }) => segment.selected)).toEqual([false, false]);
+    await screen.pressByTestIdAsync('edit.submit');
+    expect(setInputs).toHaveBeenCalledWith({});
+  });
+
+  it.each([
+    ['uses the child’s declared slot', [{ period: follow('calendar') }], inherited('Yesterday', 'This calendar')],
+    ['ignores a pinned child while showing what the following child reads', [{ period: pin('Monday') }, { period: follow('calendar') }], inherited('Yesterday', 'This calendar')],
+    ['makes no claim for competing child contexts', [{ period: follow('period') }, { period: follow('calendar') }], undefined],
+    ['makes no claim when the followed slot has nothing to inherit', [{ period: follow('missing') }], undefined],
+  ] as const)('%s', async (_name, children, expected) => {
+    const { screen } = await mount(children);
+    const input = screen.findByTestId('edit.field.period.input')!;
+    expect(input.props.value).toBe('');
+    expect(input.props.placeholder).toBe(expected);
+  });
+
+  it('uses the one inherited list to read a count of two Projects in a popup field', async () => {
+    const { screen } = await mount([{ projects: follow('work') }]);
+    expect(screen.findByTestId('edit.field.projects.control.trigger')?.props.accessibilityLabel)
+      .toBe(`Projects: ${inherited('2 projects', 'This project area')}`);
+  });
+
+  it('shows a set short choice as selected radios with no inherited claim', async () => {
+    const { screen } = await mount([{ basis: follow('basis') }], { basis: pin('reported') });
+    const control = screen.findByType(HappierSegmentedChoice);
+    expect(control.props.segments.map((segment: { selected: boolean }) => segment.selected)).toEqual([false, true]);
+    expect(screen.getTextContent()).not.toContain('widgetAdd.inheritedValue');
+  });
 });
 
 it('names the child whose effective inputs reject the group edit', async () => {

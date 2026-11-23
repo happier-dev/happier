@@ -64,7 +64,7 @@ export function HappierChoiceField<Value = string>(
     minimumSelections?: number;
     required?: boolean;
     disabled?: boolean;
-    /** Quiet text for a missing choice; an explicitly empty multiple selection uses it as its reading. */
+    /** The reading while nothing is chosen ("All agents"); the shared "Choose…" when absent. */
     placeholder?: string;
     /**
      * A value the options cannot name (a period, a date range) is read here by the host. With
@@ -129,8 +129,9 @@ export function HappierChoiceField<Value = string>(
     localization?.translate('happier.plugin-ui.select.choose', 'Choose…') ??
     'Choose…';
   const reading = resolveHappierFieldBoxLabel({
-    // An explicitly empty multiple selection ("All agents") is an answer. A missing value keeps placeholder ink.
-    value: summary ?? (props.multiple && Array.isArray(props.value) && props.value.length === 0 ? props.placeholder : null),
+    // A declared empty reading ("All agents") is a valid answer, not an unmade choice, so it keeps value ink.
+    value:
+      summary ?? (props.placeholder === undefined ? null : props.placeholder),
     placeholder,
     colors: {
       valueColor: theme.colors.text,
