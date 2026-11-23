@@ -260,6 +260,7 @@ describe('Sentry mounted detail lifetime', () => {
     }, harness.context);
 
     await harness.waitForRequest();
+    expect(harness.request.mock.calls[0]?.[1]?.signal).toBe(harness.caller.signal);
     harness.caller.abort(new DOMException('The mounted reader was closed.', 'AbortError'));
     const result = await pending;
     expect(result).toMatchObject({
@@ -297,7 +298,6 @@ describe('Sentry mounted detail lifetime', () => {
     await harness.waitForRequest();
     harness.caller.abort();
 
-    // The bound adds a second way to stop; it must not rename the first one.
     expect(await pending).toMatchObject({
       kind: 'unavailable',
       failure: { code: 'sentry-cancelled' },

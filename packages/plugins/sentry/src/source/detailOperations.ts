@@ -18,10 +18,7 @@
  */
 
 import type { SentrySourceContext } from '../api/sentryApiClient.js';
-import {
-  createBoundedInvocation,
-  type CursorCycleWalkV1,
-} from '@happier-dev/triage-sources/runtime';
+import type { CursorCycleWalkV1 } from '@happier-dev/triage-sources/runtime';
 import {
   fitActionResultPageV1,
   fitActionResultSequenceV1,
@@ -311,42 +308,34 @@ export async function readSentryIssue(
   context: SentrySourceContext,
 ): Promise<SentryReadIssueResultV1> {
   const parsed = SentryReadIssueInputV1Schema.parse(input);
-
-  const bounded = createBoundedInvocation({
-    callerSignal: context.signal,
+  const routed = admitSentryEntryInvocation({
+    localInstanceKey: parsed.instance.localInstanceKey,
+    configurationToken: parsed.instance.configuration.token,
+    localRef: parsed.localRef,
   });
-  try {
-    const routed = admitSentryEntryInvocation({
-      localInstanceKey: parsed.instance.localInstanceKey,
-      configurationToken: parsed.instance.configuration.token,
-      localRef: parsed.localRef,
-    });
-    if (!routed.ok) {
-      return Object.freeze({ kind: 'unavailable' as const, failure: routed.failure });
-    }
-
-    const client = await createSentryApiClient(context, {
-      account: parsed.instance.binding.account,
-      deployment: routed.deployment,
-      nowMs: () => Date.now(),
-      signal: bounded.signal,
-    });
-    const read = await readSentryIssueProjection(client, {
-      instance: routed.instance,
-      entryId: parsed.localRef.entryId,
-      projection: parsed.projection,
-      nowMs: Date.now(),
-    });
-    if (!read.ok) {
-      return Object.freeze({
-        kind: 'unavailable' as const,
-        failure: toTriageFailure(read.failure),
-      });
-    }
-    return fitSentryReadIssueResult(read.value);
-  } finally {
-    bounded.dispose();
+  if (!routed.ok) {
+    return Object.freeze({ kind: 'unavailable' as const, failure: routed.failure });
   }
+
+  const client = await createSentryApiClient(context, {
+    account: parsed.instance.binding.account,
+    deployment: routed.deployment,
+    nowMs: () => Date.now(),
+    signal: context.signal,
+  });
+  const read = await readSentryIssueProjection(client, {
+    instance: routed.instance,
+    entryId: parsed.localRef.entryId,
+    projection: parsed.projection,
+    nowMs: Date.now(),
+  });
+  if (!read.ok) {
+    return Object.freeze({
+      kind: 'unavailable' as const,
+      failure: toTriageFailure(read.failure),
+    });
+  }
+  return fitSentryReadIssueResult(read.value);
 }
 
 /** One bounded page of the retained events for one issue. */
@@ -355,71 +344,63 @@ export async function listSentryIssueEvents(
   context: SentrySourceContext,
 ): Promise<SentryIssueEventsResultV1> {
   const parsed = SentryIssueEventsInputV1Schema.parse(input);
-
-  const bounded = createBoundedInvocation({
-    callerSignal: context.signal,
+  const routed = admitSentryEntryInvocation({
+    localInstanceKey: parsed.instance.localInstanceKey,
+    configurationToken: parsed.instance.configuration.token,
+    localRef: parsed.localRef,
   });
-  try {
-    const routed = admitSentryEntryInvocation({
-      localInstanceKey: parsed.instance.localInstanceKey,
-      configurationToken: parsed.instance.configuration.token,
-      localRef: parsed.localRef,
-    });
-    if (!routed.ok) {
-      return Object.freeze({ kind: 'unavailable' as const, failure: routed.failure });
-    }
-
-    // The ordinary walk is the absence of a spread choice, and the choice a walk
-    // started under is frozen in every continuation it mints.
-    const sample = parsed.sample === true;
-    const walk = resolveWalkPosition(parsed.continuation, parsed.limit, sample);
-    if (!walk.ok) {
-      return Object.freeze({
-        kind: 'unavailable' as const,
-        failure: toTriageFailure(CONTINUATION_UNREADABLE),
-      });
-    }
-
-    const client = await createSentryApiClient(context, {
-      account: parsed.instance.binding.account,
-      deployment: routed.deployment,
-      nowMs: () => Date.now(),
-      signal: bounded.signal,
-    });
-    const page = await readSentryIssueEventsPage(client, {
-      instance: routed.instance,
-      entryId: parsed.localRef.entryId,
-      limit: parsed.limit,
-      sample,
-      position: walk.position,
-      nowMs: Date.now(),
-    });
-    if (!page.ok) {
-      return Object.freeze({
-        kind: 'unavailable' as const,
-        failure: toTriageFailure(page.failure),
-      });
-    }
-
-    const position = projectWalkPosition(page.value.nextPage, parsed.limit, sample);
-    return fitActionResultPageV1(
-      page.value.rows,
-      position.continuation,
-      (rows, omittedCount, continuation, continuationOmitted) => Object.freeze({
-        kind: 'events' as const,
-        rows: Object.freeze([...rows]),
-        omittedRowCount: page.value.omittedRowCount + omittedCount,
-        projectionTruncated: page.value.projectionTruncated || omittedCount > 0,
-        ...(continuationOmitted
-          ? { incomplete: 'continuationUnavailable' as const }
-          : continuation === undefined
-            ? position
-            : { continuation }),
-      }),
-    ).result;
-  } finally {
-    bounded.dispose();
+  if (!routed.ok) {
+    return Object.freeze({ kind: 'unavailable' as const, failure: routed.failure });
   }
+
+  // The ordinary walk is the absence of a spread choice, and the choice a walk
+  // started under is frozen in every continuation it mints.
+  const sample = parsed.sample === true;
+  const walk = resolveWalkPosition(parsed.continuation, parsed.limit, sample);
+  if (!walk.ok) {
+    return Object.freeze({
+      kind: 'unavailable' as const,
+      failure: toTriageFailure(CONTINUATION_UNREADABLE),
+    });
+  }
+
+  const client = await createSentryApiClient(context, {
+    account: parsed.instance.binding.account,
+    deployment: routed.deployment,
+    nowMs: () => Date.now(),
+    signal: context.signal,
+  });
+  const page = await readSentryIssueEventsPage(client, {
+    instance: routed.instance,
+    entryId: parsed.localRef.entryId,
+    limit: parsed.limit,
+    sample,
+    position: walk.position,
+    nowMs: Date.now(),
+  });
+  if (!page.ok) {
+    return Object.freeze({
+      kind: 'unavailable' as const,
+      failure: toTriageFailure(page.failure),
+    });
+  }
+
+  const position = projectWalkPosition(page.value.nextPage, parsed.limit, sample);
+  return fitActionResultPageV1(
+    page.value.rows,
+    position.continuation,
+    (rows, omittedCount, continuation, continuationOmitted) => Object.freeze({
+      kind: 'events' as const,
+      rows: Object.freeze([...rows]),
+      omittedRowCount: page.value.omittedRowCount + omittedCount,
+      projectionTruncated: page.value.projectionTruncated || omittedCount > 0,
+      ...(continuationOmitted
+        ? { incomplete: 'continuationUnavailable' as const }
+        : continuation === undefined
+          ? position
+          : { continuation }),
+    }),
+  ).result;
 }
 
 /** One bounded page of the value distribution of a single tag key. */
@@ -428,69 +409,61 @@ export async function listSentryTagValues(
   context: SentrySourceContext,
 ): Promise<SentryTagValuesResultV1> {
   const parsed = SentryTagValuesInputV1Schema.parse(input);
-
-  const bounded = createBoundedInvocation({
-    callerSignal: context.signal,
+  const routed = admitSentryEntryInvocation({
+    localInstanceKey: parsed.instance.localInstanceKey,
+    configurationToken: parsed.instance.configuration.token,
+    localRef: parsed.localRef,
   });
-  try {
-    const routed = admitSentryEntryInvocation({
-      localInstanceKey: parsed.instance.localInstanceKey,
-      configurationToken: parsed.instance.configuration.token,
-      localRef: parsed.localRef,
-    });
-    if (!routed.ok) {
-      return Object.freeze({ kind: 'unavailable' as const, failure: routed.failure });
-    }
-
-    const walk = resolveWalkPosition(parsed.continuation, parsed.limit);
-    if (!walk.ok) {
-      return Object.freeze({
-        kind: 'unavailable' as const,
-        failure: toTriageFailure(CONTINUATION_UNREADABLE),
-      });
-    }
-
-    const client = await createSentryApiClient(context, {
-      account: parsed.instance.binding.account,
-      deployment: routed.deployment,
-      nowMs: () => Date.now(),
-      signal: bounded.signal,
-    });
-    const page = await readSentryTagValuesPage(client, {
-      instance: routed.instance,
-      entryId: parsed.localRef.entryId,
-      tagKey: parsed.tagKey,
-      limit: parsed.limit,
-      position: walk.position,
-      nowMs: Date.now(),
-    });
-    if (!page.ok) {
-      return Object.freeze({
-        kind: 'unavailable' as const,
-        failure: toTriageFailure(page.failure),
-      });
-    }
-
-    const position = projectWalkPosition(page.value.nextPage, parsed.limit);
-    return fitActionResultPageV1(
-      page.value.rows,
-      position.continuation,
-      (rows, omittedCount, continuation, continuationOmitted) => Object.freeze({
-        kind: 'tagValues' as const,
-        tagKey: parsed.tagKey,
-        rows: Object.freeze([...rows]),
-        omittedRowCount: page.value.omittedRowCount + omittedCount,
-        projectionTruncated: page.value.projectionTruncated || omittedCount > 0,
-        ...(continuationOmitted
-          ? { incomplete: 'continuationUnavailable' as const }
-          : continuation === undefined
-            ? position
-            : { continuation }),
-      }),
-    ).result;
-  } finally {
-    bounded.dispose();
+  if (!routed.ok) {
+    return Object.freeze({ kind: 'unavailable' as const, failure: routed.failure });
   }
+
+  const walk = resolveWalkPosition(parsed.continuation, parsed.limit);
+  if (!walk.ok) {
+    return Object.freeze({
+      kind: 'unavailable' as const,
+      failure: toTriageFailure(CONTINUATION_UNREADABLE),
+    });
+  }
+
+  const client = await createSentryApiClient(context, {
+    account: parsed.instance.binding.account,
+    deployment: routed.deployment,
+    nowMs: () => Date.now(),
+    signal: context.signal,
+  });
+  const page = await readSentryTagValuesPage(client, {
+    instance: routed.instance,
+    entryId: parsed.localRef.entryId,
+    tagKey: parsed.tagKey,
+    limit: parsed.limit,
+    position: walk.position,
+    nowMs: Date.now(),
+  });
+  if (!page.ok) {
+    return Object.freeze({
+      kind: 'unavailable' as const,
+      failure: toTriageFailure(page.failure),
+    });
+  }
+
+  const position = projectWalkPosition(page.value.nextPage, parsed.limit);
+  return fitActionResultPageV1(
+    page.value.rows,
+    position.continuation,
+    (rows, omittedCount, continuation, continuationOmitted) => Object.freeze({
+      kind: 'tagValues' as const,
+      tagKey: parsed.tagKey,
+      rows: Object.freeze([...rows]),
+      omittedRowCount: page.value.omittedRowCount + omittedCount,
+      projectionTruncated: page.value.projectionTruncated || omittedCount > 0,
+      ...(continuationOmitted
+        ? { incomplete: 'continuationUnavailable' as const }
+        : continuation === undefined
+          ? position
+          : { continuation }),
+    }),
+  ).result;
 }
 
 /**
@@ -507,40 +480,32 @@ export async function readSentryEvent(
   context: SentrySourceContext,
 ): Promise<SentryReadEventResultV1> {
   const parsed = SentryReadEventInputV1Schema.parse(input);
-
-  const bounded = createBoundedInvocation({
-    callerSignal: context.signal,
+  const routed = admitSentryEntryInvocation({
+    localInstanceKey: parsed.instance.localInstanceKey,
+    configurationToken: parsed.instance.configuration.token,
+    localRef: parsed.localRef,
   });
-  try {
-    const routed = admitSentryEntryInvocation({
-      localInstanceKey: parsed.instance.localInstanceKey,
-      configurationToken: parsed.instance.configuration.token,
-      localRef: parsed.localRef,
-    });
-    if (!routed.ok) {
-      return Object.freeze({ kind: 'unavailable' as const, failure: routed.failure });
-    }
-
-    const client = await createSentryApiClient(context, {
-      account: parsed.instance.binding.account,
-      deployment: routed.deployment,
-      nowMs: () => Date.now(),
-      signal: bounded.signal,
-    });
-    const read = await readSentryEventProjection(client, {
-      instance: routed.instance,
-      entryId: parsed.localRef.entryId,
-      selector: parsed.selector,
-      nowMs: Date.now(),
-    });
-    if (!read.ok) {
-      return Object.freeze({
-        kind: 'unavailable' as const,
-        failure: toTriageFailure(read.failure),
-      });
-    }
-    return fitSentryEventResult(read.value);
-  } finally {
-    bounded.dispose();
+  if (!routed.ok) {
+    return Object.freeze({ kind: 'unavailable' as const, failure: routed.failure });
   }
+
+  const client = await createSentryApiClient(context, {
+    account: parsed.instance.binding.account,
+    deployment: routed.deployment,
+    nowMs: () => Date.now(),
+    signal: context.signal,
+  });
+  const read = await readSentryEventProjection(client, {
+    instance: routed.instance,
+    entryId: parsed.localRef.entryId,
+    selector: parsed.selector,
+    nowMs: Date.now(),
+  });
+  if (!read.ok) {
+    return Object.freeze({
+      kind: 'unavailable' as const,
+      failure: toTriageFailure(read.failure),
+    });
+  }
+  return fitSentryEventResult(read.value);
 }
