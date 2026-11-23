@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol';
+import { AuthStatusEnvelopeSchema, deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol';
 
 import { configuration, reloadConfiguration } from '@/configuration';
 import {
@@ -148,22 +148,13 @@ describe('happier auth status --json', () => {
           await handleAuthCommand(['status', '--json']);
 
           const raw = output.text().trim();
-          const parsed = JSON.parse(raw) as {
-            ok: boolean;
-            kind: string;
-            data?: {
-              authenticated?: boolean;
-              accountId?: string | null;
-              encryption?: { type?: string };
-              token?: string;
-            };
-          };
+          const parsed = AuthStatusEnvelopeSchema.parse(JSON.parse(raw));
           expect(parsed.ok).toBe(true);
           expect(parsed.kind).toBe('auth_status');
-          expect(parsed.data?.authenticated).toBe(true);
-          expect(parsed.data?.accountId).toBeNull();
-          expect(parsed.data?.encryption).toEqual({ type: 'none' });
-          expect(parsed.data?.token).toBeUndefined();
+          expect(parsed.data.authenticated).toBe(true);
+          expect(parsed.data.accountId).toBeNull();
+          expect(parsed.data.encryption).toEqual({ type: 'none' });
+          expect(parsed.data.token).toBeUndefined();
           expect(raw).not.toContain('token_plain_account');
           expect(process.exitCode).toBe(0);
         } finally {

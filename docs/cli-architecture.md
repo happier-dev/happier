@@ -7513,6 +7513,8 @@ an installed preference, or uses the existing at-login default for a new termina
 when the service is absent or the manager cannot be queried.
 When the platform has yet to report installation after service takeover, `service.installed` can use
 the expected service label from a daemon publication whose control listener answers authenticated `/ping`.
+`service status` uses the evaluated daemon owner for both the displayed process and the JSON owner
+metadata. A retired publication with a reused PID does not identify the daemon on this Home.
 Windows user tasks use the invoking user's SID in both the principal and the logon trigger, with
 `InteractiveToken` and `LeastPrivilege`; registration needs no password or all-users logon trigger.
 On-demand tasks register no trigger and omit missed-start catch-up. The existing task namespace,
@@ -10654,6 +10656,7 @@ Doctor repair's auth context uses the process's selected Home unless an explicit
 `--server` target is supplied; reading a scoped report does not change the terminal's
 saved selection. It probes only that Home's API endpoint and renders other stored
 credentials as unverified. Successful `auth status --json` includes `serverId`.
+Plain Accounts report `encryption.type: "none"` in the v1 success envelope.
 SSH enrollment carries `auth_status_unavailable` from the guest to the task result. Pairing
 continues on the separate signed-out result when the guest reports missing credentials.
 The identity-free env-derived-profile adoption path carries the credential's machine,

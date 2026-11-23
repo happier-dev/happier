@@ -3291,6 +3291,40 @@ describe('runDaemonServiceCliCommand', () => {
     }
   });
 
+  it('does not report a retired service owner whose PID belongs to another process', async () => {
+    await withTempDir('happier-service-status-retired-', async (homeDir) => {
+      const happierHomeDir = join(homeDir, '.happier');
+      envScope.patch({
+        HAPPIER_HOME_DIR: happierHomeDir,
+        HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
+        HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir,
+        HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: happierHomeDir,
+      });
+      vi.resetModules();
+
+      const [{ runDaemonServiceCliCommand }, { writeDaemonState }] = await Promise.all([
+        loadCliModule(),
+        import('@/persistence'),
+      ]);
+      await writeDaemonState({
+        pid: process.pid,
+        httpPort: 3005,
+        startedAt: Date.now(),
+        startedWithCliVersion: '0.0.0-retired',
+        startupSource: 'background-service',
+        serviceLabel: 'retired-service',
+      });
+
+      const output = captureStdoutJsonOutput<unknown>();
+      try {
+        await runDaemonServiceCliCommand({ argv: ['status', '--json'] });
+        expect(output.json()).toMatchObject({ daemon: { running: false, pid: null }, owner: null });
+      } finally {
+        output.restore();
+      }
+    });
+  });
+
   it('reports the current relay owner and invocation mismatch in service status JSON', async () => {
     await withTempDir('happier-service-status-owner-', async (homeDir) => {
       const happierHomeDir = `${homeDir}/.happier`;

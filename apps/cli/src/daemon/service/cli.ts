@@ -2,12 +2,12 @@ import { printDaemonServiceHelp } from './help';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import { basename, isAbsolute, join, win32 } from 'node:path';
-import { isPidPresent, spawnBackgroundSync } from '@happier-dev/cli-common/process';
+import { spawnBackgroundSync } from '@happier-dev/cli-common/process';
 import { spawnSync } from 'node:child_process';
 
 import { happierHomeDirsMatch } from '@/daemon/ownership/happierHomeDirComparableKey';
 import { configuration, reloadConfiguration } from '@/configuration';
-import { readDaemonState, readSettings, readStoredCredentials } from '@/persistence';
+import { readSettings, readStoredCredentials } from '@/persistence';
 import { getActiveServerProfile, upsertServerProfileByUrl } from '@/server/serverProfiles';
 import { resolveCurrentCliHomeTarget } from '@/server/homeTarget';
 import { isBun } from '@/utils/runtime';
@@ -89,7 +89,6 @@ import type { DaemonServiceInstallStrategy } from './daemonInstallConflict';
 import { assertDaemonServiceModeSupported } from './assertDaemonServiceModeSupported';
 import { evaluateCurrentDaemonOwner } from '@/daemon/ownership/evaluateCurrentDaemonOwner';
 import { doesInstalledDaemonServiceDefinitionMatchExpected } from './doesInstalledDaemonServiceDefinitionMatchExpected';
-import { resolveDaemonStartupSourceServiceManagedState } from '@/daemon/ownership/daemonOwnershipMetadata';
 import {
   renderDaemonServiceInventory,
   renderDefaultFollowingServiceStandingBy,
@@ -2531,9 +2530,10 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
     const ownership = await evaluateCurrentDaemonOwner();
     const services = await resolveInstalledDaemonServiceInventoryForCurrentRelay(runtime, ownershipDeadlineMs);
 
-    const state = await readDaemonState().catch(() => null);
-    const pid = typeof state?.pid === 'number' ? state.pid : null;
-    const pidAlive = pid !== null && isPidPresent(pid);
+    const currentOwner = ownership.kind === 'none' ? null : ownership.owner;
+    const state = currentOwner?.source === 'state' ? currentOwner.state : null;
+    const pid = currentOwner?.state.pid ?? null;
+    const running = currentOwner?.status === 'running';
 
     const systemPlan = planDaemonServiceLifecycle({
       platform: runtime.platform,
@@ -2550,20 +2550,16 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
     const systemStatus = installed && !flags.dryRun && systemPlan.commands.length
       ? runCommandCaptureBestEffort(systemPlan.commands[0]!, ownershipDeadlineMs)
       : { ok: false, out: null };
-    const owner = state ? {
-      running: pidAlive,
+    const owner = currentOwner && state ? {
+      running,
       startedAt: state.startedAt ?? null,
       // Canonical protocol ownership names (`readMachineDaemonOwnershipMetadataFromSocketAuth`).
       cliVersion: state.startedWithCliVersion ?? null,
       publicReleaseChannel: state.startedWithPublicReleaseChannel ?? null,
       startupSource: state.startupSource ?? null,
-      serviceManaged: resolveDaemonStartupSourceServiceManagedState(state.startupSource, state.serviceLabel),
+      serviceManaged: currentOwner.serviceManaged,
       serviceLabel: state.serviceLabel ?? null,
-      currentInvocationMatches: ownership.kind === 'compatible'
-        ? true
-        : ownership.kind === 'conflict'
-          ? false
-          : null,
+      currentInvocationMatches: ownership.kind === 'compatible',
     } : null;
 
     if (flags.json) {
@@ -2580,7 +2576,7 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
             ? ownership.owner.state.startedWithCliVersion
             : null,
         }),
-        daemon: pid ? { pid, running: pidAlive, startedAt: state?.startedAt ?? null } : { pid: null, running: false, startedAt: null },
+        daemon: { pid, running, startedAt: state?.startedAt ?? null },
         owner,
         system: { ok: systemStatus.ok, output: systemStatus.out },
       });
@@ -2588,7 +2584,11 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
     }
 
     process.stdout.write(installed ? 'Background service: installed\n' : 'Background service: not installed\n');
-    process.stdout.write(pidAlive ? `Daemon: running (pid ${pid})\n` : 'Daemon: not running\n');
+    if (currentOwner) {
+      process.stdout.write(`Daemon: ${currentOwner.status} (pid ${pid})\n`);
+    } else {
+      process.stdout.write('Daemon: not running\n');
+    }
     const inventory = renderDaemonServiceInventory(services);
     process.stdout.write(`${inventory.title}\n`);
     for (const line of inventory.lines) {

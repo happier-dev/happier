@@ -248,7 +248,7 @@ export type SessionControlEnvelopeBase = z.infer<typeof SessionControlEnvelopeBa
 export const AuthStatusResultSchema = lazyZodSchema(() => z.looseObject({
   authenticated: z.literal(true),
   encryption: z.looseObject({
-    type: z.enum(['legacy', 'dataKey']),
+    type: z.enum(['legacy', 'dataKey', 'none']),
   }),
   machineRegistered: z.boolean(),
   machineId: z.optional(z.string().check(z.minLength(1))),

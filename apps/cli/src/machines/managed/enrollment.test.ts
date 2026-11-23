@@ -14,7 +14,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { encodePlainMachineStoredContent, decodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { MachineUpdateMetadataRequestSchema } from '@happier-dev/protocol/machines/metadataUpdate';
 import { DoctorSnapshotDaemonStatusSchema } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
-import { SessionControlEnvelopeErrorSchema, SessionControlEnvelopeSuccessSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { AuthStatusEnvelopeSchema, SessionControlEnvelopeErrorSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { MACHINE_PROVISIONER_PUT_FILE_BASE64_MAX_LENGTH_V1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -176,7 +176,7 @@ describe('runManagedMachineEnrollment', () => {
           }
           if (invocation.includes('auth status')) {
             const reply = authenticated
-              ? SessionControlEnvelopeSuccessSchema.parse({ v: 1, ok: true, kind: 'auth_status', data: {
+              ? AuthStatusEnvelopeSchema.parse({ v: 1, ok: true, kind: 'auth_status', data: {
                 serverId: 'app-home', authenticated: true, accountId: 'requester-account', credentialState: 'valid',
                 encryption: { type: 'none' }, machineRegistered: true, machineRegistrationState: 'server-confirmed',
                 accountLabel: null, machineId: 'collector-machine', host: 'collector',

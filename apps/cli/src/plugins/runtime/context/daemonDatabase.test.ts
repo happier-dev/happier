@@ -173,17 +173,17 @@ describe('plugin daemon database owner', () => {
         const host = createStablePluginDaemonDatabaseHost({ paths: resolvePluginStorePaths({ happyHomeDir: home }),
             daemonDatabaseLimits: { protocolMaximumDatabaseBytes: limits.maximumDatabaseBytes, resolvePluginLimits: () => limits } });
         const controller = new AbortController();
-        const changed: string[][] = [];
-        const lastPageChanged: string[][] = [];
-        const unchanged: string[][] = [];
+        let changed = 0;
+        let lastPageChanged = 0;
+        let unchanged = 0;
         const publishedReads: Promise<readonly import('@happier-dev/plugin-sdk/storage').DaemonDatabaseRow[]>[] = [];
         let database!: import('@happier-dev/plugin-sdk/storage').DaemonDatabase;
-        const unsubscribeChanged = publisher.subscribe('expired-1', partitions => {
-            changed.push([...partitions]);
+        const unsubscribeChanged = publisher.subscribe(['expired-1'], () => {
+            changed += 1;
             publishedReads.push(database.query('SELECT COUNT(*) AS count FROM captureSummaries WHERE worktree = ?', ['expired-1']));
         });
-        const unsubscribeLastPage = publisher.subscribe('expired-999', partitions => lastPageChanged.push([...partitions]));
-        const unsubscribeUnchanged = publisher.subscribe('recent', partitions => unchanged.push([...partitions]));
+        const unsubscribeLastPage = publisher.subscribe(['expired-999'], () => { lastPageChanged += 1; });
+        const unsubscribeUnchanged = publisher.subscribe(['recent'], () => { unchanged += 1; });
         const errors: unknown[] = [];
         try {
             await host.prepare({ pluginId: DATABASE_CAPTURE_PLUGIN.manifest.id, occurrenceId: 'retention',
@@ -196,18 +196,18 @@ describe('plugin daemon database owner', () => {
             const retention = createLogRetentionOwner({ happyHomeDir: home, currentLogPaths: () => [],
                 daemonDatabases: host, onError: error => errors.push(error) });
             expect(await retention.run(1, 86399999)).toMatchObject({ pruned: 0 });
-            expect(changed).toEqual([]);
-            expect(unchanged).toEqual([]);
+            expect(changed).toBe(0);
+            expect(unchanged).toBe(0);
             expect(await retention.run(1, 86400000)).toMatchObject({ pruned: 1001, nextDueAtMs: 172800000 });
             expect(errors).toEqual([]);
-            expect(changed).toEqual([['expired-1']]);
+            expect(changed).toBe(1);
             expect(await Promise.all(publishedReads)).toEqual([[{ count: 0 }]]);
-            expect(lastPageChanged).toEqual([['expired-999']]);
-            expect(unchanged).toEqual([]);
+            expect(lastPageChanged).toBe(1);
+            expect(unchanged).toBe(0);
             expect(await database.query('SELECT worktree FROM captureSummaries')).toEqual([{ worktree: 'recent' }]);
             expect(await retention.run(1, 86400000)).toMatchObject({ pruned: 0 });
-            expect(changed).toEqual([['expired-1']]);
-            expect(unchanged).toEqual([]);
+            expect(changed).toBe(1);
+            expect(unchanged).toBe(0);
         } finally {
             unsubscribeChanged(); unsubscribeLastPage(); unsubscribeUnchanged();
             await host.close(); await rm(home, { recursive: true, force: true });
