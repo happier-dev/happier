@@ -34,7 +34,7 @@ import {
     MachineOperationProtocolCapabilitiesV1Schema, signAccountContentKeyBindingV1,
 } from '@happier-dev/protocol';
 import { bindExternalActionExecutionAuthorizationHttpPathV1, bindExternalActionExecutionAuthorizationVerifyHttpPathV1,
-    ExternalActionExecutionAuthorizationV1Schema, ExternalActionDaemonDispatchRequestSchema, createExternalActionDaemonDispatchResponseV1, createExternalActionDaemonDispatchResponse,
+    EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, ExternalActionExecutionAuthorizationV1Schema, ExternalActionDaemonDispatchRequestSchema, createExternalActionDaemonDispatchResponseV1, createExternalActionDaemonDispatchResponse,
     prepareExternalActionResponseEnvelopeV1, prepareExternalActionResponseV2, openExternalActionRequestV2, openExternalActionResponseV2, sealExternalActionRequestV2,
     computeActionInputApprovalDigestV1, computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -1411,7 +1411,13 @@ describe('composed CLI managed Action origination', () => {
         const spawn = { agentTarget, executionTarget: { serverId: homeId, machineId: selected.controller.machineId },
             directory: { kind: 'managed' }, sessionPlacement: { kind: 'preset', homeId, presetId } } as const;
         const actionId = SESSION_SPAWN_NEW_ACTION_ID_V1;
-        const instance = await app(async () => { throw new Error('Only Home root admission is exercised'); }, () => {}, []);
+        let relayedToGuest: unknown;
+        const instance = await app(async request => {
+            if (!enrolled) throw new Error('Only Home root admission is exercised');
+            // Delivery to the enrolled guest is the boundary; the signed relay before it is real.
+            relayedToGuest = request.callParams;
+            throw new Error('Guest delivery is not exercised');
+        }, () => {}, []);
         const issue = async (input: unknown, admission: ReturnType<typeof projectApiTokenSessionSpawnAdmissionV1>) => {
             const target = { kind: 'machine' as const, machineId: admission.executionTarget.machineId };
             const binding = { serverIdentityId: homeId, accountId: requester.account.id,
@@ -1559,6 +1565,29 @@ describe('composed CLI managed Action origination', () => {
                 });
                 expect((await relay(plainEnvelope)).statusCode).not.toBe(200);
                 expect((await relay(guestEnvelope, { ...continuation, expectedIntentRevision: machine.intentRevision + 1 })).statusCode).not.toBe(200);
+                // A controller posts the same signed child to the Action route; Home's relay
+                // mints the guest's root there and must carry the role it admitted, like the mint route.
+                const minted = ExternalActionExecutionAuthorizationV1Schema.parse(guest.json()).binding;
+                expect(minted.admittedMachineRole).toBe('manage');
+                const actionPath = `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${actionId}`;
+                const actionBody = { v: 1 as const, machineId: guestId, envelope: guestEnvelope, managedContinuation: continuation };
+                await instance.inject({ method: 'POST', url: actionPath, payload: actionBody,
+                    headers: createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: actionId,
+                        target: authorization.binding.target, installationId: selected.controller.installationId,
+                        privateKey: selected.keys.secretKey, method: 'POST', path: actionPath, body: actionBody }) });
+                const relayedBinding = ExternalActionDaemonDispatchRequestSchema.parse(relayedToGuest).executionAuthorization?.binding;
+                expect(relayedBinding).toMatchObject({ accountId: minted.accountId, custodianAccountId: minted.custodianAccountId,
+                    machineId: guestId, managedContinuation: minted.managedContinuation });
+                expect(relayedBinding?.admittedMachineRole).toBe(minted.admittedMachineRole);
+                // A child outside that admission still never reaches the guest.
+                relayedToGuest = undefined;
+                const staleBody = { ...actionBody, managedContinuation: { ...continuation, expectedIntentRevision: machine.intentRevision + 1 } };
+                const stale = await instance.inject({ method: 'POST', url: actionPath, payload: staleBody,
+                    headers: createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: actionId,
+                        target: authorization.binding.target, installationId: selected.controller.installationId,
+                        privateKey: selected.keys.secretKey, method: 'POST', path: actionPath, body: staleBody }) });
+                expect(stale.statusCode).not.toBe(200);
+                expect(relayedToGuest).toBeUndefined();
             }
             const absent = await issue(spawn, projectApiTokenSessionSpawnAdmissionV1(spawn));
             expect(absent.response.statusCode).toBe(409);

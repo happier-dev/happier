@@ -700,9 +700,12 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
             if (request.envelope.handoffAdmission && !handoffAdmission) throw new Error('handoff_admission_unavailable');
             const managedAdmission = readExternalActionManagedControlAdmission(request.actionId, request.envelope)
                 ?? readExternalActionManagedRecoveryAdmission(request.actionId, request.envelope);
+            // A managed creation child mints before machine resolution; its Home
+            // admission already decided the role, as the mint route carries it.
+            const admittedMachineRole = capturedMachineAdmission?.role ?? request.managedCreationAdmission?.machineAdmission.role;
             const routing = {
                 serverIdentityId: await getServerIdentityId(), machineId,
-                ...(capturedMachineAdmission ? { admittedMachineRole: capturedMachineAdmission.role } : {}),
+                ...(admittedMachineRole ? { admittedMachineRole } : {}),
                 ...(capturedMachineAdmission?.sessionPresetAcquisition
                     ? { sessionPresetAcquisition: capturedMachineAdmission.sessionPresetAcquisition } : {}),
                 actionId: request.actionId, requestId: request.envelope.requestId ?? randomUUID(),
