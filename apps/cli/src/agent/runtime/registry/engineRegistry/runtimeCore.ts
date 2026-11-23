@@ -728,8 +728,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                     // Retained Runs omit Account settings; acquire the current
                                     // snapshot once with their native Session context.
                                     const accountSettings = options.accountSettings
-                                        ?? (await options.resolveAccountSettingsSnapshot?.({ signal }))?.settings
-                                        ?? {};
+                                        ?? (await options.resolveAccountSettingsSnapshot?.({ signal }))?.settings;
                                     signal.throwIfAborted();
                                     const sessionId = host.session.sessionId;
                                     const contributionId = runtimeLease.localAgentId;

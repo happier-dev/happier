@@ -1,4 +1,4 @@
-import type { AgentSessionCapabilities } from '@happier-dev/agents';
+import type { AgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import type { AgentSessionGoalControl, AgentSessionRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 
 /** The opened runtime, including transport suppression, owns native Goal availability. */
