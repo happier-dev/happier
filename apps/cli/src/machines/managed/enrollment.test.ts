@@ -23,7 +23,9 @@ import { projectManagedMachineBootstrapPrompt, runManagedMachineEnrollment, type
 import { createSystemTasksRunner } from '@happier-dev/cli-common/systemTasks';
 import { createProtocolSystemTasksRunnerAdapter, createSystemTasksCapability } from '@/capabilities/registry/toolSystemTasks';
 import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import type { JsonValue } from '@happier-dev/protocol';
 import { machineSetup } from '@happier-dev/cli-common';
+import { createManagedNativeBootstrapIO } from '@happier-dev/cli-common/machines/managed';
 import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks';
 import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import { MachineEffectInternalRequestSchema } from '@/machines/setup/effectInternalProtocol';
@@ -784,14 +786,18 @@ describe('runManagedMachineEnrollment', () => {
     const requests: unknown[] = [];
     let attempt = 0;
     const dependencies = { readCurrentManagedRow: async () => ({ ...machine, enrollmentIdentity: { kind: 'guestProcess' as const, role: 'sandbox' as const }, enrolledMachineId: 'ordinary-machine' }),
-      native: { exec: async (request: { command: string; processConfig?: unknown }) => {
+      native: createManagedNativeBootstrapIO(correlation, async (role, request): Promise<JsonValue> => {
+        if (role !== 'exec') throw new Error('Retry must not deliver another installer or pairing payload');
         requests.push(request);
-        if (!request.processConfig) throw new Error('Retry must not reinstall or re-enroll the ordinary Machine');
-        return { status: attempt++ === 0 ? 1 : 0, stdout: '', stderr: '' };
-      }, putFile: async () => { throw new Error('Retry must not deliver another installer or pairing payload'); } } };
+        return attempt++ === 0 ? {
+          termination: { observed: { kind: 'exit', exitCode: 1 }, requestedBy: { kind: 'none' } },
+          stdoutBase64: '', stderrBase64: '', stdoutTruncated: false, stderrTruncated: false,
+        } : { kind: 'process-configured' };
+      }) };
     await expect(runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier: bootCarrier }, dependencies)).rejects.toMatchObject({ code: 'native_boot_unconfirmed' });
     expect(await runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier: bootCarrier }, dependencies)).toEqual({ machineId: 'ordinary-machine' });
-    expect(requests).toEqual([expect.objectContaining({ command: expect.stringContaining("'/persistent/home/.happier/cli/current/happier' 'daemon' 'start-sync'"),
+    expect(requests).toEqual([expect.objectContaining({
+      argv: ['sh', '-c', expect.stringContaining("'/persistent/home/.happier/cli/current/happier' 'daemon' 'start-sync'")],
       processConfig: {
         environment: { HOME: '/persistent/home', HAPPIER_HOME_DIR: '/persistent/home/.happier' },
         detachedDaemonStartArgv: ['sh', '-c', expect.stringContaining("'/persistent/home/.happier/cli/current/happier' 'daemon' 'start' '--json'")],
