@@ -78,6 +78,8 @@ vi.mock('react-native-safe-area-context', () => ({
     insets: { top: 0, bottom: 0, left: 0, right: 0 },
   },
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+  // No provider here: the optional-insets owner falls back to its own zero context.
+  SafeAreaInsetsContext: undefined,
 }));
 vi.mock('@react-navigation/native', () => ({
   ...createReactNavigationNativeMock(), useFocusEffect: () => {}, useIsFocused: () => true,
@@ -699,6 +701,8 @@ describe('SessionView composer typing', () => {
     const previousLayout = screen.tree.findAllByType('AgentContentView' as React.ElementType).at(-1)!.props;
     const edited = await typeCharacters(screen, 'queued original', ' edited');
     expect(composerText(findAgentInput(screen))).toBe(edited);
+    // An ended Session's Continue reads the unsent edit here (W22-05: withdrawal unmounts the editor).
+    expect(readFrame().readPendingMessageEditText?.()).toBe(edited);
     expect(storage.getState().sessionPending.s1!.messages[0]!.text).toBe('queued original');
     const frame = readFrame();
     const changed = Object.keys(frame).filter(key => !Object.is(frame[key], previousFrame[key]));

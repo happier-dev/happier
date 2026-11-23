@@ -90,6 +90,8 @@ export function installChatListHarnessCommonModuleMocks(
     vi.mock('react-native-safe-area-context', () => ({
         initialWindowMetrics: null,
         useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+        // No provider here: the optional-insets owner falls back to its own zero context.
+        SafeAreaInsetsContext: undefined,
     }));
 
     vi.mock('@react-native-masked-view/masked-view', async () => {

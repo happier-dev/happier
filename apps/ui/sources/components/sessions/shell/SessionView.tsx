@@ -2212,6 +2212,7 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     bottomNotice,
     followBottomIntentSeq,
     handleEditPendingMessage,
+    readPendingMessageEditText,
     isBoardPresentationUndoCurrent,
     actionExecutor,
     presentSessionActionOutcome,
@@ -2459,6 +2460,8 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
                           onActionPress={() => { openNewSessionSourceContextNavigation({
                               sourceSessionId: sessionId,
                               forkPoint: { type: 'latest' },
+                              // Withdrawal unmounts an open edit of a queued message; its unsent words start the new Session.
+                              restoredDraftText: readPendingMessageEditText(),
                               serverId: sessionRouteServerId ?? null,
                               accountLifetime: sessionAccountLifetime,
                               navigateToNewSession: route => router.push(route),

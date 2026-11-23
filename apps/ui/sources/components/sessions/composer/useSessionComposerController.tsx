@@ -3651,6 +3651,9 @@ export function useSessionComposerController({
         sessionId,
         updatePendingMessageComposerDocument,
     ]);
+    /** The words of an open pending-message edit, for a surface that outlives the editor (an ended Session's Continue). */
+    const readPendingMessageEditText = React.useCallback(
+        (): string | null => pendingMessageEditRef.current?.document.text ?? null, []);
     const cancelPendingMessageEdit = React.useCallback(() => {
         const edit = pendingMessageEditRef.current;
         if (!edit) return;
@@ -8230,6 +8233,7 @@ export function useSessionComposerController({
         bottomNotice,
         followBottomIntentSeq,
         handleEditPendingMessage,
+        readPendingMessageEditText,
         isBoardPresentationUndoCurrent,
         actionExecutor,
         presentSessionActionOutcome,

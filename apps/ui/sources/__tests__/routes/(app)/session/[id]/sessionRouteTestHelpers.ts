@@ -145,6 +145,8 @@ export function installSessionRouteCommonModuleMocks(
                 left: safeAreaInsets.left ?? 0,
                 right: safeAreaInsets.right ?? 0,
             }),
+            // No provider here: the optional-insets owner falls back to its own zero context.
+            SafeAreaInsetsContext: undefined,
         };
     });
 
