@@ -47,6 +47,27 @@ describe('Machine setup saved-copy publication', () => {
     expect(boundary.compareAndSwap).not.toHaveBeenCalled();
   });
 
+  it('reads a Machine whose retained Setup holds a pre-mode preset copy without that copy', async () => {
+    // uwd 2026-11-23: setup.sources[1] is an intermediate-0.3 accountPreset copy with no
+    // contentEncryptionMode. The mode is never inferred, so the copy is unusable; the
+    // Machine and its other Setup sources still read.
+    const direct = { kind: 'direct', setup: { scripts: [{ body: 'echo kept', affects: 'none' }] } };
+    const stored = { version: 1, revision: 7, exclusions: [], sources: [
+      direct,
+      { kind: 'accountPreset', presetId: 'retired-preset', presetRevision: 4, setup: { scripts: [{ body: 'echo retired' }] } },
+    ] };
+    const metadata = { host: 'retained', platform: 'linux', happyCliVersion: '0.3.0',
+      homeDir: '/home/retained', happyHomeDir: '/home/retained/.happier', setup: stored };
+    const parsed = StoredMachinePublishedMetadataV1Schema.safeParse(metadata);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.setup?.sources).toEqual([direct]);
+    const boundary = publicationPort(stored);
+    expect(await getMachineSetupDesiredV1(boundary.port)).toMatchObject({ status: 'ready', policy: { revision: 7, sources: [direct] } });
+    expect(boundary.compareAndSwap).not.toHaveBeenCalled();
+    // Writes and Action inputs still require the captured mode.
+    expect(MachineSetupDesiredV1Schema.safeParse(stored).success).toBe(false);
+  });
+
   it('retains the original request only while a normalized setup has unfinished scripts', async () => {
     const original: MachineSetupSourceV1 = [{ kind: 'direct', setup: { scripts: [{ body: 'exit 23' }] } }];
     const normalized: MachineSetupSourceV1 = [{ kind: 'direct', setup: { ...original[0]!.setup,

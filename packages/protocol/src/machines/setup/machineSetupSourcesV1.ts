@@ -278,14 +278,23 @@ export const MachineSetupSourceApplyV1Schema = lazyZodSchema(() => z.array(Machi
 ));
 export type MachineSetupSourceApplyV1 = z.infer<typeof MachineSetupSourceApplyV1Schema>;
 
-export const MachineSetupSourceV1Schema: z.ZodMiniType<MachineSetupSourceV1> = lazyZodSchema(() => z.array(MachineSetupSourceEntryV1Schema).check(
+const machineSetupSources = (entry: z.ZodMiniType<MachineSetupSourceEntryV1>) => z.array(entry).check(
   z.refine(sources => sources.filter(source => source.kind === 'direct').length === 1,
     { message: 'Setup has exactly one implicit direct source.' }),
   z.refine(sources => {
     const origins = sources.map(machineSetupSourceOriginKeyV1);
     return new Set(origins).size === origins.length;
   }, { message: 'Each setup source is attached once.' }),
-));
+);
+/** Intermediate 0.3 saved preset copies before captured modes (263571943a8). The mode is never inferred, so the copy is unusable. */
+const isRetiredModelessPresetCopy = (entry: unknown) => typeof entry === 'object' && entry !== null
+  && (entry as { kind?: unknown }).kind === 'accountPreset' && !('contentEncryptionMode' in entry) && !('presetContentOverride' in entry);
+export const MachineSetupSourceV1Schema: z.ZodMiniType<MachineSetupSourceV1> = defineStoredReadProjection<z.ZodMiniType<MachineSetupSourceV1>>(
+  lazyZodSchema(() => machineSetupSources(MachineSetupSourceEntryV1Schema)),
+  // Stored reads leave such a copy out so the Machine and its other sources still read; malformed current copies stay invalid.
+  () => z.pipe(z.transform((value: unknown) => Array.isArray(value) ? value.filter(entry => !isRetiredModelessPresetCopy(entry)) : value),
+    machineSetupSources(createStoredReadSchema(MachineSetupSourceEntryV1Schema))),
+);
 export const MachineSetupExclusionV1Schema = lazyZodSchema(() => z.strictObject({
   ref: MachineRecipeReferenceV1Schema, reason: z.literal('not_selected'),
 }));

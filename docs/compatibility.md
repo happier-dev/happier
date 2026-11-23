@@ -2495,6 +2495,15 @@ or managed-preset reader or writer for `environmentSetup` or preset
 `daemonState`; SSH setup and provider environment profiles are separate flows.
 This rename therefore needs no predecessor alias or second persisted format.
 
+Saved Account Preset copies in Machine Setup `sources` carry
+`contentEncryptionMode` since `263571943a8`. Intermediate 0.3 development rows
+can still hold an older copy with neither that field nor
+`presetContentOverride`. The mode is never inferred, so that copy is unusable:
+the stored Setup reader leaves it out, and the Machine and its other sources still
+read. Machine Setup Apply then saves without it, and the person can attach the preset again.
+Malformed current copies still read as invalid Setup. `../0.2` has no Machine
+Setup sources.
+
 Machine Setup Plan `resolvedSources` is a presentation-only array aligned to
 `sources`. Both explicit and changed-preset proposals return the exact Home
 projection for each newly opened opaque preset. A retained opaque source can
