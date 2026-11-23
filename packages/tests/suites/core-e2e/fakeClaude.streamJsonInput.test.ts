@@ -62,6 +62,8 @@ describe('fake Claude CLI fixture', () => {
         { type: 'text', text: `SESSION_MCP_ACTION_JSON:${JSON.stringify(request)}` },
       ] } });
       const env = { ...process.env };
+      // Installed vendor processes can start without the test runner's preload.
+      delete env.NODE_OPTIONS;
       delete env.HAPPIER_SESSION_MCP_CONTEXT_FILE;
       const result = spawnSync(process.execPath, [fixture.executablePath,
         '--output-format', 'stream-json', '--input-format', 'stream-json'], {
@@ -72,6 +74,7 @@ describe('fake Claude CLI fixture', () => {
       const invocation = events.findIndex(event => event.type === 'session_mcp_action_result'
         && event.requestId === request.requestId);
       expect(invocation).toBeGreaterThanOrEqual(0);
+      expect(events[invocation]?.result).toMatchObject({ ok: false, errorCode: 'action_transport_unavailable' });
       expect(events.slice(0, invocation)).toContainEqual(expect.objectContaining({
         type: 'sdk_stdout', messageType: 'assistant',
       }));

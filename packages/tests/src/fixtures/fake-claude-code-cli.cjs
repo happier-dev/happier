@@ -16,6 +16,7 @@ const os = require('node:os');
 const fs = require('node:fs');
 const readline = require('node:readline');
 const { createHash, randomUUID } = require('node:crypto');
+const { pathToFileURL } = require('node:url');
 const { createRequire } = require('node:module');
 const { resolveClaudeProjectId } = require('../testkit/claudeProjectId.cjs');
 const {
@@ -198,6 +199,18 @@ function readSessionMcpToolCommand(prompt) {
   } catch {
     return undefined;
   }
+}
+
+async function importSessionMcpSource(modulePath) {
+  // Vendor children may not inherit the test runner's source preload.
+  // Register workspace exports before tsx resolves the CLI's path aliases.
+  const root = path.resolve(__dirname, '../../../..');
+  await import(pathToFileURL(path.join(root, 'packages/cli-common/registerSourceRuntime.mjs')).href);
+  const { tsImport } = require('tsx/esm/api');
+  return tsImport(path.join(root, 'apps/cli/src', modulePath), {
+    parentURL: pathToFileURL(__filename).href,
+    tsconfig: path.join(root, 'apps/cli/tsconfig.json'),
+  });
 }
 
 async function callSessionMcpTool({ id: commandId, name, arguments: args }) {
@@ -1387,12 +1400,7 @@ async function runSdkStreamUntilEof() {
       // Native model readback comes from the causing assistant packet. A tool
       // cannot precede that packet, as it did in this fixture's first MCP turn.
       emitSdk(proposal);
-      const { tsImport } = require('tsx/esm/api');
-      const { executeSessionMcpAction } = await tsImport(
-        path.resolve(__dirname, '../../../../apps/cli/src/cli/commands/toolsSessionMcp.ts'),
-        { parentURL: require('node:url').pathToFileURL(__filename).href,
-          tsconfig: path.resolve(__dirname, '../../../../apps/cli/tsconfig.json') },
-      );
+      const { executeSessionMcpAction } = await importSessionMcpSource('cli/commands/toolsSessionMcp.ts');
       const result = await executeSessionMcpAction(request.actionId, request.input, { actionRequestId: request.actionRequestId });
       safeAppendJsonl(logPath, { type: 'session_mcp_action_result', invocationId,
         requestId: request.requestId, result, pid: process.pid, ts: Date.now() });

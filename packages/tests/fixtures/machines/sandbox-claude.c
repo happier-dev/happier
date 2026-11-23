@@ -3,6 +3,17 @@
 #include <string.h>
 #include <unistd.h>
 
+/* The SDK emits compact JSON records. Only copy its ASCII identifier fields. */
+static const char *sdk_identifier(const char *line, const char *field, int *length) {
+    const char *value = strstr(line, field);
+    if (!value) return NULL;
+    value += strlen(field);
+    size_t end = strspn(value, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-");
+    if (end == 0 || value[end] != '"') return NULL;
+    *length = (int)end;
+    return value;
+}
+
 /* A native external Claude boundary: the real placement owner copies this ELF
  * just as it copies a vendor executable. The fixture itself does not embed
  * Happier or launch its daemon/Session runner. */
@@ -40,7 +51,23 @@ int main(int argc, char **argv) {
     size_t capacity = 0;
     unsigned long turn = 0;
     while (getline(&line, &capacity, stdin) != -1) {
-        if (!strstr(line, "\"user\"")) continue;
+        int id_length = 0;
+        if (strstr(line, "\"type\":\"control_request\"")) {
+            const char *id = sdk_identifier(line, "\"request_id\":\"", &id_length);
+            if (id) {
+                printf("{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"%.*s\"}}\n",
+                    id_length, id);
+                fflush(stdout);
+            }
+            continue;
+        }
+        if (!strstr(line, "\"type\":\"user\"")) continue;
+        const char *id = sdk_identifier(line, "\"uuid\":\"", &id_length);
+        if (id) {
+            /* Admit the exact submitted turn before delivering its reply. */
+            printf("{\"type\":\"command_lifecycle\",\"command_uuid\":\"%.*s\",\"state\":\"started\",\"session_id\":\"sandbox-agent-session\"}\n",
+                id_length, id);
+        }
         turn++;
         /* Correlate accepted-input wake turns without replacing any Happier
          * provider, transport, enrollment or transcript behavior. */
