@@ -384,6 +384,12 @@ function bucketTitle(bucketId: MachineSelectionBucketId): string {
 }
 
 
+/** The row's own native power word (Asleep, Starting, Stopping) from the shared presence projection. */
+function hasNativePowerWord(machine: MachineDisplayRenderable, managedMachine: ManagedMachineV1 | undefined): boolean {
+    const state = projectMachineManagedPresence(machine, managedMachine)?.offline?.state;
+    return state === 'stopped' || state === 'starting' || state === 'stopping';
+}
+
 /**
  * Presence is the Machine's only blocker: it is offline and nothing else (content, access, a worker's
  * own refusal) stands between it and the destination. The one decision both the row reason and the
@@ -1350,14 +1356,17 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
         })),
     ])), [params.groups, purpose, resolveMachinePlacementFacts, presenceKey, scopeForServer]);
     const offlineOnlyMachineIdsByServerId = React.useMemo(() => Object.fromEntries(params.groups.map(group => [group.serverId,
-        group.machines.filter(machine => isBlockedOnlyByPresence(
+        // A machine with a native power word (Asleep, Starting, Stopping) is not offline: it stays named in place,
+        // as in the rail, and is never counted under "N machines offline".
+        group.machines.filter(machine => !hasNativePowerWord(machine, machinesByEnrolledMachineIdByServerId[group.serverId]?.[machine.id])
+            && isBlockedOnlyByPresence(
             resolveMachineDestinationPurposeEligibility(purpose, resolveMachinePlacementFacts?.(machine, group.serverId), machine, scopeForServer(group.serverId)),
             resolveMachinePickerPresence(machine, undefined, scopeForServer(group.serverId)),
         )).map(machine => machine.id),
     ])),
     // Request reachability changes presence without any Machine row change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [params.groups, purpose, resolveMachinePlacementFacts, presenceKey, scopeForServer]);
+    [params.groups, purpose, resolveMachinePlacementFacts, presenceKey, scopeForServer, machinesByEnrolledMachineIdByServerId]);
     const selectedOption = React.useMemo(() => {
         if (model.selectedOptionId === null) return null;
         for (const section of model.rootStep.sections) {

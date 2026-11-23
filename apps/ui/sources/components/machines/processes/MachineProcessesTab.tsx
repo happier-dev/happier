@@ -27,7 +27,6 @@ import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presenta
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useMachineProcesses } from '@/sync/domains/machines/processes/useMachineProcesses';
@@ -43,6 +42,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { ProcessDetail } from './ProcessDetail';
 import { ProcessesOwnerPage } from './ProcessesOwnerPage';
 import { ProcessesStateCard } from './ProcessesStateCard';
+import { MachineOfflineNotice } from '@/components/machines/page/MachineOfflineNotice';
 import {
   ProcessesShowDetailsContext,
   useProcessRowActions,
@@ -810,22 +810,24 @@ function MachineProcessesTree(
     (online !== true || processes.status !== 'loading') &&
     !(online && scope === 'all' && !allVisible)
   ) {
+    const stateCard = (
+      <ProcessesStateCard
+        status={processes.status}
+        reason={processes.answer?.reason ?? processes.reason}
+        online={online}
+        machineName={machineName}
+        onRetry={processes.retry}
+        onOpenDoctor={openDoctor}
+      />
+    );
     return (
       <View testID="machine-processes">
         {/* Nothing retained to filter (lab `rp` ST 6): the header and tabs stay and the body is the state; the scope bar
             stays only while All processes failed, as the way back to what Happier started. */}
         {scope === 'all' ? <ItemGroup header="none" surface="none">{toolbar}</ItemGroup> : null}
-        {/* Offline is one quiet line on the page's sheet, as Storage says it; the other states draw their own tile. */}
-        <ItemGroup header="none" {...(online === false ? {} : { surface: 'none' as const })}>
-          <ProcessesStateCard
-            status={processes.status}
-            reason={processes.answer?.reason ?? processes.reason}
-            online={online}
-            machineName={machineName}
-            onRetry={processes.retry}
-            onOpenDoctor={openDoctor}
-          />
-        </ItemGroup>
+        {/* Offline is the page's one offline notice on the page column, as Storage draws it; the other states draw
+            their own tile. */}
+        {online === false ? stateCard : <ItemGroup header="none" surface="none">{stateCard}</ItemGroup>}
       </View>
     );
   }
@@ -848,18 +850,10 @@ function MachineProcessesTree(
       <ItemGroup header="none" surface="none">
         {renderToolbar(slots.search)}
         {online === false && answer ? (
-          <SurfaceStateCard
+          <MachineOfflineNotice
             testID="machine-processes-offline"
-            kind="unavailable"
-            size="line"
-            title={t('machineProcesses.states.offlineTitle', {
-              machine: machineName,
-            })}
-            reason={t('machineProcesses.states.offlineBody')}
-            action={{
-              label: t('machineProcesses.states.tryAgain'),
-              onPress: processes.retry,
-            }}
+            title={t('machineProcesses.states.offlineBody')}
+            retry={{ onPress: processes.retry }}
           />
         ) : null}
       </ItemGroup>

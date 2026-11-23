@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import { MachineOfflineNotice } from '@/components/machines/page/MachineOfflineNotice';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { MachineProcessesState } from '@/sync/domains/machines/processes/machineProcessesStore';
 import { t } from '@/text';
@@ -15,10 +16,8 @@ export function ProcessesStateCard(props: Readonly<{
 }>) {
   if (props.online === null) return <SurfaceStateCard testID="machine-processes-unknown" kind="unavailable" title={t('common.unknown')} />;
   if (props.online === false) {
-    // One quiet line, as Storage says the same cause beside it (lab `rs` MS 4): nothing here is the machine's fault to fix.
-    return <SurfaceStateCard testID="machine-processes-offline-empty" kind="unavailable" size="line"
-      title={t('machineProcesses.states.offlineTitle', { machine: props.machineName })}
-              reason={t('machineProcesses.states.offlineReason')} />;
+    // The page header already says Offline (or Asleep); the tab says what that means here, in the page's one notice.
+    return <MachineOfflineNotice testID="machine-processes-offline-empty" title={t('machineProcesses.states.offlineReason')} />;
   }
   if (props.status === 'loading') {
     return <SurfaceStateCard testID="machine-processes-loading" kind="loading" title={t('machineProcesses.states.loading')} />;

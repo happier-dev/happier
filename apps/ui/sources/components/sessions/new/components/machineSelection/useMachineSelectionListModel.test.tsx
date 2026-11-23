@@ -303,6 +303,22 @@ describe('useMachineSelectionListModel', () => {
             .toEqual([ownership === 'owned' ? 'offline:all' : 'offline:shared:alice']);
     });
 
+    it('keeps an Asleep machine named in place, never counted under "machines offline" (D1-03, rail parity)', async () => {
+        const offline = ['offline-a', 'offline-b'].map(id => ({ ...createMachine(id), active: false, activeAt: 0 }));
+        const asleep: Machine = { ...createMachine('asleep-docker'), active: false, activeAt: 1,
+            managedInputRuntime: { nativeReady: false, wakeState: null, state: 'asleep' } };
+        const fixture = createFixture([...offline, asleep]);
+        publishMachineActivityForTest(fixture.machines);
+        const rendered = await renderHook(() => useMachineSelectionListModel({ ...buildParams(fixture, makeHandlers()),
+            selectedMachine: null, recentMachines: [], favoriteMachines: [], showRecent: false, showFavorites: false, showCliGlyphs: false,
+        }));
+        try {
+            const options = rendered.getCurrent().rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : []);
+            expect(options.map(option => option.id)).toEqual(['asleep-docker', 'offline:all']);
+            expect(rendered.getCurrent().offlineOnlyMachineIdsByServerId['server-a']).toEqual(['offline-a', 'offline-b']);
+        } finally { await rendered.unmount(); }
+    });
+
     it('folds a large New Session offline roster once per section and expands only that section in place', async () => {
         const machines = Array.from({ length: 220 }, (_, i) => ({ ...createMachine(`offline-${i}`), active: false, activeAt: 0 }));
         const shared = machines.slice(0, 3).map(machine => ({ ...machine, id: `shared-${machine.id}`, isShared: true, access: {

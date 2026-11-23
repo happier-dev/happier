@@ -495,6 +495,9 @@ describe('MachineProcessesTab', () => {
   ])('shows offline without a loading surface when no process answer exists ($page)', async (params) => {
     const { screen } = await mount({ online: false, waitForRows: false, params });
     expect(screen.findByTestId('machine-processes-offline-empty')).not.toBeNull();
+    // The page header says Offline (or Asleep); the tab says only what that means here, in the page's one notice.
+    expect(screen.getTextContent()).not.toContain(t('machineProcesses.states.offlineTitle', { machine: 'leeroy-mbp' }));
+    expect(screen.getTextContent()).toContain(t('machineProcesses.states.offlineReason'));
     expect(screen.findByTestId('machine-processes-table')).toBeNull();
     expect(transport.rpc.mock.calls.some(([rpc]: readonly unknown[]) => typeof rpc === 'object' && rpc !== null && 'method' in rpc
       && (rpc.method === RPC_METHODS.MACHINES_PROCESSES_LIST || rpc.method === RPC_METHODS.DAEMON_PROCESSES_WATCH))).toBe(false);
