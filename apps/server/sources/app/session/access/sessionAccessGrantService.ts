@@ -208,7 +208,7 @@ export async function assertSessionAccessManageAccessInTx(
     return admission === "allowed" ? null : projectMutationAdmissionError(admission);
 }
 
-/** A new Team grant uses Session attachment admission. Other grants use shared subject eligibility. */
+/** Share eligibility admits the subject. A new Team attachment also qualifies the credential. */
 async function resolveSessionGrantSubjectInTx(
     tx: Tx,
     params: Parameters<typeof resolveShareSubjectInTx>[1] & Readonly<{
@@ -216,15 +216,32 @@ async function resolveSessionGrantSubjectInTx(
         admittedPrimaryTeamId?: string;
     }>,
 ): Promise<Readonly<{ ok: true; subject: ShareSubject }> | Readonly<{ ok: false; error: SessionAccessGrantErrorCode }>> {
-    if (params.subject.kind === "team" && !params.hasExistingGrant && !params.removingExistingGrant) {
-        if (params.subject.teamId !== params.admittedPrimaryTeamId) {
-            const admission = await validateSessionContextTeamInTx(tx, { ...params, teamId: params.subject.teamId });
-            if (!admission.ok) return admission;
-        }
-        return { ok: true, subject: params.subject };
-    }
     const resolution = await resolveShareSubjectInTx(tx, params);
-    return resolution.ok ? resolution : { ok: false, error: `session_access_${resolution.error}` };
+    if (!resolution.ok) return { ok: false, error: `session_access_${resolution.error}` };
+    const { subject } = resolution;
+    if (subject.kind === "team" && !params.hasExistingGrant && !params.removingExistingGrant
+        && subject.teamId !== params.admittedPrimaryTeamId) {
+        const team = await tx.team.findUniqueOrThrow({
+            where: { id: subject.teamId },
+            select: { id: true, authenticationPolicy: true },
+        });
+        const error = await qualifySessionAttachmentTeamInTx(tx, {
+            accountId: params.actorAccountId, team, authentication: params.authentication,
+        });
+        if (error) return { ok: false, error };
+    }
+    return resolution;
+}
+
+async function qualifySessionAttachmentTeamInTx(
+    tx: Tx,
+    input: Parameters<typeof qualifySessionTeamAuthenticationInTx>[1],
+): Promise<SessionAccessGrantErrorCode | null> {
+    const qualification = await qualifySessionTeamAuthenticationInTx(tx, input);
+    if (qualification.status === "satisfied") return null;
+    return projectMutationAdmissionError(
+        qualification.status === "authentication_required" ? "authentication_required" : "authentication_unavailable",
+    );
 }
 
 async function validateSessionContextTeamInTx(
@@ -248,12 +265,10 @@ async function validateSessionContextTeamInTx(
         select: { id: true },
     });
     if (!membership) return { ok: false, error: "session_access_subject_ineligible" } as const;
-    const qualification = await qualifySessionTeamAuthenticationInTx(tx, {
+    const error = await qualifySessionAttachmentTeamInTx(tx, {
         accountId: params.actorAccountId, team, authentication: params.authentication,
     });
-    if (qualification.status !== "satisfied") return { ok: false, error: projectMutationAdmissionError(
-        qualification.status === "authentication_required" ? "authentication_required" : "authentication_unavailable",
-    ) } as const;
+    if (error) return { ok: false, error } as const;
     return { ok: true, team } as const;
 }
 
