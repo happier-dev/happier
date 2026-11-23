@@ -7130,12 +7130,16 @@ describe('plugin-surface action branch selection', () => {
         const { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1 } = await import('../../../../../../packages/plugins/triage/src/actions/configuredActionRunProtocol');
         const { TriageSessionHandoffResultV1Schema } = await import('@happier-dev/triage-protocol/v1');
         const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
-        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
         const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
         await prepareSessionDraftPersistenceStorage();
         const lifetime = clientAccountLifetime();
         const previous = getStorage().getState();
-        const declaration = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1)!;
+        const declaration = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1);
+        if (declaration?.execution.target !== 'account') throw new Error('Expected the Account handoff declaration');
+        const target = declaration.execution.account;
+        const artifactPath = `react-native/${target.artifactId}/entry.cjs.bundle`;
         const subject = { kind: 'deploymentEnvironment', serverId: lifetime.scope.serverId, environmentId: 'serving-environment' } as const;
         const input = { v: 1, handoff: { task: 'investigate', configuredActionId: 'deployments.set-up',
             context: { kind: 'failure', subject }, evidence: [{ kind: 'failure', subject }],
@@ -7149,16 +7153,27 @@ describe('plugin-surface action branch selection', () => {
                 relayed++;
                 return { v: 1, handoff: emptyHeadlessChoice };
             } });
-        const machine = createMachineFixture({ id: boundary.machine.id, activeAt: Date.now(), access: boundary.machine.access });
-        getStorage().setState({ machines: { [machine.id]: machine }, machineListByServerId: { [lifetime.scope.serverId]: [machine] },
-            machineListStatusByServerId: { [lifetime.scope.serverId]: 'idle' } });
-        network.setHttpResponder(async (url, init) => await boundary.handle(new URL(String(url)), init)
-            ?? createEmptyAccountBootstrapHttpResponse(new URL(String(url)).pathname, init));
+        const machine = createHydratedPlainMachineFixture({ id: boundary.machine.id, accountId: lifetime.scope.accountId,
+            machine: { activeAt: Date.now(), access: boundary.machine.access } });
+        onTestFinished(() => getStorage().setState({ profileScope: previous.profileScope,
+            machineRecordsByServerId: previous.machineRecordsByServerId, machineDisplayById: previous.machineDisplayById,
+            machinePresenceById: previous.machinePresenceById, machinePresenceByServerId: previous.machinePresenceByServerId }));
+        network.setHttpResponder(async (url, init) => {
+            const endpoint = new URL(String(url));
+            if (endpoint.pathname === '/v1/machines/read-batch') {
+                return createMachineReadBatchResponseFixture(init?.body, id => id === machine.id ? boundary.machine : null);
+            }
+            return await boundary.handle(endpoint, init) ?? createEmptyAccountBootstrapHttpResponse(endpoint.pathname, init);
+        });
+        await publishMachineInventoryForTest(lifetime.scope, [machine]);
         const activation = createClientActionActivation({ pluginId: PLUGIN_MANIFEST.id, localId: declaration.id,
             accountPlacement: true, accountLifetime: lifetime, accountActionDeclaration: declaration,
             confirmationWhen: declaration.confirmationWhen,
             inputSchema: declaration.inputSchema, outputSchema: declaration.resultSchema,
-            artifactGraph: { ...CLIENT_ACTION_ARTIFACT_GRAPH, artifactId: 'triage-account-runtime', executable: { exports: ['activate'] } },
+            artifactGraph: PluginUiArtifactsManifestEntryV2Schema.parse({ ...CLIENT_ACTION_ARTIFACT_GRAPH,
+                artifactId: target.artifactId, executable: { exports: [target.exportName] }, entry: artifactPath,
+                files: CLIENT_ACTION_ARTIFACT_GRAPH.files.map(file => ({ ...file, relativePath: artifactPath })),
+            }),
             accountHandler: async (_input, context) => {
                 if (!context.ui) throw new Error('Invoking UI capability was lost');
                 await context.ui.openNewSession({ prompt: 'Inspect the serving Environment and its existing Compose file before changing it.' });
@@ -7182,6 +7197,20 @@ describe('plugin-surface action branch selection', () => {
             await activation.composition.unload();
             finiteActivation = createClientActionActivation({ accountPlacement: true, accountLifetime: lifetime,
                 accountHandler: () => { throw new Error('Finite Account work must keep the Machine relay'); } });
+            const finiteIdentity = { pluginId: CALLER_PLUGIN_ID, localId: finiteActivation.action.id };
+            const { buildDeferredDaemonProjectionSections } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+            const receiver = buildDeferredDaemonProjectionSections({ protocolVersion: 1, projectionDigest: 'd'.repeat(64),
+                projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1, actionsById: {
+                    [buildQualifiedPluginContributionKey(finiteIdentity)]: createClientTargetAction({ identity: finiteIdentity, accountPlacement: true }),
+                } }) });
+            daemonRpc.mockImplementation(async (request: { method: string; machineId: string;
+                payload?: { sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] } } }) => {
+                if (request.method !== RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE || request.machineId !== machine.id) {
+                    return answerActionSchemasRead(request);
+                }
+                const read = request.payload?.sectionRead;
+                return read ? receiver.read(read.digest, read.offset, read.includeDigests) : receiver.manifest;
+            });
             await finiteActivation.composition.unload();
             await finiteActivation.composition.reconcile([finiteActivation.activation]);
             await expect(dispatchPluginSurfaceAction({ action: { pluginId: CALLER_PLUGIN_ID, localId: finiteActivation.action.id },
