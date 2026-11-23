@@ -5514,6 +5514,17 @@ template owner's projection; there is no new list Action. A server without the
 report endpoint leaves the successful copy/update intact because delivery is best
 effort, without retries or a compatibility shim.
 
+## Artifact storage budget (unreleased 0.3)
+
+Account Storage inventory can include `artifactBilledBytes` when the Home has
+an Account Artifact limit. It is the same billed amount as `usedBytes` in the
+quota read. `storage.inventory.read` exposes the optional field to Plugin SDK
+callers. Approval records and their retained versions remain in physical
+storage, and the per-document limit still applies. Load matching Home,
+Protocol, CLI, Plugin SDK and app sources for this closed read projection.
+The current app reads the physical Artifact amount when an earlier Home omits
+the billed field.
+
 ## Artifact query hints (0.3 development)
 
 The existing `artifact.list` Action accepts optional `kinds` and

@@ -8,7 +8,7 @@ import {
     type DiscussionStorageExactMessages,
     type DiscussionStorageMessage,
 } from '@/components/storage/discussion/discussionStorageMessages';
-import { resolveStorageQuotaState, type StorageQuotaState } from '@/components/storage/storageQuotaState';
+import { projectArtifactLimit, type ArtifactLimitStanding } from '@/components/storage/storageQuotaState';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 
 /**
@@ -61,21 +61,6 @@ export function projectAccountStorageKinds(inventory: StorageInventoryV1 | null)
 export function projectShownAccountStorageKinds(inventory: StorageInventoryV1 | null): readonly AccountStorageKind[] {
     const kinds = projectAccountStorageKinds(inventory);
     return inventory === null ? kinds : kinds.filter((kind) => kind.bytes === null || kind.bytes > 0);
-}
-
-export type ArtifactLimitStanding = Readonly<{
-    usedBytes: number;
-    limitBytes: number;
-    leftBytes: number;
-    state: StorageQuotaState;
-}>;
-
-/** The Artifact limit as the server reports it; `null` when no limit is set (the server default). */
-export function projectArtifactLimit(inventory: StorageInventoryV1 | null): ArtifactLimitStanding | null {
-    if (!inventory || inventory.artifactLimitBytes === null) return null;
-    const usedBytes = inventory.byKind.artifacts;
-    const limitBytes = inventory.artifactLimitBytes;
-    return { usedBytes, limitBytes, leftBytes: Math.max(0, limitBytes - usedBytes), state: resolveStorageQuotaState(usedBytes, limitBytes) };
 }
 
 /** Nothing stored in any kind the server measures, and no kind it could not measure. */

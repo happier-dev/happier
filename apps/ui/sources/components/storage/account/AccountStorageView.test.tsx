@@ -249,6 +249,7 @@ const MIXED_IMAGES: StorageInventoryV1 = {
 
 async function serve(limit: number | null, options: Readonly<{
   counts?: boolean;
+  artifactBilledBytes?: number;
   pages?: readonly [readonly unknown[], readonly unknown[]];
   /** The read's summary in place of the default Account's. */
   summary?: StorageInventoryV1;
@@ -278,6 +279,7 @@ async function serve(limit: number | null, options: Readonly<{
         inventoryReads.push(request.url);
         const next = request.url.searchParams.get('cursor') === 'page-2';
         return Response.json({ ...(options.summary ?? { ...inventory(limit), ...(options.counts ? { kinds: COUNTED_KINDS } : {}) }),
+          ...(options.artifactBilledBytes === undefined ? {} : { artifactBilledBytes: options.artifactBilledBytes }),
           page: next ? { items: second } : { items: first, nextCursor: 'page-2' } });
       }
       if (request.path === '/v1/discussions/messages/read' && request.method === 'POST') {
@@ -680,8 +682,9 @@ describe('Settings › Storage (storage-view lab scenes 1–4)', () => {
   });
 
   it('at 90% of the limit says it is nearly full, as the Artifacts header meter does (one storage quota owner)', async () => {
-    // 200 MB of Artifacts against a limit of 200 MB / 0.9: exactly the near share.
-    const disconnect = await serve(Math.floor(200_000_000 / 0.9));
+    const limit = 150_000_000;
+    // Physical storage is over the limit. Billed Artifacts sit exactly at the near share.
+    const disconnect = await serve(limit, { artifactBilledBytes: 135_000_000 });
     try {
       const screen = await renderScreen(
         <AppPaneProvider>
@@ -695,6 +698,7 @@ describe('Settings › Storage (storage-view lab scenes 1–4)', () => {
           ),
         );
         expect(screen.findHostByTestId('storage:quota')).toBeNull();
+        expect(textOf(screen.findHostByTestId('storage:limit-figure'))).toContain(storage(15_000_000));
       } finally {
         await screen.unmount();
       }

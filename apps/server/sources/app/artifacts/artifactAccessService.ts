@@ -13,7 +13,7 @@ import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import { readArtifactStorageEnv } from "@/app/features/catalog/readFeatureEnv";
 import type { AccountAdmissionIntent } from '@/app/encryption/accountSessionOwnerMetadataFence';
 import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
-import { artifactOrdinarySqlPredicate, artifactVisibleWhere } from "./artifactClassification";
+import { approvalStoredKindPrefixes, approvalStoredKinds, artifactOrdinarySqlPredicate, artifactVisibleWhere } from "./artifactClassification";
 import { readArtifactStoredSizesInTx } from "./artifactStorageService";
 import { openArtifactStoredContentBytes, openArtifactProvenanceBytes, artifactProvenanceMatchesAccountMode } from "./artifactStoredContent";
 import { deriveAccountRecipientEnvelopeReadinessFromRow, type AccountRecipientEnvelopeReadiness } from "@/app/encryption/accountRecipientEnvelopeReadiness";
@@ -530,11 +530,9 @@ const browserNonListedStoredKinds = ARTIFACT_BROWSER_NON_LISTED_KINDS_V1.flatMap
 
 const browserNonListedNoticePrefixes = ArtifactCoarseKindV1Schema.options.map(coarse =>
     `v1:${coarse}:${DEPLOYMENT_NOTICE_INDEXED_KIND_PREFIX_V1}`);
-const approvalStoredKinds = Object.values(APPROVAL_ARTIFACT_KINDS_V1).flatMap(kind =>
-    ArtifactCoarseKindV1Schema.options.map(coarse => `v1:${coarse}:${kind}`));
 const approvalKindWhere: Prisma.ArtifactWhereInput = { OR: [
     { kind: { in: approvalStoredKinds } },
-    ...ArtifactCoarseKindV1Schema.options.map(coarse => ({ kind: { startsWith: `v1:${coarse}:${APPROVAL_ARTIFACT_KINDS_V1.builtIn}#` } })),
+    ...approvalStoredKindPrefixes.map(prefix => ({ kind: { startsWith: prefix } })),
 ] };
 
 function artifactApprovalSelectionWhere(input: Readonly<{ approvalStates?: readonly ApprovalArtifactStateV1[]; approvalSessionIds?: readonly string[] }>): Prisma.ArtifactWhereInput[] {

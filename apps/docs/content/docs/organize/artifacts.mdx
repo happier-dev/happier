@@ -185,7 +185,11 @@ open or delete each one. When saving fails because the Account budget is full,
 the notice offers **See what's using space**, which opens the same view.
 
 A Home can also set a per-document budget. A save that exceeds either budget
-shows the size and limit and keeps your edits in the editor. For an Account
+shows the size and limit and keeps your edits in the editor. Starting in 0.3,
+approval records are excluded from Account usage and the Account budget so an
+agent can ask to delete an Artifact even when your Account is full. The
+per-document budget still applies to approval records. Consents, notices and
+deployment receipts still count toward both budgets. For an Account
 budget, remove artifacts you no longer need before retrying; for a document
 budget, reduce the content. Do not leave the editor until the save succeeds or
 you have copied the unsaved content somewhere safe.

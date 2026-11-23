@@ -2,7 +2,8 @@ import { inReadSnapshot, type Tx } from "@/storage/inTx";
 import { isApprovalRequestV2TerminalStatus } from '@happier-dev/protocol/approvals/approvalRequestStatus';
 import { getActivePrismaRuntime, getDbProviderFromEnv } from "@/storage/prisma";
 import { readArtifactStorageEnv } from "@/app/features/catalog/readFeatureEnv";
-import { artifactOrdinarySqlPredicate, artifactVisibleWhere, viewerMayTrimArtifactRevisions } from "./artifactClassification";
+import { approvalStoredKindPrefixes, approvalStoredKinds, artifactOrdinarySqlPredicate, artifactVisibleWhere,
+    isApprovalStoredKind, viewerMayTrimArtifactRevisions } from "./artifactClassification";
 import { decodeArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { viewerMayRemoveDiscussionAttachment } from '@/app/discussions/attachmentRemovalAuthority';
 import { storePlainArtifactDbBytes } from "./artifactStoredContent";
@@ -51,6 +52,16 @@ export function storedDateTimestamp(date: Date | bigint | number | string): numb
 type Sql = ReturnType<ReturnType<typeof storageSql>['sql']['sql']>;
 type ByteCount = bigint | number | string;
 
+/** Reuse the stored approval classification in aggregates without opening content. */
+function artifactKindBillsSql(dialect: ReturnType<typeof storageSql>, column: Sql): Sql {
+    const { sql, mysql } = dialect;
+    const stored = sql.sql`COALESCE(${column}, '')`;
+    const kind = mysql ? sql.sql`BINARY ${stored}` : stored;
+    const indexed = approvalStoredKindPrefixes.map(prefix =>
+        sql.sql`(SUBSTR(${kind}, 1, ${prefix.length}) = ${prefix} AND LENGTH(${kind}) > ${prefix.length})`);
+    return sql.sql`(${kind} NOT IN (${sql.join(approvalStoredKinds)}) AND NOT (${sql.join(indexed, ' OR ')}))`;
+}
+
 /** Each persisted blob contributes once, independently of how many versions reference it. */
 function artifactByteRows(scope: Sql, splitHistory = false) {
     const { sql, identifier: name, bytes } = storageSql();
@@ -79,11 +90,13 @@ function artifactByteRows(scope: Sql, splitHistory = false) {
 /** Count persisted content without fetching ciphertext. Classification stays with its canonical owner. */
 export async function readArtifactStorageUsageInTx(tx: Tx, accountId: string): Promise<ArtifactStorageUsageV1> {
     const config = readArtifactStorageEnv(process.env);
-    const { sql, identifier, mysql } = storageSql();
+    const dialect = storageSql();
+    const { sql, identifier, mysql } = dialect;
     const ordinary = sql.raw(artifactOrdinarySqlPredicate(mysql));
+    const billed = artifactKindBillsSql(dialect, sql.sql`a.${identifier("kind")}`);
     const rows = await tx.$queryRaw<Array<{ usedBytes: ByteCount }>>(sql.sql`
         SELECT COALESCE(SUM(${identifier("contentBytes")}), 0) AS ${identifier("usedBytes")}
-        FROM (${artifactByteRows(sql.sql`a.${identifier("accountId")} = ${accountId} AND ${ordinary}`)}) content`);
+        FROM (${artifactByteRows(sql.sql`a.${identifier("accountId")} = ${accountId} AND ${ordinary} AND ${billed}`)}) content`);
     return { usedBytes: storageSize(rows[0]?.usedBytes ?? 0), limitBytes: config.accountLimitBytes,
         documentLimitBytes: config.documentLimitBytes, revisionRetentionCount: config.revisionRetentionCount };
 }
@@ -148,9 +161,15 @@ function projectInventoryItem(row: InventoryItemRow, viewerAccountId: string): S
 
 /** Only authenticated or already-admitted identities may reach this projection. */
 export async function readStorageInventoryInTx(tx: Tx, accountId: string, selection?: InventorySelection): Promise<StorageInventoryV1> {
-    const { sql, identifier: name, mysql } = storageSql();
+    const dialect = storageSql();
+    const { sql, identifier: name, mysql } = dialect;
     const ordinary = sql.raw(artifactOrdinarySqlPredicate(mysql));
     const discussionId = selection?.discussion?.id;
+    const artifactLimitBytes = discussionId ? null : readArtifactStorageEnv(process.env).accountLimitBytes;
+    const billed = artifactLimitBytes === null ? sql.empty : sql.sql`,
+        SUM(CASE WHEN kind IN ('artifacts', 'artifactOldVersions')
+            AND ${artifactKindBillsSql(dialect, name("artifactStoredKind"))}
+            THEN ${name("storedSizeBytes")} ELSE 0 END) AS ${name("artifactBilledBytes")}`;
     const withheldMessageIds = selection?.discussion?.withheldMessageIds ?? [];
     let readable = sql.empty;
     if (withheldMessageIds.length > 0) {
@@ -219,11 +238,12 @@ export async function readStorageInventoryInTx(tx: Tx, accountId: string, select
         measuredBytes: ByteCount;
         unknown: ByteCount;
         itemCount: ByteCount;
+        artifactBilledBytes?: ByteCount;
     }>>(sql.sql`
         ${inventory}
         SELECT kind, COALESCE(SUM(${name("storedSizeBytes")}), 0) AS ${name("measuredBytes")},
             COUNT(*) - COUNT(${name("storedSizeBytes")}) AS unknown,
-            COUNT(*) AS ${name("itemCount")}
+            COUNT(*) AS ${name("itemCount")} ${billed}
         FROM inventory GROUP BY kind`);
     const kinds: NonNullable<StorageInventoryV1['kinds']> = {};
     const byKind: StorageInventoryV1['byKind'] = {
@@ -244,8 +264,10 @@ export async function readStorageInventoryInTx(tx: Tx, accountId: string, select
             if (unknown) unmeasuredKinds.push(kind);
         } else byKind[kind] += bytes;
     }
-    const summary = { totalBytes: storageSize(totalBytes), byKind,
-        artifactLimitBytes: discussionId ? null : readArtifactStorageEnv(process.env).accountLimitBytes, unmeasuredKinds };
+    const summary = { totalBytes: storageSize(totalBytes), byKind, artifactLimitBytes, unmeasuredKinds,
+        ...(artifactLimitBytes === null ? {} : { artifactBilledBytes: storageSize(
+            storageSize(byRowKind.get('artifacts')?.artifactBilledBytes ?? 0)
+            + storageSize(byRowKind.get('artifactOldVersions')?.artifactBilledBytes ?? 0)) }) };
     if (!selection) return summary;
 
     let after: z.infer<typeof inventoryCursor> | undefined;
@@ -289,6 +311,9 @@ export async function checkArtifactStorageBudgetInTx(tx: Tx, input: Readonly<{
     approvalState?: string | null;
     accountId: string;
     artifactId: string;
+    currentKind?: string | null;
+    nextKind: string | null;
+}> & (Readonly<{ kindOnly: true }> | Readonly<{
     nextHeaderBytes: number;
     nextBodyBytes: number;
     nextProvenanceBytes?: number;
@@ -301,9 +326,17 @@ export async function checkArtifactStorageBudgetInTx(tx: Tx, input: Readonly<{
     nextBlobId?: string | null;
     candidateBlobBytes?: number;
     blobBytesDelta?: number;
-}>): Promise<ArtifactQuotaExceeded | null> {
+}>)): Promise<ArtifactQuotaExceeded | null> {
     const config = readArtifactStorageEnv(process.env);
-    if (config.documentLimitBytes === null && config.accountLimitBytes === null) return null;
+    const nextBilled = !isApprovalStoredKind(input.nextKind);
+    if (config.documentLimitBytes === null && (!nextBilled || config.accountLimitBytes === null)) return null;
+    const currentBilled = !isApprovalStoredKind(input.currentKind);
+    if ('kindOnly' in input) {
+        if (currentBilled || !nextBilled || config.accountLimitBytes === null) return null;
+        const sizes = await readArtifactStoredSizesInTx(tx, [input.artifactId]);
+        const documentBytes = sizes.get(input.artifactId) ?? 0;
+        return checkProjectedArtifactLimitsInTx(tx, input.accountId, config, documentBytes, documentBytes, nextBilled);
+    }
     const revisionRetentionCount = retainedRevisionCount(config.revisionRetentionCount, input.approvalState);
     const headBytes = storageSize(input.nextHeaderBytes + input.nextBodyBytes + (input.nextProvenanceBytes ?? 0));
     const { sql, identifier, bytes } = storageSql();
@@ -326,13 +359,20 @@ export async function checkArtifactStorageBudgetInTx(tx: Tx, input: Readonly<{
     const projectedBlobBytes = storageSize(blobs.filter(blob => retainedIds.has(blob.id)).reduce((sum, blob) => sum + storageSize(blob.storedSizeBytes), 0)
         + (input.candidateBlobBytes ?? 0) + (input.blobBytesDelta ?? 0));
     const documentBytes = storageSize(headBytes + currentRevisionBytes + revisionBytesDelta + projectedBlobBytes);
+    const currentBytes = (input.currentHeaderBytes ?? 0) + (input.currentBodyBytes ?? 0) + (input.currentProvenanceBytes ?? 0)
+        + currentRevisionBytes + currentBlobBytes;
+    return checkProjectedArtifactLimitsInTx(tx, input.accountId, config, documentBytes,
+        documentBytes - (currentBilled ? currentBytes : 0), nextBilled);
+}
+
+async function checkProjectedArtifactLimitsInTx(tx: Tx, accountId: string, config: ReturnType<typeof readArtifactStorageEnv>,
+    documentBytes: number, billedBytesDelta: number, billsAccount: boolean): Promise<ArtifactQuotaExceeded | null> {
     if (config.documentLimitBytes !== null && documentBytes > config.documentLimitBytes) {
         return { error: "quota_exceeded", budget: "document", limitBytes: config.documentLimitBytes, usedBytes: documentBytes };
     }
-    if (config.accountLimitBytes === null) return null;
-    const usage = await readArtifactStorageUsageInTx(tx, input.accountId);
-    const usedBytes = storageSize(usage.usedBytes + headBytes - (input.currentHeaderBytes ?? 0) - (input.currentBodyBytes ?? 0) - (input.currentProvenanceBytes ?? 0)
-        + revisionBytesDelta + projectedBlobBytes - currentBlobBytes);
+    if (!billsAccount || config.accountLimitBytes === null) return null;
+    const usage = await readArtifactStorageUsageInTx(tx, accountId);
+    const usedBytes = storageSize(usage.usedBytes + billedBytesDelta);
     return usedBytes > config.accountLimitBytes
         ? { error: "quota_exceeded", budget: "account", limitBytes: config.accountLimitBytes, usedBytes }
         : null;
@@ -347,6 +387,7 @@ export async function checkArtifactBlobUploadBudgetInSnapshot(input: Readonly<{
     body: Uint8Array;
     provenance?: Uint8Array;
     candidateBlobBytes: number;
+    nextKind?: string | null;
     update?: Readonly<{ expectedHeaderVersion?: number; expectedBodyVersion: number }>;
 }>): Promise<ArtifactQuotaExceeded | null> {
     const config = readArtifactStorageEnv(process.env);
@@ -366,15 +407,16 @@ export async function checkArtifactBlobUploadBudgetInSnapshot(input: Readonly<{
         if (!update) {
             // The existing create path owns replay and ID conflicts.
             if (await tx.artifact.findUnique({ where: { id: artifactId }, select: { id: true } })) return null;
-            return checkArtifactStorageBudgetInTx(tx, { ...next, nextHeaderBytes: nextHeaderBytes ?? 0 });
+            return checkArtifactStorageBudgetInTx(tx, { ...next, nextKind: input.nextKind ?? null, nextHeaderBytes: nextHeaderBytes ?? 0 });
         }
         const current = await tx.artifact.findFirst({ where: { id: artifactId, accountId, ...artifactVisibleWhere }, select: {
-            headerVersion: true, bodyVersion: true, header: true, body: true, provenance: true, currentBlobId: true,
+            headerVersion: true, bodyVersion: true, header: true, body: true, provenance: true, currentBlobId: true, kind: true,
         } });
         // A version mismatch goes through the incumbent replay/CAS path.
         if (!current || current.bodyVersion !== update.expectedBodyVersion
             || (update.expectedHeaderVersion !== undefined && current.headerVersion !== update.expectedHeaderVersion)) return null;
-        return checkArtifactStorageBudgetInTx(tx, { ...next,
+        return checkArtifactStorageBudgetInTx(tx, { ...next, currentKind: current.kind,
+            nextKind: input.nextKind === undefined ? current.kind : input.nextKind,
             nextHeaderBytes: nextHeaderBytes ?? current.header.byteLength,
             currentHeaderBytes: current.header.byteLength, currentBodyBytes: current.body.byteLength,
             currentProvenanceBytes: current.provenance?.byteLength ?? 0,

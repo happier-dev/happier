@@ -97,7 +97,7 @@ async function markApprovalSessionsChangedInTx(tx: Tx, accountId: string, sessio
 }
 
 /** Plain writers already expose the header; opaque writers supply their search hint. */
-function artifactWriteKind(header: Uint8Array, dataEncryptionKey: Uint8Array, kind?: string,
+function artifactWriteKind(header: Uint8Array, plain: boolean, kind?: string,
     approvalHints: Readonly<{ approvalState?: unknown; approvalSessionId?: unknown }> = {}): ({ kind: string | null } & ApprovalArtifactQueryHintsV1) | null {
     if (kind !== undefined && !ArtifactStoredKindV1Schema.safeParse(kind).success) return null;
     const hints = ApprovalArtifactQueryHintsV1Schema.safeParse({ approvalState: approvalHints.approvalState ?? null,
@@ -105,7 +105,7 @@ function artifactWriteKind(header: Uint8Array, dataEncryptionKey: Uint8Array, ki
     if (!hints.success) return null;
     let storedKind = kind ?? null;
     let approval = hints.data;
-    if (isPlainArtifactDataKeyBytes(dataEncryptionKey)) {
+    if (plain) {
         const value: unknown = decodePlainArtifactStoredContent(privacyKit.encodeBase64(new Uint8Array(header)));
         approval = { approvalState: null, approvalSessionId: null };
         if (value && typeof value === 'object' && !Array.isArray(value)) {
@@ -161,6 +161,7 @@ export type ArtifactAccountEncryptionMigrationPostStateResult =
 
 export type ArtifactAccountEncryptionMigrationRow = Readonly<{
     id: string;
+    kind: string | null;
     reviewGraph?: ArtifactReviewGraphAccountEncryptionMigrationV1;
     actionTriggerDefinitions?: ArtifactActionTriggerDefinitionsAccountEncryptionMigrationV1;
     actionTriggerDefinitionRows?: readonly ArtifactActionTriggerDefinitionMigrationRow[];
@@ -201,6 +202,7 @@ export async function readArtifactAccountEncryptionMigrationRowsInTx(
         ...(page ? { orderBy: { id: 'asc' as const }, take: page.take } : {}),
         select: {
             id: true,
+            kind: true,
             header: true,
             headerVersion: true,
             body: true,
@@ -451,6 +453,7 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
         currentBlobId: string | null;
         blobs: readonly PreparedArtifactAccountEncryptionConversionBlob[];
         ordinary: boolean;
+        kind: string | null;
         revisions: readonly Readonly<{ bodyVersion: number; expectedStoredBody: Uint8Array; body: Uint8Array;
             expectedStoredProvenance: Uint8Array | null; provenance: Uint8Array | null }>[];
     }>>();
@@ -610,6 +613,7 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
             currentBodyBytes: row.body.byteLength,
             currentBlobId: row.currentBlobId,
             blobs,
+            kind: row.kind,
             ordinary: artifactClassificationFromRelations({ pluginUiArtifact: row.pluginUiArtifact,
                 packageAssetRelease: row.packageAssetRelease }, params.accountId).kind === "ordinary",
             revisions,
@@ -654,7 +658,7 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
         const replacement = prepared.get(item.artifactId)!;
         if (replacement.ordinary) {
             const quota = await checkArtifactStorageBudgetInTx(params.tx, {
-                accountId: params.accountId, artifactId: item.artifactId,
+                accountId: params.accountId, artifactId: item.artifactId, currentKind: replacement.kind, nextKind: replacement.kind,
                 nextHeaderBytes: replacement.header.byteLength, nextBodyBytes: replacement.body.byteLength,
                 currentHeaderBytes: replacement.currentHeaderBytes, currentBodyBytes: replacement.currentBodyBytes,
                 currentProvenanceBytes: replacement.currentProvenanceBytes, nextProvenanceBytes: replacement.provenance?.byteLength ?? 0,
@@ -814,7 +818,8 @@ export async function createArtifact(params: {
             const candidate = prepareArtifactBlobCandidate({ accountId: actorUserId, artifactId, blobId, content });
             if (!params.mutationGuard) {
                 const quota = await checkArtifactBlobUploadBudgetInSnapshot({ accountId: actorUserId, artifactId, header, body,
-                    provenance: params.provenance, plain: content.t === 'plain', candidateBlobBytes: candidate.stored.byteLength });
+                    provenance: params.provenance, plain: content.t === 'plain', candidateBlobBytes: candidate.stored.byteLength,
+                    nextKind: artifactWriteKind(header, content.t === 'plain', params.kind, params)?.kind });
                 if (quota) return { ok: false, ...quota };
             }
             await cleanupRejectedArtifactBlobUploads(actorUserId);
@@ -1039,7 +1044,7 @@ export async function createArtifactTx(tx: Tx, params: CreateArtifactTxParams): 
     }
 
     const plain = isPlainArtifactDataKeyBytes(params.dataEncryptionKey);
-    const kind = artifactWriteKind(params.header, params.dataEncryptionKey, params.kind, params);
+    const kind = artifactWriteKind(params.header, plain, params.kind, params);
     if (!kind) return { ok: false, error: 'invalid-params' };
     if (!await admitSessionApprovalConsentWriteInTx(tx, { actorAccountId: params.actorUserId, ownerAccountId: params.actorUserId,
         writerAuthTokenKind: params.writerAuthTokenKind, current: null, next: kind })) return { ok: false, error: 'artifact_access_forbidden' };
@@ -1082,7 +1087,7 @@ export async function createArtifactTx(tx: Tx, params: CreateArtifactTxParams): 
     // Qualified plugin publication is governed by its own availability budgets.
     if (!params.markChanged) {
         const quota = await checkArtifactStorageBudgetInTx(tx, { accountId: params.actorUserId,
-            artifactId: params.artifactId, nextHeaderBytes: storedHeader.byteLength, nextBodyBytes: storedBody.byteLength,
+            artifactId: params.artifactId, nextKind: kind.kind, nextHeaderBytes: storedHeader.byteLength, nextBodyBytes: storedBody.byteLength,
             nextProvenanceBytes: storedProvenance?.byteLength ?? 0,
             nextBlobId: params.blob?.blobId ?? null, candidateBlobBytes: Number(params.preparedBlob?.row.storedSizeBytes ?? 0) });
         if (quota) return { ok: false, ...quota };
@@ -1249,6 +1254,8 @@ export async function updateArtifact(params: {
         if (candidate && content && body && access.level === 'owner' && !params.mutationGuard) {
             const quota = await checkArtifactBlobUploadBudgetInSnapshot({ accountId, artifactId, header: header?.bytes, body: body.bytes,
                 provenance: params.provenance, plain: content.t === 'plain', candidateBlobBytes: candidate.stored.byteLength,
+                nextKind: header ? artifactWriteKind(header.bytes, content.t === 'plain', params.kind, params)?.kind
+                    : content.t === 'plain' ? undefined : params.kind,
                 update: { expectedHeaderVersion: header?.expectedVersion ?? params.expectedHeaderVersion,
                     expectedBodyVersion: body.expectedVersion } });
             if (quota) return { ok: false, ...quota };
@@ -1428,8 +1435,8 @@ export async function updateArtifactTx(
     }
 
     const nextKind = params.header
-        ? artifactWriteKind(params.header.bytes, current.dataEncryptionKey, params.kind, params)
-        : hasQueryHints ? artifactWriteKind(openedCurrent.header, current.dataEncryptionKey, params.kind ?? current.kind ?? undefined, {
+        ? artifactWriteKind(params.header.bytes, isPlainArtifactDataKeyBytes(current.dataEncryptionKey), params.kind, params)
+        : hasQueryHints ? artifactWriteKind(openedCurrent.header, isPlainArtifactDataKeyBytes(current.dataEncryptionKey), params.kind ?? current.kind ?? undefined, {
             approvalState: params.approvalState === undefined ? current.approvalState : params.approvalState,
             approvalSessionId: params.approvalSessionId === undefined ? current.approvalSessionId : params.approvalSessionId,
         }) : undefined;
@@ -1540,20 +1547,21 @@ export async function updateArtifactTx(
         bodyUpdate = { bytes: params.body.bytes, version: params.body.expectedVersion + 1 };
     }
 
-    // Classification changes no stored content bytes and does not consume storage quota.
+    // A kind-only write can change billing without changing any stored content bytes.
     // The approval state this write stores decides retention (a settled approval keeps no earlier version).
     // Only the owner's own write may shorten the owner's history; another person's write never does.
     const nextApprovalState = params.actorUserId !== ownerAccountId ? null
         : nextKind ? nextKind.approvalState : current.approvalState;
-    const quota = kindOnly ? null : await checkArtifactStorageBudgetInTx(tx, { accountId: ownerAccountId, artifactId: current.id,
-        approvalState: nextApprovalState,
-        nextHeaderBytes: (updateData.header ?? current.header).byteLength,
-        nextBodyBytes: (updateData.body ?? current.body).byteLength,
-        currentHeaderBytes: current.header.byteLength, currentBodyBytes: current.body.byteLength, retainCurrentBody: Boolean(params.body),
-        currentProvenanceBytes: current.provenance?.byteLength ?? 0,
-        nextProvenanceBytes: (params.body ? updateData.provenance : current.provenance)?.byteLength ?? 0,
-        currentBlobId: current.currentBlobId, nextBlobId: params.body ? updateData.currentBlobId : current.currentBlobId,
-        candidateBlobBytes: params.preparedBlob?.candidate ? Number(params.preparedBlob.row.storedSizeBytes) : 0 });
+    const quota = await checkArtifactStorageBudgetInTx(tx, { accountId: ownerAccountId, artifactId: current.id,
+        currentKind: current.kind, nextKind: nextKind === undefined ? current.kind : nextKind.kind, approvalState: nextApprovalState,
+        ...(kindOnly ? { kindOnly: true } : {
+            nextHeaderBytes: (updateData.header ?? current.header).byteLength,
+            nextBodyBytes: (updateData.body ?? current.body).byteLength,
+            currentHeaderBytes: current.header.byteLength, currentBodyBytes: current.body.byteLength, retainCurrentBody: Boolean(params.body),
+            currentProvenanceBytes: current.provenance?.byteLength ?? 0,
+            nextProvenanceBytes: (params.body ? updateData.provenance : current.provenance)?.byteLength ?? 0,
+            currentBlobId: current.currentBlobId, nextBlobId: params.body ? updateData.currentBlobId : current.currentBlobId,
+            candidateBlobBytes: params.preparedBlob?.candidate ? Number(params.preparedBlob.row.storedSizeBytes) : 0 }) });
     if (quota) return { ok: false, ...quota };
 
     const { count } = await tx.artifact.updateMany({

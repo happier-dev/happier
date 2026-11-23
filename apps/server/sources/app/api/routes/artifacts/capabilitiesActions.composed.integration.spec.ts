@@ -56,6 +56,8 @@ import { loadPromptLibraryCatalogV1, readPromptLibraryCatalogRecordV1 } from '@h
 import { removeSkillRulesV1 } from '@happier-dev/protocol/prompts/library/skillRulesActionsV1';
 import capturedPickerStack from '../../../../../../../packages/protocol/fixtures/0.2-picker-skill-instructions-stack.json';
 import { createCliActionDeps } from '../../../../../../cli/src/session/actions/createCliActionDeps';
+import { createHostApprovalOriginCurrentness } from '../../../../../../cli/src/session/actions/approvals/hostOriginCurrentness';
+import { fetchServerFeaturesSnapshot } from '../../../../../../cli/src/features/serverFeaturesClient';
 import { createCliMcpServerActionExecuteV1 } from '../../../../../../cli/src/session/actions/cliActionDeps/createCliMcpServerActionDeps';
 import { createCliActionExecutorFromCredentials } from '../../../../../../cli/src/session/actions/createCliActionExecutorFromCredentials';
 import { bootstrapAccountSettingsContext } from '../../../../../../cli/src/settings/accountSettings/bootstrapAccountSettingsContext';
@@ -84,6 +86,9 @@ import { openSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessio
 import { projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { writeRuntimeDescriptorV1ToMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '../../../../../../cli/src/api/clientCompatibility/cliClientCompatibility';
+import { ArtifactActionOutputSchemasV1, ArtifactQuotaExceededV1Schema, ArtifactStorageUsageV1Schema, StorageInventoryV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { auth } from '@/app/auth/auth';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { enableAuthentication } from '@/app/api/utils/enableAuthentication';
@@ -205,6 +210,60 @@ describe('capability Actions through the production CLI host, HTTP, SQLite and S
         if (opened.status !== 'opened' || opened.record.key !== 'skill-rules') throw new Error('Expected opened skill rules');
         return opened.record.value.rules;
     }
+
+    it('lets an Agent request and settle an Artifact delete at the Account limit while ordinary writes are refused', async () => {
+        const artifactId = '00000000-0000-4000-8000-000000000111';
+        const headers = { authorization: `Bearer ${token}` };
+        const created = await executor.execute('artifact.create', {
+            artifactId, header: { title: 'At the Artifact limit' }, body: 'Disposable document',
+        }, context);
+        if (!created.ok) throw new Error(JSON.stringify(created));
+        const { revision } = ArtifactActionOutputSchemasV1['artifact.create'].parse(created.result);
+        const readQuota = async () => {
+            const response = await app.inject({ url: '/v1/artifacts/storage/usage', headers });
+            expect(response.statusCode, response.body).toBe(200);
+            return ArtifactStorageUsageV1Schema.parse(response.json());
+        };
+        const { usedBytes } = await readQuota();
+        expect(usedBytes).toBeGreaterThan(0);
+        vi.stubEnv('HAPPIER_ARTIFACT_ACCOUNT_LIMIT_BYTES', String(usedBytes));
+        const refused = await app.inject({ method: 'POST', url: '/v1/artifacts', headers, payload: {
+            id: '00000000-0000-4000-8000-000000000112', header: encodePlainArtifactStoredContent({ title: 'Ordinary' }),
+            body: encodePlainArtifactStoredContent('Over the limit'), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+        } });
+        expect(refused.statusCode, refused.body).toBe(413);
+        expect(ArtifactQuotaExceededV1Schema.parse(refused.json())).toMatchObject({ budget: 'account', limitBytes: usedBytes });
+
+        const home = { serverId: origin, serverIdentityId: await getOrCreateServerIdentityId(),
+            runtimeAccountId: accountId, actionCaller: { kind: 'host' } } as const;
+        const credentials = { token, encryption: null };
+        const resolveServerFeaturesSnapshot = () => fetchServerFeaturesSnapshot({ serverUrl: origin, token });
+        const approvalExecutor = runWithServerHttpBaseUrl(origin, () => createActionExecutor({
+            ...createCliActionDeps({ token, credentials, serverId: origin, serverHttpBaseUrl: origin,
+                sessionId: '', mode: 'plain', ctx: null, resolveServerFeaturesSnapshot }),
+            isApprovalExecutionOriginCurrent: createHostApprovalOriginCurrentness({
+                credentials, serverId: origin, serverApiUrl: origin, resolveServerFeaturesSnapshot,
+            }),
+        }));
+        const requested = await runWithServerHttpBaseUrl(origin, () => approvalExecutor.execute('artifact.delete', { artifactId, expectedRevision: revision }, {
+            ...home, surface: 'agent', authority: 'account_automation', actionRequestId: 'artifact-delete-at-limit',
+        }));
+        if (!requested.ok) throw new Error(JSON.stringify(requested));
+        const approval = ActionApprovalRequestCreatedResultSchema.parse(requested.result);
+        expect((await readQuota()).usedBytes).toBe(usedBytes);
+        const inventoryResponse = await app.inject({ url: '/v1/artifacts/storage/usage?inventory=true', headers });
+        expect(inventoryResponse.statusCode, inventoryResponse.body).toBe(200);
+        const inventory = StorageInventoryV1Schema.parse(inventoryResponse.json());
+        expect(inventory.totalBytes).toBeGreaterThan(usedBytes);
+        expect(inventory).toMatchObject({ artifactBilledBytes: usedBytes, artifactLimitBytes: usedBytes });
+
+        const settled = await runWithServerHttpBaseUrl(origin, () => approvalExecutor.execute('approval.request.decide', { artifactId: approval.artifactId, decision: 'approve' }, {
+            ...home, surface: 'cli', authority: 'present_user',
+        }));
+        expect(settled, JSON.stringify(settled)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+        expect((await app.inject({ url: `/v1/artifacts/${artifactId}`, headers })).statusCode).toBe(404);
+        expect((await readQuota()).usedBytes).toBe(0);
+    });
 
     it('lists and reads the bundled happier skill through the real Action host and preserves Off without an Artifact', async () => {
         const listed = await executor.execute('skills.list', {}, context);

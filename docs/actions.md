@@ -5833,7 +5833,9 @@ billed to them in both Discussion and Account inventories. Discussion scope has
 no Artifact limit.
 
 The summary includes the measured total, per-kind sizes, and the nullable
-Artifact limit. Paged inventory also reports `kinds[kind].itemCount` for
+Artifact limit. When configured, `artifactBilledBytes` gives the bytes counted
+toward that limit. The physical total includes approval records and their
+retained versions. Paged inventory also reports `kinds[kind].itemCount` for
 the full scope, including items with an unmeasured size. A null size means
 a kind has at least one unmeasured item. Earlier paged responses may omit
 `itemCount`.
@@ -5873,9 +5875,12 @@ Operators configure retention with `HAPPIER_ARTIFACT_REVISION_RETENTION_COUNT`
 `HAPPIER_ARTIFACT_DOCUMENT_LIMIT_BYTES` and
 `HAPPIER_ARTIFACT_ACCOUNT_LIMIT_BYTES`. These are live policy entries in the
 existing server configuration owner. The document limit covers its current
-stored header, body and retained revisions; the Account limit counts these
-bytes across ordinary documents. Plain
-server-sealing overhead counts toward these storage limits.
+stored header, body, retained revisions and distinct stored blobs. The Account
+limit counts these bytes across ordinary documents. In unreleased 0.3, approval records and their
+retained versions are excluded from Account usage and the Account limit, but
+remain subject to the document limit, which is checked first. Consents, notices
+and deployment receipts still count toward both budgets. Plain server-sealing overhead
+counts toward the billed bytes.
 
 Sharing remains with `artifact.access.grants.*` and the server grant owner.
 In 0.3 development, grant-list reads consume only the authenticated access

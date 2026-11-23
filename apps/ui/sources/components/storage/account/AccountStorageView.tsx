@@ -81,6 +81,7 @@ import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { projectArtifactLimit, type ArtifactLimitStanding } from '@/components/storage/storageQuotaState';
 
 import {
   describeAccountStorage,
@@ -88,14 +89,12 @@ import {
   listAccountStorageItemKinds,
   parseAccountStorageItemFilter,
   projectAccountStorageItems,
-  projectArtifactLimit,
   projectShownAccountStorageKinds,
   readAccountStorageItemArtifactIds,
   type AccountStorageItem,
   type AccountStorageItemFilter,
   type AccountStorageKind,
   type AccountStorageKindId,
-  type ArtifactLimitStanding,
 } from './accountStorageModel';
 import { useAskAgentAboutStorage } from './useAskAgentAboutStorage';
 

@@ -15,7 +15,7 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { TactilePressable } from '@/components/ui/interactions/TactilePressable';
 import { accountStorageViewRoute } from '@/components/storage/account/storageViewRoute';
 import { StorageSizeCell } from '@/components/storage/StorageSizeBar';
-import { resolveStorageQuotaState, type StorageQuotaState } from '@/components/storage/storageQuotaState';
+import { projectArtifactLimit, type StorageQuotaState } from '@/components/storage/storageQuotaState';
 import { usageSignatureAccent } from '@/components/settings/usage/usageAccent';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
@@ -457,10 +457,9 @@ function BrowserHeader(props: Readonly<{
     viewSwitch: React.ReactNode;
     toolbar: React.ReactNode;
 }>) {
-    const limit = props.usage?.artifactLimitBytes ?? null;
+    const limit = projectArtifactLimit(props.usage);
     const phone = useDeviceType() === 'phone';
-    const quotaState = props.usage !== null && limit !== null ? resolveStorageQuotaState(props.usage.byKind.artifacts, limit) : 'neutral';
-    const overQuota = quotaState === 'full';
+    const overQuota = limit?.state === 'full';
     // The library's reported counts go to the shared count line; the storage meter stays beside the title (or the switch).
     // Nothing listed in the chosen kinds: the page's line says what belongs here, so no count sits above it.
     // With no limit the count says what the Artifacts hold (owner 11-19); a set limit's meter already says it.
@@ -477,7 +476,7 @@ function BrowserHeader(props: Readonly<{
     // library lists something or the Account stores anything. While the read is out the line keeps its place.
     const meter = props.usage === null
         ? (props.showPresent || props.reservePresent ? <StorageLinePending /> : null)
-        : limit !== null ? (props.showPresent ? <StorageMeter usedBytes={props.usage.byKind.artifacts} limitBytes={limit} state={quotaState} /> : null)
+        : limit !== null ? (props.showPresent ? <StorageMeter usedBytes={limit.usedBytes} limitBytes={limit.limitBytes} state={limit.state} /> : null)
             : props.showPresent || props.usage.totalBytes > 0 ? <StorageTotal inventory={props.usage} /> : null;
     return (
         // The main-screen head (owner 11-11): the title row ends with the magnifier and the "+" (the bar's "+" runs the
@@ -496,8 +495,8 @@ function BrowserHeader(props: Readonly<{
             band={props.toolbar || overQuota ? <>
                 {props.toolbar}
                 {/* Under the toolbar, on the grid's edges (lab A8): it blocks saving, not finding. */}
-                {overQuota && props.usage !== null && limit !== null ? (
-                    <ArtifactQuotaNotice testID="artifacts:quota" placement="inline" quota={{ budget: 'account', usedBytes: props.usage.byKind.artifacts, limitBytes: limit }} />
+                {overQuota ? (
+                    <ArtifactQuotaNotice testID="artifacts:quota" placement="inline" quota={{ budget: 'account', usedBytes: limit.usedBytes, limitBytes: limit.limitBytes }} />
                 ) : null}
             </> : undefined}
             // A phone's view switch ends the count line; with nothing listed there is no line and nothing to switch.

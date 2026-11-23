@@ -1,5 +1,17 @@
 import type { ArtifactCallerAccessV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { getArtifactKindPolicyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { ArtifactCoarseKindV1Schema, encodeArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import { APPROVAL_ARTIFACT_KINDS_V1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
+
+export const approvalStoredKinds = ArtifactCoarseKindV1Schema.options.flatMap(kind =>
+    Object.values(APPROVAL_ARTIFACT_KINDS_V1).map(kindHint => encodeArtifactKindV1({ kind, kindHint })));
+export const approvalStoredKindPrefixes = ArtifactCoarseKindV1Schema.options.map(kind =>
+    encodeArtifactKindV1({ kind, kindHint: `${APPROVAL_ARTIFACT_KINDS_V1.builtIn}#` }));
+
+export function isApprovalStoredKind(kind: string | null | undefined): boolean {
+    return kind != null && (approvalStoredKinds.includes(kind) || approvalStoredKindPrefixes.some(prefix =>
+        kind.length > prefix.length && kind.startsWith(prefix)));
+}
 
 type PluginArtifactOwner = Readonly<{
     accountId: string;

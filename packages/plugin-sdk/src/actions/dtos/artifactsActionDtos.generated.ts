@@ -385,6 +385,7 @@ export type ArtifactsActionResultById = {
         };
         artifactLimitBytes: null | number;
         unmeasuredKinds: ('avatars' | 'profilePictures' | 'teamLogos')[];
+        artifactBilledBytes?: number | undefined;
         kinds?: Partial<Record<'accountPets' | 'artifactOldVersions' | 'artifacts' | 'avatars' | 'discussionAttachments' | 'pluginArtifacts' | 'pluginCollections' | 'profilePictures' | 'teamLogos', {
             storedSizeBytes: null | number;
             itemCount?: number | undefined;

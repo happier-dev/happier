@@ -5,8 +5,9 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { ArtifactStorageUsageV1Schema, StorageInventoryV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { APPROVAL_ARTIFACT_KINDS_V1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
-import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import { deriveArtifactStoredKindV1, encodeArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { db, initDbPostgres, shutdownDbClient } from '@/storage/db';
 import { createLightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { observePrismaRequests } from '@/testkit/observeSqliteRequests';
@@ -238,6 +239,19 @@ describe('Account storage and admitted Artifact page', () => {
                 expect.objectContaining({ id: own.id, kind: 'artifactOldVersions', viewerMayTrim: false }),
             ]));
             expect((await trim()).statusCode).toBe(404);
+            await db.artifact.update({ where: { id: own.id }, data: { kind: encodeArtifactKindV1({
+                kind: 'other', kindHint: `${APPROVAL_ARTIFACT_KINDS_V1.builtIn}#${randomUUID()}`,
+            }) } });
+            vi.stubEnv('HAPPIER_ARTIFACT_ACCOUNT_LIMIT_BYTES', String(artifacts - 1));
+            const exemptUsage = await app.inject({ url: '/v1/artifacts/storage/usage', headers });
+            expect(exemptUsage.statusCode, exemptUsage.body).toBe(200);
+            expect(ArtifactStorageUsageV1Schema.parse(exemptUsage.json())).toMatchObject({ usedBytes: 0, limitBytes: artifacts - 1 });
+            const exemptInventory = await app.inject({ url: inventoryPath, headers });
+            expect(exemptInventory.statusCode, exemptInventory.body).toBe(200);
+            expect(StorageInventoryV1Schema.parse(exemptInventory.json())).toMatchObject({
+                totalBytes: totalBytes + 25 * 112, byKind: { artifacts }, artifactBilledBytes: 0,
+            });
+            vi.stubEnv('HAPPIER_ARTIFACT_ACCOUNT_LIMIT_BYTES', '1000');
             await db.artifact.update({ where: { id: own.id }, data: { kind: own.kind, deletedAt: new Date() } });
             const retiringItems = await app.inject({ url: `${inventoryPath}&paged=true&kinds=artifacts,artifactOldVersions`, headers });
             expect(retiringItems.statusCode, retiringItems.body).toBe(200);

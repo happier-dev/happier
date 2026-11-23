@@ -1,3 +1,5 @@
+import type { StorageInventoryV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+
 /**
  * Where a stored amount stands against its limit, decided once for every storage meter (Settings › Storage's limit
  * row and sentence, the Artifacts header meter): `neutral` below the near share, `near` from it (amber, one quiet
@@ -16,4 +18,20 @@ export function resolveStorageQuotaState(
   return limitBytes > 0 && usedBytes / limitBytes >= STORAGE_QUOTA_NEAR_SHARE
     ? 'near'
     : 'neutral';
+}
+
+export type ArtifactLimitStanding = Readonly<{
+  usedBytes: number;
+  limitBytes: number;
+  leftBytes: number;
+  state: StorageQuotaState;
+}>;
+
+export function projectArtifactLimit(inventory: StorageInventoryV1 | null): ArtifactLimitStanding | null {
+  if (!inventory || inventory.artifactLimitBytes === null) return null;
+  const limitBytes = inventory.artifactLimitBytes;
+  // Earlier Homes billed the full Artifact kind total.
+  const usedBytes = inventory.artifactBilledBytes ?? inventory.byKind.artifacts;
+  return { usedBytes, limitBytes, leftBytes: Math.max(0, limitBytes - usedBytes),
+    state: resolveStorageQuotaState(usedBytes, limitBytes) };
 }
