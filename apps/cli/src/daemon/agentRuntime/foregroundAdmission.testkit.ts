@@ -48,7 +48,7 @@ type FixtureContext = Readonly<{
   home: string;
   directory: string;
   foregroundPid: number;
-  foregroundEntrypoint: string;
+  foregroundProcessArgs: readonly string[];
   runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
   request(overrides?: RequestOverrides): ForegroundAgentRuntimeAdmissionOwnerRequestV1;
   prepare(
@@ -113,10 +113,13 @@ export async function withRealForegroundAdmissionFixture<T>(
       });
       reloadConfiguration();
       await mkdir(join(directory, 'native-home'), { recursive: true });
-      // The process runs these physical bytes. The real OS identity adapter
-      // and runner-entrypoint owner derive its authority; neither is replaced.
-      const entrypoint = fileURLToPath(new URL('../../testkit/process/fixtures/src/index.mjs', import.meta.url));
-      foreground = spawnTestProcess(process.execPath, [entrypoint]);
+      // The idle child stands in for the source runner. Give its OS command line
+      // the checkout’s CLI entrypoint so source custody resolves the real plugin tree.
+      const foregroundProcessArgs = [
+        fileURLToPath(new URL('../../testkit/process/fixtures/src/index.mjs', import.meta.url)),
+        fileURLToPath(new URL('../../index.ts', import.meta.url)),
+      ];
+      foreground = spawnTestProcess(process.execPath, foregroundProcessArgs);
       await once(foreground, 'spawn');
       if (!foreground.pid) throw new Error('Foreground fixture process has no OS identity');
       runtime = options.createRuntime
@@ -147,7 +150,7 @@ export async function withRealForegroundAdmissionFixture<T>(
         };
       };
       return await run({
-        home, directory, foregroundPid: foreground.pid, foregroundEntrypoint: entrypoint, runtime, request,
+        home, directory, foregroundPid: foreground.pid, foregroundProcessArgs, runtime, request,
         async prepare(overrides = {}, dependencies = {}) {
           const admission = await prepareForegroundAgentRuntimeAdmission(request(overrides), dependencies);
           if (admission.ok) prepared.push(admission.prepared);

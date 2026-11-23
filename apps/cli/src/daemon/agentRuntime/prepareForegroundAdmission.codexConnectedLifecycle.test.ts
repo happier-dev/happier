@@ -144,7 +144,7 @@ describe('foreground Codex Connected Account lifecycle through real materializat
           materializationKey: provisionalSessionId,
           exactPurposeBindingSubjectId: `agent-session:${claimInput.canonicalSessionId}`,
         });
-        secondForeground = spawnTestProcess(process.execPath, [fixture.foregroundEntrypoint]);
+        secondForeground = spawnTestProcess(process.execPath, fixture.foregroundProcessArgs);
         await once(secondForeground, 'spawn');
         if (!secondForeground.pid) throw new Error('Second real foreground process unavailable');
         const secondSessionId = 'canonical-session-codex-other';

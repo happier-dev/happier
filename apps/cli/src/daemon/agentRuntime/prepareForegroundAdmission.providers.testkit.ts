@@ -34,12 +34,11 @@ import { bootstrapAccountSettingsContext, resetInMemoryAccountSettingsContextFor
 import { beginActiveSavedSecretCatalogRefresh, getActiveAccountSettingsSnapshot,
   getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { deriveSettingsSecretsKeyForCredentials } from '@/settings/secrets/settingsSecretsKey';
-import { deriveKey } from '@/utils/deriveKey';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { withRealForegroundAdmissionFixture } from './foregroundAdmission.testkit';
 import { ProfileRecordV1Schema, sealProfileRecordContentV1, type ProfileRecordV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { sealProfileTransferContentV1 } from '@happier-dev/protocol/profiles/profileTransferV1';
-import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { createAccountScopedCryptoMaterialSnapshotV1, resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
@@ -141,7 +140,7 @@ function configFileAgentPlugin() {
   };
 }
 
-async function sharedMaterial(options: FixtureOptions, settings: SettingsOptions, accountSecret: Uint8Array) {
+function sharedMaterial(options: FixtureOptions, settings: SettingsOptions, accountSecret: Uint8Array) {
   const statuses: Readonly<Record<Exclude<SharedFailure, 'reference_corrupt'>, SavedSecretCatalogMaterialStatusV1>> = {
     reference_forbidden: 'access_removed', reference_deleted: 'deleted',
     reference_mode_incompatible: 'recipient_mode_unsupported', reference_repair_required: 'update_required',
@@ -153,7 +152,7 @@ async function sharedMaterial(options: FixtureOptions, settings: SettingsOptions
   const recipientEnvelope = providerSecretMode === 'e2ee' ? {
     encryptedDataKey: Buffer.from(sealEncryptedDataKeyEnvelopeV1({
       dataKey: resourceDataKey,
-      recipientPublicKey: tweetnacl.box.keyPair.fromSecretKey(await deriveKey(accountSecret, 'Happy EnCoder', ['content'])).publicKey,
+      recipientPublicKey: tweetnacl.box.keyPair.fromSecretKey(resolveAccountContentSecretKey({ type: 'legacy', secret: accountSecret })).publicKey,
       randomBytes: length => new Uint8Array(length).fill(13),
     })).toString('base64'),
     recipientContentPublicKeyFingerprint: createAccountScopedCryptoMaterialSnapshotV1({
