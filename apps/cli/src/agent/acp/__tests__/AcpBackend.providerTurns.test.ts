@@ -10,7 +10,7 @@ import { createAcpTestTransportHandler, writeAcpTestAgentScript } from '../testk
 import type { SessionUpdate } from '../updates/types';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createDeferred } from '@/testkit/async/deferred';
-import { isPidAlive } from '@/testkit/process/spawn';
+import { isPidAlive, waitForProcessExit } from '@/testkit/process/spawn';
 import { FakePermissionSession } from '@/testkit/backends/permissionHandler';
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
 import type { AgentMessage } from '@/agent/core';
@@ -655,7 +655,7 @@ it.each(['cancel', 'dispose', 'source failure'] as const)('tears down native wor
             expect(isPidAlive(before.pid)).toBe(false);
         } else {
             host().fail(new Error('Journal unavailable'));
-            await expect.poll(() => isPidAlive(before.pid)).toBe(false);
+            expect(await waitForProcessExit(before.pid)).toBe(true);
             await backend.loadSession('owned');
             await backend.sendPrompt('owned', 'successor');
             await backend.waitForResponseComplete();

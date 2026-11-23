@@ -11,7 +11,7 @@ import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderE
 import { createDeferred } from '@/testkit/async/deferred';
 import { FakePermissionSession } from '@/testkit/backends/permissionHandler';
 import { withTempDir } from '@/testkit/fs/tempDir';
-import { isPidAlive } from '@/testkit/process/spawn';
+import { isPidAlive, waitForProcessExit } from '@/testkit/process/spawn';
 
 import { createAgyBackgroundContinuationSource } from './agyBackgroundContinuationSource';
 
@@ -37,7 +37,7 @@ function agyAgent(directory: string): string {
       const notify = update => send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: '${SESSION_ID}', update } });
       const tool = (sessionUpdate, toolCallId, status, extra = {}) => notify({
         sessionUpdate, toolCallId, name: 'run_command', kind: 'execute', title: COMMANDS[toolCallId], status,
-        rawInput: { CommandLine: COMMANDS[toolCallId], WaitMsBeforeAsync: 2000 }, ...extra,
+        rawInput: { CommandLine: COMMANDS[toolCallId], WaitMsBeforeAsync: 500, IsDaemon: toolCallId !== 'call_verify' }, ...extra,
       });
       const settle = (toolCallId, output) => {
         running.delete(toolCallId);
@@ -108,19 +108,25 @@ function agyAgent(directory: string): string {
               }, endTurn);
             }
           } else if (message.method === 'test/finish-build') {
-            const { chain, plan } = message.params;
+            const { chain, plan, pauseAfterUsage, usageWhileWaitingForPermission } = message.params;
             const followUp = chain ? 'call_tests' : 'call_verify';
             const reportPlan = () => notify({ sessionUpdate: 'plan', entries: [{ content: 'Verify the build', status: 'in_progress', priority: 'medium' }] });
             settle('call_build', 'build ok');
             if (plan === 'first') reportPlan();
             usage();
-            runCommand(followUp, () => {
-              if (followUp === 'call_verify') settle('call_verify', 'verified');
-              say(followUp === 'call_verify' ? 'The build is verified.' : 'Tests are running.');
-              if (plan === 'last') reportPlan();
-              usage();
-              ok(message.id, { resumed: true });
-            }, permission => ok(message.id, { resumed: false, permission }));
+            const runFollowUp = () => {
+              if (usageWhileWaitingForPermission) say('Checking the build.');
+              runCommand(followUp, () => {
+                if (followUp === 'call_verify') settle('call_verify', 'verified');
+                say(followUp === 'call_verify' ? 'The build is verified.' : 'Tests are running.');
+                if (plan === 'last') reportPlan();
+                usage();
+                ok(message.id, { resumed: true });
+              }, permission => ok(message.id, { resumed: false, permission }));
+              if (usageWhileWaitingForPermission) usage();
+            };
+            if (pauseAfterUsage) setTimeout(runFollowUp, ${TEST_TIMING.generationSettleMs * 3});
+            else runFollowUp();
           } else if (message.method === 'test/finish-tests') {
             settle('call_tests', 'tests passed');
             usage();
@@ -184,6 +190,37 @@ function finishedTurns(events: AgentMessage[]): AgentMessage[] {
 }
 
 describe('createAgyBackgroundContinuationSource', () => {
+  it('keeps the continuation open when usage arrives before the first follow-up tool', async () => {
+    await fixture(async ({ backend, events, permissionSession }) => {
+      await promptBuild(backend, permissionSession);
+      events.length = 0;
+
+      const resumed = backend.requestExtension('test/finish-build', { pauseAfterUsage: true });
+      await approvePendingPermission(permissionSession);
+
+      expect(await resumed).toEqual({ resumed: true });
+      await expect.poll(() => finishedTurns(events)).toEqual([IDLE_AFTER_TURN]);
+      expect(events).toContainEqual(expect.objectContaining({ type: 'model-output', textDelta: 'The build is verified.' }));
+    });
+  });
+
+  it('preserves a pending follow-up permission across an in-stream usage report', async () => {
+    await fixture(async ({ backend, events, permissionSession }) => {
+      await promptBuild(backend, permissionSession);
+      events.length = 0;
+
+      const resumed = backend.requestExtension('test/finish-build', { usageWhileWaitingForPermission: true });
+      await expect.poll(() => pendingPermissionIds(permissionSession)).toHaveLength(1);
+      await delay(TEST_TIMING.generationSettleMs * 3);
+      expect(finishedTurns(events)).toEqual([]);
+      await approvePendingPermission(permissionSession);
+
+      expect(await resumed).toEqual({ resumed: true });
+      await expect.poll(() => finishedTurns(events)).toEqual([IDLE_AFTER_TURN]);
+      expect(events).toContainEqual(expect.objectContaining({ type: 'model-output', textDelta: 'The build is verified.' }));
+    });
+  });
+
   it('runs the conversation Agy resumes after a background command settles as its own turn', async () => {
     await fixture(async ({ backend, events, permissionSession }) => {
       await promptBuild(backend, permissionSession);
@@ -288,7 +325,7 @@ describe('createAgyBackgroundContinuationSource', () => {
       void backend.requestExtension('test/finish-build', { plan: 'first' }).catch(() => undefined);
 
       await expect.poll(() => events).toContainEqual(expect.objectContaining({ type: 'status', status: 'error' }));
-      await expect.poll(() => isPidAlive(agentPid)).toBe(false);
+      expect(await waitForProcessExit(agentPid)).toBe(true);
     });
   });
 

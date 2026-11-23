@@ -4,6 +4,7 @@ import {
   isGenericToolCallIdentity,
   resolveBestToolCallIdentity,
 } from './resolveToolCallIdentity';
+import { isAcpToolCallTerminalStatus } from './types';
 import type {
   AcpToolCallCloseReason,
   AcpToolCallEnrichment,
@@ -43,10 +44,6 @@ export type AcpToolCallTracker<TimerHandle = ReturnType<typeof setTimeout>> = Re
   readonly finalizedSize: number;
   readonly pendingEnrichmentSize: number;
 }>;
-
-function isTerminal(status: unknown): status is 'completed' | 'failed' | 'cancelled' {
-  return status === 'completed' || status === 'failed' || status === 'cancelled';
-}
 
 export function createAcpToolCallTracker<TimerHandle = ReturnType<typeof setTimeout>>(params: Readonly<{
   now?: () => number;
@@ -162,7 +159,7 @@ export function createAcpToolCallTracker<TimerHandle = ReturnType<typeof setTime
   ): void => {
     clearRecordTimer(record);
     const syntheticStatus = reason === 'terminal'
-      ? isTerminal(record.snapshot.status) ? record.snapshot.status : 'failed'
+      ? isAcpToolCallTerminalStatus(record.snapshot.status) ? record.snapshot.status : 'failed'
       : reason;
     const result = terminalResult ?? {
       value: { status: syntheticStatus },
@@ -292,7 +289,7 @@ export function createAcpToolCallTracker<TimerHandle = ReturnType<typeof setTime
       publishCurrent(patch.toolCallId, record);
       if (status === 'in_progress') armTimeout(patch.toolCallId, record);
       else if (status === 'pending') clearRecordTimer(record);
-      if (isTerminal(status)) finish(patch.toolCallId, record, 'terminal', terminalResult);
+      if (isAcpToolCallTerminalStatus(status)) finish(patch.toolCallId, record, 'terminal', terminalResult);
       return true;
     },
     enrich(callId, enrichment) {
