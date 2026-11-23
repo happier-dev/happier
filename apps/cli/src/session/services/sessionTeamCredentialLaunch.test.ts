@@ -448,7 +448,10 @@ describe('Session Team launch composition', () => {
       readCatalog: async () => [{ ...resource, providerModels: [],
         readiness: { kind: 'broker_unavailable', reason: 'projection_unavailable' }, recoveryAction: 'retry',
       }],
-    })).rejects.toMatchObject({ code: 'broker_unavailable', phase: 'readiness' });
+    })).rejects.toMatchObject({ code: 'broker_unavailable', phase: 'readiness', failureCause: {
+      actionCause: { phase: 'providers.team_credential.readiness', errorCode: 'broker_unavailable',
+        nativeErrorReason: 'projection_unavailable', httpStatus: null },
+    } });
   });
 
   it('enforces the current brokered allowance when the chosen revision is stale', async () => {

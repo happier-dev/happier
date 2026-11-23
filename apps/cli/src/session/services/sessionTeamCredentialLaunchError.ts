@@ -1,3 +1,4 @@
+import type { TeamCredentialResourceReadinessV1 } from '@happier-dev/protocol/teams/credentials/resourceReadinessV1';
 import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { TeamCredentialBrokerApplicationFailureCodeV1Schema, type TeamCredentialBrokerApplicationFailureCodeV1 } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
 import { ConnectedServiceUxDiagnosticCodeV1Schema, type ConnectedServiceUxDiagnosticCodeV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
@@ -37,9 +38,11 @@ export function readTeamCredentialLaunchFailureCode(value: unknown): TeamCredent
 }
 
 /** The Session runtime and Action carriers share the closed Team credential refusal. */
-export function createTeamCredentialLaunchFailureCause(code: TeamCredentialLaunchFailureCode, phase: TeamCredentialLaunchFailurePhase) {
+export function createTeamCredentialLaunchFailureCause(code: TeamCredentialLaunchFailureCode, phase: TeamCredentialLaunchFailurePhase,
+  readinessReason?: Extract<TeamCredentialResourceReadinessV1, { kind: 'broker_unavailable' }>['reason']) {
   return { code, phase: 'authentication', failureReason: 'unknown',
-    actionCause: { phase: `providers.team_credential.${phase}`, errorClass: 'Error', errorCode: code, httpStatus: null },
+    actionCause: { phase: `providers.team_credential.${phase}`, errorClass: 'Error', errorCode: code, httpStatus: null,
+      ...(readinessReason ? { nativeErrorReason: readinessReason } : {}) },
   } satisfies NonNullable<SessionRuntimeIssueV1['failureCause']>;
 }
 

@@ -396,7 +396,9 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
         readiness: { kind: 'broker_unavailable' as const, reason: 'projection_unavailable' as const },
         recoveryAction: 'retry' as const, connectedServiceSelections: [],
       })) },
-    })).toEqual({ kind: 'unavailable', reason: 'broker_unavailable' });
+    })).toMatchObject({ kind: 'unavailable', reason: 'broker_unavailable',
+      failureCause: { actionCause: { nativeErrorReason: 'projection_unavailable', httpStatus: null } },
+    });
     const updateCatalog = { ...catalog, resources: catalog.resources.map(resource => ({ ...resource,
       readiness: { kind: 'update_required' as const }, providerModels: [], connectedServiceSelections: [],
     })) };
@@ -458,18 +460,23 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
       { readiness: { kind: 'broker_unavailable' as const, reason: 'projection_unavailable' as const },
         refusal: { code: 'broker_unavailable', details: { v: 1, source: 'team_credential' } } },
       { readiness: { kind: 'broker_unavailable' as const, reason: 'response_invalid' as const },
-        refusal: { code: 'broker_unavailable', details: { v: 1, source: 'team_credential' } } },
+        refusal: { code: 'broker_unavailable', details: { v: 1, source: 'team_credential' },
+          failureCause: { actionCause: { nativeErrorReason: 'response_invalid', httpStatus: null } } } },
       { readiness: { kind: 'source_unavailable' as const }, refusal: { code: 'source_unavailable' } },
       { readiness: { kind: 'resource_corrupt' as const }, refusal: { code: 'resource_corrupt' } },
       { readiness: { kind: 'resource_unavailable' as const }, refusal: { code: 'resource_unavailable' } },
       { readiness: { kind: 'policy_denied' as const }, refusal: { code: 'policy_denied' } },
     ]) {
-      expect(() => resolvePurposeTeamCredentialBindingIntents({ teamResourceSelections,
-        teamCredentialResourceCatalog: { ...catalog, resources: catalog.resources.map(resource => ({ ...resource,
-          readiness, connectedServiceSelections: [],
-          recoveryAction: readiness.kind === 'source_unavailable' ? 'source_owner_action' as const : 'retry' as const,
-        })) },
-      })).toThrow(expect.objectContaining(refusal));
+      let error: unknown;
+      try {
+        resolvePurposeTeamCredentialBindingIntents({ teamResourceSelections,
+          teamCredentialResourceCatalog: { ...catalog, resources: catalog.resources.map(resource => ({ ...resource,
+            readiness, connectedServiceSelections: [],
+            recoveryAction: readiness.kind === 'source_unavailable' ? 'source_owner_action' as const : 'retry' as const,
+          })) },
+        });
+      } catch (cause) { error = cause; }
+      expect(error).toMatchObject(refusal);
     }
     expect(() => resolvePurposeTeamCredentialBindingIntents({
       teamResourceSelections,

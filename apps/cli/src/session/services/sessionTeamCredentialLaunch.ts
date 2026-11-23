@@ -3,8 +3,8 @@ import type { ResolvedContributionRegistry } from '@/plugins/projection/registry
 import type { ProviderBrokerApplicationBindingV1, TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol';
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { mergeSessionTeamCredentialBindingIntents } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
-import { readTeamCredentialLaunchReadinessRefusal,
-  resolvePurposeTeamCredentialBindingIntents, type PurposeTeamResourceSelectionForSession } from './spawnConnectedServicesDefaults';
+import { resolvePurposeTeamCredentialBindingIntents, type PurposeTeamResourceSelectionForSession } from './spawnConnectedServicesDefaults';
+import { projectTeamCredentialLaunchReadinessRefusal } from './sessionTeamCredentialReadiness';
 import { resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn,
   type AgentSpawnPurposeContributions } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -154,8 +154,11 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
     && automatic && automatic.selection.deliveryMode !== deliveryMode) {
     throw new SessionTeamCredentialLaunchUnavailableError('team_credential_provider_selection_not_current', 'model_source');
   }
-  const readinessRefusal = readTeamCredentialLaunchReadinessRefusal(resource, deliveryMode);
-  if (readinessRefusal) throw new SessionTeamCredentialLaunchUnavailableError(readinessRefusal, 'readiness');
+  const readinessRefusal = projectTeamCredentialLaunchReadinessRefusal(resource, deliveryMode, 'readiness');
+  if (readinessRefusal) {
+    throw new SessionTeamCredentialLaunchUnavailableError(readinessRefusal.code, 'readiness',
+      readinessRefusal.failureCause ? readinessRefusal : undefined);
+  }
   const matchingRows = resource.providerModels.filter(candidate => (
     candidate.selection.resourceId === resourceId
     && candidate.selection.teamId === resource.teamId

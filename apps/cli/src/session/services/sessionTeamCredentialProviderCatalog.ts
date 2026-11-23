@@ -7,7 +7,7 @@ import { projectAgentProviderBrokerApplications } from '@/providers/broker/appli
 import { isSameTeamCredentialBrokerApplication } from '@/providers/broker/teamCredentialModelCatalog';
 import { readSessionTeamCredentialResourceCatalog } from './sessionTeamCredentialCatalog';
 import { SessionTeamCredentialLaunchUnavailableError } from './sessionTeamCredentialLaunchError';
-import { readTeamCredentialLaunchReadinessRefusal } from './sessionTeamCredentialReadiness';
+import { projectTeamCredentialLaunchReadinessRefusal } from './sessionTeamCredentialReadiness';
 
 /** Discover the worker's applications once; exact revalidation reads only its selected application. */
 export async function readSessionTeamCredentialProviderModels(input: Readonly<{
@@ -36,8 +36,10 @@ export async function readSessionTeamCredentialProviderModels(input: Readonly<{
   });
   const resource = resources.find(candidate => candidate.id === input.resourceId);
   if (resource) {
-    const refusal = readTeamCredentialLaunchReadinessRefusal(resource, input.deliveryMode);
-    if (refusal) throw new SessionTeamCredentialLaunchUnavailableError(refusal, 'readiness');
+    const refusal = projectTeamCredentialLaunchReadinessRefusal(resource, input.deliveryMode, 'readiness');
+    if (refusal) {
+      throw new SessionTeamCredentialLaunchUnavailableError(refusal.code, 'readiness', refusal.failureCause ? refusal : undefined);
+    }
   }
   return resource?.providerModels ?? [];
 }
