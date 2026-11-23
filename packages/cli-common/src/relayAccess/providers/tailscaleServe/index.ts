@@ -8,14 +8,13 @@ import {
 } from '../tailscale/commandParams.js';
 
 import {
-    classifyTailscaleServeRootSlot,
     extractTailscaleServeHttpsUrl,
     tailscaleServeHttpsUrlForInternalServerUrlFromStatus,
-    runTailscaleServeDisable,
     runTailscaleServeEnable,
     runTailscaleServeStatus,
     runTailscaleStatusJson,
 } from '../../../tailscale/index.js';
+import { disableTailscaleRelayRoot, readTailscaleRelayRootSlot } from '../tailscale/rootSlot.js';
 
 import { readBuiltinRelayAccessProviderId, relayAccessProviderDescriptorsById } from '../../catalog.js';
 
@@ -45,14 +44,8 @@ export const tailscaleServeRelayAccessProvider: RelayAccessProvider = {
                 deadline: commandDeadline,
                 signal,
             });
-            const serveStatus = await runTailscaleServeStatus(
-                commandParams,
-                {
-                    ...(ctx.runCommand ? { runCommand: ctx.runCommand } : {}),
-                    ...(ctx.resolveCommandOnPath ? { resolveCommandOnPath: ctx.resolveCommandOnPath } : {}),
-                },
-            );
-            const rootSlot = classifyTailscaleServeRootSlot(serveStatus, upstreamUrl);
+            const deps = { runCommand: ctx.runCommand, resolveCommandOnPath: ctx.resolveCommandOnPath };
+            const rootSlot = await readTailscaleRelayRootSlot(upstreamUrl, commandParams, deps, ctx.route?.httpsPort);
             if (rootSlot.kind === 'conflict') {
                 return {
                     state: 'error',
@@ -73,10 +66,7 @@ export const tailscaleServeRelayAccessProvider: RelayAccessProvider = {
                     ...commandParams,
                     upstreamUrl,
                 },
-                {
-                    ...(ctx.runCommand ? { runCommand: ctx.runCommand } : {}),
-                    ...(ctx.resolveCommandOnPath ? { resolveCommandOnPath: ctx.resolveCommandOnPath } : {}),
-                },
+                deps,
             );
 
             if (res.approvalUrl) {
@@ -112,14 +102,7 @@ export const tailscaleServeRelayAccessProvider: RelayAccessProvider = {
         if (readBuiltinRelayAccessProviderId(config.provider) !== 'tailscaleServe') {
             return;
         }
-        const commandDeadline = resolveTailscaleRelayAccessDeadline({ timeoutMs, deadline, signal });
-        await runTailscaleServeDisable(
-            resolveTailscaleRelayAccessCommandParams(ctx, { timeoutMs, deadline: commandDeadline, signal }),
-            {
-                ...(ctx.runCommand ? { runCommand: ctx.runCommand } : {}),
-                ...(ctx.resolveCommandOnPath ? { resolveCommandOnPath: ctx.resolveCommandOnPath } : {}),
-            },
-        );
+        await disableTailscaleRelayRoot('serve', ctx, { timeoutMs, deadline, signal });
     },
     status: async ({ config, ctx, timeoutMs, deadline, signal }) => {
         if (!config || readBuiltinRelayAccessProviderId(config.provider) !== 'tailscaleServe') {

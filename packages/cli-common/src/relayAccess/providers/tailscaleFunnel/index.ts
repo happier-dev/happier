@@ -11,10 +11,10 @@ import {
     extractTailscaleServeHttpsUrl,
     tailscaleServeHttpsUrlForInternalServerUrlFromStatus,
     runTailscaleFunnelEnable,
-    runTailscaleFunnelDisable,
     runTailscaleFunnelStatus,
     runTailscaleStatusJson,
 } from '../../../tailscale/index.js';
+import { disableTailscaleRelayRoot, readTailscaleRelayRootSlot } from '../tailscale/rootSlot.js';
 
 import { readBuiltinRelayAccessProviderId, relayAccessProviderDescriptorsById } from '../../catalog.js';
 
@@ -39,15 +39,19 @@ export const tailscaleFunnelRelayAccessProvider: RelayAccessProvider = {
 
         try {
             const commandDeadline = resolveTailscaleRelayAccessDeadline({ timeoutMs, deadline, signal });
+            const params = resolveTailscaleRelayAccessCommandParams(ctx, { timeoutMs, deadline: commandDeadline, signal });
+            const deps = { runCommand: ctx.runCommand, resolveCommandOnPath: ctx.resolveCommandOnPath };
+            const rootSlot = await readTailscaleRelayRootSlot(upstreamUrl, params, deps, ctx.route?.httpsPort);
+            if (rootSlot.kind === 'conflict') {
+                return { state: 'error', details: { reason: 'tailscale_root_slot_conflict',
+                    exposure: rootSlot.exposure, shareUrl: rootSlot.httpsUrl } };
+            }
             const res = await runTailscaleFunnelEnable(
                 {
-                    ...resolveTailscaleRelayAccessCommandParams(ctx, { timeoutMs, deadline: commandDeadline, signal }),
+                    ...params,
                     upstreamUrl,
                 },
-                {
-                    ...(ctx.runCommand ? { runCommand: ctx.runCommand } : {}),
-                    ...(ctx.resolveCommandOnPath ? { resolveCommandOnPath: ctx.resolveCommandOnPath } : {}),
-                },
+                deps,
             );
 
             if (res.approvalUrl) {
@@ -83,14 +87,7 @@ export const tailscaleFunnelRelayAccessProvider: RelayAccessProvider = {
         if (readBuiltinRelayAccessProviderId(config.provider) !== 'tailscaleFunnel') {
             return;
         }
-        const commandDeadline = resolveTailscaleRelayAccessDeadline({ timeoutMs, deadline, signal });
-        await runTailscaleFunnelDisable(
-            resolveTailscaleRelayAccessCommandParams(ctx, { timeoutMs, deadline: commandDeadline, signal }),
-            {
-                ...(ctx.runCommand ? { runCommand: ctx.runCommand } : {}),
-                ...(ctx.resolveCommandOnPath ? { resolveCommandOnPath: ctx.resolveCommandOnPath } : {}),
-            },
-        );
+        await disableTailscaleRelayRoot('funnel', ctx, { timeoutMs, deadline, signal });
     },
     status: async ({ config, ctx, timeoutMs, deadline, signal }) => {
         if (!config || readBuiltinRelayAccessProviderId(config.provider) !== 'tailscaleFunnel') {
