@@ -257,6 +257,42 @@ describe('action operation observation RPC handlers', () => {
     } finally { finish(); await runner.waitForTerminal(scope, 'move-operation'); }
     expect(await handlers.claimServiceMoveStart(request, context)).toEqual(refused);
   });
+  it('claims the SOURCE-prepared Move Start when the person\'s confirmed intent carried no setup review', async () => {
+    const scope = { accountId: 'requester', machineId: 'source' };
+    const workspace = { serverId: 'home', refId: 'workspace' };
+    const destination = { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: 'worker' } };
+    const intent = ProjectServiceRelocateInputV1Schema.parse({ workspace, sourceMachineId: scope.machineId, serviceName: 'web', requestId: 'move',
+      currentTarget: { kind: 'managed_service', machineId: 'source', managedServiceId: 'native-old',
+        workspaceId: 'workspace', cwd: '/project', declaration: { workspaceRefId: 'workspace', selection: { kind: 'manifest', name: 'web' } } },
+      destination, selectedTarget: { machineId: 'worker' }, desiredPlacement: { workspace, serviceName: 'web',
+        expectedRevision: 'absent', expected: { kind: 'absent' }, value: { runsOn: destination, unavailable: 'fail' } } });
+    // SOURCE preparation adds the inspected setup review; the destination re-derives this prepared operand.
+    const prepared = { ...intent, setupReview: { reviewedEffect: { commands: [] }, reviewedEffectDigest: 'source-setup' } };
+    const store = createActionOperationStore();
+    const spec = getActionSpec('projects.service.relocate');
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'move-operation',
+      resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation }) });
+    let finish!: () => void;
+    const completed = new Promise<void>(resolve => { finish = resolve; });
+    // A carried-review confirm is observed with the person's intent; the SOURCE coordinator publishes what it prepared.
+    const observed = runner.observe({ actionId: spec.id, scope, input: intent, requestId: 'confirm-request',
+      cancellation: 'supported', execute: async context => {
+        context.publishOwnerUpdate?.({ preparedInput: prepared });
+        context.updateProgress({ phase: 'starting', label: 'Starting service' });
+        await completed;
+        return { ok: true, result: { status: 'moved' } };
+      } });
+    const handlers = createActionOperationRpcHandlers({ store, runner, machineId: 'source', resolveAccountId: async () => 'custodian' });
+    const context = { machineAdmission: { actorAccountId: 'requester', custodianAccountId: 'custodian', machineId: 'source',
+      installationId: 'source-installation', role: 'use' as const, encryptionMode: 'plain' as const }, verifyMachineAdmissionCurrent: async () => true };
+    const request = { requestId: 'confirm-request', installationId: 'source-installation' };
+    await vi.waitFor(() => expect(store.get(scope, 'move-operation')?.progress).toMatchObject({ phase: 'starting' }));
+    try {
+      expect(await handlers.claimServiceMoveStart({ ...request, input: intent }, context))
+        .toEqual({ kind: 'refused', reasonCode: 'service_move_not_starting' });
+      expect(await handlers.claimServiceMoveStart({ ...request, input: prepared }, context)).toEqual({ kind: 'claimed' });
+    } finally { finish(); await observed; }
+  });
   it('keeps a guest operation read alive past the former Home phase cutoff within its RPC lifetime', async () => {
     const store = createActionOperationStore();
     store.create({ operationId: 'guest-operation', actionId: 'projects.script.run', title: 'Run',

@@ -314,6 +314,9 @@ export function createActionOperationRunner(deps: Readonly<{
         }
       };
       const publishOwnerUpdate = (update: ActionOperationOwnerUpdate): void => {
+        if (update.preparedInput !== undefined) {
+          deps.store.retainPreparedInput(operationId, createCanonicalJsonSigningInput(update.preparedInput));
+        }
         if (update.cancellation !== undefined) {
           cancellation = update.cancellation;
           deps.store.updateCancellation(operationId, cancellation);
@@ -838,7 +841,8 @@ export function createActionOperationRunner(deps: Readonly<{
       if (!snapshot || snapshot.state !== 'running' || snapshot.observation
         || snapshot.progress?.kind !== 'phase' || snapshot.progress.phase !== 'starting'
         || !invocation?.serviceMoveStart || invocation.controller.signal.aborted
-        || !deps.store.hasMatchingInputIdentity(snapshot.operationId, createCanonicalJsonSigningInput(input))) {
+        // The destination re-derives the SOURCE-prepared operand (setup review included), not the caller's intent.
+        || !deps.store.hasMatchingPreparedInputIdentity(snapshot.operationId, createCanonicalJsonSigningInput(input))) {
         return { kind: 'refused', reasonCode: 'service_move_not_starting' };
       }
       if (invocation.serviceMoveStart.claimed) return { kind: 'refused', reasonCode: 'service_move_start_already_claimed' };

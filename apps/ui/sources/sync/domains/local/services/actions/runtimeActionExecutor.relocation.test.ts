@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { ProjectServiceRelocateInputV1Schema, ProjectServiceRelocateResultV1Schema, type ProjectServiceRelocateResultV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
@@ -42,6 +43,12 @@ beforeEach(async () => {
     home.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {
         actionsSettingsV1: normalizeActionsSettingsV1({ v: 1, actions: {}, approvalWaivedSurfaces: { [actionId]: ['ui'] } }),
     } }, version: 1 } });
+    // A person's Move addresses the SOURCE checkout's Machine from Home's project rows.
+    const key = { kind: 'workspace-ref' as const, serverId: 'srv_service_move', id: 'source-ref' };
+    home.answer(serverId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, { body: { status: 'listed', coverage: 'complete', rows: [
+        ProjectAccountRowV1Schema.parse({ key, revision: 1, content: { t: 'plain', v: { key,
+            value: { id: key.id, serverId: 'srv_service_move', machineId: 'source-controller', rootPath: '/source', createdAtMs: 1 } } } }),
+    ] } });
     // The SOURCE Machine is read by id through the Machine rows reader (a532f4a1e0).
     home.answer(serverId, '/v1/machines/source-controller', { body: { machine: {
         ...createPlainMachineRowFixture({ id: 'source-controller', accountId: scope.accountId }), installationId: 'source-installation' } } });
@@ -127,7 +134,7 @@ describe('Service Move through the real UI Action front door', () => {
         await expect(createDefaultActionExecutor().execute(actionId, requestFor('new-worker'), {
             surface: 'ui', authority: 'present_user', serverId,
             externalActionTarget: { kind: 'machine', machineId: 'new-worker' },
-        })).resolves.toMatchObject({ ok: true, result: { status: 'refused', reasonCode: 'target_unavailable' } });
+        })).resolves.toMatchObject({ ok: false, errorCode: 'target_mismatch' });
         expect(home.requestsFor(route)).toEqual([]);
     });
 });

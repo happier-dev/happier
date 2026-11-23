@@ -551,6 +551,12 @@ export function createActionOperationStore(options?: Readonly<{
       return isDeepStrictEqual(invocationMetadata.get(operationId)?.deploymentTokenOrigin, origin);
     },
 
+    /** The running owner's prepared operand; the admitted intent identity is unchanged. */
+    retainPreparedInput(operationId: string, preparedInput: string): void {
+      const current = snapshots.get(operationId), metadata = invocationMetadata.get(operationId);
+      if (current && !isTerminal(current) && metadata) retainInvocation(current, { ...metadata, preparedInput });
+    },
+
     /** Used only after the Action declaration admits a newly reviewed re-entry. */
     replaceInputIdentity(operationId: string, inputIdentity: string, preparedInput?: string): void {
       const current = snapshots.get(operationId), metadata = invocationMetadata.get(operationId);

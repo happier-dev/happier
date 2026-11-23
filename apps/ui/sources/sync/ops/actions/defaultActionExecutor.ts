@@ -158,6 +158,7 @@ import { doesExternalActionConsumeRequesterAccountContentV1, getActionSpec, reso
 import { ActionIdSchema, isWorkspaceSyncRelationshipWriteActionId, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { WorkflowRunStartRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { WorkspaceSyncRelationshipWriteActionInputV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
 import { resolveActionBackendTargetSelection } from '@happier-dev/protocol/actions/resolveActionBackendTargetSelection';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
@@ -1137,13 +1138,16 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     const presetArchive = args.actionId === MACHINE_PRESET_ARCHIVE_ACTION_ID_V1;
     const machineOwnedAction = isMachineOwnedAdmissionAction(args.actionId, args.input) || presetArchive;
     const relationshipWrite = isWorkspaceSyncRelationshipWriteActionId(args.actionId);
+    // A person's service Move runs at the SOURCE workspace's Machine, addressed exactly like a Sync write.
+    const serviceMove = args.actionId === 'projects.service.relocate';
     let workspaceSourceMachineId: string | undefined;
-    if (relationshipWrite) {
+    if (relationshipWrite || serviceMove) {
       if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
-      const input = WorkspaceSyncRelationshipWriteActionInputV1Schema.parse(pluginInput);
+      const sourceWorkspaceRefId = serviceMove ? ProjectServiceRelocateInputV1Schema.parse(pluginInput).workspace.refId
+        : WorkspaceSyncRelationshipWriteActionInputV1Schema.parse(pluginInput).sourceWorkspaceRefId;
       const rows = await createUiProjectAccountRowsClient(accountContext).read(args.context.signal);
       const source = rows.status === 'ready' && rows.coverage === 'complete'
-        ? resolveWorkspaceRefById(rows.workspaceRefs, input.sourceWorkspaceRefId, accountContext.serverIdentityId ?? accountContext.serverId)
+        ? resolveWorkspaceRefById(rows.workspaceRefs, sourceWorkspaceRefId, accountContext.serverIdentityId ?? accountContext.serverId)
         : null;
       if (source?.kind !== 'resolved') return { ok: false, errorCode: 'workspace_ref_not_ready', error: 'workspace_ref_not_ready' };
       workspaceSourceMachineId = resolveWorkspaceSyncExecutionMachineIdV1(source.ref);

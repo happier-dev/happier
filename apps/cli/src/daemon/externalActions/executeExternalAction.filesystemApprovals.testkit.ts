@@ -1343,7 +1343,8 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       prepareRequesterAccountContext: source ? prepareSourceRequester : prepareRequester,
     }));
   };
-  const harness = { rootPath, directory, ref, workerRef, workerRelationship: relationship, rows, rpcOutcomes, networkPaths, finiteIngress, spawned, installation, sourceInstallation, deploymentRuntime,
+  const personMoveExecutions: ActionExecuteResult[] = [];
+  const harness = { personMoveExecutions, rootPath, directory, ref, workerRef, workerRelationship: relationship, rows, rpcOutcomes, networkPaths, finiteIngress, spawned, installation, sourceInstallation, deploymentRuntime,
     nativeAgentRoots,
     useNativeStreamCopy() { nativeStreamCopy = true; },
     runRootControl: (input: unknown, requestedActionId: Parameters<typeof requestDaemonSignedRootActionExecution>[0]['actionId']) => requestDaemonSignedRootActionExecution({
@@ -1564,7 +1565,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       selectedMachineId?: string; protectedInput?: 'requester material' | 'other material';
       sourceCoordinator?: true; requesterToken?: string; activeMove?: true;
       executeMove?: import('@happier-dev/protocol/workspaces/projectServiceRelocationV1').ProjectServiceRelocateInputV1;
-      originalCli?: 'default' | 'source' | 'mcp' | 'session_agent';
+      originalCli?: 'default' | 'source' | 'mcp' | 'session_agent' | 'ui_person';
       proposalOnly?: true;
       approveRequiredChild?: true;
       cancelRequiredChild?: true;
@@ -1740,6 +1741,40 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
                   expect(proposal, JSON.stringify({ networkPaths, refusals: refusalDiagnostics() })).toMatchObject({ kind: 'approval_request_created' });
                   accepted = { ok: true, result: ActionApprovalRequestCreatedResultSchema.parse(proposal) };
                 } finally { await client.close(); await mcp.close(); }
+              } else if (options.originalCli === 'ui_person') {
+                // The person's own UI press, as the UI Account transport sends it: Home mints the
+                // root for the SOURCE, the sealed invocation carries the UI confirmation, and the
+                // real SOURCE ingress (executeExternalAction) receives it. A carried review is
+                // confirmed once, exactly as confirmOwnUiRefusal does: same input, fresh request id.
+                const sendUi = async (requestId: string, reviewDigest?: string) => {
+                  const uiEnvelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId, target: moveTarget, input });
+                  const confirmation = reviewDigest ? { actionId: 'projects.service.relocate' as const, accountId: 'account',
+                    serverId: homeId, requestId, reviewDigest, target: moveTarget,
+                    inputDigest: computeActionInputApprovalDigestV1('projects.service.relocate', input) } : undefined;
+                  const minted = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'ui-move-home-root', binding: {
+                    accountId: 'account', custodianAccountId: 'account', authentication: { kind: 'account', tokenEpoch: 1 },
+                    admittedMachineRole: cliPolicy?.machineRole ?? 'manage',
+                    ...mintActionAdmission('projects.service.relocate', uiEnvelope),
+                    accountEncryptionMode: 'plain', serverIdentityId: homeId, machineId: ref.machineId,
+                    installationId: moveInstallation.installationId, actionId: 'projects.service.relocate',
+                    requestId, target: moveTarget, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(uiEnvelope) } });
+                  const executionAuthorization = sealExternalActionRequesterAccountContextV1({ authorization: minted,
+                    credentials: encodeStoredCredentials(credentials),
+                    invocation: { caller: { kind: 'host' }, surface: 'ui', authority: 'present_user',
+                      ...(confirmation ? { presentUserConfirmation: confirmation } : {}) },
+                    purpose: { kind: 'external_action' },
+                    installationPublicKey: Buffer.from(moveInstallation.publicKey, 'base64url'), randomBytes: tweetnacl.randomBytes });
+                  const response = await originalMoveIngress!(ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1,
+                    machineId: ref.machineId, envelope: uiEnvelope, executionAuthorization }));
+                  const execution = (response as { execution: ActionExecuteResult }).execution;
+                  personMoveExecutions.push(execution);
+                  return execution;
+                };
+                const reviewed = await sendUi(envelope.requestId);
+                const carried = !reviewed.ok && reviewed.details && typeof reviewed.details === 'object'
+                  && 'reviewDigest' in reviewed.details && typeof reviewed.details.reviewDigest === 'string'
+                  ? reviewed.details.reviewDigest : undefined;
+                accepted = carried ? await sendUi(randomUUID(), carried) : reviewed;
               } else if (options.originalCli === 'session_agent') {
                 // An Agent in a Session on this installed SOURCE, as its own Account:
                 // the production Session executor and Home-root issuer, then this SOURCE executor.

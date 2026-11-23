@@ -694,6 +694,34 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       await h.close();
     }
   });
+  it.each(['default', 'ask'] as const)('moves a person\'s own UI Move after they confirm the SOURCE\'s carried review (%s policy)', async policy => {
+    const h = await createHarness('projects.service.relocate', policy, false, 'srv_portableHome', undefined, true, false,
+      { authentication: 'account' });
+    const service = await h.seedMoveService();
+    try {
+      expect(await h.ensureWorkerLink()).toMatchObject({ state: 'watching' });
+      service.finishStop();
+      const terminal = await h.prepareSignedMove({ sourceCoordinator: true, executeMove: service.request, originalCli: 'ui_person' });
+      const [review, confirm] = h.personMoveExecutions;
+      expect(review, JSON.stringify(review)).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required',
+        details: { reviewDigest: expect.any(String) } });
+      // The review the person confirmed and the one the SOURCE rebuilt at confirm must be the same.
+      if (confirm && !confirm.ok && confirm.errorCode === 'action_interactive_review_required') {
+        expect((confirm.details as { review?: unknown } | undefined)?.review).toEqual((review as { details?: { review?: unknown } }).details?.review);
+      }
+      expect(terminal, JSON.stringify({ terminal, outcomes: h.rpcOutcomes })).toMatchObject({ kind: 'found', operation: {
+        state: 'succeeded', result: { status: 'moved', currentTarget: { machineId: h.workerRef.machineId, workspaceId: h.workerRef.id } } } });
+      expect(h.personMoveExecutions).toHaveLength(2);
+      expect(service.snapshot().state).toBe('stopped');
+      expect(h.serviceInstances().filter(instance => instance.workspace.rootPath === h.workerRef.rootPath)
+        .map(instance => instance.snapshot().state)).toEqual(['running']);
+      expect(h.networkPaths.filter(path => path === 'POST /v1/artifacts')).toHaveLength(0);
+    } finally {
+      service.finishStop();
+      await Promise.all(h.serviceInstances().filter(instance => instance.workspace.rootPath === h.workerRef.rootPath).map(instance => instance.stop()));
+      await h.close();
+    }
+  });
   it('reviews original Account CLI declared-Service Ask before publication despite a UI waiver', async () => {
     const h = await createHarness('localServices.launcher.start', 'ask', false, 'srv_n2', undefined, false, false,
       { authentication: 'account', askWithUiWaiver: true });

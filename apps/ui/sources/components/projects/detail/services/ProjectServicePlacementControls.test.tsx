@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectExecutionChoiceV1, WorkspaceExecutionSettingsV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
@@ -166,7 +167,8 @@ async function setup(options: Readonly<{
   const moveBoundary = options.onMove ? await createExternalActionAccountHttpBoundary({
     serverUrl: 'https://service-placement-ui.test', serverIdentityId: 'srv_service_creation',
     accountId: 'artifact-account', machineId: 'devbox', actionId: 'projects.service.relocate', tokenEpoch: 0,
-    requesterInvocation: 'none', execute: input => {
+    // The person's confirmed Move carries their sealed confirmation to the SOURCE; an unconfirmed press does not.
+    requesterInvocation: 'optional', execute: input => {
       options.onMove!(input);
       return options.moveReply ?? { status: 'refused', reasonCode: 'native_boundary_observed' };
     },
@@ -176,6 +178,13 @@ async function setup(options: Readonly<{
     {
       currentAccount: options.currentAccount ?? Boolean(moveBoundary),
       handleRequest: async (path, init) => {
+        // A person's Move addresses the SOURCE checkout's Machine from Home's project rows.
+        if (path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return json({ status: 'listed', coverage: 'complete',
+          rows: [source, worker].map(ref => {
+            const key = { kind: 'workspace-ref' as const, serverId: 'srv_service_creation', id: ref.id };
+            return ProjectAccountRowV1Schema.parse({ key, revision: 1,
+              content: { t: 'plain', v: { key, value: { ...ref, serverId: 'srv_service_creation' } } } });
+          }) });
         if (options.initialBindingMachineId && moveBoundary && path === '/v1/machines?includeRevoked=true') {
           return json([moveBoundary.machine, ...['hz-build-1', 'pool-worker'].map(id =>
             createPlainMachineRowFixture({ id, accountId: 'artifact-account' }))]);

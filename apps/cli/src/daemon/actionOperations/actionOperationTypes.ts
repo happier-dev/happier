@@ -86,7 +86,9 @@ export type ActionOperationProgressUpdate = Readonly<z.infer<typeof ActionOperat
 export const ActionOperationOwnerUpdateSchema = z.strictObject({ actor: z.optional(z.nullable(ActionActorV1Schema)),
   state: z.optional(z.literal('running')), cancellation: z.optional(z.enum(['supported', 'unsupported'])),
   outcome: z.optional(ActionExecuteResultSchema), progress: z.optional(ActionOperationProgressUpdateSchema),
-  domainRef: z.optional(ActionOperationDomainRefV1Schema), observation: z.optional(z.nullable(ActionOperationObservationV1Schema)) });
+  domainRef: z.optional(ActionOperationDomainRefV1Schema), observation: z.optional(z.nullable(ActionOperationObservationV1Schema)),
+  /** The owner's prepared operand when it differs from the admitted intent (a Move's SOURCE setup review). */
+  preparedInput: z.optional(z.unknown()) });
 export type ActionOperationOwnerUpdate = Readonly<z.infer<typeof ActionOperationOwnerUpdateSchema>>;
 
 /** A projection of a lifecycle already owned by another domain. No runner or AbortController is created. */

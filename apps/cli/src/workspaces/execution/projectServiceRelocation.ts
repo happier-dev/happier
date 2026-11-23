@@ -89,7 +89,8 @@ export function createProjectServiceRelocation(ports: ProjectServiceRelocationPo
       const sameTarget = selected.machineId === current.currentTarget.machineId && selected.id === current.currentTarget.workspaceId;
       const sourceWorkspace = input.workspace;
       const destinationWorkspace = { serverId: selected.serverId, machineId: selected.machineId, workspaceId: selected.id, rootPath: selected.rootPath };
-      context.publishOwnerUpdate?.({ domainRef: { kind: 'projectService', purpose: 'relocation', sourceWorkspace, destinationWorkspace,
+      // The destination's Start claim re-derives this SOURCE-prepared operand, not the caller's intent.
+      context.publishOwnerUpdate?.({ preparedInput: input, domainRef: { kind: 'projectService', purpose: 'relocation', sourceWorkspace, destinationWorkspace,
         workspace: { serverId: current.workspace.serverId, machineId: current.workspace.machineId,
           workspaceId: current.workspace.id, rootPath: current.workspace.rootPath },
         declaration: current.currentTarget.declaration, currentTarget: current.currentTarget } });
