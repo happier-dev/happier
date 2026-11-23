@@ -119,6 +119,22 @@ function barrierAtRead(
 }
 
 describe('the canonical configured source instance writer', () => {
+    it('uses the acknowledged source ID without rereading the created row', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        const result = await administerConfiguredSourceInstance({
+            collections,
+            source: SOURCE,
+            declaredPurpose: PURPOSE,
+            request: { kind: 'create', draft: draft() },
+            nowMs: 10,
+            mintSourceInstanceId: mintSequence(ID_A),
+        });
+
+        expect(result).toEqual({ kind: 'active', sourceInstanceId: ID_A });
+        expect((await liveRows(collections.sourceInstances)).map(row => row.configured.instance.sourceInstanceId)).toEqual([ID_A]);
+        expect(control.sourceInstances.getCallCount()).toBe(1);
+    });
+
     it('creates one stable source instance when two same-tuple administration creates race', async () => {
         const { collections } = createTestkitCorpusCollections();
         const mint = mintSequence(ID_A, ID_B);

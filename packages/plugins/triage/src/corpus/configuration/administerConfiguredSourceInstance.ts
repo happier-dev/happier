@@ -283,18 +283,14 @@ async function createInstance(
             : CONFLICT;
     }
 
+    const sourceInstanceId = input.mintSourceInstanceId();
     const written = await putRow(sourceInstances, activeRow({
         instanceTag,
         source: input.source,
-        configured: configuredFrom(input.source, draft, input.mintSourceInstanceId()),
+        configured: configuredFrom(input.source, draft, sourceInstanceId),
         configuredAtMs: input.nowMs,
     }), 'absent', options);
-    if (written) {
-        const committed = await readConfiguredSourceInstanceRow(sourceInstances, instanceTag, options);
-        return committed
-            ? { kind: 'active', sourceInstanceId: committed.value.configured.instance.sourceInstanceId }
-            : CONFLICT;
-    }
+    if (written) return { kind: 'active', sourceInstanceId };
 
     // Another writer won the same tuple-addressed row. Re-read it and adopt the
     // winner's stable ref; the id this call minted is simply discarded.
