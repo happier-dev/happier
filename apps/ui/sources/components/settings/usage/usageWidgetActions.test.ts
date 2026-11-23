@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { buildWidgetSurfaceArtifactIdV1, projectWidgetBindingInputV1, readBuiltinWidgetDescriptorV1, WidgetSurfaceReadV1Schema, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { buildWidgetSurfaceArtifactIdV1, projectWidgetBindingInputV1, readBuiltinWidgetDescriptorV1, WidgetSurfaceReadV1Schema, WidgetInstanceV1Schema, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { buildWidgetAreaActionInputV1, PluginUiWidgetAreaResultV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { standardCleanup } from '@/dev/testkit';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
@@ -9,7 +9,7 @@ import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/act
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { createUsageWidgetPresets, USAGE_WIDGET_PRESET_IDS } from './usageWidgetPresets';
-import { setUsageWidgetMetric } from './usageWidgetActions';
+import { setUsageWidgetMetric, usageWidgetAcceptsMetric } from './usageWidgetActions';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { readUsageWidgetPageContext, readUsageWidgetPageScope } from './usageWidgetPageContext';
@@ -18,6 +18,20 @@ import { storage } from '@/sync/domains/state/storage';
 
 let home: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
 afterEach(async () => { standardCleanup(); retireActiveServerAccountScopeLifetime(); await home?.dispose(); home = undefined; });
+
+it('includes only currently applicable metric inputs in toolbar edits and mixed-metric decisions', () => {
+    const rhythm = WidgetInstanceV1Schema.parse({ v: 1, id: 'metric-rhythm',
+        definition: { kind: 'builtin', id: 'usage_rhythm' },
+        bindings: { metric: { kind: 'value', value: 'tokens' } } });
+    // The retained activity composition has no Tokens/Cost encoding, even with a saved metric.
+    expect(usageWidgetAcceptsMetric(rhythm)).toBe(false);
+    expect(usageWidgetAcceptsMetric({ ...rhythm, bindings: { ...rhythm.bindings,
+        style: { kind: 'value', value: 'heatmap' } } })).toBe(false);
+    expect(usageWidgetAcceptsMetric({ ...rhythm, bindings: { ...rhythm.bindings,
+        style: { kind: 'value', value: 'sky' } } })).toBe(true);
+    expect(usageWidgetAcceptsMetric({ ...rhythm,
+        definition: { kind: 'builtin', id: 'usage_daily' }, bindings: {} })).toBe(true);
+});
 
 it('edits only displayed widget metric inputs through real Actions and Artifact CAS, retaining independent scopes', async () => {
     const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });

@@ -2,14 +2,24 @@ import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { PluginUiWidgetAreaResultV1 } from '@happier-dev/protocol/plugins/ui';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { buildWidgetAreaActionInputV1, PluginUiWidgetAreaResultV1Schema } from '@happier-dev/protocol/plugins/ui';
-import { readBuiltinWidgetDescriptorV1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
+import { projectWidgetBindingInputV1, proposeWidgetInputDefaultBindingsV1, readBuiltinWidgetDescriptorV1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
+import { resolveEffectiveInputFields } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import { resumeActionExecutionResult, type ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import type { WidgetAreaPort } from '@/components/widgets/area/useWidgetAreaLayout';
 
 /** The page toolbar edits the metric on each eligible placement. */
-export function usageWidgetAcceptsMetric(definition: WidgetInstanceV1['definition']): boolean {
-    return definition.kind === 'builtin' && definition.id.startsWith('usage_')
-        && readBuiltinWidgetDescriptorV1(definition)?.inputs?.fields.some(field => field.path === 'metric') === true;
+export function usageWidgetAcceptsMetric(instance: WidgetInstanceV1): boolean {
+    const { definition } = instance;
+    if (definition.kind !== 'builtin' || !definition.id.startsWith('usage_')) return false;
+    const descriptor = readBuiltinWidgetDescriptorV1(definition);
+    if (!descriptor) return false;
+    // Applicability belongs to the declaration: a latent metric on an activity-only Style
+    // neither determines the page selection nor becomes a toolbar write target.
+    const input = projectWidgetBindingInputV1({
+        instance: { ...instance, bindings: proposeWidgetInputDefaultBindingsV1(descriptor, instance.bindings) },
+        fields: descriptor.inputs?.fields ?? [], context: {}, viewerValues: {},
+    });
+    return resolveEffectiveInputFields({ inputHints: descriptor.inputs }, input).some(field => field.path === 'metric');
 }
 
 /** Receipts are per instance: the existing layout owner does not promise a multi-write transaction. */
