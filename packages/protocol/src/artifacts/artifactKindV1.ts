@@ -1,7 +1,10 @@
 import { z } from '../zodRuntimePolicy.js';
 import { createServerHttpRequestBodyItemBudgetV1 } from '../server/http/requestBodyBoundsV1.js';
-import { ApprovalArtifactQueryHintsV1Schema, deriveApprovalArtifactQueryHintsV1, isApprovalArtifactKindV1,
+import { APPROVAL_ARTIFACT_KINDS_V1, ApprovalArtifactQueryHintsV1Schema, deriveApprovalArtifactQueryHintsV1, isApprovalArtifactKindV1,
   readApprovalArtifactSubjectIndexedKindV1 } from '../approvals/approvalArtifactKindV1.js';
+
+import { ACCOUNT_NOTICE_ARTIFACT_KIND_V1, deploymentNoticeEnvironmentIndexedKindV1,
+  readDeploymentNoticeIndexedKindV1 } from '../activity/accountNoticeArtifactKindsV1.js';
 
 /** Plaintext search hint only; access and content admission still open the private header. */
 export const ArtifactCoarseKindV1Schema = z.enum(['skill', 'prompt', 'plugin_ui', 'work_board', 'widget_area_layout', 'widget_definition', 'widget_layout_fragment', 'other']);
@@ -131,7 +134,11 @@ export function frameArtifactKindWriteBatchesV1(items: readonly ArtifactKindWrit
  */
 export function deriveArtifactKindWriteItemV1(row: Readonly<{ artifactId: string; header: Readonly<Record<string, unknown>>;
   headerVersion: number; storedKindClassified?: boolean }>): ArtifactKindWriteBatchInputV1['items'][number] | undefined {
-  const kind = tryDeriveArtifactStoredKindV1(row.header);
+  // The generic legacy repair can classify a notice's family. Only a new notice
+  // write publishes its page-association index.
+  const kind = row.header.kind === ACCOUNT_NOTICE_ARTIFACT_KIND_V1
+    ? encodeArtifactKindV1({ kind: deriveArtifactCoarseKindV1(row.header), kindHint: ACCOUNT_NOTICE_ARTIFACT_KIND_V1 })
+    : tryDeriveArtifactStoredKindV1(row.header);
   if (kind === undefined) return undefined;
   const approval = isApprovalArtifactKindV1(row.header.kind) ? deriveApprovalArtifactQueryHintsV1(row.header) : undefined;
   if (row.storedKindClassified && approval?.approvalState == null) return undefined;
@@ -160,10 +167,21 @@ export function encodeArtifactKindV1(value: ArtifactKindV1): string {
   return stored;
 }
 
-/** Only the type discriminator leaves the private header; no title/name/content is extracted. */
+/** The kind and indexed non-content associations leave the private header. */
+export function artifactKindHasIndexedChildrenV1(kind: string): boolean {
+  return kind === APPROVAL_ARTIFACT_KINDS_V1.builtIn || kind === ACCOUNT_NOTICE_ARTIFACT_KIND_V1
+    || deploymentNoticeEnvironmentIndexedKindV1(kind) === kind;
+}
+
+export function doesArtifactIndexedKindMatchV1(selection: string, indexedKind: string): boolean {
+  return selection === indexedKind
+    || (artifactKindHasIndexedChildrenV1(selection) && indexedKind.startsWith(`${selection}#`));
+}
+
+/** Projects membership only. The private header still owns routing and content. */
 export function deriveArtifactKindV1(header: Readonly<Record<string, unknown>>): ArtifactKindV1 {
   return { kind: deriveArtifactCoarseKindV1(header),
-    kindHint: readApprovalArtifactSubjectIndexedKindV1(header)
+    kindHint: readApprovalArtifactSubjectIndexedKindV1(header) ?? readDeploymentNoticeIndexedKindV1(header)
       ?? (typeof header.kind === 'string' && header.kind.length > 0 ? header.kind : null) };
 }
 

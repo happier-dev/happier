@@ -1,4 +1,4 @@
-import { deriveArtifactCoarseKindV1, deriveArtifactKindV1, type ArtifactCoarseKindV1, type ArtifactKindCoverageV1,
+import { deriveArtifactCoarseKindV1, deriveArtifactKindV1, doesArtifactIndexedKindMatchV1, type ArtifactCoarseKindV1, type ArtifactKindCoverageV1,
   type ArtifactTeamResourceKindV1 } from './artifactKindV1.js';
 import { deriveApprovalArtifactQueryHintsV1, isApprovalArtifactKindV1, type ApprovalArtifactStateV1 } from '../approvals/approvalArtifactKindV1.js';
 import { throwIfAborted } from '../abortSignal.js';
@@ -81,9 +81,13 @@ function artifactHeaderSelection(options: ArtifactListSelectionOptionsV1 = {}) {
       && (options.approvalStates === undefined || !isApprovalArtifactKindV1(header.kind)
         || (hints.approvalState === null ? includeUnknownState : options.approvalStates.includes(hints.approvalState)));
   };
+  const matchesKind = (header: ArtifactListHeader['header']) => {
+    if (!kindSet || typeof header.kind === 'string' && kindSet.has(header.kind)) return true;
+    const hint = deriveArtifactKindV1(header).kindHint;
+    return hint !== null && (kindSet.has(hint) || kinds?.some(kind => doesArtifactIndexedKindMatchV1(kind, hint)) === true);
+  };
   const matchesSelection = (item: ArtifactListHeader, includeUnknownState: boolean) => (!options.kind || item.header.kind === options.kind)
-    && (!kindSet || (typeof item.header.kind === 'string' && kindSet.has(item.header.kind))
-      || kindSet.has(deriveArtifactKindV1(item.header).kindHint ?? ''))
+    && matchesKind(item.header)
     && (!indexedKinds || (typeof item.header.kind === 'string' && indexedKinds.has(item.header.kind))
       || indexedKinds.has(deriveArtifactKindV1(item.header).kindHint ?? ''))
     && matchesApproval(item.header, includeUnknownState)

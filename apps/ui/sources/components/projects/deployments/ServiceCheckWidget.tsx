@@ -9,7 +9,7 @@ import { SavedHealthCheckRefV1Schema } from '@happier-dev/protocol/inputs/savedH
 import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
-import { useManagedInventory, type ManagedInventoryQuery } from '@/components/store/inventory/useManagedInventory';
+import { useAccountConfiguredChecks } from '@/components/store/inventory/managedOperationalInventory';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { Text } from '@/components/ui/text/Text';
 import {
@@ -35,13 +35,10 @@ import {
 import { useEnvironmentName } from './useEnvironmentName';
 
 const m = 'projects.deployments.monitoring' as const;
-const CHECK_KINDS = ['configuredCheck'] as const;
 const NO_MARK_TITLE = null;
 
 /**
- * The Check widget (D32 key flows, lab p7Surfaces home): one saved Check the person picked, found in the Account's
- * managed inventory (the Checks list's own read, so its name, rule and results are the ones Monitoring shows). It reads
- * only while presented, and names the Check in its frame.
+ * Read the chosen Check through the same definition and result owner as Monitoring, only while presented.
  */
 export function ServiceCheckWidgetBody(props: Readonly<{ input: Readonly<Record<string, JsonValue>>; serverId: string; testID: string }>) {
   const parsed = SavedHealthCheckRefV1Schema.safeParse(props.input.check);
@@ -49,25 +46,14 @@ export function ServiceCheckWidgetBody(props: Readonly<{ input: Readonly<Record<
   const presented = useLayoutPresentationActive();
   const lifetime = useActiveServerAccountScopeLifetime();
   const scope = lifetime && areServerProfileIdentifiersEquivalent(lifetime.scope.serverId, props.serverId) ? lifetime.scope : null;
-  const bound = address !== null;
-  // Nothing is read until a Check is chosen and the widget is on screen.
-  const query = React.useMemo<ManagedInventoryQuery>(() => ({ scope, machine: null, projectKey: null,
-    presented: presented && bound, kinds: CHECK_KINDS }), [bound, presented, scope]);
-  const checks = useManagedInventory(query).operationalFamilies.configuredCheck;
-  const row = address ? checks.rows.find((candidate) => candidate.automationId === address.automationId
-    && candidate.triggerId === address.triggerId) ?? null : null;
-  // The picked Check may sit on a later Automation page than the one the inventory read first: read on until it is
-  // found or the pages end, as the Checks list's Show more does.
-  const more = !row && typeof checks.coverage === 'object' && 'partial' in checks.coverage
-    && checks.coverage.partial === 'automation_page' ? checks.continuation : undefined;
-  React.useEffect(() => { void more?.(); }, [more]);
+  const checks = useAccountConfiguredChecks(scope, presented && address !== null, address ?? undefined);
+  const row = checks.rows[0];
   const head = row ? serviceCheckShownDefinition(row.definitionFacts, null) : null;
   const environmentId = presented && head?.kind === 'available' ? head.definition.keyFlow?.environmentId ?? null : null;
   const environment = useEnvironmentName(row?.scope.serverId ?? null, environmentId).name;
   if (!address) return <ServiceCheckWidgetState text={t(`${m}.widgetChooseCheck`)} testID={`${props.testID}.choose`} />;
   if (row) return <ServiceCheckWidgetView row={row} environmentName={environment} testID={props.testID} />;
-  const reading = checks.coverage === 'loading' || more !== undefined;
-  return reading ? <WidgetFrameLoadingBody testID={`${props.testID}.loading`} accessibilityLabel={t('common.loading')} />
+  return checks.coverage === 'loading' ? <WidgetFrameLoadingBody testID={`${props.testID}.loading`} accessibilityLabel={t('common.loading')} />
     : <ServiceCheckWidgetState text={t(`${m}.widgetCheckMissing`)} testID={`${props.testID}.missing`} />;
 }
 

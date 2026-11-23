@@ -3812,7 +3812,6 @@ class Sync {
             artifactPromptLibraryArtifacts: {},
             artifactInboxEntries: {},
             artifactInboxOrder: [],
-            artifactHealthNoticesByEnvironmentId: {},
             artifactOpenApprovalEntries: {},
             artifactListedOpenApprovals: {},
             artifactDiscussionAttentionEntries: {},

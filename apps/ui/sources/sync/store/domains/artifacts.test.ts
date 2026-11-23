@@ -15,7 +15,8 @@ import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
 import { doesArtifactInventorySelectionCover, isArtifactInventoryLoaded, isArtifactInventoryReady } from '@/sync/domains/artifacts/artifactInventory';
 import { selectArtifactInventoryRows } from './artifactInventoryIndex';
 import { createServiceHealthNoticeArtifactFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
-import { serverAccountScopedResourceKey } from '@/sync/domains/scope/serverAccountScope';
+import { deploymentNoticeIndexedKindV1 } from '@happier-dev/protocol/activity/accountNoticeArtifactKindsV1';
+import { readAccountNoticeListHeader } from '@/sync/domains/artifacts/usageNoticeArtifacts';
 
 function createHarness() {
     return createStore<ArtifactsDomain>((set, get) => createArtifactsDomain({ set, get }));
@@ -29,23 +30,26 @@ function artifact(id: number): Extract<DecryptedArtifact, { isDecrypted: true }>
 }
 
 describe('createArtifactsDomain', () => {
-    it('indexes C1 health by Environment at admission and withdraws removed or unreadable facts', () => {
+    it('indexes notice headers by Environment and withdraws removed or unauthorised facts', () => {
         const store = createHarness();
-        const health = createServiceHealthNoticeArtifactFixture('home', { id: 'health', sourceServerId: 'home' });
-        const key = serverAccountScopedResourceKey({ serverId: 'home', accountId: 'account-a' }, 'environment');
-        store.getState().applyArtifacts([health]);
-        expect(store.getState().artifactHealthNoticesByEnvironmentId?.[key]?.health?.notice?.header.healthPhase).toBe('open');
-        const selected = store.getState().artifactHealthNoticesByEnvironmentId[key];
+        const selection = [deploymentNoticeIndexedKindV1('environment')];
+        const health = createServiceHealthNoticeArtifactFixture('home', { id: 'health', sourceServerId: 'home', kindHint: selection[0] });
+        const legacy = createServiceHealthNoticeArtifactFixture('home', { id: 'legacy', sourceServerId: 'home' });
+        const selected = () => selectArtifactInventoryRows(store.getState(), selection).health;
+        const check = () => selected() ? readAccountNoticeListHeader(selected()!, 'account-a') : null;
+        store.getState().applyArtifacts([{ ...health, body: undefined }, legacy]);
+        expect(check()?.healthPhase).toBe('open');
+        const before = selected();
         store.getState().applyArtifacts([artifact(5)]);
-        expect(store.getState().artifactHealthNoticesByEnvironmentId[key]).toBe(selected);
-        store.getState().updateArtifact({ ...health, headerVersion: 4, bodyVersion: 4, body: undefined });
-        expect(store.getState().artifactHealthNoticesByEnvironmentId[key]?.health?.complete).toBe(false);
-        expect(store.getState().artifactHealthNoticesByEnvironmentId[key]?.health?.notice).toBeNull();
+        expect(selected()).toBe(before);
         store.getState().updateArtifact({ ...health, headerVersion: 5, bodyVersion: 5, access: 'view' });
-        expect(store.getState().artifactHealthNoticesByEnvironmentId[key]).toBeUndefined();
+        expect(check()).toBeNull();
         store.getState().updateArtifact({ ...health, headerVersion: 6, bodyVersion: 6 });
         store.getState().deleteArtifact(health.id);
-        expect(store.getState().artifactHealthNoticesByEnvironmentId[key]).toBeUndefined();
+        expect(selected()).toBeUndefined();
+        const baseline = store.getState().artifacts;
+        store.getState().applyArtifacts([], baseline, selection);
+        expect(store.getState().artifacts.legacy).toBe(baseline.legacy);
     });
     it('publishes a same-Session approval page and retires it without enumerating membership after each row', () => {
         const store = createHarness();

@@ -12,7 +12,7 @@ import { DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIN
 import { WIDGET_SURFACE_ARTIFACT_KIND_V1, readWidgetSurfaceArtifactV1 } from '../widgets/widgetSurfaceArtifactV1.js';
 import { HOME_HUB_ARTIFACT_KIND_V1 } from '../home/homeHubArtifactV1.js';
 import { WIDGET_LAYOUT_FRAGMENT_ARTIFACT_KIND_V1 } from '../widgets/widgetLayoutFragmentArtifactV1.js';
-import { USAGE_NOTICE_ARTIFACT_KIND_V1, ACCOUNT_NOTICE_ARTIFACT_KIND_V1 } from '../activity/accountNoticeArtifactKindsV1.js';
+import { USAGE_NOTICE_ARTIFACT_KIND_V1, ACCOUNT_NOTICE_ARTIFACT_KIND_V1, deploymentNoticeEnvironmentIndexedKindV1 } from '../activity/accountNoticeArtifactKindsV1.js';
 import { WorkflowDefinitionArtifactHeaderV1ReadSchema } from '../workflows/workflowDefinitionV1.js';
 import { roleArtifactSharingAdapterV1 } from '../prompts/roles/roleArtifactSharingV1.js';
 import { launchProfileArtifactSharingAdapterV1 } from '../launchProfiles/launchProfileArtifactV1.js';
@@ -288,7 +288,9 @@ export const ARTIFACT_BROWSER_NON_LISTED_KINDS_V1: readonly string[] = Object.fr
 
 /** Unknown and untyped ordinary documents retain generic document behavior. */
 export function getArtifactKindPolicyV1(kind: unknown, audience: 'anonymous' | 'signed_in' = 'anonymous'): ArtifactKindPolicyV1 {
-  const policy = kindPolicies.find(policy => policy.kind === kind) ?? documentPolicy;
+  const base = typeof kind === 'string' && deploymentNoticeEnvironmentIndexedKindV1(kind) !== null
+    ? ACCOUNT_NOTICE_ARTIFACT_KIND_V1 : kind;
+  const policy = kindPolicies.find(policy => policy.kind === base) ?? documentPolicy;
   return { ...policy, ...getArtifactContentDeliveryPolicyV1(kind),
     ...(audience === 'signed_in' && 'signedInLinkAllowed' in policy && policy.signedInLinkAllowed === true
       ? { publicLinkAllowed: true } : {}) };

@@ -1,4 +1,5 @@
 import { getArtifactKindPolicyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { deriveArtifactKindV1, doesArtifactIndexedKindMatchV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { deriveApprovalArtifactQueryHintsV1, isApprovalArtifactKindV1, readApprovalArtifactSubjectIndexedKindV1,
     type ApprovalArtifactStateV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import { INBOX_ARTIFACT_KINDS } from './inboxArtifacts';
@@ -66,7 +67,8 @@ export function doesArtifactInventorySelectionMatchHeader(selection: ArtifactInv
         && hints?.approvalSessionId !== undefined && selection.approvalSessionIds.includes(hints.approvalSessionId);
     if (isApprovalStateInventorySelection(selection)) return doesApprovalInventoryKindMatchHeader(selection.kinds, header)
         && hints?.approvalState !== null && hints?.approvalState !== undefined && selection.approvalStates.includes(hints.approvalState);
-    return typeof header.kind === 'string' && selection.includes(header.kind);
+    const { kindHint } = deriveArtifactKindV1(header);
+    return kindHint !== null && selection.some(kind => doesArtifactIndexedKindMatchV1(kind, kindHint));
 }
 
 /** Selection containment is shared by the inventory's queue and its admitted store facts. */

@@ -1,6 +1,7 @@
 import { deriveApprovalArtifactQueryHintsV1, isApprovalArtifactSubjectIndexedKindV1,
   readApprovalArtifactSubjectIndexedKindV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import { ACCOUNT_NOTICE_ARTIFACT_KIND_V1, USAGE_NOTICE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import { deploymentNoticeEnvironmentIndexedKindV1, readDeploymentNoticeIndexedKindV1 } from '@happier-dev/protocol/activity/accountNoticeArtifactKindsV1';
 import type { DecryptedArtifact } from '../../domains/artifacts/artifactTypes';
 import { doesArtifactInventorySelectionMatchHeader, isApprovalSessionInventorySelection,
   isApprovalStateInventorySelection, readArtifactBrowserMembership,
@@ -18,6 +19,13 @@ function memberships(artifact: DecryptedArtifact | undefined): readonly string[]
   const keys: string[] = [];
   if (header) {
     if (typeof header.kind === 'string') keys.push(key('kind', header.kind));
+    const noticeSubject = readDeploymentNoticeIndexedKindV1(header);
+    // An indexed read can establish absence only for rows whose writer published the index.
+    if (noticeSubject !== null && artifact.kindHint === noticeSubject) {
+      keys.push(key('kind', noticeSubject));
+      const environmentSubject = deploymentNoticeEnvironmentIndexedKindV1(noticeSubject);
+      if (environmentSubject !== null && environmentSubject !== noticeSubject) keys.push(key('kind', environmentSubject));
+    }
     const hints = deriveApprovalArtifactQueryHintsV1(header);
     if (hints.approvalState !== null) keys.push(key('state', hints.approvalState));
     if (hints.approvalSessionId !== null) keys.push(key('session', hints.approvalSessionId));

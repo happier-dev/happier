@@ -1,10 +1,8 @@
 import * as React from 'react';
 import type { StoragePathCapacityV1 } from '@happier-dev/protocol/storage/storageV1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import type { Machine } from '@/sync/domains/state/storageTypes';
-import { useMachineListForServerSelection } from '@/sync/store/hooks';
+import { useMachineDisplayNamesById } from '@/sync/store/hooks';
 import { fetchMachineStoragePathCapacityViaAction } from '@/sync/domains/machines/storage/machineRpc';
-import { getSettledMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 import { Item } from '@/components/ui/lists/Item';
@@ -14,9 +12,9 @@ import { t } from '@/text';
 /** Observe the selected destination filesystem through the existing capacity Action. */
 export function useBackupPathCapacity(serverId: string, machineId: string | undefined, path: unknown,
   lifetime: ServerAccountScopeLifetime | undefined, enabled: boolean) {
-  const selectMachineName = React.useCallback((machines: readonly Machine[]) =>
-    getSettledMachineDisplayName(machines.find(entry => entry.id === machineId), machines) ?? machineId ?? '', [machineId]);
-  const machineName = useMachineListForServerSelection(serverId, selectMachineName);
+  const machineIds = React.useMemo(() => [machineId], [machineId]);
+  const names = useMachineDisplayNamesById(machineIds, { serverId });
+  const machineName = machineId ? names[machineId] ?? machineId : '';
   const selectedPath = typeof path === 'string' ? path : '';
   const accountId = lifetime?.scope.accountId;
   const [observation, setObservation] = React.useState<Readonly<{

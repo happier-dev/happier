@@ -75,7 +75,7 @@ import { describeReceipt, DeployOutcomeBanner, type DeploymentReviewHandle } fro
 import { hasDeploymentPressAttention, useDeploymentPress, type DeploymentRecoveryTarget } from './deploymentActionOutcome';
 import { useDeploymentCancellation } from './useDeploymentCancellation';
 import type { createDeploymentActions } from './deploymentActions';
-import { useDeploymentEnvironment, useDeploymentEnvironmentDomains, useDeploymentReceipt } from './useDeploymentReads';
+import { useDeploymentEnvironmentHealthRecord, useDeploymentEnvironmentDomains, useDeploymentReceipt } from './useDeploymentReads';
 import { DeploymentStepLogs } from './DeploymentStepLogs';
 import { DeploymentLiveAddressActions } from './deploymentLiveAddress';
 import { deploymentAddressExpected, deploymentLiveAddressDemand, formatDeploymentLiveAddress, resolveDeploymentLiveAddress, type DeploymentLiveAddress } from './deploymentLiveAddressFacts';
@@ -133,7 +133,7 @@ export const DeploymentReceiptDetail = React.memo(
     }>,
   ) {
     // The serving pointer lives on the Environment's runtime link; the controller shares that read.
-    const environment = useDeploymentEnvironment(props.controller, props.environmentId, props.demand);
+    const environment = useDeploymentEnvironmentHealthRecord(props.controller, props.environmentId, props.demand);
     const environmentValue = environment.snapshot.value;
     const activeId = environmentValue?.runtimeTargetLink?.activeDeploymentId ?? null;
     const [latestPress, setLatestPress] = React.useState<'rollback' | 'deploy' | 'cancel' | null>(null);
@@ -485,7 +485,8 @@ export const DeploymentReceiptDetail = React.memo(
     // A failed deploy's notice offers its recovery choices on this, its one page; when the failure card already leads
     // with the rollback they would repeat, the card's own button is that choice.
     const noticeRecovery = !pressAttention && deployment.state === 'failed' && !recoveryLeads
-      ? <DeploymentNoticeRecoveryChoices deploymentId={deployment.id} testID="project-deployments.receipt.noticeRecovery" /> : null;
+      ? <DeploymentNoticeRecoveryChoices scope={props.controller?.scope ?? null} environmentId={environmentId}
+          deploymentId={deployment.id} testID="project-deployments.receipt.noticeRecovery" /> : null;
     const headerActions = phone ? (
       <View style={styles.headerActions}>{noticeRecovery}{rollbackButton}{menu}</View>
     ) : (

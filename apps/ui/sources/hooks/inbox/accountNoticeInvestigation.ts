@@ -2,7 +2,7 @@ import type { TriageFailureSubjectV1 } from '@happier-dev/triage-protocol/v1';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { FailureActionOutcome, FailureAgentAction, FailureActionPlacement } from '@happier-dev/protocol/plugins/contributions/ui/failureActionPresentation';
 import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
-import { readAccountNoticeArtifactHeader, type AccountNoticeArtifact } from '@/sync/domains/artifacts/usageNoticeArtifacts';
+import { readAccountNoticeArtifactHeader, readAccountNoticeListHeader, type AccountNoticeArtifact } from '@/sync/domains/artifacts/usageNoticeArtifacts';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -83,7 +83,7 @@ export function createAccountNoticeInvestigation(input: Readonly<{
     }
     const recoveryChoices = (entry: AccountNoticeArtifact): readonly AccountNoticeRecoveryChoiceV1[] => {
         if (!input.scope || !input.isCurrent()) return NO_RECOVERY_CHOICES;
-        const header = readAccountNoticeArtifactHeader(entry.artifact, input.scope.accountId);
+        const header = readAccountNoticeListHeader(entry.artifact, input.scope.accountId);
         if (!header || header.status !== 'open' || header.resolved || header.healthPhase !== 'open'
             || header.source.kind !== 'host' || header.source.topic !== 'service_health'
             || !header.page || !('kind' in header.page)

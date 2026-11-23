@@ -1,7 +1,9 @@
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ArtifactCoarseKindV1Schema, ArtifactStoredKindV1Schema, ArtifactKindWriteBatchInputV1Schema,
-    ArtifactKindWriteBatchResponseV1Schema, type ArtifactCoarseKindV1, ArtifactKindCoverageV1Schema, decodeArtifactKindV1, deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+    ArtifactKindWriteBatchResponseV1Schema, type ArtifactCoarseKindV1, ArtifactKindCoverageV1Schema, decodeArtifactKindV1,
+    deriveArtifactStoredKindV1, doesArtifactIndexedKindMatchV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import { deploymentNoticeEnvironmentIndexedKindV1 } from '@happier-dev/protocol/activity/accountNoticeArtifactKindsV1';
 import { ArtifactAccessGrantsListResponseV1Schema, ArtifactAccessRecipientCensusResponseV1Schema,
     ArtifactAccessGrantSetInputV1Schema, ArtifactAccessGrantMutationResponseV1Schema,
     ArtifactReadBatchHttpInputV1Schema, ArtifactReadBatchResponseV1Schema, ArtifactReadHeadersBatchResponseV1Schema,
@@ -212,7 +214,7 @@ export function createArtifactListHttpResponse(url: URL, inventory: readonly Sto
     const ownerAccountId = url.searchParams.get('ownerAccountId');
     const scopedInventory = inventory.filter(row => ownerAccountId === null || row.ownerAccountId === ownerAccountId);
     const selected = scopedInventory.filter(row => unclassified === 'approval' ? approvalUnknown(row) : unclassified !== null ? unknownKind(row)
-        : kinds !== undefined ? typeof row.kindHint === 'string' && kinds.includes(row.kindHint)
+        : kinds !== undefined ? kinds.some(kind => typeof row.kindHint === 'string' && doesArtifactIndexedKindMatchV1(kind, row.kindHint))
             : browserListed !== null ? getArtifactKindPolicyV1(row.kindHint).browserListed : kind === null || row.kind === kind)
         .filter(row => unclassified !== null || !approvalSelected || (!approvalKind(row) ? approvalSessionIds === undefined
             : row.approvalState != null && (!approvalStates || approvalStates.includes(row.approvalState))
@@ -224,7 +226,8 @@ export function createArtifactListHttpResponse(url: URL, inventory: readonly Sto
         const { body: _body, ...header } = row;
         return projectArtifactBoundaryReadRow(header);
     });
-    const indexedSubjects = approvalStates !== undefined && kinds?.every(isApprovalArtifactSubjectIndexedKindV1);
+    const indexedSubjects = kinds?.every(kind => deploymentNoticeEnvironmentIndexedKindV1(kind) !== null
+        || approvalStates !== undefined && isApprovalArtifactSubjectIndexedKindV1(kind));
     const unclassifiedCount = indexedSubjects ? 0 : scopedInventory.filter(row =>
         approvalSelected || unclassified === 'approval' ? approvalUnknown(row) : !Object.hasOwn(row, 'kindHint')).length;
     const coverage = ArtifactKindCoverageV1Schema.parse(unclassifiedCount === 0

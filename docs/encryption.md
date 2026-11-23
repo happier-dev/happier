@@ -4118,9 +4118,18 @@ existing Account-mode envelopes.
 The Artifact list/query owner is implementing the first consumed extraction:
 `{ kind: <existing coarse family>, kindHint: <exact header.kind or null> }`.
 The family still comes from Protocol's existing classifier, including the skill
-bundle discriminator; the exact hint is the private header's type discriminator,
-not its title or other fields. Notice selectors use `account_notice.v1` and
-`usage_notice.v1`; Role and prompt/skill readers consume the same owner.
+bundle discriminator. The exact hint carries the type and any canonical
+non-content associations indexed for that type. Notice selectors use
+`account_notice.v1` and `usage_notice.v1`; Role and prompt/skill readers consume
+the same owner.
+
+New deployment notices publish the domain-separated digests of their existing
+Environment association and, when present, their deployment receipt association.
+The Environment lookup selects that Environment's notice headers. Receipt
+recovery selects that receipt's notice headers. Both read within the admitted
+Account and check the opened private header before presentation. Opening or
+acting on a notice still uses its admitted body. Existing notice rows stay in the
+Inbox and are not rewritten to add the association hint.
 
 This reuses nullable `Artifact.kind` and its existing Account/kind index. The
 canonical stored form is `v1:<coarse family>:<exact kind>`, with an empty final

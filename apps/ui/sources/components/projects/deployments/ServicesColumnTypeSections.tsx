@@ -6,9 +6,7 @@ import {
   type DeploymentReadDemandV1,
 } from '@happier-dev/deployments';
 
-import { useManagedInventory } from '@/components/store/inventory/useManagedInventory';
-import { InboxArtifactSourceBoundary } from '@/hooks/inbox/useInboxArtifactSource';
-import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
+import { useAccountConfiguredChecks } from '@/components/store/inventory/managedOperationalInventory';
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
@@ -35,7 +33,6 @@ import {
   useDeploymentDomainPage,
 } from './useDeploymentReads';
 
-const CHECK_KINDS = ['configuredCheck'] as const;
 
 /** One row of a type section: what it is, its one line and where a press goes. */
 type TypeRow = Readonly<{
@@ -54,15 +51,6 @@ type TypeRow = Readonly<{
  * one Environment row (`DeploymentTreeRow`); its end is its state (the compact dot) or its one quiet fact. The reads
  * mount only while this grouping is shown.
  */
-export function ServicesColumnTypeSections(props: TypeSectionsProps) {
-  // The Checks read (managed inventory) reads through the Inbox Artifact source; the boundary reuses an existing one.
-  return (
-    <InboxArtifactSourceBoundary>
-      <TypeSectionsBody {...props} />
-    </InboxArtifactSourceBoundary>
-  );
-}
-
 type TypeSectionsProps = Readonly<{
   controller: DeploymentReadControllerV1 | null;
   demand: DeploymentReadDemandV1;
@@ -72,24 +60,14 @@ type TypeSectionsProps = Readonly<{
   onNavigate: (href: string) => void;
 }>;
 
-function TypeSectionsBody(props: TypeSectionsProps) {
+export function ServicesColumnTypeSections(props: TypeSectionsProps) {
   const { serverId, needle } = props;
   const databases = useDeploymentDataServicePage(
     props.controller,
     props.demand,
   );
   const domains = useDeploymentDomainPage(props.controller, props.demand);
-  const checksQuery = React.useMemo(
-    () => ({
-      scope: props.scope,
-      machine: null,
-      projectKey: null,
-      presented: true,
-      kinds: CHECK_KINDS,
-    }),
-    [props.scope],
-  );
-  const inventory = useManagedInventory(checksQuery);
+  const checks = useAccountConfiguredChecks(props.scope, true);
   const databaseItems = databases.snapshot.value?.items;
   const domainItems = domains.snapshot.value?.items;
   const sections = React.useMemo(() => {
@@ -156,11 +134,7 @@ function TypeSectionsBody(props: TypeSectionsProps) {
       };
     });
     // A check says its state while it fails or is switched off (the Check presentation owner); its list is Services → Checks.
-    const checkRows: TypeRow[] = inventory.rows
-      .filter(
-        (row): row is ManagedConfiguredCheckRow =>
-          row.kind === 'configuredCheck',
-      )
+    const checkRows: TypeRow[] = checks.rows
       .map((row) => {
         const status = readServiceCheckFacts(row.lastResults).status;
         const tone = serviceCheckStatusTone(status);
@@ -194,7 +168,7 @@ function TypeSectionsBody(props: TypeSectionsProps) {
   }, [
     databaseItems,
     domainItems,
-    inventory.rows,
+    checks.rows,
     needle,
     props.scope?.accountId,
     serverId,

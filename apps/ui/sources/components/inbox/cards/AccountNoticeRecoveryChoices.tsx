@@ -5,7 +5,8 @@ import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemePro
 import type { createAccountNoticeInvestigation } from '@/hooks/inbox/accountNoticeInvestigation';
 import { isOpenAccountNotice, type AccountNoticeArtifact } from '@/sync/domains/artifacts/usageNoticeArtifacts';
 import { AccountNoticeInvestigationBoundary, useAccountNoticeInvestigation } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
-import { InboxArtifactSourceBoundary, useInboxArtifactItems } from '@/hooks/inbox/useInboxArtifactSource';
+import { useDeploymentNoticeHeaders } from '@/hooks/inbox/useDeploymentNoticeHeaders';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { findInboxDeploymentNotice } from '@/components/inbox/inboxItemFocus';
 import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { alertActionFailure } from '@/utils/errors/alertActionFailure';
@@ -91,21 +92,24 @@ export const AccountNoticeRecoveryChoices = React.memo(
  * here, the same list its Inbox row offers. The receipt is the notice's one page (Inbox, push and links all land on
  * it), so its header carries them. Mounts the small Account notice owners a receipt outside the Inbox lacks.
  */
-export function DeploymentNoticeRecoveryChoices(props: Readonly<{ deploymentId: string; testID: string }>) {
+type DeploymentNoticeRecoveryProps = Readonly<{
+  scope: ServerAccountScope | null;
+  environmentId: string;
+  deploymentId: string;
+  testID: string;
+}>;
+
+export function DeploymentNoticeRecoveryChoices(props: DeploymentNoticeRecoveryProps) {
   return (
     <AccountNoticeInvestigationBoundary>
-      <InboxArtifactSourceBoundary>
-        <DeploymentNoticeRecoveryBody deploymentId={props.deploymentId} testID={props.testID} />
-      </InboxArtifactSourceBoundary>
+      <DeploymentNoticeRecoveryBody {...props} />
     </AccountNoticeInvestigationBoundary>
   );
 }
 
-function DeploymentNoticeRecoveryBody(props: Readonly<{ deploymentId: string; testID: string }>) {
-  const { accountNotices } = useInboxArtifactItems();
+function DeploymentNoticeRecoveryBody(props: DeploymentNoticeRecoveryProps) {
+  const { items } = useDeploymentNoticeHeaders(props.scope, props.environmentId, true, props.deploymentId);
   const recovery = useAccountNoticeInvestigation();
-  const entry = React.useMemo(() => findInboxDeploymentNotice(
-    accountNotices.filter(candidate => isOpenAccountNotice(candidate.header)), props.deploymentId,
-  ), [accountNotices, props.deploymentId]);
+  const entry = findInboxDeploymentNotice(items.filter(candidate => isOpenAccountNotice(candidate.header)), props.deploymentId);
   return entry ? <AccountNoticeRecoveryChoices entry={entry} recovery={recovery} testID={props.testID} /> : null;
 }

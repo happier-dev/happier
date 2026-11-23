@@ -1,5 +1,6 @@
 import {
     readOwnedNoticeArtifactAdmissionV1,
+    readOwnedAccountNoticeHeaderV1,
     normalizeAccountNoticeArtifactV1,
     projectOpenUsageNoticeHeaderV1,
     type UsageNoticeArtifactHeaderV1,
@@ -25,6 +26,13 @@ export function readAccountNoticeArtifactHeader(
 ): AccountNoticeArtifactHeaderV1 | null {
     const result = readAccountNoticeArtifactAdmission(artifact, accountId);
     return result.disposition === 'presented' ? normalizeAccountNoticeArtifactV1(result.notice) : null;
+}
+
+export function readAccountNoticeListHeader(artifact: DecryptedArtifact, accountId: string | null | undefined): AccountNoticeArtifactHeaderV1 | null {
+    if (!artifact.isDecrypted || artifact.draft) return null;
+    return artifact.body === undefined
+        ? readOwnedAccountNoticeHeaderV1({ ...artifact, header: artifact.rawHeader ?? artifact.header }, accountId)
+        : readAccountNoticeArtifactHeader(artifact, accountId);
 }
 
 export function readAccountNoticeArtifactAdmission(

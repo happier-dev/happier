@@ -10,6 +10,7 @@ import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/te
 import { createArtifactStoreBoundary, createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { ApprovalRequestV1Schema, ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { deploymentNoticeIndexedKindV1 } from '@happier-dev/protocol/activity/accountNoticeArtifactKindsV1';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 
 const rpc = createProviderSettingsHarness({ machines: [] });
@@ -66,13 +67,14 @@ it('wakes the mounted badge once when a recipient reminder becomes due and cance
     } finally { await screen.unmount(); vi.useRealTimers(); }
 });
 
-it('feeds admitted C1 health changes only to the consumed Environment and keeps unaffected rows quiet', async () => {
+it('cold Environment health lookup reads only the selected association and ignores other arrivals', async () => {
     const home = await account.restore({ machines: [] });
     const scope = storage.getState().settingsScope!;
     const base = createDeploymentEnvironmentDetailV1();
     const detail = { ...base, environment: { ...base.environment, serverId: scope.serverId } };
     const notice = (environmentId: string, id: string, phase: 'open' | 'recovered' = 'open', revision = 3) =>
         createServiceHealthNoticeArtifactFixture(scope.serverId, { id, ownerAccountId: scope.accountId,
+            kindHint: deploymentNoticeIndexedKindV1(environmentId),
             sourceServerId: scope.serverId, headerVersion: revision, bodyVersion: revision,
             header: { source: { kind: 'host', topic: 'service_health', subject: { kind: 'environment',
                 environmentId, targetLinkId: 'runtime-link', condition: 'health' } },
@@ -89,81 +91,124 @@ it('feeds admitted C1 health changes only to the consumed Environment and keeps 
     const other = notice('unrelated', 'other-health');
     const boundary = createArtifactStoreBoundary({ ownerAccountId: () => scope.accountId, encryptionMode: 'plain' });
     for (const row of [selected, other]) boundary.replaceStoredRow(createPlainArtifactHttpFixture(row, scope.accountId));
+    const lists: string[][] = [];
+    let bodyReads = 0;
     let failInventory = false;
     account.home.answer(home.serverId, 'GET /v1/artifacts', { select: async (_input, request) => {
-        if (failInventory) return { status: 503, body: { error: 'artifact_content_unavailable' } };
         const url = new URL(request.url);
-        const response = await boundary.handle(`${url.pathname}${url.search}`, { method: 'GET' });
+        lists.push(JSON.parse(url.searchParams.get('kinds') ?? '[]'));
+        if (failInventory) return { status: 503, body: { error: 'artifact_content_unavailable' } };
+        const response = await boundary.handle(url.pathname + url.search, { method: 'GET' });
         if (!response) throw new Error('Expected Artifact list boundary');
         return { body: await response.json() };
     } });
-    const bodyRelease = createDeferred<void>();
-    let bodyReads = 0;
     account.home.answer(home.serverId, 'POST /v1/artifacts/read', { select: async input => {
-        bodyReads++;
-        await bodyRelease.promise;
+        const request = input as { projection?: 'headers' };
+        if (request.projection !== 'headers') bodyReads++;
         const response = await boundary.handle('/v1/artifacts/read', { method: 'POST', body: JSON.stringify(input) });
-        if (!response) throw new Error('Expected Artifact body boundary');
+        if (!response) throw new Error('Expected Artifact read boundary');
         return { body: await response.json() };
     } });
-    let reads = 0;
     const transport: DeploymentReadTransportV1 = {
         listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
-        readEnvironment: async () => { reads++; return { ok: true, value: detail }; },
+        readEnvironment: async () => ({ ok: true, value: detail }),
         listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
         readReceipt: async () => ({ ok: false, failure: { code: 'not_demanded', retryable: false } }),
     };
     const controller = createDeploymentReadControllerV1({ scope: { ...scope, projectSourceId: detail.environment.projectSourceId }, transport });
     const renders = createRenderCommitCounter();
-    const shown = { mounted: true, visible: true, focused: true };
-    await act(async () => { storage.setState({ isDataReady: true }); });
+    await act(async () => { storage.setState({ isDataReady: true, profileScope: scope }); });
     const hook = await renderHook((demand: DeploymentReadDemandV1) => {
         useRenderCommitCounter(renders);
         return useDeploymentEnvironment(controller, detail.environment.id, demand);
-    }, { initialProps: shown, wrapper: ({ children }: Readonly<{ children?: React.ReactNode }>) => <InboxArtifactSourceBoundary>{children}</InboxArtifactSourceBoundary> });
+    }, { initialProps: { mounted: true, visible: true, focused: true } });
     try {
-        await vi.waitFor(() => expect(bodyReads).toBeGreaterThan(0));
-        expect(hook.getCurrent().healthNotices).toMatchObject({ status: 'loading', items: [] });
-        await act(async () => { bodyRelease.resolve(); });
-        await vi.waitFor(() => expect(hook.getCurrent().healthNotices).toMatchObject({ status: 'ready', items: [
-            { artifact: { id: selected.id }, header: { healthPhase: 'open', environmentHealth: { n: 1, down: 1 } } },
-        ] }));
+        await vi.waitFor(() => expect(hook.getCurrent().snapshot.value).toBeTruthy());
+        await vi.waitFor(() => expect(lists).toEqual([[deploymentNoticeIndexedKindV1(detail.environment.id)]]));
+        await vi.waitFor(() => expect(hook.getCurrent().healthNotices.items.map(item => item.artifact.id)).toEqual([selected.id]));
+        expect(bodyReads).toBe(0);
         renders.reset();
-        const settledReads = reads;
-        const first = hook.getCurrent().healthNotices;
-        await act(async () => {
-            for (let i = 4; i <= 23; i++) storage.getState().updateArtifact(notice('unrelated', other.id, i % 2 ? 'open' : 'recovered', i));
-        });
+        await act(async () => { storage.getState().updateArtifact(other); });
         expect(renders.read()).toEqual({ renders: 0, commits: 0 });
-        expect(reads).toBe(settledReads);
-        expect(hook.getCurrent().healthNotices).toBe(first);
         await act(async () => { storage.getState().updateArtifact(notice(detail.environment.id, selected.id, 'recovered', 4)); });
         expect(hook.getCurrent().healthNotices.items[0]?.header.healthPhase).toBe('recovered');
         expect(hook.getCurrent().healthNotices.items[0]?.header.environmentHealth).toMatchObject({ authoritativeRecovery: true, down: 0 });
         expect(renders.read()).toEqual({ renders: 1, commits: 1 });
+        expect(lists).toHaveLength(1);
         renders.reset();
-        await act(async () => {
-            for (let i = 0; i < 20; i++) storage.getState().updateArtifact(notice(detail.environment.id, selected.id, 'recovered', 4));
-        });
+        await act(async () => { storage.getState().updateArtifact(notice(detail.environment.id, selected.id, 'recovered', 4)); });
         expect(renders.read()).toEqual({ renders: 0, commits: 0 });
         await hook.rerender({ mounted: true, visible: false, focused: false });
         renders.reset();
         await act(async () => { storage.getState().updateArtifact(notice(detail.environment.id, selected.id, 'open', 5)); });
         expect(renders.read()).toEqual({ renders: 0, commits: 0 });
-        await hook.rerender(shown);
+        await hook.rerender({ mounted: true, visible: true, focused: true });
         expect(hook.getCurrent().healthNotices.items[0]?.header.healthPhase).toBe('open');
         failInventory = true;
         await act(async () => { hook.getCurrent().healthNotices.retry(); });
         await vi.waitFor(() => expect(hook.getCurrent().healthNotices.status).toBe('unavailable'));
         expect(hook.getCurrent().healthNotices.items[0]?.artifact.id).toBe(selected.id);
         failInventory = false;
+        // Respond with the latest stored header so successful Retry reconciles the published revision.
+        boundary.replaceStoredRow(createPlainArtifactHttpFixture(notice(detail.environment.id, selected.id, 'open', 5), scope.accountId));
         await act(async () => { hook.getCurrent().healthNotices.retry(); });
         await vi.waitFor(() => expect(hook.getCurrent().healthNotices.status).toBe('ready'));
         await act(async () => { storage.getState().deleteArtifact(selected.id); });
         expect(hook.getCurrent().healthNotices).toMatchObject({ status: 'ready', items: [] });
         await act(async () => { storage.setState({ profileScope: { ...scope, accountId: 'another-account' } }); });
         expect(hook.getCurrent().healthNotices).toMatchObject({ status: 'unavailable', items: [] });
-    } finally { bodyRelease.resolve(); await hook.unmount(); controller.retire(); }
+        expect(bodyReads).toBe(0);
+    } finally { await hook.unmount(); controller.retire(); }
+});
+
+it('cold Receipt recovery lookup reads only the selected notice header', async () => {
+    const home = await account.restore({ machines: [] });
+    const scope = storage.getState().settingsScope!;
+    const { DeploymentNoticeRecoveryChoices } = await import('@/components/inbox/cards/AccountNoticeRecoveryChoices');
+    const notice = (id: string, deploymentId: string) => createServiceHealthNoticeArtifactFixture(scope.serverId, {
+        id, sourceServerId: scope.serverId, ownerAccountId: scope.accountId,
+        kindHint: deploymentNoticeIndexedKindV1('staging', deploymentId),
+        header: {
+            source: { kind: 'host', topic: 'service_health', subject: { kind: 'environment', environmentId: 'staging',
+                targetLinkId: 'runtime', condition: 'deployment_failed' } },
+            page: { kind: 'host', page: 'environment', targetLinkId: 'runtime', deploymentId,
+                environment: { serverId: scope.serverId, environmentId: 'staging', projectSourceId: 'project' } },
+            type: 'blocked', recoveryChoices: [{ actionId: 'inbox.notice.dismiss', input: { artifactId: id }, label: 'Keep and fix forward' }],
+        },
+    });
+    const selected = notice('selected-notice', 'failed-deploy');
+    const other = notice('other-notice', 'other-deploy');
+    const boundary = createArtifactStoreBoundary({ ownerAccountId: () => scope.accountId, encryptionMode: 'plain' });
+    for (const artifact of [selected, other]) boundary.replaceStoredRow(createPlainArtifactHttpFixture(artifact, scope.accountId));
+    const lists: string[][] = [];
+    let bodies = 0;
+    account.home.answer(home.serverId, 'GET /v1/artifacts', { select: async (_input, request) => {
+        const url = new URL(request.url);
+        lists.push(JSON.parse(url.searchParams.get('kinds') ?? '[]'));
+        const response = await boundary.handle(url.pathname + url.search, { method: 'GET' });
+        if (!response) throw new Error('Expected Artifact list boundary');
+        return { body: await response.json() };
+    } });
+    account.home.answer(home.serverId, 'POST /v1/artifacts/read', { select: async input => {
+        const request = input as { projection?: 'headers' };
+        if (request.projection !== 'headers') bodies++;
+        const response = await boundary.handle('/v1/artifacts/read', { method: 'POST', body: JSON.stringify(input) });
+        if (!response) throw new Error('Expected Artifact read boundary');
+        return { body: await response.json() };
+    } });
+    await act(async () => { storage.setState({ isDataReady: true, profileScope: scope }); });
+    const onRender = vi.fn();
+    const screen = await renderScreen(<React.Profiler id="receipt-notice" onRender={onRender}>
+        <DeploymentNoticeRecoveryChoices scope={scope} environmentId="staging" deploymentId="failed-deploy" testID="receipt-notice" />
+    </React.Profiler>);
+    try {
+        await vi.waitFor(() => expect(lists).toEqual([[deploymentNoticeIndexedKindV1('staging', 'failed-deploy')]]));
+        await vi.waitFor(() => expect(screen.findByTestId('receipt-notice')).not.toBeNull());
+        expect(bodies).toBe(0);
+        onRender.mockClear();
+        await act(async () => { storage.getState().updateArtifact(other); });
+        expect(onRender).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); }
 });
 
 it('withdraws hidden notice body demand, resumes exact hydration and ignores unrelated Artifact changes without writes', async () => {

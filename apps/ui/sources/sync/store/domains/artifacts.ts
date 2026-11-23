@@ -14,7 +14,6 @@ import { readApprovalArtifactHeaderSessionIds, readDiscussionRequesterApprovalFa
   readWorkflowPublicationApprovalRunId } from '../../domains/artifacts/approvalArtifactAdmission';
 import { projectArtifactInventoryIndex, selectArtifactInventoryRows, type ArtifactInventoryIndex } from './artifactInventoryIndex';
 import { projectWidgetAreaLayoutPublications, type WidgetAreaLayoutPublications } from './widgetAreaLayoutPublications';
-import { patchEnvironmentHealthNotices, type EnvironmentHealthNotices } from '../../domains/artifacts/healthNoticeEnvironments';
 
 type ApprovalArtifactGroups = Record<string, Record<string, DecryptedArtifact>>;
 
@@ -169,7 +168,6 @@ function projectArtifactInventory(state: ArtifactsDomain, artifacts: Record<stri
   const removedWorkflowGroups = new Set<string>();
   let inbox = state.artifactInboxEntries;
   const inboxOrderChanges: InboxArtifactOrderChange[] = [];
-  let environmentHealth = state.artifactHealthNoticesByEnvironmentId;
   let openApprovals = state.artifactOpenApprovalEntries;
   let listedApprovals = state.artifactListedOpenApprovals;
   let discussionAttention = state.artifactDiscussionAttentionEntries;
@@ -195,8 +193,6 @@ function projectArtifactInventory(state: ArtifactsDomain, artifacts: Record<stri
         beforeDiscussion ? [beforeDiscussion] : [], discussion ? [discussion] : [], approval, 'discussion', removedDiscussionGroups);
     }
     const inboxEntry = artifact ? readInboxArtifactEntry(artifact) : null;
-    environmentHealth = patchEnvironmentHealthNotices(environmentHealth, state.artifactHealthNoticesByEnvironmentId,
-      id, state.artifactInboxEntries[id], inboxEntry);
     const openApproval = inboxEntry?.openApproval ?? null;
     if (openApproval || openApprovals[id]) {
       if (openApprovals === state.artifactOpenApprovalEntries) openApprovals = { ...openApprovals };
@@ -278,7 +274,6 @@ function projectArtifactInventory(state: ArtifactsDomain, artifacts: Record<stri
     artifactWidgetAreaLayoutPublications: projectWidgetAreaLayoutPublications(state.artifactWidgetAreaLayoutPublications, state.artifacts, artifacts, changedIds),
     artifactApprovalArtifactsBySessionId: sessionApprovals,
     artifactApprovalArtifactsByDiscussionId: discussionApprovals,
-    artifactHealthNoticesByEnvironmentId: environmentHealth,
     artifactInboxEntries: inbox, artifactInboxOrder: patchInboxArtifactOrder(state.artifactInboxOrder, inboxOrderChanges),
     artifactOpenApprovalEntries: openApprovals,
     artifactListedOpenApprovals: listedApprovals,
@@ -305,7 +300,6 @@ export type ArtifactsDomain = {
   /** The same entries newest first, merged per applied page; retained entries are never re-sorted. */
   artifactInboxOrder: readonly InboxArtifactEntry[];
   /** Private C1 health relationships, keyed by authenticated Home/Account/Environment. */
-  artifactHealthNoticesByEnvironmentId: EnvironmentHealthNotices;
   /** Strictly admitted open requests; notices and settled receipt changes retain this identity. */
   artifactOpenApprovalEntries: Record<string, OpenApprovalInboxEntry>;
   /** Listed open requests (header facts; body admission once read): the Inbox list's approval rows. */
@@ -360,7 +354,6 @@ export function createArtifactsDomain<S extends ArtifactsDomain & { profileScope
     artifactThemeLibraryArtifacts: {},
     artifactInboxEntries: {},
     artifactInboxOrder: [],
-    artifactHealthNoticesByEnvironmentId: {},
     artifactOpenApprovalEntries: {},
     artifactListedOpenApprovals: {},
     artifactDiscussionAttentionEntries: {},

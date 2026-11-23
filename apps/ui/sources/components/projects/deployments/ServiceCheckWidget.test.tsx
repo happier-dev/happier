@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import * as React from 'react';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -30,8 +30,6 @@ const { ServiceCheckWidgetBody, ServiceCheckWidgetView } =
 const { formatServiceCheckLatency } =
   await import('./serviceCheckPresentation');
 const { storage } = await import('@/sync/domains/state/storage');
-// The app shell's Inbox source boundary, which the managed inventory reads under.
-const { InboxArtifactSourceBoundary } = await import('@/hooks/inbox/useInboxArtifactSource');
 
 afterEach(async () => {
   standardCleanup();
@@ -152,7 +150,7 @@ it('draws any other saved check by its latest response and 30-day uptime, saying
       : 0;
   expect(text).toContain(formatServiceCheckLatency(latest));
   expect(text).toContain('99.98%');
-  expect(lent.identity?.title).toBe('billing.acme.dev/health');
+  expect(lent.identity?.title).toBe('HTTP');
   expect(lent.caption).toBe('HTTP');
   expect(lent.meta).toBeNull();
 });
@@ -166,7 +164,7 @@ it('reads nothing while the widget is not presented, and asks for a check when n
     ).length;
   const before = automationReads();
   const hidden = await renderScreen(
-    <InboxArtifactSourceBoundary><PluginSurfaceFocusEligibilityProvider active={false}>
+    <PluginSurfaceFocusEligibilityProvider active={false}>
       <ServiceCheckWidgetBody
         input={{
           check: {
@@ -178,13 +176,32 @@ it('reads nothing while the widget is not presented, and asks for a check when n
         serverId={scope.serverId}
         testID="w"
       />
-    </PluginSurfaceFocusEligibilityProvider></InboxArtifactSourceBoundary>,
+    </PluginSurfaceFocusEligibilityProvider>,
   );
   expect(automationReads()).toBe(before);
-  hidden.unmount();
+  await hidden.unmount();
   const unbound = await renderScreen(
-    <InboxArtifactSourceBoundary><ServiceCheckWidgetBody input={{}} serverId={scope.serverId} testID="w" /></InboxArtifactSourceBoundary>,
+    <ServiceCheckWidgetBody input={{}} serverId={scope.serverId} testID="w" />,
   );
   expect(unbound.findByTestId('w.choose')).not.toBeNull();
   expect(automationReads()).toBe(before);
+  await unbound.unmount();
+});
+
+it('opens only the saved Check by its address and leaves the Inbox closed', async () => {
+  await account.restore({ serverIdentityId: 'srv_check_widget_scoped', machines: [], httpAnswers: {
+    'GET /v3/automations/removed-check': { status: 404, body: { error: 'automation_not_found' } },
+    'POST /v3/automations/query': { body: { automations: [] } },
+  } });
+  const scope = storage.getState().settingsScope!;
+  const screen = await renderScreen(
+    <ServiceCheckWidgetBody input={{ check: { serverId: scope.serverId, automationId: 'removed-check', triggerId: 'trigger-1' } }}
+      serverId={scope.serverId} testID="w" />,
+  );
+  try {
+    await vi.waitFor(() => expect(screen.findByTestId('w.missing')).not.toBeNull());
+    expect(account.home.requests.filter(request => request.path.startsWith('/v3/automations'))
+      .map(request => request.path)).toEqual(['/v3/automations/removed-check']);
+    expect(account.home.requests.filter(request => request.path === '/v1/artifacts')).toHaveLength(0);
+  } finally { await screen.unmount(); }
 });

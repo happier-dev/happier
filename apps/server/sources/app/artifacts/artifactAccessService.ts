@@ -31,7 +31,7 @@ import { isPublicSessionShareActive } from "@/app/share/publicSessionSharePublic
 import { ArtifactHeaderMetadataV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { ArtifactBodyEnvelopeV1StoredSchema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { ARTIFACT_BROWSER_NON_LISTED_KINDS_V1, getArtifactGrantInspectionPolicyV1, type ArtifactSharingResourceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
-import { ArtifactCoarseKindV1Schema, decodeArtifactKindV1, type ArtifactCoarseKindV1, type ArtifactKindCoverageV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import { artifactKindHasIndexedChildrenV1, ArtifactCoarseKindV1Schema, decodeArtifactKindV1, type ArtifactCoarseKindV1, type ArtifactKindCoverageV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { mergeResourceGrantArmPages, resourceGrantPageAccessArms, resourceGrantAccessSqlPredicate } from '@/app/teams/resourceGrantAccess';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { artifactAccessFactsSelect, artifactGrantFacts, artifactGrantStorageAdapter, type ArtifactAccessFacts } from './artifactGrantStorageAdapter';
@@ -44,6 +44,7 @@ import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encry
 import type { ArtifactTemplateAcceptedVersionInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { projectAdmittedTemplateAcceptedVersionsInTx, writeAdmittedTemplateAcceptedVersionInTx } from './artifactTemplateAcceptedVersionStorage';
 import { resolveTeamArtifactQueryInTx } from './artifactTeamResourceQuery';
+import { DEPLOYMENT_NOTICE_INDEXED_KIND_PREFIX_V1, deploymentNoticeEnvironmentIndexedKindV1 } from '@happier-dev/protocol/activity/accountNoticeArtifactKindsV1';
 import type { ArtifactTeamResourceKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import type { ArtifactLockedAvailabilityV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import type { TeamOperationAuthenticationContext } from '@/app/teams/actorContext';
@@ -527,6 +528,8 @@ export function projectArtifactPageReadRow(row: ArtifactPageReadRow, actorAccoun
 const browserNonListedStoredKinds = ARTIFACT_BROWSER_NON_LISTED_KINDS_V1.flatMap(kind =>
     ArtifactCoarseKindV1Schema.options.map(coarse => `v1:${coarse}:${kind}`));
 
+const browserNonListedNoticePrefixes = ArtifactCoarseKindV1Schema.options.map(coarse =>
+    `v1:${coarse}:${DEPLOYMENT_NOTICE_INDEXED_KIND_PREFIX_V1}`);
 const approvalStoredKinds = Object.values(APPROVAL_ARTIFACT_KINDS_V1).flatMap(kind =>
     ArtifactCoarseKindV1Schema.options.map(coarse => `v1:${coarse}:${kind}`));
 const approvalKindWhere: Prisma.ArtifactWhereInput = { OR: [
@@ -548,7 +551,7 @@ function artifactListFixedBindings(input: Parameters<typeof listArtifactHeadersF
     // merged received positions, then the optional selectors.
     return 4 + 5 + 4 + 3 + 2 + input.limit + (input.ownerAccountId === undefined ? 0 : 1) + (input.audience === 'received' ? 1 : 0)
         + (input.kind === undefined || input.kind === null ? 0 : 2)
-        + (input.browserListed ? browserNonListedStoredKinds.length : 0)
+        + (input.browserListed ? browserNonListedStoredKinds.length + browserNonListedNoticePrefixes.length : 0)
         + (input.approvalStates === undefined ? 0
             : approvalStoredKinds.length + ArtifactCoarseKindV1Schema.options.length + new Set(input.approvalStates).size)
         + (input.kinds?.includes(APPROVAL_ARTIFACT_KINDS_V1.builtIn) ? ArtifactCoarseKindV1Schema.options.length : 0);
@@ -632,7 +635,8 @@ async function listArtifactHeaderQueryInTx(tx: Tx, input: Parameters<typeof list
         // Byte-exact candidate paging preserves the kind policy's ordinary documents.
         if (getDbProviderFromEnv(process.env, 'postgres') === 'mysql') return listBrowserArtifactHeadersMysqlInTx(tx, input, candidateAccess);
         return listArtifactHeaderSelectionInTx(tx, input, candidateAccess, { OR: [
-            { kind: null }, { kind: { notIn: browserNonListedStoredKinds } },
+            { kind: null }, { AND: [{ kind: { notIn: browserNonListedStoredKinds } },
+                { NOT: { OR: browserNonListedNoticePrefixes.map(prefix => ({ kind: { startsWith: prefix } })) } }] },
         ] });
     }
     if (input.kinds !== undefined) {
@@ -641,10 +645,11 @@ async function listArtifactHeaderQueryInTx(tx: Tx, input: Parameters<typeof list
         const exactKinds = new Set(input.kinds);
         const values = [...exactKinds].flatMap(kind => ArtifactCoarseKindV1Schema.options.map(coarse => `v1:${coarse}:${kind}`));
         const selected: ArtifactInventoryItemForCaller[] = [];
-        for (const kinds of portableQueryChunks({ values, bindingsPerValue: 1,
+        const annotatedParents = new Set([...exactKinds].filter(artifactKindHasIndexedChildrenV1)
+            .flatMap(kind => ArtifactCoarseKindV1Schema.options.map(coarse => `v1:${coarse}:${kind}`)));
+        for (const kinds of portableQueryChunks({ values, bindingsPerValue: annotatedParents.size === 0 ? 1 : 2,
             fixedBindings: artifactListFixedBindings(input) + (input.approvalSessionIds?.length ?? 0) })) {
-            const annotations = exactKinds.has(APPROVAL_ARTIFACT_KINDS_V1.builtIn)
-                ? kinds.filter(kind => kind.endsWith(`:${APPROVAL_ARTIFACT_KINDS_V1.builtIn}`)) : [];
+            const annotations = kinds.filter(kind => annotatedParents.has(kind));
             selected.push(...await listArtifactHeaderSelectionInTx(tx, input, candidateAccess, { OR: [
                 { kind: { in: [...kinds] } }, ...annotations.map(kind => ({ kind: { startsWith: `${kind}#` } })),
             ] }, new Set(kinds), annotations));
@@ -667,13 +672,15 @@ async function listBrowserArtifactHeadersMysqlInTx(tx: Tx, input: Parameters<typ
     const listed = browserNonListedStoredKinds.length === 0 ? sql`TRUE`
         : sql`(a.\`kind\` IS NULL OR CAST(a.\`kind\` AS BINARY) NOT IN
             (${prismaRuntime.join(browserNonListedStoredKinds.map(kind => sql`CAST(${kind} AS BINARY)`))}))`;
+    const noticePrefixes = prismaRuntime.join(browserNonListedNoticePrefixes.map(prefix =>
+        sql`LEFT(CAST(a.\`kind\` AS BINARY), ${prefix.length}) = CAST(${prefix} AS BINARY)`), ' OR ');
     const result: ArtifactInventoryItemForCaller[] = [];
     let cursor = input.cursor;
     while (result.length < input.limit) {
         const positions = await tx.$queryRaw<Array<{ id: string; updatedAt: Date }>>(sql`
             SELECT a.\`id\`, a.\`updatedAt\` FROM \`Artifact\` a
             WHERE a.\`deletedAt\` IS NULL AND ${prismaRuntime.raw(artifactOrdinarySqlPredicate(true))}
-                AND ${access} AND ${listed}
+                AND ${access} AND ${listed} AND (a.\`kind\` IS NULL OR NOT (${noticePrefixes}))
                 ${input.audience === 'received' ? sql`AND a.\`accountId\` <> ${input.actorAccountId}` : prismaRuntime.empty}
                 ${input.ownerAccountId === undefined ? prismaRuntime.empty : sql`AND a.\`accountId\` = ${input.ownerAccountId}`}
                 ${cursor ? sql`AND (a.\`updatedAt\` < ${cursor.updatedAt}
@@ -798,8 +805,9 @@ export async function listArtifactHeaderPageForCaller(input: Parameters<typeof l
 }> {
     if (input.approvalSessionIds?.length === 0) return { items: [], hasUnclassified: false, coverage: { status: 'complete', unclassifiedCount: 0 } };
     // A named approval subject is published together with its indexed state. Unclassified
-    // inventory cannot answer this selector and must not trigger a legacy discovery walk.
-    const indexedSubjects = input.approvalStates !== undefined && input.kinds?.every(isApprovalArtifactSubjectIndexedKindV1);
+    // inventory cannot answer a named subject selector and must not trigger a legacy discovery walk.
+    const indexedSubjects = input.kinds?.every(kind => deploymentNoticeEnvironmentIndexedKindV1(kind) !== null
+        || input.approvalStates !== undefined && isApprovalArtifactSubjectIndexedKindV1(kind));
     const readCount = async (tx: Tx, candidateAccess: ArtifactCandidateAccess) => !indexedSubjects && (input.kind !== undefined || input.kinds !== undefined
         || input.browserListed || input.unclassified
         || input.approvalStates !== undefined || input.approvalSessionIds !== undefined || input.audience !== undefined)

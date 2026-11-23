@@ -311,16 +311,35 @@ const RetiredNoticeHeaderSchema = lazyZodSchema(() => z.extend(RetiredNoticeCont
   status: AccountNoticeArtifactHeaderV1Schema.shape.status,
 }));
 
-/** Authenticated Artifact facts, never a notice-supplied Account or audience. */
-export function readOwnedNoticeArtifactAdmissionV1(artifact: Readonly<{
+type OwnedNoticeArtifact = Readonly<{
   artifactId?: string; id?: string;
   ownerAccountId?: string; access?: string; publicAudience?: string; header?: unknown; body?: unknown;
-}>, accountId: string | null | undefined): OwnedNoticeArtifactAdmissionV1 {
-  if (!accountId || artifact.ownerAccountId !== accountId || artifact.access !== 'owner' || artifact.publicAudience !== 'none') return { disposition: 'unreadable' };
+}>;
+
+function isPrivateNoticeOwner(artifact: OwnedNoticeArtifact, accountId: string | null | undefined): boolean {
+  return Boolean(accountId) && artifact.ownerAccountId === accountId && artifact.access === 'owner' && artifact.publicAudience === 'none';
+}
+
+function recoveryChoicesAddressNotice(notice: AccountNoticeArtifactHeaderV1, artifact: OwnedNoticeArtifact): boolean {
+  return !notice.recoveryChoices?.some(choice =>
+    choice.actionId === 'inbox.notice.dismiss' && choice.input.artifactId !== (artifact.artifactId ?? artifact.id));
+}
+
+/** Header-only presentation. Opening or acting still requires the admitted body. */
+export function readOwnedAccountNoticeHeaderV1(artifact: OwnedNoticeArtifact,
+  accountId: string | null | undefined): AccountNoticeArtifactHeaderV1 | null {
+  if (!isPrivateNoticeOwner(artifact, accountId)) return null;
+  const header = readAccountNoticeArtifactHeaderV1(artifact.header);
+  return header && recoveryChoicesAddressNotice(header, artifact) ? header : null;
+}
+
+/** Authenticated Artifact facts, never a notice-supplied Account or audience. */
+export function readOwnedNoticeArtifactAdmissionV1(artifact: OwnedNoticeArtifact,
+  accountId: string | null | undefined): OwnedNoticeArtifactAdmissionV1 {
+  if (!isPrivateNoticeOwner(artifact, accountId)) return { disposition: 'unreadable' };
   const content = { header: artifact.header, body: artifact.body };
   const notice = readAccountNoticeArtifactV1(content) ?? readUsageNoticeArtifactV1(content);
-  if (notice) return notice.kind === ACCOUNT_NOTICE_ARTIFACT_KIND_V1 && notice.recoveryChoices?.some(choice =>
-    choice.actionId === 'inbox.notice.dismiss' && choice.input.artifactId !== (artifact.artifactId ?? artifact.id))
+  if (notice) return notice.kind === ACCOUNT_NOTICE_ARTIFACT_KIND_V1 && !recoveryChoicesAddressNotice(notice, artifact)
     ? { disposition: 'unreadable' } : { disposition: 'presented', notice };
   if (typeof content.body === 'string') try {
     const header = RetiredNoticeHeaderSchema.safeParse(content.header);

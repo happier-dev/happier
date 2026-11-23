@@ -5,7 +5,7 @@ import type { Machine, MachineMetadata } from '@/sync/domains/state/storageTypes
 import { useMachineListForServerSelection } from '@/sync/store/hooks';
 import { serverAccountScopedResourceKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useInstalledMachines } from '../catalog/storeInstalled';
-import type { InstalledScopeAdmission } from '../catalog/storeAccountAdmission';
+import { useInstalledScope, type InstalledScopeAdmission } from '../catalog/storeAccountAdmission';
 import type { InstalledFamilyResult, StoreDemand, StoreInstalledInput } from '../catalog/storeKinds';
 import type { MachineSetupSourceEntryV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { machineSetupSourceOriginKeyV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
@@ -193,6 +193,12 @@ export function isConfiguredCheckResultsPartial(reason: unknown): boolean {
  * Saved Checks from the Account's Automation summaries, which name each one whether or not it has run. What a Check
  * watches lives in its private definition, so a Check claims no Machine and is left out of a Machine's own inventory.
  */
+export function useAccountConfiguredChecks(scope: ServerAccountScope | null, presented: boolean, selection?: ConfiguredCheckSelection) {
+    const input = { scope, projectKey: null, machine: null };
+    const admitted = useInstalledScope(input);
+    return useManagedConfiguredChecks(input, { presented }, admitted, selection);
+}
+
 export function useManagedConfiguredChecks(input: StoreInstalledInput, demand: StoreDemand, admitted: InstalledScopeAdmission,
     selection?: ConfiguredCheckSelection, completeCoverage = false): ConfiguredCheckResult {
     const allAutomations = useAutomations();
