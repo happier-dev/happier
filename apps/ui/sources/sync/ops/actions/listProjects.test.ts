@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { storage } from '@/sync/domains/state/storage';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { createScmCapabilities, ScmWorkingSnapshotSchema, type ScmHostingProviderRef } from '@happier-dev/protocol/scm';
 import { mapProtocolSnapshotToUiSnapshot } from '@/scm/core/snapshotMappers';
@@ -58,6 +60,32 @@ describe('projects.list forge identity', () => {
         projectManager.clear();
         storage.setState(storage.getInitialState(), true);
         storage.getState().activateProfileScope({ serverId: 'server-1', accountId: 'account-1' });
+    });
+    it('does not report a managed checkout reachable based on its controller being online', async () => {
+        const direct = workspaceRef();
+        const controller = createMachineFixture({ activeAt: Date.now(), presenceProtocolVersion: 1 });
+        await publishMachineInventoryForTest({ serverId: direct.serverId, accountId: 'account-1' }, [controller]);
+        const guest = {
+            v: 2,
+            kind: 'managed',
+            id: 'guest-workspace',
+            serverId: direct.serverId,
+            managedId: 'guest',
+            controller: { machineId: controller.id, installationId: 'installation' },
+            rootPath: direct.rootPath,
+            createdAtMs: 1,
+            lastOpenedAtMs: 2,
+        } satisfies WorkspaceRefV1;
+        stateWith({ refs: [direct, guest], snapshotByRoot: {} });
+
+        const result = await listProjectsForActions({});
+
+        expect(result.items.find((item) => item.projectKey.id === direct.id)).toMatchObject({
+            workspaceAddress: { machineId: controller.id }, reachable: true,
+        });
+        expect(result.items.find((item) => item.projectKey.id === guest.id)).toMatchObject({
+            workspaceAddress: { kind: 'managed' }, reachable: null,
+        });
     });
     it('reports incomplete coverage instead of claiming an unavailable census is an empty complete registry', async () => {
         storage.setState({ projectAccountRows: null });

@@ -1,16 +1,13 @@
 import { readProjectRepositoryIdentityV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { projectProjectListV1 } from '@happier-dev/protocol/workspaces';
-import { isManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import type { ProjectsListOutputV1 } from '@happier-dev/protocol/projects/projectListProjectionV1';
 
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
 import { readCurrentProjectAccountRows, type ProjectAccountRowsSnapshot } from '@/sync/store/domains/projectAccountRows';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
-import type { Machine, ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { isWorkspaceScopeReachableFromState } from '@/sync/domains/workspaces/workspaceReachability';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 /**
  * The Account's persisted projects, each with the two facts its SCM working
@@ -58,37 +55,6 @@ function worktreesOf(snapshot: ScmWorkingSnapshot | null): ProjectsListItem['wor
     }));
 }
 
-type ProjectsListMachineInventory = Readonly<{
-    machines?: Record<string, Machine | undefined>;
-    machineListByServerId?: Record<string, Machine[] | null | undefined>;
-}>;
-
-/**
- * Whether a Session could start on this project's machine right now.
- *
- * Both halves go through their canonical owners rather than a local re-read.
- * `resolveExactServerScopedMachine` resolves the machine WITHIN the project's
- * own server scope: the predecessor here indexed the active server's map by
- * `machineId` alone, so a project on a second server matched whichever machine
- * happened to carry that id on the active one — and machine ids are not unique
- * across servers, so that is a wrong machine, not a missing one. It also never
- * saw a machine outside the active server at all, reporting every project on
- * another server as unreachable.
- *
- * The scoped reachability owner includes request failures and the facts a bare
- * `active === true` misses: a REVOKED machine is never reachable however active
- * its last heartbeat claimed, and a machine within the online grace window
- * still is.
- */
-function reachabilityOf(
-    state: ProjectsListMachineInventory,
-    ref: Readonly<{ serverId: string; machineId: string; rootPath: string }>,
-    activeServerId: string,
-    accountScope: ServerAccountScope | null,
-): boolean {
-    return isWorkspaceScopeReachableFromState(state, ref, activeServerId, accountScope);
-}
-
 export async function listProjectsForActions(params: Readonly<{
     serverId?: string;
     machineId?: string;
@@ -119,14 +85,15 @@ export async function listProjectsForActions(params: Readonly<{
         workspaceRefs: rows?.workspaceRefs ?? [], organizations: rows?.organizations,
         coverage: rows?.status === 'ready' ? rows.coverage : 'unknown', normalizeServerId: resolveServerProfileScopeIdForIdentifier });
     for (const { ref, ...item } of projected.items) {
-        const managed = isManagedWorkspaceRefV2(ref);
-        const scope = { serverId: ref.serverId, machineId: resolveWorkspaceSyncExecutionMachineIdV1(ref), rootPath: ref.rootPath };
-        const snapshot = !managed && readSnapshot ? readSnapshot(scope) : null;
+        const scope = item.machineId === undefined
+            ? null
+            : { serverId: item.serverId, machineId: item.machineId, rootPath: item.rootPath };
+        const snapshot = scope && readSnapshot ? readSnapshot(scope) : null;
         const forge = readProjectRepositoryIdentityV1({ checkout: ref, snapshot });
         items.push({
             ...item,
             ...(ref.source ? { sourceId: ref.source.sourceId } : {}),
-            reachable: reachabilityOf(state, scope, activeServerId, rows?.scope ?? null),
+            reachable: scope ? isWorkspaceScopeReachableFromState(state, scope, activeServerId, rows?.scope ?? null) : null,
             ...(forge ? { forge } : {}),
             worktrees: worktreesOf(snapshot),
         });
