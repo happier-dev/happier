@@ -24,7 +24,7 @@ import { DiscussionSummaryV1Schema } from '@happier-dev/protocol/discussions/mod
 import { act, flushHookEffects, renderHook } from '@/dev/testkit';
 import { useSyncExternalStore } from 'react';
 import { createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit/performance/counts';
-import { useDiscussionRepositorySnapshot } from './useDiscussionRepositorySnapshot';
+import { useDiscussionActiveListSnapshot, useDiscussionCollectionSnapshot, useDiscussionRepositorySnapshot } from './useDiscussionRepositorySnapshot';
 
 import { createDiscussionRepository, selectDiscussionListSearch, selectDiscussionThreadAccessState, type DiscussionRepositoryClient } from './discussionRepository';
 import { publishMountedDiscussionChanges } from '@/sync/domains/discussions/discussionChangeWatch';
@@ -456,6 +456,72 @@ it('patches only the changed list row across 300 Discussions and three loaded pa
         expect(states).not.toContain('loading');
         expect(repository.getListSnapshot('source').lists.active.items[0]?.messageSeq).toBe(6);
     } finally { unsubscribe(); leaveHome(); leaveAnchor(); await unchanged.unmount(); await changed.unmount(); repository.clear(); }
+});
+
+it('commits Discussion list consumers only when their query changes', async () => {
+    let homeItems: ReturnType<typeof storedSummary>[] = [];
+    let anchoredItems: ReturnType<typeof storedSummary>[] = [];
+    const repository = createDiscussionRepository({ scope, address, client: httpClient(async path => {
+        const url = new URL(path, 'https://home.invalid');
+        if (url.pathname === '/v1/discussions/attention') return response({ discussions: [], nextCursor: null, incomplete: false });
+        const session = url.searchParams.get('anchorSessionId');
+        const discussions = url.searchParams.get('state') === 'archived' ? []
+            : session === 'session-a' ? anchoredItems : session === null ? homeItems : [];
+        return response({ discussions, nextCursor: null });
+    }) });
+    await repository.refreshList('active');
+    await repository.refreshAnchoredList('session-a', 'active');
+    const homeCounter = createRenderCommitCounter();
+    const anchoredCounter = createRenderCommitCounter();
+    const wholeCounter = createRenderCommitCounter();
+    const whole = await renderHook(() => {
+        const snapshot = useDiscussionRepositorySnapshot(repository);
+        useRenderCommitCounter(wholeCounter);
+        return snapshot;
+    });
+    const home = await renderHook(() => {
+        const collection = useDiscussionCollectionSnapshot(repository);
+        useRenderCommitCounter(homeCounter);
+        return collection;
+    });
+    const anchored = await renderHook(() => {
+        const list = useDiscussionActiveListSnapshot(repository, 'session-a');
+        useRenderCommitCounter(anchoredCounter);
+        return list;
+    });
+    try {
+        homeCounter.reset(); anchoredCounter.reset(); wholeCounter.reset();
+        const originalHome = home.getCurrent();
+        const originalAnchor = anchored.getCurrent();
+        await act(async () => { await repository.refreshAttention(); });
+        expect(repository.getSnapshot().attention.status).toBe('ready');
+        await act(async () => { await repository.refreshAnchoredList('session-b', 'active'); });
+        expect(repository.getListSnapshot('session-b').lists.active.status).toBe('ready');
+        await act(async () => { await repository.refreshAnchoredList('session-a', 'archived'); });
+        expect(repository.getListSnapshot('session-a').lists.archived.status).toBe('ready');
+        console.info('Discussion list unrelated publication cost', {
+            whole: wholeCounter.read(), home: homeCounter.read(), anchored: anchoredCounter.read(),
+        });
+        expect(wholeCounter.read()).toEqual({ renders: 3, commits: 3 });
+        expect(homeCounter.read()).toEqual({ renders: 0, commits: 0 });
+        expect(anchoredCounter.read()).toEqual({ renders: 0, commits: 0 });
+        expect(home.getCurrent()).toBe(originalHome);
+        expect(anchored.getCurrent()).toBe(originalAnchor);
+
+        const added = { ...storedSummary('matching'), anchor: { kind: 'session' as const, sessionId: 'session-a' } };
+        anchoredItems = [added];
+        await act(async () => { await repository.refreshAnchoredList('session-a', 'active'); });
+        expect(anchored.getCurrent().items.map(row => row.id)).toEqual(['matching']);
+        expect(anchoredCounter.read()).toEqual({ renders: 1, commits: 1 });
+        expect(homeCounter.read()).toEqual({ renders: 0, commits: 0 });
+
+        homeItems = [storedSummary('home-match')];
+        await act(async () => { await repository.refreshList('active'); });
+        expect(home.getCurrent().lists.active.items.map(row => row.id)).toEqual(['home-match']);
+        console.info('Discussion list matching publication cost', { home: homeCounter.read(), anchored: anchoredCounter.read() });
+        expect(homeCounter.read()).toEqual({ renders: 1, commits: 1 });
+        expect(anchoredCounter.read()).toEqual({ renders: 1, commits: 1 });
+    } finally { await whole.unmount(); await home.unmount(); await anchored.unmount(); repository.clear(); }
 });
 
 it('keeps the newer summary when consecutive invalidations overlap an older exact read', async () => {

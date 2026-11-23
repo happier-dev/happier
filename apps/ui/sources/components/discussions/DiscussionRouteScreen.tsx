@@ -22,7 +22,7 @@ import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { createDiscussionClient } from '@/sync/api/discussions/discussionActions';
 import { getDiscussionRepository } from '@/sync/ops/discussions/discussionRepositoryRegistry';
-import { useDiscussionRepositorySnapshot } from '@/sync/ops/discussions/useDiscussionRepositorySnapshot';
+import { useDiscussionActiveListSnapshot } from '@/sync/ops/discussions/useDiscussionRepositorySnapshot';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { buildDiscussionRouteHref, buildDiscussionsRouteHref, readDiscussionRouteAnchor, readDiscussionRouteDraftId } from './discussionRoutes';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
@@ -201,8 +201,7 @@ function DiscussionsIndexPage(props: Readonly<{ address: Readonly<{ serverId: st
     const repository = React.useMemo(() => getDiscussionRepository({
         scope, address: props.address, client, accountLifetime: props.binding,
     }), [client, props.address, props.binding, scope]);
-    useDiscussionRepositorySnapshot(repository);
-    const active = repository.getListSnapshot().lists.active;
+    const active = useDiscussionActiveListSnapshot(repository);
     const { openNewDiscussion } = useOpenDiscussion({ address: props.address, sourceSurface: 'discussions' });
     if (active.items.length === 0 && (active.status === 'idle' || active.status === 'loading')) return null;
     const none = active.items.length === 0 && active.status === 'ready';

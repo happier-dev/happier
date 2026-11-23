@@ -41,7 +41,7 @@ import {
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { DiscussionRepositoryStatus } from '@/sync/ops/discussions/discussionRepository';
 import { getDiscussionRepository } from '@/sync/ops/discussions/discussionRepositoryRegistry';
-import { useDiscussionRepositorySnapshot } from '@/sync/ops/discussions/useDiscussionRepositorySnapshot';
+import { useDiscussionCollectionSnapshot } from '@/sync/ops/discussions/useDiscussionRepositorySnapshot';
 import { useDiscussionListSearch } from '@/sync/ops/discussions/useDiscussionListSearch';
 import { t } from '@/text';
 import {
@@ -304,9 +304,8 @@ function DiscussionsListReady(props: Readonly<{
         client,
         accountLifetime: props.accountLifetime,
     }), [client, props.accountLifetime, props.address, props.scope]);
-    useDiscussionRepositorySnapshot(repository);
     const anchorSessionId = props.anchor?.sessionId;
-    const collection = repository.getListSnapshot(anchorSessionId);
+    const collection = useDiscussionCollectionSnapshot(repository, anchorSessionId);
     const refreshList = React.useCallback((state: 'active' | 'archived') => anchorSessionId
         ? repository.refreshAnchoredList(anchorSessionId, state)
         : repository.refreshList(state), [anchorSessionId, repository]);

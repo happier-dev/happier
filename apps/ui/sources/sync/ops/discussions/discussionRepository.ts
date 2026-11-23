@@ -418,10 +418,10 @@ export function createDiscussionRepository(options: Readonly<{
         resource: discussionId === undefined ? 0 : resourceEpochs.get(discussionId) ?? 0 });
     const isCurrentOperation = (operation: ReturnType<typeof captureOperation>) => operation.home === accessLossEpoch
         && (operation.discussionId === undefined || operation.resource === (resourceEpochs.get(operation.discussionId) ?? 0));
+    let homeCollection = EMPTY_COLLECTION;
     let snapshot: DiscussionRepositorySnapshot = {
         address: options.address,
-        lists: { active: EMPTY_LIST, archived: EMPTY_LIST },
-        archivedExistence: 'unknown',
+        ...homeCollection,
         anchors: {},
         threads: {},
         mutations: {},
@@ -435,6 +435,9 @@ export function createDiscussionRepository(options: Readonly<{
     };
     const publish = (next: DiscussionRepositorySnapshot) => {
         if (next === snapshot) return;
+        if (next.lists !== homeCollection.lists || next.archivedExistence !== homeCollection.archivedExistence) {
+            homeCollection = { lists: next.lists, archivedExistence: next.archivedExistence };
+        }
         snapshot = next;
         if (publicationBatchDepth > 0) hasPendingPublication = true;
         else notifyListeners();
@@ -475,8 +478,8 @@ export function createDiscussionRepository(options: Readonly<{
         for (const id of summaryObservers.keys()) notifySummaryObservers(id);
     };
     const getListSnapshot = (anchorSessionId?: ListAnchor): DiscussionRepositoryCollectionSnapshot => anchorSessionId === undefined
-        ? snapshot : snapshot.anchors[listAnchorKey(anchorSessionId)]
-            ?? (snapshot.lists.active.status === 'revoked' && snapshot.lists.archived.status === 'revoked' ? snapshot : EMPTY_COLLECTION);
+        ? homeCollection : snapshot.anchors[listAnchorKey(anchorSessionId)]
+            ?? (snapshot.lists.active.status === 'revoked' && snapshot.lists.archived.status === 'revoked' ? homeCollection : EMPTY_COLLECTION);
     const pagesFor = (anchorSessionId?: ListAnchor) => {
         if (anchorSessionId === undefined) return listPages;
         const key = listAnchorKey(anchorSessionId);

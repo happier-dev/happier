@@ -13,7 +13,7 @@ import { resolveThemeHairlineBorderStyle } from '@/components/ui/surfaces/resolv
 import { createDiscussionClient } from '@/sync/api/discussions/discussionActions';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getDiscussionRepository } from '@/sync/ops/discussions/discussionRepositoryRegistry';
-import { useDiscussionRepositorySnapshot } from '@/sync/ops/discussions/useDiscussionRepositorySnapshot';
+import { useDiscussionActiveListSnapshot } from '@/sync/ops/discussions/useDiscussionRepositorySnapshot';
 import { t } from '@/text';
 
 import { readAnchoredDiscussionSourceLinks } from './discussionRoutes';
@@ -68,7 +68,7 @@ export function SessionDiscussionSourceLinksProvider(
       }) : null,
     [address, binding, client],
   );
-  useDiscussionRepositorySnapshot(repository);
+  const discussions = useDiscussionActiveListSnapshot(repository, sessionId)?.items;
   React.useEffect(() => {
     if (!repository) return;
     const unmount = repository.mount({ anchorSessionId: sessionId });
@@ -76,7 +76,6 @@ export function SessionDiscussionSourceLinksProvider(
       void repository.refreshAnchoredList(sessionId, 'active');
     return unmount;
   }, [repository, sessionId]);
-  const discussions = repository?.getListSnapshot(sessionId).lists.active.items;
   const value = React.useMemo<SourceMarkers | null>(() => {
     if (!address || !discussions) return null;
     const titles = new Map(

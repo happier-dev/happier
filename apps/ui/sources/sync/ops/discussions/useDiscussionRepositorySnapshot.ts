@@ -6,6 +6,7 @@ import { readRegisteredDiscussionRepository, subscribeRegisteredDiscussionReposi
 
 import type {
     DiscussionRepository,
+    DiscussionRepositoryCollectionSnapshot,
     DiscussionRepositorySnapshot,
     DiscussionRepositoryListSnapshot,
     DiscussionRepositoryThreadSnapshot,
@@ -75,7 +76,26 @@ export function useDiscussionDocSnapshot(repository: DiscussionRepository | null
     return React.useSyncExternalStore(source.subscribe, source.read, source.read);
 }
 
-/** The single React projection seam for the shared Home Discussion repository. */
+/** Observe both lists and archived existence for the current Home or Session anchor. */
+export function useDiscussionCollectionSnapshot(
+    repository: DiscussionRepository,
+    anchorSessionId?: string,
+): DiscussionRepositoryCollectionSnapshot {
+    const read = React.useCallback(() => repository.getListSnapshot(anchorSessionId), [repository, anchorSessionId]);
+    return React.useSyncExternalStore(repository.subscribe, read, read);
+}
+
+export function useDiscussionActiveListSnapshot(repository: DiscussionRepository, anchorSessionId?: string): DiscussionRepositoryListSnapshot;
+export function useDiscussionActiveListSnapshot(repository: DiscussionRepository | null, anchorSessionId?: string): DiscussionRepositoryListSnapshot | null;
+export function useDiscussionActiveListSnapshot(
+    repository: DiscussionRepository | null,
+    anchorSessionId?: string,
+): DiscussionRepositoryListSnapshot | null {
+    const read = React.useCallback(() => repository?.getListSnapshot(anchorSessionId).lists.active ?? null, [repository, anchorSessionId]);
+    return React.useSyncExternalStore(repository?.subscribe ?? subscribeWithoutRepository, read, read);
+}
+
+/** Observe the entire Home Discussion repository when the consumer needs multiple domains. */
 export function useDiscussionRepositorySnapshot(repository: DiscussionRepository): DiscussionRepositorySnapshot;
 export function useDiscussionRepositorySnapshot(repository: DiscussionRepository | null): DiscussionRepositorySnapshot | null;
 export function useDiscussionRepositorySnapshot(

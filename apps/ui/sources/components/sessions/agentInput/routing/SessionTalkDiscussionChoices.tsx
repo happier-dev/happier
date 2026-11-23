@@ -8,7 +8,7 @@ import { CollectionListGroupLabel } from '@/components/ui/lists/collection/Colle
 import { createDiscussionClient } from '@/sync/api/discussions/discussionActions';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getDiscussionRepository } from '@/sync/ops/discussions/discussionRepositoryRegistry';
-import { useDiscussionRepositorySnapshot } from '@/sync/ops/discussions/useDiscussionRepositorySnapshot';
+import { useDiscussionActiveListSnapshot } from '@/sync/ops/discussions/useDiscussionRepositorySnapshot';
 import { t } from '@/text';
 
 import { AGENT_INPUT_MENU_ICON_SIZE_PX } from '../definitions/agentInputChipIconMetrics';
@@ -87,14 +87,13 @@ function DiscussionChoiceRows(
       }),
     [address, binding, client],
   );
-  useDiscussionRepositorySnapshot(repository);
+  const list = useDiscussionActiveListSnapshot(repository, sessionId);
   React.useEffect(() => {
     const unmount = repository.mount({ anchorSessionId: sessionId });
     if (repository.getListSnapshot(sessionId).lists.active.status === 'idle')
       void repository.refreshAnchoredList(sessionId, 'active');
     return unmount;
   }, [repository, sessionId]);
-  const list = repository.getListSnapshot(sessionId).lists.active;
   const discussions = selectDiscussionSummariesForAnchor(list.items, {
     kind: 'session',
     sessionId,
