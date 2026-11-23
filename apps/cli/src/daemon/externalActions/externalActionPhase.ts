@@ -6,6 +6,7 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ActionStartDiagnosticV1 } from '@happier-dev/protocol/actions/executor/actionStartDiagnostics';
 import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { isManagedEnrollmentPolicyChildActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { readRequesterHomeActionFailure } from '@/daemon/sessionEncryption/requesterCurrentness';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { parseActionExecuteFailure, readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -79,6 +80,7 @@ function isTracedRequest(actionId: unknown, rootRequestId: unknown): boolean {
   return validRequestId && (actionId === 'session.spawn_new'
     || (actionId === 'session.stop' || actionId === 'session.archive' || actionId === 'session.unarchive'
       || actionId === 'session.status.get' || actionId === 'plugins.list' || actionId === 'action.invoke'
+      || typeof actionId === 'string' && isManagedEnrollmentPolicyChildActionIdV1(actionId)
       || isWebLatencyTraceEnabled()
         && (actionId === 'approval.request.decide' || actionId === 'projects.script.run' || actionId === 'projects.compute.exec'
           || actionId === 'projects.inspect' || actionId === 'localServices.launcher.start'

@@ -12,6 +12,7 @@ import { executeExternalAction } from './executeExternalAction';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { createDaemonExternalActionTargetResolver } from './daemonExternalActionTargetResolver';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { MANAGED_ENROLLMENT_POLICY_CHILD_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 
 it('correlates only opaque Session input ids and drops all private admission carrier fields', () => {
   const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
@@ -222,3 +223,13 @@ it.each(['machines.provisioners.list', 'machines.provisioners.check', 'machines.
     } finally { log.mockRestore(); vi.unstubAllEnvs(); }
   },
 );
+
+it.each(MANAGED_ENROLLMENT_POLICY_CHILD_ACTION_IDS_V1)('traces the managed enrollment child %s on both sides without latency diagnostics', actionId => {
+  const log = vi.spyOn(logger, 'debugLocalFile').mockImplementation(() => {});
+  const rootRequestId = '7a5710d0-6cc9-4bdc-afd9-53a658c41d44';
+  try {
+    vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '0');
+    traceExternalActionStage(actionId, rootRequestId, 'rpc.received');
+    expect(log.mock.calls).toEqual([['[external-action-stage]', { actionId, rootRequestId, stage: 'rpc.received' }]]);
+  } finally { log.mockRestore(); vi.unstubAllEnvs(); }
+});

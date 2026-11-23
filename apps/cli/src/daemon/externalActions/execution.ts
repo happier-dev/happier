@@ -130,8 +130,11 @@ export function createRequesterAccountOperationContext(input: Readonly<{
     const ownCustodian = isOriginalOwnAccountActionCustody(requester.authorization.binding)
       && requester.authorization.binding.custodianAccountId === input.custodianAccountId;
     const role = requester.authorization.binding.admittedMachineRole ?? (ownCustodian ? 'manage' : undefined);
+    // The receipt names the deciding fact: no Home-admitted role and not original own custody.
     if (!role) throw createActionExecuteFailureError({
       ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable', effectAttempted: false,
+      failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: 'admission_unavailable', httpStatus: null,
+        nativeErrorReason: 'admitted_machine_role' },
     });
     return {
       machineAdmission: {
