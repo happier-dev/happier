@@ -13,6 +13,8 @@ import 'fake-indexeddb/auto';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineAdministrationTargetSelectionFixture } from '@/dev/testkit/fixtures/machineAdministrationTargetSelectionFixtures';
+import { teamProjectSourceFixture } from '@/dev/testkit/fixtures/teamFixtures';
 
 // The Socket.IO port supplies daemon answers; Machine routing, credential
 // currentness and operation observation remain in the production owners.
@@ -182,6 +184,54 @@ describe('selected Team batch progress', () => {
         await hook.rerender();
         expect(hook.getCurrent().pending).toBeNull();
         await hook.unmount();
+    });
+    it('follows a later checkout’s native review and settlement on the mounted batch', async () => {
+        const [{ TeamSetupPageView }, { ItemList }, { Modal, ModalProvider }] = await Promise.all([
+            import('./TeamSetupScreen'), import('@/components/ui/lists/ItemList'), import('@/modal'),
+        ]);
+        daemonReply.mockReturnValue(new Promise(() => {}));
+        let batch = selectedBatch();
+        const first = { ...preparedResult, setup: 'notRequired' as const, directory: '/first',
+            workspace: { ...preparedResult.workspace, workspaceId: 'first', rootPath: '/first' } };
+        const second = { ...preparedResult, setup: 'approvalRequired' as const };
+        batch = { ...batch, settlement: { completed: false, machine: null, machineSettlement: null,
+            repositories: [{ id: 'source', result: { ok: true, result: first } }] } };
+        const repositories = [teamProjectSourceFixture({ id: 'source', name: 'First', nameWithOwner: 'team/first' }),
+            teamProjectSourceFixture({ id: 'next', name: 'Next', nameWithOwner: 'team/next' })];
+        const view = () => <ModalProvider><ItemList pageColumn="wide"><TeamSetupPageView
+            header={null} teamName="Team" selection={createMachineAdministrationTargetSelectionFixture()}
+            machineId={query.machineId} machineLabel="Member Machine" homeDir="/home/member"
+            run={{ kind: 'done', completed: false, operationId: null }} canRun={false} onRun={vi.fn()}
+            onOpenOperation={vi.fn()} sources={{ loading: false, failure: null, onRetry: vi.fn() }}
+            hasPreset={false} machinePlan={null} repositories={repositories} repositoryFreeSources={[]}
+            excluded={new Set()} onToggleRepository={vi.fn()} batch={batch} sharedKeys={[]} keyDisplayNames={{}}
+            firstTask={null} onStartSession={vi.fn()} presetChange={null}
+            clones={{ onFind: vi.fn(), searching: false, folder: null, adopted: new Map(), failure: null, noneFound: false }}
+        /></ItemList></ModalProvider>;
+        const screen = await renderScreen(view());
+        try {
+            expect(screen.findByTestId('team-setup-repository-start:source')).not.toBeNull();
+            expect(screen.findByTestId('team-setup-repository-start:next')).toBeNull();
+            batch = { ...batch, dispatched: new Set(['source', 'next']), running: false };
+            await screen.update(view());
+            const review = setupOperation({ createdAt: 5, startedAt: 5, setupReview: {
+                kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'effect',
+                reviewedEffect: { commands: [] },
+            } });
+            act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshots: [
+                opening({ operationId: 'second-open', requestId: 'next-request', domainRef: { kind: 'projectOpen', sourceId: 'next' },
+                    createdAt: 3, state: 'succeeded', settledAt: 4, result: second }), review,
+            ] }));
+            expect(screen.findByTestId('team-setup-repository-start:next')).toBeNull();
+            await screen.pressByTestIdAsync('team-setup-repository:next');
+            await vi.waitFor(() => expect(screen.findByTestId(`project-setup-session-review:${review.operationId}`)).not.toBeNull());
+            await act(async () => Modal.hideAll());
+            act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshots: [
+                setupOperation({ revision: 2, createdAt: 5, startedAt: 5, state: 'succeeded', settledAt: 6 }),
+            ] }));
+            expect(screen.findByTestId('team-setup-repository-start:source')).not.toBeNull();
+            expect(screen.findByTestId('team-setup-repository-start:next')).not.toBeNull();
+        } finally { await screen.unmount(); }
     });
     it('requires actual setup success, retains native failure, and announces only a live ready transition', async () => {
         daemonReply.mockReturnValue(new Promise(() => {}));
