@@ -8,6 +8,7 @@ import { readCodexNativeAccounting } from '../../../../../packages/plugins/codex
 import { UsageEventIngestRequestSchema } from '@happier-dev/protocol';
 import { createUsageObservationPublisher } from '../createUsageObservationPublisher';
 import { createNativeUsageCollector } from './nativeUsageCollector';
+import { deriveNativeUsageAccountingIdentity } from './nativeUsageAccountingIdentity';
 import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 
@@ -78,6 +79,101 @@ describe('native accounting capture custody', () => {
                 expect(posted).toHaveLength(1);
             } finally { await collector.dispose(); }
 
+        } finally { await rm(directory, { recursive: true, force: true }); }
+    });
+
+    it('replays the same Codex event and cumulative checkpoint after local custody is removed', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'happier-codex-priced-custody-'));
+        try {
+            const sessions = join(directory, 'sessions');
+            await mkdir(sessions);
+            await writeFile(join(sessions, 'rollout.jsonl'), [
+                { type: 'session_meta', payload: { id: 'native-codex' } },
+                { type: 'token_usage_record', timestamp: '2026-10-31T00:00:00.000Z',
+                    payload: { thread_id: 'native-codex', response_id: 'priced-response', model: 'gpt-5',
+                        usage: { input_tokens: 10, output_tokens: 5, cached_input_tokens: 3,
+                            reasoning_output_tokens: 2, cache_write_input_tokens: 0 } } },
+                { type: 'event_msg', timestamp: '2026-10-31T00:01:00.000Z',
+                    payload: { type: 'token_count', info: { total_token_usage: {
+                        input_tokens: 20, output_tokens: 10, cached_input_tokens: 3, reasoning_output_tokens: 2, total_tokens: 30,
+                    } } } },
+            ].map(row => JSON.stringify(row)).join('\n') + '\n');
+            const source = { kind: 'codexHome', home: 'user', homePath: directory } as const;
+            const request = { source, signal: new AbortController().signal,
+                exec: createUnavailablePluginServices().exec,
+                managedEndpointRead: async () => { throw new Error('File-backed fixture'); },
+                ripgrep: { run: async () => { throw new Error('File-backed accounting has no content search'); } },
+            };
+            const result = await readCodexNativeAccounting(request, source, { CODEX_HOME: directory });
+            if (!result.ok || result.value.outcome !== 'advanced') throw new Error('Expected priced native accounting');
+            const read = result.value;
+            expect(read.observations.map(row => row.observation.scope)).toEqual(['turn_delta', 'session_cumulative']);
+            const observedCost = read.observations[0]!.observation.cost;
+            expect(observedCost?.estimatedUsd).toBeGreaterThan(0);
+            expect(observedCost?.breakdown?.cacheSavingsUsd).toBeGreaterThan(0);
+            const keyPath = join(directory, 'device.key');
+            const storage = await readOrCreateDeviceLocalSecretStorage({ path: keyPath });
+            const authority = { serverId: 'home', accountId: 'account', machineId: 'machine' };
+            const path = join(directory, 'capture.sealed');
+            const descriptor = {
+                agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                source, sourceKey: 'native-root', root: sessions, supported: true,
+            } as const;
+            const state = { v: 1, authority, sources: [{
+                ...descriptor, sourceId: deriveNativeUsageAccountingIdentity({ ...descriptor, authority, storage }).sourceRootKey,
+                consented: true,
+                cursor: read.nextCursor, pending: [...read.observations],
+            }] } satisfies NativeUsageCaptureState;
+            await createNativeUsageCaptureStore({ path, authority, storage }).save(state);
+            const retained = await createNativeUsageCaptureStore({ path, authority, storage }).load();
+            expect(retained.sources[0]!.pending[0]!.observation.cost).toEqual(JSON.parse(JSON.stringify(observedCost)));
+            expect(await readCodexNativeAccounting({ ...request, cursor: retained.sources[0]!.cursor }, source,
+                { CODEX_HOME: directory })).toEqual({ ok: true, value: { outcome: 'unchanged' } });
+            const posted: Array<ReturnType<typeof UsageEventIngestRequestSchema.parse>> = [];
+            const makeCollector = (storage: Awaited<ReturnType<typeof readOrCreateDeviceLocalSecretStorage>>) => {
+                const store = createNativeUsageCaptureStore({ path, authority, storage });
+                const collector = createNativeUsageCollector({ authority, storage, store,
+                    budgetRegistry: new ExecutionBudgetRegistry(),
+                    discoverSources: async () => [descriptor],
+                    resolveRoot: async () => { throw new Error('No root edit requested'); },
+                    readAccounting: (captured, signal) => readCodexNativeAccounting({ ...request, cursor: captured.cursor, signal }, source, { CODEX_HOME: directory }),
+                    // Only the OS watcher and HTTP boundary are substituted.
+                    subscribeSource: async () => ({ dispose() {} }),
+                    publisher: createUsageObservationPublisher({ emitUsageEvent: () => null, token: 'synthetic-token', apiServerUrl: 'https://capture.test',
+                        postJson: async request => {
+                            expect((await store.load()).sources[0]!.pending).toHaveLength(2);
+                            posted.push(UsageEventIngestRequestSchema.parse(request.body));
+                            return { ok: true };
+                        },
+                    }),
+                    deleteHistory: async () => { throw new Error('No deletion requested'); },
+                });
+                return { store, collector };
+            };
+            const { store, collector } = makeCollector(storage);
+            try {
+                await collector.initialize();
+                await collector.flushPending();
+                expect(posted).toHaveLength(2);
+                expect(posted[0]).toMatchObject({ subject: { kind: 'native' },
+                    tokens: read.observations[0]!.observation.tokens, cost: JSON.parse(JSON.stringify(observedCost)) });
+                expect((await store.load()).sources[0]!.pending).toHaveLength(0);
+                await collector.flushPending();
+                expect(posted).toHaveLength(2);
+            } finally { await collector.dispose(); }
+
+            await rm(path);
+            const fresh = makeCollector(await readOrCreateDeviceLocalSecretStorage({ path: keyPath }));
+            try {
+                const [source] = await fresh.collector.discover();
+                expect(source?.consent).toBe('disabled');
+                await fresh.collector.setConsent(source!.sourceId, true);
+                await fresh.collector.flushPending();
+                const persistedIdentity = ({ subject, externalKey, scope, observedAt, tokens }: typeof posted[number]) =>
+                    ({ subject, externalKey, scope, observedAt, tokens });
+                expect(posted.slice(2).map(persistedIdentity)).toEqual(posted.slice(0, 2).map(persistedIdentity));
+                expect((await fresh.store.load()).sources[0]!.pending).toHaveLength(0);
+            } finally { await fresh.collector.dispose(); }
         } finally { await rm(directory, { recursive: true, force: true }); }
     });
 
