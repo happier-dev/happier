@@ -34,7 +34,7 @@ import {
 import { projectLoadedWorkspaceSyncConflicts, buildReviewedWorkspaceSyncResolution, isReviewedWorkspaceSyncResolutionCurrent, resolveWorkspaceSyncComparisonText } from '@/sync/domains/sessionHandoff/workspaceSyncConflictReviewModel';
 import { useWorkspaceSyncRelationshipSummaries, resolveWorkspaceSyncStatusScope, resolveWorkspaceSyncSummaryStateLabel } from '@/sync/domains/sessionHandoff/useWorkspaceSyncRelationshipSummaries';
 import { refreshWorkspaceSyncStatuses } from '@/sync/domains/sessionHandoff/workspaceSyncStatusStore';
-import { formatWorkspaceSyncRelationshipTitle, resolveWorkspaceSyncErrorTranslationKey, resolveWorkspaceSyncModeTranslationKey } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
+import { formatWorkspaceSyncRelationshipTitle, presentWorkspaceSyncFailure, readWorkspaceSyncErrorCode, resolveWorkspaceSyncErrorTranslationKey, resolveWorkspaceSyncModeTranslationKey } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
 import { useLocalDaemonControl } from '@/components/settings/machines/localControl/useLocalDaemonControl';
 import { openSessionAuthoringSeed } from '@/sync/ops/actions/openSessionAuthoringSeed';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
@@ -235,7 +235,7 @@ export const WorkspaceSyncConflictDetailsView = React.memo(function WorkspaceSyn
     const [compareWorkspaceRefId, setCompareWorkspaceRefId] = React.useState<string | null>(null);
     const [outcome, setOutcome] = React.useState<WorkspaceSyncConflictResolutionResultV1 | null>(null);
     const visibleOutcome = props.reportedOutcome ?? outcome;
-    const [resolveError, setResolveError] = React.useState<'changed' | 'failed' | null>(null);
+    const [resolveError, setResolveError] = React.useState<string | null>(null);
     const [resolving, setResolving] = React.useState(false);
     const [actionPhase, setActionPhase] = React.useState<'requesting_approval' | 'applying' | null>(null);
     const [reinspectingTerminal, setReinspectingTerminal] = React.useState(false);
@@ -488,8 +488,9 @@ export const WorkspaceSyncConflictDetailsView = React.memo(function WorkspaceSyn
             refresh();
         } catch (error: unknown) {
             if (!isCurrentRequest()) return;
-            const code = error && typeof error === 'object' && 'code' in error ? error.code : null;
-            setResolveError(code === 'conflict_changed' ? 'changed' : 'failed');
+            const code = readWorkspaceSyncErrorCode(error);
+            setResolveError(code === 'conflict_changed' ? t('workspaceSync.resolve.changedBody')
+                : presentWorkspaceSyncFailure(error)?.message ?? t('errors.operationFailed'));
             if (code === 'conflict_changed') refresh();
         } finally {
             if (isCurrentRequest()) {
@@ -686,7 +687,7 @@ export const WorkspaceSyncConflictDetailsView = React.memo(function WorkspaceSyn
                             onPress={refresh} />
                     </View> : null}
                     {resolveError ? <Text accessibilityLiveRegion="polite" style={{ padding: theme.space.s16 }}>
-                                {resolveError === 'changed' ? t('workspaceSync.resolve.changedBody') : t('errors.operationFailed')}
+                                {resolveError}
                             </Text> : null}
                 </ScrollView>
                 {!props.approvedRequest && currentInspection && sourceId ? <View style={{ padding: theme.space.s12, gap: theme.space.s8 }}>

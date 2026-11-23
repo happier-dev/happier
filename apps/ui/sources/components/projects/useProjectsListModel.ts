@@ -10,7 +10,7 @@ import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMac
 import { Modal } from '@/modal';
 import { useWorkspaceSyncRelationshipSummaries, resolveWorkspaceSyncStatusScope } from '@/sync/domains/sessionHandoff/useWorkspaceSyncRelationshipSummaries';
 import { projectWorkspaceSyncSetAttentionByWorkspaceRefId } from '@/sync/domains/sessionHandoff/workspaceSyncRelationshipModel';
-import { formatWorkspaceSyncSetAttention } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
+import { formatWorkspaceSyncSetAttention, presentWorkspaceSyncFailure } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
 import { updateProjectWorkspace, forgetProjectWorkspace } from '@/sync/ops/actions/projectWorkspaceActions';
 import { terminateWorkspaceSyncRelationship } from '@/sync/ops/actions/workspaceSyncRelationshipActions';
 import { resolveMachineActionCandidates } from '@/utils/sessions/resolveMachineActionCandidates';
@@ -40,7 +40,7 @@ import { resolveSettledMachineDisplayNames } from '@/utils/sessions/machineDispl
 import { useProjectMachineDisplays } from './useProjectMachineDisplays';
 import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { resolveWorkspaceRefByAddress } from '@/sync/domains/workspaces/workspaceRefs';
-import { ActionApprovalRequestCreatedResultSchema, type ActionApprovalRequestCreatedResult,
+import { ActionApprovalRequestCreatedResultSchema, createActionExecuteFailureError, type ActionApprovalRequestCreatedResult,
     type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { PluginUiNewSessionSeedV1 } from '@happier-dev/protocol/plugins/ui';
 
@@ -389,7 +389,8 @@ export function useProjectsListModel() {
                 rememberApproval(stopped);
                 if (stopped.ok && 'kind' in stopped) return stopped;
                 if (!stopped.ok) {
-                    Modal.alert(t('common.error'), t('projects.actions.removeStopSyncingFailed'));
+                    Modal.alert(t('common.error'), presentWorkspaceSyncFailure(createActionExecuteFailureError(stopped))?.message
+                        ?? t('projects.actions.removeStopSyncingFailed'));
                     return stopped;
                 }
             }
@@ -398,7 +399,8 @@ export function useProjectsListModel() {
         }
 
         if (!removal.ok) {
-            Modal.alert(t('common.error'), t('projects.actions.removeStopSyncingFailed'));
+            Modal.alert(t('common.error'), presentWorkspaceSyncFailure(createActionExecuteFailureError(removal))?.message
+                ?? t('projects.actions.removeStopSyncingFailed'));
         }
         return removal;
     }, [

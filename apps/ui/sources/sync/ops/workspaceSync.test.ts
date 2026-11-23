@@ -27,6 +27,7 @@ const machineRpcWithServerScope = vi.hoisted(() => vi.fn());
 
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 // Metro's deferred module loader is the boundary; the mounted/default executors remain real.
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOriginal => {
@@ -384,12 +385,20 @@ describe('workspace sync UI operations', () => {
         });
     });
 
-    it('propagates a failed approved conflict execution instead of masking it with a later status read', async () => {
-        const conflictChanged = Object.assign(new Error('conflict_changed'), {
-            rpcErrorCode: 'conflict_changed',
-        });
+    it.each([
+        [false, 'credential_scope_denied'], [true, 'credential_scope_denied'],
+        [false, 'conflict_changed'], [true, 'conflict_changed'],
+    ] as const)('carries conflict refusal cause through direct or approved execution (ask=%s, code=%s)', async (ask, errorCode) => {
+        if (ask) {
+            accountActionsSettings = ActionsSettingsV1Schema.parse({ v: 1, actions: {
+                'workspace.sync.conflict.resolve': { approvalRequiredSurfaces: ['ui'] },
+            } });
+            getStorage().getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse(accountActionsSettings) });
+        }
+        const failureCause = { phase: 'rpc.handler', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: null };
+        const conflictChanged = { error: 'conflict_changed', errorCode, failureCause, effectAttempted: false };
         machineRpcWithServerScope
-            .mockRejectedValueOnce(conflictChanged)
+            .mockResolvedValueOnce(conflictChanged)
             .mockResolvedValueOnce({ status });
 
         await expect(resolveWorkspaceSyncConflict({
@@ -405,8 +414,8 @@ describe('workspace sync UI operations', () => {
                 relationshipIds: ['relationship-1'],
             },
         })).rejects.toMatchObject({
-            message: 'conflict_changed',
-            code: 'conflict_changed',
+            failureCause,
+            effectAttempted: false,
         });
 
         expect(machineRpcWithServerScope.mock.calls.map(([input]) => input.method)).toEqual([

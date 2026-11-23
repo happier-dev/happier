@@ -26,6 +26,11 @@ describe('presentWorkspaceSyncStatusLine', () => {
             .toEqual({ text: t('workspaceSync.state.controllerUnavailable'), tone: 'warn', busy: false, action: 'retry' });
     });
 
+    it('carries a custody refusal to the existing failure presenter', () => {
+        expect(present('workspaceSync.state.controllerUnavailable', { readError: { code: 'custodian_only' } }).text)
+            .toBe(t('errors.custodianOnly'));
+    });
+
     it('shows work in progress instead of the state while an action settles', () => {
         expect(present('workspaceSync.state.controllerUnavailable', { pending: true }))
             .toEqual({ text: t('workspaceSync.state.working'), tone: 'quiet', busy: true, action: null });

@@ -1,4 +1,4 @@
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ReadWorkspaceSyncFileResultV1Schema, ReadWorkspaceSyncFileV1Schema, WorkspaceSyncConflictPageRequestV1Schema, WorkspaceSyncConflictPageV1Schema, WorkspaceSyncRelationshipIdV1Schema, WorkspaceSyncLegacyStateInspectionV1Schema, WorkspaceSyncStatusV1Schema, WorkspaceSyncConflictResolveActionInputV1Schema, WorkspaceSyncConflictResolutionResultV1Schema, WorkspaceSyncConflictInspectRpcRequestV1Schema, WorkspaceSyncConflictInspectRpcResultV1Schema, type WorkspaceSyncConflictResolutionV1, type WorkspaceSyncConflictResolutionResultV1, type WorkspaceSyncConflictInspectRpcRequestV1, type WorkspaceSyncConflictInspectRpcResultV1, type ReadWorkspaceSyncFileResultV1, type ReadWorkspaceSyncFileV1, type WorkspaceSyncConflictPageV1, type WorkspaceSyncStatusV1, type WorkspaceSyncLegacyStateInspectionV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -6,7 +6,7 @@ import { WorkspaceSyncRelationshipsListActionOutputV1Schema } from '@happier-dev
 import { WorkspaceSyncRelationshipsListRpcRequestV1Schema, WorkspaceSyncRelationshipsListRpcResultV1Schema,
     type WorkspaceSyncRequesterAvailabilityV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { createRpcCallError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
-import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { readActionFailureEnvelope, readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { ProjectWorkerCopyRetireInputV1Schema, type ProjectWorkerCopyRetireInputV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import type { WorkspaceSyncCommittedCopyPreviewV1, WorkspaceSyncCommittedCopyPreviewResultV1,
 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
@@ -103,10 +103,6 @@ function parseStatusEnvelope(raw: unknown, method: string): WorkspaceSyncStatusV
     return parsed.success ? parsed.data : unsupported(method);
 }
 
-function workspaceSyncActionError(errorCode: string, message: string): Error {
-    return Object.assign(new Error(message), { code: errorCode });
-}
-
 function parseApprovedWorkspaceSyncConflictResult(
     raw: unknown,
     method: string,
@@ -133,14 +129,13 @@ function parseApprovedWorkspaceSyncConflictResult(
         // codes to `action_failed`. Preserve the exact typed failure from this
         // synchronous subordinate RPC while the recorded result remains the
         // authority for whether the approved execution succeeded or failed.
-        const errorCode = recordedErrorCode === 'action_failed' && subordinateRpcErrorCode
-            ? subordinateRpcErrorCode
-            : recordedErrorCode;
+        if (recordedErrorCode === 'action_failed' && subordinateRpcErrorCode) throw subordinateRpcFailure;
         const recordedError = typeof executionRecord.error === 'string'
             && executionRecord.error.trim().length > 0
             ? executionRecord.error.trim()
-            : errorCode;
-        throw workspaceSyncActionError(errorCode, recordedError);
+            : recordedErrorCode;
+        const failure = readActionFailureEnvelope({ ...executionRecord, errorCode: recordedErrorCode, error: recordedError })!;
+        throw createActionExecuteFailureError(failure);
     }
 
     if (executionRecord.ok !== true) return unsupported(method);
@@ -305,7 +300,7 @@ export async function resolveWorkspaceSyncConflict(
         actionRequestId: randomUUID(),
         signal: input.signal,
     });
-    if (!requested.ok) throw Object.assign(new Error(requested.error), { code: requested.errorCode });
+    if (!requested.ok) throw createActionExecuteFailureError(requested);
     const approval = ActionApprovalRequestCreatedResultSchema.safeParse(requested.result);
     if (!approval.success) {
         return WorkspaceSyncConflictResolutionResultV1Schema.parse(requested.result);
@@ -315,7 +310,7 @@ export async function resolveWorkspaceSyncConflict(
         artifactId: approval.data.artifactId,
         decision: 'approve',
     }, { serverId: input.serverId ?? undefined, surface: 'ui', signal: input.signal });
-    if (!decided.ok) throw Object.assign(new Error(decided.error), { code: decided.errorCode });
+    if (!decided.ok) throw createActionExecuteFailureError(decided);
     return parseApprovedWorkspaceSyncConflictResult(decided.result, method, subordinateRpcFailure);
 }
 

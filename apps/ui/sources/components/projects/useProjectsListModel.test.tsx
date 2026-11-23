@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { ActionExecuteFailureSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMachineFixture, createSessionListRenderableSessionFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { act } from 'react-test-renderer';
@@ -473,6 +474,24 @@ describe('Projects model Action admission', () => {
         await hook.unmount();
     });
 
+    it('presents the typed Forget refusal instead of a generic removal failure', async () => {
+        const settings = { ...storage.getState().settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+            'projects.workspace.forget': { disabledSurfaces: ['ui'] },
+        } }) };
+        storage.getState().applySettingsForScope({ serverId, accountId: 'account-a' }, settings, 1);
+        homes.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: settings }, version: 1 } });
+        const alerts = vi.spyOn((await import('@/modal')).Modal, 'alert');
+        const hook = await renderHook(() => useProjectsListModel());
+        const ref = hook.getCurrent().groups.projectGroups[0]!.items[0]!;
+        let outcome: unknown;
+        await act(async () => { outcome = await hook.getCurrent().removeProject(ref); });
+        const { presentWorkspaceSyncFailure } = await import('@/sync/domains/sessionHandoff/workspaceSyncPresentation');
+        expect(outcome).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+        expect(alerts).toHaveBeenCalledWith(expect.any(String), presentWorkspaceSyncFailure(createActionExecuteFailureError(ActionExecuteFailureSchema.parse(outcome)))?.message);
+        expect(rows.find(row => row.key.kind === 'workspace-ref')?.content).not.toBeNull();
+        await hook.unmount();
+    });
+
     it('denied unlinked Forget leaves the accepted ref intact; granted Forget retires it', async () => {
         await homes.requireUiApproval(serverId, 'projects.workspace.forget');
         const hook = await renderHook(() => useProjectsListModel());
@@ -523,8 +542,15 @@ describe('Projects model Action admission', () => {
         await hook.unmount();
     });
 
-    it('routes paused relationship termination through its Action before Forget changes accepted rows', async () => {
-        await homes.requireUiApproval(serverId, 'workspace.sync.relationship.terminate');
+    it.each([false, true])('keeps linked Forget intact on Stop approval or refusal (disabled=%s)', async disabled => {
+        if (disabled) {
+            const settings = { ...storage.getState().settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+                'workspace.sync.relationship.terminate': { disabledSurfaces: ['ui'] },
+            } }) };
+            storage.getState().applySettingsForScope({ serverId, accountId: 'account-a' }, settings, 1);
+            homes.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: settings }, version: 1 } });
+        } else await homes.requireUiApproval(serverId, 'workspace.sync.relationship.terminate');
+        const alerts = vi.spyOn((await import('@/modal')).Modal, 'alert');
         const target = { id: 'target', serverId, machineId: 'other', rootPath: '/target', projectKey: 'anchor', createdAtMs: 1 };
         const targetKey = { kind: 'workspace-ref' as const, serverId, id: 'target' };
         const policy = { v: 1 as const, selection: 'git_worktree' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
@@ -548,6 +574,14 @@ describe('Projects model Action admission', () => {
         expect(storage.getState().projectAccountRows?.relationships).toHaveLength(1);
         let outcome: unknown;
         await act(async () => { outcome = await hook.getCurrent().removeProject(ref); });
+        if (disabled) {
+            const { presentWorkspaceSyncFailure } = await import('@/sync/domains/sessionHandoff/workspaceSyncPresentation');
+            expect(outcome).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+            expect(alerts).toHaveBeenCalledWith(expect.any(String), presentWorkspaceSyncFailure(createActionExecuteFailureError(ActionExecuteFailureSchema.parse(outcome)))?.message);
+            expect(rows).toEqual(before);
+            await hook.unmount();
+            return;
+        }
         if (!outcome || typeof outcome !== 'object' || !('ok' in outcome) || outcome.ok !== true) {
             throw new Error(`Expected relationship Action admission: ${JSON.stringify(outcome)}`);
         }
