@@ -25,7 +25,8 @@ export async function readWorkflowRunOriginWakeCandidatesInTx(tx: Tx, input:
         ...(input.runId ? { id: input.runId } : {}) });
     const rows: Awaited<ReturnType<typeof read>> = [];
     for (const accountIds of portableQueryChunks({ values: [...new Set(input.accountIds)], bindingsPerValue: 1,
-        fixedBindings: AUTOMATION_RUN_TERMINAL_STATES.length + 2 })) {
+        // Account IDs share the budget with the admitting predicate and SQLite pagination.
+        fixedBindings: AUTOMATION_RUN_TERMINAL_STATES.length + 3 })) {
         rows.push(...await read({ accountId: { in: [...accountIds] }, originSessionId: { not: null } }));
     }
     return rows;

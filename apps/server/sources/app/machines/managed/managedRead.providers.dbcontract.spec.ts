@@ -13,6 +13,8 @@ import { readManagedWakeTargets } from './managedWake';
 import { enqueuePendingMessageByAuthenticatedMachine } from '@/app/session/pending/pendingMessageService';
 import { ManagedWakeTargetV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { ManagedListInputV1Schema, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { readManagedGuestEdgesInTx } from '@/app/machines/machineRole';
+import { readWorkflowRunOriginWakeCandidatesInTx } from '@/app/workflows/workflowRunAttention';
 import { readAccessibleMachineOpeningsInTx } from '@/app/machines/machineAccess';
 import { serializeManagedInputRuntime } from '@/app/machines/machineSerialization';
 import { recordMachineAlive } from '@/app/presence/presenceRecorder';
@@ -118,6 +120,27 @@ describe('managed query selection on disposable databases', () => {
         await db.$connect();
     });
     afterAll(async () => { await stopLocalMachinePresenceTimeout(); if (sqlite) await sqlite.close(); else await db.$disconnect(); vi.unstubAllEnvs(); });
+
+    it('follows an enrolled guest edge across the provider bind boundary', async () => {
+        const { custodian, controller, row } = await createCreatorFixture();
+        const guest = await db.machine.create({ data: { id: randomUUID(), accountId: custodian.id, metadata: '{}' } });
+        await db.managedMachine.update({ where: { id: row.id }, data: { enrolledMachineId: guest.id } });
+        const ids = [...Array.from({ length: 1_000 }, () => randomUUID()), controller.id];
+        const edges = await inReadSnapshot(tx => readManagedGuestEdgesInTx(tx, ids));
+        expect([...edges]).toEqual([[controller.id, [guest.id]]]);
+    });
+
+    it('returns Workflow origin work across the provider bind boundary', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(),
+            encryptionMode: 'plain', metadata: '{}' } });
+        const run = await db.automationRun.create({ data: { accountId: owner.id, originKind: 'direct', causeKind: null,
+            originSessionId: session.id, originDeliveryAckRevision: 0, revision: 1, state: 'succeeded',
+            workflowCustodyState: 'settled', workflowAcceptedSnapshotEnvelope: '{}', scheduledAt: new Date(), dueAt: new Date() } });
+        const accountIds = [...Array.from({ length: 1_000 }, () => randomUUID()), owner.id];
+        const candidates = await inReadSnapshot(tx => readWorkflowRunOriginWakeCandidatesInTx(tx, { accountIds }));
+        expect(candidates.map(candidate => candidate.id)).toEqual([run.id]);
+    });
 
     it('projects current finite wake readiness with one exact controller batch and no dependent reads on continuing beats', async () => {
         const { custodian, controller, row, create, launch } = await createCreatorFixture();

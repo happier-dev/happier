@@ -168,7 +168,8 @@ export async function readManagedGuestEdgesInTx(tx: Tx, machineIds: readonly str
     let pending = [...visited];
     while (pending.length > 0) {
         const next: string[] = [];
-        for (const ids of portableQueryChunks({ values: pending, bindingsPerValue: 1 })) {
+        // SQLite's Prisma query binds its default LIMIT and OFFSET.
+        for (const ids of portableQueryChunks({ values: pending, bindingsPerValue: 1, fixedBindings: 2 })) {
             const guests = await tx.managedMachine.findMany({ where: { controllerMachineId: { in: [...ids] }, enrolledMachineId: { not: null } },
                 select: { controllerMachineId: true, enrolledMachineId: true } });
             for (const guest of guests) {
