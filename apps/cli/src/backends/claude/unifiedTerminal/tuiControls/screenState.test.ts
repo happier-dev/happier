@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
+import { scrolledCjkScreenText, scrolledCjkVisibleRows } from './__fixtures__/scrolledCjkComposer';
+
 import {
   isClaudeScreenReadyForInput,
   isSafeWindowForModeCycle,
@@ -1424,6 +1426,15 @@ describe('parseClaudeScreenState — scrolled composer draft', () => {
     expect(state.composerContent).toBeNull();
     expect(state.shellComposerContent).toBe('The first visible draft paragraph.\n\nThe last visible draft paragraph.');
     expect(isClaudeScreenReadyForInput(state)).toBe(false);
+  });
+});
+
+describe('parseClaudeScreenState — scrolled CJK composer draft', () => {
+  it('reads every visible row, including one that opens with full-width punctuation', () => {
+    const state = parseClaudeScreenState(scrolledCjkScreenText);
+    expect(state.composerContent).toBe(scrolledCjkVisibleRows.join('\n'));
+    expect(state.userDraftPresent).toBe(true);
+    expect(state.modeMarker).toBe('bypassPermissions');
   });
 });
 
