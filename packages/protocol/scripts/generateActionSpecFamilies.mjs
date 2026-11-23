@@ -93,7 +93,8 @@ export function readActionSpecCatalogFamilies(source = readFileSync(CATALOG_PATH
   return { readers: families.map(reader), imports: used };
 }
 
-function renderModule({ readers, imports }, idsByFamily, resolveSpecifier = (specifier) => specifier, uiPlacementIds = {}) {
+function renderModule({ readers, imports }, idsByFamily, resolveSpecifier = (specifier) => specifier,
+  uiPlacementIds = {}, mcpToolBindings = []) {
   const bySpecifier = new Map();
   for (const [local, { specifier, imported }] of imports) {
     if (!bySpecifier.has(specifier)) bySpecifier.set(specifier, []);
@@ -123,6 +124,11 @@ function renderModule({ readers, imports }, idsByFamily, resolveSpecifier = (spe
       .map(([placement, ids]) => `  ${JSON.stringify(placement)}: [${ids.map((id) => JSON.stringify(id)).join(', ')}],`),
     '};',
     '',
+    '/** Named MCP bindings in catalog order, available without evaluating the Action families. */',
+    'export const ACTION_SPEC_MCP_TOOL_BINDINGS: readonly (readonly [name: string, id: string])[] = [',
+    ...mcpToolBindings.map(([name, id]) => `  [${JSON.stringify(name)}, ${JSON.stringify(id)}],`),
+    '];',
+    '',
   ].join('\n');
 }
 
@@ -145,7 +151,9 @@ function readFamilyIds(families) {
       + `const c = await import(${JSON.stringify(pathToFileURL(CATALOG_PATH).href)});`
       + 'const placements = {}; for (const spec of c.listActionSpecs()) { if (spec.surfaces.ui !== true) continue;'
       + ' for (const placement of spec.placements ?? []) (placements[placement] ??= []).push(spec.id); }'
-      + 'console.log(JSON.stringify({ families: m.ACTION_SPEC_FAMILY_READERS.map((read) => read().map((row) => row.id)), placements }));';
+      + 'const mcpToolBindings = c.listActionSpecBindingDeclarations().flatMap(({id, bindings}) => {'
+      + ' const name = bindings?.mcpToolName?.trim(); return name ? [[name, id]] : []; });'
+      + 'console.log(JSON.stringify({ families: m.ACTION_SPEC_FAMILY_READERS.map((read) => read().map((row) => row.id)), placements, mcpToolBindings }));';
     const result = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval', script], { cwd: PACKAGE_ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
     if (result.status !== 0) throw new Error(`reading family ids failed:\n${result.stderr}`);
     return JSON.parse(result.stdout.trim().split('\n').pop());
@@ -157,7 +165,7 @@ function readFamilyIds(families) {
 export function renderActionSpecFamilies() {
   const families = readActionSpecCatalogFamilies();
   const facts = readFamilyIds(families);
-  return renderModule(families, facts.families, undefined, facts.placements);
+  return renderModule(families, facts.families, undefined, facts.placements, facts.mcpToolBindings);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

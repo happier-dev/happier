@@ -1,7 +1,7 @@
 import { PROJECT_STARTER_ACTION_SPECS_V1 } from './specs/projectStarters.js';
 import { parseQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
 import { lazyActionSpecArray, lazyActionSpecRecord, memoizeActionSpecValue , type ActionSpecArrayConcat } from './lazyActionSpecValue.js';
-import { ACTION_SPEC_FAMILY_IDS, ACTION_SPEC_FAMILY_READERS, ACTION_SPEC_UI_PLACEMENT_IDS } from './actionSpecFamilies.generated.js';
+import { ACTION_SPEC_FAMILY_IDS, ACTION_SPEC_FAMILY_READERS, ACTION_SPEC_MCP_TOOL_BINDINGS, ACTION_SPEC_UI_PLACEMENT_IDS } from './actionSpecFamilies.generated.js';
 import type { ExternalActionRequestEnvelope, ExternalActionTargetV1 } from './externalActionApi.js';
 
 
@@ -2301,6 +2301,13 @@ const ACTION_SPEC_BINDING_DECLARATIONS: readonly ActionSpecBindingDeclaration[] 
 
 export function listActionSpecBindingDeclarations(): readonly ActionSpecBindingDeclaration[] {
   return ACTION_SPEC_BINDING_DECLARATIONS;
+}
+
+/** Named MCP tool bindings in catalog order, independent of Action materialization. */
+export function listActionSpecMcpToolBindings(): readonly (readonly [name: string, id: ActionId])[] {
+  // The generator derives every id from this catalog (actionSpecFamilies.test.ts checks it); typing the
+  // ~1,200 literals against the ActionId union in place exceeds TypeScript's union limit (TS2590).
+  return ACTION_SPEC_MCP_TOOL_BINDINGS as readonly (readonly [name: string, id: ActionId])[];
 }
 
 /** RPC registration facts of every Action: id, primary method, aliases. */

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { ACTION_SPEC_FAMILY_IDS, ACTION_SPEC_FAMILY_READERS, ACTION_SPEC_UI_PLACEMENT_IDS } from './actionSpecFamilies.generated.js';
-import { getActionSpec, listActionSpecBindingDeclarations, listActionSpecs } from './actionSpecs.js';
+import { getActionSpec, listActionSpecBindingDeclarations, listActionSpecMcpToolBindings, listActionSpecs } from './actionSpecs.js';
 
 const REGENERATE = 'stale: run node packages/protocol/scripts/generateActionSpecFamilies.mjs';
 
@@ -17,6 +17,14 @@ describe('Action spec family routing', () => {
     for (const ids of ACTION_SPEC_FAMILY_IDS) {
       for (const id of ids) expect(getActionSpec(id as Parameters<typeof getActionSpec>[0]).id).toBe(id);
     }
+  });
+
+  it('lists named MCP tool bindings exactly as the catalog declares them', () => {
+    const expected = listActionSpecBindingDeclarations().flatMap(({ id, bindings }) => {
+      const name = bindings?.mcpToolName?.trim();
+      return name ? [[name, id]] : [];
+    });
+    expect(listActionSpecMcpToolBindings(), REGENERATE).toEqual(expected);
   });
 
   it('lists UI placement ids exactly as the normalized catalog declares them', () => {
