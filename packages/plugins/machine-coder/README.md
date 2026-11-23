@@ -2,7 +2,7 @@
 
 This plugin creates Coder workspaces and enrolls them through Happier’s shared native Machine bootstrap. Lifecycle requests use the selected deployment’s REST API; private guest IO uses the controller’s `coder` executable through Happier’s managed-dependency owner. The implementation is characterized against Coder v2.39.0.
 
-Install the Coder CLI matching your Coder deployment on the Happier controller and make `coder` available on its PATH. Follow the [official CLI installation instructions](https://coder.com/docs/install/cli); your deployment also provides its matching installer at `<deployment>/install.sh`. Happier checks the existing installation and reports an actionable refusal when it is missing. This version does not download or update the CLI automatically.
+Happier uses the Coder CLI on the controller's PATH if available. If it is missing, choose **Install Coder CLI** to install the Happier-managed version on the controller. To use the version matching a different Coder deployment, follow the [official CLI installation instructions](https://coder.com/docs/install/cli) or run your deployment's installer at `<deployment>/install.sh`.
 
 To host a Coder server on a Linux Machine with APT and systemd, select the **Coder** software recipe in Machine setup. Install Docker Engine first for Docker-based workspaces. The recipe installs Coder v2.39.0, writes the supplied external HTTPS URL, and starts the service on loopback port 3000; configure your HTTPS reverse proxy separately. Removing the recipe stops the service and retains the package and workspace data. Hosting the server on this Machine does not establish where a template provisions its workspaces.
 

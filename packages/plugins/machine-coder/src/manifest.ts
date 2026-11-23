@@ -1,5 +1,5 @@
 import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolLiteral, defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
 import { CODER_CLI_INSTALL_ACTION } from './machine/cliPrerequisite.js';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
@@ -17,6 +17,8 @@ const defaults = { scopes: ['machine'], surfaces: ['plugin'], execution: { targe
 const confirmation = { title: 'Manage this Coder workspace?', body: 'Coder templates control compute, storage and billing. Delete requests native destruction of this workspace.' };
 const runtime = async (context: PluginInvocationContext) => (await import('./machine/runtime.js')).coderRuntime(context);
 const failure = <const T>(error: unknown, fallback: T) => projectMachineProvisionerActionFailure(error, () => fallback);
+const cliVersion = '2.39.0';
+const cliRelease = `https://github.com/coder/coder/releases/download/v${cliVersion}/coder_${cliVersion}`;
 
 export const MACHINE_PROVISIONER = {
   title: 'Coder', icon: 'terminal', resourceKind: 'coder-workspace', schemaVersion: 1, enrollmentRole: 'personal',
@@ -51,7 +53,22 @@ export const PLUGIN = definePlugin({
   ], optional: [] },
   managedDependencies: { [DEPENDENCY_ID]: { id: DEPENDENCY_ID, title: 'Coder CLI', executable: 'coder',
     platforms: ['macos', 'linux', 'windows'], architectures: ['x64', 'arm64'],
-    sources: [{ kind: 'system', executableNames: ['coder'], versionArguments: ['version'] }] } },
+    sources: [{ kind: 'system', executableNames: ['coder'], versionArguments: ['version'] }, {
+      kind: 'pinnedArchive', installId: 'dep.coder', version: cliVersion, assetsByPlatform: {
+        'darwin-x64': { archiveUrl: `${cliRelease}_darwin_amd64.zip`, executableSubpath: 'coder',
+          sha256: '166a5ef7dea8a4e32e92e86e151c10b4d246b09060264786c12594120a2d1af7' },
+        'darwin-arm64': { archiveUrl: `${cliRelease}_darwin_arm64.zip`, executableSubpath: 'coder',
+          sha256: '3d8162bd2d4948bfb5f3559f59e7ca1b4b174a1d86b4dd10034cb436efda2c04' },
+        'linux-x64': { archiveUrl: `${cliRelease}_linux_amd64.tar.gz`, executableSubpath: 'coder',
+          sha256: '49bdd000dac448f110e23b9e0712cd5b51ca8a345f9c7061d59dd3cb526d4fe5' },
+        'linux-arm64': { archiveUrl: `${cliRelease}_linux_arm64.tar.gz`, executableSubpath: 'coder',
+          sha256: 'acb7968d095440eca4bf3c82613df5fdd4bbce383fdc5737cacbe90df7411033' },
+        'win32-x64': { archiveUrl: `${cliRelease}_windows_amd64.zip`, executableSubpath: 'coder.exe',
+          sha256: '0c00254355ab21e5735b69a26a0e18ad4c62db9e1871a61439409ef0c24460a8' },
+        'win32-arm64': { archiveUrl: `${cliRelease}_windows_arm64.zip`, executableSubpath: 'coder.exe',
+          sha256: '4f28f7549cb3b7aca58444fe81b10ffec8dad6bf5f79659cc7e6a7a67a37a875' },
+      },
+    }] } },
   connectedAccountDescriptors: { [ACCOUNT_SERVICE.localId]: {
     declaration: { title: 'Coder account', ui: { category: 'cloud-machines' }, authentication: {
       account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
@@ -86,10 +103,15 @@ export const PLUGIN = definePlugin({
   } },
   machineProvisioners: { [CONTRIBUTION.localId]: MACHINE_PROVISIONER },
   actions: {
-    [CODER_CLI_INSTALL_ACTION]: { title: 'Install Coder CLI', surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], dangerLevel: 'safe',
-      execution: { target: 'client', client: { artifactId: 'cli-install', exportName: 'activate' }, platforms: ['web', 'ios', 'android'] },
+    [CODER_CLI_INSTALL_ACTION]: { title: 'Install Coder CLI', scopes: ['machine'],
+      surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], dangerLevel: 'writesLocal', execution: { target: 'daemon' },
+      confirmation: { title: 'Install Coder CLI on this computer?' },
       inputSchema: defineProtocolObject({}, { policy: 'closed' }),
-      resultSchema: defineProtocolUnion([defineProtocolLiteral(null), defineProtocolObject({ url: defineProtocolString() }, { policy: 'closed' })]) },
+      resultSchema: defineProtocolLiteral(null),
+      async run(_input, context) {
+        await context.services.managedServices.dependencies.ensure(DEPENDENCY_ID, { signal: context.signal });
+        return null;
+      } },
     check: { ...defaults, title: 'Check Coder access', dangerLevel: 'safe', inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) { try { return await (await runtime(context)).check(); }
         catch (error) { return failure(error, { available: false, code: 'provider_unavailable' }); } } },

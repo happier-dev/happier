@@ -29,7 +29,7 @@ import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import type { PluginJsonValueV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
-import { dockerRuntimeRepairSources } from '../../../../../../../packages/plugins/devcontainer/src/machine/runtimeRepair';
+import { runtimeRepairSources } from '../../../../../../../packages/plugins/devcontainer/src/machine/runtimeRepair';
 
 const boundary = vi.hoisted(() => ({ rpc: vi.fn(), navigate: vi.fn() }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
@@ -193,7 +193,7 @@ describe('mounted provisioner repair', () => {
             requesterInvocation: 'optional',
             execute: async () => (repaired && scenario !== 'guide') || optionsPrerequisite ? { available: true } : isCrabbox ? crabboxCheck : {
                 available: false, prerequisites: [{ requirement: { kind: 'systemTool', id: 'native-vm' }, status: 'unavailable',
-                  ...(scenario === 'picker' ? { setupSources: dockerRuntimeRepairSources() } : {}),
+                  ...(scenario === 'picker' ? { setupSources: runtimeRepairSources() } : {}),
                   ...(scenario === 'missingWithoutRepair' ? {} : { repairAction: { action, input: { tool: 'native-vm' } } }) }],
             },
         });
@@ -256,7 +256,7 @@ describe('mounted provisioner repair', () => {
             const key = buildQualifiedPluginContributionKey(contribution);
             const offered = screen.tree.findAll(node => Array.isArray(node.props.cards))
                 .flatMap(node => node.props.cards).find(entry => entry.id === key);
-            expect(offered).toMatchObject({ setupSources: dockerRuntimeRepairSources(),
+            expect(offered).toMatchObject({ setupSources: runtimeRepairSources(),
                 repairAction: { action, input: { tool: 'native-vm' } } });
         }
         if (optionsPrerequisite) expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);

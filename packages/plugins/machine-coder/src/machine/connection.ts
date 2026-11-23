@@ -1,5 +1,6 @@
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountRuntime, ConnectedAccountPortableRuntime, ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
+import { createMachineProvisionerFetch } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { ACCOUNT_PURPOSE, ACCOUNT_SERVICE } from './schemas.js';
 import { completeCoderFirstAdmin } from './firstAdmin.js';
 
@@ -22,18 +23,14 @@ function connection(values: Readonly<Record<string, unknown>>, token: string | n
   return { endpoint: coderEndpoint(values), token };
 }
 function requestWithConnection(selected: ReturnType<typeof connection>, http: HttpService, signal: AbortSignal) {
-  return async (path: string, init: RequestInit = {}) => {
-    signal.throwIfAborted();
-    const url = selected.endpoint + path;
-    const headers = Object.fromEntries(new Headers(init.headers));
-    headers[coderTokenHeader] = selected.token;
-    const method = init.method ?? 'GET';
-    if (method !== 'GET' && method !== 'POST') throw new PluginError({ code: 'invalid_request' });
-    const response = await http.request({ url, method, headers, redirect: 'error',
-      ...(init.body === undefined ? {} : { body: new TextEncoder().encode(String(init.body)) }) }, { signal });
-    if (response.finalUrl !== url) throw coderCredentialUnavailable();
-    return new Response(Uint8Array.from(response.body), { status: response.status, headers: response.headers });
-  };
+  const request = createMachineProvisionerFetch({ signal, services: { http } }, {
+    purpose: ACCOUNT_PURPOSE,
+    origins: [selected.endpoint],
+    headerName: coderTokenHeader,
+    credential: { [coderTokenHeader]: selected.token },
+    methods: ['GET', 'POST'],
+  });
+  return (path: string, init?: RequestInit) => request(selected.endpoint + path, init);
 }
 async function probe(selected: ReturnType<typeof connection>, context: { services: { http: HttpService }; signal: AbortSignal }) {
   const response = await requestWithConnection(selected, context.services.http, context.signal)('/api/v2/users/me');

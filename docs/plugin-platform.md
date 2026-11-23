@@ -4441,6 +4441,11 @@ handoff before the provider role runs. A pre-dispatch retirement reports
 as the cause. Start a fresh Acquire after the controller is available and
 select the current prepared revision.
 
+Provisioners whose rebuild replaces a controller-owned installation declare
+`nestedChild: true`. The server then requires a different native child identity
+before settling the rebuild. The resource carries this identity in the
+existing `devcontainerObservation` field.
+
 The Devcontainer provisioner retains a finished setup hook's exit code and
 keeps hook output out of the public Action failure cause. It uses the same
 exact-container removal and absence observation as Delete. Confirmed absence

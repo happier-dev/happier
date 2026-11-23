@@ -18,6 +18,7 @@ export type MachineProvisionerContributionV1 = Readonly<{
   title: PluginLocalizedStringV2;
   icon: string;
   resourceKind: string;
+  nestedChild?: canonical.MachineProvisionerContributionV1['nestedChild'];
   enrollmentRole?: canonical.MachineProvisionerContributionV1['enrollmentRole'];
   /** Human kind and purpose; resourceKind remains native identity, never copy. */
   kindTitle?: PluginLocalizedStringV2;

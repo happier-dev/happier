@@ -114,6 +114,8 @@ export const MachineProvisionerSnapshotFactsV1Schema = lazyDefinition(() => mini
 export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.strictObject({
   id: local(), title: PluginLocalizedStringV2Schema, icon: PluginActionIconV2Schema,
   resourceKind: z.string().check(z.trim(), z.minLength(1)),
+  /** Rebuild replaces a child installation of the controller. */
+  nestedChild: z.optional(z.literal(true)),
   enrollmentRole: z.optional(enrollmentRole),
   kindTitle: z.optional(PluginLocalizedStringV2Schema), description: z.optional(PluginLocalizedStringV2Schema),
   launchSchema: strictPortableSchema, resourceSchema: strictPortableSchema,

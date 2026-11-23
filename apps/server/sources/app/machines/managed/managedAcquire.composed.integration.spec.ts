@@ -673,7 +673,8 @@ describe("managed acquisition durable authority", () => {
             { id: "rebuild", inputSchema: roles.rebuildInput.jsonSchema, resultSchema: roles.rebuildResult.jsonSchema },
         ];
         const manifest = PluginManifestV2Schema.parse({ schemaVersion: 2, id: "fixture.rebuild", version: "1.0.0", displayName: "Rebuild fixture", engines: { happier: "^1.0.0" }, runtime: { apiVersion: 1 }, contributes: {
-            machineProvisioners: [{ id: "child", title: "Child", icon: "machine", resourceKind: compute ? "compute" : "devcontainer", schemaVersion: 1,
+            machineProvisioners: [{ id: "child", title: "Child", icon: "machine", resourceKind: compute ? "compute" : "fixture-nested-child", schemaVersion: 1,
+                ...(compute ? {} : { nestedChild: true }),
                 launchSchema: native.jsonSchema, resourceSchema: native.jsonSchema, platforms: ["linux"], prerequisites: [],
                 billing: { location: "local", stoppedBilling: "not-billed" }, retention: { supportedIntents: ["delete", "rebuild"] },
                 actions: { check: "check", acquire: "acquire", bootstrap: "bootstrap", inspect: "inspect", destroy: "destroy", rebuild: "rebuild" } }],

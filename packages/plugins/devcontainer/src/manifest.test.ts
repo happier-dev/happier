@@ -5,7 +5,7 @@ import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { DEVCONTAINER_PLUGIN } from './manifest.js';
-import { installDockerRuntime } from './machine/runtimeRepair.js';
+import { installContainerRuntime } from './machine/runtimeRepair.js';
 import { createPluginTestkit, type PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
 import { requiresMachineProvisionerEffectReviewV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 
@@ -70,7 +70,12 @@ describe('Devcontainer public-author declaration', () => {
       });
       expect(await kit.invokeAction('options', { runtime: 'podman', configuration: { kind: 'image', image: 'example:latest' } }, { surface: 'plugin' }))
         .toMatchObject({ base: { available: false, prerequisites: [{ requirement: { id: { localId: 'podman' } },
-          repairAction: { input: { runtime: 'podman' } } }] } });
+          repairAction: { action: { localId: platform() === 'linux' ? 'install-runtime' : 'runtime-install-docs' },
+            input: { runtime: 'podman' } },
+          ...(platform() === 'linux' ? { setupSources: [{ kind: 'direct', setup: { items: [{ kind: 'softwareRecipe',
+            selection: { ref: { pluginId: 'happier.machine.recipes', recipeId: 'install-package', revision: '1' },
+              inputs: { apt: [{ name: 'podman' }], dnf: [{ name: 'podman' }] } },
+          }] } }] } : {}) }] } });
     } finally { await kit.dispose(); }
   });
 
@@ -86,9 +91,12 @@ describe('Devcontainer public-author declaration', () => {
     } finally { await kit.dispose(); }
   });
 
-  it('repairs Docker through the controller setup recipe and preserves its operation result', async () => {
-    const sources = [{ kind: 'direct', setup: { items: [{ kind: 'softwareRecipe',
-      selection: { ref: DOCKER_ENGINE_RECIPE_REF_V1, inputs: { mode: 'rootless', daemonConfig: {} } } }] } }];
+  it.each([
+    ['Docker', {}, { ref: DOCKER_ENGINE_RECIPE_REF_V1, inputs: { mode: 'rootless', daemonConfig: {} } }],
+    ['Podman', { runtime: 'podman' }, { ref: { pluginId: 'happier.machine.recipes', recipeId: 'install-package', revision: '1' },
+      inputs: { apt: [{ name: 'podman' }], dnf: [{ name: 'podman' }] } }],
+  ] as const)('repairs %s through the controller setup recipe and preserves its operation result', async (_runtime, input, selection) => {
+    const sources = [{ kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection }] } }];
     const plan = { desiredRevision: 0, sources, exclusions: [], support: [], recipePlans: [] };
     // The host Action transport is the boundary; the plugin's Plan-to-Apply
     // adapter remains real.
@@ -101,7 +109,7 @@ describe('Devcontainer public-author declaration', () => {
       execute } } as unknown as PluginTestServicesFixture;
     const kit = await createPluginTestkit({ manifest: DEVCONTAINER_PLUGIN.manifest, module: DEVCONTAINER_PLUGIN, services });
     try {
-      await expect(kit.invokeAction('install-runtime', {}, { surface: 'plugin' })).resolves.toEqual({ operationId: 'docker-setup' });
+      await expect(kit.invokeAction('install-runtime', input, { surface: 'agent' })).resolves.toEqual({ operationId: 'docker-setup' });
       expect(execute).toHaveBeenCalledWith('machines.setup.plan', { homeId: 'home', machineId: 'controller', sources }, expect.anything());
       expect(execute).toHaveBeenCalledWith('machines.setup.apply', { homeId: 'home', machineId: 'controller', targets: [{
         homeId: 'home', machineId: 'controller', desiredRevision: 0, sources, exclusions: [], recipePlans: [],
@@ -110,21 +118,21 @@ describe('Devcontainer public-author declaration', () => {
       // run only after the incumbent operation owner settles the installer.
       expect(execute).toHaveBeenCalledWith('action.operations.get', { serverId: 'home', machineId: 'controller',
         operationId: 'docker-setup', waitForTerminal: true }, expect.anything());
-      const failure = Object.assign(new Error('Setup unavailable'), { code: 'admin_access_unavailable' });
+      const failure = Object.assign(new Error('Setup unavailable'), { ok: false, errorCode: 'admin_access_unavailable', error: 'Setup unavailable' });
       execute.mockRejectedValueOnce(failure);
-      await expect(kit.invokeAction('install-runtime', {}, { surface: 'plugin' })).rejects.toMatchObject({
+      await expect(kit.invokeAction('install-runtime', input, { surface: 'plugin' })).rejects.toMatchObject({
         code: 'plugin_action_execution_failed', data: { failureCause: { errorCode: 'admin_access_unavailable' } },
       });
       execute.mockClear();
       const approval = { kind: 'approval_request_created', artifactId: 'setup-review', actionId: 'machines.setup.plan' };
       execute.mockResolvedValueOnce(approval);
-      await expect(kit.invokeAction('install-runtime', {}, { surface: 'plugin' })).resolves.toEqual(approval);
+      await expect(kit.invokeAction('install-runtime', input, { surface: 'plugin' })).resolves.toEqual(approval);
       expect(execute).not.toHaveBeenCalledWith('machines.setup.apply', expect.anything(), expect.anything());
       execute.mockResolvedValueOnce(plan).mockResolvedValueOnce({ operationId: 'docker-setup' }).mockResolvedValueOnce({
         ...settled, operation: { ...settled.operation, state: 'failed',
           error: { errorCode: 'admin_access_unavailable', error: 'Setup unavailable' } },
       });
-      await expect(kit.invokeAction('install-runtime', {}, { surface: 'plugin' })).rejects.toMatchObject({ code: 'admin_access_unavailable' });
+      await expect(kit.invokeAction('install-runtime', input, { surface: 'plugin' })).rejects.toMatchObject({ code: 'admin_access_unavailable' });
     } finally { await kit.dispose(); }
   });
 
@@ -136,7 +144,7 @@ describe('Devcontainer public-author declaration', () => {
       getCurrentExecutionRouting: async () => ({ serverIdentityId: 'home', machineId: 'controller', pluginId: 'happier.devcontainer' }),
       execute,
     } } } as unknown as PluginInvocationContext;
-    await expect(installDockerRuntime(context, mode === undefined ? {} : { mode })).resolves.toEqual(approval);
+    await expect(installContainerRuntime(context, mode === undefined ? {} : { mode })).resolves.toEqual(approval);
     expect(execute).toHaveBeenCalledExactlyOnceWith('machines.setup.plan', { homeId: 'home', machineId: 'controller',
       sources: [{ kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection: {
         ref: DOCKER_ENGINE_RECIPE_REF_V1, inputs: { mode: mode ?? 'rootless', daemonConfig: {} },

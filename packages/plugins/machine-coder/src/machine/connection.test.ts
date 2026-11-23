@@ -58,6 +58,13 @@ describe('Coder connected account invocation custody', () => {
     expect(JSON.stringify(await client.check())).not.toContain(token);
   });
 
+  it('accepts an empty success reply without discarding the native HTTP status', async () => {
+    const h = await fixture(204);
+    const response = await h.prepared.request('/api/v2/workspaces/example');
+    expect(response.status).toBe(204);
+    expect(await response.text()).toBe('');
+  });
+
   it('uses the captured deployment and invocation lifetime for the workspace watch handshake', async () => {
     const refused = new Error('fixture closes before upgrade');
     const opened = Promise.withResolvers<Parameters<PluginInvocationContext['services']['http']['openWebSocket']>>();

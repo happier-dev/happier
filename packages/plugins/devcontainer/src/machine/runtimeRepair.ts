@@ -1,25 +1,34 @@
-import { dockerEngineAccessModeInputSchema, DOCKER_ENGINE_RECIPE_REF_V1, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { dockerEngineAccessModeInputSchema, DOCKER_ENGINE_RECIPE_REF_V1, PluginError, type MachineRecipeSelectionV1, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { buildMachineSetupTargetApplyInput, isPluginActionApprovalRequestCreated, machineSetupApplyTargetFromPlanV1, waitForMachineSetupOperationV1, type MachineSetupSourceV1 } from '@happier-dev/plugin-sdk/actions';
 import { defineProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
+import { DevcontainerRuntimeSchema } from './schemas.js';
 
-export const DockerRuntimeRepairInputSchema = { type: 'object', properties: { mode: dockerEngineAccessModeInputSchema },
+export const RuntimeRepairInputSchema = { type: 'object',
+  properties: { runtime: DevcontainerRuntimeSchema.jsonSchema, mode: dockerEngineAccessModeInputSchema },
   additionalProperties: false } as const;
-export type DockerRuntimeRepairInput = Readonly<{ mode?: typeof dockerEngineAccessModeInputSchema.enum[number] }>;
+export type RuntimeRepairInput = Readonly<{
+  runtime?: ReturnType<typeof DevcontainerRuntimeSchema.parse>;
+  mode?: typeof dockerEngineAccessModeInputSchema.enum[number];
+}>;
 
-export function dockerRuntimeRepairSources(input: DockerRuntimeRepairInput = {}) {
-  return [{ kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection: {
+export function runtimeRepairSources(input: RuntimeRepairInput = {}) {
+  const selection: MachineRecipeSelectionV1 = input.runtime === 'podman' ? {
+    ref: { pluginId: DOCKER_ENGINE_RECIPE_REF_V1.pluginId, recipeId: 'install-package', revision: '1' },
+    inputs: { apt: [{ name: 'podman' }], dnf: [{ name: 'podman' }] },
+  } : {
     ref: DOCKER_ENGINE_RECIPE_REF_V1, inputs: { mode: input.mode ?? dockerEngineAccessModeInputSchema.default, daemonConfig: {} },
-  } }] } }] satisfies MachineSetupSourceV1;
+  };
+  return [{ kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection }] } }] satisfies MachineSetupSourceV1;
 }
 
 /** Installation, support, administrator consent and operation lifetime stay
  * with the Machine setup owner; the provider only selects its existing recipe. */
-export async function installDockerRuntime(context: PluginInvocationContext, input: DockerRuntimeRepairInput = {}) {
+export async function installContainerRuntime(context: PluginInvocationContext, input: RuntimeRepairInput = {}) {
   const routing = await context.services.actions.getCurrentExecutionRouting?.({ signal: context.signal });
   if (!routing) throw new PluginError({ code: 'target_unavailable', message: 'The container controller is unavailable.' });
   const target = { homeId: routing.serverIdentityId, machineId: routing.machineId };
   const plan = await context.services.actions.execute('machines.setup.plan', { ...target,
-    sources: dockerRuntimeRepairSources(input),
+    sources: runtimeRepairSources(input),
   }, { signal: context.signal });
   if (isPluginActionApprovalRequestCreated(plan)) return plan;
   // This request addresses one controller, whose Plan contract is not the

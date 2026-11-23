@@ -66,12 +66,17 @@ describe('Coder public authoring entry and portable authentication', () => {
     const h = await deployment();
     // The managed-dependency service is the genuine host boundary for a plugin;
     // the public testkit runs declaration admission, Action projection and HTTP.
+    let installed = false;
     const services = { http: h.http, connectedAccounts: {
       getBinding: async () => ({ account: { service: ACCOUNT_SERVICE, accountId: 'test-account' } }),
       materialize: async () => ({ kind: 'environment', env: { CODER_URL: h.endpoint, CODER_SESSION_TOKEN: 'private-token' } }),
     }, managedServices: { dependencies: { status: async (id: string) => {
       expect(id).toBe(DEPENDENCY_ID);
       return state === 'missing' ? { state, id, supported: true } : { state, id, version: '2.39.0', sourceId: 'system', executable: { kind: 'managedDependency', id } };
+    }, ensure: async (id: string) => {
+      expect(id).toBe(DEPENDENCY_ID);
+      installed = true;
+      return { state: 'ready', id, version: '2.39.0', sourceId: 'dep.coder-cli', executable: { kind: 'managedDependency', id } };
     } } } } as unknown as PluginTestServicesFixture;
     const kit = await createPluginTestkit({ manifest: PLUGIN.manifest, module: PLUGIN, services });
     cleanup.push(() => kit.dispose());
@@ -82,12 +87,14 @@ describe('Coder public authoring entry and portable authentication', () => {
       const check = MachineProvisionerCheckResultV1Schema.parse(await result);
       expect(check).toMatchObject({ available: false, code: 'coder_cli_unavailable', prerequisites: [{
         requirement: { kind: 'managedDependency', id: { pluginId: PLUGIN.manifest.id, localId: DEPENDENCY_ID } },
-        status: 'unavailable', repairAction: { action: { pluginId: PLUGIN.manifest.id, localId: 'cli-install-docs' }, input: {} },
+        status: 'unavailable', repairAction: { action: { pluginId: PLUGIN.manifest.id }, input: {} },
       }] });
       expect(check.prerequisites?.[0]?.reason).toContain(`${h.endpoint}/install.sh`);
       expect(check.prerequisites?.[0]?.reason).toContain('https://coder.com/docs/install/cli');
-      expect(PLUGIN.manifest.contributes.actions?.find(action => action.id === 'cli-install-docs')).toMatchObject({
-        execution: { target: 'client', client: { artifactId: 'cli-install', exportName: 'activate' } }, dangerLevel: 'safe' });
+      const repair = check.prerequisites?.[0]?.repairAction;
+      if (!repair) throw new Error('Expected Coder CLI repair');
+      await expect(kit.invokeAction(repair.action.localId, repair.input, { surface: 'agent' })).resolves.toBeNull();
+      expect(installed).toBe(true);
       const error: unknown = await kit.invokeAction('bootstrap', { resource }, { surface: 'plugin' }).catch(error => error);
       expect(isPluginError(error)).toBe(true);
       expect(error).toMatchObject({ code: 'coder_cli_unavailable', remediation: { kind: 'openUrl', url: 'https://coder.com/docs/install/cli' },

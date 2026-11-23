@@ -15,7 +15,7 @@ import type { MachineProvisionerAuthorDefinitionV1, MachineProvisionerCheckResul
 import { createDevcontainerProvider, DEVCONTAINER_PLUGIN_ID, DEVCONTAINER_PROVISIONER_ID } from './machine/provider.js';
 import { DevcontainerResourceSchema, DevcontainerReviewQuerySchema, DevcontainerNativeOperationSchema, DevcontainerRuntimeSchema, DEVCONTAINER_EFFECT_REVIEW_REQUIREMENT } from './machine/schemas.js';
 import { readDevcontainerEffectReview, readDevcontainerNativeEnvironment } from './machine/effectReview.js';
-import { DockerRuntimeRepairInputSchema, dockerRuntimeRepairSources, installDockerRuntime, type DockerRuntimeRepairInput } from './machine/runtimeRepair.js';
+import { RuntimeRepairInputSchema, runtimeRepairSources, installContainerRuntime, type RuntimeRepairInput } from './machine/runtimeRepair.js';
 import { createDevcontainerPreparation, devcontainerPreparationOperation, resolveDevcontainerPreparationInput, DevcontainerPreparationInputSchema, DevcontainerPreparedImageSchema, DevcontainerPreparationOperationSchema } from './machine/preparation.js';
 
 export const DEVCONTAINER_ROLE_SCHEMAS = defineMachineProvisionerSchemas({ launch: DevcontainerReviewQuerySchema, resource: DevcontainerResourceSchema });
@@ -35,12 +35,13 @@ class DependencyUnavailable extends Error {
 function unavailable(error: unknown): MachineProvisionerCheckResultV1 {
   const failure = { available: false, code: code(error) };
   if (!(error instanceof DependencyUnavailable) || !error.missing) return failure;
-  const recipeRepair = error.dependencyId === 'docker' && platform() === 'linux';
+  const runtime = error.dependencyId === devcontainerDependencyId ? undefined : error.dependencyId;
+  const recipeRepair = runtime !== undefined && platform() === 'linux';
   return { ...failure, prerequisites: [projectUnavailableManagedDependency({ pluginId: DEVCONTAINER_PLUGIN_ID, localId: error.dependencyId }, {
-    ...(recipeRepair ? { setupSources: dockerRuntimeRepairSources() } : {}),
+    ...(recipeRepair ? { setupSources: runtimeRepairSources({ runtime }) } : {}),
     repairAction: { action: { pluginId: DEVCONTAINER_PLUGIN_ID,
-      localId: error.dependencyId === devcontainerDependencyId ? 'install-cli' : recipeRepair ? 'install-runtime' : 'runtime-install-docs' },
-      input: error.dependencyId === devcontainerDependencyId || recipeRepair ? {} : { runtime: error.dependencyId } },
+      localId: runtime === undefined ? 'install-cli' : recipeRepair ? 'install-runtime' : 'runtime-install-docs' },
+      input: runtime === undefined || recipeRepair && runtime === 'docker' ? {} : { runtime } },
   })] };
 }
 async function provider(context: PluginInvocationContext, selection?: NativeSelection) {
@@ -67,6 +68,7 @@ function bytes(value: string) {
 }
 export const DEVCONTAINER_MACHINE_PROVISIONER = {
   title: 'Docker container', icon: 'cube', resourceKind: 'devcontainer', schemaVersion: 1,
+  nestedChild: true,
   description: 'A container from any image, using Docker or Podman.',
   enrollmentRole: 'sandbox',
   launchSchema: DevcontainerReviewQuerySchema.jsonSchema, resourceSchema: DevcontainerResourceSchema.jsonSchema,
@@ -134,13 +136,13 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
         try { return await (await preparation(context, reference.value.runtime)).destroy(reference.value); }
         catch (error) { return { kind: 'unknown' as const, code: code(error), nativeOperationRef: reference }; }
       } },
-    'install-runtime': { title: 'Set up Docker Engine', scopes: ['machine'], surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
+    'install-runtime': { title: 'Install container runtime', scopes: ['machine'], surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       execution: { target: 'daemon' }, dangerLevel: 'writesLocal',
-      confirmation: { title: 'Set up Docker Engine on this computer?', confirmLabel: 'Set up' },
-      inputSchema: DockerRuntimeRepairInputSchema, resultSchema: defineProtocolJsonValue(),
+      confirmation: { title: 'Install the container runtime on this computer?', confirmLabel: 'Install' },
+      inputSchema: RuntimeRepairInputSchema, resultSchema: defineProtocolJsonValue(),
       async run(input, context) {
         // The host validates this JSON input against the recipe-owned mode schema.
-        return installDockerRuntime(context, input as DockerRuntimeRepairInput);
+        return installContainerRuntime(context, input as RuntimeRepairInput);
       } },
     'runtime-install-docs': { title: 'Install a container runtime', surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], dangerLevel: 'safe',
       execution: { target: 'client', client: { artifactId: 'runtime-install', exportName: 'activate' }, platforms: ['web', 'ios', 'android'] },

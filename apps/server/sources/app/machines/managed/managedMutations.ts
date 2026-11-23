@@ -713,12 +713,11 @@ export async function reportManagedIntent(canonical: ManagedControllerIntentRepo
             const declaration = await resolveManagedRowDeclarationInTx(tx, row);
             if (!declaration || declaration.schemaVersion !== launch.schemaVersion || !declaration.actions.rebuild) throw new ManagedMachineError('provider_unavailable');
             const previousNativeId = previous.resource?.devcontainerObservation?.nativeResourceId;
-            // Devcontainer rebuild removes the retained native child before
-            // realizing its replacement. Namespace changes on that old child
-            // do not prove a new installation.
-            if (declaration.resourceKind === 'devcontainer' && (previousNativeId === undefined
-                || canonical.result.resource.devcontainerObservation === undefined
-                || previousNativeId === canonical.result.resource.devcontainerObservation.nativeResourceId)) {
+            const replacementNativeId = canonical.result.resource.devcontainerObservation?.nativeResourceId;
+            // A retained child remains a child for the lifetime of the row.
+            // A new namespace on the same native resource proves no replacement.
+            if ((declaration.provisioner.nestedChild || previousNativeId !== undefined)
+                && (previousNativeId === undefined || replacementNativeId === undefined || replacementNativeId === previousNativeId)) {
                 throw new ManagedMachineError('resource_mismatch');
             }
             const parsed = createManagedMachineRetainedSchema(declaration.resourceSchema)
