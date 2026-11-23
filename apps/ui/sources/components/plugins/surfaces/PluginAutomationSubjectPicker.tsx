@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { AutomationSubjectPickerProps } from '@happier-dev/plugin-ui/components';
+import { HappierAutomationSubjectPicker } from '@happier-dev/plugin-ui/presentation';
 import { automationSubjectKeyV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import type { PluginUiAutomationPresentationScope } from './pluginUiPrivatePresentationHost';
 import { useAutomationSubjectPicker, type AutomationSubjectPickerInput } from '@/sync/domains/workflows/useAutomationSubjectPicker';
@@ -7,22 +8,18 @@ import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaem
 import { pluginUiSections, PLUGIN_UI_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import { getStorage } from '@/sync/domains/state/storage';
 import { resolveMachineControlTargetForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { getPluginSurfaceTargetAuthorityKey } from './pluginSurfaceContext';
 import { t } from '@/text';
 
 export type PluginAutomationSubjectPickerProps = AutomationSubjectPickerProps & PluginUiAutomationPresentationScope;
 
 const EMPTY_SUBJECT_KINDS = Object.freeze([]);
-const MORE = 'picker:more';
-const RETRY = 'picker:retry';
-const LOADING = 'picker:loading';
 
 /** The physical plugin host lends its Account and Action context to the shared picker. */
 export function PluginAutomationSubjectPicker(props: PluginAutomationSubjectPickerProps) {
     const [open, setOpen] = React.useState(false);
     const [refreshKey, retryProjection] = React.useReducer(value => value + 1, 0);
-    const [selected, setSelected] = React.useState<DropdownMenuItem | null>(null);
     const targetKey = getPluginSurfaceTargetAuthorityKey(props.target);
     const sessionId = props.target.kind === 'session' ? props.target.sessionId : null;
     const serverId = props.accountLifetime?.scope.serverId;
@@ -62,42 +59,21 @@ export function PluginAutomationSubjectPicker(props: PluginAutomationSubjectPick
     const read = useAutomationSubjectPicker(input);
     const current = React.useRef({ targetKey, machineId, lifetime: props.accountLifetime });
     current.current = { targetKey, machineId, lifetime: props.accountLifetime };
-    const choices = React.useMemo(() => read.items.map(item => ({ id: automationSubjectKeyV1(item.subject), title: item.label,
-        ...(item.description === undefined ? {} : { subtitle: item.description }) })), [read.items]);
-    const selectedId = props.value === null ? null : automationSubjectKeyV1(props.value);
     const waiting = read.status === 'loading' || read.status === 'loading_more'
         || plugin && demanded && Boolean(machineId) && (projection.phase === 'idle' || projection.phase === 'loading');
     const failed = read.status === 'error' || plugin && projection.phase === 'error';
-    const items = React.useMemo(() => {
-        const items: DropdownMenuItem[] = [...choices];
-        if (waiting) items.push({ id: LOADING, title: t('common.loading'), loading: true, disabled: true });
-        else if (failed) items.push({ id: RETRY, title: t('common.retry'), subtitle: t('common.requestFailed'),
-            testID: props.testID === undefined ? undefined : `${props.testID}-retry`, keepMenuOpen: true });
-        else if (read.hasMore) items.push({ id: MORE, title: t('common.more'),
-            testID: props.testID === undefined ? undefined : `${props.testID}-more`, keepMenuOpen: true });
-        if (!open && selected?.id === selectedId && !items.some(item => item.id === selectedId)) items.push(selected);
-        return items;
-    }, [choices, waiting, failed, read.hasMore, props.testID, open, selected, selectedId]);
-    const select = React.useCallback((id: string) => {
-        if (current.current.targetKey !== targetKey || current.current.machineId !== machineId || current.current.lifetime !== props.accountLifetime
-            || !props.isCurrent() || !props.accountLifetime?.isCurrent() || props.disabled) return;
-        if (id === MORE) { void read.loadMore(); return; }
-        if (id === RETRY) {
-            if (plugin && projection.phase === 'error') retryProjection();
-            else void read.reload();
-            return;
-        }
-        const index = choices.findIndex(item => item.id === id);
-        const item = read.items[index];
-        if (!item) return;
-        setSelected(choices[index]!);
-        props.onChange(item.subject);
-        setOpen(false);
-    }, [targetKey, machineId, props.accountLifetime, props.isCurrent, props.disabled, props.onChange, choices, read, plugin, projection.phase]);
-    const unavailable = props.accountLifetime === null || !props.isCurrent() || read.status === 'unsupported'
+    const canSelect = React.useCallback(() => current.current.targetKey === targetKey && current.current.machineId === machineId
+        && current.current.lifetime === props.accountLifetime && props.isCurrent() && props.accountLifetime?.isCurrent() === true && !props.disabled,
+    [targetKey, machineId, props.accountLifetime, props.isCurrent, props.disabled]);
+    const retry = React.useCallback(() => {
+        if (plugin && projection.phase === 'error') retryProjection();
+        else void read.reload();
+    }, [plugin, projection.phase, read.reload]);
+    const unavailable = props.accountLifetime === null || !props.isCurrent() || (props.kind.kind === 'database' && read.status === 'idle')
         || plugin && (!machineId || projection.phase === 'unsupported');
-    return <DropdownMenu testID={props.testID} open={open && !props.disabled} onOpenChange={setOpen}
-        itemTrigger={{ title: t('common.choose'), itemProps: { disabled: props.disabled } }}
-        items={items} selectedId={selectedId} onSelect={select}
-        emptyLabel={t(unavailable ? 'common.unavailable' : 'common.noMatches')} />;
+    return <HappierAutomationSubjectPicker Menu={DropdownMenu} testID={props.testID} open={open} onOpenChange={setOpen}
+        value={props.value} options={read.items} subjectKey={automationSubjectKeyV1} waiting={waiting} failed={failed}
+        hasMore={read.hasMore} disabled={props.disabled} canSelect={canSelect} onRetry={retry} onLoadMore={read.loadMore}
+        onChange={props.onChange} chooseLabel={t('common.choose')} emptyLabel={t(unavailable ? 'common.unavailable' : 'common.noMatches')}
+        loadingLabel={t('common.loading')} retryLabel={t('common.retry')} failureLabel={t('common.requestFailed')} moreLabel={t('common.more')} />;
 }

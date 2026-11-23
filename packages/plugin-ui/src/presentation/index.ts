@@ -39,3 +39,6 @@ export { resolveHappierRovingTabStop } from './collection/semantics.js';
 // Host-only: the one clipped-preview owner, for core content excerpts (a quoted source message). Plugins use
 // `ContentPreview` from the components barrel.
 export { HappierCollapsibleBody, type HappierCollapsibleBodyActionProps } from './content/CollapsibleBody.js';
+// Host-only: the core controller and its public plugin bindings use the same Automations section and picker.
+export { HappierAutomationsSection, type HappierAutomationsSectionBindings } from './automations/AutomationsSection.js';
+export { HappierAutomationSubjectPicker } from './automations/AutomationSubjectPicker.js';

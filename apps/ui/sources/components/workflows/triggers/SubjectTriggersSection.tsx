@@ -47,7 +47,7 @@ import { ResourceLinkWorkflowSheet } from './ResourceLinkWorkflowSheet';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
 import { resolveUnknownAccountActorName } from '@/sync/domains/account/accountActorPresentation';
-import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
+import { HappierAutomationsSection, joinHappierFacts, type HappierAutomationsSectionBindings } from '@happier-dev/plugin-ui/presentation';
 import { useResourceAutomationsSection, type ResourceAutomationsSectionRead, type SelectedAutomationsSectionRead } from './useResourceAutomationsSection';
 import { createWorkflowTriggerStartWhen } from './workflowTriggerStarts';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -142,40 +142,42 @@ type SubjectTriggersReadStateProps = Readonly<{
   reason?: string;
 }>;
 
-function SubjectTriggersReadState(props: SubjectTriggersReadStateProps) {
+function describeReadState(props: SubjectTriggersReadStateProps) {
+  if (props.status === 'loading') return { kind: 'loading' } as const;
   const failed = t('workflows.triggers.section.automationsLoadFailed');
-  return <ItemLoadStateRows testID="subject-triggers-read" rows={2} accessibilityLabel={t('workflows.triggers.section.title')}
-    state={props.status === 'failed'
-      ? { kind: 'failed', reason: props.reason ? `${failed} ${props.reason}` : failed, onRetry: props.onRetry }
-      : { kind: 'loading' }} />;
+  return { kind: 'failed', reason: props.reason ? `${failed} ${props.reason}` : failed, onRetry: props.onRetry } as const;
 }
 
-function SubjectTriggersSectionFrame(props: Pick<React.ComponentProps<typeof ItemGroup>, 'testID' | 'action' | 'children'>
-  & Readonly<{ description: string; widget?: boolean }>) {
-  // A page section wherever it is mounted: a plugin page draws it through its host with no list presentation of its
-  // own, where it fell back to a grouped card (its description under the rows, its empty line in a pill; DBW M10).
-  // That page's column already owns the width and the outer inset, so there the section adds neither: it shares the
-  // edge of the page's other sections instead of a narrower, centred block (DBW M14).
-  const page = useListPresentation() === 'page';
-  const section = <ItemGroup testID={props.testID ?? 'subject-triggers'}
-    {...(page || props.widget ? {} : { constrainToContentWidth: false })}
-    {...(props.widget ? { surface: 'none' as const }
-      : { title: t('workflows.triggers.section.title'), description: props.description, action: props.action })}>
-    {props.widget ? <WidgetGlanceRow variant="fact" titleSentence title={props.description} testID="subject-triggers-description" /> : null}
-    {/* A widget body is a dense surface (lab Project dashboard): its rows take the inspector's size and small marks,
-        as the glance rows of the widgets beside it do. */}
-    {props.widget ? <PageRowDensityProvider value="inspector">{props.children}</PageRowDensityProvider> : props.children}
-  </ItemGroup>;
-  return props.widget || page ? section : <ListPresentationProvider value="page" pageInsets="contained">{section}</ListPresentationProvider>;
+function WidgetFrameHeaderActions(props: Readonly<{ node: React.ReactNode }>) {
+  useWidgetFrameBodyMeta(props.node);
+  return null;
 }
+
+function SectionActionBar(props: Readonly<{ anchor?: React.RefObject<View | null>; children: React.ReactNode }>) {
+  return <View {...(props.anchor ? { ref: props.anchor, collapsable: false } : {})} style={styles.actions}>{props.children}</View>;
+}
+
+const SECTION_BINDINGS = {
+  Group: ItemGroup,
+  PagePresentation: ListPresentationProvider,
+  RowDensity: PageRowDensityProvider,
+  WidgetDescription: WidgetGlanceRow,
+  WidgetHeaderActions: WidgetFrameHeaderActions,
+  ActionBar: SectionActionBar,
+  LoadStateRows: ItemLoadStateRows,
+  StateLine: SurfaceStateCard,
+  FreshnessLine: SurfaceFreshnessLine,
+  MoreRow: Item,
+  SectionButton: SectionActionButton,
+  IconButton,
+} satisfies HappierAutomationsSectionBindings;
 
 /** A host whose subject read has not succeeded keeps the shared section without inventing an identity. */
 export function SubjectTriggersSectionReadState(props: SubjectTriggersReadStateProps
   & Readonly<{ subjectKind: SubjectTriggersSectionProps['subject']['kind'] }>) {
-  return <SubjectTriggersSectionFrame description={describeAutomationsSection(props.subjectKind, false)}>
-    <SubjectTriggersReadState status={props.status} onRetry={props.onRetry}
-      {...(props.reason === undefined ? {} : { reason: props.reason })} />
-  </SubjectTriggersSectionFrame>;
+  const page = useListPresentation() === 'page';
+  return <HappierAutomationsSection bindings={SECTION_BINDINGS} page={page} title={t('workflows.triggers.section.title')}
+    description={describeAutomationsSection(props.subjectKind, false)} readState={describeReadState(props)} />;
 }
 
 /** Hosts with destination children share one intake rather than acquiring a second Session watcher. */
@@ -186,6 +188,7 @@ export const SubjectTriggersSectionContent = React.memo(
   }>) {
     const { accountLifetime, read, editor, rows, also, skippedNotSharedCount, machineId, project, link, session } = props.automations;
     const presented = useLayoutPresentationActive();
+    const page = useListPresentation() === 'page';
     const linkAnchor = React.useRef<View>(null);
     // Link is decided by this resource's settled starts: offered when some can start a linked workflow, never a form that
     // cannot succeed. While they load its place is held unseen, so the common case (starts exist) lands without moving
@@ -240,6 +243,7 @@ export const SubjectTriggersSectionContent = React.memo(
       return true;
     }, [accountLifetime, legacy, actionId, props.deploymentEnvironment, props.controllerMachineId, props.subjectName, project, session]);
     const openAutomate = React.useCallback(() => openSentence(null, addAnchor), [openSentence]);
+    const openLink = React.useCallback(() => setOpening({ kind: 'link', anchor: linkAnchor }), []);
     useCurrentUiContextLocalCommands([{
       key: 'automate', title: t('workflows.triggers.section.automate'), invoke: openAutomate,
     }], { contextKey: JSON.stringify(props.subject) });
@@ -267,134 +271,67 @@ export const SubjectTriggersSectionContent = React.memo(
     const linkExpanded = opening?.kind === 'link';
     // Offline, unread starts are the page's one offline fact: Retry can't answer until the subject is back.
     const linkHeld = linkSlot === 'pending' || (linkSlot === 'unavailable' && props.offlineStatedAbove !== true);
-    // In a widget frame the same two actions are its header's icon controls, under the same anchors and rule.
-    const frameActions = React.useMemo(() => !widget ? null : (
-      <View style={styles.actions}>
-        {linkSlot === 'offered' ? (
-          <View ref={linkAnchor} collapsable={false}>
-            <IconButton testID="subject-triggers-link" iconName="link" variant="plain" expanded={linkExpanded}
-              accessibilityLabel={t('workflows.triggers.section.link')} tooltip={t('workflows.triggers.section.link')}
-              onPress={() => setOpening({ kind: 'link', anchor: linkAnchor })} />
-          </View>
-        ) : linkHeld ? (
-          <View testID="subject-triggers-link-pending" style={styles.heldSlot} pointerEvents="none"
-            aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-            <IconButton iconName="link" variant="plain" accessibilityLabel={t('workflows.triggers.section.link')} disabled onPress={() => {}} />
-          </View>
-        ) : null}
-        <View ref={addAnchor} collapsable={false}>
-          <IconButton testID="subject-triggers-add" iconName="plus" variant="plain"
-            accessibilityLabel={t('workflows.triggers.section.automate')} tooltip={t('workflows.triggers.section.automate')}
-            onPress={openAutomate} />
-        </View>
-      </View>
-    ), [widget, linkSlot, linkHeld, linkExpanded, openAutomate]);
-    const sectionActions = widget ? null : (
-      <View ref={addAnchor} collapsable={false} style={styles.actions}>
-        <SectionActionsInEdgeOrder link={linkSlot === 'offered' ? (
-          <View key="link" ref={linkAnchor} collapsable={false}>
-            <SectionActionButton
-              testID="subject-triggers-link"
-              icon="link"
-              title={t('workflows.triggers.section.link')}
-              expanded={opening?.kind === 'link'}
-              onPress={() => setOpening({ kind: 'link', anchor: linkAnchor })}
-            />
-          </View>
-        ) : linkHeld ? (
-          <View key="link" testID="subject-triggers-link-pending" style={styles.heldSlot} pointerEvents="none"
-            aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-            <SectionActionButton icon="link" title={t('workflows.triggers.section.link')} disabled onPress={() => {}} />
-          </View>
-        ) : null} automate={
-          <SectionActionButton
-            key="automate"
-            testID="subject-triggers-add"
-            icon="plus"
-            title={t('workflows.triggers.section.automate')}
-            onPress={openAutomate}
-          />
-        } />
-      </View>
-    );
-    const section = (
-      <SubjectTriggersSectionFrame testID={props.testID} widget={widget} description={description} action={sectionActions}>
-        {props.leading}
-        {unsettled ? (
-          <SubjectTriggersReadState status={status === 'failed' ? 'failed' : 'loading'} onRetry={read.retry} />
-        ) : empty
-          ? starters.filter(starterAvailable).map((starter) => (
-              <StarterRow key={starter} starter={starter} onOpen={(anchor) => openStarter(starter, anchor)} />
-            ))
-          : rows.map((row) => row.readOnly ? (
-              <ReadOnlyAutomationRow key={`${row.automationId}:${row.triggerId ?? 'manual'}`} row={row} onOpen={openReadOnly} />
-            ) : (
-              <SubjectTriggerRowView
-                key={`${row.automationId}:${row.triggerId ?? 'manual'}`}
-                row={row}
-                pending={editor.pending.has(row.automationId)}
-                reveal={row.automationId === props.revealAutomationId}
-                onOpen={(anchor) => {
-                  void editor.open(row, anchor);
-                }}
-                onToggle={(next) => {
-                  void editor.toggle(row, next);
-                }}
-                onRemove={editor.remove}
-                onOpenWorkflow={openWorkflow}
-              />
-            ))}
-        {linkSlot === 'offline' && !unsettled && status !== 'failed' && props.offlineStatedAbove !== true ? (
-          <SurfaceStateCard testID="subject-triggers-starts-offline" size="line" kind="unavailable"
-            title={t('workflows.triggers.section.startsNeedMachineOnline')} />
-        ) : null}
-        {linkSlot === 'unavailable' && !unsettled && status !== 'failed' && props.offlineStatedAbove !== true ? (
-          <SurfaceStateCard testID="subject-triggers-starts-unavailable" size="line" kind="unavailable"
-            title={t('workflows.triggers.section.startsUnavailable')}
-            action={link ? { label: t('common.retry'), onPress: link.retryWhen } : undefined} />
-        ) : null}
-        {props.children}
-        {empty ? null : persistentStarters.filter(starterAvailable).map((starter) => (
+    const startNotice = !unsettled && status !== 'failed' && props.offlineStatedAbove !== true
+      ? linkSlot === 'offline'
+        ? { kind: 'offline' as const, title: t('workflows.triggers.section.startsNeedMachineOnline') }
+        : linkSlot === 'unavailable'
+          ? { kind: 'unavailable' as const, title: t('workflows.triggers.section.startsUnavailable'),
+              action: link ? { label: t('common.retry'), onPress: link.retryWhen } : undefined }
+          : undefined
+      : undefined;
+    const sectionRows = unsettled ? undefined : empty
+      ? starters.filter(starterAvailable).map((starter) => (
           <StarterRow key={starter} starter={starter} onOpen={(anchor) => openStarter(starter, anchor)} />
-        ))}
-        {nothingHere ? (
-          <SurfaceStateCard testID="subject-triggers-empty" size="line" kind="empty" title={t('workflows.triggers.section.empty')} />
-        ) : null}
-        {skippedNotSharedCount > 0 ? (
-          <SurfaceStateCard testID="subject-triggers-not-shared" size="line" kind="unavailable"
-            title={t('workflows.triggers.section.skippedNotShared', { count: skippedNotSharedCount })} />
-        ) : null}
-        {read.attachedPage?.nextCursor ? (
-          <Item testID="subject-triggers-more" title={t('workflows.triggers.section.showMore')} showChevron={false}
-            onPress={read.loadMore} />
-        ) : null}
-        {held && status === 'failed' ? (
-          <SurfaceFreshnessLine
-            testID="subject-triggers-read"
-            tone="warning"
-            reason={t('workflows.triggers.section.accountLoadFailed')}
-            action={{
-              label: t('workflows.triggers.popover.tryAgain'),
-              onPress: read.retry,
-            }}
-          />
-        ) : null}
-      </SubjectTriggersSectionFrame>
-    );
-    // Broader triggers that also match this resource (a whole App, any Environment): read-only, opening their workflow.
-    const alsoSection = also.length === 0 ? null : (
-      <ItemGroup testID="subject-triggers-also" titleRole="label" title={t('workflows.triggers.section.alsoRunsHere')}>
-        {also.map((row) => (
+        ))
+      : rows.map((row) => row.readOnly ? (
           <ReadOnlyAutomationRow key={`${row.automationId}:${row.triggerId ?? 'manual'}`} row={row} onOpen={openReadOnly} />
-        ))}
-      </ItemGroup>
-    );
+        ) : (
+          <SubjectTriggerRowView
+            key={`${row.automationId}:${row.triggerId ?? 'manual'}`}
+            row={row}
+            pending={editor.pending.has(row.automationId)}
+            reveal={row.automationId === props.revealAutomationId}
+            onOpen={(anchor) => {
+              void editor.open(row, anchor);
+            }}
+            onToggle={(next) => {
+              void editor.toggle(row, next);
+            }}
+            onRemove={editor.remove}
+            onOpenWorkflow={openWorkflow}
+          />
+        ));
     // An open editor owns its draft independently of the row read's availability.
     return (
       <>
-        {frameActions ? <WidgetFrameHeaderActions node={frameActions} /> : null}
-        {section}
-        {alsoSection}
+        <HappierAutomationsSection bindings={SECTION_BINDINGS} testID={props.testID} page={page} widget={widget}
+          title={t('workflows.triggers.section.title')} description={description}
+          controls={{
+            automateLabel: t('workflows.triggers.section.automate'), linkLabel: t('workflows.triggers.section.link'),
+            addAnchor, linkAnchor, onAutomate: openAutomate,
+            link: linkSlot === 'offered' ? { kind: 'offered', expanded: linkExpanded, onPress: openLink }
+              : linkHeld ? { kind: 'held' } : null,
+          }}
+          leading={props.leading}
+          readState={unsettled ? describeReadState({ status: status === 'failed' ? 'failed' : 'loading', onRetry: read.retry }) : undefined}
+          rows={sectionRows}
+          startNotice={startNotice}
+          persistentStarters={empty ? null : persistentStarters.filter(starterAvailable).map((starter) => (
+            <StarterRow key={starter} starter={starter} onOpen={(anchor) => openStarter(starter, anchor)} />
+          ))}
+          emptyTitle={nothingHere ? t('workflows.triggers.section.empty') : undefined}
+          notSharedTitle={skippedNotSharedCount > 0 ? t('workflows.triggers.section.skippedNotShared', { count: skippedNotSharedCount }) : undefined}
+          more={read.attachedPage?.nextCursor ? { label: t('workflows.triggers.section.showMore'), onPress: read.loadMore } : undefined}
+          freshness={held && status === 'failed' ? { reason: t('workflows.triggers.section.accountLoadFailed'),
+            action: { label: t('workflows.triggers.popover.tryAgain'), onPress: read.retry } } : undefined}
+          also={also.length === 0 ? undefined : {
+            title: t('workflows.triggers.section.alsoRunsHere'),
+            rows: also.map((row) => (
+              <ReadOnlyAutomationRow key={`${row.automationId}:${row.triggerId ?? 'manual'}`} row={row} onOpen={openReadOnly} />
+            )),
+          }}>
+          {props.children}
+        </HappierAutomationsSection>
         {editor.popover}
         {opening?.kind === 'link' && link ? (
           <ResourceLinkWorkflowSheet anchorRef={opening.anchor} resourceName={props.subjectName} link={link}
@@ -428,21 +365,6 @@ export const SubjectTriggersSectionContent = React.memo(
     );
   },
 );
-
-/** Lends the section's actions to the widget frame that heads it; mounted only in that presentation. */
-/**
- * The section's two actions, Automate… then Link, in one order wherever the row stands (lab `automations:v:*`, beside
- * the title at 1440 and under the text on a phone). Link's held place trails Automate…, so it reserves Link's room
- * without moving Automate… when Link arrives. Keyed, so neither remounts.
- */
-function SectionActionsInEdgeOrder(props: Readonly<{ link: React.ReactNode; automate: React.ReactNode }>) {
-  return <>{props.automate}{props.link}</>;
-}
-
-function WidgetFrameHeaderActions(props: Readonly<{ node: React.ReactNode }>) {
-  useWidgetFrameBodyMeta(props.node);
-  return null;
-}
 
 /** A suggested entry opens a sentence draft or the subject's specialized setup. */
 const StarterRow = React.memo(function StarterRow(
@@ -562,6 +484,4 @@ const SubjectTriggerRowView = React.memo(function SubjectTriggerRowView(
 
 const styles = StyleSheet.create((theme) => ({
   actions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
-  /** Link's place while this resource's starts load or could not be read: held, not drawn, so Automate… never moves. */
-  heldSlot: { opacity: 0 },
 }));
