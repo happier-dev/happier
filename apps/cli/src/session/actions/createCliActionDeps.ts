@@ -1073,7 +1073,6 @@ export function createCliActionDeps(params: CliActionDepsParams,
         : { authority: context.authority, invocation: invocation! }),
       serverHttpBaseUrl: todoHomeBaseUrl,
       ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}),
-      ...(params.onRequesterSessionCredentialDisclosure ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
       ...(params.isCredentialCurrent ? { isCurrent: params.isCredentialCurrent } : {}),
       ...(context.signal ? { signal: context.signal } : {}) });
   };

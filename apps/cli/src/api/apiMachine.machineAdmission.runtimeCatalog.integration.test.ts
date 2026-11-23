@@ -303,12 +303,13 @@ describe('ApiMachineClient machine admission transport', () => {
       }
     });
 
-  // The controller receives the requester's sealed credentials. Home's admission
-  // names its custodian; another person's controller is refused before sealing.
+  // The controller receives the requester's sealed credentials whoever holds it
+  // (owner ruling 2026-11-23); Home's verified destination still pins the recipient.
   it.each([
-    ['the requester owns the controller', 'project-owner'],
-    ['another person owns the controller', 'hub-owner'],
-  ] as const)('signs preparation SOURCE with its admitted relationship when the operation differs from the original Action request: %s', async (_case, controllerCustodian) => {
+    ['the requester owns the controller', 'project-owner', 'admitted'],
+    ['another person owns the controller', 'hub-owner', 'admitted'],
+    ['Home names another destination Machine', 'hub-owner', 'other-machine'],
+  ] as const)('signs preparation SOURCE with its admitted relationship when the operation differs from the original Action request: %s', async (_case, controllerCustodian, destination) => {
     const [family, signing, projection, content] = await Promise.all([
       import('@happier-dev/protocol/actions/projectActionFamily'),
       import('@happier-dev/protocol/actions/externalActionExecutionAuthorization'),
@@ -343,7 +344,7 @@ describe('ApiMachineClient machine admission transport', () => {
               workspaceSyncSourceRouting: raw.workspaceSyncSourceRouting,
               workspaceSyncSourceReceiver: raw.workspaceSyncSourceReceiver,
               callerInputAuthorization: raw.callerInputAuthorization } }) })).toBe(true);
-        return { status: 200, data: { v: 1, ok: true, destinationInstallation: { machineId: fixture.sourceRef.machineId,
+        return { status: 200, data: { v: 1, ok: true, destinationInstallation: { machineId: destination === 'admitted' ? fixture.sourceRef.machineId : 'other-machine',
           installationId: fixture.controller.installationId, installationPublicKey: Buffer.from(sourceKey.publicKey).toString('base64url') },
           receivingMachineAdmission: { actorAccountId: 'project-owner', custodianAccountId: controllerCustodian,
             machineId: fixture.sourceRef.machineId, installationId: fixture.controller.installationId, role: 'use', encryptionMode: 'plain' } } };
@@ -405,11 +406,11 @@ describe('ApiMachineClient machine admission transport', () => {
         callerAuthority: 'present_user', machineAdmission: { actorAccountId: 'project-owner', custodianAccountId: 'project-owner',
           machineId: fixture.targetChildRef.machineId, installationId: fixture.targetChildInstallationId, role: 'manage', encryptionMode: 'plain' },
         verifyMachineAdmissionCurrent: async () => true, signal: new AbortController().signal } });
-    if (controllerCustodian === 'project-owner') {
+    if (destination === 'admitted') {
       await expect(prepared).resolves.toEqual({ ok: true, traversed: [] });
       expect(received).toBe(true);
     } else {
-      await expect(prepared).rejects.toMatchObject({ errorCode: 'requester_credential_disclosure_required' });
+      await expect(prepared).rejects.toThrow();
       expect(received).toBe(false);
     }
   });

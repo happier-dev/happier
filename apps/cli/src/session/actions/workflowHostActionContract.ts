@@ -31,8 +31,6 @@ export function createWorkflowHostActionContractReader(
             target: { kind: 'machine', machineId: target.machineId,
               project: { machineId: target.machineId, directory: target.directory } },
             ...(params.isCredentialCurrent ? { isCurrent: params.isCredentialCurrent } : {}),
-            ...(params.onRequesterSessionCredentialDisclosure
-              ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
             ...(target.signal ? { signal: target.signal } : {}),
           });
           if (!result.ok) {

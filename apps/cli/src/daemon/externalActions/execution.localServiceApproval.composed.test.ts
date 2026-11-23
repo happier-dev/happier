@@ -266,7 +266,7 @@ it.each(['declared Service', 'incomplete native declaration'] as const)('handles
     installationId: h.f.installation.installationId, serverHttpBaseUrl: 'https://session-home.test' })).toBe(true);
   const decided = await createCliActionExecutorFromCredentials({ credentials: personCredentials, serverId,
     serverApiUrl: 'https://session-home.test', machineId: 'machine', externalActionClient: true,
-    readCredentials: async () => personCredentials, onRequesterSessionCredentialDisclosure: async () => true,
+    readCredentials: async () => personCredentials,
   }).execute('approval.request.decide', { artifactId: artifact.id, decision: 'approve', serverIdentityId: homeId },
     { surface: 'cli', authority: 'present_user' });
   expect(decided, JSON.stringify({ decided, receiverResults, roots, mintFailures, transportFailures, phases })).toMatchObject({ ok: true });

@@ -20,7 +20,7 @@ import type { CredentialedConnectedAccountAuthenticationHost } from '@/plugins/r
 import type { CreateSpawnedSessionParams, DirectSpawnedSessionTransport } from '@/session/services/createSpawnedSession';
 import type { ResolveSpawnConnectedServicesTeamResourceCatalog } from '@/session/services/spawnConnectedServicesDefaults';
 import type { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
-import type { dispatchOriginalAccountAction, ExternalActionHomeBinding } from '@/api/externalActionExecutionAuthorization';
+import type { ExternalActionHomeBinding } from '@/api/externalActionExecutionAuthorization';
 import type { ComposerAttachmentSendPreparationRegistryV1 } from '@/session/composer/prepareComposerAttachmentDraftsForSendV1';
 import type { sendSessionMessage } from '@/session/services/sendSessionMessage';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
@@ -237,7 +237,6 @@ export type CliActionDepsParams = Readonly<{
   machineRecipesRead?: ActionExecutorDeps['machineRecipesRead'];
   /** Currentness of this composition's already-captured credential. */
   isCredentialCurrent?: () => boolean | Promise<boolean>;
-  onRequesterSessionCredentialDisclosure?: Parameters<typeof dispatchOriginalAccountAction>[0]['onRequesterSessionCredentialDisclosure'];
   requesterSessionBootstrap?: AdmittedRequesterSessionBootstrap;
   /** Private invocation custody, never a daemon Account snapshot or a fake Session. */
   savedSecretOperationContext?: SavedSecretOperationContextV1;

@@ -969,7 +969,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
         serverHttpBaseUrl: installed.serverHttpBaseUrl, serverIdentityId: installed.homeServerIdentityId,
         authority: 'present_user', invocation: { surface: 'ui', authority: 'present_user', caller: { kind: 'host' },
           ...(confirmation ? { presentUserConfirmation: confirmation } : {}) },
-        onRequesterSessionCredentialDisclosure: () => true });
+        });
     const review = await dispatch();
     expect(review, JSON.stringify({ review, diagnostics: rpcDiagnostics, target: targetRpcDiagnostics }))
       .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });

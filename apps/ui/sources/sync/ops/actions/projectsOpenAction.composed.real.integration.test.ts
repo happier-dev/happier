@@ -302,8 +302,7 @@ describe('recipient Project Open through the real UI, Home, installed daemon and
             // consumes this explicit preference; approval replay is a separate installed-daemon path.
             actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1,
                 approvalWaivedSurfaces: { 'projects.open': ['cli'] } }) },
-            onRequesterSessionCredentialDisclosure: async disclosure => disclosure.accountId === requester.id
-                && disclosure.machineId === machine.id });
+            });
         const cliResult = await cli.execute('projects.open', input,
             bindPresentUserActionConfirmationV1('projects.open', input, { serverId: homeId, serverIdentityId: homeId,
                 runtimeAccountId: requester.id, actionCaller: { kind: 'host' }, surface: 'cli',

@@ -256,7 +256,6 @@ export async function startInstalledDaemonFixture(input: Readonly<{
             }),
             // This is the caller's affirmative confidentiality choice, not
             // execution admission: Home still refuses unsupported members.
-            onRequesterSessionCredentialDisclosure: () => true,
             signal: lifetime.signal,
           }),
       }),

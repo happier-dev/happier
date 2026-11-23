@@ -114,7 +114,6 @@ it.each(['session', 'detached_run'] as const)('completes an owner Workflow %s th
         credentials: f.ownerCredentials, serverHttpBaseUrl: f.home.baseUrl,
         serverIdentityId: f.home.homeId, authority: 'present_user',
         invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user' },
-        onRequesterSessionCredentialDisclosure: () => true,
       });
       expect(sent, JSON.stringify(sent)).toMatchObject({ ok: true, result: { status: 'accepted' } });
       // A warm send consumes the daemon's existing snapshot; it must not

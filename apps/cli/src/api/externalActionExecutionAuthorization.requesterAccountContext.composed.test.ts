@@ -43,7 +43,7 @@ import { computeExternalActionRequestEnvelopeDigestV1, decodeExternalActionHttpB
 import { deriveWorkspaceSyncRelationshipId, projectWorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 import { EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, ExternalActionExecutionAuthorizationVerifyRequestV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1, bindExternalActionExecutionAuthorizationVerifyHttpPathV1, ExternalActionExecutionAuthorizationRequestV1Schema, projectExternalActionDeploymentPreparationEnvelopeAdmissionV1, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ActionIdSchema, DeploymentPrepareInputV1Schema, ExternalActionRequestEnvelopeSchema, type ActionExecuteResult, type ActionId } from '@happier-dev/protocol';
-import { openExternalActionRequesterAccountContextV1, openManagedControllerActionCodecV1, openManagedCreationActionCodecV1, projectRequesterSessionCredentialDisclosure } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { openExternalActionRequesterAccountContextV1, openManagedControllerActionCodecV1, openManagedCreationActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -111,13 +111,13 @@ vi.mock('@/terminal/prompts/promptInput', async importOriginal => ({
 const servers: Server[] = [];
 const controlApps: ReturnType<typeof createDaemonControlApp>[] = [];
 const homeIdentityId = 'srv_requester_home';
+// Using a Machine another person holds is ordinary use (owner ruling
+// 2026-11-23): the sign-in is sealed to it with no prompt, on every surface.
 it.each([
-  { mode: 'interactive', answer: 'y', interactive: true, structured: [] as string[], accepted: true },
-  { mode: 'declined', answer: 'no', interactive: true, structured: [] as string[], accepted: false },
-  { mode: 'json', answer: 'y', interactive: true, structured: ['--json'], accepted: false },
-  { mode: 'jsonl', answer: 'y', interactive: true, structured: ['--jsonl', '--follow'], accepted: false },
-  { mode: 'noninteractive', answer: 'y', interactive: false, structured: [] as string[], accepted: false },
-])('keeps friendly Session creation requester disclosure explicit ($mode)', async scenario => {
+  { mode: 'interactive', interactive: true, structured: [] as string[] },
+  { mode: 'json', interactive: true, structured: ['--json'] },
+  { mode: 'noninteractive', interactive: false, structured: [] as string[] },
+])('creates a Session on another person\'s Machine with no sign-in prompt ($mode)', async scenario => {
   const events: string[] = [];
   const target = await home('plain', events, { originalOwnAction: 'session.spawn_new', ownExecution: {
     ok: true, result: { type: 'success', sessionId: 'member-session', disposition: 'created',
@@ -125,11 +125,8 @@ it.each([
       organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' } },
   } });
   terminal.interactive = scenario.interactive;
-  terminal.answer = scenario.answer;
-  terminal.onPrompt = () => {
-    expect(events).not.toContain('dispatch');
-    expect(target.readReceived()).toBeUndefined();
-  };
+  // A prompt that did appear would read the default-no answer and decline.
+  terminal.answer = 'no';
   await withConfiguredDaemonTestHome({ prefix: 'session-create-disclosure-',
     env: { HAPPIER_SERVER_URL: target.url, HAPPIER_WEBAPP_URL: target.url } }, async () => {
     const output = captureConsoleText();
@@ -139,21 +136,14 @@ it.each([
         '--title', 'Shared Computer Session', '--prompt', 'Reply with a greeting.', ...scenario.structured], {
         readCredentialsFn: async () => ({ token: token(), encryption: null, credentialProvenance: 'stored_session' }),
       });
-      if (scenario.accepted || scenario.structured.length) await invocation;
-      else await expect(invocation).rejects.toMatchObject({ code: 'requester_credential_disclosure_declined' });
-      if (scenario.accepted) {
-        expect(output.text()).toContain('member-session');
-        const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
-        expect(openExternalActionRequesterAccountContextV1({ authorization: received.executionAuthorization,
-          purpose: { kind: 'external_action' }, machineId: 'alice-machine', installationId: 'alice-installation',
-          serverIdentityId: homeIdentityId, installationPrivateKey: target.privateKey }))
-          .toMatchObject({ token: token() });
-      } else {
-        expect(events).not.toContain('dispatch');
-        expect(target.readReceived()).toBeUndefined();
-        if (scenario.structured.length) expect(output.text()).toContain('requester_credential_disclosure_declined');
-      }
-      expect(terminal.prompts).toHaveLength(scenario.interactive && !scenario.structured.length ? 1 : 0);
+      await invocation;
+      expect(output.text()).toContain('member-session');
+      const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
+      expect(openExternalActionRequesterAccountContextV1({ authorization: received.executionAuthorization,
+        purpose: { kind: 'external_action' }, machineId: 'alice-machine', installationId: 'alice-installation',
+        serverIdentityId: homeIdentityId, installationPrivateKey: target.privateKey }))
+        .toMatchObject({ token: token() });
+      expect(terminal.prompts).toHaveLength(0);
     } finally { output.restore(); }
   });
 });
@@ -251,19 +241,13 @@ it.each(['plain', 'e2ee'] as const)(
       const target = await home(mode, events, { originalOwnAction: 'machines.services.list',
         authenticationKind: 'terminal', machineRole: 'manage',
         custodianAccountId: 'alice', ownExecution: { ok: true, result } });
-      const disclosures: string[] = [];
       const credentials: StoredCredentials = { token: token('terminal'), credentialProvenance: 'stored_session',
         encryption: mode === 'plain' ? null : { type: 'legacy', secret: new Uint8Array(32).fill(23) } };
       const executor = createCliActionExecutorFromCredentials({ credentials,
         serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId,
-        actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) },
-        onRequesterSessionCredentialDisclosure: async disclosure => {
-          disclosures.push(disclosure.custodian?.accountId ?? 'missing');
-          return false;
-        } });
+        actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) } });
       const execution = await executor.execute('machines.services.list', { serverId: 'home', machineId: 'alice-machine' },
         { surface: 'cli', authority: 'account_automation', actionRequestId: 'request-1' });
-      expect(disclosures).toEqual([]);
       expect(execution).toEqual({ ok: true, result });
       const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
       expect(received.envelope.v).toBe(mode === 'e2ee' ? 2 : 1);
@@ -318,37 +302,47 @@ it.each(['plain', 'e2ee'] as const)('dispatches an initial terminal read with an
   expect(deliveredInput).toEqual(expectedInput);
 });
 
-it.each(['accepted', 'declined', 'missing'] as const)(
-  'retains requester credential consent for shared service logs (%s)', async consent => {
+it('seals requester credentials for shared service logs with no consent step', async () => {
+    const surface = 'cli';
     const events: string[] = [];
     const target = await home('plain', events, { originalOwnAction: 'machines.services.logs.read',
       authenticationKind: 'account', ownExecution: { ok: true, result: { kind: 'page',
         page: { sourceRevision: 'generation', text: 'fixture log', nextCursor: null, truncated: false } } } });
-    const disclosures: string[] = [];
     const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
     const execution = await dispatchOriginalAccountAction({ actionId: 'machines.services.logs.read',
       input: { serverId: 'home', machineId: 'alice-machine', serviceId: 'service' },
       requestId: 'request-1', target: { kind: 'machine', machineId: 'alice-machine' }, credentials,
       serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId, authority: 'present_user',
-      invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user' },
-      ...(consent === 'missing' ? {} : { onRequesterSessionCredentialDisclosure: async () => {
-        disclosures.push('prompt'); return consent === 'accepted';
-      } }) });
-    expect(disclosures).toEqual(consent === 'missing' ? [] : ['prompt']);
-    if (consent !== 'accepted') {
-      expect(execution).toMatchObject({ ok: false, errorCode: consent === 'missing'
-        ? 'requester_credential_disclosure_required' : 'requester_credential_disclosure_declined' });
-      expect(events).not.toContain('dispatch');
-      return;
-    }
+      invocation: { caller: { kind: 'host' }, surface, authority: 'present_user' } });
     expect(execution, JSON.stringify(execution)).toMatchObject({ ok: true });
     const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
     expect(openExternalActionRequesterAccountContextV1({ authorization: received.executionAuthorization,
       purpose: { kind: 'external_action' }, machineId: 'alice-machine', installationId: 'alice-installation',
       serverIdentityId: homeIdentityId, installationPrivateKey: target.privateKey, includeInvocation: true }))
-      .toMatchObject({ credentials: { token: credentials.token }, invocation: { surface: 'cli' } });
+      .toMatchObject({ credentials: { token: credentials.token }, invocation: { surface } });
+    expect(events).toContain('dispatch');
   });
-it('retains requester credential consent for shared service watch effects', async () => {
+// No consent step is not admission: the ordinary access owner still refuses
+// the next request once the custodian withdraws the member's grant.
+it('seals for a Use member with a current grant and refuses the next request after the grant is withdrawn', async () => {
+  const events: string[] = [];
+  let withdrawn = false;
+  const target = await home('plain', events, { originalOwnAction: 'machines.services.logs.read',
+    authenticationKind: 'account', accessWithdrawn: () => withdrawn, ownExecution: { ok: true, result: { kind: 'page',
+      page: { sourceRevision: 'generation', text: 'fixture log', nextCursor: null, truncated: false } } } });
+  const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
+  const read = (requestId: string) => dispatchOriginalAccountAction({ actionId: 'machines.services.logs.read',
+    input: { serverId: 'home', machineId: 'alice-machine', serviceId: 'service' },
+    requestId, target: { kind: 'machine', machineId: 'alice-machine' }, credentials,
+    serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId, authority: 'present_user',
+    invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user' } });
+  expect(await read('request-1')).toMatchObject({ ok: true });
+  expect(events.filter(event => event === 'dispatch')).toHaveLength(1);
+  withdrawn = true;
+  expect(await read('request-2')).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+  expect(events.filter(event => event === 'dispatch')).toHaveLength(1);
+});
+it('seals requester credentials for shared service watch effects with no consent step', async () => {
   const events: string[] = [];
   const target = await home('plain', events, { originalOwnAction: 'machines.services.unwatch', authenticationKind: 'terminal' });
   const execution = await dispatchOriginalAccountAction({ actionId: 'machines.services.unwatch',
@@ -357,8 +351,8 @@ it('retains requester credential consent for shared service watch effects', asyn
     credentials: { token: token('terminal'), encryption: null, credentialProvenance: 'stored_session' },
     serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId, authority: 'present_user',
     invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user' } });
-  expect(execution).toMatchObject({ ok: false, errorCode: 'requester_credential_disclosure_required' });
-  expect(events).not.toContain('dispatch');
+  expect(execution).not.toMatchObject({ errorCode: 'requester_credential_disclosure_required' });
+  expect(events).toContain('dispatch');
 });
 it('requires installed requester custody for private deployment observation reads', () => {
   expect(requiresOriginalAccountMachineActionProof('deployments.observation.get', {
@@ -669,12 +663,10 @@ it.each([{ refused: false, shared: false }, { refused: true, shared: false }, { 
   const target = await home('plain', events, { originalOwnAction: 'execution.run.action', custodianAccountId: shared ? 'alice' : 'bob', machineRole: shared ? 'use' : 'manage',
     ownExecution: refused ? failure : { ok: true, result: { ok: true, result: next } } });
   const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
-  const disclose = vi.fn(async () => true);
   const genericRpc = vi.spyOn(machineRpc, 'callMachineRpc').mockRejectedValue(new Error('Bare Machine custody cannot prepare this Role'));
   try {
     const deps = createCliActionDeps({ token: credentials.token, credentials, serverId: 'home',
-      serverIdentityId: homeIdentityId, serverHttpBaseUrl: target.url, sessionId: '', mode: 'plain', ctx: null,
-      onRequesterSessionCredentialDisclosure: disclose });
+      serverIdentityId: homeIdentityId, serverHttpBaseUrl: target.url, sessionId: '', mode: 'plain', ctx: null });
     const result = await deps.executionRunAction!(null, { runId: 'retained-review-run', actionId: 'review.new_round', input: { fresh: true } }, {
       surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, actionRequestId: 'request-1',
       serverId: 'home', exactMachineId: 'alice-machine', runtimeAccountId: 'bob',
@@ -686,7 +678,6 @@ it.each([{ refused: false, shared: false }, { refused: true, shared: false }, { 
       serverIdentityId: homeIdentityId, installationPrivateKey: target.privateKey, includeInvocation: true }))
       .toMatchObject({ credentials: { token: credentials.token }, invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user' } });
     expect(genericRpc).not.toHaveBeenCalled();
-    expect(disclose).toHaveBeenCalledTimes(shared ? 1 : 0);
   } finally { genericRpc.mockRestore(); }
 });
 afterEach(async () => {
@@ -789,6 +780,8 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
   passiveReadDelayMs?: number;
   invalidEncryptionResponse?: boolean;
   inventoryUnavailable?: boolean;
+  /** Home stops listing the Machine once the custodian withdraws this member's grant. */
+  accessWithdrawn?: () => boolean;
   malformedUnrelatedMachine?: boolean;
   onInventoryResponse?: (path: string, rowCount: number) => void;
   scopedManagedController?: boolean;
@@ -873,7 +866,8 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
       await options.beforeInventoryRead?.();
       if (options.passiveReadDelayMs) await new Promise(resolve => setTimeout(resolve, options.passiveReadDelayMs));
       if (options.inventoryUnavailable) { response.statusCode = 503; return respond({ error: 'unavailable' }); }
-      const rows = options.malformedUnrelatedMachine ? [machine, { id: 'unrelated-machine' }]
+      const rows = options.accessWithdrawn?.() ? []
+        : options.malformedUnrelatedMachine ? [machine, { id: 'unrelated-machine' }]
         : options.finiteWake ? [machine, controller] : [machine];
       options.onInventoryResponse?.(request.url, rows.length);
       return respond(rows);
@@ -890,6 +884,7 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
       options.onInventoryRead?.();
       await options.beforeInventoryRead?.();
       if (options.inventoryUnavailable) { response.statusCode = 503; return respond({ error: 'unavailable' }); }
+      if (options.accessWithdrawn?.()) { response.statusCode = 404; return respond({ error: 'not_found' }); }
       options.onInventoryResponse?.(request.url, 1);
       if (options.passiveReadDelayMs) await new Promise(resolve => setTimeout(resolve, options.passiveReadDelayMs));
       return respond({ machine: !hostFacts && options.installedCustodianAccountId
@@ -1373,8 +1368,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     const result = await dispatchOriginalAccountAction({ actionId: 'machines.managed.inspect',
       input: { homeId: homeIdentityId, managedId: 'retained-machine' }, requestId: 'request-1',
       target: { kind: 'machine', machineId: 'alice-machine' }, credentials,
-      serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId,
-      onRequesterSessionCredentialDisclosure: () => { throw new Error('Managed workspace inspection never discloses requester credentials'); } });
+      serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId, });
     expect(result).toEqual({ ok: true, result: { inspected: true } });
     expect(events).toEqual(['managed-read', 'home-authorized', 'dispatch']);
   });
@@ -1741,7 +1735,6 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
           serverIdentityId: homeIdentityId, ...(explicitTarget ? { machineId: 'alice-machine' } : {}),
           actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }),
             getAccountSettings: () => accountSettingsParse({}) },
-          onRequesterSessionCredentialDisclosure: async () => { throw new Error('Own controller needs no foreign custody'); },
         });
         const input = ManagedMachineActionInputSchemasV1['machines.managed.bootstrap.retry'].parse({
           homeId: homeIdentityId, managedId: 'retained-machine', expectedIntentRevision: 2,
@@ -1793,8 +1786,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
         const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
           readCredentials,
           serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId, machineId: 'alice-machine',
-          actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) },
-          onRequesterSessionCredentialDisclosure: async () => { throw new Error('Own Account work must not disclose private custody'); } });
+          actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) }, });
         const context = { surface: 'cli' as const, actionRequestId: 'request-1' };
         const result = method === 'execute' ? await executor.execute('agents.models.list', ownMachineInput, context)
           : await executor.prepare('agents.models.list', ownMachineInput, context).then(prepared => {
@@ -1831,8 +1823,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
         const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
           readCredentials: () => readStoredCredentialsForServerId('home'),
           serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId, machineId: 'alice-machine',
-          actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) },
-          onRequesterSessionCredentialDisclosure: async () => { throw new Error('Own Account work must not disclose private custody'); } });
+          actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) }, });
         expect(await executor.execute('agents.models.list', ownMachineInput, { surface: 'cli', actionRequestId: 'request-1' }))
           .toMatchObject({ ok: false, errorCode: 'installation_key_mismatch' });
         expect(events).not.toContain('dispatch');
@@ -1856,8 +1847,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
         const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
           readCredentials: () => readStoredCredentialsForServerId('home'),
           serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId, machineId: 'alice-machine',
-          actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) },
-          onRequesterSessionCredentialDisclosure: async () => { throw new Error('Own Account work must not disclose private custody'); } });
+          actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) }, });
         const execution = executor.execute('agents.models.list', ownMachineInput, { surface: 'cli', actionRequestId: 'request-1' });
         if (custody === 'active') {
           // A plain report beside active keys stays the Account mode owner's typed refusal.
@@ -1969,7 +1959,6 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
           serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId,
           ...(placement === 'machine' ? { machineId: 'alice-machine' } : {}),
           actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) },
-          onRequesterSessionCredentialDisclosure: async () => { throw new Error('Own terminal origination must not disclose full Account custody'); },
         });
         const input = placement === 'machine' ? { serverId: 'home', machineId: 'alice-machine' } : placement === 'session' ? { sessionId: 'session-1' } : {};
         // Session access is server-placed: its input selects the resource;
@@ -2038,8 +2027,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
         const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
         const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
           serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId, machineId: 'alice-machine',
-          actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) },
-          onRequesterSessionCredentialDisclosure: async () => { events.push('disclosed'); return true; } });
+          actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) } });
         await expect(executor.execute('agents.models.list', ownMachineInput,
           { surface: 'cli', actionRequestId: 'request-1' })).resolves.toMatchObject({ errorCode: 'fixture_receipt' });
         const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
@@ -2047,7 +2035,6 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
           purpose: { kind: 'external_action' }, machineId: 'alice-machine', installationId: 'alice-installation',
           serverIdentityId: homeIdentityId, installationPrivateKey: target.privateKey })).toEqual(encodeStoredCredentials(credentials));
         expect(events).not.toContain('local-daemon');
-        expect(events.indexOf('disclosed')).toBeLessThan(events.indexOf('dispatch'));
       } finally { Object.assign(configuration, originalConfiguration); }
     });
   });
@@ -2160,7 +2147,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     expect(target.readReceived()).toBeUndefined();
   });
 
-  it('joins the one Machine publication read and validates its custody before disclosure', async () => {
+  it('joins the one Machine publication read and validates its custody before sealing', async () => {
     const request = { actionId: 'agents.models.list', input: ownMachineInput,
       requestId: 'request-1', target: { kind: 'machine', machineId: 'alice-machine' } as const,
       credentials: { token: token(), encryption: null }, serverIdentityId: homeIdentityId };
@@ -2170,8 +2157,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     let publicationRead = false;
     const target = await home('plain', events, { originalOwnAction: 'agents.models.list',
       beforeInventoryRead: () => inventoryGate, onInstalledMachineRead: () => { publicationRead = true; } });
-    const pending = dispatchOriginalAccountAction({ ...request, serverHttpBaseUrl: target.url,
-      onRequesterSessionCredentialDisclosure: async () => { events.push('disclosed'); return true; } });
+    const pending = dispatchOriginalAccountAction({ ...request, serverHttpBaseUrl: target.url });
     try {
       await vi.waitFor(() => expect(publicationRead).toBe(true));
       expect(events).toEqual([]);
@@ -2182,11 +2168,10 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     }
     const mismatchEvents: string[] = [];
     const mismatch = await home('plain', mismatchEvents, { installedCustodianAccountId: 'replacement-owner' });
-    expect(await dispatchOriginalAccountAction({ ...request, serverHttpBaseUrl: mismatch.url,
-      onRequesterSessionCredentialDisclosure: async () => { mismatchEvents.push('disclosed'); return true; } }))
+    expect(await dispatchOriginalAccountAction({ ...request, serverHttpBaseUrl: mismatch.url }))
       .toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
     // Inventory and installation share one publication, so a replaced custodian is
-    // caught against the Home-minted binding: nothing is disclosed or dispatched.
+    // caught against the Home-minted binding: nothing is sealed or dispatched.
     expect(mismatchEvents).toEqual(['home-authorized']);
     expect(mismatch.readReceived()).toBeUndefined();
   });
@@ -2224,21 +2209,14 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     expect(target.readReceived()).toBeUndefined();
   });
 
-  it.each(['plain', 'e2ee'] as const)('discloses then delivers genuine %s Bob material sealed to the exact Home root and installation', async mode => {
+  it.each(['plain', 'e2ee'] as const)('seals then delivers genuine %s Bob material sealed to the exact Home root and installation', async mode => {
     const events: string[] = [];
     const target = await home(mode, events);
     const credentials: StoredCredentials = { token: token(), encryption: mode === 'plain' ? null : { type: 'legacy', secret: new Uint8Array(32).fill(23) } };
-    const disclosure = { onRequesterSessionCredentialDisclosure: async (value: ReturnType<typeof projectRequesterSessionCredentialDisclosure>) => {
-      expect(value).toMatchObject({ accountId: 'bob', machineId: 'alice-machine', fullSignIn: true, hostCanInspectLocalProcess: true });
-      expect(target.readReceived()).toBeUndefined();
-      events.push('disclosed');
-      return true;
-    } };
     await expect(dispatchOriginalAccountAction({ actionId: 'agents.models.list', input: ownMachineInput,
       requestId: 'request-1', target: { kind: 'machine', machineId: 'alice-machine' }, credentials,
-      serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId, ...disclosure })).resolves.toMatchObject({ errorCode: 'fixture_receipt' });
+      serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId })).resolves.toMatchObject({ errorCode: 'fixture_receipt' });
     const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
-    expect(events.indexOf('disclosed')).toBeLessThan(events.indexOf('dispatch'));
     expect(received.executionAuthorization?.requesterAccountContext?.installationId).toBe('alice-installation');
     const opening = { authorization: received.executionAuthorization, purpose: { kind: 'external_action' as const },
       machineId: 'alice-machine', installationId: 'alice-installation', serverIdentityId: homeIdentityId, installationPrivateKey: target.privateKey };
@@ -2247,7 +2225,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     expect(JSON.stringify(received)).not.toContain(credentials.token);
   });
 
-  it.each(['plain', 'e2ee'] as const)('asks once before disclosing credentials for one contributed Machine Action invocation (%s)', async mode => {
+  it.each(['plain', 'e2ee'] as const)('seals credentials for one contributed Machine Action invocation with no sign-in prompt (%s)', async mode => {
     const events: string[] = [];
     const paths: (string | undefined)[] = [];
     const target = await home(mode, events, { originalOwnAction: 'action.invoke', machineRole: 'manage',
@@ -2267,7 +2245,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
           serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId,
           actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) } }),
       });
-      expect(terminal.prompts, JSON.stringify({ events, paths })).toHaveLength(1);
+      expect(terminal.prompts, JSON.stringify({ events, paths })).toHaveLength(0);
       expect(output.text()).toContain('configured');
     } finally { output.restore(); }
   });
@@ -2296,22 +2274,18 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     } finally { output.restore(); }
   });
 
-  it('still requires guest disclosure for an Action that carries requester credentials', async () => {
+  it('seals guest credentials for an Action that carries them with no consent step', async () => {
     const events: string[] = [];
     const target = await home('plain', events);
     const executor = createCliActionExecutorFromCredentials({
       credentials: { token: token(), encryption: null, credentialProvenance: 'stored_session' }, externalActionClient: true,
       serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId, machineId: 'alice-machine',
       actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) },
-      onRequesterSessionCredentialDisclosure: async () => { events.push('disclosed'); return false; },
     });
     await expect(executor.execute('agents.models.list', ownMachineInput,
-      { surface: 'cli', actionRequestId: 'request-1' })).resolves.toMatchObject({
-      ok: false, errorCode: 'requester_credential_disclosure_declined',
-    });
-    expect(events).toContain('disclosed');
-    expect(events).not.toContain('dispatch');
-    expect(target.readReceived()).toBeUndefined();
+      { surface: 'cli', actionRequestId: 'request-1' })).resolves.toMatchObject({ errorCode: 'fixture_receipt' });
+    expect(events).toContain('dispatch');
+    expect(target.readReceived()).toBeDefined();
   });
 
   it.each([
@@ -2325,7 +2299,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     { actionId: 'machines.agents.signIn.status' as const, input: { machineId: 'alice-machine', agentId: 'codex' },
       result: { status: 'signedIn', checkedAt: 1, nativeLogin: 'status_only', connectedServices: [], signInScope: 'machineOwner' } },
     { actionId: 'machines.agents.list' as const, input: { machineId: 'alice-machine' }, result: { items: [] } },
-  ].flatMap(read => (['plain', 'e2ee'] as const).flatMap(mode => [false, true].map(disclosureCallback => ({ ...read, mode, disclosureCallback })))))('delivers the identity-free $actionId read without requester credential disclosure ($mode, callback: $disclosureCallback)', async ({ actionId, input, result, mode, disclosureCallback }) => {
+  ].flatMap(read => (['plain', 'e2ee'] as const).map(mode => ({ ...read, mode }))))('delivers the identity-free $actionId read without requester credentials ($mode)', async ({ actionId, input, result, mode }) => {
     const events: string[] = [];
     const execution = { ok: true as const, result };
     const target = await home(mode, events, { originalOwnAction: actionId, ownExecution: execution, machineRole: 'manage' });
@@ -2333,15 +2307,13 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
       : { type: 'legacy', secret: new Uint8Array(32).fill(23) }, credentialProvenance: 'stored_session' };
     const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
       serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId, machineId: 'alice-machine',
-      actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) },
-      ...(disclosureCallback ? { onRequesterSessionCredentialDisclosure: async () => { events.push('disclosed'); return false; } } : {}) });
+      actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) } });
     // Cancellation approval is independent of credential transport. Enter its
     // existing signed carrier directly; read cases exercise the public factory.
     const delivered = actionId === 'machines.agents.install.cancel'
       ? dispatchOriginalAccountAction({ actionId, input, requestId: 'request-1',
         target: { kind: 'machine', machineId: 'alice-machine' }, credentials,
-        serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId,
-        ...(disclosureCallback ? { onRequesterSessionCredentialDisclosure: async () => { events.push('disclosed'); return false; } } : {}) })
+        serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId })
       : executor.execute(actionId, input, { surface: 'cli', actionRequestId: 'request-1' });
     await expect(delivered).resolves.toEqual(execution);
     const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
@@ -2359,7 +2331,6 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
       expect(codec.machineKey).not.toEqual(deriveAccountMachineKeyFromRecoverySecret(new Uint8Array(32).fill(23)));
     }
     expect(openExternalActionRequesterAccountContextV1({ ...opening, purpose: { kind: 'external_action' } })).toBeNull();
-    expect(events).not.toContain('disclosed');
     expect(JSON.stringify(received)).not.toContain(credentials.token);
   });
 
@@ -2369,8 +2340,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
     const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
       serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId, machineId: 'alice-machine',
-      actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) },
-      ...{ onRequesterSessionCredentialDisclosure: async () => { events.push('disclosed'); return true; } } });
+      actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) } });
     await expect(executor.execute('agents.models.list', ownMachineInput,
       { surface: 'cli', actionRequestId: 'request-1' })).resolves.toMatchObject({ errorCode: 'fixture_receipt' });
     const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
@@ -2387,8 +2357,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     const result = await dispatchOriginalAccountAction({ actionId: 'agents.models.list',
       input: ownMachineInput, requestId: 'request-1',
       target: { kind: 'machine', machineId: 'alice-machine' }, credentials,
-      serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId, authority: 'account_automation',
-      onRequesterSessionCredentialDisclosure: async () => { events.push('disclosed'); return true; } });
+      serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId, authority: 'account_automation' });
     expect(result).toMatchObject({ errorCode: 'fixture_receipt' });
     const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
     expect(received.executionAuthorization?.binding).toMatchObject({ accountId: 'bob',
@@ -2396,7 +2365,6 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     expect(openExternalActionRequesterAccountContextV1({ authorization: received.executionAuthorization,
       purpose: { kind: 'external_action' }, machineId: 'alice-machine', installationId: 'alice-installation',
       serverIdentityId: homeIdentityId, installationPrivateKey: target.privateKey })).toEqual(encodeStoredCredentials(credentials));
-    expect(events.indexOf('disclosed')).toBeLessThan(events.indexOf('dispatch'));
   });
 
   it('originates genuine terminal private custody through the public CLI factory without a human upgrade', async () => {
@@ -2405,8 +2373,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     const credentials: StoredCredentials = { token: token('terminal'), encryption: null, credentialProvenance: 'stored_session' };
     const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
       serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId, machineId: 'alice-machine',
-      actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) },
-      onRequesterSessionCredentialDisclosure: async () => true });
+      actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) }, });
     await expect(executor.execute('agents.models.list', ownMachineInput,
       { surface: 'cli', authority: 'account_automation', actionRequestId: 'request-1' })).resolves.toMatchObject({ errorCode: 'fixture_receipt' });
     const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
@@ -2554,27 +2521,14 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     const target = await home('plain', events, { finiteWake: true, custodianAccountId: guestCustodian,
       onInventoryResponse: (path, rows) => { inventoryResponses.push({ path, rows }); } });
     const credentials: StoredCredentials = { token: token(), encryption: null };
-    const disclosedRecipients: string[] = [];
     const result = await dispatchOriginalAccountAction({ actionId: 'projects.script.run',
       input: PROJECT_ACTION_INPUT_SCHEMAS_V1['projects.script.run'].parse({
         workspace: { serverId: 'home', workspaceId: 'workspace-1', machineId: 'alice-machine', rootPath: '/workspace' },
         selection: { kind: 'named', name: 'test' } }),
       requestId: 'request-1', target: { kind: 'machine', machineId: 'alice-machine' }, credentials,
-      serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId,
-      onRequesterSessionCredentialDisclosure: async disclosure => {
-        expect(disclosure.accountId).toBe('bob');
-        expect(disclosure.fullSignIn).toBe(true);
-        if (disclosure.machineId === 'alice-controller') expect(disclosure).toMatchObject({
-          custodian: { accountId: 'alice', displayName: 'Alice' },
-        });
-        expect(target.readReceived()).toBeUndefined();
-        disclosedRecipients.push(disclosure.machineId);
-        return true;
-      } });
+      serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId });
     expect(result).toMatchObject({ errorCode: 'fixture_receipt' });
     expect(inventoryResponses).toEqual([{ path: '/v1/machines/alice-machine', rows: 1 }]);
-    expect(disclosedRecipients).toEqual(guestCustodian === 'bob'
-      ? ['alice-controller'] : ['alice-machine']);
     const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
     const authorization = received.executionAuthorization;
     expect(authorization?.binding).toMatchObject({ accountId: 'bob', custodianAccountId: guestCustodian,
@@ -2602,8 +2556,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
         workspace: { serverId: 'home', workspaceId: 'workspace-1', machineId: 'alice-machine', rootPath: '/workspace' },
         selection: { kind: 'named', name: 'test' } }),
       requestId: 'request-1', target: { kind: 'machine', machineId: 'alice-machine' },
-      credentials: { token: token(), encryption: null }, serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId,
-      onRequesterSessionCredentialDisclosure: async () => { throw new Error('There is no foreign recipient'); } });
+      credentials: { token: token(), encryption: null }, serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId, });
     expect(result).toMatchObject({ errorCode: 'fixture_receipt' });
     const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
     expect(received.executionAuthorization?.binding).toMatchObject({ accountId: 'bob', custodianAccountId: 'bob' });
@@ -2619,18 +2572,6 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
       target: { kind: 'machine', machineId: 'alice-machine' }, credentials: { token: legacyToken, encryption: null },
       serverHttpBaseUrl: target.url, foreignTargetOnly: true });
     expect(result).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
-    expect(target.readReceived()).toBeUndefined();
-  });
-
-  it('withholds accepted private custody when credentials retire during confidentiality consent', async () => {
-    const events: string[] = [];
-    const target = await home('plain', events);
-    let current = true;
-    const result = await dispatchOriginalAccountAction({ actionId: 'agents.models.list', input: {}, requestId: 'request-1',
-      target: { kind: 'machine', machineId: 'alice-machine' }, credentials: { token: token(), encryption: null },
-      serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId, isCurrent: () => current,
-      onRequesterSessionCredentialDisclosure: async () => { current = false; return true; } });
-    expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
     expect(target.readReceived()).toBeUndefined();
   });
 
@@ -2691,10 +2632,10 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     } finally { output.restore(); await currentness.close(); await artifacts.close(); }
   });
 
-  it.each(['yes', 'no', 'noninteractive', 'json'] as const)('requires actual CLI confidentiality consent before private delivery (%s)', async answer => {
+  it.each(['interactive', 'noninteractive', 'json'] as const)('delivers private custody from the CLI with no sign-in prompt (%s)', async answer => {
     const events: string[] = [];
     const target = await home('plain', events);
-    terminal.interactive = answer !== 'noninteractive'; terminal.answer = answer === 'yes' ? 'yes' : 'no';
+    terminal.interactive = answer !== 'noninteractive'; terminal.answer = 'no';
     const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
     const output = captureConsoleText();
     try {
@@ -2705,27 +2646,17 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
           serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId,
           actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) } }),
       });
-      if (answer === 'yes') {
-        expect(target.readReceived()).toBeDefined();
-        expect(terminal.prompts[0]).toContain('[y/N]');
-        expect(terminal.prompts[0]).toMatch(/account/i);
-        expect(terminal.prompts[0]).toMatch(/files|output|sign-ins/i);
-      } else expect(target.readReceived()).toBeUndefined();
-      if (answer === 'json' || answer === 'noninteractive') expect(terminal.prompts).toEqual([]);
+      expect(target.readReceived()).toBeDefined();
+      expect(terminal.prompts).toEqual([]);
     } finally { output.restore(); }
   });
 
-  it.each(['missing-disclosure', 'informational-only', 'rejected-disclosure', 'changed-root', 'terminal-human-upgrade'] as const)('withholds private custody for %s', async reason => {
+  it.each(['changed-root', 'terminal-human-upgrade'] as const)('withholds private custody for %s', async reason => {
     const events: string[] = [];
     const target = await home('plain', events, { mutateRoot: reason === 'changed-root' });
-    const disclosure = reason === 'missing-disclosure' ? {} : { onRequesterSessionCredentialDisclosure: async () => {
-      events.push('disclosed');
-      if (reason === 'informational-only') return;
-      return reason !== 'rejected-disclosure';
-    } };
     const result = await dispatchOriginalAccountAction({ actionId: 'agents.models.list', input: ownMachineInput,
       requestId: 'request-1', target: { kind: 'machine', machineId: 'alice-machine' }, credentials: { token: token(reason === 'terminal-human-upgrade' ? 'terminal' : 'account'), encryption: null },
-      serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId, ...disclosure });
+      serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId });
     expect(result.ok).toBe(false);
     expect(target.readReceived()).toBeUndefined();
   });

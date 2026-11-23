@@ -136,7 +136,6 @@ export async function runMemberInstallJourney(installRolesReceiver: boolean): Pr
         }
         return dispatchOriginalAccountAction({ actionId, input, requestId, target, credentials,
             serverHttpBaseUrl: home.baseUrl, serverIdentityId: home.serverId,
-            onRequesterSessionCredentialDisclosure: async () => true,
             invocation: { surface: 'ui', authority: 'present_user', caller: { kind: 'host' },
                 presentUserConfirmation: { actionId, requestId, accountId: member.id, serverId: home.serverId, target,
                     inputDigest: computeActionInputApprovalDigestV1(actionId, input) } } });

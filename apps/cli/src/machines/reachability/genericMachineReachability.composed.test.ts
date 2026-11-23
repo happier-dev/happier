@@ -21,7 +21,6 @@ import * as agentIsolationLaunchPolicy from '@/daemon/agentIsolation/agentIsolat
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { reachabilityConnectorSubject } from '@/machines/reachability/prepareReachabilityJoinCredential';
 import * as terminalInput from '@/terminal/prompts/promptInput';
-import * as cliActionExecution from '@/cli/actions/executeCommand';
 import { inspectMachineReachability } from './machineReachabilityHost';
 import { prepareReachabilityReviewedChildrenForHost } from './reachabilityProviderHost';
 
@@ -224,11 +223,11 @@ describe('Manage grantee Saved Secret join', () => {
   }, 120_000);
 
   it('joins another custodian Machine using the admitted Manage requester own Saved Secret and one parent approval', async () => {
-    // Only terminal availability and text input are replaced. The real
-    // default-no confidentiality prompt, answer parser and requester box run.
+    // Only terminal availability and text input are replaced. Another
+    // custodian's Machine receives the sign-in with no prompt (owner ruling
+    // 2026-11-23); a prompt that did appear would read a default-no answer.
     const terminalAvailability = vi.spyOn(terminalInput, 'isInteractiveTerminal').mockReturnValue(true);
-    const terminalAnswer = vi.spyOn(terminalInput, 'promptInput').mockResolvedValue('yes');
-    const disclosures = vi.spyOn(cliActionExecution, 'confirmCliRequesterCredentialDisclosure');
+    const terminalAnswer = vi.spyOn(terminalInput, 'promptInput').mockResolvedValue('no');
     try {
       expect(api.requesterAdmission).toMatchObject({ actorAccountId: granteeAccountId,
         custodianAccountId: 'generic-owner', machineId, installationId, role: 'manage', encryptionMode: 'plain' });
@@ -260,11 +259,7 @@ describe('Manage grantee Saved Secret join', () => {
           });
         },
       });
-      expect(disclosures).toHaveBeenCalled();
-      for (const [disclosure] of disclosures.mock.calls) {
-        expect(disclosure).toMatchObject({ accountId: granteeAccountId, machineId, fullSignIn: true,
-          custodian: { accountId: 'generic-owner' } });
-      }
+      expect(terminalAnswer).not.toHaveBeenCalled();
       expect(parseCompletedReachabilityConfigure(configured.result)).toMatchObject({ status: 'applied', selections: [selected],
         observation: { privateNetworks: [expect.objectContaining({ provider: selected.provider, state: 'ready' })] } });
       expect(fixture.home.connectorSetRequesterProofs, 'Actual grant set carries the admitted grantee installation signature').toEqual([true]);
@@ -279,7 +274,7 @@ describe('Manage grantee Saved Secret join', () => {
       expect(api.processBoundary.failures).toEqual([]);
     } finally {
       try { await api.dispose(); }
-      finally { disclosures.mockRestore(); terminalAnswer.mockRestore(); terminalAvailability.mockRestore(); }
+      finally { terminalAnswer.mockRestore(); terminalAvailability.mockRestore(); }
     }
   });
 });

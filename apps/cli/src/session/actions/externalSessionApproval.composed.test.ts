@@ -279,7 +279,7 @@ it.each((['bob', 'alice'] as const).flatMap(accountId => (['account', 'terminal'
     const caller = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
         externalActionClient: true,
         serverId, serverIdentityId: homeId, serverApiUrl: endpoint, actionsSettingsProvider: policy,
-        onRequesterSessionCredentialDisclosure: async () => true });
+        });
     const context = { surface: 'cli' as const, authority: 'present_user' as const, serverId, serverIdentityId: homeId,
         runtimeAccountId: accountId, defaultSessionMachineId: machineId, actionRequestId: 'original-process-stop' };
     try {

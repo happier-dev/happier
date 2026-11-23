@@ -127,10 +127,9 @@ describe('Machine RPC replacement Home custody', () => {
     expect(owner.calls).toEqual(['current:status', `current:${RPC_METHODS.MACHINE_SETUP_PLAN}`]);
     expect(owner.socketTokens).toEqual([credentials.token, credentials.token]);
   });
-  // A Setup Plan child carries the requester's sealed sign-in to its target.
-  // Another person's Machine never confirmed that disclosure, so it is refused
-  // before sealing or sending; the requester's own other Machine is unchanged.
-  it.each([['own', 'session-account'], ['foreign', 'bob']] as const)('seals a Setup Plan child only to a Machine the requester or confirmed custodian holds (%s peer)', async (_case, peerCustodian) => {
+  // A Setup Plan child carries the requester's sealed sign-in to its reviewed
+  // target, whoever holds that Machine (owner ruling 2026-11-23).
+  it.each([['own', 'session-account'], ['foreign', 'bob']] as const)('seals a Setup Plan child to its reviewed target Machine whoever holds it (%s peer)', async (_case, peerCustodian) => {
     const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'session-account' })).toString('base64url')}.signature`, encryption: null } as const;
     const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23));
     const owner = await createHome(credentials.token, Buffer.from(keys.publicKey).toString('base64'), undefined, peerCustodian);
@@ -160,14 +159,8 @@ describe('Machine RPC replacement Home custody', () => {
       request: { homeId: input.homeId, machineId: 'peer', sources: reviewed.sources, exclusions: reviewed.exclusions, mode: 'effects' },
       context: { surface: 'ui', authority: 'present_user', runtimeAccountId: 'session-account', serverId: input.homeId,
         externalActionExecutionAuthorization: authorization, externalActionTarget: target, originalActionEnvelope: envelope } }));
-    if (peerCustodian === 'session-account') {
-      await expect(result).resolves.toEqual({ status: 'running' });
-      expect(owner.calls).toEqual([`peer:${RPC_METHODS.MACHINE_SETUP_PLAN}`]);
-    } else {
-      await expect(result).rejects.toMatchObject({ errorCode: 'requester_credential_disclosure_required' });
-      expect(owner.calls).toEqual([]);
-      expect(owner.socketTokens).toEqual([]);
-    }
+    await expect(result).resolves.toEqual({ status: 'running' });
+    expect(owner.calls).toEqual([`peer:${RPC_METHODS.MACHINE_SETUP_PLAN}`]);
   });
   it.each([
     { foreignRuntime: false, accountMode: 'plain' as const },

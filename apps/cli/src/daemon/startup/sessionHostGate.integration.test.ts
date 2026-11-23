@@ -310,7 +310,7 @@ it.skipIf(process.env.HAPPIER_RUN_SESSION_HOST_GATE !== '1')(
         serverIdentityId: boundHome.homeId, authority: 'present_user',
         invocation: { caller: { kind: 'host' }, surface: 'ui', authority: 'present_user',
           ...(presentUserConfirmation ? { presentUserConfirmation } : {}) },
-        onRequesterSessionCredentialDisclosure: () => true, signal: lifetime.signal });
+        signal: lifetime.signal });
     const reviewed = await send(input);
     if (reviewed?.ok !== false || reviewed.errorCode !== 'action_interactive_review_required') return reviewed;
     const details = z.object({ review: z.object({ actionArgs: z.unknown() }), reviewDigest: z.string() }).parse(reviewed.details);

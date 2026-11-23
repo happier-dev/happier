@@ -28,9 +28,6 @@ import {
   type ServerFeaturesSnapshotStore,
 } from '@/features/serverFeaturesSnapshotStore';
 import type { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
-import { projectRequesterSessionCredentialDisclosure } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
-import { isInteractiveTerminal } from '@/terminal/prompts/promptInput';
-import { promptConfirmYesNo } from '@/terminal/prompts/promptConfirmYesNo';
 
 import type { CompiledActionCliCommand } from './compiledCommands';
 import { renderActionCliCommandHelp } from './commandHelp';
@@ -88,21 +85,6 @@ const DEFAULT_DEPS: ActionCliExecutionDeps = {
     await import('@/session/actions/createCliActionExecutorFromCredentials')
   ).createCliActionExecutorFromCredentials(params),
 };
-
-/** CLI confidentiality consent precedes private custody; target Action approval remains separate. */
-export async function confirmCliRequesterCredentialDisclosure(
-  disclosure: ReturnType<typeof projectRequesterSessionCredentialDisclosure>,
-  options: Readonly<{ json?: boolean; signal?: AbortSignal }> = {},
-): Promise<boolean> {
-  if (options.json || options.signal?.aborted || !isInteractiveTerminal()) return false;
-  const custodian = disclosure.custodian?.displayName?.trim() || disclosure.custodian?.accountId;
-  return await promptConfirmYesNo(
-    `Machine ${disclosure.machineId}${custodian ? ` (owned by ${custodian})` : ''} will receive your full Happier sign-in and can use it to access your Account. `
-    + 'Its owner and anyone with terminal or agent access can read local files, output and sign-ins used by work there. '
-    + 'Allow this sign-in to be shared for this action?',
-    { default: 'no', ...(options.signal ? { signal: options.signal } : {}) },
-  );
-}
 
 /**
  * CLI-owned transport flags. They route the invocation and never become Action
@@ -442,8 +424,6 @@ export async function runCompiledActionCliCommand(params: Readonly<{
       credentials,
       onApprovalRequested: createCliActionApprovalPresenter({ actionId: command.actionId, json, envelopeKind: kind }),
       ...(serverIdentityId ? { serverIdentityId } : {}),
-      onRequesterSessionCredentialDisclosure: (disclosure: ReturnType<typeof projectRequesterSessionCredentialDisclosure>) =>
-        confirmCliRequesterCredentialDisclosure(disclosure, { json, ...(requestSignal ? { signal: requestSignal } : {}) }),
       readCredentials: fixedServer
         ? () => deps.readCredentialsForServerIdFn(fixedServer.serverId)
         : deps.readCredentialsFn,

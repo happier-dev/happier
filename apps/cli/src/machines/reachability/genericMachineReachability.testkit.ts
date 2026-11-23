@@ -83,7 +83,6 @@ import { SocketRpcMachineAdmissionContextV1Schema, MachineAdmissionVerifyRespons
 import { SOCKET_RPC_EVENTS, SocketRpcRequestIdSchema, SocketRpcCancellationPayloadSchema, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
-import { confirmCliRequesterCredentialDisclosure } from '@/cli/actions/executeCommand';
 import { MachineUpdateOperationProtocolCapabilitiesRequestV1Schema, MachineUpdateOperationProtocolCapabilitiesResponseV1Schema } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
@@ -1977,8 +1976,6 @@ export async function createGenericDefaultFactoryJourney(fixture: Awaited<Return
       const pending = createCliActionExecutorFromCredentials({ credentials,
         serverId: 'generic-home', serverApiUrl: fixture.accountRuntime.serverHttpBaseUrl,
         machineId, externalActionClient: true,
-        onRequesterSessionCredentialDisclosure: disclosure =>
-          confirmCliRequesterCredentialDisclosure(disclosure, { signal: lifetime.signal }),
         ...(requesterCredentials ? {} : { actionsSettingsProvider: originalCliSettings }),
         readCredentials: readCallerCredentials,
       }).bindInvocation(lifetime.signal).execute(actionId, input, { surface: 'cli', authority, actionRequestId });

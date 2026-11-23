@@ -38,7 +38,6 @@ it.each([
   const binding = { accountId: 'member', authentication: { kind: 'account' as const, tokenEpoch: 2 }, serverIdentityId: 'srv_home',
     actionId: 'session.spawn_new', requestId: 'preset-session', target };
   const requests: string[] = [];
-  let disclosed: unknown;
   vi.spyOn(axios, 'get').mockImplementation(async url => {
     const path = new URL(String(url)).pathname;
     requests.push(path);
@@ -82,18 +81,15 @@ it.each([
     return { status: 200, data: { v: 1, actionId: 'session.spawn_new', requestId: binding.requestId, execution } };
   });
   const result = await dispatchOriginalAccountAction({ actionId: 'session.spawn_new', input, requestId: binding.requestId,
-    target, credentials, serverHttpBaseUrl: 'https://home.example', serverIdentityId: 'srv_home', invocation,
-    onRequesterSessionCredentialDisclosure: disclosure => { disclosed = disclosure; return true; } });
+    target, credentials, serverHttpBaseUrl: 'https://home.example', serverIdentityId: 'srv_home', invocation });
   if (!presetBacked) {
     expect(result).toMatchObject({ ok: false, errorCode: targetState === 'hidden' ? 'admission_unavailable' : 'machine_offline' });
     if (result.ok) throw new Error('Expected Machine refusal');
     expect(result.details).toEqual(targetState === 'hidden' ? undefined : { machineId: controller.machineId });
-    expect(disclosed).toBeUndefined();
     expect(requests.some(path => path.endsWith('/execution-authorization'))).toBe(false);
     expect(requests).not.toContain('/v1/actions/session.spawn_new');
     return;
   }
   expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-  expect(disclosed).toMatchObject({ disposition: 'ordinary_requester', accountId: 'member', machineId: controller.machineId });
   expect(requests.filter(path => path.includes('/machines/') || path.includes('/pools/'))).toEqual([]);
 });

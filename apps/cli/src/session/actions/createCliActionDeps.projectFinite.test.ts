@@ -104,7 +104,6 @@ describe('Project finite Actions through exact Machine transport', () => {
       error: 'Forbidden', failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'custodian_only', httpStatus: 403 } });
     const owner = createCliActionExecutor({ token, credentials, serverIdentityId: 'srv_finite_home', sessionId: 'cli-global',
       mode: 'plain', ctx: null, serverId: 'home', serverHttpBaseUrl: 'https://home.test',
-      onRequesterSessionCredentialDisclosure: async () => true,
       actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
     const context: ActionExecutorContext = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
       runtimeAccountId: 'ports-member', serverId: 'home', serverIdentityId: 'srv_finite_home', actionRequestId: 'ports-cut20-replay' };

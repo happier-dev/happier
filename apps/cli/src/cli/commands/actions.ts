@@ -40,7 +40,6 @@ import {
 } from '@/cli/actions/commandHelp';
 import {
   runCompiledActionCliCommand,
-  confirmCliRequesterCredentialDisclosure,
   type ActionCliExecutionDeps,
 } from '@/cli/actions/executeCommand';
 import {
@@ -434,8 +433,6 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
   const executorOptions = credentials ? {
     credentials,
     ...(serverIdentityId ? { serverIdentityId } : {}),
-    onRequesterSessionCredentialDisclosure: (disclosure: Parameters<typeof confirmCliRequesterCredentialDisclosure>[0]) =>
-      confirmCliRequesterCredentialDisclosure(disclosure, { json, ...(signal ? { signal } : {}) }),
     readCredentials: fixedServer
       ? () => deps.readCredentialsForServerIdFn(fixedServer.serverId)
       : deps.readCredentialsFn,

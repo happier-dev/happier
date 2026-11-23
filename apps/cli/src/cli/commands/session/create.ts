@@ -20,7 +20,6 @@ import {
 } from './shared/sessionWaitAction';
 import { cmd, fail } from '@happier-dev/cli-common/output';
 import { logger } from '@/ui/logger';
-import { confirmCliRequesterCredentialDisclosure } from '@/cli/actions/executeCommand';
 
 const SESSION_CREATE_USAGE = `Usage: ${SESSION_HELP_LINES.create}`;
 
@@ -86,8 +85,6 @@ export async function cmdSessionCreate(
   const executor = createCliActionExecutorFromCredentials({
     credentials,
     externalActionClient: true,
-    onRequesterSessionCredentialDisclosure: disclosure =>
-      confirmCliRequesterCredentialDisclosure(disclosure, { json: structuredCreationOutput, ...(deps.signal ? { signal: deps.signal } : {}) }),
     ...(spawnRequest.machineId ? { machineId: spawnRequest.machineId } : {}),
   });
   if (!spawnRequest.machineId) {

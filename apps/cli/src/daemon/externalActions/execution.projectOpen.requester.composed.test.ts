@@ -295,7 +295,7 @@ it.each([
     provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature` };
   const decided = await createCliActionExecutorFromCredentials({ credentials: personCredentials, serverId,
     serverApiUrl: 'https://session-home.test', machineId: 'machine', externalActionClient: true,
-    readCredentials: async () => personCredentials, onRequesterSessionCredentialDisclosure: async () => true,
+    readCredentials: async () => personCredentials,
   }).execute('approval.request.decide', { artifactId: artifact.id, decision: 'approve', serverIdentityId: homeId },
     { surface: 'cli', authority: 'present_user' });
   if (losesProfileIdentity) {

@@ -46,7 +46,7 @@ function isOrganizationPayload(payload: ProjectAccountRowPayloadV1): payload is 
   return payload.key.kind === 'project-organization';
 }
 export function createCliProjectActionDeps(
-  params: Pick<CliActionDepsParams, 'serverId' | 'credentials' | 'isCredentialCurrent' | 'machineActionDirectTargetTransport' | 'onRequesterSessionCredentialDisclosure' | 'projectAction' | 'projectWorkerAccountAction' | 'projectDefinitionAction' | 'serverHttpBaseUrl' | 'serverIdentityId' | 'token'>,
+  params: Pick<CliActionDepsParams, 'serverId' | 'credentials' | 'isCredentialCurrent' | 'machineActionDirectTargetTransport' | 'projectAction' | 'projectWorkerAccountAction' | 'projectDefinitionAction' | 'serverHttpBaseUrl' | 'serverIdentityId' | 'token'>,
   { readAdmittedProjectRows, actionOperationAction, callMachineAction, dispatchOriginalAccountMachineAction, isMachineActionServerScopeCurrent, executionRunActionFailure, isExecutionRunActionAbort, projectHomeAdmission, projectAccountAdmission, projectRowsAuthority, readProjectRows, resolveProjectHomeIdentity, withProjectHome, admitProjectRows, readProjectRequesterArtifact, projectHomeId, widgetHomeId, homeAccountId, todoHomeBaseUrl, todoHomeServerId, approvalsStore, exactHome }: Readonly<{
     readAdmittedProjectRows: CliAdmittedProjectRowsReader;
     actionOperationAction: NonNullable<ActionExecutorDeps['actionOperationAction']>;
@@ -349,8 +349,6 @@ export function createCliProjectActionDeps(
           invocation: { caller: { kind: 'host' }, surface: 'cli', authority: context.authority ?? 'account_automation' },
           serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
           ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}),
-          ...(params.onRequesterSessionCredentialDisclosure
-            ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
           ...(params.isCredentialCurrent ? { isCurrent: params.isCredentialCurrent } : {}),
           ...(context.signal ? { signal: context.signal } : {}) });
         if (!execution.ok) return execution;
@@ -504,7 +502,6 @@ export function createCliProjectActionDeps(
         credentials: params.credentials!, authority: context.authority,
         serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
         ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}),
-        ...(params.onRequesterSessionCredentialDisclosure ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
         ...(params.isCredentialCurrent ? { isCurrent: params.isCredentialCurrent } : {}),
         ...(signal ? { signal } : {}) }) : null;
       const raw = execution ? execution.ok ? execution.result : execution
@@ -576,7 +573,6 @@ export function createCliProjectActionDeps(
           credentials: params.credentials, authority: context.authority,
           serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
           ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}),
-          ...(params.onRequesterSessionCredentialDisclosure ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
           ...(params.isCredentialCurrent ? { isCurrent: params.isCredentialCurrent } : {}),
           ...(context.signal ? { signal: context.signal } : {}) });
         return execution.ok ? execution.result : execution;

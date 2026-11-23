@@ -114,7 +114,7 @@ import { AUTHORITY_CEILING_HEADER_V1, resolveInvocationAuthority } from '@happie
 import { z } from 'zod/mini';
 import { ExternalActionMachineBootstrapV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { projectExternalActionRequesterInvocationContextV1, projectRequesterSessionCredentialDisclosure, sealExternalActionRequesterAccountContextV1, sealManagedCreationActionCodecV1, type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { projectExternalActionRequesterInvocationContextV1, sealExternalActionRequesterAccountContextV1, sealManagedCreationActionCodecV1, type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { encodeRequesterCredentials, encodeStoredCredentials, readAccountE2eeCustody } from '@/persistence';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
@@ -799,8 +799,6 @@ type OriginalAccountActionInput = Readonly<{
     binding: Exclude<SessionTeamCredentialBindingIntentV1, { resourceId: null }>;
     agentTargetKey: string; modelId: string;
   }>;
-  /** A human confidentiality decision, distinct from the target Action's Ask first policy. */
-  onRequesterSessionCredentialDisclosure?: (disclosure: ReturnType<typeof projectRequesterSessionCredentialDisclosure>) => boolean | void | Promise<boolean | void>;
   isCurrent?: () => boolean | Promise<boolean>;
   signal?: AbortSignal;
 }> & (Readonly<{ executeOnRequester?: undefined }> | Readonly<{
@@ -1454,7 +1452,6 @@ async function prepareOriginalAccountAction(
     }
   } else if (telemetryRead && input.target.kind === 'machine' || scopedController || machine && access && (foreign || requiresMachineProof)) {
     if (!input.serverIdentityId) return fail('admission_unavailable', 'dispatch.machine_home_identity');
-    if (foreign && !controllerCodec && !retainedRequester && !pendingSessionResume && !input.onRequesterSessionCredentialDisclosure) return fail('requester_credential_disclosure_required');
     const readInstalledMachine = async (observed: CurrentAccountMachineInventoryItem) => {
       const isOriginalTarget = input.target.kind === 'machine' && observed.id === input.target.machineId && requiresMachineProof;
       if (isOriginalTarget && installedRead.status === 'rejected') throw installedRead.reason;
@@ -1512,21 +1509,15 @@ async function prepareOriginalAccountAction(
         || root.managedContinuation.expectedIntentRevision !== input.managedContinuation.expectedIntentRevision
         : root.managedContinuation !== undefined)
       || !await isCurrent()) return fail('admission_unavailable', 'dispatch.machine_authorization');
-    const confirmDisclosure = async (recipient: Readonly<{ id: string; custodian?: Readonly<{ accountId: string; displayName: string }> }>): Promise<ActionExecuteResult | null> => {
+    // Sealing the requester's sign-in to a Machine another person holds is
+    // ordinary use (owner ruling 2026-11-23): no prompt and no refusal for
+    // that reason. Only a requester with no sign-in to seal refuses here.
+    const foreignSealRefusal = (): ActionExecuteResult | null => {
       if (kind === 'account' && input.authority === 'account_automation'
         || input.credentials.credentialProvenance === 'api_token') return fail('requester_account_material_unavailable');
-      if (!input.onRequesterSessionCredentialDisclosure) return fail('requester_credential_disclosure_required');
-      // Ask nothing the sealer must refuse: a plain Account's requester carries no active keys.
+      // A plain Account's requester carries no active keys.
       if (mode.mode === 'plain' && readAccountE2eeCustody(input.credentials) === 'active') return fail('content_unavailable');
-      let confirmed: boolean | void;
-      try {
-        confirmed = await input.onRequesterSessionCredentialDisclosure(projectRequesterSessionCredentialDisclosure({
-          disposition: 'ordinary_requester', accountId, machineId: recipient.id,
-          ...(recipient.custodian ? { custodian: recipient.custodian } : {}),
-        }));
-      } catch { return fail(input.signal?.aborted ? 'cancelled' : 'requester_credential_disclosure_declined'); }
-      if (confirmed !== true) return fail('requester_credential_disclosure_declined');
-      return await isCurrent() ? null : fail(input.signal?.aborted ? 'cancelled' : 'target_unavailable', 'dispatch.requester_disclosure.currentness');
+      return null;
     };
     const { telemetryReadInstallationPublicKey, ...signedAuthorization } = minted.authorization;
     const prepareDelivery = async (invocation = input.invocation, signal = input.signal): Promise<Exclude<OriginalAccountActionPreparation, null>> => {
@@ -1556,7 +1547,7 @@ async function prepareOriginalAccountAction(
         } else if (foreign || input.invocation) {
           if (!installed?.installationPublicKey) return fail('admission_unavailable', 'dispatch.requester_installation_key');
           if (foreign && !retainedRequester && !pendingSessionResume) {
-            const refusal = await confirmDisclosure({ id: destinationId, custodian: machine?.access?.custodian });
+            const refusal = foreignSealRefusal();
             if (refusal) return refusal;
           }
           // A foreign custodian's content is not ours to open; its delivered key stays Home-vouched (docs/encryption.md).
@@ -1574,7 +1565,7 @@ async function prepareOriginalAccountAction(
           // Home already admitted this exact controller and key. Guest Use need
           // not grant controller inventory access, including delegated enrollment.
           if (wake.requesterCredentialDisclosure) {
-            const refusal = await confirmDisclosure({ id: wakeController.machineId, custodian: wake.requesterCredentialDisclosure });
+            const refusal = foreignSealRefusal();
             if (refusal) return refusal;
           }
           authorization = sealExternalActionRequesterAccountContextV1({ authorization,

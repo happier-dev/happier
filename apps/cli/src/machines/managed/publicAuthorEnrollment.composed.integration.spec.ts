@@ -114,15 +114,10 @@ it.skipIf(process.platform !== 'linux')('public-only author enrolls its retained
     expect(operations.filter(operation => operation.actionId === 'machines.managed.acquire')).toMatchObject([{ state: 'succeeded' }]);
     const credentials = readS0ControllerCredentials(home);
     const target = { kind: 'machine' as const, machineId: guest.machineId };
-    const confirmDisclosure: NonNullable<Parameters<typeof dispatchOriginalAccountAction>[0]['onRequesterSessionCredentialDisclosure']> = async disclosure => {
-        expect(disclosure.custodian?.accountId).toBe(home.accountId);
-        return true;
-    };
-    const executeAs = (actorCredentials: typeof credentials, accountId: string, consentToDisclosure = false) => (actionId: ActionId, input: JsonValue) => {
+    const executeAs = (actorCredentials: typeof credentials, accountId: string) => (actionId: ActionId, input: JsonValue) => {
         const requestId = randomUUID();
         return dispatchOriginalAccountAction({ actionId, input, requestId, target, credentials: actorCredentials,
             serverHttpBaseUrl: home.baseUrl, serverIdentityId: home.serverId,
-            ...(consentToDisclosure ? { onRequesterSessionCredentialDisclosure: confirmDisclosure } : {}),
             invocation: { surface: 'ui', authority: 'present_user', caller: { kind: 'host' },
                 presentUserConfirmation: { actionId, requestId, accountId, serverId: home.serverId, target,
                     inputDigest: computeActionInputApprovalDigestV1(actionId, input) } } });
@@ -171,7 +166,7 @@ it.skipIf(process.platform !== 'linux')('public-only author enrolls its retained
     const memberCredentials = decodeStoredCredentials(encodeStoredCredentials({ token,
         encryption: { type: 'dataKey', machineKey: keys.secretKey, publicKey: keys.publicKey } }));
     if (!memberCredentials) throw new Error('Missing recipient credentials');
-    const memberExecute = executeAs(memberCredentials, member.id, true);
+    const memberExecute = executeAs(memberCredentials, member.id);
     await expect(execute('machines.terminal.write', { ...routing, terminalId,
         event: { t: 'resize', cols: 101, rows: 33 } })).resolves.toMatchObject({ ok: true, result: { ok: true } });
     await expect(execute('machines.terminal.write', { ...routing, terminalId,
@@ -193,8 +188,6 @@ it.skipIf(process.platform !== 'linux')('public-only author enrolls its retained
     expect(JSON.stringify(memberSummary)).not.toContain(terminalId);
     expect(JSON.stringify(memberSummary)).not.toContain(directory);
     expect(JSON.stringify(memberSummary)).not.toContain('a03-public-terminal');
-    await expect(executeAs(memberCredentials, member.id)('machines.terminal.read', { ...routing, terminalId, byteOffset: 0 }))
-        .resolves.toMatchObject({ ok: false, errorCode: 'requester_credential_disclosure_required' });
     const foreignRead = await memberExecute('machines.terminal.read', { ...routing, terminalId, byteOffset: 0 });
     expect(foreignRead, JSON.stringify(foreignRead)).toMatchObject({ ok: true, result: { ok: false, code: 'terminal_forbidden' } });
     expect(foreignRead).not.toHaveProperty('result.frames');

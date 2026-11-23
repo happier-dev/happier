@@ -839,7 +839,7 @@ describe('Machine terminal approval receipt across Home aliases (real SQLite)', 
             return await dispatchOriginalAccountAction({ actionId: 'machines.terminal.close', input, requestId: crypto.randomUUID(),
                 target: { kind: 'machine', machineId: machine.id }, credentials: pairedCredentials,
                 serverHttpBaseUrl: endpoint, serverIdentityId: homeId, authority: 'account_automation',
-                onRequesterSessionCredentialDisclosure: () => true });
+                });
         };
         const source = paneHost;
         const sourceInterest = new AbortController();

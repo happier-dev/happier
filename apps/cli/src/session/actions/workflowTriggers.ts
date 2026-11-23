@@ -21,14 +21,12 @@ import { encodeRequesterCredentials, hasStoredSessionCredentialProvenance } from
 import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { projectRequesterSessionCredentialDisclosure, sealSessionRequesterBootstrapRpcRequestV1 } from
+import { sealSessionRequesterBootstrapRpcRequestV1 } from
   '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 
 type CliTriggerRequesterCustodyOptions = Readonly<{
   serverId: string;
   isCredentialCurrent?: () => boolean | Promise<boolean>;
-  onRequesterSessionCredentialDisclosure?: (disclosure: ReturnType<typeof projectRequesterSessionCredentialDisclosure>) =>
-    boolean | void | Promise<boolean | void>;
 }>;
 
 function createCliTriggerRequesterCustody(params: Readonly<{
@@ -49,12 +47,7 @@ function createCliTriggerRequesterCustody(params: Readonly<{
         return refuse('requester_custody_unavailable');
       }
       if (!hasStoredSessionCredentialProvenance(credentials)) return refuse('requester_account_material_unavailable');
-      const confirm = options.onRequesterSessionCredentialDisclosure;
-      if (!confirm) return refuse('requester_credential_disclosure_required');
-      signal?.throwIfAborted();
-      if (await confirm(projectRequesterSessionCredentialDisclosure({
-        disposition: 'ordinary_requester', accountId, machineId, custodian,
-      })) !== true) return refuse('requester_credential_disclosure_declined');
+      // Another person's Machine receives the sign-in as ordinary use (owner ruling 2026-11-23).
       signal?.throwIfAborted();
       if (options.isCredentialCurrent && !await options.isCredentialCurrent()) return refuse('requester_custody_unavailable');
       const publicKey = decodeBase64(installationPublicKey, 'base64');

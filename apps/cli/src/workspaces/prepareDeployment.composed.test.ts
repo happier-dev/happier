@@ -1056,11 +1056,13 @@ describe('Prepare native workspace to normal Session handoff', () => {
     expect(f.dispatched).toEqual([]);
   });
 
-  it('retains the independent disclosure refusal for a genuine foreign custodian without creating a Session', async () => {
+  // No disclosure step exists for a foreign custodian (owner ruling 2026-11-23);
+  // this fixture's Home admission does not match, so the existing owner refuses.
+  it('refuses a foreign custodian whose Home admission does not match without creating a Session', async () => {
     const f = fixture();
     f.useForeignCustodian();
     const result = await f.executeRoot({});
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'requester_credential_disclosure_required' });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
     expect(f.dispatched).toEqual([]);
     expect(f.launches).toEqual([]);
     expect(f.prepareDispatches).toEqual([]);

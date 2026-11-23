@@ -328,7 +328,6 @@ it.skipIf(process.platform !== 'linux').each(['create', 'recover', 'retire', 're
       credentials: { ...setup.credentials, token: requesterToken }, serverHttpBaseUrl: setup.installed.serverHttpBaseUrl,
       serverIdentityId: setup.installed.homeServerIdentityId,
       invocation: { surface: 'mcp', authority: 'present_user', caller: { kind: 'host' } }, authority: 'present_user',
-      onRequesterSessionCredentialDisclosure: () => true,
     }) : null;
     const reply = CallToolResultSchema.parse(seeded ? { content: [{ type: 'text', text: JSON.stringify(
       seeded.ok ? seeded.result : seeded) }], isError: !seeded.ok }
@@ -502,7 +501,6 @@ it.skipIf(process.platform !== 'linux').each(['create', 'recover', 'retire', 're
           credentials: reviewerCredentials, serverId: setup.installed.serverId,
           serverApiUrl: setup.installed.serverHttpBaseUrl, machineId: setup.installed.machineId,
           resolveServerFeaturesSnapshot: () => ({ status: 'ready', features, provenance: 'authenticated' }),
-          onRequesterSessionCredentialDisclosure: () => true,
         });
         const decision = await cli.execute('approval.request.decide', { artifactId: proposal.artifactId, decision: 'approve' }, {
           surface: 'cli', authority: 'present_user', serverId: setup.installed.serverId,
@@ -519,8 +517,8 @@ it.skipIf(process.platform !== 'linux').each(['create', 'recover', 'retire', 're
         const statuses = await setup.fixture.parent.workspaceSync.controller.list();
         expect(statuses.filter(status => status.relationshipId === relationship.relationshipId && status.state === 'watching')).toEqual([]);
         if (cleanup === 'retire') await expect(readdir(setup.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
-        // Enter Move through MCP after retirement. A foreign SOURCE first needs
-        // deliberate credential disclosure; an own SOURCE reaches missing-copy resolution.
+        // Enter Move through MCP after retirement. Own and foreign SOURCEs both
+        // reach missing-copy resolution (owner ruling 2026-11-23: no disclosure step).
         const workspace = { serverId: setup.installed.homeServerIdentityId, refId: setup.sourceRef.id };
         const destination = { kind: 'workers', destination: { kind: 'machine', machineId: 'target-parent' } };
         const moveReply = CallToolResultSchema.parse(await nextClient.callTool({ name: 'action_execute', arguments: {
@@ -532,7 +530,7 @@ it.skipIf(process.platform !== 'linux').each(['create', 'recover', 'retire', 're
               expectedRevision: 'absent', expected: { kind: 'absent' }, value: { runsOn: destination, unavailable: 'fail' } } } } }));
         const moveBody = moveReply.content.find(entry => entry.type === 'text');
         expect(moveBody?.type === 'text' ? JSON.parse(moveBody.text) : null, JSON.stringify(moveReply))
-          .toMatchObject({ errorCode: sourceCustodian === 'member-a' ? 'worker_copy_missing' : 'requester_credential_disclosure_required' });
+          .toMatchObject({ errorCode: 'worker_copy_missing' });
         if (sourceCustodian !== 'member-a') expect(setup.custodianRows).toEqual(setup.custodianBefore);
         expect(setup.targetAccountRows).toEqual(targetRowsBefore);
       } finally { await nextClient.close(); await next.mcp.close(); }

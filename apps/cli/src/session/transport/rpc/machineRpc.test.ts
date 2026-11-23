@@ -761,8 +761,8 @@ describe('callMachineRpc', () => {
     expect(socket.emit).not.toHaveBeenCalled();
   });
 
-  it.each(['human', 'human-deferred', 'nested-human', 'disabled', 'unbound-agent', 'declined', 'undisclosed', 'notification-only'] as const)('preserves public CLI requester spawn authority for %s', async (callerKind) => {
-    const disclosures: unknown[] = [];
+  // A shared Machine receives the requester's sign-in with no consent step (owner ruling 2026-11-23).
+  it.each(['human', 'human-deferred', 'nested-human', 'disabled', 'unbound-agent'] as const)('preserves public CLI requester spawn authority for %s', async (callerKind) => {
     const effects: string[] = [];
     const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(3));
     const token = `e30.${Buffer.from(JSON.stringify({ sub: 'bob', tokenEpoch: 7,
@@ -844,9 +844,6 @@ describe('callMachineRpc', () => {
     socket.emit.mockImplementation(() => { throw new Error('Raw shared Machine spawn is forbidden'); });
     const executor = createCliActionExecutorFromCredentials({ credentials: { token, encryption: null, credentialProvenance: 'stored_session' },
       serverId: 'home', serverIdentityId: 'srv_home', serverApiUrl: 'https://api.example.test',
-      ...(callerKind === 'undisclosed' ? {} : { onRequesterSessionCredentialDisclosure: (disclosure: unknown) => {
-        disclosures.push(disclosure); effects.push('disclosure'); return callerKind === 'notification-only' ? undefined : callerKind !== 'declined';
-      } }),
       resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({
         features: { sessions: { enabled: true, conversations: { enabled: true } }, sharing: { enabled: true, session: { enabled: true } } }, capabilities: {},
       }) }),
@@ -866,22 +863,16 @@ describe('callMachineRpc', () => {
         ? { type: 'success', disposition: 'created', sessionId: 'bob-session' }
         : { modelParticipant: { sessionId: 'bob-session' }, sessionStart: { type: 'success', disposition: 'created', sessionId: 'bob-session' } } });
       expect(socket.emit).not.toHaveBeenCalled();
-      expect(disclosures).toEqual([{ disposition: 'ordinary_requester', accountId: 'bob', machineId: 'machine-session',
-        custodian: { accountId: 'alice', displayName: 'Alice' }, fullSignIn: true, selectedPurposeRuntimeAuth: true, hostCanInspectLocalProcess: true }]);
-      expect(effects).toEqual(['disclosure', 'action']);
+      expect(effects).toEqual(['action']);
     } else if (callerKind === 'disabled') {
       expect(result).toMatchObject({ ok: false, errorCode: 'action_disabled' });
       expect(effects).toEqual([]);
       expect(socket.emit).not.toHaveBeenCalled();
-    } else if (callerKind === 'unbound-agent') {
+    } else {
       expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable',
         details: { code: 'target_unavailable', reason: 'caller_session_unavailable' } });
       expect(effects).toEqual([]);
       expect(socket.emit).not.toHaveBeenCalled();
-    } else {
-      expect(result).toMatchObject({ ok: false });
-      expect(socket.emit).not.toHaveBeenCalled();
-      expect(effects).toEqual(callerKind === 'undisclosed' ? [] : ['disclosure']);
     }
   });
 

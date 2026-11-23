@@ -193,7 +193,7 @@ it.each(([
                 resolveServerFeaturesSnapshot: async () => ({ status: 'ready', provenance: 'authenticated', features }),
                 actionsSettingsProvider: { getActionsSettings: () => accountSettings.actionsSettingsV1,
                     getAccountSettings: () => accountSettings },
-                onRequesterSessionCredentialDisclosure: async () => true });
+                });
             const result = await executor.execute('approval.request.decide', { artifactId: 'delete-approval', decision: 'approve' },
                 { surface: 'cli', authority: 'present_user', actionRequestId: 'approve-delete' });
             if (admissionRefused) {

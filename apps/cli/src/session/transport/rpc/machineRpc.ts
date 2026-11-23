@@ -24,7 +24,6 @@ import { SessionRequesterBootstrapRpcRequestV1Schema, sealSessionRequesterBootst
   SessionRequesterHandoffBootstrapRpcRequestV1Schema, sealSessionRequesterHandoffBootstrapRpcRequestV1,
   SessionRequesterHandoffPreflightBootstrapRpcRequestV1Schema, sealSessionRequesterHandoffPreflightBootstrapRpcRequestV1,
   SessionRequesterHandoffWorkspaceCaptureRpcRequestV1Schema, sealSessionRequesterHandoffWorkspaceCaptureRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
-import { projectRequesterSessionCredentialDisclosure } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { SessionSpawnNewInputV2Schema, projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { SessionSpawnNewResultV1Schema, SessionSpawnNewActionResultV1Schema, readSessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { fetchAccountProfile } from '@/api/accountProfile';
@@ -69,7 +68,6 @@ import {
 } from '@happier-dev/sync-client';
 import { readRpcObservation, withUserScopedRpcSocket, type RpcObservationOptions } from './withUserScopedRpcSocket';
 import { readRequesterAccountActionContext, readRequesterAccountActionTransportContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
-import { assertRequesterCredentialRecipient } from '@/daemon/sessionEncryption/requesterCredentialRecipient';
 import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { createWorkspaceSyncSourceOperationContinuation } from '@/api/rpc/workspaceSyncOperationContinuation';
@@ -115,7 +113,6 @@ export async function dispatchRequesterSessionSpawnNewRpc(params: Readonly<{
     | 'machineAdmission' | 'verifyMachineAdmissionCurrent'>>;
   externalActionMachineInstallationId?: string;
   externalActionMachineRequestPrivateKey?: ExternalActionMachineRequestSigningKey;
-  onRequesterSessionCredentialDisclosure?: (disclosure: ReturnType<typeof projectRequesterSessionCredentialDisclosure>) => boolean | void | Promise<boolean | void>;
 }>): Promise<ActionExecuteResult | null> {
   const parsed = SessionSpawnNewInputV2Schema.safeParse(params.input);
   if (!parsed.success || parsed.data.executionTarget.serverId !== params.serverId) return null;
@@ -168,7 +165,6 @@ export async function dispatchRequesterSessionSpawnNewRpc(params: Readonly<{
     serverIdentityId: params.serverIdentityId, requestId: params.context?.actionRequestId ?? randomUUID(),
     ...(params.context ? { invocation: readExternalActionRequesterInvocation(params.context) } : {}),
     ...(params.context?.authority ? { authority: params.context.authority } : {}),
-    ...(params.onRequesterSessionCredentialDisclosure ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
     ...(signal ? { signal } : {}) });
   if (!execution.ok) return execution;
   const approval = ActionApprovalRequestCreatedResultSchema.safeParse(execution.result);
@@ -597,13 +593,6 @@ export async function callExactMachineRpc(params: Readonly<{
         };
         if (!await review(reviewInput)) {
           throw new MachineRpcTargetNotCurrentError(machineId, 'child_not_derived', derivationReason);
-        }
-        // Both requester seals below (Account context and private bootstrap)
-        // carry the full sign-in to this target. A stop child reaches only the
-        // Machine already holding that Session's requester AccessKey.
-        if (!stopChild) {
-          assertRequesterCredentialRecipient(moveAuthorization.binding, machineTarget.access?.custodian.accountId,
-            'Another person holds the target Machine for this step.');
         }
       }
       const machineCodec = machineTarget.codec;

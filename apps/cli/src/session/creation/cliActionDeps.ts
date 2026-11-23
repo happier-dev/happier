@@ -366,8 +366,6 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
                 ? { externalActionMachineInstallationId: params.externalActionMachineInstallationId } : {}),
               ...(params.externalActionMachineRequestPrivateKey
                 ? { externalActionMachineRequestPrivateKey: params.externalActionMachineRequestPrivateKey } : {}),
-              ...(params.onRequesterSessionCredentialDisclosure
-                ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
             });
             if (dispatched) return dispatched.ok ? dispatched.result : dispatched;
           } catch (error) {

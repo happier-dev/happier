@@ -552,7 +552,7 @@ it.skipIf(process.platform !== 'linux')('refuses a Can use same-Machine worker c
     input: setup.request.actionInput, requestId: setup.request.operationId, target, credentials: setup.credentials,
     serverHttpBaseUrl: setup.installed.serverHttpBaseUrl, serverIdentityId: setup.installed.homeServerIdentityId,
     authority: 'present_user', invocation: { surface: 'ui', authority: 'present_user', caller: { kind: 'host' } },
-    onRequesterSessionCredentialDisclosure: () => true });
+    });
   expect(result, JSON.stringify({ result, diagnostics: setup.rpcDiagnostics }))
     .toMatchObject({ ok: false, errorCode: 'machine_manage_required' });
   expect(setup.approvalArtifacts.size).toBe(0);
@@ -629,7 +629,7 @@ it.skipIf(process.platform !== 'linux')('retains and executes an exact-copy appr
     credentials: setup.credentials, serverHttpBaseUrl: setup.installed.serverHttpBaseUrl,
     serverIdentityId: setup.installed.homeServerIdentityId, authority: 'present_user',
     invocation: { surface: 'api', authority: 'present_user', caller: { kind: 'host' } },
-    onRequesterSessionCredentialDisclosure: () => true });
+    });
   expect(result, JSON.stringify({ result, diagnostics: setup.rpcDiagnostics }))
     .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: expect.any(String) } });
   expect(setup.approvalArtifacts.size).toBe(1);
@@ -1309,7 +1309,7 @@ it.skipIf(process.platform !== 'linux').each([
       credentials: setup.credentials, serverHttpBaseUrl: setup.installed.serverHttpBaseUrl,
       serverIdentityId: setup.installed.homeServerIdentityId, authority: 'present_user',
       invocation: { surface: 'api', authority: 'present_user', caller: { kind: 'host' } },
-      onRequesterSessionCredentialDisclosure: () => true });
+      });
   };
   const ask = asker === 'person' ? await askAsPerson() : await setup.askAsSessionAgent(setup.request);
   if (!ask.ok || !ask.result || typeof ask.result !== 'object' || !('artifactId' in ask.result)

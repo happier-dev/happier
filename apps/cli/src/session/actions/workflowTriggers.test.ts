@@ -113,7 +113,8 @@ describe('CLI workflow trigger Account codec', () => {
       } } },
     });
   });
-  it.each(['declined', 'accepted', 'write-refused'] as const)('settles shared Machine trigger custody when the save is %s', async decision => {
+  // A shared Machine receives the requester's sign-in with no consent step (owner ruling 2026-11-23).
+  it.each(['accepted', 'write-refused'] as const)('settles shared Machine trigger custody when the save is %s', async decision => {
     network.currentness.mockResolvedValue({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
     const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
     network.publishedMachine.mockResolvedValue({ row: { id: 'shared-machine', installationId: 'installation',
@@ -121,7 +122,6 @@ describe('CLI workflow trigger Account codec', () => {
       custodian: { accountId: 'machine-owner', displayName: 'Owner' },
     } }, legacyOwnerOnly: false });
     const { createCliWorkflowTriggerActions } = await import('./workflowTriggers');
-    const confirm = vi.fn(async () => decision !== 'declined');
     const token = 'fixture.' + Buffer.from(JSON.stringify({ sub: 'requester' })).toString('base64url') + '.fixture';
     const refused = Object.assign(new Error('fixture refused the write'), { status: 403 });
     if (decision === 'write-refused') network.create.mockRejectedValueOnce(refused);
@@ -142,14 +142,10 @@ describe('CLI workflow trigger Account codec', () => {
     });
     const actions = createCliWorkflowTriggerActions({ credentials: { token, encryption: null, credentialProvenance: 'stored_session' },
       resolveWorkflow: async () => ({ definition }),
-      requesterCustody: { serverId: 'home', onRequesterSessionCredentialDisclosure: confirm } });
+      requesterCustody: { serverId: 'home' } });
     const write = actions.add({ target: { kind: 'inline', definition }, project: { machineId: 'shared-machine', directory: '/work' }, trigger },
       { surface: 'cli', authority: 'present_user' });
-    if (decision === 'declined') {
-      await expect(write).rejects.toMatchObject({ code: 'requester_credential_disclosure_declined' });
-      expect(network.machineRpc).not.toHaveBeenCalled();
-      expect(network.create).not.toHaveBeenCalled();
-    } else if (decision === 'write-refused') {
+    if (decision === 'write-refused') {
       await expect(write).rejects.toBe(refused);
       const operations = network.machineRpc.mock.calls.map(([call]) => call.request.input);
       expect(operations).toEqual([
@@ -163,7 +159,6 @@ describe('CLI workflow trigger Account codec', () => {
       expect(request?.input?.automationId).toBe(admitted.set.automationId);
       expect(network.create).toHaveBeenCalledOnce();
     }
-    expect(confirm).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ accountId: 'requester', machineId: 'shared-machine' }));
   });
   it('opens real E2EE context only while the Account mode and key witness match', async () => {
     const secret = new Uint8Array(32).fill(7);

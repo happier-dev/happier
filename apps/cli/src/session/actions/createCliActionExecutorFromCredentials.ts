@@ -170,7 +170,6 @@ import { ACTION_OPERATION_CANCEL_ACTION_ID_V1 } from '@happier-dev/protocol/acti
 import { getServerProfile } from '@/server/serverProfiles';
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { readSessionMemoryEnabledV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
-import type { dispatchRequesterSessionSpawnNewRpc } from '@/session/transport/rpc/machineRpc';
 import { SessionSpawnNewActionInputV2Schema, type SessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -841,7 +840,6 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   postAgentDiscussionMessage?: Parameters<typeof createCliActionDeps>[0]['postAgentDiscussionMessage'];
   postWorkflowDiscussionMessage?: Parameters<typeof createCliActionDeps>[0]['postWorkflowDiscussionMessage'];
   workflowRequesterCustody?: Parameters<typeof createCliActionDeps>[0]['workflowRequesterCustody'];
-  onRequesterSessionCredentialDisclosure?: Parameters<typeof dispatchRequesterSessionSpawnNewRpc>[0]['onRequesterSessionCredentialDisclosure'];
   scmFilesystemAccessPolicy?: FilesystemAccessPolicy;
   /** Receives the exact dispatch boundary for Home-owned HTTP Actions. */
   onAccountServerRequestIssued?: () => void;
@@ -1265,8 +1263,6 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       credentials,
       ...(params.readCredentials ? { isCredentialCurrent: async () => sameStoredCredentials(credentials, await readCurrentCredentials()) } : {}),
       ...(prepareApprovalExecutionOriginContext ? { prepareApprovalExecutionOriginContext } : {}),
-      ...(params.onRequesterSessionCredentialDisclosure
-        ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
       ...(params.requesterSessionBootstrap ? { requesterSessionBootstrap: params.requesterSessionBootstrap } : {}),
       ...(savedSecretOperationContext ? { savedSecretOperationContext } : {}),
       ...(params.providerPreparedSavedSecret ? { providerPreparedSavedSecret: params.providerPreparedSavedSecret } : {}),
@@ -1406,7 +1402,6 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
               target: { kind: 'machine', machineId }, requestId: context?.actionRequestId ?? randomUUID(), credentials,
               serverHttpBaseUrl: approvalServerApiUrl, serverIdentityId: origin.serverIdentityId,
               invocation, authority: invocation.authority,
-              onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure,
               ...(signal ? { signal } : {}) });
           }) satisfies NonNullable<ActionExecutorDeps['targetActionApprovalReplay']> }
           : {}),
@@ -1486,7 +1481,6 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
             serverHttpBaseUrl: approvalServerApiUrl, serverIdentityId: request.executionOriginV1.serverIdentityId,
             invocation, authority: invocation.authority,
             ...(decisionAdmission === 'foreign_target_only' ? { foreignTargetOnly: true as const } : {}),
-            onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure,
             ...(signal ? { signal } : {}) });
           if (admittedDecision) return admittedDecision;
         }
@@ -2319,8 +2313,6 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
                   // incumbent own-target bridge while Home still admits foreign work.
                   ...(ordinary && localPublication && !localPublication.accountId ? { foreignTargetOnly: true as const } : {}),
                   ...(originalContext.authority ? { authority: originalContext.authority } : {}),
-                  ...(params.onRequesterSessionCredentialDisclosure
-                    ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
                   ...(requestSignal ? { signal: requestSignal } : {}) });
                 const requester = params.onApprovalRequested && accountId && context.serverIdentityId
                   ? await executeOriginalAccountCliApprovalRequest({ actionId: parsedActionId.data, requestId,

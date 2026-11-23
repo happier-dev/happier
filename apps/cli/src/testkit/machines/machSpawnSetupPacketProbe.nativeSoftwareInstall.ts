@@ -412,7 +412,6 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
       target: invocation.externalActionTarget ?? { kind: 'machine', machineId }, authority: 'present_user',
       invocation: ExternalActionRequesterInvocationV1Schema.parse({ caller: { kind: 'host' }, surface: 'ui', authority: 'present_user',
         ...(invocation.presentUserConfirmation ? { presentUserConfirmation: invocation.presentUserConfirmation } : {}) }),
-      onRequesterSessionCredentialDisclosure: () => true,
       ...(invocation.signal ? { signal: invocation.signal } : {}),
     }); } finally { recordFixturePhase(`${phase}.end`); }
   } };

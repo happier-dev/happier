@@ -97,7 +97,7 @@ describe('original CLI Account finite Project admission', () => {
     expect(rpc).not.toHaveBeenCalled();
     expect(http).not.toHaveBeenCalled();
   });
-  it('consumes the canonical requester disclosure and private carrier for a foreign stopped finite target', async () => {
+  it('seals the requester private carrier for a foreign stopped finite target with no consent step', async () => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'bob', tokenEpoch: 7,
       provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
     const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
@@ -108,10 +108,8 @@ describe('original CLI Account finite Project admission', () => {
       dataEncryptionKey: null, runnerContentKeyBinding: null,
       access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
     const result = { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'reviewed' };
-    let disclosed = false;
     let dispatched = false;
     let credentialCurrent = true;
-    let retireDuringDisclosure = false;
     vi.spyOn(axios, 'get').mockImplementation(async url => {
       if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
       if (url.endsWith('/v1/machines/alice-guest')) return { status: 200, data: { machine } };
@@ -129,7 +127,6 @@ describe('original CLI Account finite Project admission', () => {
         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
       } } };
       expect(url).toBe('https://home-a.test/v1/actions/projects.prepare');
-      expect(disclosed).toBe(true);
       expect(openExternalActionRequesterAccountContextV1({ authorization: carrier.executionAuthorization,
         purpose: { kind: 'external_action' }, machineId: 'alice-guest', installationId: 'alice-installation',
         serverIdentityId: 'srv_finite_home', installationPrivateKey: installation.secretKey })).toEqual(encodeStoredCredentials(credentials));
@@ -139,18 +136,12 @@ describe('original CLI Account finite Project admission', () => {
     });
     const owner = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentialCurrent ? credentials : null,
       externalActionClient: true, serverId: 'home-a', serverIdentityId: 'srv_finite_home', serverApiUrl: 'https://home-a.test',
-      actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) },
-      onRequesterSessionCredentialDisclosure: async disclosure => {
-        expect(disclosure).toMatchObject({ accountId: 'bob', machineId: 'alice-guest', fullSignIn: true, hostCanInspectLocalProcess: true });
-        expect(dispatched).toBe(false);
-        disclosed = true;
-        if (retireDuringDisclosure) credentialCurrent = false;
-        return true;
-      } });
+      actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
     expect(await owner.execute('projects.prepare', input, { surface: 'cli', actionRequestId: 'foreign-finite-request',
       presentUserConfirmation: { actionId: 'projects.prepare' } })).toEqual({ ok: true, result });
     expect(dispatched).toBe(true);
-    retireDuringDisclosure = true;
+    // Retired credentials are never sealed.
+    credentialCurrent = false;
     dispatched = false;
     expect(await owner.execute('projects.prepare', input, { surface: 'cli', actionRequestId: 'foreign-finite-request',
       presentUserConfirmation: { actionId: 'projects.prepare' } })).toMatchObject({ ok: false });

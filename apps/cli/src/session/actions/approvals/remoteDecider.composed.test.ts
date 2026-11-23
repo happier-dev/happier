@@ -391,7 +391,6 @@ describe('remote person approval through credentialed CLI and registered daemon 
       });
       const executor = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
         serverId, serverIdentityId: 'srv_home', serverApiUrl: 'https://approval.test',
-        onRequesterSessionCredentialDisclosure: async () => true,
         machineId: 'controller-machine', ...(externalActionClient ? { externalActionClient: true } : {}),
       });
       const decide = () => executor.execute('approval.request.decide', { artifactId: 'approval', decision }, {

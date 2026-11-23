@@ -419,12 +419,9 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                 console.info('F14 native private network', { provider: privateNetwork.provider, state: privateNetwork.state,
                     scope: 'existing host network; collector App and workload share this hosting Machine',
                     networkIdentityPresent: Boolean(privateNetwork.networkIdentity), addresses: privateNetwork.addresses.length });
-                const createExecutor = (actorCredentials: typeof credentials, machineId?: string, disclosureAccountId?: string) => createCliActionExecutorFromCredentials({
+                const createExecutor = (actorCredentials: typeof credentials, machineId?: string) => createCliActionExecutorFromCredentials({
                     credentials: actorCredentials, readCredentials: async () => actorCredentials, externalActionClient: true,
                     ...(machineId ? { machineId } : {}), serverId: home.serverId, serverIdentityId: home.serverId, serverApiUrl: home.baseUrl,
-                    ...(disclosureAccountId ? { onRequesterSessionCredentialDisclosure: disclosure =>
-                        disclosure.accountId === disclosureAccountId && disclosure.machineId === home.machineId
-                        && (disclosure.custodian === undefined || disclosure.custodian.accountId === home.accountId) } : {}),
                 });
                 const invokeLocal = createInvoke(createExecutor(credentials, home.machineId), home.serverId, home.accountId);
                 const invokeTargeted = createInvoke(createExecutor(credentials), home.serverId, home.accountId);
@@ -446,7 +443,7 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                     if (!result.ok) throw new Error(`${name}: ${result.errorCode}`);
                     return result.result;
                 };
-                const createReader = async (options?: Readonly<{ consentToFixtureHost: boolean }>) => {
+                const createReader = async () => {
                     const keys = encryptionMode === 'e2ee' ? nacl.box.keyPair() : null;
                     const account = await db.account.create({ data: { encryptionMode,
                         ...(keys ? createSignedAccountContentBinding(keys.publicKey) : {}) } });
@@ -454,8 +451,7 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                     const readerCredentials = readS0ControllerCredentials({ ...home, token,
                         encryption: keys ? { type: 'dataKey', machineKey: new Uint8Array(keys.secretKey),
                             publicKey: new Uint8Array(keys.publicKey) } : null });
-                    const invokeReader = createInvoke(createExecutor(readerCredentials, undefined,
-                        options?.consentToFixtureHost ? account.id : undefined), home.serverId, account.id);
+                    const invokeReader = createInvoke(createExecutor(readerCredentials), home.serverId, account.id);
                     const invokeSettled: Invoke = async (name, input, machineId) =>
                         support.settlePublicApproval(invokeReader, await invokeReader(name, input, machineId));
                     const acceptedReader = async (name: string, input: unknown, machineId?: string) => {
@@ -808,7 +804,7 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                     source: captureSource, page: { limit: 6 } }, home.machineId);
                 if (denied.ok) expect(DatabaseCaptureQueriesListResultV1Schema.parse(denied.result).ok).toBe(false);
                 else expect(denied.effectAttempted).not.toBe(true);
-                const collectorOperator = await createReader({ consentToFixtureHost: true });
+                const collectorOperator = await createReader();
                 const operatorTeam = await db.team.create({ data: { name: 'F14 collector operators' } });
                 await db.teamMembership.createMany({ data: [
                     { teamId: operatorTeam.id, accountId: home.accountId, role: 'owner' },

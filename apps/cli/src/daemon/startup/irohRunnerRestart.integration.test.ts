@@ -240,7 +240,7 @@ it.skipIf(process.env.HAPPIER_RUN_HOME_IROH_REAL_INTEGRATION !== '1')('retains a
         serverIdentityId: boundHome.homeId, authority: 'present_user',
         invocation: { caller: { kind: 'host' }, surface: 'ui', authority: 'present_user',
           ...(presentUserConfirmation ? { presentUserConfirmation } : {}) },
-        onRequesterSessionCredentialDisclosure: () => true, signal: lifetime.signal });
+        signal: lifetime.signal });
     const reviewed = await send(input);
     if (reviewed?.ok !== false || reviewed.errorCode !== 'action_interactive_review_required') return reviewed;
     // The fixture is the present user's affirmative choice for this exact

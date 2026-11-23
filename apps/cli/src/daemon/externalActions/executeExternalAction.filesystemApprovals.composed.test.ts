@@ -1598,7 +1598,9 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
         selection: { kind: 'named', name: 'lint' }, choice: { kind: 'workers', destination: { kind: 'machine', machineId: h.workerRef.machineId } } },
         'ui', false, 'present_user');
       if (reason === 'foreign Source Account') {
-        expect(result).toMatchObject({ ok: false, errorCode: 'requester_credential_disclosure_required' });
+        // Another person's Machine is no longer refused for disclosure (owner ruling 2026-11-23); this
+        // fixture's foreign Source stays unadmitted, so nothing is copied.
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
         expect(h.copies()).toBe(0);
       } else {
         expect(result).toMatchObject({ ok: true });

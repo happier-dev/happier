@@ -115,7 +115,7 @@ export function createCliMachineActionServerScopeCurrent(
 }
 
 export function createCliMachineActionTransport(
-  params: Pick<CliActionDepsParams, 'credentials' | 'serverId' | 'serverIdentityId' | 'serverHttpBaseUrl' | 'machineActionDirectTargetTransport' | 'externalActionMachineRequestPrivateKey' | 'externalActionMachineInstallationId' | 'onRequesterSessionCredentialDisclosure'>,
+  params: Pick<CliActionDepsParams, 'credentials' | 'serverId' | 'serverIdentityId' | 'serverHttpBaseUrl' | 'machineActionDirectTargetTransport' | 'externalActionMachineRequestPrivateKey' | 'externalActionMachineInstallationId'>,
 ): Readonly<{ callMachineAction: CliMachineActionCall; dispatchOriginalAccountMachineAction: CliOriginalAccountMachineActionDispatch;
   isMachineActionServerScopeCurrent: CliMachineActionServerScopeCurrent }> {
   const isMachineActionServerScopeCurrent = createCliMachineActionServerScopeCurrent(params);
@@ -146,8 +146,6 @@ export function createCliMachineActionTransport(
       requestId: context.actionRequestId, target,
       credentials: params.credentials, serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
       ...(serverIdentityId ? { serverIdentityId } : {}), authority: invocation.authority, invocation,
-      ...(params.onRequesterSessionCredentialDisclosure
-        ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
       ...(input.signal ? { signal: input.signal } : {}) });
   };
   // Resource handlers require current Machine admission even on this daemon.

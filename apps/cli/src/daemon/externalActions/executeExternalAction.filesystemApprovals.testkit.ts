@@ -1499,7 +1499,6 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
         serverId: options?.serverId ?? 'srv_n2', serverApiUrl: params.serverHttpBaseUrl,
         serverIdentityId: homeId, machineId: target.machineId, externalActionClient: true, actionsSettingsProvider: originalCliSettings,
         readCredentials: async () => cliCredentials,
-        ...(cliPolicy?.machineCustodianAccountId ? { onRequesterSessionCredentialDisclosure: async () => true } : {}),
       }).execute(requestedActionId, input, { surface: 'cli', authority: options?.authority ?? 'account_automation' });
     },
     readTerminalAs: (terminalId: string, actorAccountId: string) => rpc.handleRequest({
@@ -1819,7 +1818,6 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
                 const decided = await createCliActionExecutorFromCredentials({ credentials, serverId: 'srv_n2',
                   serverApiUrl: params.serverHttpBaseUrl, serverIdentityId: homeId, machineId: ref.machineId,
                   actionsSettingsProvider: settings, readCredentials: async () => credentials,
-                  onRequesterSessionCredentialDisclosure: () => true,
                 }).execute('approval.request.decide', { artifactId: artifactId(), decision: options.cancelRequiredChild ? 'cancel' : 'approve' }, {
                   surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, actionRequestId: randomUUID(),
                 });
@@ -1947,7 +1945,6 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       return createCliActionExecutorFromCredentials({ credentials: reviewerCredentials,
         serverId: 'srv_n2', serverApiUrl: params.serverHttpBaseUrl, machineId: target.machineId,
         externalActionClient: true, actionsSettingsProvider: settings, readCredentials: async () => reviewerCredentials,
-        ...(cliPolicy?.machineCustodianAccountId ? { onRequesterSessionCredentialDisclosure: async () => true } : {}),
       }).execute('approval.request.decide', { artifactId: artifactId(), decision, serverIdentityId: homeId },
         { surface: 'cli', authority });
     },
@@ -1956,7 +1953,6 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       return createCliActionExecutorFromCredentials({ credentials: reviewerCredentials,
       serverId: 'srv_n2', serverApiUrl: params.serverHttpBaseUrl, machineId: target.machineId,
       externalActionClient: true, actionsSettingsProvider: settings, readCredentials: async () => reviewerCredentials,
-      ...(cliPolicy?.machineCustodianAccountId ? { onRequesterSessionCredentialDisclosure: async () => true } : {}),
     }).execute('approval.request.decide', { artifactId: artifactId(), decision: 'approve', serverIdentityId: homeId },
       { surface: 'cli', authority: 'present_user' });
     },
