@@ -951,7 +951,8 @@ describe('canonical Session creation admission', () => {
     fetchAccountEncryptionCurrentness.mockResolvedValue({ mode: 'plain', version: 1,
       signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
       recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } });
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json(FeaturesResponseSchema.parse({ features: {},
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(FeaturesResponseSchema.parse({
+      features: { sharing: { session: { enabled: true } } },
       capabilities: { encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' } } }))));
     vi.mocked(axios.get).mockImplementation(async url => {
       if (String(url).endsWith('/v1/account/entity-rows/connected-accounts/purposes')) return { status: 200,
@@ -967,6 +968,8 @@ describe('canonical Session creation admission', () => {
         data: createAccountEncryptionCurrentnessFixture({ settingsVersion: 1 }) };
       if (String(url).endsWith('/v1/machines/machine-1')) return { status: 200, data: { machine: {
         ...machineSnapshot,
+        installationId: 'installation-1',
+        installationPublicKey: Buffer.from(signing.publicKey).toString('base64'),
         operationProtocolCapabilities: { sessionSpawn: { protocolVersions: [1, 2, 3, 4] } },
         operationProtocolCapabilitiesRevision: 1,
       } } };
@@ -1050,16 +1053,16 @@ describe('canonical Session creation admission', () => {
       expect(spawn).not.toHaveBeenCalled();
       return;
     }
-    expect(execution, JSON.stringify(execution)).toMatchObject({ ok: true });
-    if (!execution.ok) throw new Error('Managed Template child execution was refused');
-    const result = SessionSpawnNewResultV1Schema.parse(execution.result);
     if (targetReply === 'incompatible') {
-      expect(result).toEqual({ type: 'error', code: 'incompatible_target', retryable: false,
-        incompatibleTarget: { reason: 'target_preparation_invalid_result' } });
+      expect(execution).toMatchObject({ ok: false, errorCode: 'incompatible_target',
+        details: { type: 'error', code: 'incompatible_target', retryable: false,
+          incompatibleTarget: { reason: 'target_preparation_invalid_result' } } });
       expect(birthTriggers).toBeUndefined();
       expect(spawn).not.toHaveBeenCalled();
       return;
     }
+    expect(execution, JSON.stringify(execution)).toMatchObject({ ok: true });
+    if (!execution.ok) throw new Error('Managed Template child execution was refused');
     // The failure before the fix is an absent birth transaction: the canonical
     // Workflow recipe parser rejects the missing managed directory first.
     expect(Array.isArray(birthTriggers)).toBe(true);

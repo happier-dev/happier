@@ -89,8 +89,12 @@ it('previews the member page from the same Team reads, with nothing to run and a
     <TeamSetupScreen serverId={serverId} teamId={team.id} preview />
   </TeamSetupPlanProvider>);
   try {
-    await waitForHomeGovernance(() =>
-      expect(screen.findByTestId('team-setup-repository:source-web'), screen.getTextContent()).not.toBeNull());
+    await waitForHomeGovernance(() => {
+      const sourceRequests = homes.requests.filter(request => request.path.startsWith('/v1/projects/sources?'));
+      expect(sourceRequests.some(request => new URL(request.path, 'https://setup-preview.example.test')
+        .searchParams.get('sharedWithTeamId') === team.id), JSON.stringify(homes.requests.map(request => request.path))).toBe(true);
+      expect(screen.findByTestId('team-setup-repository:source-web'), screen.getTextContent()).not.toBeNull();
+    });
     const text = screen.getTextContent();
     expect(screen.findByTestId('team-setup-repository:source-group')).toBeNull();
     expect(screen.findByTestId('team-setup-preview-audience')).not.toBeNull();
