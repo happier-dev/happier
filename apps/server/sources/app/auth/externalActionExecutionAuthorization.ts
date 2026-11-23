@@ -2857,6 +2857,8 @@ function isProjectAccountMetadataHttpPurpose(verified: VerifiedExternalActionExe
     // This read has exact signed selectors; its purpose owner below must bind
     // those operands before the Account row-family transport can admit it.
     if (actionId === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1) return false;
+    // Removal reviews the requester's accepted Setup before teardown; Artifact ACLs still own access.
+    if (isProjectCheckoutRemovalActionIdV1(actionId)) return readArtifactGetHttpPurpose(proof) !== null;
     const url = new URL(proof.path, 'http://home.invalid');
     const method = proof.method.toUpperCase();
     if (MACHINE_TERMINAL_ACTION_IDS.some(id => id === actionId)) {

@@ -3367,7 +3367,7 @@ describe("external Action execution authorization", () => {
             v: 1, requestId: crypto.randomUUID(), target: { kind: 'machine', machineId: machine.id },
             input: { cwd: '/repo', worktreePath: '/repo/linked', confirmed: true, authorizationToken: SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN },
         });
-        const { app } = await createApp('unrelated-team-route');
+        const { app } = await createApp('unrelated-team-route', false, undefined, undefined, false, artifactsRoutes);
         try {
             const bearer = (value: string) => ({ authorization: `Bearer ${value}` });
             const issue = (root: typeof actionId | 'projects.prepare', input: unknown, requesterToken = token) => app.inject({
@@ -3410,6 +3410,33 @@ describe("external Action execution authorization", () => {
                 effectActionId: actionId, method: 'POST', path: readPath, body, reviewedChild: child,
             });
             if (!exactHeaders) throw new Error('Expected installed requester HTTP proof');
+            // Removal reviews the accepted Setup before teardown, using the unchanged root.
+            const createSetup = async (actorUserId: string) => {
+                const artifact = await createArtifact({ actorUserId, artifactId: crypto.randomUUID(),
+                    header: decodeBase64(encodePlainArtifactStoredContent({ kind: 'project_setup.v1', title: 'Accepted Setup' })),
+                    body: decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify({ kind: 'project_setup.v1' }) })),
+                    dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+                if (!artifact.ok) throw new Error(artifact.error);
+                return artifact.artifact.id;
+            };
+            const acceptedSetupId = await createSetup(account.id);
+            const foreignSetupId = await createSetup(other.id);
+            const setupPath = (id: string) => `/v1/artifacts/${encodeURIComponent(id)}`;
+            const setupHeaders = async (path: string) => {
+                const headers = await projected?.requesterHttpProjection?.createRequestHeaders({ effectActionId: actionId,
+                    method: 'GET', path });
+                if (!headers) throw new Error('Expected installed requester Setup read proof');
+                return headers;
+            };
+            const acceptedPath = setupPath(acceptedSetupId);
+            const acceptedHeaders = await setupHeaders(acceptedPath);
+            const acceptedRead = await app.inject({ method: 'GET', url: acceptedPath, headers: acceptedHeaders });
+            expect.soft(acceptedRead.statusCode, acceptedRead.body).toBe(200);
+            const foreignPath = setupPath(foreignSetupId);
+            expect.soft((await app.inject({ method: 'GET', url: foreignPath, headers: await setupHeaders(foreignPath) })).statusCode,
+                'the signed requester cannot read another Account’s Setup').toBe(404);
+            expect.soft((await app.inject({ method: 'GET', url: foreignPath, headers: acceptedHeaders })).statusCode,
+                'the installation proof binds the exact Artifact path').toBe(401);
             for (const read of [await send(readPath, body, exactHeaders), await send(readPath, body, exactHeaders)]) {
                 expect.soft(read.statusCode, read.body).toBe(200);
                 if (read.statusCode === 200) expect(ProjectTrustReadResponseV1Schema.parse(read.json()))
