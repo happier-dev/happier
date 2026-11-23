@@ -9,7 +9,7 @@ import { createSessionListSourceFixture } from '@/dev/testkit/harness/sessionRea
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { createPlainSessionCurrentProjectionRecordFixture, createSessionFixture, createSessionListRenderableSessionFixture, createSessionOwnerViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { publishMachineActivityForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { createRenderCommitCounter, createRootLayoutFeaturesResponse, renderScreen, useRenderCommitCounter } from '@/dev/testkit';
@@ -21,6 +21,7 @@ import { ARTIFACT_LIST_PATH, AUTOMATION_QUERY_PATH, RUN_STORAGE_PATH, boardDefin
 import type { BoardHomes } from './useBoardContent';
 
 const harness = installBoardLibraryTestHarness();
+const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
 const { readSessionStatusNextRefreshAtMs } = await import('@/utils/sessions/sessionUtils');
 const { sessionListRuntimeClock } = await import('@/hooks/session/sessionListRuntimeClock');
 const { workflowRunRowFromSummary, workflowRunStoreKey } = await import('@/sync/store/domains/workflowRuns');
@@ -126,7 +127,7 @@ describe('Board shared Run filter membership', () => {
             expect(hook.getCurrent().map(card => card.title)).toContain('Secret invoices');
         } finally { await hook.unmount(); setScreenSharingPrivacyActive(false); }
     });
-    it('settles answered Run filter unknowns with incompleteness instead of treating them as misses', async () => {
+    it('keeps Run membership when a saved list filter contains a retired extension', async () => {
         const pending = createDeferred<void>();
         onTestFinished(() => pending.resolve());
         runAnswer.mockReturnValue({ body: await boardRunStoragePage([
@@ -141,8 +142,8 @@ describe('Board shared Run filter membership', () => {
         expect(hook.getCurrent().settled).toBe(false);
         await act(async () => { pending.resolve(); await pending.promise; });
         await waitForHomeGovernance(() => expect(hook.getCurrent().settled).toBe(true));
-        expect(hook.getCurrent()).toMatchObject({ members: [], complete: false, undetermined: { count: 2,
-            reasons: [{ kind: 'workflow_run', reason: 'filter_facts_unavailable', count: 2 }] } });
+        expect(hook.getCurrent()).toMatchObject({ complete: true, undetermined: { count: 0, reasons: [] } });
+        expect(hook.getCurrent().members.map(member => member.ref.qualifiedId.id).sort()).toEqual(['other-run', 'unknown-run']);
     });
     it.each([false, true])('settles an unlisted visible Session by exact read, without paging its Home (exists: %s)', async exists => {
         const serverId = homes.activeServerId!;
@@ -475,7 +476,7 @@ describe('Board shared Run filter membership', () => {
         const machine = createMachineFixture({ id: 'recovering-machine', active: true, activeAt: Date.now() });
         const serverId = homes.activeServerId!;
         storage.setState({ machineListByServerId: { [serverId]: [machine] } });
-        observeMachinePresenceForTest({ serverId, accountId: 'account-a' }, [machine.id]);
+        publishMachineActivityForTest([machine]);
         const ref = { kind: 'machine' as const, qualifiedId: { serverId, id: machine.id } };
         const membership = { members: [{ key: buildWorkBoardItemKeyV1(ref), ref, picked: true, sourced: false, available: true }], complete: true };
         const hook = await renderHook(() => useBoardCards(membership, homes));
@@ -525,7 +526,7 @@ describe('Board shared Run filter membership', () => {
         expect(hook.getCurrent()[0]?.status.bucket).toBe('needs_you');
     });
 
-    it('keeps My machines own-only without hiding an unreadable owned Machine', async () => {
+    it('includes a ready shared Machine without hiding an unreadable owned Machine', async () => {
         const owned = createMachineFixture({ id: 'owned', availability: {
             kind: 'locked', reason: 'encryption_material_unavailable',
         } });
@@ -537,11 +538,14 @@ describe('Board shared Run filter membership', () => {
         const base = createWorkBoardV1({ id: 'my-machines', name: 'My machines' });
         const board = { ...base, source: { ...base.source, sections: ['my_machines' as const] } };
         const hook = await renderHook(() => useBoardMembership(board, homes));
-        expect(hook.getCurrent().members.map(member => member.ref.qualifiedId.id)).toEqual(['owned']);
+        expect(hook.getCurrent().members.map(member => member.ref.qualifiedId.id)).toEqual(['owned', 'shared']);
     });
 
     it('refreshes exclude-only Session filter membership at its canonical freshness deadline without store writes', async () => {
-        const serverId = homes.activeServerId!;
+        const serverId = resolveServerProfileScopeIdForIdentifier(homes.activeServerId);
+        const mountedHomes: BoardHomes = {
+            activeServerId: serverId, mountedServerIds: [serverId], isHomeMounted: id => id === serverId,
+        };
         const features = createRootLayoutFeaturesResponse({ features: {
             sessions: { enabled: true, filteredListing: { enabled: true } },
         } });
@@ -549,23 +553,25 @@ describe('Board shared Run filter membership', () => {
         harness.home.answer(serverId, '/v1/features/authenticated', { body: features });
         const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
         await getServerFeaturesSnapshot({ serverId, force: true });
-        vi.useFakeTimers({ now: Date.now() });
-        const session = createSessionFixture({ id: 'excluded-stale-session', active: true, activeAt: Date.now() });
-        harness.home.answer(serverId, '/v2/sessions/query', { body: createSessionListSourceFixture({
+        const session = createSessionFixture({ id: 'excluded-waiting-session', active: true, activeAt: Date.now() });
+        const listing = createSessionListSourceFixture({
             sessions: [{ ...createPlainSessionCurrentProjectionRecordFixture({ id: session.id,
                 active: session.active, activeAt: session.activeAt }), viewer: createSessionOwnerViewerFixture(session) }],
             nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
-        }) });
+        });
+        harness.home.answer(serverId, '/v2/sessions', { body: listing });
+        harness.home.answer(serverId, '/v2/sessions/query', { body: listing });
         const filter = normalizeSessionListFilterV1({ show: 'sessions', scope: 'all_accessible',
-            homeServerIds: [serverId], excludedStatuses: ['stale', 'disconnected'] });
+            homeServerIds: [serverId], excludedStatuses: ['waiting'] });
         const board = { ...createWorkBoardV1({ id: 'exclude-stale', name: 'Current Sessions' }), source: { picked: [], filter } };
-        const hook = await renderHook(() => useBoardMembership(board, homes));
-        await waitForHomeGovernance(async () => {
-            await act(async () => {});
+        const hook = await renderHook(() => useBoardMembership(board, mountedHomes));
+        await waitForHomeGovernance(() => {
+            expect(harness.home.requestsFor('/v2/sessions/query')).not.toHaveLength(0);
             expect(hook.getCurrent().settled).toBe(true);
         });
-        // The query proves membership; an actual runtime arrival supplies the live observation
-        // that can expire. A list-only HTTP row intentionally carries no live presence proof.
+        vi.useFakeTimers({ now: Date.now() });
+        // An online Session keeps its presence when the thinking observation expires.
+        // The resulting idle state is now excluded by the Board filter.
         act(() => { storage.getState().applyServerScopedSessionListRows(serverId, [
             createSessionListRenderableSessionFixture({ id: session.id, active: true, activeAt: Date.now(),
                 thinking: true, thinkingAt: Date.now(), presence: 'online' }),
@@ -590,13 +596,12 @@ describe('Board shared Run filter membership', () => {
             metadata: { path: '/repo', host: 'test', homeDir: '/home/test', machineId: 'expiring-machine' } });
         const waiting = createSessionListRenderableSessionFixture({ id: 'waiting-session', active: true,
             activeAt: Date.now(), hasPendingPermissionRequests: true, pendingRequestObservedAt: Date.now() });
-        const machine = createMachineFixture({ id: 'expiring-machine', activeAt: Date.now() });
-        storage.setState({ sessionListRowsByServerId: { [homes.activeServerId!]: { [row.id]: row, [waiting.id]: waiting } },
-            machineListByServerId: { [homes.activeServerId!]: [machine] } });
-        observeMachinePresenceForTest({ serverId: homes.activeServerId!, accountId: 'account-a' }, [machine.id]);
+        const machine = createMachineFixture({ id: 'expiring-machine', activeAt: Date.now(), presenceProtocolVersion: 1 });
+        storage.setState({ sessionListRowsByServerId: { [homes.activeServerId!]: { [row.id]: row, [waiting.id]: waiting } } });
+        await publishMachineInventoryForTest({ serverId: homes.activeServerId!, accountId: 'account-a' }, [machine]);
         const members = [
             { kind: 'session', qualifiedId: { serverId: homes.activeServerId!, id: row.id } } as const,
-            { kind: 'machine', qualifiedId: { serverId: homes.activeServerId!, id: machine.id } } as const,
+            { kind: 'machine', qualifiedId: { serverId: resolveServerProfileScopeIdForIdentifier(homes.activeServerId), id: machine.id } } as const,
             { kind: 'session', qualifiedId: { serverId: homes.activeServerId!, id: waiting.id } } as const,
         ].map(ref => ({ key: buildWorkBoardItemKeyV1(ref), ref, picked: true, sourced: false, available: true }));
         const membership = { members, complete: true };
@@ -619,9 +624,8 @@ describe('Board shared Run filter membership', () => {
     it('removes Board deadline demand while inactive and refreshes on focus', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(100_000);
-        const machine = createMachineFixture({ id: 'inactive-machine', activeAt: Date.now() });
-        storage.setState({ machineListByServerId: { [homes.activeServerId!]: [machine] } });
-        observeMachinePresenceForTest({ serverId: homes.activeServerId!, accountId: 'account-a' }, [machine.id]);
+        const machine = createMachineFixture({ id: 'inactive-machine', activeAt: Date.now(), presenceProtocolVersion: 1 });
+        await publishMachineInventoryForTest({ serverId: homes.activeServerId!, accountId: 'account-a' }, [machine]);
         const ref = { kind: 'machine', qualifiedId: { serverId: homes.activeServerId!, id: machine.id } } as const;
         const membership = { members: [{ key: buildWorkBoardItemKeyV1(ref), ref, picked: true, sourced: false, available: true }], complete: true };
         let renders = 0;
@@ -678,10 +682,10 @@ describe('Board shared Run filter membership', () => {
         const machine = createMachineFixture({ id: 'counted-machine', activeAt: Date.now() });
         storage.setState({ sessionListRowsByServerId: { [homes.activeServerId!]: rows }, workflowRunsById: runs,
             machineListByServerId: { [homes.activeServerId!]: [machine] } });
-        observeMachinePresenceForTest({ serverId: homes.activeServerId!, accountId: 'account-a' }, [machine.id]);
+        publishMachineActivityForTest([machine]);
         const members = [...Object.keys(rows).map(id => ({ kind: 'session', qualifiedId: { serverId: homes.activeServerId!, id } } as const)),
             ...Object.keys(runs).map(id => ({ kind: 'workflow_run', qualifiedId: { serverId: homes.activeServerId!, id } } as const)),
-            { kind: 'machine', qualifiedId: { serverId: homes.activeServerId!, id: machine.id } } as const]
+            { kind: 'machine', qualifiedId: { serverId: resolveServerProfileScopeIdForIdentifier(homes.activeServerId), id: machine.id } } as const]
             .map(ref => ({ key: buildWorkBoardItemKeyV1(ref), ref, picked: true, sourced: false, available: true }));
         const membership = { members, complete: true };
         const counters = new Map(members.map(member => [member.key, createRenderCommitCounter()]));

@@ -84,6 +84,7 @@ import {
     rehydrateCanonicalProtocolComposableSchema,
 } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import {
+    PLUGIN_UI_HOST_API_VERSION_V1,
     PLUGIN_UI_HOST_METHODS_V1,
     isPluginUiHostMethodSupportedInVersionV1,
     buildPluginHostedWebStaticAssetPreviewId,
@@ -9384,7 +9385,7 @@ describe('PluginSurfacePlacementHost', () => {
         }));
         const accountADataClient = props.privateHostBindings?.dataClient;
         expect(props.renderContext?.hostApi.version()).toMatchObject({
-            apiVersion: '1.1.0',
+            apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
             wireVersion: 1,
             // Resource methods also serve admitted Account hostRead references.
             // Their presence is not a grant for a daemon's declared Resource.

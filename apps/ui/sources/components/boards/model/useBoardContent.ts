@@ -28,7 +28,7 @@ import { compileSessionListRowLocalFilter, compileWorkflowRunSessionListFilter, 
 import { getStorage, useWorkspaceRefs, useActiveServerAccountScope, useActiveServerAccountScopeLifetime, useSessionListRowsByServerId, useWorkflowRunRows, useMachineListByServerId } from '@/sync/domains/state/storage';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { subscribeMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
 import { readSessionStatusNextRefreshAtMs } from '@/utils/sessions/sessionUtils';
 import { resolveMachineDestinationPurposeEligibility } from '@/components/sessions/new/components/machineSelection/buildMachineDestinationModel';
 import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
@@ -626,11 +626,9 @@ function useBoardFacts(membership: BoardMembership, homes: BoardHomes, enabled =
         if (hasMachines) take(machineSessionProjection.read(nowMs).refreshAt);
         return next;
     }, [machineSessions, machineSessionProjection, hasMachines, sessionSources]);
-    const subscribeMachineDeadlineChanges = React.useCallback((listener: () => void) => {
-        const stops = machines.flatMap(machine => machine ? [subscribeMachineActivity(machine, listener)] : []);
-        return () => { for (const stop of stops) stop(); };
-    }, [machines]);
-    const runtimeNowMs = useSessionListRuntimeDeadlineNowMs(readNextRefreshAtMs, readsRuntimeTime, undefined, subscribeMachineDeadlineChanges);
+    const observedMachines = React.useMemo(() => machines.filter(machine => machine !== null), [machines]);
+    const presenceNowMs = useMachinePresenceNowMs(observedMachines);
+    const runtimeNowMs = useSessionListRuntimeDeadlineNowMs(readNextRefreshAtMs, readsRuntimeTime);
     const machineCounts = machineSessionProjection.read(Math.max(runtimeNowMs, Date.now())).counts;
     const machineScope = React.useCallback((serverId: string) => {
         const binding = machineScopeBindings.get(resolveServerProfileScopeIdForIdentifier(serverId));
@@ -646,12 +644,12 @@ function useBoardFacts(membership: BoardMembership, homes: BoardHomes, enabled =
             const scope = machineScope(member.ref.qualifiedId.serverId);
             const machine = machines[index];
             if (!scope || !machine) return;
-            const reachability = resolveMachineReachability(scope, machine, Math.max(runtimeNowMs, Date.now()));
+            const reachability = resolveMachineReachability(scope, machine, Math.max(presenceNowMs, Date.now()));
             targets.set(member.key, { scope, machineId: machine.id,
                 online: reachability === 'unknown' ? null : reachability === 'reachable' });
         });
         return targets;
-    }, [readMachineWork, members, machineMembers, machines, machineScope, reachabilityRevision, runtimeNowMs]);
+    }, [readMachineWork, members, machineMembers, machines, machineScope, reachabilityRevision, presenceNowMs]);
     const workTargets = React.useMemo(() => [...workTargetsByKey.values()], [workTargetsByKey]);
     const workSummaries = useMachineWorkSummaries(workTargets);
     const sessionContext = React.useMemo(() => ({}), [lifetime, sessionRefs, homes.activeServerId]);
@@ -693,7 +691,7 @@ function useBoardFacts(membership: BoardMembership, homes: BoardHomes, enabled =
     const facts = React.useMemo(() => {
         // A source update or refocus can arrive after an idle clock observation. Never project
         // new facts into the past; deadline wakes themselves use the shared owner's instant.
-        const nowMs = Math.max(runtimeNowMs, Date.now());
+        const nowMs = Math.max(runtimeNowMs, presenceNowMs, Date.now());
         const runById = new Map(runRows.map((row) => [row.id, row] as const));
         const machineByKey = new Map(machineMembers.map((member, index) => [member.key, machines[index] ?? null] as const));
         const missingReasons = new Map<string, string>();
@@ -743,7 +741,7 @@ function useBoardFacts(membership: BoardMembership, homes: BoardHomes, enabled =
             },
         };
         return facts;
-    }, [machineCounts, sessionContext, runContext, machineContext, workflowContext, homes.activeServerId, machineScope, machineMembers, machines, machineSourceStates, workTargetsByKey, workSummaries.states, machinesByEnrolledMachineIdByServerId, membership.taskItems, reachabilityRevision, runRows, runWindow.status, runWindow.failure, runWindow.hasMore, runWindow.loadMoreFailed, runtimeNowMs, sessionSources, workflowById, library.status, library.failure, library.hasMore, library.loadMoreFailed, library.deletedDefinitionId]);
+    }, [machineCounts, sessionContext, runContext, machineContext, workflowContext, homes.activeServerId, machineScope, machineMembers, machines, machineSourceStates, workTargetsByKey, workSummaries.states, machinesByEnrolledMachineIdByServerId, membership.taskItems, reachabilityRevision, runRows, runWindow.status, runWindow.failure, runWindow.hasMore, runWindow.loadMoreFailed, runtimeNowMs, presenceNowMs, sessionSources, workflowById, library.status, library.failure, library.hasMore, library.loadMoreFailed, library.deletedDefinitionId]);
     return facts;
 }
 

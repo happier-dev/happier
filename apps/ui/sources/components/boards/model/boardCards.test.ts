@@ -11,7 +11,7 @@ vi.mock('@/text', async () => {
 });
 
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createWorkflowRunSummaryFixture, createWorkflowRunRecentSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { workflowRunRowFromSummary } from '@/sync/store/domains/workflowRuns';
@@ -31,7 +31,7 @@ import {
 } from './boardCards';
 import type { BoardMember } from './boardMembership';
 import { readSessionStatusNextRefreshAtMs } from '@/utils/sessions/sessionUtils';
-import { clearMachineRequestReachabilityForTest, recordMachineRequestFailed, recordMachineRequestSucceeded, withdrawMachinePresenceForScope, captureMachinePresenceObservation } from '@/sync/domains/machines/reachability/machineReachability';
+import { clearMachineRequestReachabilityForTest, recordMachineRequestFailed, recordMachineRequestSucceeded, withdrawMachinePresenceForScope } from '@/sync/domains/machines/reachability/machineReachability';
 import { adoptHomeProfile, areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { createBoardSessionSourceProjection, readBoardMachineSourceState, readBoardPagedEntitySourceState, readBoardSessionSourceState, shouldLoadNextBoardEntityPage } from './boardEntityBinding';
 
@@ -87,7 +87,7 @@ describe('board cards', () => {
         const ref = { kind: 'machine', qualifiedId: { serverId: 'home-a', id: 'mbp' } } as const;
         const machine = createMachineFixture({ id: 'mbp', active: true, activeAt: NOW });
         const scope = { serverId: 'home-a', accountId: 'owner' };
-        observeMachinePresenceForTest(scope, [machine.id]);
+        publishMachineActivityForTest([machine]);
         const facts: BoardCardFacts = { nowMs: NOW, session: () => null, workflowRun: () => null, workflow: () => null,
             machine: () => machine, machineScope: () => scope, machineSessionCounts: new Map(), accountScopedHome: () => true,
             machineWorkSummary: () => ({ kind: 'summary', summary: { kind: 'current', requesters: [
@@ -302,19 +302,19 @@ describe('board cards', () => {
         expect(describeBoardUndetermined({ count: 0, reasons: [] })).toBeNull();
         expect(describeBoardUndetermined(null)).toBeNull();
     });
-    it('reprojects withdrawn Machine presence from offline to unknown without changing its retained row', () => {
+    it('keeps the last confirmed offline Machine card across a Home disconnect', () => {
         const ref = { kind: 'machine', qualifiedId: { serverId: 'home-a', id: 'mbp' } } as const;
         const machine = createMachineFixture({ id: 'mbp', active: false, activeAt: 1 });
         const scope = { serverId: 'home-a', accountId: 'owner' };
         const facts: BoardCardFacts = { nowMs: NOW, session: () => null, workflowRun: () => null, workflow: () => null,
             machine: () => machine, machineScope: () => scope, machineSessionCounts: new Map(), accountScopedHome: () => true };
         const project = createBoardCardProjection();
-        expect(project([member(ref)], facts)[0]?.status.bucket).toBe('offline');
+        expect(project([member(ref)], facts)[0]?.body).toMatchObject({ online: null });
+        publishMachineActivityForTest([machine]);
+        const offline = project([member(ref)], facts)[0];
+        expect(offline).toMatchObject({ body: { online: false }, status: { bucket: 'offline' } });
         withdrawMachinePresenceForScope(scope);
-        expect(project([member(ref)], facts)[0]).toMatchObject({ body: { online: null },
-            status: { bucket: 'idle', word: 'common.unknown' } });
-        captureMachinePresenceObservation(scope)([machine.id]);
-        expect(project([member(ref)], facts)[0]).toMatchObject({ body: { online: false }, status: { bucket: 'offline' } });
+        expect(project([member(ref)], facts)[0]).toBe(offline);
     });
     it('settles linked-task status with its Session read and recovers without replacing the task', () => {
         const ref = { kind: 'task', qualifiedId: { serverId: 'home-a', id: 'issue-cold' }, pluginId: 'com.acme.tasks' } as const;
@@ -406,6 +406,7 @@ describe('board cards', () => {
         const scope = { serverId: 'home-a', accountId: 'owner' };
         const facts: BoardCardFacts = { nowMs: NOW, session: () => null, workflowRun: () => null, workflow: () => null,
             machine: () => machine, machineScope: () => scope, machineSessionCounts: new Map(), accountScopedHome: () => true };
+        publishMachineActivityForTest([machine]);
         const project = createBoardCardProjection();
         expect(project([member(ref)], facts)[0]?.body).toMatchObject({ online: true });
         recordMachineRequestFailed({ ...scope, machineId: machine.id, observedAtMs: NOW });
@@ -454,6 +455,7 @@ describe('board cards', () => {
     it('names why an online Machine needs the person in its state word, not its presence', () => {
         const ref = { kind: 'machine', qualifiedId: { serverId: 'home-a', id: 'mbp' } } as const;
         const mbp = createMachineFixture({ id: 'mbp', active: true, activeAt: NOW });
+        publishMachineActivityForTest([mbp]);
         const facts: BoardCardFacts = { nowMs: NOW, session: () => null, workflowRun: () => null, workflow: () => null,
             machine: () => mbp, machineScope: () => ({ serverId: 'home-a', accountId: 'owner' }), machineSessionCounts: new Map([[member(ref).key, { running: 2, needsYou: 1 }]]), accountScopedHome: () => true };
         expect(buildBoardCards([member(ref)], facts)[0]?.status)
@@ -556,11 +558,11 @@ describe('board cards', () => {
         expect(countBoardCardsNeedingYou(cards)).toBe(0);
     });
 
-    it('refreshes a Run pending Stop when its already-held Machine disconnects and reconnects', () => {
+    it('keeps a cancelled Run finished while its Machine reconnects and Stop cleanup is pending', () => {
         const ref = { kind: 'workflow_run', qualifiedId: { serverId: 'home-a', id: 'r1' } } as const;
         const machine = createMachineFixture({ id: 'mbp', active: true, activeAt: NOW });
         const scope = { serverId: 'home-a', accountId: 'owner' };
-        observeMachinePresenceForTest(scope, [machine.id]);
+        publishMachineActivityForTest([machine]);
         const row = workflowRunRowFromSummary(createWorkflowRunSummaryFixture({
             state: 'cancelled', workflowCustodyState: 'pending', machineId: machine.id,
         }), null);
@@ -568,11 +570,11 @@ describe('board cards', () => {
             machineScope: () => scope, machineSessionCounts: new Map(), workflow: () => null,
             accountScopedHome: () => true, workflowRun: () => row };
         const project = createBoardCardProjection();
-        expect(project([member(ref)], facts)[0]?.status.bucket).toBe('working');
+        expect(project([member(ref)], facts)[0]?.status).toMatchObject({ state: 'cancelled', bucket: 'finished' });
         recordMachineRequestFailed({ ...scope, machineId: machine.id, observedAtMs: NOW });
-        expect(project([member(ref)], facts)[0]?.status.bucket).toBe('offline');
+        expect(project([member(ref)], facts)[0]?.status).toMatchObject({ state: 'cancelled', bucket: 'finished' });
         recordMachineRequestSucceeded({ ...scope, machineId: machine.id, observedAtMs: NOW + 1 });
-        expect(project([member(ref)], facts)[0]?.status.bucket).toBe('working');
+        expect(project([member(ref)], facts)[0]?.status).toMatchObject({ state: 'cancelled', bucket: 'finished' });
     });
 
     it('projects library trigger summaries and distinguishes manual from unavailable scheduled next-run facts', () => {
@@ -633,13 +635,14 @@ describe('board cards', () => {
     });
 
     it('gives every kind one status vocabulary and groups all kinds By status, Finished rather than Done', () => {
+        const online = createMachineFixture({ id: 'm1', active: true, activeAt: NOW });
+        const offline = createMachineFixture({ id: 'm2', active: false, activeAt: 1 });
+        publishMachineActivityForTest([online, offline]);
         const facts: BoardCardFacts = {
             nowMs: NOW,
             session: (ref) => (ref.qualifiedId.id === 's-need' ? permissionSession : null),
             workflowRun: () => workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id: 'r1', state: 'succeeded' }), null),
-            machine: (ref) => (ref.qualifiedId.id === 'm1'
-                ? createMachineFixture({ id: 'm1', active: true, activeAt: NOW })
-                : createMachineFixture({ id: 'm2', active: false, activeAt: 1 })),
+            machine: (ref) => (ref.qualifiedId.id === online.id ? online : offline),
             machineScope: serverId => ({ serverId, accountId: 'owner' }),
             machineSessionCounts: new Map([[JSON.stringify(['machine', 'home-a', 'm1']), { running: 1, needsYou: 1 }]]),
             accountScopedHome: () => true,

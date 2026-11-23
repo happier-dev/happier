@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { chmod, cp, lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -447,31 +447,20 @@ describe('installRemoteFirstPartyComponent', () => {
     const fixture = await createPayloadRootFixture();
     const installRoot = join(home, '.happier', 'cli');
     const versions = join(installRoot, 'versions');
-    let runningPayload: Awaited<ReturnType<typeof open>> | undefined;
-    let runningChild: ReturnType<typeof spawn> | undefined;
-    let childExited: Promise<void> | undefined;
     try {
-      const nativeLsof = (await execFileAsync('/bin/sh', ['-c', 'command -v lsof'])).stdout.trim();
       const tools = join(home, 'tools');
       await mkdir(tools);
-      // Keep real open-file evidence while excluding unrelated worker mount warnings;
-      // diagnostic refusal is exercised at the shared census owner.
-      await writeFile(join(tools, 'lsof'), '#!/bin/sh\nexec "$retention_native_lsof" -w "$@"\n', { mode: 0o755 });
-      vi.stubEnv('PATH', `${tools}:${process.env.PATH}`);
-      vi.stubEnv('retention_native_lsof', nativeLsof);
+      // Supply only this remote host's process/open-file evidence at the OS boundary.
+      await writeFile(join(tools, 'ps'), '#!/bin/sh\nprintf "%s\n" "$(id -u) external-node $script_path"\n', { mode: 0o755 });
+      await writeFile(join(tools, 'lsof'), '#!/bin/sh\nprintf "p1234\nn%s\n" "$open_path"\n', { mode: 0o755 });
       for (const id of ['0.6.0', '0.7.0', '0.8.0', '0.9.0', '1.0.0', '1.1.0', '1.2.0', 'local-stable-1792190545251']) {
         await mkdir(join(versions, id), { recursive: true });
         await writeFile(join(versions, id, 'happier'), id);
       }
-      // A process still uses this old payload after both activation pointers moved on.
-      runningPayload = await open(join(versions, '0.9.0', 'happier'), 'r');
       const script = join(versions, '0.8.0', 'entry.mjs');
-      await writeFile(script, 'process.send("ready"); setInterval(() => {}, 1000);');
-      const child = spawn(process.execPath, [script], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
-      runningChild = child;
-      childExited = new Promise<void>((resolve, reject) => { child.once('exit', () => resolve()); child.once('error', reject); });
-      await new Promise<void>((resolve, reject) => { child.once('message', () => resolve()); child.once('error', reject); });
-      expect(child.pid).toBeGreaterThan(0);
+      await writeFile(script, 'export {};');
+      const remoteEnv = { ...process.env, HOME: home, PATH: `${tools}:${process.env.PATH}`,
+        script_path: script, open_path: join(versions, '0.9.0', 'happier') };
       await symlink('versions/1.2.0', join(installRoot, 'current'));
       await symlink(join(versions, '1.1.0'), join(installRoot, 'previous'));
       await writeFile(join(installRoot, 'current.version'), '1.2.0\n');
@@ -496,14 +485,14 @@ describe('installRemoteFirstPartyComponent', () => {
         resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
         runRemoteText: async ({ remoteCommand }) => {
           if (remoteCommand.includes('tar -xf')) {
-            expect(await readFile(script, 'utf8')).toContain('process.send');
+            expect(await readFile(script, 'utf8')).toBe('export {};');
             expect(await readFile(join(versions, '0.9.0', 'happier'), 'utf8')).toBe('0.9.0');
             await expect(lstat(join(versions, '1.0.0'))).rejects.toMatchObject({ code: 'ENOENT' });
             await expect(lstat(join(versions, 'local-stable-1792190545251'))).rejects.toMatchObject({ code: 'ENOENT' });
             expect(await readFile(join(versions, '1.2.0', 'happier'), 'utf8')).toBe('1.2.0');
             expect(await readFile(join(versions, '1.1.0', 'happier'), 'utf8')).toBe('1.1.0');
           }
-          return execFileAsync('/bin/sh', ['-c', remoteCommand], { env: { ...process.env, HOME: home } }).then(
+          return execFileAsync('/bin/sh', ['-c', remoteCommand], { env: remoteEnv }).then(
             (result) => ({ status: 0, ...result }),
             (error: unknown) => {
               if (!(error instanceof Error) || !('code' in error) || typeof error.code !== 'number') throw error;
@@ -536,9 +525,6 @@ describe('installRemoteFirstPartyComponent', () => {
         throw error;
       })).toEqual([]);
     } finally {
-      await runningPayload?.close();
-      runningChild?.kill();
-      await childExited;
       await fixture.cleanup();
       await rm(home, { recursive: true, force: true });
     }

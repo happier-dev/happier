@@ -119,12 +119,7 @@ vi.mock('node:child_process', async original => {
     return spawnRequesterWorkspaceSyncProcessBoundary(actual, command, args, options, executionBoundary.member);
   } };
 });
-// Native and HTTP boundaries stay installed until every fixture's onTestFinished cleanup settles.
-beforeEach(() => { native.reset(); vi.restoreAllMocks(); executionBoundary.recovery = undefined; executionBoundary.returnPromotionFailureRoot = ''; });
-
-it.skipIf(process.platform !== 'linux')('captures only a retained Session into the requester member and releases SOURCE custody after failed TARGET preparation', async () => {
-  executionBoundary.member = true;
-  const setup = await createRequesterWorkspaceSyncFixture({ role: 'use', socketIo });
+async function startRetainedReturnGuest(setup: Awaited<ReturnType<typeof createRequesterWorkspaceSyncFixture>>) {
   const directory = await mkdtemp(join(tmpdir(), 'native-return-capture-'));
   const guestRoot = join(directory, 'guest');
   await mkdir(guestRoot);
@@ -164,6 +159,16 @@ it.skipIf(process.platform !== 'linux')('captures only a retained Session into t
     callerInputAuthorization: setup.account.authorization, verifyMachineAdmissionCurrent: async () => true,
     machineAdmission: { actorAccountId: 'member-a', custodianAccountId: 'requester', machineId: setup.installed.machineId,
       installationId: setup.installed.installation.installationId, role: 'use', encryptionMode: 'plain' } };
+  return { sessionId, agent, context, baseline };
+}
+
+// Native and HTTP boundaries stay installed until every fixture's onTestFinished cleanup settles.
+beforeEach(() => { native.reset(); vi.restoreAllMocks(); executionBoundary.recovery = undefined; executionBoundary.returnPromotionFailureRoot = ''; });
+
+it.skipIf(process.platform !== 'linux')('captures only a retained Session into the requester member and releases SOURCE custody after failed TARGET preparation', async () => {
+  executionBoundary.member = true;
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'use', socketIo });
+  const { sessionId, agent, context, baseline } = await startRetainedReturnGuest(setup);
   const captured = await setup.fixture.parent.workspaceSync.captureSessionWorkspaceReturn!({ sessionId }, context);
   expect(captured.workspace.rootPath.startsWith(setup.member.workspaceRoot + '/')).toBe(true);
   expect(captured.baseline).toEqual(baseline);
@@ -197,6 +202,33 @@ it.skipIf(process.platform !== 'linux')('captures only a retained Session into t
   expect(setup.fixture.parent.handoffAdapter.listPrivateExecutions?.().filter(value => value.execution.onSourceRootReleased)).toEqual([]);
   expect(await native.identity.run('member', () => readdir(setup.member.workspaceRoot))).toEqual(rootsBeforeFailure);
 }, 240_000); // The existing native composition lane's budget covers two worker preparations.
+
+it.skipIf(process.platform !== 'linux')('copies on a retained Project after returning the Session', async () => {
+  executionBoundary.member = true;
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'use', socketIo,
+    remoteTarget: true, targetCustodianAccountId: 'member-a', workerCleanCopy: true, originalActionHomeHttp: true });
+  const { sessionId, context } = await startRetainedReturnGuest(setup);
+  const captured = await setup.fixture.parent.workspaceSync.captureSessionWorkspaceReturn!({ sessionId }, context);
+  const adapter = setup.fixture.parent.handoffAdapter;
+  const retained = adapter.listPrivateExecutions?.().find(value => value.input.sourceWorkspaceRefId === captured.workspace.workspaceId);
+  if (!retained) throw new Error('Session return did not acquire SOURCE custody');
+
+  const { operationId } = retained.input;
+  const prepared = await adapter.prepare(retained.input);
+  await adapter.finalize({ operationId, prepared });
+  await adapter.commit({ operationId, prepared });
+  expect(adapter.resolvePrivateExecution?.({ operationId })).toBeNull();
+
+  const invocation = await setup.prepareInvocation({ ...setup.request, operationId: 'member-sync-after-return' });
+  const result = await setup.executeNativeRelationshipAction(invocation);
+  expect(result).toMatchObject({ ok: true, result: { created: true } });
+  const persisted = await readProjectAccountRows({ credentials: setup.credentials,
+    serverId: setup.installed.homeServerIdentityId, selection: { kinds: ['workspace-ref', 'relationship-graph'] } });
+  expect(persisted.relationships).toEqual([expect.objectContaining({
+    alphaWorkspaceRefId: setup.sourceRef.id, betaWorkspaceRefId: setup.targetRef.id, committedAtMs: expect.any(Number),
+  })]);
+  expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+}, 240_000);
 
 it.skipIf(process.platform !== 'linux').each(['requester', 'installed'] as const)('settles the normal SOURCE list after %s lifecycle Actions through two daemon compositions', async owner => {
   executionBoundary.member = false;

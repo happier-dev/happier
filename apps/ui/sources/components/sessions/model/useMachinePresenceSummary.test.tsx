@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMachineFixture, createSessionListRenderableSessionFixture, renderHook, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import * as serverProfiles from '@/sync/domains/server/serverProfiles';
 import {
@@ -10,7 +11,6 @@ import {
     recordMachineRequestFailed,
     recordMachineRequestSucceeded,
     withdrawMachinePresenceForScope,
-    captureMachinePresenceObservation,
     resolveMachineReachability,
 } from '@/sync/domains/machines/reachability/machineReachability';
 const home = createHomeGovernanceHarness();
@@ -201,6 +201,7 @@ describe('reactive Machine presence', () => {
         const otherHome = await home.addHome({ name: 'Other fallback Home', serverUrl: 'https://fallback-other.example.test',
             serverIdentityId: 'srv_other_fallback', accountId: 'account-b', active: false });
         const machine = createMachineFixture({ id: 'active-only', activeAt: Date.now() });
+        publishMachineActivityForTest([machine]);
         storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: {}, machineListStatusByServerId: {} });
         const hook = await renderHook(() => useMachinePresenceSummary(serverId, machine.id));
         try {
@@ -221,6 +222,7 @@ describe('reactive Machine presence', () => {
         const scope = { serverId, accountId: 'account-a' };
         storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
         const targets = [{ serverId, machineIds: [machine.id] }];
+        publishMachineActivityForTest([machine]);
         const readMachines = () => [machine];
         const readSnapshot = (at: number) => resolveMachineReachability(scope, machine, at);
         const hook = await renderHook(() => {
@@ -234,7 +236,7 @@ describe('reactive Machine presence', () => {
         finally { await hook.unmount(); }
     });
 
-    it('shares withdrawn unknown presence and fresh offline recovery with membership without losing identity', async () => {
+    it('retains answered presence until fresh activity changes summary and membership', async () => {
         const scope = { serverId, accountId: 'account-a' };
         const now = Date.now();
         const machine = createMachineFixture({ id: 'reconnecting-machine', active: true, activeAt: now });
@@ -247,14 +249,13 @@ describe('reactive Machine presence', () => {
         const name = hook.getCurrent().summary.name;
         try {
             await act(async () => { withdrawMachinePresenceForScope(scope); });
-            expect(hook.getCurrent().summary).toMatchObject({ name, reachability: 'unknown', lastSeenAt: null });
-            expect(hook.getCurrent().membership.onlineMachineIds).toEqual([]);
-            expect(hook.getCurrent().membership.selectableMachineIds).toEqual([]);
+            expect(hook.getCurrent().summary).toMatchObject({ name, reachability: 'reachable', lastSeenAt: null });
+            expect(hook.getCurrent().membership.onlineMachineIds).toEqual([machine.id]);
+            expect(hook.getCurrent().membership.selectableMachineIds).toEqual([machine.id]);
             vi.useFakeTimers({ toFake: ['Date'] });
             vi.setSystemTime(now + 97_000);
             await act(async () => {
                 storage.getState().applyMachines([{ ...machine, active: false, activeAt: now + 1 }], false, { sourceServerId: serverId });
-                captureMachinePresenceObservation(scope)([machine.id]);
             });
             expect(hook.getCurrent().summary).toMatchObject({ name, reachability: 'unreachable', lastSeenAt: now + 1 });
             expect(hook.getCurrent().membership.onlineMachineIds).toEqual([]);
