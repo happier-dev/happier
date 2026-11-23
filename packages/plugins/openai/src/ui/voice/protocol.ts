@@ -367,21 +367,9 @@ export function createOpenAiRealtimeProtocolAdapter(input: Readonly<{
   releasePrepared?: RealtimeVoiceProviderProtocol['releasePrepared'];
 }>): RealtimeVoiceProviderProtocol {
   const transcriptLadder = createVoiceTranscriptLadderMapper();
-  const seenEventIds = new Set<string>();
-  const seenEventOrder: string[] = [];
   const outputItemByResponseId = new Map<string, string | null>();
   let activeOutputResponseId: string | null = null;
   let activeOutputItemId: string | null = null;
-
-  const rememberEventId = (eventId: string): boolean => {
-    if (seenEventIds.has(eventId)) return false;
-    seenEventIds.add(eventId);
-    seenEventOrder.push(eventId);
-    while (seenEventOrder.length > 4_096) {
-      seenEventIds.delete(seenEventOrder.shift()!);
-    }
-    return true;
-  };
 
   const transcriptEvent = (
     observation: VoiceTranscriptLadderObservation,
@@ -431,18 +419,14 @@ export function createOpenAiRealtimeProtocolAdapter(input: Readonly<{
       const event = decodeOpenAiServerEvent(raw);
       if (!event) return [];
       const result: VoiceRealtimeCanonicalEvent[] = [];
-      const providerEventId = event.event_id;
-      if (seenEventIds.has(providerEventId)) return Object.freeze(result);
-      if (event.type === 'session.created') {
-        transcriptLadder.beginConversation();
-        seenEventIds.clear();
-        seenEventOrder.length = 0;
+      const eventId = event.event_id;
+      const startsConversation = event.type === 'session.created';
+      if (!transcriptLadder.admitProviderEvent(eventId, startsConversation)) return Object.freeze(result);
+      if (startsConversation) {
         outputItemByResponseId.clear();
         activeOutputResponseId = null;
         activeOutputItemId = null;
       }
-      rememberEventId(providerEventId);
-      const eventId = providerEventId;
       if (event.type === 'error') {
         result.push(projectOpenAiProviderError(event.error.code));
       } else if (event.type === 'conversation.item.input_audio_transcription.failed') {

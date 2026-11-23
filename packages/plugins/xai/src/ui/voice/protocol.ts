@@ -129,6 +129,7 @@ export function createXaiRealtimeProtocolAdapter(input: Readonly<{
   const transcriptEvent = (
     observation: VoiceTranscriptLadderObservation,
   ): VoiceRealtimeCanonicalEvent | null => {
+    if (!transcriptLadder.admitProviderEvent(observation.eventId, false)) return null;
     const event = transcriptLadder.map(observation);
     return event ? { type: 'transcript', event } : null;
   };
@@ -141,8 +142,6 @@ export function createXaiRealtimeProtocolAdapter(input: Readonly<{
     decodeControl(raw: VoiceRealtimeJsonValue): readonly VoiceRealtimeCanonicalEvent[] {
       const event = record(raw);
       if (!event || typeof event.type !== 'string') return [];
-      // Transcript revision belongs to the shared ladder;
-      // tool effect identity belongs to the host barrier, not a replay cache.
       const eventId = providerEventId(event.event_id);
       if (!eventId) return [];
       const eventType = normalizeXaiRealtimeEventType(event.type);

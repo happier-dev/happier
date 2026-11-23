@@ -1,3 +1,4 @@
+import { createXaiRealtimeProtocolAdapter } from '@happier-dev/plugins-xai/ui/voice';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createCanonicalVoiceTranscriptProjector } from './canonicalProjector';
@@ -19,6 +20,23 @@ function finalEvent(overrides: Record<string, unknown> = {}) {
 }
 
 describe('canonical voice transcript persistence admission', () => {
+  it('persists a textless xAI final with each provider delta applied once', () => {
+    const adapter = createXaiRealtimeProtocolAdapter({
+      prepare: async () => { throw new Error('This replay uses provider events only'); },
+    });
+    const persistFinal = vi.fn();
+    const projector = createCanonicalVoiceTranscriptProjector({ persistFinal });
+    const { epoch } = projector.beginAttempt();
+    const delta = { type: 'response.output_audio_transcript.delta', item_id: 'item-1', event_id: 'e1', delta: 'Hello' };
+    let sequence = 0;
+    for (const raw of [delta, delta, { type: 'response.output_audio_transcript.done', item_id: 'item-1', event_id: 'e2' }]) {
+      for (const mapped of adapter.decodeControl(raw)) {
+        if (mapped.type === 'transcript') projector.project({ ...mapped.event, epoch, sequence: ++sequence });
+      }
+    }
+    expect(persistFinal.mock.calls.map(([item]) => item.text)).toEqual(['Hello']);
+  });
+
   it('admits and commits a corrected final behind its still-pending final in arrival order', () => {
     const persistFinal = vi.fn();
     const projector = createCanonicalVoiceTranscriptProjector({

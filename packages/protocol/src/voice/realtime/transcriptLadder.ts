@@ -35,6 +35,8 @@ export type VoiceTranscriptLadderObservation = Readonly<{
 export type VoiceTranscriptLadderMapper = Readonly<{
   /** Start a new provider conversation: a fresh epoch with no carried-over items. */
   beginConversation(): number;
+  /** Admit a provider event once, before it can mutate any conversation state. */
+  admitProviderEvent(eventId: string, startsConversation: boolean): boolean;
   /**
    * Fold one provider observation into the item's transcript, returning the
    * canonical event to publish or `null` when the observation changes nothing.
@@ -43,6 +45,8 @@ export type VoiceTranscriptLadderMapper = Readonly<{
 }>;
 
 const DEFAULT_MAX_ITEMS = 2_048;
+// Preserve the realtime mapper's bounded provider-event replay window.
+const MAX_PROVIDER_EVENT_IDS = 4_096;
 
 type LadderItemState = Readonly<{ text: string; revision: number; final: boolean }>;
 
@@ -69,6 +73,7 @@ export function createVoiceTranscriptLadderMapper(
     ? Math.max(1, Math.floor(Number(options?.maxItems)))
     : DEFAULT_MAX_ITEMS;
   const items = new Map<string, LadderItemState>();
+  const providerEventIds = new Set<string>();
   let epoch = 0;
   let sequence = 0;
 
@@ -77,7 +82,19 @@ export function createVoiceTranscriptLadderMapper(
     epoch += 1;
     sequence = 0;
     items.clear();
+    providerEventIds.clear();
     return epoch;
+  };
+
+  const admitProviderEvent = (eventId: string, startsConversation: boolean): boolean => {
+    if (providerEventIds.has(eventId)) return false;
+    if (startsConversation) beginConversation();
+    providerEventIds.add(eventId);
+    if (providerEventIds.size > MAX_PROVIDER_EVENT_IDS) {
+      const oldest = providerEventIds.values().next();
+      if (!oldest.done) providerEventIds.delete(oldest.value);
+    }
+    return true;
   };
 
   const map = (
@@ -124,5 +141,5 @@ export function createVoiceTranscriptLadderMapper(
     });
   };
 
-  return Object.freeze({ beginConversation, map });
+  return Object.freeze({ beginConversation, admitProviderEvent, map });
 }
