@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import { createReducer } from '@happier-dev/session-core/reducer';
 import type { Message } from '@happier-dev/session-core/messages';
-import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { act, renderHook, standardCleanup, createSessionFixture } from '@/dev/testkit';
 import { createTriageFailureActionBoundaryFixture as createActionExecutorBoundaryFixture, TRIAGE_FAILURE_TEST_BINDING } from '@/dev/testkit/harness/triageFailureActionBoundary';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -30,7 +30,6 @@ it('composes one exact failed receipt through the public Action, chosen Agent an
         spawnSuccess, testkitTriageActionId } = await import('../../../../../packages/plugins/triage/src/sessions/testkit/entrySessionTestkit.test-support');
     const { buildAgentTargetKeyV2 } = await import('@happier-dev/plugin-sdk/agents');
     const { createDeploymentApprovalScopeResolverV1 } = await import('@happier-dev/protocol/deployments/deploymentApprovalScopeV1');
-    const { DeploymentEnvironmentHeaderV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
     const before = storage.getState();
     const scope = { serverId: 'home', accountId: 'account' };
     const subject = { kind: 'deploymentReceipt', serverId: scope.serverId, environmentId: 'env', deploymentId: 'failed-receipt' } as const;
@@ -81,12 +80,11 @@ it('composes one exact failed receipt through the public Action, chosen Agent an
         targetLinkId: 'link', machineId: 'affected-controller', installationId: 'installation' };
     const service = { kind: 'deployment' as const, machineId: target.machineId, environmentId: target.environmentId,
         environmentInstanceId: 'instance', composeService: 'app', serviceId: 'instance/app' };
-    const environment = DeploymentEnvironmentHeaderV1Schema.parse({ v: 1, id: subject.environmentId,
+    const environment = createDeploymentEnvironmentHeaderV1({ v: 1, id: subject.environmentId,
         serverId: scope.serverId, projectSourceId: 'project-source', revision: 1,
         owner: { kind: 'account', accountId: scope.accountId }, protection: 'nonProduction', purpose: 'standard',
         deployerMode: 'managers', controllerMachineId: target.machineId, runtimeTargetLinkId: target.targetLinkId,
         contentArtifactId: 'environment-content', contentHeaderVersion: 1, contentBodyVersion: 1,
-        capabilities: { role: 'manager', read: true, deploy: true, manage: true, manageBindings: true, manageTargets: true, delete: true },
         createdByAccountId: scope.accountId, createdAtMs: 1, updatedAtMs: 1 });
     // Daemon and metadata transports are boundaries; scope resolution and Action policy stay real.
     const deploymentTransport: NonNullable<ActionExecutorDeps['deploymentAction']> = async (id, input) => {
@@ -123,7 +121,7 @@ it('composes one exact failed receipt through the public Action, chosen Agent an
         const started = await owner.launch(subject, { actionId: 'investigate' }, { placement: { machine, workspace } });
         expect(started, JSON.stringify({ started, sessionBoundaryCalls: invoker.calls })).toMatchObject({ kind: 'started', handoff: { kind: 'sendResult', result: { status: 'accepted' } } });
         expect(reads).toEqual([{ id: 'deployments.receipts.get', input: { serverId: scope.serverId,
-            environmentId: subject.environmentId, deploymentId: subject.deploymentId } }]);
+            environmentId: subject.environmentId, deploymentId: subject.deploymentId, projection: 'investigation' } }]);
         expect(invoker.callsFor('session.spawn_new')[0]?.input).toMatchObject({ executionTarget: machine, agentTarget,
             directory: { kind: 'path', path: workspace.rootPath } });
         const sent = JSON.stringify(invoker.callsFor('session.message.send')[0]?.input);
