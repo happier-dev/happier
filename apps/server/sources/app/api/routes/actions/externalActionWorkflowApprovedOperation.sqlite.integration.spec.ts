@@ -11,6 +11,7 @@ import { bindExternalActionExecutionAuthorizationHttpPathV1, bindExternalActionE
 import { computeExternalActionRequestEnvelopeDigestV1, encodeExternalActionResolvedTargetV1,
     signExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { signMachineInstallationProof, verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { projectManagedOpaqueSetupSourcesV1 } from '@happier-dev/cli-common/machines/managed';
 import { MachineSetupApplyInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1,
     type WorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows';
@@ -41,6 +42,12 @@ import { projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/deploy
 let server: Awaited<ReturnType<typeof startWorkflowApprovedOperationServer>>;
 beforeAll(async () => { server = await startWorkflowApprovedOperationServer(); }, 120_000);
 afterAll(async () => { if (server) await server.close(); });
+
+async function expectWorkflowScopeDenied(pending: Promise<Response>) {
+    const response = await pending;
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: 'credential_scope_denied' });
+}
 
 it('publishes complete Machine metadata for real daemon snapshot readers', async () => {
     for (const machine of server.machines) {
@@ -386,11 +393,15 @@ it('does not let a compact Workflow root continue an independently admitted rece
     const siblingRunningReceipt = DeploymentReceiptResultV1Schema.parse(await siblingRunning.json());
     expect(siblingRunningReceipt).toMatchObject({ ok: true, state: 'running' });
     if (!siblingRunningReceipt.ok || !('deploymentRevision' in siblingRunningReceipt)) throw new Error('sibling_running_unavailable');
-    // Retained receipts without the new admission fact cannot borrow a root's
-    // Artifact identity. This models a pre-migration nullable capture only.
+    // A retained receipt without its original request binding still requires
+    // exact custody to stage. Its captured controller can settle the interrupted slot.
     await db.deployment.update({ where: { id: sibling.deploymentId }, data: { acceptedRequestEnvelopeDigest: null } });
     expect((await transition(siblingRoot, sibling.deploymentId, siblingOperationId,
-        siblingRunningReceipt.deploymentRevision, 'failed')).status).toBe(401);
+        siblingRunningReceipt.deploymentRevision, 'running')).status).toBe(401);
+    const recovered = await transition(siblingRoot, sibling.deploymentId, siblingOperationId,
+        siblingRunningReceipt.deploymentRevision, 'failed');
+    expect(recovered.status).toBe(200);
+    expect(DeploymentReceiptResultV1Schema.parse(await recovered.json())).toMatchObject({ ok: true, state: 'failed' });
 }, 120_000);
 
 it('admits installed Workflow deployment provenance at current placement without inferring receiver consent, including legacy dispatch', async () => {
@@ -505,9 +516,8 @@ it('admits installed Workflow deployment provenance at current placement without
         acceptedBuildMachineId: publisher.id, acceptedBuildInstallationId: publisher.installationId,
         acceptedRequestEnvelopeDigest: authorization.binding.requestEnvelopeDigest,
     });
-    // Receipt admission legitimately advances the Environment. The frozen leaf
-    // remains exact; current controller/Source authority, not its old revision,
-    // determines whether the already issued proof is still usable.
+    // Receipt admission advances the Environment revision. The issued proof
+    // continues to verify against the captured receipt.
     await db.deploymentEnvironment.update({ where: { id: created.environmentId }, data: { revision: { increment: 1 } } });
     expect((await verify()).status).toBe(200);
     // Ordered native execution selects immutable build/member history under
@@ -533,9 +543,11 @@ it('admits installed Workflow deployment provenance at current placement without
     expect((await readHistory(environmentPath, 'deployments.receipts.list', historyPath)).status).toBe(401);
     expect((await readHistory(historyPath, 'deployments.cancel')).status).toBe(401);
     expect((await mint({ ...envelope, input: { ...childInput, requestKey: 'unreviewed' } })).status).toBe(200);
-    expect((await mint({ ...envelope, target: { kind: 'machine', machineId: other.id } })).status).toBe(401);
-    expect((await mint({ ...envelope, target: { kind: 'machine', machineId: publisher.id } })).status).toBe(401);
-    expect((await mint(envelope, receiver)).status).toBe(401);
+    // An existing Machine at the wrong placement and a missing Machine get the same refusal.
+    await expectWorkflowScopeDenied(mint({ ...envelope, target: { kind: 'machine', machineId: other.id } }));
+    await expectWorkflowScopeDenied(mint({ ...envelope, target: { kind: 'machine', machineId: randomUUID() } }));
+    await expectWorkflowScopeDenied(mint({ ...envelope, target: { kind: 'machine', machineId: publisher.id } }));
+    await expectWorkflowScopeDenied(mint(envelope, receiver));
     await db.automationRun.update({ where: { id: runId }, data: { workflowAcceptedSnapshotEnvelope: seal(snapshot) } });
     expect((await mint()).status).toBe(200);
     expect((await verify()).status).toBe(200);
@@ -543,13 +555,14 @@ it('admits installed Workflow deployment provenance at current placement without
     expect((await mint({ ...envelope, target: { kind: 'machine', machineId: publisher.id } })).status).toBe(200);
     await db.deploymentEnvironment.update({ where: { id: created.environmentId }, data: { controllerMachineId: receiver.id } });
     await db.automationRun.update({ where: { id: runId }, data: { workflowAcceptedSnapshotEnvelope: seal() } });
+    // The accepted receipt keeps its captured controller while new minting uses current placement.
     await db.deploymentEnvironment.update({ where: { id: created.environmentId }, data: { controllerMachineId: other.id } });
-    expect((await mint()).status).toBe(401);
-    expect((await verify()).status).toBe(401);
+    await expectWorkflowScopeDenied(mint());
+    expect((await verify()).status).toBe(200);
     await db.deploymentEnvironment.update({ where: { id: created.environmentId }, data: { controllerMachineId: receiver.id } });
     await db.deploymentTargetLink.update({ where: { id: linked.targetLinkId }, data: { detachedAt: new Date() } });
-    expect((await mint()).status).toBe(401);
-    expect((await verify()).status).toBe(401);
+    await expectWorkflowScopeDenied(mint());
+    expect((await verify()).status).toBe(200);
     await db.deploymentTargetLink.update({ where: { id: linked.targetLinkId }, data: { detachedAt: null } });
     const seed = process.env.HANDY_MASTER_SECRET;
     if (!seed) throw new Error('test_auth_seed_unavailable');
@@ -565,27 +578,27 @@ it('admits installed Workflow deployment provenance at current placement without
         headers: { ...headers, authorization: `Bearer ${legacyToken}` }, body: JSON.stringify(body) });
     expect((await dispatch(installed())).status).toBe(200);
     expect(deliveries).toBe(1);
-    expect((await dispatch(envelope)).status).toBe(401);
+    await expectWorkflowScopeDenied(dispatch(envelope));
     expect(deliveries).toBe(1);
     await db.machine.update({ where: { id: receiver.id }, data: { revokedAt: new Date() } });
-    expect((await mint()).status).toBe(401);
+    await expectWorkflowScopeDenied(mint());
     expect((await verify()).status).toBe(401);
     await db.machine.update({ where: { id: receiver.id }, data: { revokedAt: null } });
     const foreign = await db.account.create({ data: { encryptionMode: 'plain', publicKey: null } });
     await db.projectSource.update({ where: { id: project.projectSourceId }, data: { owner: { kind: 'account', accountId: foreign.id } } });
-    expect((await mint()).status).toBe(401);
-    expect((await verify()).status).toBe(401);
+    await expectWorkflowScopeDenied(mint());
+    expect((await verify()).status).toBe(200);
     await db.projectSource.update({ where: { id: project.projectSourceId }, data: { owner: { kind: 'account', accountId: server.accountId } } });
     await db.automationRunAssignment.deleteMany({ where: { runId } });
-    expect((await mint()).status).toBe(401);
-    expect((await verify()).status).toBe(401);
-    expect((await readHistory()).status).toBe(401);
+    await expectWorkflowScopeDenied(mint());
+    expect((await verify()).status).toBe(200);
+    expect((await readHistory()).status).toBe(200);
     await db.automationRunAssignment.create({ data: { runId, machineId: publisher.id } });
     expect((await verify()).status).toBe(200);
     expect((await readHistory()).status).toBe(200);
 
-    // Future placement edits do not transfer an already accepted operation.
-    // Issuance and generic currentness deliberately stay placement-bound.
+    // New issuance follows the edited placement. Verification and the native
+    // transition keep the controller already captured by the accepted receipt.
     const currentEnvironment = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: created.environmentId } });
     const controller = await fetch(`${server.baseUrl}/v1/deployments/environments/${created.environmentId}/controller`, {
         method: 'POST', headers, body: JSON.stringify({ serverId: server.homeId, environmentId: created.environmentId,
@@ -597,8 +610,8 @@ it('admits installed Workflow deployment provenance at current placement without
         method: 'PATCH', headers, body: JSON.stringify({ serverId: server.homeId, environmentId: created.environmentId,
             expectedRevision: controllerResult.revision, ...environmentContent, patch: { buildMachineId: other.id } }) });
     expect(builder.status).toBe(200);
-    expect((await mint()).status).toBe(401);
-    expect((await verify()).status).toBe(401);
+    await expectWorkflowScopeDenied(mint());
+    expect((await verify()).status).toBe(200);
     const stage = { serverId: server.homeId, environmentId: created.environmentId, deploymentId: receipt.deploymentId,
         actionOperationId: acceptedOperationId, expectedRevision: receipt.deploymentRevision,
         machineId: receiver.id, installationId: receiver.installationId, kind: 'stage' as const, state: 'running' as const };
@@ -626,10 +639,13 @@ it('admits installed Workflow deployment provenance at current placement without
     expect((await nativeRequest(transitionPath, stageBody, semanticAuthorization)).status).toBe(401);
     expect((await nativeRequest(`/v1/deployments/environments/${created.environmentId}/deployments/${sibling.id}/transitions`,
         signStage(siblingStage), semanticAuthorization)).status).toBe(401);
-    // Reassigning Source custody can make the installed Machine unavailable;
-    // it is not a fresh requester permission evaluation (O1 / Plan 40 invariant 3).
+    // The captured controller can replay the committed stage after Source ownership changes.
     await db.projectSource.update({ where: { id: project.projectSourceId }, data: { owner: { kind: 'account', accountId: foreign.id } } });
-    expect((await nativeRequest(transitionPath, stageBody)).status).toBe(503);
+    const replayedStage = await nativeRequest(transitionPath, stageBody);
+    expect(replayedStage.status).toBe(200);
+    expect(DeploymentReceiptResultV1Schema.parse(await replayedStage.json())).toMatchObject({
+        ok: true, deploymentId: receipt.deploymentId, state: 'running',
+    });
     await db.projectSource.update({ where: { id: project.projectSourceId }, data: { owner: { kind: 'account', accountId: server.accountId } } });
     await db.machine.update({ where: { id: receiver.id }, data: { installationId: randomUUID() } });
     expect((await nativeRequest(transitionPath, stageBody)).status).toBe(401);
@@ -651,10 +667,13 @@ it('admits same-Account accepted Run placement without deciding receiver consent
     const runId = randomUUID();
     const actionId = 'machines.setup.apply';
     const childInput = MachineSetupApplyInputV1Schema.parse({ homeId: server.homeId, machineId: receiver.id, targets: [{
-        homeId: server.homeId, machineId: receiver.id, desiredRevision: 0, recipePlans: [], sources: [
-        { kind: 'accountPreset', presetId: 'reviewed', presetRevision: 1, setup: { scripts: [{ body: 'echo retained', affects: 'none' }] } },
-        { kind: 'direct', setup: {} },
-    ] }] });
+        homeId: server.homeId, machineId: receiver.id, desiredRevision: 0, recipePlans: [],
+        sources: projectManagedOpaqueSetupSourcesV1([
+            { kind: 'accountPreset', presetId: 'reviewed', presetRevision: 1, contentEncryptionMode: 'plain',
+                setup: { scripts: [{ body: 'echo retained', affects: 'none' }] } },
+            { kind: 'direct', setup: {} },
+        ]),
+    }] });
     const snapshot = await materializeWorkflowAcceptedSnapshotFixture({
         definition: { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'wait', id: 'review',
             document: { text: 'Review', references: [], attachments: [] }, result: { kind: 'text' } }] },
@@ -748,10 +767,10 @@ it('admits same-Account accepted Run placement without deciding receiver consent
     // Home admits provenance, not child consent. The receiving approved-operation
     // reader owns exact Action/input matching, including stricter child policy.
     expect((await mint({ ...envelope, input: { ...childInput, targets: childInput.targets.map(target => ({ ...target,
-        sources: target.sources.map(source => source.kind === 'accountPreset'
+        sources: target.sources.map(source => source.kind === 'accountPresetOpaque'
             ? { ...source, presetRevision: 2 } : source) })) } })).status).toBe(200);
     expect((await mint({ ...envelope, target: { kind: 'machine', machineId: other.id } })).status).toBe(200);
-    expect((await mint(envelope, receiver)).status).toBe(401);
+    await expectWorkflowScopeDenied(mint(envelope, receiver));
     const setEnvelope = async (raw: string) => { await db.automationRun.update({ where: { id: runId }, data: { workflowAcceptedSnapshotEnvelope: raw } }); };
     await setEnvelope(seal(snapshot));
     expect((await mint()).status).toBe(200);
@@ -759,7 +778,7 @@ it('admits same-Account accepted Run placement without deciding receiver consent
     await setEnvelope(seal());
     for (const data of [{ state: 'failed' }, { workflowCustodyState: 'settled' }] as const) {
         await db.automationRun.update({ where: { id: runId }, data });
-        expect((await mint()).status).toBe(401);
+        await expectWorkflowScopeDenied(mint());
         expect((await verify()).status).toBe(401);
         await db.automationRun.update({ where: { id: runId }, data: { state: 'claimed', workflowCustodyState: 'pending' } });
     }
@@ -771,22 +790,24 @@ it('admits same-Account accepted Run placement without deciding receiver consent
         { teamId: team.id, accountId: server.accountId, role: 'member' }] });
     await db.machineGrant.create({ data: { principalKind: 'team', machineId: receiver.id, teamId: team.id,
         accessLevel: 'admin', createdByAccountId: foreign.id } });
-    expect((await mint()).status).toBe(401);
+    await expectWorkflowScopeDenied(mint());
     expect((await verify()).status).toBe(401);
     await db.machine.update({ where: { id: receiver.id }, data: { accountId: server.accountId } });
     await db.machine.update({ where: { id: receiver.id }, data: { revokedAt: new Date() } });
-    expect((await mint()).status).toBe(401);
+    await expectWorkflowScopeDenied(mint());
     expect((await verify()).status).toBe(401);
     await db.machine.update({ where: { id: receiver.id }, data: { revokedAt: null } });
+    // Publisher and credential changes stop fresh admission. The issued Setup
+    // proof spends the active Run's retained authority on the same receiver.
     await db.machine.update({ where: { id: publisher.id }, data: { revokedAt: new Date() } });
-    expect((await mint()).status).toBe(401);
-    expect((await verify()).status).toBe(401);
+    await expectWorkflowScopeDenied(mint());
+    expect((await verify()).status).toBe(200);
     await db.machine.update({ where: { id: publisher.id }, data: { revokedAt: null } });
     await db.automationRunAssignment.deleteMany({ where: { runId } });
-    expect((await mint()).status).toBe(401);
-    expect((await verify()).status).toBe(401);
-    await db.automationRunAssignment.create({ data: { runId, machineId: publisher.id } });
+    await expectWorkflowScopeDenied(mint());
     expect((await verify()).status).toBe(200);
+    await db.automationRunAssignment.create({ data: { runId, machineId: publisher.id } });
     await server.revokeAccount();
-    expect((await verify()).status).toBe(401);
+    expect((await mint()).status).toBe(401);
+    expect((await verify()).status).toBe(200);
 }, 120_000);
