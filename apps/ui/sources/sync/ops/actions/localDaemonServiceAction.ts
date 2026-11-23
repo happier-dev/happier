@@ -1,12 +1,12 @@
 import type { ActionExecutorDeps} from '@happier-dev/protocol/actions/executor/types';
 import type { SystemTaskResult } from '@happier-dev/protocol/system/tasks/spec';
-import { LOCAL_CLI_PATH_EXPOSURE_SET_ACTION_ID_V1, LOCAL_DAEMON_SERVICE_INPUT_SCHEMAS, LocalCliPathExposureSetInputSchema, LocalDaemonServiceAutostartInputSchema } from '@happier-dev/protocol/actions/specs/localDaemonService';
+import { LOCAL_CLI_PATH_EXPOSURE_SET_ACTION_ID_V1, LOCAL_DAEMON_SERVICE_CANCEL_ACTION_ID_V1, LOCAL_DAEMON_SERVICE_INPUT_SCHEMAS, LocalCliPathExposureSetInputSchema, LocalDaemonServiceAutostartInputSchema, LocalDaemonServiceCancelInputSchema } from '@happier-dev/protocol/actions/specs/localDaemonService';
 import { getSystemTasksRunner } from '@/components/systemTasks/systemTasksRuntime';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
 import { waitForSystemTaskResult } from '@/components/systemTasks/createSystemTaskRunner';
 import { buildLocalDaemonServiceSystemTaskSpec } from '@/components/systemTasks/specs/localControl/buildLocalDaemonServiceSystemTaskSpec';
 import { refreshLocalDaemonStatus, readLocalDaemonStatusData } from '@/components/settings/machines/localControl/useLocalDaemonControl';
-import { isLocalCliUpdateRunning, publishLocalDaemonStatus, publishLocalDaemonServiceStartTask, startLocalCliUpdate } from '@/components/settings/machines/localControl/localDaemonSharedState';
+import { cancelLocalDaemonServiceProgress, isLocalCliUpdateRunning, publishLocalDaemonStatus, publishLocalDaemonServiceStartTask, startLocalCliUpdate } from '@/components/settings/machines/localControl/localDaemonSharedState';
 import { setDesktopLoginStartMode } from '@/components/settings/desktop/desktopLoginStart';
 import { disconnectThisComputerFromHome } from '@/components/serverProfiles/disconnectThisComputerFromHome';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -42,6 +42,12 @@ export function createLocalDaemonServiceAction(options: Readonly<{ runner?: Syst
                 const { autostart } = LocalDaemonServiceAutostartInputSchema.parse(input);
                 const result = await setDesktopLoginStartMode(runner, autostart, { scope, signal, isCurrent, statusIsCurrent: canPublish });
                 return result ? settled(result) : fail('action_account_scope_changed');
+            }
+            if (actionId === LOCAL_DAEMON_SERVICE_CANCEL_ACTION_ID_V1) {
+                const { taskId } = LocalDaemonServiceCancelInputSchema.parse(input);
+                const canceled = await cancelLocalDaemonServiceProgress(runner,
+                    { serverId: account.serverId, accountId: account.accountId }, taskId);
+                return canceled ? { taskId: canceled } : fail('target_unavailable');
             }
             if (actionId === 'machines.local.service.update') {
                 const result = await startLocalCliUpdate(runner, readLocalDaemonStatusData, {

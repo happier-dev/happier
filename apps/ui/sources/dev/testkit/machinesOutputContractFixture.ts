@@ -16,13 +16,18 @@ export function createUiMachineOutputFixture(serverId: string) {
     const subscribe = manual.bridge.subscribe.getMockImplementation()!;
     const localStatus = { serviceInstalled: false, daemonRunning: false, needsAuth: false,
         machineId: null, serviceAutostart: 'on-demand' as const, managedServiceInstalled: false };
+    // One service start stays running so its cancel Action has a real task to cancel.
+    let holdNextServiceStart = false;
+    const held = new Set<string>();
     manual.bridge.start.mockImplementation(async spec => {
-        const taskId = await start(spec); nativeTasks.set(taskId, spec); return taskId;
+        const taskId = await start(spec); nativeTasks.set(taskId, spec);
+        if (holdNextServiceStart && spec.kind === 'daemon.service.start.v1') { holdNextServiceStart = false; held.add(taskId); }
+        return taskId;
     });
     manual.bridge.subscribe.mockImplementation(async (taskId, listeners) => {
         const unlisten = await subscribe(taskId, listeners);
         const spec = nativeTasks.get(taskId);
-        if (spec?.kind.startsWith('daemon.service.') || spec?.kind === 'cli.update.v1') {
+        if (!held.has(taskId) && (spec?.kind.startsWith('daemon.service.') || spec?.kind === 'cli.update.v1')) {
             queueMicrotask(() => manual.emitResult(taskId, { protocolVersion: 1, taskId, ok: true,
                 data: spec.kind === 'daemon.service.status.v1' ? localStatus
                     : spec.kind === 'daemon.service.relay.disconnect.v1' ? { outcome: 'no_service' } : {} }));
@@ -57,6 +62,19 @@ export function createUiMachineOutputFixture(serverId: string) {
         ['machines.local.service.autostart.set', () => ({ serverId, autostart: 'on-demand' })],
         ['machines.local.service.update', () => ({ serverId })],
         ['machines.local.service.disconnect', () => ({ serverId })],
+        ['machines.local.service.cancel', async () => {
+            holdNextServiceStart = true;
+            const running = execute('machines.local.service.start', { serverId });
+            await vi.waitFor(() => { if (held.size === 0) throw new Error('Service start has not started'); });
+            const [taskId] = held;
+            // The canceled native task settles its waiting start Action.
+            void running.finally(() => held.delete(taskId!));
+            manual.bridge.cancel.mockImplementationOnce(async () => {
+                manual.emitResult(taskId!, { protocolVersion: 1, taskId: taskId!, ok: false, error: { code: 'canceled', message: 'Canceled' } });
+                return undefined;
+            });
+            return { serverId, taskId };
+        }],
         ['machines.add.local.start', () => ({ serverId })],
         ['machines.add.local.cancel', async () => ({ taskId: localTaskId ?? await startLocal() })],
         ['machines.add.ssh.start', () => { discardMachineAddFlowDraft(); return { serverId, host: 'output-contract-host',

@@ -206,6 +206,7 @@ export const autoApprovedNames: readonly string[] = Object.freeze([
   "machines_isolation_set",
   "machines_list",
   "machines_local_service_autostart_set",
+  "machines_local_service_cancel",
   "machines_local_service_start",
   "machines_local_service_status",
   "machines_managed_birth_get",

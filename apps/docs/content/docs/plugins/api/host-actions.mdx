@@ -10970,6 +10970,22 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `autostart` (text, required): Login-start mode
 - `clientId` (text): Client Id
 
+## `machines.local.service.cancel`
+
+**Cancel local service progress** — Cancel the running background-service start or managed-CLI update that this Home's Settings progress shows on the answering desktop. Omit taskId to cancel the running one.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `serverId` (text, required): Home ID
+- `taskId` (text): Task ID
+- `clientId` (text): Client id
+
 ## `machines.local.service.disconnect`
 
 **Disconnect local service from Home** — Remove only the desktop-managed service for this Home. Preserve user-owned services and the saved Home profile.

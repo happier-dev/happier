@@ -42,6 +42,12 @@ export type LocalDaemonServicesActionInputById = {
     } & {
         clientId?: string | undefined;
     };
+    readonly "machines.local.service.cancel": {
+        serverId: string;
+        taskId?: string | undefined;
+    } & {
+        clientId?: string | undefined;
+    };
     readonly "machines.local.service.pathExposure.set": {
         enabled: boolean;
         serverId: string;
@@ -319,6 +325,9 @@ export type LocalDaemonServicesActionResultById = {
     } | {
         outcome: 'user_owned';
         label: null | string;
+    };
+    readonly "machines.local.service.cancel": {
+        taskId: string;
     };
     readonly "machines.local.service.pathExposure.set": {
         taskId: string;

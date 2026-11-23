@@ -374,6 +374,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "machines.guard.sessionCeiling.set",
   "machines.isolation.set",
   "machines.local.service.autostart.set",
+  "machines.local.service.cancel",
   "machines.local.service.disconnect",
   "machines.local.service.restart",
   "machines.local.service.start",
@@ -2151,6 +2152,7 @@ export type GeneratedActions = Readonly<{
         readonly autostart: Readonly<{
           readonly set: (input: PublicActionInputById["machines.local.service.autostart.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.local.service.autostart.set">>;
         }> ;
+        readonly cancel: (input: PublicActionInputById["machines.local.service.cancel"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.local.service.cancel">>;
         readonly disconnect: (input: PublicActionInputById["machines.local.service.disconnect"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.local.service.disconnect">>;
         readonly restart: (input: PublicActionInputById["machines.local.service.restart"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.local.service.restart">>;
         readonly start: (input: PublicActionInputById["machines.local.service.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.local.service.start">>;
@@ -5219,6 +5221,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
           autostart: {
             set: (input: PublicActionInputById["machines.local.service.autostart.set"], options?: ActionExecutionOptions) => execute("machines.local.service.autostart.set", input, options),
           },
+          cancel: (input: PublicActionInputById["machines.local.service.cancel"], options?: ActionExecutionOptions) => execute("machines.local.service.cancel", input, options),
           disconnect: (input: PublicActionInputById["machines.local.service.disconnect"], options?: ActionExecutionOptions) => execute("machines.local.service.disconnect", input, options),
           restart: (input: PublicActionInputById["machines.local.service.restart"], options?: ActionExecutionOptions) => execute("machines.local.service.restart", input, options),
           start: (input: PublicActionInputById["machines.local.service.start"], options?: ActionExecutionOptions) => execute("machines.local.service.start", input, options),

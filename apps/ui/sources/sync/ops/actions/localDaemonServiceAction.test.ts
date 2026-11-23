@@ -116,11 +116,12 @@ describe('local daemon service Actions through the native task owner', () => {
         expect(manual.bridge.start.mock.calls[1]?.[0].params).toMatchObject({ relayUrl: 'https://service-home.test' });
         await act(async () => {
             hook.getCurrent().cancel();
+            // The Settings cancel runs the cancel Action, which reaches the native task asynchronously.
+            await vi.waitFor(() => expect(manual.bridge.cancel).toHaveBeenCalledWith('personal-home-task-2'));
             manual.emitResult('personal-home-task-2', { protocolVersion: 1, taskId: 'personal-home-task-2', ok: false,
                 error: { code: 'canceled', message: 'Canceled' } });
             await pending;
         });
-        expect(manual.bridge.cancel).toHaveBeenCalledWith('personal-home-task-2');
         expect(hook.getCurrent().isBusy).toBe(false);
         await hook.unmount();
     });
@@ -366,6 +367,73 @@ describe('local daemon service Actions through the native task owner', () => {
             error: { code: 'service_restart_failed', message: 'Service manager refused restart' } });
         expect(await pending).toMatchObject({ ok: false, errorCode: 'service_restart_failed' });
         expect(manual.bridge.start.mock.calls).toHaveLength(1);
+    });
+
+    it.each([
+        ['machines.local.service.start', 'daemon.service.start.v1'],
+        ['machines.local.service.update', 'cli.update.v1'],
+    ] as const)('lets an agent cancel the running %s native task through the cancel Action', async (startId, kind) => {
+        const { serverId, manual, executor, context } = await fixture();
+        const pending = executor.execute(startId, { serverId }, context);
+        await vi.waitFor(() => expect(manual.bridge.start.mock.calls[0]?.[0].kind).toBe(kind));
+        const canceled = await executor.execute('machines.local.service.cancel', { serverId },
+            { ...context, surface: 'agent', authority: 'account_automation' });
+        expect(canceled).toMatchObject({ ok: true, result: { taskId: 'personal-home-task-1' } });
+        expect(manual.bridge.cancel).toHaveBeenCalledWith('personal-home-task-1');
+        manual.emitResult('personal-home-task-1', { protocolVersion: 1, taskId: 'personal-home-task-1', ok: false,
+            error: { code: 'canceled', message: 'Canceled' } });
+        await pending;
+        expect(await executor.execute('machines.local.service.cancel', { serverId }, context))
+            .toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+    });
+
+    it('does not cancel another Home service start through the cancel Action', async () => {
+        const { serverId, manual, executor, context } = await fixture();
+        const pending = executor.execute('machines.local.service.start', { serverId }, context);
+        await vi.waitFor(() => expect(manual.bridge.start.mock.calls[0]?.[0].kind).toBe('daemon.service.start.v1'));
+        const otherId = await harness.addHome({ name: 'Other Home', serverUrl: 'https://other-cancel.test', accountId: 'bob' });
+        storage.setState({ settingsScope: { serverId: otherId, accountId: 'bob' }, profileScope: { serverId: otherId, accountId: 'bob' } });
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
+        try {
+            expect(await executor.execute('machines.local.service.cancel', { serverId: otherId },
+                { ...context, serverId: otherId, surface: 'agent', authority: 'account_automation' }))
+                .toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+            expect(manual.bridge.cancel).not.toHaveBeenCalled();
+        } finally {
+            manual.emitResult('personal-home-task-1', { protocolVersion: 1, taskId: 'personal-home-task-1', ok: false,
+                error: { code: 'canceled', message: 'Canceled original Home task' } });
+            await pending;
+        }
+    });
+
+    it('routes the Settings progress cancel through the cancel Action owner', async () => {
+        const { serverId, manual } = await fixture();
+        const settings = { ...storage.getState().settings, actionsSettingsV1: normalizeActionsSettingsV1({
+            v: 1, actions: { 'machines.local.service.cancel': { enabled: false } },
+        }) };
+        storage.getState().applySettingsForScope({ serverId, accountId: 'alice' }, settings, 2);
+        harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: settings }, version: 2 } });
+        const { useLocalDaemonControl } = await import('@/components/settings/machines/localControl/useLocalDaemonControl');
+        const hook = await renderHook(() => useLocalDaemonControl({ runner: manual.runner }));
+        await act(async () => {
+            manual.emitResult('personal-home-task-1', { protocolVersion: 1, taskId: 'personal-home-task-1', ok: true, data: status });
+        });
+        let pending!: Promise<unknown>;
+        await act(async () => { pending = hook.getCurrent().startDaemonService(); });
+        await act(async () => {
+            await vi.waitFor(() => expect(manual.bridge.start.mock.calls[1]?.[0].kind).toBe('daemon.service.start.v1'));
+        });
+        try {
+            await act(async () => { hook.getCurrent().cancel(); await flushHookEffects(); });
+            expect(manual.bridge.cancel).not.toHaveBeenCalled();
+        } finally {
+            await act(async () => {
+                manual.emitResult('personal-home-task-2', { protocolVersion: 1, taskId: 'personal-home-task-2', ok: false,
+                    error: { code: 'canceled', message: 'Canceled' } });
+                await pending;
+            });
+            await hook.unmount();
+        }
     });
 
     it('cancels the admitted service task when the invocation aborts', async () => {

@@ -190,6 +190,26 @@ export function isLocalCliUpdateRunning(runner: SystemTaskRunner): boolean {
 }
 
 /**
+ * Cancels the running service start of this Home's Account, or the one managed-CLI update, that the
+ * Settings progress shows. Another Home's start is never a candidate. Returns the canceled task id.
+ */
+export async function cancelLocalDaemonServiceProgress(runner: SystemTaskRunner, scope: ServerAccountScope,
+    taskId?: string): Promise<string | null> {
+    const state = readLocalDaemonSharedState(runner);
+    const running = (id: string | null | undefined) => {
+        const snapshot = id ? runner.getSnapshot(id) : null;
+        return snapshot != null && snapshot.result == null;
+    };
+    const start = state.serviceStart && state.serviceStart.scope.accountId === scope.accountId
+        && areServerProfileIdentifiersEquivalent(state.serviceStart.scope.serverId, scope.serverId) ? state.serviceStart.taskId : null;
+    const candidates = [start, state.cliUpdate.taskId].filter((id): id is string => running(id));
+    const target = taskId === undefined ? candidates[0] : candidates.find(id => id === taskId);
+    if (!target) return null;
+    await runner.cancel(target);
+    return target;
+}
+
+/**
  * Starts the one update of this computer's managed CLI. Success is re-read, never inferred from the
  * exit code: after the run (or when another update already held the lock) the status is read once
  * and published to every surface through `parseStatus`.

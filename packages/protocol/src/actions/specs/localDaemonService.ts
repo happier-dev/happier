@@ -1,6 +1,6 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
-import { LOCAL_CLI_PATH_EXPOSURE_SET_ACTION_ID_V1, LOCAL_DAEMON_SERVICE_ACTION_IDS } from './localDaemonServiceActionIdsV1.js';
-export { LOCAL_CLI_PATH_EXPOSURE_SET_ACTION_ID_V1, LOCAL_DAEMON_SERVICE_ACTION_IDS } from './localDaemonServiceActionIdsV1.js';
+import { LOCAL_CLI_PATH_EXPOSURE_SET_ACTION_ID_V1, LOCAL_DAEMON_SERVICE_ACTION_IDS, LOCAL_DAEMON_SERVICE_CANCEL_ACTION_ID_V1 } from './localDaemonServiceActionIdsV1.js';
+export { LOCAL_CLI_PATH_EXPOSURE_SET_ACTION_ID_V1, LOCAL_DAEMON_SERVICE_ACTION_IDS, LOCAL_DAEMON_SERVICE_CANCEL_ACTION_ID_V1 } from './localDaemonServiceActionIdsV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { SystemTaskResultSchema } from '../../system/tasks/spec.js';
@@ -12,6 +12,11 @@ export const LocalCliPathExposureSetInputSchema = lazyZodSchema(() => z.strictOb
   ...LocalDaemonServiceInputSchema.shape, enabled: z.boolean(),
 }));
 export const LocalDaemonServiceOutputSchema = lazyZodSchema(() => z.strictObject({ taskId: z.string().check(z.minLength(1)), result: SystemTaskResultSchema }));
+/** Cancels the exact running start or CLI-update task this Home's Settings progress shows; omit taskId for the running one. */
+export const LocalDaemonServiceCancelInputSchema = lazyZodSchema(() => z.strictObject({
+  ...LocalDaemonServiceInputSchema.shape, taskId: z.optional(z.string().check(z.minLength(1))),
+}));
+export const LocalDaemonServiceCancelOutputSchema = lazyZodSchema(() => z.strictObject({ taskId: z.string().check(z.minLength(1)) }));
 export const LocalDaemonServiceDisconnectOutputSchema = lazyZodSchema(() => z.discriminatedUnion('outcome', [
   z.strictObject({ outcome: z.enum(['removed', 'no_service']) }),
   z.strictObject({ outcome: z.literal('user_owned'), label: z.nullable(z.string()) }),
@@ -25,6 +30,7 @@ export const LOCAL_DAEMON_SERVICE_INPUT_SCHEMAS = {
   'machines.local.service.update': LocalDaemonServiceInputSchema,
   'machines.local.service.disconnect': LocalDaemonServiceInputSchema,
   [LOCAL_CLI_PATH_EXPOSURE_SET_ACTION_ID_V1]: LocalCliPathExposureSetInputSchema,
+  [LOCAL_DAEMON_SERVICE_CANCEL_ACTION_ID_V1]: LocalDaemonServiceCancelInputSchema,
 } as const;
 const surfaces = { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false } as const;
 const clientCli = { commands: [] };
@@ -39,6 +45,11 @@ function createLocalDaemonServiceActionSpecs() {
   { ...common, id: 'machines.local.service.autostart.set', title: 'Set desktop login start', description: 'Set the common login-start mode of every desktop-managed service, not a stored preference.', safety: 'safe', sideEffectClass: 'write', bindings: { mcpToolName: 'machines_local_service_autostart_set' }, inputSchema: LocalDaemonServiceAutostartInputSchema, outputSchema: LocalDaemonServiceOutputSchema, inputHints: { fields: [...common.inputHints.fields, { path: 'autostart', title: 'Login-start mode', widget: 'text', required: true }] } },
   { ...common, id: 'machines.local.service.update', title: 'Update desktop-managed CLI', description: 'Use the shared managed-CLI update task and its scoped completion/readback.', safety: 'danger', sideEffectClass: 'danger', bindings: { mcpToolName: 'machines_local_service_update' }, inputSchema: LocalDaemonServiceInputSchema, outputSchema: LocalDaemonServiceOutputSchema },
   { ...common, id: 'machines.local.service.disconnect', title: 'Disconnect local service from Home', description: 'Remove only the desktop-managed service for this Home. Preserve user-owned services and the saved Home profile.', safety: 'danger', sideEffectClass: 'danger', bindings: { mcpToolName: 'machines_local_service_disconnect' }, inputSchema: LocalDaemonServiceInputSchema, outputSchema: LocalDaemonServiceDisconnectOutputSchema },
+  { ...common, id: LOCAL_DAEMON_SERVICE_CANCEL_ACTION_ID_V1, title: 'Cancel local service progress',
+    description: 'Cancel the running background-service start or managed-CLI update that this Home\'s Settings progress shows on the answering desktop. Omit taskId to cancel the running one.',
+    safety: 'safe', sideEffectClass: 'write', bindings: { mcpToolName: 'machines_local_service_cancel' },
+    inputSchema: LocalDaemonServiceCancelInputSchema, outputSchema: LocalDaemonServiceCancelOutputSchema,
+    inputHints: { fields: [...common.inputHints.fields, { path: 'taskId', title: 'Task ID', widget: 'text' }] } },
   { ...common, id: LOCAL_CLI_PATH_EXPOSURE_SET_ACTION_ID_V1,
     title: 'Set Happier CLI PATH exposure',
     description: 'Add the Happier CLI to PATH on the answering desktop or remove the entry the desktop created. Pass clientId to address a specific desktop client.',
