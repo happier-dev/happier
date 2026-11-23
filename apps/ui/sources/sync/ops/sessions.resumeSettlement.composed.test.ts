@@ -39,7 +39,7 @@ describe('Resume settlement through the real Action executor and Home transport'
             || request.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE);
     }
 
-    it.each(['acknowledged', 'refused', 'cancelled-before-admission', 'open-before-navigation'] as const)(
+    it.each(['acknowledged', 'refused', 'cancelled-before-admission', 'open-before-navigation', 'caller-retired-before-ack'] as const)(
         'keeps the %s Resume result across caller cancellation through the real Action executor', async disposition => {
         const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
         const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
@@ -60,6 +60,7 @@ describe('Resume settlement through the real Action executor and Home transport'
                     && request.method !== RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE) {
                     return { ok: false, error: 'Not available', errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE };
                 }
+                if (disposition === 'caller-retired-before-ack') caller.abort();
                 return { ok: true, result: disposition === 'refused'
                     ? { type: 'error', errorCode: 'SESSION_DIRECTORY_MISSING', errorMessage: 'Missing folder' }
                     : { type: 'success', sessionId } };
@@ -67,7 +68,7 @@ describe('Resume settlement through the real Action executor and Home transport'
             const resumeSession = ops.resumeSession;
             // Observe settlement without replacing any owner logic or its result:
             // the original Resume consumes the real Socket.IO acknowledgement first.
-            vi.spyOn(ops, 'resumeSession').mockImplementation(async options => {
+            if (disposition !== 'caller-retired-before-ack') vi.spyOn(ops, 'resumeSession').mockImplementation(async options => {
                 const result = await resumeSession(options);
                 expect(result).toMatchObject(disposition === 'refused'
                     ? { type: 'error', errorCode: 'SESSION_DIRECTORY_MISSING' }

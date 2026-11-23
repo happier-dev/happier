@@ -2907,8 +2907,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
             accountLifetime: backgroundAccountLifetime,
           }), { tag: `session.open.installables.${target.defaultAgentId}` });
         }
+        // Admitted Resume outlives its caller; Account retirement still fences it.
         const resumed = await resumeSession({
-          ...base, ...(resumeRequest ? resumeRequest : {}), serverId: accountContext.serverId, accountLifetime: accountContext.accountLifetime,
+          ...base, ...(resumeRequest ? resumeRequest : {}), serverId: accountContext.serverId, accountLifetime: accountContext.accountOnlyLifetime,
           actionContext: context,
           executionAuthority: context?.authority ?? 'account_automation',
           executionAuthorization: { provenance: 'user_request', requestId: actionRequestId ?? randomUUID() },
