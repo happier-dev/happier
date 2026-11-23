@@ -27,6 +27,8 @@ const { storage } = await import('@/sync/domains/state/storage');
 const { settingsDefaults } = await import('@/sync/domains/settings/settings');
 const { ThemeActionResult } = await import('./ThemeActionResult');
 const { ThemeActionResultView } = await import('./ThemeActionResultView');
+const { t } = await import('@/text');
+const { resolveToolInlineErrorDisplay } = await import('../../shell/presentation/resolveToolInlineErrorDisplay');
 
 describe('MCPToolView', () => {
     it.each(['single', 'first option', 'last option'])('shows a CSS approval receipt in the theme card (%s)', async placement => {
@@ -377,8 +379,27 @@ describe('MCPToolView', () => {
         });
         const rendered = (await renderView(tool, 'summary')).getTextContent();
 
-        expect(rendered).toContain('unsupported_action · target_outside_led_subtree');
+        // The header already says the cause in words; the body keeps the typed code under Technical details.
+        expect(rendered).not.toContain(t('toolView.actionOutcome.refusedReason'));
+        expect(rendered).toContain(t('approvals.technicalDetails'));
         expect(rendered).not.toContain('Stop a running session');
+    });
+
+    it('says a failed Action call in one sentence, with its code under Technical details and no raw payload', async () => {
+        const text = JSON.stringify({ ok: false, errorCode: 'workspace_destination_unavailable', error: 'workspace_destination_unavailable' });
+        const tool = makeToolCall({
+            name: 'mcp__happier__action_execute',
+            state: 'error',
+            input: { actionId: 'workspace.tabs.open', input: {} },
+            result: { content: [{ type: 'text', text }], structuredContent: null, text, isError: true, _mcp: { serverId: 'happier', toolId: 'action_execute' } },
+        });
+        const screen = await renderView(tool, 'summary');
+        const rendered = screen.getTextContent();
+
+        expect(rendered).toContain(t('toolView.actionOutcome.failedReason'));
+        expect(rendered).toContain(t('approvals.technicalDetails'));
+        expect(rendered).not.toContain('{');
+        expect(resolveToolInlineErrorDisplay({ tool, normalizedToolName: tool.name, metadata: null }).append).toBeNull();
     });
 
     it('says an acknowledged section move in words instead of its JSON (lab clsections:agent)', async () => {

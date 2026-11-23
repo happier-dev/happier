@@ -17,6 +17,7 @@ import { useDemoMessages } from '@/hooks/session/useDemoMessages';
 /**
  * Dev-only: Session failure and recovery states that live sessions rarely reach on demand — typed
  * transcript failure rows (model not found, Team refusal, Team reconnect, Team model reset, usage limit, Agent sign-in),
+ * an Agent Action refused before any Ask, the receipt of an approved Action whose run failed,
  * the quota card, and the Terminal tool card title. Every frame mounts the real owner with fixture data.
  * `?only=transcript|quota` renders one section.
  */
@@ -209,7 +210,52 @@ const TRANSCRIPT: Message[] = [
       agentId: 'codex',
     },
   ),
+  failedActionCall(
+    'action-refused-before-ask',
+    90_000,
+    'workspace.tabs.open',
+    'workspace_destination_unavailable',
+  ),
+  approvalResultRow('approval-failed-run', 60_000, 'browser.workspace.open', {
+    status: 'approved',
+    execution: { executedAtMs: NOW - 60_000, ok: false, errorCode: 'runtime_action_disabled' },
+  }),
 ];
+
+/** An Agent's Happier Action call that failed before any Ask (the transcript tool row). */
+function failedActionCall(id: string, offsetMs: number, actionId: string, errorCode: string): Message {
+  const text = JSON.stringify({ ok: false, errorCode, error: errorCode });
+  return {
+    id,
+    localId: null,
+    createdAt: NOW - offsetMs,
+    kind: 'tool-call',
+    children: [],
+    tool: {
+      name: 'mcp__happier__action_execute',
+      state: 'error',
+      input: { actionId, input: {} },
+      result: { content: [{ type: 'text', text }], structuredContent: null, text, isError: true,
+        _mcp: { serverId: 'happier', toolId: 'action_execute' } },
+      createdAt: NOW - offsetMs,
+      startedAt: NOW - offsetMs,
+      completedAt: NOW - offsetMs + 300,
+      description: null,
+    },
+  };
+}
+
+/** The decided approval's result, delivered to the requesting Session as host input (its quiet receipt). */
+function approvalResultRow(id: string, offsetMs: number, actionId: string, payload: Record<string, unknown>): Message {
+  return {
+    kind: 'user-text',
+    id,
+    localId: `approval-result:${id}`,
+    createdAt: NOW - offsetMs,
+    text: JSON.stringify({ actionId, ...payload }),
+    meta: { happierProvenanceV1: { v: 1, kind: 'host', producer: 'sessionAction' } },
+  } as Message;
+}
 
 const QUOTA_ISSUE = SessionRuntimeIssueV1Schema.parse({
   v: 1,

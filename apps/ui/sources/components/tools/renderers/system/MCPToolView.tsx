@@ -22,6 +22,8 @@ import { presentActionApproval } from '@/components/approvals/actionApprovalPres
 import { resolveActionTitle } from '@/text/actionTitles';
 import { Typography } from '@/constants/Typography';
 import { resolveToolActionFailure, type ToolActionFailurePresentation } from '@/components/tools/shell/presentation/resolveToolActionFailure';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { useThemeActionCardPresentation } from '@/components/sessions/transcript/references/transcriptThemeAction';
 import { ThemeActionResult } from './ThemeActionResult';
 
@@ -140,19 +142,31 @@ export const projectMCPDisplayText: ToolDisplayTextProjector = (tool) => {
     ];
 };
 
-/** The typed code of a refused or failed Action call as a quiet fact; the outcome and cause already read on its header. */
-function ActionFailureCode({ failure }: Readonly<{ failure: ToolActionFailurePresentation }>) {
+/**
+ * A refused or failed Action call, through the one failure presenter: one sentence (unless the header already says
+ * the cause in words), then its typed code under Technical details. The raw payload is never the explanation.
+ */
+function ActionFailureDetail({ failure }: Readonly<{ failure: ToolActionFailurePresentation }>) {
+    const fallback = failure.outcome === 'refused'
+        ? t('toolView.actionOutcome.refusedReason') : t('toolView.actionOutcome.failedReason');
+    const sentence = failure.summary ? null : resolveActionExecutionFailureMessage(
+        { ok: false, errorCode: failure.code, error: failure.code }, fallback, { closedCodesOnly: true }) ?? fallback;
+    const lines = [
+        { key: 'code', label: t('workflows.run.technical.failureCode'), value: failure.code },
+        ...(failure.cause ? [{ key: 'cause', label: t('approvals.failureTechnicalLabels.causeCode'), value: failure.cause }] : []),
+    ];
     return (
-        <Text testID="mcp-tool-action-failure" style={styles.failureCode} selectable>
-            {failure.cause ? `${failure.code} · ${failure.cause}` : failure.code}
-        </Text>
+        <>
+            {sentence ? <Text testID="mcp-tool-action-failure" style={styles.failureSentence}>{sentence}</Text> : null}
+            <TechnicalDetailsDisclosure testID="mcp-tool-action-failure-details" title={t('approvals.technicalDetails')} lines={lines} />
+        </>
     );
 }
 
 function renderMCPToolSummary(tool: ToolViewProps['tool']) {
     const failure = resolveToolActionFailure(tool);
     const resultText = tool.state === 'completed' ? getResultText(tool.result) : null;
-    const outcome = failure ? <ActionFailureCode failure={failure} />
+    const outcome = failure ? <ActionFailureDetail failure={failure} />
         : resultText ? <CodeView code={truncate(resultText, 800)} /> : null;
     return outcome ? (
         <ToolSectionView>
@@ -227,10 +241,9 @@ const styles = StyleSheet.create((theme) => ({
     section: {
         gap: theme.space.s6,
     },
-    failureCode: {
-        color: theme.colors.text.tertiary,
+    failureSentence: {
+        color: theme.colors.text.secondary,
         ...Typography.variant('meta'),
-        ...Typography.mono(),
     },
     sectionTitle: {
         fontSize: 12,

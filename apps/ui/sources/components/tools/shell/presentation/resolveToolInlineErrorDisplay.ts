@@ -7,6 +7,7 @@ import { parseToolUseError } from '@/utils/errors/toolErrorParser';
 import { resolveToolPermissionTerminalErrorMessage } from '../permissions/resolveToolPermissionTerminalErrorMessage';
 import type { TranscriptPermissionDisabledReason } from '@/utils/sessions/deriveTranscriptInteraction';
 import { resolveToolStatusIndicatorKind } from './resolveToolStatusIndicatorKind';
+import { resolveToolActionFailure } from './resolveToolActionFailure';
 
 export function resolveToolErrorDisplay(message: string) {
     const parsed = parseToolUseError(message);
@@ -39,6 +40,8 @@ export function resolveToolInlineErrorDisplay(params: Readonly<{
     if (resolveToolStatusIndicatorKind(params.tool) !== 'error' || !result || parseToolUseError(result).isToolUseError || isSubAgentRun) {
         return { override: null, append: null, generic: null };
     }
+    // A typed Action failure is said by its own presenter (sentence, code under Technical details), never as raw JSON.
+    if (resolveToolActionFailure(params.tool)) return { override: null, append: null, generic: null };
     const raw = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
     // The body without a tool-specific view always states a failure itself, with the raw result.
     const generic = raw;
