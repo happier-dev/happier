@@ -7736,6 +7736,8 @@ const ru: typeof en = {
         showMe: 'Показать',
         callbackAddress: 'Адрес обратного вызова',
         callbackAddressHint: 'Зарегистрируйте его в OAuth-приложении GitHub.',
+        callbackAddressSuggestedHint: 'Ещё не сохранён. Зарегистрируйте этот адрес в OAuth-приложении GitHub, затем сохраните его здесь.',
+        callbackAddressSuggestedHintReadOnly: 'Ещё не сохранён. Зарегистрируйте этот адрес в OAuth-приложении GitHub; владелец сохраняет его здесь.',
         whoCanSignInGithub: 'Кто может входить через GitHub',
         companySignIn: 'Корпоративный вход',
         companySignInDescription: 'Провайдеры OpenID Connect, через которые могут входить люди и команды.',

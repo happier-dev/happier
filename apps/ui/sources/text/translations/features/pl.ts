@@ -7735,6 +7735,8 @@ const pl: typeof en = {
         showMe: 'Pokaż',
         callbackAddress: 'Adres zwrotny',
         callbackAddressHint: 'Zarejestruj go w aplikacji OAuth w GitHubie.',
+        callbackAddressSuggestedHint: 'Jeszcze niezapisany. Zarejestruj ten adres w aplikacji OAuth w GitHubie, a potem zapisz go tutaj.',
+        callbackAddressSuggestedHintReadOnly: 'Jeszcze niezapisany. Zarejestruj ten adres w aplikacji OAuth w GitHubie; właściciel zapisuje go tutaj.',
         whoCanSignInGithub: 'Kto może logować się przez GitHub',
         companySignIn: 'Logowanie firmowe',
         companySignInDescription: 'Dostawcy OpenID Connect, przez których mogą logować się osoby i zespoły.',

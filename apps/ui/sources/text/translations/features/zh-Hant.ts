@@ -7608,6 +7608,8 @@ const zhHant: typeof en = {
         showMe: '查看',
         callbackAddress: '回呼位址',
         callbackAddressHint: '請在 GitHub OAuth 應用程式中登記此位址。',
+        callbackAddressSuggestedHint: '尚未儲存。請在 GitHub OAuth 應用程式中登記此位址，然後在這裡儲存。',
+        callbackAddressSuggestedHintReadOnly: '尚未儲存。請在 GitHub OAuth 應用程式中登記此位址；由擁有者在這裡儲存。',
         whoCanSignInGithub: '誰可以用 GitHub 登入',
         companySignIn: '公司登入',
         companySignInDescription: '成員和團隊可用於登入的 OpenID Connect 提供者。',

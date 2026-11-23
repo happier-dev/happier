@@ -1,6 +1,7 @@
 import type { OutboundIdentityNetworkPolicy } from "@/app/net/outboundIdentityNetworkPolicy";
 import type { OAuthFlowProvider } from "@/app/oauth/providers/types";
 import { createOutboundIdentityFetch } from "@/app/net/outboundIdentityFetch";
+import { oauthCallbackUrl } from "@/app/oauth/oauthCallbackUrl";
 
 export type ManagedGitHubUserOAuthConfig = Readonly<{
     providerId: string;
@@ -27,7 +28,7 @@ export const MANAGED_GITHUB_APP_CALLBACK_PROVIDER_ID = "github-app";
  * never disagree.
  */
 export function managedGitHubAppUserAuthorizationCallbackUrl(publicServerUrl: string): string {
-    return `${publicServerUrl.replace(/\/$/u, "")}/v1/oauth/${MANAGED_GITHUB_APP_CALLBACK_PROVIDER_ID}/callback`;
+    return oauthCallbackUrl(publicServerUrl, MANAGED_GITHUB_APP_CALLBACK_PROVIDER_ID);
 }
 
 function asRecord(value: unknown): Readonly<Record<string, unknown>> | null {

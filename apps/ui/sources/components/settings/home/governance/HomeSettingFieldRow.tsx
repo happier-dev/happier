@@ -8,6 +8,7 @@ import {
     SchemaFieldValueSlot,
 } from '@/components/settings/schemaFields/SchemaFieldRow';
 import { StringListField } from '@/components/ui/forms/StringListField';
+import { CopyIconButton } from '@/components/ui/copy/CopyIconButton';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { t } from '@/text';
 
@@ -139,12 +140,24 @@ export const HomeSettingFieldRow = React.memo(function HomeSettingFieldRow(props
     subtitleLeading?: React.ReactNode;
     /** Labels an enum value; defaults to its translated choice label. */
     choiceLabel?: (value: string) => string;
+    /**
+     * What this Home expects an unset text key to hold (an address it answers at), shown where
+     * "Not set" would be: the empty field's placeholder, or the read-only value. Never staged or saved.
+     */
+    emptyValue?: string;
+    /** A Copy control beside the value: it copies the typed or saved text, else `emptyValue`. */
+    copyable?: boolean;
 }>) {
     const { entry, staged, onStage, onCommit, testID } = props;
     const declaration = entry.declaration;
     const choiceLabel = props.choiceLabel ?? homeSettingChoiceLabel;
     const [menuOpen, setMenuOpen] = React.useState(false);
     const value = fieldText(entry);
+    const shownText = (staged?.kind === 'text' ? staged.text : value).trim();
+    const copyText = shownText || props.emptyValue || '';
+    const copy = props.copyable && copyText ? (
+        <CopyIconButton testID={`${testID}.copy`} text={copyText} />
+    ) : undefined;
     const stageValue = React.useCallback((next: unknown) => {
         onStage(entry.key, next === entry.value ? null : { kind: 'value', value: next });
     }, [entry.key, entry.value, onStage]);
@@ -175,7 +188,14 @@ export const HomeSettingFieldRow = React.memo(function HomeSettingFieldRow(props
     // An enum with one allowed value is not a choice (a reserved capability): nothing is offered.
     if (declaration?.type === 'enum' && declaration.bounds?.values?.length === 1) return null;
     if (kind === null) {
-        return <SchemaFieldRow {...row} layout="inline" value={homeSettingShownValue(entry)} />;
+        return (
+            <SchemaFieldRow
+                {...row}
+                layout="inline"
+                value={value.trim() === '' && props.emptyValue ? props.emptyValue : homeSettingShownValue(entry)}
+                control={copy}
+            />
+        );
     }
     if (declaration?.type === 'list') {
         return (
@@ -282,9 +302,9 @@ export const HomeSettingFieldRow = React.memo(function HomeSettingFieldRow(props
                                 accessibilityLabel: props.title,
                                 value: staged?.kind === 'text' ? staged.text : value,
                                 // An empty field says what empty means: the default it falls back to, or not set.
-                                placeholder: fallback === undefined || fallback === null || fallback === ''
+                                placeholder: props.emptyValue ?? (fallback === undefined || fallback === null || fallback === ''
                                     ? t('homeSettings.row.notSet')
-                                    : Array.isArray(fallback) ? fallback.join(', ') : String(fallback),
+                                    : Array.isArray(fallback) ? fallback.join(', ') : String(fallback)),
                                 editable: !props.disabled,
                                 autoCapitalize: 'none',
                                 keyboardType: numeric ? 'number-pad' : undefined,
@@ -293,6 +313,7 @@ export const HomeSettingFieldRow = React.memo(function HomeSettingFieldRow(props
                                 ...(onCommit ? { onBlur: commit, onSubmitEditing: commit } : {}),
                                 style: SCHEMA_FIELD_INPUT_STYLE,
                             }} />
+                            {copy}
                         </SchemaFieldValueSlot>
                     )}
                 />

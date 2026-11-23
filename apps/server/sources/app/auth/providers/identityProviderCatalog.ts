@@ -1,6 +1,7 @@
 import type { AuthProviderId } from '@happier-dev/protocol/auth/providers';
 import { normalizeOidcAllowRules } from "@/app/auth/providers/oidc/oidcProviderConfig";
 import { managedGitHubAppUserAuthorizationCallbackUrl } from "@/app/integrations/github/githubManagedAppManifest";
+import { oauthCallbackUrl } from "@/app/oauth/oauthCallbackUrl";
 import type {
     TeamIdentityEligibleProviderV1,
     IdentityEligibleProviderV1,
@@ -860,7 +861,7 @@ function managedIdentityProviderCallbackUrl(
 ): string {
     return provider.kind === "github_app_identity"
         ? managedGitHubAppUserAuthorizationCallbackUrl(publicServerUrl)
-        : `${publicServerUrl}/v1/oauth/${provider.id}/callback`;
+        : oauthCallbackUrl(publicServerUrl, provider.id);
 }
 
 /**

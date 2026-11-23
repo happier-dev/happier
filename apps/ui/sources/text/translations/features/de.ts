@@ -7723,6 +7723,8 @@ const de: typeof en = {
         showMe: 'Zeigen',
         callbackAddress: 'Callback-Adresse',
         callbackAddressHint: 'Trage sie in der GitHub-OAuth-App ein.',
+        callbackAddressSuggestedHint: 'Noch nicht gespeichert. Trage diese Adresse in der GitHub-OAuth-App ein und speichere sie hier.',
+        callbackAddressSuggestedHintReadOnly: 'Noch nicht gespeichert. Trage diese Adresse in der GitHub-OAuth-App ein; ein Eigentümer speichert sie hier.',
         whoCanSignInGithub: 'Wer sich mit GitHub anmelden kann',
         companySignIn: 'Firmenanmeldung',
         companySignInDescription: 'OpenID-Connect-Anbieter, mit denen sich Personen und Teams anmelden können.',

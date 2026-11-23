@@ -47,6 +47,7 @@ import {
   homeSettingRunningState,
 } from '../governance/HomeSettingRowState';
 import { homeSettingTitle } from '../governance/homeServerSettingsRows';
+import { homeSettingText } from '../governance/homeEmailSettingsForm';
 import {
   homeSettingFieldError,
   homeSettingTextRefusal,
@@ -107,6 +108,7 @@ function platformEntries(
 function platformRowWords(
   platform: HomeSignInPlatform,
   entry: HomeSettingEntryV1,
+  callback: Readonly<{ suggested: boolean; readOnly: boolean }>,
 ): Readonly<{
   title: string;
   hint: string | undefined;
@@ -155,11 +157,16 @@ function platformRowWords(
       tone: null,
     };
   }
+  // An unset callback shows the address this Home answers at, to register on GitHub and save here.
   return {
     title,
-    hint: detail
-      ? t('homeGovernance.signInProviders.callbackAddressHint')
-      : undefined,
+    hint: !detail
+      ? undefined
+      : !callback.suggested
+        ? t('homeGovernance.signInProviders.callbackAddressHint')
+        : callback.readOnly
+          ? t('homeGovernance.signInProviders.callbackAddressSuggestedHintReadOnly')
+          : t('homeGovernance.signInProviders.callbackAddressSuggestedHint'),
     tone: null,
   };
 }
@@ -184,6 +191,8 @@ type RowProps = Readonly<{
   disabled: boolean;
   onStage: HomeSettingStage;
   onSecretChange: (key: string, draft: HomeSecretDraft) => void;
+  /** The address this Home's GitHub OAuth callback answers at, from the settings projection. */
+  githubOAuthCallbackUrl: string | undefined;
   showDivider?: boolean;
 }>;
 
@@ -197,7 +206,15 @@ const PlatformSettingRow = React.memo(function PlatformSettingRow(
   const { entry, onSecretChange } = props;
   const { theme } = useUnistyles();
   const testID = `${ROW_TESTID}:${entry.key}`;
-  const { title, hint, tone } = platformRowWords(props.platform, entry);
+  // The callback address row: its value is copied to the GitHub OAuth app, so it carries Copy.
+  const callbackRow = props.platform.details.includes(entry);
+  const suggestedCallback = callbackRow && !entry.fixed && homeSettingText(entry).trim() === ''
+    ? props.githubOAuthCallbackUrl
+    : undefined;
+  const { title, hint, tone } = platformRowWords(props.platform, entry, {
+    suggested: suggestedCallback !== undefined,
+    readOnly: props.readOnly,
+  });
   const leading = tone ? (
     <StatusDot
       color={
@@ -245,6 +262,8 @@ const PlatformSettingRow = React.memo(function PlatformSettingRow(
         error={props.error ?? null}
         onStage={props.onStage}
         showDivider={props.showDivider}
+        {...(suggestedCallback ? { emptyValue: suggestedCallback } : {})}
+        copyable={callbackRow}
       />
     );
   const setting = declared(entry.key);
@@ -418,6 +437,7 @@ const SignInPlatformRow = React.memo(function SignInPlatformRow(
           disabled={disabled}
           onStage={onStage}
           onSecretChange={onSecretChange}
+          githubOAuthCallbackUrl={home.settings?.githubOAuthCallbackUrl}
           showDivider={index < entries.length - 1}
         />
       )),
@@ -425,6 +445,7 @@ const SignInPlatformRow = React.memo(function SignInPlatformRow(
       disabled,
       drafts,
       errors,
+      home.settings?.githubOAuthCallbackUrl,
       onSecretChange,
       onStage,
       platform,

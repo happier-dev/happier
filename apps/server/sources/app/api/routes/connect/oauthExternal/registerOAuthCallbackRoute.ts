@@ -10,6 +10,7 @@ import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { readUsernameAvailabilityInTx } from "@/app/social/usernameUpdate";
 import { consumeValidOAuthStateAttempt } from "../connectRoutes.oauthStateAttempt";
 import { log } from "@/utils/logging/log";
+import { OAUTH_CALLBACK_ROUTE } from "@/app/oauth/oauthCallbackUrl";
 import { readAuthOauthKeylessFeatureEnv, readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveKeylessAccountsAvailability } from "@/app/features/e2ee/resolveKeylessAccountsEnabled";
 import { resolveEffectiveHomeAuthMethods } from "@/app/auth/methods/effectiveHomeAuthMethods";
@@ -96,7 +97,7 @@ async function createConnectPending(params: Readonly<{
 }
 
 export function registerOAuthCallbackRoute(app: Fastify) {
-    app.get("/v1/oauth/:provider/callback", {
+    app.get(OAUTH_CALLBACK_ROUTE, {
         config: { rateLimit: oauthExternalRateLimitCallbackPerIp() },
         schema: {
             params: z.object({ provider: z.string() }),

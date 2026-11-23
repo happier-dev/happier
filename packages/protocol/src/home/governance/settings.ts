@@ -101,6 +101,12 @@ export const HomeSettingsProjectionV1Schema = lazyZodSchema(() => z.strictObject
    * `blockingDependencyId`. The same decisions close `/v1/features`. Additive.
    */
   featureDecisions: z.optional(z.array(FeatureDecisionSchema)),
+  /**
+   * The address this Home's GitHub OAuth callback answers at, derived from its public server URL:
+   * what the owner registers on the GitHub OAuth app and sets as `GITHUB_REDIRECT_URL`. Absent when
+   * the Home has no public server URL to derive it from.
+   */
+  githubOAuthCallbackUrl: z.optional(z.string().check(z.minLength(1))),
 }));
 
 export type HomeSettingsProjectionV1 = z.infer<typeof HomeSettingsProjectionV1Schema>;

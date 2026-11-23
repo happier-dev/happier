@@ -7608,6 +7608,8 @@ const zhHans: typeof en = {
         showMe: '查看',
         callbackAddress: '回调地址',
         callbackAddressHint: '请在 GitHub OAuth 应用中登记此地址。',
+        callbackAddressSuggestedHint: '尚未保存。请在 GitHub OAuth 应用中登记此地址，然后在这里保存。',
+        callbackAddressSuggestedHintReadOnly: '尚未保存。请在 GitHub OAuth 应用中登记此地址；由所有者在这里保存。',
         whoCanSignInGithub: '谁可以用 GitHub 登录',
         companySignIn: '公司登录',
         companySignInDescription: '成员和团队可用于登录的 OpenID Connect 提供方。',

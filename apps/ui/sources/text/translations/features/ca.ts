@@ -7712,6 +7712,8 @@ const ca: typeof en = {
         showMe: 'Mostra-m’ho',
         callbackAddress: 'Adreça de retorn',
         callbackAddressHint: 'Registra-la a l’aplicació OAuth de GitHub.',
+        callbackAddressSuggestedHint: 'Encara no desada. Registra aquesta adreça a l’aplicació OAuth de GitHub i desa-la aquí.',
+        callbackAddressSuggestedHintReadOnly: 'Encara no desada. Registra aquesta adreça a l’aplicació OAuth de GitHub; un propietari la desa aquí.',
         whoCanSignInGithub: 'Qui pot iniciar sessió amb GitHub',
         companySignIn: 'Inici de sessió d’empresa',
         companySignInDescription: 'Proveïdors OpenID Connect amb què persones i equips poden iniciar sessió.',

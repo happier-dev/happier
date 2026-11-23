@@ -7,6 +7,7 @@ import { resolveManagedIdentityNetworkPolicyInTx } from "@/app/auth/providers/ma
 import { resolveOauthStateAttemptTtlMsFromEnv } from "@/app/api/routes/connect/oauthExternal/oauthExternalConfig";
 import { createOutboundIdentityFetch } from "@/app/net/outboundIdentityFetch";
 import { resolveConfiguredPublicServerUrl } from "@/app/serverUrls/effectiveServerUrls";
+import { oauthCallbackUrl } from "@/app/oauth/oauthCallbackUrl";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
@@ -163,7 +164,7 @@ export async function beginGitHubAppManifestSetup(params: GitHubAppManagementAut
         throw error;
     }
 
-    const callbackUrl = `${publicServerUrl}/v1/oauth/github/callback`;
+    const callbackUrl = oauthCallbackUrl(publicServerUrl, GITHUB_CALLBACK_PROVIDER_ID);
     const userAuthorizationCallbackUrl = managedGitHubAppUserAuthorizationCallbackUrl(publicServerUrl);
     const setupUrl = new URL("/v1/identity/github-apps/manifest-setup/complete", publicServerUrl);
     setupUrl.searchParams.set("state", state);

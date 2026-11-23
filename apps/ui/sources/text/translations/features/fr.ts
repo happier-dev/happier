@@ -7728,6 +7728,8 @@ const fr: typeof en = {
         showMe: 'Afficher',
         callbackAddress: 'Adresse de rappel',
         callbackAddressHint: 'Enregistre-la dans l’application OAuth GitHub.',
+        callbackAddressSuggestedHint: 'Pas encore enregistrée. Enregistre cette adresse dans l’application OAuth GitHub, puis enregistre-la ici.',
+        callbackAddressSuggestedHintReadOnly: 'Pas encore enregistrée. Enregistre cette adresse dans l’application OAuth GitHub ; un propriétaire l’enregistre ici.',
         whoCanSignInGithub: 'Qui peut se connecter avec GitHub',
         companySignIn: 'Connexion d’entreprise',
         companySignInDescription: 'Les fournisseurs OpenID Connect avec lesquels les personnes et les équipes peuvent se connecter.',

@@ -13,6 +13,8 @@ import { findRetentionPolicyEnvProblem } from "@/app/retention/config/readRetent
 import { publishHomeGovernanceChangedInTx } from "@/app/home/governance/governanceChanges";
 import { authorizeHomeGovernanceMutationInTx } from "@/app/home/governance/homeCapabilities";
 import { peekInferredPublicServerUrl } from "@/app/integrations/publicUrl/publicServerUrlInference";
+import { oauthCallbackUrl } from "@/app/oauth/oauthCallbackUrl";
+import { resolveConfiguredPublicServerUrl } from "@/app/serverUrls/effectiveServerUrls";
 import { SERVER_CONFIG_REGISTRY } from "@/config/serverConfigRegistry";
 import { decryptString, encryptString } from "@/modules/encrypt";
 import { db, isPrismaErrorCode } from "@/storage/db";
@@ -265,7 +267,15 @@ async function projectRecordInTx(
     }).map((row) => ({ ...row }));
     // The same overlay a request would read, answered by the canonical feature decision engine.
     const featureDecisions = resolveFeatureDecisionsFromEnv(runtimeEnv);
-    return { revision: record.revision, startedAt: startup?.snapshot.appliedAt ?? null, entries, featureDecisions };
+    // What the owner registers on the GitHub OAuth app: the address its callback route answers at.
+    const publicServerUrl = resolveConfiguredPublicServerUrl(runtimeEnv);
+    return {
+        revision: record.revision,
+        startedAt: startup?.snapshot.appliedAt ?? null,
+        entries,
+        featureDecisions,
+        ...(publicServerUrl ? { githubOAuthCallbackUrl: oauthCallbackUrl(publicServerUrl, "github") } : {}),
+    };
 }
 
 export type HomeSettingsReadResult =

@@ -6,6 +6,7 @@ import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { resolveFeaturesFromEnv } from "@/app/features/registry";
+import { OAUTH_CALLBACK_ROUTE } from "@/app/oauth/oauthCallbackUrl";
 
 import { applyStartupHomeEnvToProcess, loadStartupHomeEnv } from "./startupHomeEnv";
 import {
@@ -182,6 +183,22 @@ describe("Home settings owner", () => {
             .resolves.toEqual({ status: "revision_conflict" });
         const record = await inTx(async (tx) => await readHomeSettingsInTx(tx));
         expect(record.values).toEqual({ METRICS_PORT: 9191 });
+    });
+
+    it("projects the address the GitHub OAuth callback route answers at, and none without a public server URL", async () => {
+        const admin = await createAccount("admin");
+        const read = async () => {
+            const result = await inTx(async (tx) => await readHomeSettingsProjectionInTx(tx, { actorAccountId: admin }));
+            if (result.status !== "ok") throw new Error(result.status);
+            return result.projection;
+        };
+        delete process.env.HAPPIER_PUBLIC_SERVER_URL;
+        expect((await read()).githubOAuthCallbackUrl).toBeUndefined();
+
+        process.env.HAPPIER_PUBLIC_SERVER_URL = "https://studio.example.test/";
+        const address = new URL((await read()).githubOAuthCallbackUrl ?? "");
+        expect(address.origin).toBe("https://studio.example.test");
+        expect(address.pathname).toBe(OAUTH_CALLBACK_ROUTE.replace(":provider", "github"));
     });
 
     it("clears a value and a secret, recording set to unset", async () => {

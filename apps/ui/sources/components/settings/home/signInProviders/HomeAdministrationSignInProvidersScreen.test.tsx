@@ -11,6 +11,7 @@ import {
 } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { installBrowserClipboardBoundary } from '@/dev/testkit/harness/browserClipboardBoundary';
 import { reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { teamCapabilitiesFixture, teamPolicyFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
@@ -33,6 +34,18 @@ const workosApiKey = (overrides?: Partial<HomeSettingEntryV1>) => homeSettingEnt
     applied: { value: null, pending: false },
     ...overrides,
 });
+
+const githubEntry = (key: string, overrides?: Partial<HomeSettingEntryV1>) => homeSettingEntryFixture(key, {
+    apply: 'restart',
+    declaration: { type: key === 'GITHUB_REDIRECT_URL' ? 'url' : 'string', section: 'policies', group: 'github' },
+    applied: { value: null, pending: false },
+    ...overrides,
+});
+const githubEntries = (callback?: Partial<HomeSettingEntryV1>) => [
+    githubEntry('GITHUB_CLIENT_ID', { value: 'Iv1.client', source: 'home' }),
+    githubEntry('GITHUB_CLIENT_SECRET', { secretSet: true, source: 'home' }),
+    githubEntry('GITHUB_REDIRECT_URL', callback),
+];
 
 const routeParams = vi.hoisted(() => ({ value: {} as Record<string, string> }));
 // Opening an external page is the OS/browser boundary.
@@ -420,6 +433,52 @@ describe('Sign-in providers page', () => {
         expect(screen.findByTestId('home-sign-in-platform-setting:WORKOS_API_KEY.fixed-key:0')).not.toBeNull();
         expect(screen.findByTestId('home-sign-in-platform-setting:WORKOS_API_KEY-replace')).toBeNull();
         expect(screen.findByTestId('home-sign-in-platform-setting:WORKOS_API_KEY-input')).toBeNull();
+    });
+
+    // TH-OWNER-UI-1123 (owner 2026-11-23): the GitHub row offers the address this Home's callback answers at.
+    describe('GitHub callback address', () => {
+        const CALLBACK_ROW = 'home-sign-in-platform-setting:GITHUB_REDIRECT_URL';
+        async function openGithub(entries: HomeSettingEntryV1[], viewer: 'owner' | 'admin' = 'owner') {
+            const serverId = await harness.addHome({ name: 'Acme Home', serverUrl: `https://acme-home-callback-${viewer}-${entries.length}.example`, accountId: `${viewer}-1` });
+            const projection = homeGovernanceProjectionFixture();
+            if (viewer === 'admin') {
+                projection.viewer = { ...projection.viewer, homeRole: 'admin' };
+                projection.capabilities = { ...projection.capabilities, manageAuthentication: false, manageHomeSettings: false };
+            }
+            harness.answer(serverId, '/v1/home/governance/get', { body: projection });
+            const settings = homeSettingsProjectionFixture({ entries, githubOAuthCallbackUrl: 'https://acme.example.test/v1/oauth/github/callback' });
+            harness.answer(serverId, '/v1/home/settings/get', { body: settings });
+            const writes: string[] = [];
+            installBrowserClipboardBoundary(async (text) => { writes.push(text); });
+            const screen = await renderScreen(<HomeAdministrationSignInProvidersScreen serverId={serverId} />);
+            await waitForHomeGovernance(() => expect(screen.findByTestId('home-sign-in-platform:github')).not.toBeNull());
+            await act(async () => { screen.pressByTestId('home-sign-in-platform:github.header'); });
+            return { screen, writes, expected: settings.githubOAuthCallbackUrl! };
+        }
+
+        it('offers the Home\'s own callback address with Copy when none is saved', async () => {
+            const { screen, writes, expected } = await openGithub(githubEntries());
+            expect(screen.findByTestId(`${CALLBACK_ROW}.input`)?.props.placeholder).toBe(expected);
+            expect(screen.getTextContent()).toContain('homeGovernance.signInProviders.callbackAddressSuggestedHint');
+            await screen.pressByTestIdAsync(`${CALLBACK_ROW}.copy`);
+            expect(writes).toEqual([expected]);
+        });
+
+        it('copies the saved callback address when the owner has set one', async () => {
+            const saved = 'https://login.acme.example.test/v1/oauth/github/callback';
+            const { screen, writes } = await openGithub(githubEntries({ value: saved, source: 'home' }));
+            expect(screen.getTextContent()).toContain('homeGovernance.signInProviders.callbackAddressHint');
+            await screen.pressByTestIdAsync(`${CALLBACK_ROW}.copy`);
+            expect(writes).toEqual([saved]);
+        });
+
+        it('shows an admin the suggested address as a fact they can copy', async () => {
+            const { screen, writes, expected } = await openGithub(githubEntries(), 'admin');
+            expect(screen.findByTestId(`${CALLBACK_ROW}.input`)).toBeNull();
+            expect(screen.getTextContent()).toContain(expected);
+            await screen.pressByTestIdAsync(`${CALLBACK_ROW}.copy`);
+            expect(writes).toEqual([expected]);
+        });
     });
 
     it('shows an admin the platforms as facts, without fields or Save', async () => {

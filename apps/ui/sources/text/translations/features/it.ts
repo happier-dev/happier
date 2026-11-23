@@ -7719,6 +7719,8 @@ const it: typeof en = {
         showMe: 'Mostra',
         callbackAddress: 'Indirizzo di callback',
         callbackAddressHint: 'Registralo nell’app OAuth di GitHub.',
+        callbackAddressSuggestedHint: 'Non ancora salvato. Registra questo indirizzo nell’app OAuth di GitHub, poi salvalo qui.',
+        callbackAddressSuggestedHintReadOnly: 'Non ancora salvato. Registra questo indirizzo nell’app OAuth di GitHub; un proprietario lo salva qui.',
         whoCanSignInGithub: 'Chi può accedere con GitHub',
         companySignIn: 'Accesso aziendale',
         companySignInDescription: 'I provider OpenID Connect con cui persone e team possono accedere.',

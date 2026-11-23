@@ -7706,6 +7706,8 @@ const pt: typeof en = {
         showMe: 'Mostrar',
         callbackAddress: 'Endereço de retorno',
         callbackAddressHint: 'Registe-o na aplicação OAuth do GitHub.',
+        callbackAddressSuggestedHint: 'Ainda não guardado. Registe este endereço na aplicação OAuth do GitHub e guarde-o aqui.',
+        callbackAddressSuggestedHintReadOnly: 'Ainda não guardado. Registe este endereço na aplicação OAuth do GitHub; um proprietário guarda-o aqui.',
         whoCanSignInGithub: 'Quem pode iniciar sessão com o GitHub',
         companySignIn: 'Início de sessão empresarial',
         companySignInDescription: 'Fornecedores OpenID Connect com que pessoas e equipas podem iniciar sessão.',

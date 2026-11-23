@@ -7668,6 +7668,8 @@ const ja: typeof en = {
         showMe: '表示',
         callbackAddress: 'コールバックアドレス',
         callbackAddressHint: 'GitHub OAuth アプリに登録してください。',
+        callbackAddressSuggestedHint: 'まだ保存されていません。このアドレスを GitHub OAuth アプリに登録し、ここで保存してください。',
+        callbackAddressSuggestedHintReadOnly: 'まだ保存されていません。このアドレスを GitHub OAuth アプリに登録してください。保存はオーナーがここで行います。',
         whoCanSignInGithub: 'GitHub でサインインできる人',
         companySignIn: '会社サインイン',
         companySignInDescription: 'ユーザーとチームがサインインに使える OpenID Connect プロバイダー。',

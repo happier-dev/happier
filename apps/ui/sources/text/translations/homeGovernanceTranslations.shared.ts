@@ -406,6 +406,8 @@ export const en = {
         showMe: 'Show me',
         callbackAddress: 'Callback address',
         callbackAddressHint: 'Register this on the GitHub OAuth app.',
+        callbackAddressSuggestedHint: 'Not saved yet. Register this address on the GitHub OAuth app, then save it here.',
+        callbackAddressSuggestedHintReadOnly: 'Not saved yet. Register this address on the GitHub OAuth app; an owner saves it here.',
         whoCanSignInGithub: 'Who can sign in with GitHub',
         companySignIn: 'Company sign-in',
         companySignInDescription: 'OpenID Connect providers people and Teams can sign in with.',
