@@ -16,13 +16,12 @@ import type { SessionAccessAuthentication } from '@/app/session/access/sessionAc
 import { readDatabaseErrorCode } from '@/storage/transactionErrors';
 import { PrivateStorageUnavailableError } from '@/storage/blob/files';
 import type { ApprovalArtifactQueryHintsV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
-import type { ApprovalInputCustody } from '@happier-dev/protocol/approvals/approvalInputCustody';
 import type { ArtifactIdScopeV1 } from '@happier-dev/protocol';
 import type { ApprovalTranscriptVisualPublicationV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 
 export type ArtifactHttpMutationResult = Awaited<ReturnType<typeof createArtifactHttpMutation | typeof updateArtifactHttpMutation>>;
 export type ArtifactCreateHttpInput = Readonly<{ id: string; idScope?: ArtifactIdScopeV1; kind?: string; reviewMetadata?: ReviewMetadataWriteV1; header: string; body: string; dataEncryptionKey: string; provenance?: string | null; provenanceDataEncryptionKey?: string | null; blob?: ArtifactBlobWriteV1; memoryDecisionSource?: CoordinationMessageRefV1 } & Partial<ApprovalArtifactQueryHintsV1>>;
-export type ArtifactUpdateHttpInput = Readonly<{ updateOperationId?: string; transcriptVisualPublication?: ApprovalTranscriptVisualPublicationV1; approvalInputCustody?: ApprovalInputCustody; kind?: string; reviewMetadata?: ReviewMetadataWriteV1; header?: string; expectedHeaderVersion?: number; body?: string; expectedBodyVersion?: number; provenance?: string | null; provenanceDataEncryptionKey?: string | null; blob?: ArtifactBlobWriteV1 | null; memoryDecisionSource?: CoordinationMessageRefV1 } & Partial<ApprovalArtifactQueryHintsV1>>;
+export type ArtifactUpdateHttpInput = Readonly<{ updateOperationId?: string; transcriptVisualPublication?: ApprovalTranscriptVisualPublicationV1; kind?: string; reviewMetadata?: ReviewMetadataWriteV1; header?: string; expectedHeaderVersion?: number; body?: string; expectedBodyVersion?: number; provenance?: string | null; provenanceDataEncryptionKey?: string | null; blob?: ArtifactBlobWriteV1 | null; memoryDecisionSource?: CoordinationMessageRefV1 } & Partial<ApprovalArtifactQueryHintsV1>>;
 
 export function readArtifactPrivateStorageHttpRefusal(error: unknown) {
     return error instanceof PrivateStorageUnavailableError
@@ -145,7 +144,6 @@ export async function updateArtifactHttpMutation(userId: string, artifactId: str
             const result = await updateArtifact({
                 updateOperationKey,
                 transcriptVisualPublication: input.transcriptVisualPublication,
-                approvalInputCustody: input.approvalInputCustody,
                 actorUserId: userId,
                 artifactId: id,
                 mutationGuard,

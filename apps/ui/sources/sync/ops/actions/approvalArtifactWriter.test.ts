@@ -358,7 +358,9 @@ describe('UI approval Artifact writer', () => {
         await expect(write({ ...terminal, input: null })).resolves.toMatchObject({ ok: false, errorCode: 'subject_mismatch' });
         await expect(write(terminal)).resolves.toEqual({ ok: true });
         expect(JSON.parse(storedJson())).toMatchObject({ status, input: null });
-        expect(artifactUpdates.at(-1)).toMatchObject({ approvalInputCustody: 'live_only', approvalState: status });
+        // The server keeps no earlier version from the stored terminal state; no custody flag travels.
+        expect(artifactUpdates.at(-1)).toMatchObject({ approvalState: status });
+        expect(artifactUpdates.at(-1)).not.toHaveProperty('approvalInputCustody');
         expect(storedJson()).not.toContain('DELETE FROM private_records');
         const version = home.artifacts.read(ARTIFACT_ID)?.bodyVersion;
         await expect(write(terminal)).resolves.toEqual({ ok: true });

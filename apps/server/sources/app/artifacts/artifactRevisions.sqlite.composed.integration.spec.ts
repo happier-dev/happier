@@ -75,14 +75,22 @@ describe("Artifact revisions and storage budgets (real SQLite)", () => {
                     const executing = TargetActionApprovalRequestV1Schema.parse({ ...approved, status: 'executing', updatedAtMs: 3 });
                     const terminal = TargetActionApprovalRequestV1Schema.parse({ ...executing, status: 'executed', updatedAtMs: 4,
                         execution: { executedAtMs: 4, ok: true } });
-                    for (const next of [approved, executing, terminal]) {
+                    for (const next of [approved, executing]) {
                         expect(await lifecycle.targetActionApprovalsUpdate({ artifactId, request: next })).toEqual({ ok: true });
                     }
+                    if (custody === 'durable') {
+                        // A pending approval keeps its history until it settles.
+                        expect((await accountArtifactStore.revisions.list({ artifactId })).revisions
+                            .map(revision => JSON.parse(String(revision.body)).status)).toEqual(['approved', 'open']);
+                    }
+                    expect(await lifecycle.targetActionApprovalsUpdate({ artifactId, request: terminal })).toEqual({ ok: true });
                     const head = await lifecycle.targetActionApprovalsGet({ artifactId });
                     const revisions = await accountArtifactStore.revisions.list({ artifactId });
                     if (custody === 'durable') {
+                        // Owner 2026-11-23: a settled approval keeps no earlier version.
                         expect(head).toEqual(terminal);
-                        expect(revisions.revisions.map(revision => JSON.parse(String(revision.body)).status)).toEqual(['executing', 'approved', 'open']);
+                        expect(revisions.revisions).toEqual([]);
+                        expect(await db.artifactRevision.count({ where: { artifactId } })).toBe(0);
                     } else {
                         expect.soft(head).toMatchObject({ status: 'executed', input: null });
                         expect.soft(head?.decision?.narrowedInput).toBeUndefined();
@@ -196,6 +204,49 @@ describe("Artifact revisions and storage budgets (real SQLite)", () => {
             const current = await app.inject({ method: 'GET', url: `/v1/artifacts/${id}`, headers: headers(owner.id) });
             expect(current.json()).toMatchObject({ headerVersion: 2, bodyVersion: 3, provenance: null });
             expect(decodePlainArtifactStoredContent(current.json().body)).toEqual({ body: value });
+        });
+    });
+
+    it.each(['plain', 'e2ee'] as const)('keeps one stored body and zero earlier versions once a built-in %s approval settles', async mode => {
+        const owner = await db.account.create({ data: { encryptionMode: mode, ...(mode === 'e2ee' ? createSignedAccountContentBinding() : {}) } });
+        const id = crypto.randomUUID();
+        const kind = 'v1:other:approval_request.v1';
+        const write = (status: string, value: string) => mode === 'plain'
+            ? { header: encodePlainArtifactStoredContent({ v: 1, kind: 'approval_request.v1', title: 'Delete', approvalStatus: status }), body: body(value) }
+            : { header: privacyKit.encodeBase64(new TextEncoder().encode(`h-${status}`)), body: privacyKit.encodeBase64(new TextEncoder().encode(value)),
+                kind, approvalState: status, approvalSessionId: null };
+        await withAuthenticatedTestApp(artifactsRoutes, async app => {
+            expect((await app.inject({ method: 'POST', url: '/v1/artifacts', headers: headers(owner.id), payload: { id, ...write('open', 'request'),
+                dataEncryptionKey: mode === 'plain' ? ARTIFACT_PLAIN_DATA_KEY_MARKER : privacyKit.encodeBase64(sealEncryptedDataKeyEnvelopeV1({
+                    dataKey: tweetnacl.randomBytes(32), recipientPublicKey: owner.contentPublicKey!, randomBytes: tweetnacl.randomBytes })) } })).statusCode).toBe(200);
+            const transitions = ['approved', 'executing', 'executed', 'executed'] as const;
+            for (const [index, status] of transitions.entries()) {
+                const response = await app.inject({ method: 'POST', url: `/v1/artifacts/${id}`, headers: headers(owner.id), payload: {
+                    ...write(status, status === 'executed' ? 'receipt' : `request-${status}`), expectedHeaderVersion: index + 1, expectedBodyVersion: index + 1 } });
+                expect(response.json()).toMatchObject({ success: true, bodyVersion: index + 2 });
+                // Pending writes keep history; the settling write and any later one keep none.
+                expect(await db.artifactRevision.count({ where: { artifactId: id } })).toBe(status === 'executed' ? 0 : index + 1);
+            }
+            expect((await db.artifact.findUniqueOrThrow({ where: { id } })).approvalState).toBe('executed');
+        });
+    });
+
+    it("never lets another person's write shorten the owner's history with a settled approval state", async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const editor = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const id = crypto.randomUUID();
+        await withAuthenticatedTestApp(artifactsRoutes, async app => {
+            expect((await app.inject({ method: 'POST', url: '/v1/artifacts', headers: headers(owner.id), payload: { id,
+                header: encodePlainArtifactStoredContent({ title: 'Shared' }), body: body('1'), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER } })).statusCode).toBe(200);
+            expect((await app.inject({ method: 'POST', url: `/v1/artifacts/${id}`, headers: headers(owner.id),
+                payload: { body: body('2'), expectedBodyVersion: 1 } })).statusCode).toBe(200);
+            await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: id, accountId: editor.id, accessLevel: 'edit', createdByAccountId: owner.id } });
+            const response = await app.inject({ method: 'POST', url: `/v1/artifacts/${id}`, headers: headers(editor.id), payload: {
+                header: encodePlainArtifactStoredContent({ v: 1, kind: 'approval_request.v1', title: 'Shared', approvalStatus: 'executed' }),
+                expectedHeaderVersion: 1, body: body('3'), expectedBodyVersion: 2 } });
+            // Whether or not the edit is admitted, the owner's earlier versions survive it.
+            expect(response.statusCode, response.body).toBeLessThan(500);
+            expect(await db.artifactRevision.count({ where: { artifactId: id } })).toBeGreaterThanOrEqual(1);
         });
     });
 

@@ -5,7 +5,7 @@ import { isApprovalRequestV2TerminalStatus } from './approvalRequestStatus.js';
 export const ApprovalInputCustodySchema = z.literal('live_only');
 export type ApprovalInputCustody = z.infer<typeof ApprovalInputCustodySchema>;
 
-/** The receipt writer and opaque storage transport share the same settlement fact. */
+/** The receipt writer and the request schema share the same settlement fact. */
 export function readSettledApprovalInputCustodyV1(request: Readonly<{
   approvalInputCustody?: ApprovalInputCustody; status: unknown;
 }>): ApprovalInputCustody | undefined {

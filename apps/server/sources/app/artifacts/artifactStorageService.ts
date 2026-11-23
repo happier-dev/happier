@@ -1,5 +1,5 @@
 import { inReadSnapshot, type Tx } from "@/storage/inTx";
-import type { ApprovalInputCustody } from '@happier-dev/protocol/approvals/approvalInputCustody';
+import { isApprovalRequestV2TerminalStatus } from '@happier-dev/protocol/approvals/approvalRequestStatus';
 import { getActivePrismaRuntime, getDbProviderFromEnv } from "@/storage/prisma";
 import { readArtifactStorageEnv } from "@/app/features/catalog/readFeatureEnv";
 import { artifactOrdinarySqlPredicate, artifactVisibleWhere, viewerMayTrimArtifactRevisions } from "./artifactClassification";
@@ -16,8 +16,12 @@ import { StorageInventoryKindV1Schema, type ArtifactQuotaExceededV1, type Artifa
 
 export type ArtifactQuotaExceeded = ArtifactQuotaExceededV1;
 
-function retainedRevisionCount(configuredCount: number, custody: ApprovalInputCustody | undefined): number {
-    return custody === 'live_only' ? 0 : configuredCount;
+/**
+ * A settled approval keeps no earlier version (owner 2026-11-23). The write's own stored
+ * approval state decides it; a writer can only shorten its own record's history this way.
+ */
+function retainedRevisionCount(configuredCount: number, approvalState: string | null | undefined): number {
+    return isApprovalRequestV2TerminalStatus(approvalState) ? 0 : configuredCount;
 }
 
 export class ArtifactStorageSizeUnavailableError extends Error {
@@ -282,7 +286,7 @@ export async function readArtifactStoredSizesInTx(tx: Tx, admittedIds: readonly 
 
 /** Project retention before the write, so quota refusal leaves head, history and changes untouched. */
 export async function checkArtifactStorageBudgetInTx(tx: Tx, input: Readonly<{
-    approvalInputCustody?: ApprovalInputCustody;
+    approvalState?: string | null;
     accountId: string;
     artifactId: string;
     nextHeaderBytes: number;
@@ -300,7 +304,7 @@ export async function checkArtifactStorageBudgetInTx(tx: Tx, input: Readonly<{
 }>): Promise<ArtifactQuotaExceeded | null> {
     const config = readArtifactStorageEnv(process.env);
     if (config.documentLimitBytes === null && config.accountLimitBytes === null) return null;
-    const revisionRetentionCount = retainedRevisionCount(config.revisionRetentionCount, input.approvalInputCustody);
+    const revisionRetentionCount = retainedRevisionCount(config.revisionRetentionCount, input.approvalState);
     const headBytes = storageSize(input.nextHeaderBytes + input.nextBodyBytes + (input.nextProvenanceBytes ?? 0));
     const { sql, identifier, bytes } = storageSql();
     const rows = await tx.$queryRaw<Array<{ sizeBytes: bigint | number | string; blobId: string | null }>>(sql.sql`
@@ -343,7 +347,7 @@ export async function checkArtifactBlobUploadBudgetInSnapshot(input: Readonly<{
     body: Uint8Array;
     provenance?: Uint8Array;
     candidateBlobBytes: number;
-    update?: Readonly<{ expectedHeaderVersion?: number; expectedBodyVersion: number; approvalInputCustody?: ApprovalInputCustody }>;
+    update?: Readonly<{ expectedHeaderVersion?: number; expectedBodyVersion: number }>;
 }>): Promise<ArtifactQuotaExceeded | null> {
     const config = readArtifactStorageEnv(process.env);
     if (config.documentLimitBytes === null && config.accountLimitBytes === null) return null;
@@ -370,7 +374,7 @@ export async function checkArtifactBlobUploadBudgetInSnapshot(input: Readonly<{
         // A version mismatch goes through the incumbent replay/CAS path.
         if (!current || current.bodyVersion !== update.expectedBodyVersion
             || (update.expectedHeaderVersion !== undefined && current.headerVersion !== update.expectedHeaderVersion)) return null;
-        return checkArtifactStorageBudgetInTx(tx, { ...next, approvalInputCustody: update.approvalInputCustody,
+        return checkArtifactStorageBudgetInTx(tx, { ...next,
             nextHeaderBytes: nextHeaderBytes ?? current.header.byteLength,
             currentHeaderBytes: current.header.byteLength, currentBodyBytes: current.body.byteLength,
             currentProvenanceBytes: current.provenance?.byteLength ?? 0,
@@ -380,7 +384,8 @@ export async function checkArtifactBlobUploadBudgetInSnapshot(input: Readonly<{
 
 /** Successful body CAS writes retain the displaced stored bytes in the same transaction. */
 export async function retainArtifactBodyRevisionInTx(tx: Tx, input: Readonly<{
-    approvalInputCustody?: ApprovalInputCustody;
+    /** The stored approval state after this write. */
+    approvalState?: string | null;
     artifactId: string;
     bodyVersion: number;
     body: Uint8Array;
@@ -388,8 +393,8 @@ export async function retainArtifactBodyRevisionInTx(tx: Tx, input: Readonly<{
     blobId?: string | null;
     createdAt: Date;
 }>) {
-    const { approvalInputCustody, ...revision } = input;
-    const revisionRetentionCount = retainedRevisionCount(readArtifactStorageEnv(process.env).revisionRetentionCount, approvalInputCustody);
+    const { approvalState, ...revision } = input;
+    const revisionRetentionCount = retainedRevisionCount(readArtifactStorageEnv(process.env).revisionRetentionCount, approvalState);
     if (revisionRetentionCount > 0) {
         await tx.artifactRevision.create({ data: { ...revision, body: Buffer.from(input.body), provenance: input.provenance ? Buffer.from(input.provenance) : null } });
     }
