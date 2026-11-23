@@ -357,6 +357,7 @@ export function createSessionProviderInputOutcomeNormalizer(params: Readonly<{
     readRepresentedPendingInputs?(localId: string): readonly RepresentedProviderInput[];
     observeAcceptedEffect?(localId: string, pendingSettlement?: Promise<void>): void;
     discardAcceptedEffect?(localId: string): void;
+    releaseRejectedBeforeProviderPromptIdentity?(target: SessionProviderInputOutcomeTarget, identity: SessionProviderInputOutcomeIdentity): void;
 }>): (outcome: HostProviderInputOutcomeEvidence) => void {
     const decisiveOutcomeBySessionAndLocalId = new Map<
         string,
@@ -421,7 +422,14 @@ export function createSessionProviderInputOutcomeNormalizer(params: Readonly<{
             else params.observeAcceptedEffect?.(outcome.localId);
             return pendingSettlement;
         }
-        target.observeProviderInputSettlement(outcome);
+        const settlement = target.observeProviderInputSettlement(outcome);
+        if (outcome.kind === 'rejected_before_effect' && settlement) {
+            void settlement.then((retired) => {
+                // Pending alone decides whether the durable block retired local custody.
+                // Release the queue's remembered identity so an explicit Send now can return it.
+                if (retired === true) params.releaseRejectedBeforeProviderPromptIdentity?.(target, outcome);
+            }, () => undefined);
+        }
         return undefined;
     };
 

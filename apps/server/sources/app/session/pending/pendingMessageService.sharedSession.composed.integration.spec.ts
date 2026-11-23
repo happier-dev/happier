@@ -536,7 +536,7 @@ describe("pendingMessageService (shared sessions)", () => {
         } })).resolves.toBeNull();
     });
 
-    it.each(['permission_mode_not_granted', 'session_model_transition_apply_failed', 'team_credential_binding_not_current'] as const)(
+    it.each(['permission_mode_not_granted', 'session_model_transition_apply_failed', 'team_credential_binding_not_current', 'provider_unavailable_before_acceptance'] as const)(
         'settles an encrypted shared editor input refused before dispatch (%s) and delivers the following input', async refusal => {
         const ownerKey = tweetnacl.box.keyPair();
         const editorKey = tweetnacl.box.keyPair();
@@ -602,8 +602,11 @@ describe("pendingMessageService (shared sessions)", () => {
             });
             const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(
                 mode => JSON.stringify(mode), { batcher: combinePermissionModeQueuedPrompts });
-            const outcomes = createSessionProviderInputOutcomeBinding({ getTarget: () => client });
-            registerPermissionModeMessageQueueBinding({ session: client, queue,
+            const outcomes = createSessionProviderInputOutcomeBinding({ getTarget: () => client,
+                releaseRejectedBeforeProviderPromptIdentity: (_target, identity) =>
+                    queueBinding.releaseRejectedBeforeProviderPromptIdentity(client, { text: '', ...identity }),
+            });
+            const queueBinding = registerPermissionModeMessageQueueBinding({ session: client, queue,
                 getCurrentPermissionMode: () => 'default', setCurrentPermissionMode: () => {},
                 inFlightSteer: { isTurnInFlight: () => false, supportsInFlightSteer: () => false,
                     registerProviderAcceptedEffect: () => {}, steerText: async () => {},
@@ -632,7 +635,56 @@ describe("pendingMessageService (shared sessions)", () => {
             });
             try {
                 await new Promise<void>(resolve => client.once('session-sync-server-contract', resolve));
+                if (refusal === 'provider_unavailable_before_acceptance') {
+                    // A retained original can already have its committed transcript identity when
+                    // this host receives it. The socket frame is the real committed-seq boundary.
+                    const claim = await materializeNextPendingMessage({ actorUserId: owner.id,
+                        sessionId: session.id, publisherAuthority: publisher });
+                    if (!claim.ok || !claim.didMaterialize || !claim.message.inputAdmissionReceipt) {
+                        throw new Error('Expected the retained original claim');
+                    }
+                    const admission = buildTrustedHostSessionInputAdmissionV1('cli');
+                    const request = { ...admission.request, replyIntent: { mode: 'wait' as const } };
+                    const record = buildProtectedSessionInputTextRecordV1({ text: refused,
+                        meta: { permissionMode: 'default' }, admission: { ...admission, request } });
+                    const finalContent = { t: 'encrypted' as const, c: encodeBase64(encrypt(encryptionKey, 'dataKey', {
+                        ...record, meta: {
+                            ...withSessionInputAuthorityV1(record.meta, settleSessionInputRequestV1({ request,
+                                currentSessionPermissionCeiling: 'default', inputAdmissionReceipt: claim.message.inputAdmissionReceipt })),
+                            [SESSION_MESSAGE_PROVENANCE_META_KEY]: settleSessionMessageProvenanceV1({ request,
+                                requestedProvenance: admission.provenance, inputAdmissionReceipt: claim.message.inputAdmissionReceipt }),
+                        },
+                    })) };
+                    expect(await settlePendingInputAdmission({ actorUserId: owner.id, sessionId: session.id,
+                        localId: refused, publisherAuthority: publisher, decision: { kind: 'admit', finalContent, validation: { reply: { mode: 'wait' } } } }))
+                        .toMatchObject({ ok: true, result: { status: 'accepted' } });
+                    const committed = await db.sessionMessage.findUniqueOrThrow({
+                        where: { sessionId_localId: { sessionId: session.id, localId: refused } }, select: { seq: true },
+                    });
+                    socket.trigger('update', { body: { t: 'message-updated', sid: session.id, delivery: 'full',
+                        message: { localId: refused, seq: committed.seq, messageRole: 'user', content: finalContent } } });
+                    expect(client.getCommittedUserMessageSeq(refused)).toBe(committed.seq);
+                }
                 await expect(client.materializeNextPendingMessageSafely()).resolves.toMatchObject({ localId: refused });
+                if (refusal === 'provider_unavailable_before_acceptance') {
+                    const rejected = (await queue.waitForMessagesAndGetAsString()).message;
+                    expect(rejected.localId).toBe(refused);
+                    outcomes.observeProviderInputOutcome({ type: 'input-rejected-before-provider',
+                        localInputId: refused, userMessageSeq: rejected.userMessageSeq ?? null, reason: refusal,
+                        retryable: true, retireLocalCustodyAfterDurableBlock: true,
+                        diagnostic: { code: 'daemon_turn_admission_unavailable', severity: 'error' },
+                    });
+                    await vi.waitFor(() => expect(client.hasPendingProviderInput(refused)).toBe(false));
+                    const resumed = await app.inject({ method: 'PATCH', url: `${basePath}/${refused}/action`,
+                        headers: senderHeaders, payload: { requestedAction: { v: 1, kind: 'send_now' } } });
+                    expect(resumed.statusCode).toBe(200);
+                    expect(resumed.json()).toMatchObject({ pendingCount: 2, pendingBlockedCount: 0 });
+                    await expect(client.materializeNextPendingMessageSafely()).resolves.toMatchObject({ localId: refused });
+                    // The unblock event must redeliver the retained input to the real queue.
+                    expect(queue.size()).toBe(1);
+                    expect((await queue.waitForMessagesAndGetAsString()).message.localId).toBe(refused);
+                    return;
+                }
                 if (refusal === 'session_model_transition_apply_failed' || refusal === 'team_credential_binding_not_current') {
                     expect((await queue.waitForMessagesAndGetAsString()).message.localId).toBe(refused);
                     if (refusal === 'team_credential_binding_not_current') client.markPendingProviderInputDispatched([refused]);

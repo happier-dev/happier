@@ -2392,6 +2392,9 @@ async function runHostedSessionRuntime(
   });
   const { registerProviderAcceptedEffect, observeProviderInputOutcome, clearAcceptedEffects } = createSessionProviderInputOutcomeBinding({
     getTarget: () => session,
+    releaseRejectedBeforeProviderPromptIdentity: (target, identity) => {
+      if (target === session) permissionModeState.releaseRejectedBeforeProviderPromptIdentity(session, { text: '', ...identity });
+    },
   });
   let inputConsumer: SessionProviderInputConsumer<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt> | null = null;
   const inFlightSteerController: InFlightSteerController = {
