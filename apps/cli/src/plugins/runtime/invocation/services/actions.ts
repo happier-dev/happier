@@ -12,6 +12,7 @@ import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-commo
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { createConfirmedSessionSendClaimV1 } from '@happier-dev/protocol/actions/invocationAuthority';
+import { readActionAutomationExecutionMachineV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
 import type {
     AdmittedTargetedOperationExecutionOptions,
     AdmittedTargetedOperationExecutionWithOriginOptions,
