@@ -1,5 +1,5 @@
 import { QualifiedConnectedAccountConfigurationSnapshotV4Schema, QualifiedConnectedAccountConfigurationTargetV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountServiceRefSchema, QualifiedConnectedAccountListResponseV4Schema, type QualifiedConnectedAccountListResponseV4 } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
-import { QualifiedConnectedAccountGroupActiveAccountV4Schema, QualifiedConnectedAccountGroupCreateV4Schema, QualifiedConnectedAccountGroupDeleteV4Schema, QualifiedConnectedAccountGroupListResponseV4Schema, QualifiedConnectedAccountGroupMemberDeleteV4Schema, QualifiedConnectedAccountGroupMemberMutationV4Schema, QualifiedConnectedAccountGroupPatchV4Schema, QualifiedConnectedAccountGroupResponseV4Schema, QualifiedConnectedAccountQuotaResponseV4Schema, type QualifiedConnectedAccountConfigurationSnapshotV4, type QualifiedConnectedAccountCredentialSnapshotV4, type QualifiedConnectedAccountGroupRef, type QualifiedConnectedAccountGroupV4, type QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { QualifiedConnectedAccountGroupCreateV4Schema, QualifiedConnectedAccountGroupDeleteV4Schema, QualifiedConnectedAccountGroupListResponseV4Schema, QualifiedConnectedAccountGroupMemberDeleteV4Schema, QualifiedConnectedAccountGroupMemberMutationV4Schema, QualifiedConnectedAccountGroupPatchV4Schema, QualifiedConnectedAccountGroupResponseV4Schema, QualifiedConnectedAccountQuotaResponseV4Schema, type QualifiedConnectedAccountConfigurationSnapshotV4, type QualifiedConnectedAccountCredentialSnapshotV4, type QualifiedConnectedAccountGroupRef, type QualifiedConnectedAccountGroupV4, type QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { QualifiedConnectedAccountRefSchema, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { encodeQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
 import { buildQualifiedConnectedAccountGroupMutationRequestV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountGroupRequestsV4';
@@ -288,24 +288,6 @@ export async function removeQualifiedConnectedAccountGroupMemberV4(
   return await mutateQualifiedSnapshot({
     credentials,
     ...buildQualifiedConnectedAccountGroupMutationRequestV4('removeMember', params),
-    parse: (value) =>
-      QualifiedConnectedAccountGroupResponseV4Schema.parse(value),
-  });
-}
-
-export async function setQualifiedConnectedAccountGroupActiveAccountV4(
-  credentials: AuthCredentials,
-  params: z.input<
-    typeof QualifiedConnectedAccountGroupActiveAccountV4Schema
-  >,
-): Promise<{ group: QualifiedConnectedAccountGroupV4 }> {
-  const body =
-    QualifiedConnectedAccountGroupActiveAccountV4Schema.parse(params);
-  return await mutateQualifiedSnapshot({
-    credentials,
-    path: '/v4/connect/qualified/group/active-account',
-    method: 'POST',
-    body,
     parse: (value) =>
       QualifiedConnectedAccountGroupResponseV4Schema.parse(value),
   });

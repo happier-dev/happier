@@ -1,10 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import { CANONICAL_AGENT_IDS } from '@/agents/registry/registryCore';
+import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { getProviderCliInstallGuideUrl } from '@happier-dev/agents';
 
-import { getAgentLocalAuthPlugin } from '@/agents/catalog/localAuth/agentLocalAuthCatalog';
+import { getAgentLocalAuthPlugin, readAgentSignInDeviceCode } from '@/agents/catalog/localAuth/agentLocalAuthCatalog';
 
 describe('provider local auth registry', () => {
+    it.each([
+        ['codex', 'copilot', '2. Enter this one-time code (expires in 15 minutes)\r\n   \u001b[1mAB12-CD34\u001b[0m\r\n'],
+        ['copilot', 'codex', '! First copy your one-time code: AB12-CD34\r\n'],
+        ['copilot', 'codex', '! One-time code (AB12-CD34) copied to clipboard\n'],
+    ] as const)('recognizes the complete %s prompt for its catalog identity only', (agentId, otherAgentId, output) => {
+        const qualifiedId = buildQualifiedPluginContributionKey(BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[agentId]);
+        expect(readAgentSignInDeviceCode(agentId, output)).toBe('AB12-CD34');
+        expect(readAgentSignInDeviceCode(qualifiedId, output)).toBe('AB12-CD34');
+        expect(readAgentSignInDeviceCode(agentId, output.trimEnd())).toBeNull();
+        expect(readAgentSignInDeviceCode(otherAgentId, output)).toBeNull();
+        expect(readAgentSignInDeviceCode(`other-plugin/${agentId}`, output)).toBeNull();
+    });
+
     it('covers every canonical Agent with an explicit local auth plugin', () => {
         const agentIds = [...CANONICAL_AGENT_IDS];
         expect(new Set(agentIds.map((agentId) => getAgentLocalAuthPlugin(agentId as Parameters<typeof getAgentLocalAuthPlugin>[0])?.agentId ?? null))).toEqual(new Set(agentIds));

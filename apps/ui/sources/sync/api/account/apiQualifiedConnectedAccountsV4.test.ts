@@ -259,7 +259,7 @@ describe('apiQualifiedConnectedAccountsV4', () => {
         expect(result.groups[0]?.policy).not.toHaveProperty('maxSwitchesPerSessionHour');
     });
 
-    it('threads the current runtime-state revision through member, policy, and active-account mutations', async () => {
+    it('threads the current runtime-state revision through member and policy mutations', async () => {
         const observed: Array<{ path: string; method: string; body: unknown }> = [];
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = new URL(String(input));
@@ -278,7 +278,6 @@ describe('apiQualifiedConnectedAccountsV4', () => {
         const {
             addQualifiedConnectedAccountGroupMemberV4,
             patchQualifiedConnectedAccountGroupV4,
-            setQualifiedConnectedAccountGroupActiveAccountV4,
         } = await import('./apiQualifiedConnectedAccountsV4');
 
         await addQualifiedConnectedAccountGroupMemberV4(credentials, {
@@ -294,13 +293,6 @@ describe('apiQualifiedConnectedAccountsV4', () => {
             service,
             groupId: 'primary',
             policy: { autoSwitch: true },
-            expectedGeneration: 3,
-            expectedIncarnation: 'qualified-group-row-primary',
-            expectedRuntimeStateRevision: 7,
-        });
-        await setQualifiedConnectedAccountGroupActiveAccountV4(credentials, {
-            group: groupRef,
-            connectedAccountId: 'backup',
             expectedGeneration: 3,
             expectedIncarnation: 'qualified-group-row-primary',
             expectedRuntimeStateRevision: 7,
@@ -332,17 +324,6 @@ describe('apiQualifiedConnectedAccountsV4', () => {
                     expectedRuntimeStateRevision: 7,
                 }),
             }),
-            {
-                path: '/v4/connect/qualified/group/active-account',
-                method: 'POST',
-                body: {
-                    group: groupRef,
-                    connectedAccountId: 'backup',
-                    expectedGeneration: 3,
-                    expectedIncarnation: 'qualified-group-row-primary',
-                    expectedRuntimeStateRevision: 7,
-                },
-            },
         ]);
     });
 

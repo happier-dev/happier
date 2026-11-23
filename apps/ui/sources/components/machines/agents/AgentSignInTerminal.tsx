@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 import { machineAgentSignInTerminalKey } from '@happier-dev/protocol/daemon/agentSignIn';
 
+import { readAgentSignInDeviceCode } from '@/agents/catalog/localAuth/agentLocalAuthCatalog';
 import { useAgentSignIn } from '@/agents/machineAgents/signIn/useAgentSignIn';
 import { EmbeddedTerminalPane } from '@/components/terminal/embedded/EmbeddedTerminalPane';
 import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
@@ -20,13 +21,6 @@ import type { AgentSignInTerminalTarget } from './signInTerminalHost';
 
 /** The key of an agent's sign-in terminal on a machine; one per (machine, agent), reused on reopen. */
 export const agentSignInTerminalKey = machineAgentSignInTerminalKey;
-
-function readDeviceCode(preview: string): string | null {
-    const text = preview.replace(/\u001b\[[0-9;]*m/g, '');
-    const gitHub = /^! (?:First copy your one-time code: ([A-Z0-9]+-[A-Z0-9]+)|One-time code \(([A-Z0-9]+-[A-Z0-9]+)\) copied to clipboard)\r?\n/m.exec(text);
-    const codex = /^(?:2\. )?Enter this one-time code \(expires in [0-9]+ minutes\)\r?\n[ \t]*([A-Z0-9]+-[A-Z0-9]+)\r?\n/m.exec(text);
-    return gitHub?.[1] ?? gitHub?.[2] ?? codex?.[1] ?? null;
-}
 
 /**
  * The agent's own sign-in running in a machine terminal (lab T1), wired to the sign-in owner
@@ -50,11 +44,11 @@ export const AgentSignInTerminal = React.memo(function AgentSignInTerminal(props
     const recognizedTerminal = React.useRef<string | null>(null);
     const onAttachedOutput = React.useCallback((terminalId: string, preview: string) => {
         if (recognizedTerminal.current === terminalId) return;
-        const code = readDeviceCode(preview);
+        const code = readAgentSignInDeviceCode(props.agentId, preview);
         if (!code) return;
         recognizedTerminal.current = terminalId;
         setDeviceCode({ terminalId, code });
-    }, []);
+    }, [props.agentId]);
     const terminalKey = signIn.terminalKey ?? agentSignInTerminalKey(props.machineId, props.agentId);
     const launch = React.useMemo(() => ({ kind: 'agent_login' as const, agentId: props.agentId }), [props.agentId]);
     const controller = useMachineTerminalSession({
