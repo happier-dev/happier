@@ -45,7 +45,7 @@ describe('workspaceSyncConflictStore', () => {
     });
 
     it('coalesces conflict reads and preserves the daemon truncation facts', async () => {
-        const scope = { relationshipId: 'relationship-1', controllerMachineId: 'machine-a' } as const;
+        const scope = { serverId: workspace.serverId, relationshipId: 'relationship-1', controllerMachineId: 'machine-a' } as const;
         listWorkspaceSyncConflicts.mockResolvedValueOnce({
             status: 'page',
             relationshipId: 'relationship-1',
@@ -75,7 +75,7 @@ describe('workspaceSyncConflictStore', () => {
     });
 
     it('retains an idle conflict snapshot across repeated unobserved invalidations', () => {
-        const scope = { relationshipId: 'relationship-1', controllerMachineId: 'machine-a' };
+        const scope = { serverId: workspace.serverId, relationshipId: 'relationship-1', controllerMachineId: 'machine-a' };
         const initial = getWorkspaceSyncConflictSnapshot(scope);
         invalidateWorkspaceSyncConflicts(scope);
         invalidateWorkspaceSyncConflicts(scope);
@@ -84,7 +84,7 @@ describe('workspaceSyncConflictStore', () => {
     });
 
     it('retains equal lists and unchanged rows while publishing refresh, cursor, and content transitions', async () => {
-        const scope = { relationshipId: 'relationship-1', controllerMachineId: 'machine-a' };
+        const scope = { serverId: workspace.serverId, relationshipId: 'relationship-1', controllerMachineId: 'machine-a' };
         const page = { status: 'page', relationshipId: scope.relationshipId, totalCount: 2, nextCursor: 'next',
             conflicts: [
                 { relationshipId: scope.relationshipId, path: 'a.txt', alpha: { kind: 'file' }, beta: { kind: 'file' } },
@@ -113,7 +113,7 @@ describe('workspaceSyncConflictStore', () => {
     });
 
     it('appends public cursor pages and preserves loaded conflicts when the engine invalidates the cursor', async () => {
-        const scope = { relationshipId: 'relationship-1', controllerMachineId: 'machine-a' } as const;
+        const scope = { serverId: workspace.serverId, relationshipId: 'relationship-1', controllerMachineId: 'machine-a' } as const;
         listWorkspaceSyncConflicts
             .mockResolvedValueOnce({
                 status: 'page', relationshipId: 'relationship-1', totalCount: 2, nextCursor: 'next-page',
@@ -125,7 +125,8 @@ describe('workspaceSyncConflictStore', () => {
         await loadMoreWorkspaceSyncConflicts(scope);
 
         expect(listWorkspaceSyncConflicts).toHaveBeenNthCalledWith(2, {
-            ...scope,
+            relationshipId: scope.relationshipId,
+            controllerMachineId: scope.controllerMachineId,
             cursor: 'next-page',
         });
         expect(getWorkspaceSyncConflictSnapshot(scope)).toMatchObject({
@@ -232,7 +233,7 @@ describe('workspaceSyncConflictStore', () => {
             conflicts: [{ relationshipId: 'relationship-1', path: 'stale.txt', alpha: { kind: 'file' }, beta: { kind: 'file' } }],
         });
         // Invalidation cancels the superseded read; its late reply must not publish either.
-        await expect(staleRefresh).rejects.toMatchObject({ code: 'MACHINE_RPC_ABORTED' });
+        await expect(staleRefresh).rejects.toMatchObject({ name: 'AbortError' });
         await vi.waitFor(() => expect(getWorkspaceSyncConflictSnapshot(scope)).toMatchObject({
             phase: 'ready',
             list: { conflicts: [{ path: 'fresh.txt' }] },
