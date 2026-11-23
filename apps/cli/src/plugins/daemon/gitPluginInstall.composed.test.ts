@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { createRegistryHostV1 } from '@happier-dev/protocol/registries';
-import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { createActionExecutor, getActionSpec } from '@happier-dev/protocol/actions';
 import { InstalledPluginCapabilityEntryV1Schema } from '@happier-dev/protocol/capabilities/pluginMarketplace';
 
 import { runScmCommand } from '@/scm/runtime';
@@ -153,6 +153,30 @@ describe('Git vendor plugin installation', () => {
           .toMatchObject({ resolvedCommit: updated });
         expect(getJson).toHaveBeenCalledTimes(4);
         expect(releaseFetch).not.toHaveBeenCalled();
+
+        // Write a Git symlink entry without depending on the host's symlink support.
+        // The selected plugin still contains a valid manifest and portable content.
+        const linkTarget = join(root, 'link-target');
+        await writeFile(linkTarget, '../commands');
+        const blob = await run(['hash-object', '-w', linkTarget]);
+        await run(['update-index', '--add', '--cacheinfo', `120000,${blob},plugins/kit/.cursor/skills`]);
+        await run(['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'Add vendor-specific link']);
+        catalogRef = await run(['rev-parse', 'HEAD']);
+
+        const refusal = await executePluginDevLoopAction({
+          actionId: 'plugins.install',
+          input: { machineId: 'home', source: { kind: 'gitCatalog', sourceId: 'vendor', itemId: 'kit' } },
+        }, {
+          requestUserPluginChange: ({ request, signal }) => changes.requestPluginChange(request, { signal }),
+        });
+        expect(getActionSpec('plugins.install').outputSchema?.safeParse(refusal).success).toBe(true);
+        expect(refusal).toMatchObject({
+          ok: false,
+          errorCode: 'invalid_source',
+          failureCause: { phase: 'plugins.change.prepare', errorCode: 'invalid_source' },
+        });
+        expect(InstalledPluginCapabilityEntryV1Schema.parse((await readInstalledPluginCatalog({ happyHomeDir }))[0]).source)
+          .toMatchObject({ resolvedCommit: updated });
       }
     } finally {
       vi.unstubAllEnvs();

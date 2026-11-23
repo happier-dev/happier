@@ -1,5 +1,6 @@
 import { isReservedHappierPluginId } from '@happier-dev/protocol/plugins/plugin-id';
 import type { PluginGitCatalogPointerV1, PluginGitSourceV1 } from '@happier-dev/protocol/plugins/source-spec';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { withResolvedGitPluginSource } from '@/plugins/discovery/sources/git';
 import type { ManagedResourceDependencyV1, ManagedResourceDispositionV1, MachineDaemonRightsV1 } from '@happier-dev/protocol';
 import { runPluginAuthorPhase } from '@/plugins/authoring/phaseLog';
@@ -484,7 +485,10 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
         (stateRequest.kind === 'uninstall' || stateRequest.kind === 'uninstallAndDeleteData')
         && existing?.source.kind === 'bundled'
       ) {
-        throw new Error(`Bundled first-party plugin '${stateRequest.pluginId}' cannot be uninstalled`);
+        throw new PluginError({
+          code: 'plugin_not_uninstallable',
+          message: `Bundled first-party plugin '${stateRequest.pluginId}' cannot be uninstalled. Use Disable to turn it off.`,
+        });
       }
       if (
         stateRequest.kind === 'uninstallAndDeleteData'

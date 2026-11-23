@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { isPluginError } from '@happier-dev/protocol/plugins/errors';
+import { RegistryFetchErrorV1 } from '@happier-dev/protocol/registries';
 import { realpath } from 'node:fs/promises';
 import { runPluginAuthorPhase } from '@/plugins/authoring/phaseLog';
 
@@ -113,17 +115,21 @@ function describePluginChangeFailureCause(error: unknown): string | undefined {
 }
 
 function failedPluginChange(
-  code: string,
+  fallbackCode: string,
   error: unknown,
   sourceRootPath?: string,
   phase = 'plugins.change.apply',
 ): Extract<PluginChangeApplyResult, { kind: 'failed' }> {
+  const ownerRefusal = error instanceof RegistryFetchErrorV1
+    || error instanceof DaemonPluginChangePreparationError
+    || isPluginError(error);
+  const code = ownerRefusal ? error.code : fallbackCode;
   logger.warnLocalFile(`[plugins] ${code}`, { code, ...(sourceRootPath ? { sourceRootPath } : {}), error });
   const moduleError = findPluginModuleLoadError(error);
   const diagnostic = findPluginFailureDiagnostic(error)
     ?? (moduleError ? mapDaemonModuleLoadErrorToDiagnostic(moduleError) : undefined);
   const message = diagnostic?.message ?? describePluginChangeFailureCause(error);
-  const failureCause = projectActionFailureCauseV1(error, phase);
+  const failureCause = projectActionFailureCauseV1(error, phase, { allowUnknownErrorCode: ownerRefusal });
   const details = diagnostic?.details;
   return {
     kind: 'failed', code: diagnostic?.code ?? code, ...(message ? { message } : {}),
@@ -357,9 +363,7 @@ export function createDaemonPluginChangeService(params: Readonly<{
       } : undefined, { onApplied: lease.release });
     } catch (error) {
       return failedPluginChange(
-        error instanceof DaemonPluginChangePreparationError
-          ? error.code
-          : 'plugin_change_failed',
+        'plugin_change_failed',
         error,
         isDevelopmentCandidate(prepared) ? prepared.sourceAuthority.canonicalRoot : undefined,
       );
@@ -427,9 +431,7 @@ export function createDaemonPluginChangeService(params: Readonly<{
             return { kind: 'registryProfileRequired', ...error.requirement };
           }
           return failedPluginChange(
-            error instanceof DaemonPluginChangePreparationError
-              ? error.code
-              : 'plugin_change_preparation_failed',
+            'plugin_change_preparation_failed',
             error,
             request.kind === 'development' ? request.sourceRootPath : undefined,
             'plugins.change.prepare',

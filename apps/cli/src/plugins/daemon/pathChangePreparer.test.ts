@@ -11,6 +11,8 @@ import type {
 } from './changeContract';
 import { createDaemonPathPluginChangePreparer as createBaseDaemonPathPluginChangePreparer } from './pathChangePreparer';
 import { derivePluginInstallReviewPrincipal } from './installReviewPrincipal';
+import { executePluginDevLoopAction } from '@/plugins/devLoop/actions';
+import { createPluginStateStore } from '@/plugins/store/state.testkit';
 import {
   createPluginRegistryStateStore,
   type PluginDevelopmentRuntimeCandidate,
@@ -299,6 +301,51 @@ async function loadCurrentDevelopmentSentinel(input: Readonly<{
 }
 
 describe('createDaemonPathPluginChangePreparer', () => {
+  it.each([false, true])('preserves the bundled plugin uninstall refusal (deleteData: %s)', async (deleteData) => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-bundled-uninstall-'));
+    roots.push(happyHomeDir);
+    const pluginId = 'happier.triage';
+    const bundledRoot = await createDescriptorPlugin({ pluginId });
+    const store = createPluginStateStore({ happyHomeDir });
+    await store.write({
+      t: 'happier_plugin_state_v1',
+      schemaVersion: 1,
+      plugins: {
+        [pluginId]: {
+          source: {
+            kind: 'bundled', locator: '@happier-dev/plugins-bundled', trustPolicy: 'local_trusted', installPolicy: 'link',
+            resolvedPath: bundledRoot, manifestPath: join(bundledRoot, '.happier-plugin', 'plugin.json'),
+          },
+          compatibility: { status: 'compatible', diagnostics: [] },
+          install: { mode: 'link', manifestVersion: '1.0.0', installedPath: null },
+          state: { enabled: true },
+        },
+      },
+    });
+    const service = createBaseDaemonPluginChangeService({ prepare: createBaseDaemonPathPluginChangePreparer({
+      happyHomeDir,
+      runtimeLifecycle: { prepare: async () => { throw new Error('Bundled plugin removal must not publish'); } },
+    }) });
+    try {
+      const result = await executePluginDevLoopAction({
+        actionId: 'plugins.uninstall',
+        input: { machineId: 'home', pluginId, deleteData },
+      }, {
+        requestUserPluginChange: ({ request, signal }) => service.requestPluginChange(request, { signal }),
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        change: {
+          kind: 'failed',
+          code: 'plugin_not_uninstallable',
+          details: { failureCause: { phase: 'plugins.change.prepare', errorCode: 'plugin_not_uninstallable' } },
+        },
+        diagnostics: [{ code: 'plugin_not_uninstallable', message: expect.stringContaining('Disable') }],
+      });
+      expect((await store.read()).plugins[pluginId]?.state.enabled).toBe(true);
+    } finally { await service.shutdown(); }
+  });
+
   it('installs the maintained public Store kind through ordinary path review and registry commit', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-store-example-home-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-store-example-source-'));
