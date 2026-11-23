@@ -752,11 +752,13 @@ export function createCliMessageActionDeps(
           ...(signal ? { signal } : {}),
         });
         if (!protectedResult.ok && (protectedResult.code === 'machine_admission_transport_unavailable'
-          || protectedResult.code === 'credential_scope_denied')) {
+          || protectedResult.code === 'credential_scope_denied' || protectedResult.code === 'timeout' && protectedResult.failureCause)) {
           return {
             ok: false,
             errorCode: protectedResult.code,
             error: protectedResult.message ?? protectedResult.code,
+            ...(protectedResult.failureCause ? { failureCause: protectedResult.failureCause } : {}),
+            ...(protectedResult.admissionResult ? { details: { admission: protectedResult.admissionResult } } : {}),
           };
         }
         const admissionResult = projectSessionMessageSendActionResult(protectedResult);
@@ -867,7 +869,9 @@ export function createCliMessageActionDeps(
           error: result.code,
           ...(result.candidates ? { candidates: result.candidates } : {}),
           ...(result.message ? { message: result.message } : {}),
-          ...(result.providerError ? { details: result.providerError } : {}),
+          ...(result.failureCause ? { failureCause: result.failureCause } : {}),
+          ...(result.providerError ? { details: result.providerError }
+            : result.failureCause && result.admissionResult ? { details: { admission: result.admissionResult } } : {}),
         };
       }
       const canonicalSessionId = typeof result.sessionId === 'string' && result.sessionId.trim().length > 0

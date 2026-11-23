@@ -8,6 +8,7 @@ import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, readRpcErrorCod
 import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { readSessionPreparationFailureCode, readSessionRuntimeIssueCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { buildInactiveSessionResumeSpawnOptions, type InactiveSessionResumeRuntimeOptions } from '@/daemon/sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';
 import type { StoredCredentials } from '@/persistence';
@@ -15,6 +16,7 @@ import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/s
 import { createStableSpawnNonce } from '@/session/shared/spawnNonce';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { callMachineRpc, executionRunAuthorityCeiling } from '@/session/transport/rpc/machineRpc';
+import { readRpcRequestDisposition, type RpcRequestDisposition } from '@happier-dev/sync-client';
 import { awaitSpawnedSessionId } from './awaitSpawnedSessionId';
 import type { ActionExecutorContext, SessionInitialGoalRequestV1 } from '@happier-dev/protocol';
 import { randomUUID } from 'node:crypto';
@@ -46,6 +48,8 @@ export type InactiveSessionResumeResult =
       ok: false;
       code: 'session_archived' | 'held_by_person' | 'authority_unavailable' | 'takeover_required' | 'unsupported' | 'resume_failed' | 'timeout' | 'SESSION_DIRECTORY_MISSING' | 'machine_target_not_current' | 'plugin_disabled';
       message: string;
+      failureCause?: ActionFailureCauseV1;
+      requestDisposition?: RpcRequestDisposition;
       errorDetail?: SpawnSessionErrorDetail;
       spawnErrorCode?: SpawnSessionErrorCode;
       spawnRefusalReason?: string;
@@ -282,7 +286,7 @@ export async function requestInactiveSessionResume(params: Readonly<{
   const spawnRpcRequestId = randomUUID();
   const authorityCeiling = executionRunAuthorityCeiling({ authority: params.executionAuthority });
   let phase: 'spawn_rpc' | 'nonce_readiness' = 'spawn_rpc';
-  const refuse = (failure: Extract<InactiveSessionResumeResult, { ok: false }>, cause: unknown) => {
+  const refuse = (failure: Extract<InactiveSessionResumeResult, { ok: false }>, cause: unknown, error?: unknown) => {
     logger.infoFile('[SessionResume] Readiness refused', {
       requestId, sessionId: params.sessionId, machineId, spawnRpcRequestId, phase,
       cause: typeof cause === 'string' && resumeDiagnosticCauseCodes.has(cause) ? cause : 'unclassified',
@@ -292,7 +296,10 @@ export async function requestInactiveSessionResume(params: Readonly<{
       cancelled: params.signal?.aborted === true,
       transport: params.machineRpcTransport && !params.externalAction ? 'direct' : 'machine_rpc',
     });
-    return failure;
+    if (failure.code !== 'timeout') return failure;
+    const requestDisposition = readRpcRequestDisposition(error);
+    return { ...failure, failureCause: projectActionFailureCauseV1(error ?? { code: cause }, `session.resume.${phase}`),
+      ...(requestDisposition ? { requestDisposition } : {}) };
   };
 
   try {
@@ -430,6 +437,6 @@ export async function requestInactiveSessionResume(params: Readonly<{
       code: resolveThrownResumeFailureCode(error, code),
       message: error instanceof Error ? error.message : 'Inactive session resume failed; pending custody was retained',
       ...facts,
-    }, code);
+    }, code, error);
   }
 }

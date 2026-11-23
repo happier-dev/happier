@@ -9,7 +9,7 @@ import { buildSessionStopHoldV1 } from '@happier-dev/protocol/sessions/metadata/
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
-import { createSocketTransportAdapter } from '@happier-dev/sync-client';
+import { createSocketTransportAdapter, markRpcRequestDisposition } from '@happier-dev/sync-client';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -326,6 +326,29 @@ describe('a message send after Stop', () => {
     }, { surface: 'ui', authority: 'present_user' });
     expect(result).toMatchObject({ ok: true, result: { status: 'accepted', localId: 'person-send' } });
   });
+
+  it.each(['outcomeUnknown', 'notSent'] as const)(
+    'reports a stopped person Send truthfully when the Resume RPC times out (%s)', async disposition => {
+      heldStop();
+      const credentials = { token: 'account-token', encryption: null };
+      const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'daemon-global',
+        mode: 'plain', ctx: null,
+        machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: async () => {
+          expect(http.post.mock.calls.some(([url]) => url.endsWith('/pending'))).toBe(true);
+          throw markRpcRequestDisposition(Object.assign(new Error('Machine RPC call timeout'), {
+            code: 'MACHINE_RPC_TIMEOUT',
+          }), disposition);
+        } },
+      });
+      const result = await createActionExecutor(deps).execute('session.message.send', {
+        sessionId, message: 'Pick this back up', localId: 'person-send', reply: 'none',
+      }, { surface: 'cli', authority: 'present_user' });
+
+      expect(result).toMatchObject(disposition === 'outcomeUnknown'
+        ? { ok: true, result: { status: 'accepted', localId: 'person-send' } }
+        : { ok: false, errorCode: 'timeout', failureCause: { phase: 'session.resume.spawn_rpc', httpStatus: null } });
+    },
+  );
 
   it.each([
     { stopped: true, reply: 'none' },

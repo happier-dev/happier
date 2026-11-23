@@ -345,6 +345,12 @@ coordination deadline. Run-lifetime waiting remains the distinct
 `execution.run.wait` owner; neither parent idleness nor a Run's terminal status
 substitutes for the exact submitted input's outcome.
 
+When a person Sends with `reply: none` after Stop, an issued Resume whose
+acknowledgement times out leaves the Action's accepted Pending receipt intact.
+That receipt confirms custody. The exact input's delivery status records
+provider consumption. A Resume timeout before dispatch carries the Resume
+phase and the retained admission so the caller can see where progress stopped.
+
 The original Pending input owns optional strict reply progress. Materialization
 carries that progress to the same input's committed `SessionMessage`; there is
 no separate obligation table. It retains admitted source correlation, exact

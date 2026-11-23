@@ -135,7 +135,7 @@ export type SendSessionMessageResult =
       admissionResult?: SessionInputEnqueueResultV1;
       /** Delivery settled; admission separately records retained Pending custody. */
       settlementResult?: Extract<SessionMessageSendResultV1, { status: 'failed' | 'cancelled' | 'held' }>;
-    }> & Pick<Extract<InactiveSessionResumeResult, { ok: false }>, 'errorDetail' | 'spawnErrorCode' | 'runtimeFailureReason'>);
+    }> & Pick<Extract<InactiveSessionResumeResult, { ok: false }>, 'errorDetail' | 'failureCause' | 'spawnErrorCode' | 'runtimeFailureReason'>);
 
 /**
  * The terminal outcome for one already-admitted Session input. This Session
@@ -2333,6 +2333,12 @@ export async function sendSessionMessage(
         ...(params.spawnSession ? { spawnSession: params.spawnSession } : {}),
       });
     if (!resumeResult.ok) {
+      // A person Send without reply observation reports its durable admission.
+      // The issued wake can finish independently of its lost acknowledgement.
+      if (crossesStopHold && !params.wait && !params.replyIntent && resumeResult.code === 'timeout'
+        && resumeResult.requestDisposition === 'outcomeUnknown') {
+        return { ok: true, sessionId, localId, waited: false, admissionResult };
+      }
       const refusedResume = !informationDelivery
         && (resumeResult.code === 'resume_failed' || resumeResult.code === 'SESSION_DIRECTORY_MISSING')
         && resumeResult.spawnErrorCode !== undefined;
