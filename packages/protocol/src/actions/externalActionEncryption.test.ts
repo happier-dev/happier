@@ -700,7 +700,17 @@ describe('whole external Action encryption', () => {
       const setupBinding = { ...binding, actionId };
       const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: setupBinding, input, material, randomBytes });
       const admission = { operation: 'setup', deployments: [],
-        ...(actionId === 'machines.setup.apply' ? { machineTargets: [root.machineId] } : {}),
+        ...(actionId === 'machines.setup.apply' ? {
+          machineTargets: [root.machineId],
+          catalogApps: [{
+            operation: 'template', mode: 'apply', machineId: root.machineId, source: { id: 'source' },
+            environment: {
+              kind: 'create', requestKey: 'create-environment', protection: 'nonProduction', purpose: 'standard',
+              deployerMode: 'managers', controllerMachineId: root.machineId,
+            },
+            target: { kind: 'new', installationId: 'installation' }, deploy: { requestKey: 'reviewed-deploy' },
+          }],
+        } : {}),
         catalogSources: [{ machineId: root.machineId, source: { id: 'source' } }] };
       expect(request.deploymentPreparationAdmission).toEqual(admission);
       for (const privateValue of ['Private catalog app title', 'private-runtime-value', 'PRIVATE_VALUE', templateRef.ref.repo]) {
