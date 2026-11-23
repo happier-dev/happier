@@ -75,7 +75,8 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
             retainedRuns.set(run.id, member);
             changedRuns.push(member);
         }
-        publishPage(retainDeep(page, { ...retained, runs: [...retainedRuns.values()].sort(compareRuns) }), changedRuns, recovered);
+        const runs = page && changedRuns.length === 0 ? page.runs : [...retainedRuns.values()].sort(compareRuns);
+        publishPage(retainDeep(page, { ...retained, runs }), changedRuns, recovered);
     };
     const close = () => {
         for (const release of detach.splice(0)) release();

@@ -282,7 +282,14 @@ it('shares acquisition across hosts, publishes only changed facts and releases t
     expect(pages[6]?.nextCursor).toBeUndefined();
     // Fresh query continuation must expose new rows between already loaded pages.
     baselinePage.nextCursor = 'new-middle-runs';
-    await source.retry();
+    const parseRetainedDates = vi.spyOn(Date, 'parse');
+    try {
+        await source.retry();
+        // A cursor-only change must not re-sort already displayed history.
+        expect(parseRetainedDates.mock.calls.filter(([value]) => value === continuationRun.createdAt)).toHaveLength(0);
+    } finally {
+        parseRetainedDates.mockRestore();
+    }
     expect(pages).toHaveLength(10);
     expect(pages.at(-1)?.nextCursor).toBe('new-middle-runs');
     expect(reads).toBe(4);
