@@ -69,7 +69,7 @@ type HomeEnrollmentPresentationSource =
     }>
     | Readonly<{
         kind: 'requester_display';
-        phase: 'generating' | 'ready' | 'adding' | 'retryable_error' | 'expired' | 'invalid' | 'update_required' | 'succeeded';
+        phase: 'generating' | 'ready' | 'adding' | 'retryable_error' | 'expired' | 'invalid' | 'rejected' | 'update_required' | 'succeeded';
         partialCommit?: boolean;
         canRetryRetainedHome?: boolean;
     }>
@@ -283,6 +283,9 @@ export function resolveHomeEnrollmentPresentation(
                 phase: 'expired', primaryTranslationKey: 'connect.pairingQrExpired', contextualFacts: 'target',
                 recoveryAction: 'create_new_qr', liveRegion: 'assertive', activity: false,
             };
+        }
+        if (source.phase === 'rejected') {
+            return { ...TERMINAL_SCANNER_PRESENTATIONS.rejected, recoveryAction: 'create_new_qr' };
         }
         if (source.phase === 'invalid') {
             return {

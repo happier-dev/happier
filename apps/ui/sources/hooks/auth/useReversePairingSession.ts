@@ -29,7 +29,7 @@ export type ReversePairingPresentation =
     | Readonly<{ phase: 'adding'; descriptor: HomeConnectionDescriptorV1; expiresAtMs: number }>
     | Readonly<{ phase: 'succeeded'; descriptor: HomeConnectionDescriptorV1; profileId: string }>
     | Readonly<{ phase: 'expired'; descriptor: HomeConnectionDescriptorV1; renew: boolean }>
-    | Readonly<{ phase: 'invalid' | 'update_required'; descriptor?: HomeConnectionDescriptorV1 }>
+    | Readonly<{ phase: 'invalid' | 'rejected' | 'update_required'; descriptor?: HomeConnectionDescriptorV1 }>
     | Readonly<{
         phase: 'retryable_error';
         descriptor?: HomeConnectionDescriptorV1;
@@ -275,6 +275,8 @@ export function useReversePairingSession(params: Readonly<{
                 if (result.reason === 'expired') {
                     // An early server refusal keeps the explicit recovery instead of registering in a loop.
                     publish(attempt, { phase: 'expired', descriptor, renew: Date.now() >= expiresAtMs });
+                } else if (result.reason === 'rejected') {
+                    publish(attempt, { phase: 'rejected', descriptor });
                 } else {
                     publish(attempt, result.reason === 'cancelled'
                         ? { phase: 'retryable_error', descriptor, partialCommit: null }

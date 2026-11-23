@@ -11,6 +11,7 @@ import { HomeConnectionDescriptorV1Schema, type HomeConnectionDescriptorV1 } fro
 import { sealTerminalProvisioningV3TokenOnlyPayload } from '@happier-dev/protocol/crypto/terminalProvisioningV2';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 
+import { resolveHomeEnrollmentPresentation } from '@/auth/pairing/pairingPresentation';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createDeferred, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
@@ -231,6 +232,18 @@ describe('useReversePairingSession', () => {
         await act(async () => hook.getCurrent().cancel());
         expect(signal?.aborted).toBe(false);
         expect(hook.getCurrent().presentation.phase).toBe('ready');
+        await hook.unmount();
+    });
+
+    it('retains the Home’s refusal of the exact pairing request', async () => {
+        const hook = await mount();
+        await vi.waitFor(() => expect(http.poll).toHaveBeenCalledOnce());
+        await act(async () => heldResponses[0]!.resolve(json(200, { state: 'rejected' })));
+        await vi.waitFor(() => expect(hook.getCurrent().presentation).toEqual({ phase: 'rejected', descriptor }));
+        expect(resolveHomeEnrollmentPresentation({ kind: 'requester_display', phase: hook.getCurrent().presentation.phase }))
+            .toMatchObject({ primaryTranslationKey: 'connect.pairingRejectedBody', recoveryAction: 'create_new_qr' });
+        await expect(TokenStorage.getCredentialsForServerUrl(descriptor.canonicalServerUrl, { serverId: descriptor.homeServerIdentityId }))
+            .resolves.toBeNull();
         await hook.unmount();
     });
 
