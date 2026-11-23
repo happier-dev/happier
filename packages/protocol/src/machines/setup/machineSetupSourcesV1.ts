@@ -18,14 +18,11 @@ import { getMachineMetadataFieldV1, readMachineMetadataFieldV1, mutateMachineMet
 const id = () => z.string().check(z.trim(), z.minLength(1));
 const revision = () => z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER));
 export type MachineSetupSourceEntryV1 =
-  | Readonly<{ kind: 'accountPreset'; presetId: string; presetRevision: number; setupRevision?: number; setup: MachineSetupV1 } & (
-      | { /** Author-owned mode captured with this opened local copy; never inferred from ciphertext. */
-          contentEncryptionMode: 'plain' | 'e2ee';
-          /** A locally retained opaque recipe-input edit, replayed only through the Action wire. */
-          presetContentOverride?: ManagedMachinePresetLaunchNameOverrideV1 }
-      /** Retained copies predate captured modes; only the stored reader admits this branch. */
-      | { contentEncryptionMode?: never; presetContentOverride?: never }
-    )>
+  | Readonly<{ kind: 'accountPreset'; presetId: string; presetRevision: number; setupRevision?: number; setup: MachineSetupV1;
+      /** Author-owned mode captured with this opened copy. */
+      contentEncryptionMode: 'plain' | 'e2ee';
+      /** A local recipe-input edit replayed through the Action wire. */
+      presetContentOverride?: ManagedMachinePresetLaunchNameOverrideV1 }>
   | Readonly<{ kind: 'bundledPreset'; ref: { pluginId: string; localId: string; revision: string }; setup: MachineSetupV1 }>
   | Readonly<{ kind: 'direct'; setup: MachineSetupV1 }>
 ;
@@ -240,12 +237,6 @@ export const MachineSetupSourceEntryV1Schema: z.ZodMiniType<MachineSetupSourceEn
   ])),
   () => z.union([
     createStoredReadSchema(accountPresetCopy),
-    createStoredReadSchema(z.extend(accountPresetReference, {
-      setup: MachineSetupV1Schema,
-      // Known malformed current fields must not fall through to the legacy branch.
-      contentEncryptionMode: z.optional(z.never()),
-      presetContentOverride: z.optional(z.never()),
-    })),
     createStoredReadSchema(MachineSetupNonAccountPresetSourceEntryV1Schema),
   ]),
 );
@@ -383,15 +374,10 @@ function mergeMachineSetupSourceFacts(current: MachineSetupDesiredV1, sources: M
     for (const item of source.setup.items ?? []) {
       if (item.kind !== 'app') continue;
       const identity = readMachineSetupAppIdentityV1(item);
-      // Keyless legacy addresses remain inert history, never inferred identity.
-      // Retaining them does not let a reader classify that legacy app as installed.
-      const candidates = identity === undefined
-        ? [...(current.sourceFacts?.[origin]?.acceptedAppRuns ?? []), ...(observed[origin]?.acceptedAppRuns ?? [])]
-          .filter(reference => readMachineSetupAppIdentityV1({ kind: 'app', definition: reference.intent,
-            ...(reference.authoredKey ? { authoredKey: reference.authoredKey } : {}) }) === undefined)
-        : [...Object.values(current.sourceFacts ?? {}), ...Object.values(observed)].flatMap(facts => facts.acceptedAppRuns ?? [])
-          .filter(reference => readMachineSetupAppIdentityV1({ kind: 'app', definition: reference.intent,
-            ...(reference.authoredKey ? { authoredKey: reference.authoredKey } : {}) }) === identity);
+      if (identity === undefined) continue;
+      const candidates = [...Object.values(current.sourceFacts ?? {}), ...Object.values(observed)].flatMap(facts => facts.acceptedAppRuns ?? [])
+        .filter(reference => readMachineSetupAppIdentityV1({ kind: 'app', definition: reference.intent,
+          ...(reference.authoredKey ? { authoredKey: reference.authoredKey } : {}) }) === identity);
       // Preserve ambiguity instead of selecting the first completed candidate.
       for (const reference of candidates) if (!acceptedAppRuns.some(retained => sameStrictJsonValue(retained, reference)))
         acceptedAppRuns.push(reference);

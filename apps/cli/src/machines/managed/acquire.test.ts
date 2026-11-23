@@ -1681,7 +1681,7 @@ describe('opaque managed preset admission', () => {
             binding: createManagedMachinePresetPreparationBindingV1({ content: freshness === 'stale'
                 ? { ...authored, setup: { ...setup, scripts: [{ body: 'echo old setup' }] } } : authored,
                 credentialConfigurations: [],
-                cliIdentity: freshness === 'cli-updated' ? 'public-release:0.2.0' : 'public-release:0.3.0' }),
+                machineId: 'prepare-host', cliIdentity: freshness === 'cli-updated' ? 'public-release:0.2.0' : 'public-release:0.3.0' }),
             artifact: { contributionRef: launch.provider, schemaVersion: 1, value: freshness === 'missing-launch' ? {}
                 : { launch: freshness === 'invalid-launch' ? { image: 7 } : { image: 'owned-artifact' } } },
             cliBinaryPath: '/opt/happier/cli/current/happier', bakedSetup: { items: setup.items } } };

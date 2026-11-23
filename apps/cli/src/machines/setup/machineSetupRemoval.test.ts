@@ -14,7 +14,7 @@ describe('Machine setup declared removal through the public Plan Action', () => 
     const itemKey = createCanonicalJsonSigningInput(item);
     const direct = { kind: 'direct' as const, setup: {} };
     const sources = [{ kind: 'accountPreset' as const, presetId: 'tools', presetRevision: 1,
-      setup: { items: [item] }, ...(scenario === 'retired-source-field' ? { alreadyPresentAtFirstApply: { [itemKey]: false } } : {}) }, direct];
+      contentEncryptionMode: 'plain' as const, setup: { items: [item] }, ...(scenario === 'retired-source-field' ? { alreadyPresentAtFirstApply: { [itemKey]: false } } : {}) }, direct];
     const previousPresence = scenario === 'native-absent' ? 'absent'
       : scenario.startsWith('pre-existing-') ? 'present' : undefined;
     const sourceFacts = previousPresence ? { 'account:tools': { firstPresence: { [itemKey]: previousPresence } } } : undefined;

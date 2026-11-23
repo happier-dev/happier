@@ -326,7 +326,7 @@ describe('Account API token HTTP adapter', () => {
       prepared: { operationId: 'previous-prepare', status: 'cancelled', binding: createManagedMachinePresetPreparationBindingV1({
         content: { ...preset.content.v, launch: { ...preset.content.v.launch,
           provider: { pluginId: 'acme.removed-image-provider', localId: 'removed' } } },
-        cliIdentity: 'previous-cli', credentialConfigurations: [],
+        machineId: 'prepare-host', cliIdentity: 'previous-cli', credentialConfigurations: [],
       }) },
     } } } as const;
     let presetAvailable = false;

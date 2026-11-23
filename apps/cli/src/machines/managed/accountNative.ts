@@ -38,8 +38,8 @@ export function createCliManagedAccountNativeInvocationForLaunch(input: Readonly
     context: ActionExecutorContext;
     signal?: AbortSignal;
     requestId: string;
-    /** Retained Prepare placement; missing legacy placement cannot select a Machine effect. */
-    originalMachineId?: string;
+    /** Retained Prepare placement for Machine effects. */
+    originalMachineId: string;
     /** Host-captured identity; approval replay does not reconstruct it from caller context. */
     executingMachineId?: string;
     /** Requester-visible publication from Archive's existing original-host read. */
@@ -75,7 +75,7 @@ function createAccountNativeInvocation(input: Readonly<{
     context: ActionExecutorContext;
     signal?: AbortSignal;
     requestId: string;
-    originalPreparation?: Readonly<{ machineId?: string; executingMachineId?: string }>;
+    originalPreparation?: Readonly<{ machineId: string; executingMachineId?: string }>;
 }>): ManagedNativeInvocation {
     const { launch, provisioner, selected } = input;
     const reviewedParent = input.useReviewedParent ? readHostAdmittedReviewedParentV1(input.context.hostReviewedChild) : null;
@@ -89,7 +89,7 @@ function createAccountNativeInvocation(input: Readonly<{
         if (input.originalPreparation && declaration.execution?.target !== 'account') {
             const machineId = input.originalPreparation.executingMachineId;
             // Cross-host routing waits for Home's original-placement admission. Never substitute today's controller.
-            if (!input.originalPreparation.machineId || input.originalPreparation.machineId !== machineId) {
+            if (input.originalPreparation.machineId !== machineId) {
                 throw createActionExecuteFailureError({ ok: false,
                     errorCode: 'controller_unavailable', error: 'controller_unavailable' });
             }

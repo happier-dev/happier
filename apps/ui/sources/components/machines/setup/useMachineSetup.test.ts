@@ -30,7 +30,7 @@ describe('readMachineSetupApps', () => {
       definition: { from: 'compose', document: 'services: {}', profiles: [], services: [] }, bindings: [],
     } });
     const rows = readMachineSetupApps([
-      { sourceIndex: 0, source: { kind: 'accountPreset', presetId: 'web', presetRevision: 3, setup: { items: [item(docker), app('Status page')] as never } } },
+      { sourceIndex: 0, source: { kind: 'accountPreset', presetId: 'web', presetRevision: 3, contentEncryptionMode: 'plain' as const, setup: { items: [item(docker), app('Status page')] as never } } },
       { sourceIndex: 1, source: { kind: 'direct', setup: { items: [app('Analytics')] as never } } },
     ]);
     expect(rows.map(row => [row.key, row.item.definition.name, row.sourceIndex])).toEqual([['0.1', 'Status page', 0], ['1.0', 'Analytics', 1]]);
@@ -81,7 +81,7 @@ describe('readMachineSetupRecipes', () => {
     const rows = readMachineSetupRecipes(plan, [
       { sourceIndex: 0, source: {
         kind: 'accountPreset', presetId: 'web', presetRevision: 3,
-        setup: { items: [item(firewall), item(docker)] },
+        contentEncryptionMode: 'plain' as const, setup: { items: [item(firewall), item(docker)] },
       }, presetName: 'Historical web' },
       { sourceIndex: 1, source: { kind: 'direct', setup: { items: [item(docker)] } } },
     ], {

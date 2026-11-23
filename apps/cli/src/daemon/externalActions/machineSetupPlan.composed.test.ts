@@ -7,7 +7,7 @@ import { createMachineSetupPlanAction } from '@/machines/setup/machineSetupActio
 it('keeps the receiving current-copy plan owner through the actual credentialed factory without self-RPC or catalog work', async () => {
   const desired: MachineSetupDesiredV1 = { version: 1, revision: 2, exclusions: [], sources: [
     { kind: 'accountPreset', presetId: 'saved', presetRevision: 1,
-      setup: { scripts: [{ body: '\r\necho retained\r\n', affects: 'none' }],  } },
+      contentEncryptionMode: 'plain' as const, setup: { scripts: [{ body: '\r\necho retained\r\n', affects: 'none' }],  } },
     { kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection: {
       ref: { pluginId: 'example.retired-software', recipeId: 'fonts', revision: '1' }, inputs: {},
     } }] } },

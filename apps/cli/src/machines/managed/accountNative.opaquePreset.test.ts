@@ -39,7 +39,7 @@ function opaqueAccountNativeFixture() {
 
 describe('CLI Account opaque preset native roles', () => {
     it.each([
-        { originalMachineId: undefined, member: false },
+        { originalMachineId: 'different-host', member: false },
         { originalMachineId: 'original-host', member: false },
         { originalMachineId: 'original-host', member: false, replay: true },
         { originalMachineId: 'original-host', member: true },
@@ -101,7 +101,7 @@ describe('CLI Account opaque preset native roles', () => {
                 inputDigest: computeActionInputApprovalDigestV1('machines.presets.archive', archiveInput), requestId,
                 accountId: member ? 'member' : 'owner', serverId: 'home' },
         });
-        expect(result, JSON.stringify(result)).toMatchObject(member ? { ok: false, errorCode: 'credential_scope_denied' } : originalMachineId
+        expect(result, JSON.stringify(result)).toMatchObject(member ? { ok: false, errorCode: 'credential_scope_denied' } : originalMachineId === 'original-host'
             ? { ok: true, result: { kind: 'refused', code: 'managed_not_found' } }
             : { ok: false, errorCode: 'controller_unavailable' });
         if (member) {
@@ -110,7 +110,7 @@ describe('CLI Account opaque preset native roles', () => {
             expect(result.error).toContain('original-host');
             expect(result.error).toContain('owner');
         }
-        expect(observed).toHaveLength(originalMachineId && !member ? 2 : 0);
+        expect(observed).toHaveLength(originalMachineId === 'original-host' && !member ? 2 : 0);
     });
 
     it('routes opened power, resize, and diagnostics roles through the reviewed host child without exposing the opened machine', async () => {

@@ -199,7 +199,7 @@ describe('MachineSetupPlanReview', () => {
             kind: 'accountPreset',
             presetId: 'historical',
             presetRevision: 3,
-            setup: { scripts: [{ body }] },
+            contentEncryptionMode: 'plain' as const, setup: { scripts: [{ body }] },
           },
         }],
       }],
@@ -328,7 +328,7 @@ describe('MachineSetupPlanReview', () => {
       kind: 'accountPreset',
       presetId: 'web',
       presetRevision: 3,
-      setup: {
+      contentEncryptionMode: 'plain' as const, setup: {
         items: [
           app('Plausible', '2'),
           app('Uptime Kuma', '2'),

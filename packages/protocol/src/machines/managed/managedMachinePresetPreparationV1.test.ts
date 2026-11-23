@@ -20,6 +20,7 @@ const binding = {
   configuration: { launch: { provider: content.launch.provider, schemaVersion: 1, choices: content.launch.choices },
     setup: content.setup },
   cliIdentity: 'home-payload:0.3:abc',
+  machineId: 'preparation-host',
   credentialConfigurations: [],
 };
 const prepared = { operationId: 'prepare-1', binding, status: 'ready' as const, artifact: reference,
@@ -31,8 +32,10 @@ describe('private prepared preset content', () => {
     const explicit = { enabled: true, whenHappierUpdates: 'update-at-start' };
     expect(ManagedMachinePresetPreparationV1Schema.parse(explicit)).toEqual(explicit);
   });
-  it('reads retained bindings without retaining the retired revision', () => {
-    expect(ManagedMachinePresetPreparationBindingV1Schema.parse({ ...binding, presetRevision: 3 })).toEqual(binding);
+  it('requires the original Prepare host and rejects the retired revision', () => {
+    const { machineId: _host, ...missingHost } = binding;
+    expect(ManagedMachinePresetPreparationBindingV1Schema.safeParse(missingHost).success).toBe(false);
+    expect(ManagedMachinePresetPreparationBindingV1Schema.safeParse({ ...binding, presetRevision: 3 }).success).toBe(false);
   });
   it('carries the admitted CLI swap independently of its warm physical launch', () => {
     const execution = { launch: content.launch, binaryPath: prepared.cliBinaryPath, updateCli: true };
@@ -182,7 +185,7 @@ describe('private prepared preset content', () => {
   it('accepts canonical Account selections without a second credential identity', () => {
     const { name: _name, ...launch } = content.launch;
     expect(preset.ManagedMachinePresetContentV1Schema.safeParse({ ...content, prepared: { ...prepared,
-      binding: { cliIdentity: binding.cliIdentity,
+      binding: { ...binding,
         credentialConfigurations: [{ account: { service: { pluginId: 'test.service', localId: 'compute' },
           accountId: 'provider-account' }, revision: null }],
         configuration: { ...binding.configuration, launch: { ...launch, credentials: [{

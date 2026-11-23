@@ -80,7 +80,7 @@ export function createUiManagedAccountNativeInvocationForLaunch(params: Readonly
     context: ActionExecutorContext;
     requestId: string;
     signal?: AbortSignal;
-    originalMachineId?: string;
+    originalMachineId: string;
 }>): ManagedNativeInvocation {
     return createUiManagedAccountNativeInvocation({ ...params, providerPluginId: params.launch.provider.pluginId,
         originalPreparation: { machineId: params.originalMachineId } }, () => ({ launch: params.launch,
@@ -95,7 +95,7 @@ function createUiManagedAccountNativeInvocation(params: Readonly<{
     context: ActionExecutorContext;
     requestId: string;
     signal?: AbortSignal;
-    originalPreparation?: Readonly<{ machineId?: string }>;
+    originalPreparation?: Readonly<{ machineId: string }>;
 }>, read: () => Readonly<{
     launch: ManagedMachinePresetPreparationBindingV1['configuration']['launch'];
     machine?: ManagedMachineFullV1;
@@ -136,7 +136,7 @@ function createUiManagedAccountNativeInvocation(params: Readonly<{
         if (!port) throw new ManagedMachineControllerError('admission_unavailable');
         if (original && action.execution?.target !== 'account') {
             const machineId = params.context.runtimeActionMachineId ?? params.context.externalActionExecutionAuthorization?.binding.machineId;
-            if (!original.machineId || original.machineId !== machineId) throw new ManagedMachineControllerError('controller_unavailable');
+            if (original.machineId !== machineId) throw new ManagedMachineControllerError('controller_unavailable');
         }
         const requests = resolvePluginContributionHostAccessRequestsV2({ manifest: selected.manifest,
             pluginId: identity.pluginId, contribution: { family: 'actions', localId }, requestIds: action.hostAccess ?? [] });

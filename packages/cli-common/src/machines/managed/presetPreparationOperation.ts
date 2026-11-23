@@ -5,6 +5,7 @@ import { openManagedMachinePresetContentV1, replaceManagedMachinePresetPreparati
   type ManagedMachinePresetContentV1, type ManagedMachinePresetPreparedWriteV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { PREPARATION_ARTIFACT_ABSENT_BUILD_UNCONFIRMED_CODE_V1,
+  MachineProvisionerPreparationInspectResultV1Schema, MachineProvisionerPreparationDestroyResultV1Schema,
   type MachineProvisionerPreparationBuildInputV1, type MachineProvisionerPreparationBuildResultV1,
   type MachineProvisionerPreparationInspectInputV1, type MachineProvisionerPreparationInspectResultV1,
   type MachineProvisionerPreparationDestroyInputV1, type MachineProvisionerPreparationDestroyResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisionerPreparationSchemas';
@@ -14,6 +15,7 @@ import { createPresetPreparationProgress, type ManagedMachinePresetPreparationPr
 import type { ManagedMachinePresetPreparationBuildCompositionV1 } from './presetPreparationBuildInput.js';
 import type { PluginActionExecutionV2 } from '@happier-dev/protocol/plugins/actions/v2';
 import { ManagedMachineControllerError, ManagedMachineNativeEffectGuardRefusal } from './controllerErrors.js';
+import type { ManagedNativeInvocation } from './reconcile.js';
 
 export type ManagedMachinePresetPreparationStorageV1 = Readonly<{
   /** Bound to the preset and original admission by the installed custodian. */
@@ -70,14 +72,18 @@ type OperationInput = ManagedMachinePresetPreparationOperationInputV1;
 type OperationResult = ManagedMachinePresetPreparationOperationResultV1;
 type SettledKind = Extract<OperationResult, { prepared: unknown }>['kind'];
 
-async function readPreset(input: OperationInput): Promise<OpenPreset | Extract<OperationResult, { kind: 'refused' }>> {
-  const preset = await input.storage.read();
-  if (preset.contentEncryptionMode !== input.custody.mode) return { kind: 'refused', code: 'account_mode_mismatch' };
+function openPreset(preset: ManagedMachinePresetV1, custody: ManagedMachinePresetPreparationCustodyV1):
+  OpenPreset | Extract<OperationResult, { kind: 'refused' }> {
+  if (preset.contentEncryptionMode !== custody.mode) return { kind: 'refused', code: 'account_mode_mismatch' };
   const opening = { presetId: preset.id, content: preset.content };
-  const content = input.custody.mode === 'plain'
+  const content = custody.mode === 'plain'
     ? openManagedMachinePresetContentV1({ ...opening, mode: 'plain' })
-    : openManagedMachinePresetContentV1({ ...opening, ...input.custody, recipients: preset.recipients });
+    : openManagedMachinePresetContentV1({ ...opening, ...custody, recipients: preset.recipients });
   return content ? { preset, content } : { kind: 'refused', code: 'credential_unavailable' };
+}
+
+async function readPreset(input: OperationInput) {
+  return openPreset(await input.storage.read(), input.custody);
 }
 
 /** Same-key private persistence; operational CAS writes consume the row's next revision. */
@@ -166,7 +172,7 @@ async function advanceOperation(input: OperationInput, current: OpenPreset,
       ? { nativeOperation: incumbent.nativeOperationRef }
       : { operationId: incumbent.operationId, launch: incumbent.binding.configuration.launch.choices }, root(current));
   } else {
-    if (capturedContent.preparation?.enabled !== true || !capturedContent.launch || !input.composeBuild) {
+    if (capturedContent.preparation?.enabled !== true || !capturedContent.launch || !input.composeBuild || !input.machineId) {
       return { kind: 'refused', code: 'invalid_request' };
     }
     progress.start('prepare-inputs');
@@ -252,7 +258,7 @@ export async function resolveManagedMachinePresetArchiveExecutionTargetV1(input:
   const accountTarget = execution?.target === 'account';
   if (accountTarget && !requiresNativeHost) return null;
   const machineId = prepared.binding.machineId;
-  if (machineId && !await input.readCleanupUnavailable(machineId)) return { kind: 'machine', machineId };
+  if (!await input.readCleanupUnavailable(machineId)) return { kind: 'machine', machineId };
   if (accountTarget) throw new ManagedMachineControllerError('controller_unavailable');
   // Permanent host loss keeps the existing metadata Archive and cleanup diagnostics.
   return null;
@@ -325,10 +331,14 @@ async function cancelOperation(input: OperationInput, current: OpenPreset, expec
 export async function settleManagedMachinePresetPreparationOperationV1(
   input: OperationInput & Readonly<{ signal?: AbortSignal }>,
 ): Promise<OperationResult> {
-  const wait = createManagedNativeObservationWait(input.signal);
-  const cleanupWait = createManagedNativeObservationWait();
   const initial = await readPreset(input);
   if ('kind' in initial) return initial;
+  return await settleOpenedPreparation(input, initial);
+}
+
+async function settleOpenedPreparation(input: OperationInput & Readonly<{ signal?: AbortSignal }>, initial: OpenPreset): Promise<OperationResult> {
+  const wait = createManagedNativeObservationWait(input.signal);
+  const cleanupWait = createManagedNativeObservationWait();
   const incumbent = initial.content.prepared;
   let current = initial;
   const progress = createPresetPreparationProgress(input.onProgress);
@@ -415,7 +425,6 @@ export async function settleManagedMachinePresetPreparationOperationV1(
     if (recovered.kind === 'ready' && input.cliIdentity !== undefined
       && readManagedMachinePresetPreparationV1({ content: { ...capturedContent, prepared: recovered.prepared },
         cliIdentity: input.cliIdentity,
-        canManagePreset: true, // This finite Prepare operation already holds admitted Manage authority.
         credentialConfigurations: input.credentialConfigurations }).kind === 'warm') return recovered;
     const observed = await readPreset(input);
     if ('kind' in observed) return observed;
@@ -425,7 +434,7 @@ export async function settleManagedMachinePresetPreparationOperationV1(
     current = observed;
     cleanupRevision = observed.preset.revision;
   }
-  if (capturedContent.preparation?.enabled !== true || !capturedContent.launch || !input.composeBuild) {
+  if (capturedContent.preparation?.enabled !== true || !capturedContent.launch || !input.composeBuild || !input.machineId) {
     return { kind: 'refused', code: 'invalid_request' };
   }
   const cleanup = await follow({ ...input, operationId: incumbent.operationId }, true, cleanupRevision);
@@ -440,4 +449,38 @@ export async function settleManagedMachinePresetPreparationOperationV1(
   // new binding is written, the original revision conflicts and Retry admits a
   // new target; cleanup never reconstructs it from today's authored definition.
   return await follow({ ...input, expectedRevision: current.preset.revision }, false, undefined, capturedContent);
+}
+
+/** Archive settles native ownership before spending the revision returned by its cleanup write. */
+export async function archiveManagedMachinePreset<T>(input: Readonly<{
+  expectedRevision: number;
+  signal?: AbortSignal;
+  storage: ManagedMachinePresetPreparationStorageV1;
+  withCustody<R>(preset: ManagedMachinePresetV1, run: (custody: ManagedMachinePresetPreparationCustodyV1) => Promise<R>): Promise<R>;
+  resolveCleanup(prepared: ManagedMachinePresetPreparedV1): Promise<
+    Readonly<{ invoke: ManagedNativeInvocation }> | Readonly<{ unavailable: NonNullable<OperationInput['cleanupUnavailable']> }>>;
+  archive(expectedRevision: number): Promise<T>;
+}>): Promise<T | Extract<OperationResult, { kind: 'refused' | 'conflict' }>> {
+  const preset = await input.storage.read();
+  if (preset.revision !== input.expectedRevision) return { kind: 'conflict', currentRevision: preset.revision };
+  return await input.withCustody(preset, async custody => {
+    const opened = openPreset(preset, custody);
+    if ('kind' in opened) throw new ManagedMachineControllerError(opened.code);
+    const prepared = opened.content.prepared;
+    if (!prepared) return await input.archive(preset.revision);
+    const cleanup = managedMachinePresetPreparationNeedsNativeCleanupV1(prepared) ? await input.resolveCleanup(prepared) : undefined;
+    const invoke = cleanup && 'invoke' in cleanup ? cleanup.invoke : () => { throw new ManagedMachineControllerError('invalid_request'); };
+    const outcome = await settleOpenedPreparation({ cleanupOnly: true, signal: input.signal,
+      cleanupUnavailable: cleanup && 'unavailable' in cleanup ? cleanup.unavailable : undefined,
+      operationId: prepared.operationId, expectedRevision: input.expectedRevision, custody,
+      credentialConfigurations: prepared.binding.credentialConfigurations, storage: input.storage,
+      native: {
+        build: async () => { throw new ManagedMachineControllerError('invalid_request'); },
+        inspect: async body => MachineProvisionerPreparationInspectResultV1Schema.parse(await invoke('preparationInspect', body, {})),
+        destroy: async body => MachineProvisionerPreparationDestroyResultV1Schema.parse(await invoke('preparationDestroy', body, {})),
+      } }, opened);
+    if (outcome.kind === 'conflict' || outcome.kind === 'refused') return outcome;
+    if (outcome.kind !== 'cancelled') throw new ManagedMachineControllerError(outcome.prepared.code ?? 'native_intent_unconfirmed');
+    return await input.archive(outcome.revision);
+  });
 }

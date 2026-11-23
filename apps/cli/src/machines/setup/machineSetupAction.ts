@@ -352,8 +352,7 @@ export function createMachineSetupPlanAction(params: Readonly<{
     return withAdministratorPrerequisite('errorCode' in appPrepared ? appPrepared : projectMachineSetupPlanResult({ ...appPrepared,
       ...(candidatePreset === undefined ? {} : { candidatePreset }),
     }, resolvedSources,
-      current.status === 'ready' && current.policy.sources.some(source => source.kind === 'accountPreset'
-        && source.contentEncryptionMode !== undefined) || wireSources?.some(source => source.kind === 'accountPresetOpaque')
+      current.status === 'ready' && current.policy.sources.some(source => source.kind === 'accountPreset') || wireSources?.some(source => source.kind === 'accountPresetOpaque')
         ? reviewedWireSources : undefined));
   };
 }

@@ -55,7 +55,7 @@ describe('ApiMachineClient updates', () => {
     // READY196's decrypted shape, with synthetic preset identity and content.
     const setup = { version: 1, revision: 2, exclusions: [], sources: [
       { kind: 'direct', setup: {} },
-      { kind: 'accountPreset', presetId: 'saved-preset', presetRevision: 1, setup: {} },
+      { kind: 'accountPreset', presetId: 'saved-preset', presetRevision: 1, contentEncryptionMode: 'plain' as const, setup: {} },
     ] };
     const metadata = { host: 'worker', platform: 'linux', homeDir: '/home/worker', happyHomeDir: '/home/worker/.happier',
       happyCliVersion: 'test', setup };
@@ -83,7 +83,7 @@ describe('ApiMachineClient updates', () => {
       const { mutateMachineSetupDesiredV1 } = await import('@happier-dev/protocol/machines/setup/machineSetupSourcesV1');
       await expect(mutateMachineSetupDesiredV1({ expectedDesiredRevision: 2, sources: [
         { kind: 'direct', setup: {} },
-        { kind: 'accountPreset', presetId: 'saved-preset', presetRevision: 1, setup: {}, contentEncryptionMode: 'e2ee' },
+        { kind: 'accountPreset', presetId: 'saved-preset', presetRevision: 1, contentEncryptionMode: 'plain' as const, setup: {}, contentEncryptionMode: 'e2ee' },
       ], exclusions: [] }, {
         read: async () => client.getMachineMetadataSnapshot(),
         compareAndSwap: input => client.compareAndSwapMachineMetadata(input),

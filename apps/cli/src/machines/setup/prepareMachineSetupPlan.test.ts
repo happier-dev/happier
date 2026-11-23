@@ -285,7 +285,7 @@ describe('Machine setup current-copy plan entry', () => {
     const exclusions = [{ ref, reason: 'not_selected' as const }];
     const current = await getMachineSetupDesiredV1({
       read: async () => ({ status: 'ready', metadata: { setup: { version: 1, revision: 2, exclusions, sources: [
-        { kind: 'accountPreset', presetId: 'detached', presetRevision: 1, setup: { items: [item] } },
+        { kind: 'accountPreset', presetId: 'detached', presetRevision: 1, contentEncryptionMode: 'plain' as const, setup: { items: [item] } },
         { kind: 'direct', setup: {} },
       ], sourceFacts: { 'account:detached': { firstPresence: { [itemKey]: 'absent' } } } } }, metadataVersion: 2 }),
       compareAndSwap: async () => { throw new Error('Plan cannot publish'); },

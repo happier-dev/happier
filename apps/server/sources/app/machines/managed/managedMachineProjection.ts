@@ -4,7 +4,7 @@ import { ManagedMachineFullV1Schema, ManagedOpaqueMachineSetupStateV1Schema, Man
 import { ManagedOpaquePresetObservationV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { deriveManagedDevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { ManagedMachinePresetEnvelopeV1Schema, type ManagedMachinePresetEnvelopeV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
-import type { ManagedDeclaration, StoredManagedAdmission, StoredManagedMachine } from './managedRows';
+import type { StoredManagedAdmission, StoredManagedMachine } from './managedRows';
 
 /**
  * The outer mode is the author-admitted persistence binding.  The inner tag is
@@ -21,14 +21,14 @@ function requireStoredPresetMode(contentEncryptionMode: 'plain' | 'e2ee', conten
     }
 }
 
-/** Presence selects the current carrier even when malformed; never downgrade it to legacy raw. */
+/** A carrier without a preset association is malformed and needs the checked projection. */
 export function hasStoredOpaquePresetEnvelope(value: unknown): boolean {
     return value !== null && typeof value === 'object'
         && ('contentEncryptionMode' in value || 'content' in value || 'recipients' in value);
 }
 
-export function isStoredOpaquePresetMachine<Row extends Pick<StoredManagedMachine, 'presetId' | 'launch'>>(row: Row): row is Row & { presetId: string } {
-    return row.presetId !== null && hasStoredOpaquePresetEnvelope(row.launch);
+export function isStoredOpaquePresetMachine<Row extends Pick<StoredManagedMachine, 'presetId'>>(row: Row): row is Row & { presetId: string } {
+    return row.presetId !== null;
 }
 
 export function readStoredOpaquePresetLaunch(value: unknown): StoredOpaquePresetLaunch {
@@ -69,35 +69,6 @@ export function storeOpaquePresetLaunch(input: Readonly<{
     });
     requireStoredPresetMode(input.contentEncryptionMode, envelope.content);
     return { contentEncryptionMode: input.contentEncryptionMode, ...envelope };
-}
-
-/** Retained raw snapshots stay intact on reads; migration exposes their existing private fields. */
-export function readStoredPresetSnapshotContent(row: StoredManagedMachine): StoredOpaquePresetLaunch {
-    if (hasStoredOpaquePresetEnvelope(row.launch)) return readStoredOpaquePresetLaunch(row.launch);
-    const machine = projectManagedMachineFull(row);
-    const admission = readManagedAdmissionState(row.admittedInput);
-    const controlIntent = admission.submittedEffect?.intent;
-    const nativeControlResult = row.resource !== null && row.nativeOperationRef !== null && controlIntent === 'delete'
-        ? { kind: 'delete', result: { kind: 'accepted', nativeOperationRef: row.nativeOperationRef } } : undefined;
-    if (row.recovery !== null && (row.resource !== null || row.nativeOperationRef !== null)
-        || row.resource !== null && row.nativeOperationRef !== null && nativeControlResult === undefined) {
-        // A normal controller report must first settle/reseal this historical
-        // combination. Refuse migration rather than omit private custody data.
-        throw new Error('Retained native state cannot be represented by the preset content carrier');
-    }
-    const nativeResult = row.resource !== null ? { kind: 'bound', resource: row.resource }
-        : row.nativeOperationRef !== null ? { kind: 'pending', nativeOperationRef: row.nativeOperationRef }
-            : row.recovery !== null ? { kind: 'unknown', recovery: row.recovery } : undefined;
-    return storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', recipients: [], content: { t: 'plain', v: {
-        v: 1, name: machine.launch.name, launch: row.launch,
-        ...(machine.machineSetup ? { setup: machine.machineSetup.setup } : {}),
-        ...(admission.computeInput?.enrollmentIdentity ? { enrollmentIdentity: admission.computeInput.enrollmentIdentity } : {}),
-        ...(row.reviewedFacts === null && !admission.computeInput?.reviewedFacts ? {}
-            : { reviewedFacts: row.reviewedFacts ?? admission.computeInput?.reviewedFacts }),
-        ...(nativeResult === undefined ? {} : { nativeResult }),
-        ...(nativeControlResult === undefined ? {} : { nativeControlResult }),
-        ...(row.observation === null ? {} : { observation: row.observation }),
-    } } });
 }
 
 /** The persisted pair is absent for Account-controlled cloud resources. */
@@ -158,21 +129,13 @@ function projectManagedMachineStructural(row: StoredManagedMachine) {
 /** Compose a raw snapshot. The owning Account's admitted one-off inventory can use it directly. */
 export function projectManagedMachineFull(row: StoredManagedMachine, admission?: 'owned-inventory'): ManagedMachineFullV1 {
     const { structural, enrollmentIdentity, workspaceAttachment } = projectManagedMachineStructural(row);
-    const reviewedFacts = row.reviewedFacts as (Omit<NonNullable<ManagedMachineFullV1['reviewedFacts']>, 'provisioner'> & {
-        provisioner?: ManagedDeclaration['provisioner'] | ManagedDeclaration;
-    }) | null;
-    const declaration = reviewedFacts?.provisioner;
-    // Older bound reports stored the server's lookup wrapper alongside the admitted declaration.
-    const publicReviewedFacts = declaration && 'provisioner' in declaration
-        ? { ...reviewedFacts, provisioner: declaration.provisioner }
-        : reviewedFacts;
+    const reviewedFacts = row.reviewedFacts as ManagedMachineFullV1['reviewedFacts'] | null;
     const resource = row.resource === null ? undefined : row.resource as ManagedMachineFullV1['resource'];
     const controller = structural.controller;
     const devcontainerChild = controller ? deriveManagedDevcontainerChildProjectionV1({ managedMachineId: row.id,
         controllerMachineId: controller.machineId, enrolledMachineId: row.enrolledMachineId ?? undefined, resource }) : undefined;
     const projection = {
         ...structural,
-        ...(structural.preset ? { preset: { ...structural.preset, contentEncryptionMode: 'plain' } } : {}),
         ...(enrollmentIdentity ? { enrollmentIdentity } : {}),
         ...(workspaceAttachment ? { workspaceAttachment } : {}),
         ...(resource ? { resource } : {}),
@@ -181,7 +144,7 @@ export function projectManagedMachineFull(row: StoredManagedMachine, admission?:
         ...(row.recovery !== null ? { recovery: row.recovery } : {}),
         ...(row.observation !== null ? { observation: row.observation } : {}),
         launch: row.launch,
-        ...(publicReviewedFacts !== null ? { reviewedFacts: publicReviewedFacts } : {}),
+        ...(reviewedFacts !== null ? { reviewedFacts: reviewedFacts } : {}),
         ...(row.machineSetup !== null ? { machineSetup: row.machineSetup } : {}),
     };
     return admission === 'owned-inventory' ? projection as ManagedMachineFullV1

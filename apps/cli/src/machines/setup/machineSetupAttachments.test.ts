@@ -42,9 +42,9 @@ describe('default attachment removal review', () => {
   it('keeps detached software in the single direct source and leaves shared software in its remaining preset', async () => {
     const direct = { kind: 'direct' as const, setup: {} };
     const a = { kind: 'accountPreset' as const, presetId: 'a', presetRevision: 1,
-      setup: { items: [chrome, fonts] } };
+      contentEncryptionMode: 'plain' as const, setup: { items: [chrome, fonts] } };
     const b = { kind: 'accountPreset' as const, presetId: 'b', presetRevision: 1,
-      setup: { items: [fonts] } };
+      contentEncryptionMode: 'plain' as const, setup: { items: [fonts] } };
     const sourceFacts: MachineSetupSourceFactsMapV1 = {
       'account:a': { firstPresence: { [key(chrome)]: 'absent', [key(fonts)]: 'absent' } },
       'account:b': { firstPresence: { [key(fonts)]: 'absent' } },
@@ -60,7 +60,7 @@ describe('default attachment removal review', () => {
   it('keeps pre-existing and unknown-origin items when an attachment is updated', async () => {
     const direct = { kind: 'direct' as const, setup: {} };
     const source = { kind: 'accountPreset' as const, presetId: 'a', presetRevision: 1,
-      setup: { items: [chrome, fonts] } };
+      contentEncryptionMode: 'plain' as const, setup: { items: [chrome, fonts] } };
     const sourceFacts: MachineSetupSourceFactsMapV1 = { 'account:a': { firstPresence: { [key(chrome)]: 'present' } } };
     const updated = { ...source, presetRevision: 2, setup: {} };
     expect(await plan(MachineSetupSourceV1Schema.parse([source, direct]), MachineSetupSourceV1Schema.parse([updated, direct]), sourceFacts))

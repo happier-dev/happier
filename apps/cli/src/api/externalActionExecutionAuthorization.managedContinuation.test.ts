@@ -589,7 +589,7 @@ describe('managed continuation through the ordinary public Action transport', ()
         const credentials = await readStoredCredentialsForServerId(installedProfile);
         if (!credentials) throw new Error('Expected persisted local terminal credentials');
         const setup = MachineSetupApplyInputV1Schema.parse({ homeId: 'srv_home', machineId: 'guest', targets: [{ homeId: 'srv_home', machineId: 'guest', sources: [
-            { kind: 'accountPreset', presetId: 'preset', presetRevision: 4, setup: { scripts: [{ body: 'echo admitted', affects: 'none' }],  } },
+            { kind: 'accountPreset', presetId: 'preset', presetRevision: 4, contentEncryptionMode: 'plain' as const, setup: { scripts: [{ body: 'echo admitted', affects: 'none' }],  } },
             { kind: 'direct', setup: {} },
         ], desiredRevision: 0, recipePlans: [] }] });
         const isolation = { serverId: 'srv_home', machineId: 'guest', enabled: true };
@@ -813,7 +813,7 @@ describe('managed continuation through the ordinary public Action transport', ()
 
     it('carries the captured Voice automation ceiling through signed managed setup', async () => {
         const setup = MachineSetupApplyInputV1Schema.parse({ homeId: 'srv_home', machineId: 'guest', targets: [{ homeId: 'srv_home', machineId: 'guest', sources: [
-            { kind: 'accountPreset', presetId: 'preset', presetRevision: 4, setup: { scripts: [{ body: 'echo admitted', affects: 'none' }],  } },
+            { kind: 'accountPreset', presetId: 'preset', presetRevision: 4, contentEncryptionMode: 'plain' as const, setup: { scripts: [{ body: 'echo admitted', affects: 'none' }],  } },
             { kind: 'direct', setup: {} },
         ], desiredRevision: 0, recipePlans: [] }] });
         let capturedHeaders: unknown;

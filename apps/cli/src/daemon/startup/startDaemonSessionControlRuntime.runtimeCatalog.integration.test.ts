@@ -2527,11 +2527,11 @@ describe('startDaemonSessionControlRuntime', () => {
             expect(setupRequests, JSON.stringify({ terminal, transportPaths })).toEqual([
                 { actionId: 'machines.setup.plan', input: { homeId, machineId: 'private-guest' }, continuation: undefined },
                 { actionId: 'machines.setup.plan', input: { homeId, machineId: 'private-guest', mode: 'effects', sources: [
-                    { kind: 'accountPreset', presetId: 'admitted-preset', presetRevision: 2, setup: retainedSetup },
+                    { kind: 'accountPreset', presetId: 'admitted-preset', presetRevision: 2, contentEncryptionMode: 'plain' as const, setup: retainedSetup },
                     { kind: 'direct', setup: {} },
                 ] }, continuation: undefined },
                 { actionId: 'machines.setup.apply', input: { homeId, machineId: 'private-guest', targets: [{ homeId, machineId: 'private-guest',
-                    sources: [{ kind: 'accountPreset', presetId: 'admitted-preset', presetRevision: 2, setup: retainedSetup },
+                    sources: [{ kind: 'accountPreset', presetId: 'admitted-preset', presetRevision: 2, contentEncryptionMode: 'plain' as const, setup: retainedSetup },
                         { kind: 'direct', setup: {} }], desiredRevision: 7, recipePlans: [] }] }, continuation: undefined },
             ]);
             expect(terminal, JSON.stringify(terminal)).toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
@@ -2582,7 +2582,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 return;
             }
             expect(setupRequests[1]).toEqual({ actionId: 'machines.setup.plan', input: { homeId, machineId: 'private-guest', mode: 'effects', sources: [
-                { kind: 'accountPreset', presetId: 'admitted-preset', presetRevision: 2, setup: retainedSetup },
+                { kind: 'accountPreset', presetId: 'admitted-preset', presetRevision: 2, contentEncryptionMode: 'plain' as const, setup: retainedSetup },
                 { kind: 'direct', setup: {} },
             ] }, continuation: { managedId: enrolled.id, creationRequestId: 'private-acquire', expectedIntentRevision: 1 } });
             if (automaticSetup === 'effects-changed') {
@@ -2595,7 +2595,7 @@ describe('startDaemonSessionControlRuntime', () => {
             expect(setupRequests).toHaveLength(3);
             expect(setupRequests[2]).toEqual({ actionId: 'machines.setup.apply', input: { homeId, machineId: 'private-guest',
                 targets: [{ homeId, machineId: 'private-guest', sources: [
-                    { kind: 'accountPreset', presetId: 'admitted-preset', presetRevision: 2, setup: retainedSetup },
+                    { kind: 'accountPreset', presetId: 'admitted-preset', presetRevision: 2, contentEncryptionMode: 'plain' as const, setup: retainedSetup },
                     { kind: 'direct', setup: {} },
                 ], desiredRevision: 7, recipePlans: [] }] },
                 continuation: { managedId: enrolled.id, creationRequestId: 'private-acquire', expectedIntentRevision: 1 } });

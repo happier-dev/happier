@@ -306,7 +306,7 @@ export async function listManagedMachines(params: Readonly<{ actorAccountId: str
             || role(row));
         return { machines: accessible.map(row => {
             // The owning Account can consume current snapshots written at managed admission.
-            // Shared rows and retained raw presets still use the checked stored reader.
+            // Shared rows use the checked stored reader.
             if (row.custodianAccountId === params.actorAccountId) {
                 if (row.presetId === null && !hasStoredOpaquePresetEnvelope(row.launch)) return projectManagedMachineFull(row, 'owned-inventory');
                 if (row.presetRevision !== null && isStoredOpaquePresetMachine(row)) {

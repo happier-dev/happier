@@ -238,7 +238,7 @@ describe('managed acquire opaque admission', () => {
       input.sources[0], { ...input.sources[1], setup: { setupScript: 'private' } },
     ] }).success).toBe(false);
     expect(MachineSetupPlanInputV1Schema.safeParse({ ...input, sources: [
-      input.sources[0], { kind: 'accountPreset', presetId: 'preset', presetRevision: 3, setup: { setupScript: 'private' } },
+      input.sources[0], { kind: 'accountPreset', presetId: 'preset', presetRevision: 3, contentEncryptionMode: 'plain' as const, setup: { setupScript: 'private' } },
     ] }).success).toBe(false);
     expect(MachineSetupResolveResultV1Schema.parse({ sources: [
       input.sources[0], { ...input.sources[1], presetContent: readerProjection },

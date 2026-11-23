@@ -321,7 +321,7 @@ describe('daemon managed Machine Action factory', () => {
                 prepared: { operationId: 'lost-original-operation', status: 'building', cliBinaryPath: '/opt/happier/cli/current/happier',
                     binding: createManagedMachinePresetPreparationBindingV1({ content: { launch },
                         credentialConfigurations: reconnected ? [{ account, revision: 'configuration-before-reconnect' }] : [],
-                        cliIdentity: 'home-payload:' + (outcome === 'interrupted-replace' ? 'b' : 'a').repeat(64) }) },
+                        machineId: 'controller', cliIdentity: 'home-payload:' + (outcome === 'interrupted-replace' ? 'b' : 'a').repeat(64) }) },
             } } });
             if (outcome === 'interrupted-adopt') {
                 // Genuine filesystem boundary: metadata can be read, but no
@@ -338,7 +338,7 @@ describe('daemon managed Machine Action factory', () => {
                 name: launch.name, launch: { ...launch, provider: replacementArtifact.contributionRef, choices: { name: 'replacement' } },
                 preparation: { enabled: true }, prepared: { operationId: 'original-preparation', status: 'ready', artifact,
                     cliBinaryPath: '/opt/happier/cli/current/happier', binding: createManagedMachinePresetPreparationBindingV1({
-                        content: { launch }, cliIdentity: 'a'.repeat(64), credentialConfigurations: [] }) },
+                        content: { launch }, machineId: 'controller', cliIdentity: 'a'.repeat(64), credentialConfigurations: [] }) },
             } } });
         }
         const nativeOperationRef = { contributionRef: provider, schemaVersion: 1, value: { claimId: 'prepare-operation' } };

@@ -23,7 +23,7 @@ const definition: ManagedMachinePresetContentV1 = { v: 1, name: 'Private preset'
     name: 'Guest', choices: { image: 'clean-base' } } };
 const artifact = { contributionRef: definition.launch!.provider, schemaVersion: 1, value: { image: 'owned-image' } };
 const nativeOperationRef = { ...artifact, value: { name: 'build-operation-one' } };
-const identity = { credentialConfigurations: [], expectedRevision: 1, cliIdentity: `home-payload:${'a'.repeat(64)}` };
+const identity = { machineId: 'preparation-host', credentialConfigurations: [], expectedRevision: 1, cliIdentity: `home-payload:${'a'.repeat(64)}` };
 let buildInput: ManagedMachinePresetPreparationBuildInputV1;
 beforeAll(async () => {
   const cli = await prepareManagedGuestCliBuildInput({ homeUrl: 'https://private-home.example',
@@ -790,7 +790,7 @@ describe('private preset preparation operation', () => {
       const { name: _targetName, ...targetBindingLaunch } = target.launch;
       let destroys = 0;
       let settled = false;
-      const settling = settleManagedMachinePresetPreparationOperationV1({ operationId: 'operation-two',
+      const settling = settleManagedMachinePresetPreparationOperationV1({ operationId: 'operation-two', machineId: identity.machineId,
         expectedRevision: fixture.row().revision, credentialConfigurations: [], custody: { mode: 'plain' }, storage: fixture.storage,
         composeBuild: async (captured: ManagedMachinePresetContentV1) => {
           events.push('compose');
@@ -854,7 +854,7 @@ describe('private preset preparation operation', () => {
     const credentialConfigurations = scenario === 'credential-changed' ? [{
       account: { service: { pluginId: 'fixture.compute', localId: 'auth' }, accountId: 'account' }, revision: 'new-configuration',
     }] : [];
-    const outcome = await settleManagedMachinePresetPreparationOperationV1({ operationId: 'operation-two',
+    const outcome = await settleManagedMachinePresetPreparationOperationV1({ operationId: 'operation-two', machineId: identity.machineId,
       expectedRevision: fixture.row().revision, cliIdentity, credentialConfigurations, custody: { mode: 'plain' }, storage: fixture.storage,
       composeBuild: async captured => { events.push('compose'); return { input: { ...buildInput,
         cli: { ...buildInput.cli, identity: cliIdentity }, launch: { ...buildInput.launch, choices: captured.launch!.choices } } }; },
@@ -947,7 +947,7 @@ describe('private preset preparation operation', () => {
       const stop = new AbortController();
       let destroys = 0;
       let newEffects = 0;
-      const settling = settleManagedMachinePresetPreparationOperationV1({ operationId: 'operation-two',
+      const settling = settleManagedMachinePresetPreparationOperationV1({ operationId: 'operation-two', machineId: identity.machineId,
         expectedRevision: fixture.row().revision, signal: stop.signal, credentialConfigurations: [], custody: { mode: 'plain' }, storage: fixture.storage,
         composeBuild: async () => { newEffects++; return { input: buildInput }; }, native: nativeFixture({
           destroy: async () => ++destroys === 1 ? { kind: 'unknown', code: 'outcome_unknown', nativeOperationRef } : { kind: 'confirmed' },
@@ -975,14 +975,14 @@ describe('private preset preparation operation', () => {
     const started = new Promise<void>(resolve => { compositionStarted = resolve; });
     const composition = new Promise<void>(resolve => { releaseComposition = resolve; });
     let builds = 0;
-    const settling = settleManagedMachinePresetPreparationOperationV1({ operationId: 'operation-two',
+    const settling = settleManagedMachinePresetPreparationOperationV1({ operationId: 'operation-two', machineId: identity.machineId,
       expectedRevision: fixture.row().revision, signal: stop.signal, credentialConfigurations: [], custody: { mode: 'plain' }, storage: fixture.storage,
       composeBuild: async () => { compositionStarted(); await composition; return { input: buildInput }; },
       native: nativeFixture({ build: async () => { builds++; return { kind: 'ready', artifact }; } }) });
     const outcome = await Promise.race([started.then(() => 'composing'), settling.then(() => 'settled')]);
     expect(outcome).toBe('composing');
     if (newerBinding) {
-      const newer = { operationId: 'operation-newer', expectedRevision: fixture.row().revision,
+      const newer = { operationId: 'operation-newer', machineId: identity.machineId, expectedRevision: fixture.row().revision,
         composeBuild: async () => ({ input: buildInput }), credentialConfigurations: [], custody: { mode: 'plain' as const }, storage: fixture.storage,
         native: nativeFixture({ build: async () => ({ kind: 'refused', code: 'invalid_request' }) }) };
       expect(await advanceManagedMachinePresetPreparationOperationV1(newer)).toMatchObject({ kind: 'failed' });

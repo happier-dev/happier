@@ -32,8 +32,8 @@ it('captures two admitted Preset copies through the existing create Action and c
     const second = { body: ' \r\n', affects: { services: ['editor'] },
         check: { executable: 'test', args: ['-f', '/ready'], unsatisfiedExitCodes: [1] } };
     const sources: MachineSetupSourceV1 = [
-        { kind: 'accountPreset', presetId: 'first', presetRevision: 2, setup: { scripts: [first] } },
-        { kind: 'accountPreset', presetId: 'second', presetRevision: 7, setup: { scripts: [second] } },
+        { kind: 'accountPreset', presetId: 'first', presetRevision: 2, contentEncryptionMode: 'plain' as const, setup: { scripts: [first] } },
+        { kind: 'accountPreset', presetId: 'second', presetRevision: 7, contentEncryptionMode: 'plain' as const, setup: { scripts: [second] } },
         { kind: 'direct', setup: {} },
     ];
     let saved: ManagedMachinePresetV1 | undefined;
@@ -79,7 +79,7 @@ it('refuses conflicting retained setup before creating any Preset', async () => 
     const client = createMachinePresetCollectionClient({ serverId, accountId: 'owner' }, 'srv_capture_home');
     const sources: MachineSetupSourceV1 = [
         { kind: 'accountPreset', presetId: 'first', presetRevision: 1,
-            setup: { toolchain: { adapterId: 'mise', config: 'first' }, scripts: [{ body: 'echo first' }] } },
+            contentEncryptionMode: 'plain' as const, setup: { toolchain: { adapterId: 'mise', config: 'first' }, scripts: [{ body: 'echo first' }] } },
         { kind: 'direct', setup: { toolchain: { adapterId: 'mise', config: 'other' }, scripts: [{ body: 'echo second' }] } },
     ];
     expect(await client.capture({ homeId: 'srv_capture_home', id: 'captured', name: 'Captured setup',

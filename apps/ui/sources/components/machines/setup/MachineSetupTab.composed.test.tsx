@@ -199,7 +199,7 @@ it('opens the exact retained App invocation when Workflow offers Retry', async (
   harness.answer(home, '/v1/machines/devbox', { body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }) } });
   harness.answer(home, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [presetWire(saved)] } });
   const plan = setupPlanFromOpened({ desiredRevision: 3, exclusions: [], support: [],
-    sources: [{ kind: 'accountPreset', presetId: saved.id, presetRevision: saved.revision, setup: saved.setup },
+    sources: [{ kind: 'accountPreset', presetId: saved.id, presetRevision: saved.revision, contentEncryptionMode: 'plain' as const, setup: saved.setup },
       { kind: 'direct', setup: {} }],
     review: { target: { homeId: 'srv_build', machineId: 'devbox' }, administratorRequired: null, downtime: 'none',
       apps: [{ sourceIndex: 0, itemIndex: 0, kind: 'failed', retry: { runId: 'run-app', invocationId: 'failed-app' } },
@@ -1334,8 +1334,8 @@ describe('Machine → Setup tab (P-M1)', () => {
     } } });
     const applied: unknown[] = [];
     let currentPlan = setupPlanFromOpened({ desiredRevision: 7, exclusions: [], support: [], sources: [
-      { kind: 'accountPreset', presetId: 'other', presetRevision: 3, setup: { scripts: [{ body: '\r\necho other\r\n' }] } },
-      { kind: 'accountPreset', presetId: 'build', presetRevision: 1, setupRevision: 1, setup: { scripts: [{ body: 'old build' }] } },
+      { kind: 'accountPreset', presetId: 'other', presetRevision: 3, contentEncryptionMode: 'plain' as const, setup: { scripts: [{ body: '\r\necho other\r\n' }] } },
+      { kind: 'accountPreset', presetId: 'build', presetRevision: 1, setupRevision: 1, contentEncryptionMode: 'plain' as const, setup: { scripts: [{ body: 'old build' }] } },
       { kind: 'direct', setup: { scripts: [{ body: '\r\necho direct\r\n' }] } },
     ], sourceFacts: { 'account:build': { firstPresence: { retained: 'absent' } } } });
     // The reviewed change replaces only Build box's reference with the candidate the owner named.
@@ -1601,10 +1601,10 @@ describe('Machine → Setup tab (P-M1)', () => {
       ] } } });
     const fonts = { kind: 'softwareRecipe' as const, selection: { ref: { pluginId: 'com.example.machine-tools', recipeId: 'fonts', revision: '1' }, inputs: {} } };
     const ssh = { kind: 'setupRecipe' as const, selection: { ref: { pluginId: 'com.example.machine-tools', recipeId: 'ssh-hardening', revision: '1' }, inputs: {} } };
-    const other = { kind: 'accountPreset' as const, presetId: 'other', presetRevision: 3, setup: { scripts: [{ body: 'echo other' }] } };
+    const other = { kind: 'accountPreset' as const, presetId: 'other', presetRevision: 3, contentEncryptionMode: 'plain' as const, setup: { scripts: [{ body: 'echo other' }] } };
     const localSources: MachineSetupSourceV1 = [
       other,
-      { kind: 'accountPreset', presetId: 'build', presetRevision: 1, setupRevision: 1, setup: { items: [fonts, ssh] } },
+      { kind: 'accountPreset', presetId: 'build', presetRevision: 1, setupRevision: 1, contentEncryptionMode: 'plain' as const, setup: { items: [fonts, ssh] } },
       { kind: 'direct', setup: {} },
     ];
     const current = setupPlanFromOpened({ desiredRevision: 4, exclusions: [], support: [], sources: localSources });
@@ -1776,7 +1776,7 @@ describe('Machine → Setup tab (P-M1)', () => {
       const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
       return { body: { v: 1, actionId: 'machines.setup.plan', requestId: envelope.requestId, execution: { ok: true,
         result: setupPlanFromOpened({ desiredRevision: 2, exclusions: [], support: [], sources: [
-          { kind: 'accountPreset', presetId: 'web', presetRevision: 2, setup: { items: [firewall, docker] } },
+          { kind: 'accountPreset', presetId: 'web', presetRevision: 2, contentEncryptionMode: 'plain' as const, setup: { items: [firewall, docker] } },
           { kind: 'direct', setup: { items: [keep] } },
         ] }) } } };
     } });
@@ -1837,7 +1837,7 @@ describe('Machine → Setup tab (P-M1)', () => {
     const { projectMachineSetupCapture } = await import('./machineSetupCapture');
     const docker = MachinePresetItemV1Schema.parse({ kind: 'softwareRecipe', selection: { ref: { pluginId: 'tools.example', recipeId: 'docker', revision: '1' }, inputs: {} } });
     const sources = [
-      { kind: 'accountPreset' as const, presetId: 'web', presetRevision: 2, setup: { items: [docker] } },
+      { kind: 'accountPreset' as const, presetId: 'web', presetRevision: 2, contentEncryptionMode: 'plain' as const, setup: { items: [docker] } },
       { kind: 'direct' as const, setup: {} },
     ];
     expect(projectMachineSetupCapture(sources, 'everything', new Set()).sources).toHaveLength(2);

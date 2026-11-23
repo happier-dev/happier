@@ -1960,8 +1960,8 @@ A preset's name, launch definition (including provider, image, location and size
 setup and optional controller display label belong to its private `content`.
 Plain Account writes use `{t:'plain',v}` without Account encryption material;
 E2EE writes use `{t:'encrypted',c}`. The persisted author's Account mode decides
-the write arm. A mismatch is refused before mutation, without a plaintext fallback.
-An Action caller that cannot know the Account mode, such as an agent, may submit
+the write arm. The Home requires an envelope on each preset and preset-backed
+Machine snapshot and refuses a mode mismatch before mutation. An Action caller that cannot know the Account mode, such as an agent, may submit
 a plaintext draft. The host's authoring preparation
 (`prepareManagedMachinePresetAuthoringV1`) admits the Home's recipient census
 against the host's Account mode. The UI collection writer uses the same decision.

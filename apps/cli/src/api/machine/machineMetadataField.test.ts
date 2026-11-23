@@ -14,10 +14,10 @@ function retainedMachine(): Machine {
     daemonState: null, daemonStateVersion: 0, metadata: MachineMetadataSchema.parse({
       host: 'worker', platform: 'linux', homeDir: '/home/worker', happyHomeDir: '/home/worker/.happier',
       happyCliVersion: 'test', installationPublicKey: Buffer.from(tweetnacl.sign.keyPair.fromSeed(encryptionKey).publicKey).toString('base64url'),
-      // READY196 retained a saved preset from before explicit preset encryption mode.
+      // A plaintext Account preset remains attached across unrelated metadata edits.
       setup: { version: 1, revision: 2, exclusions: [], sources: [
         { kind: 'direct', setup: {} },
-        { kind: 'accountPreset', presetId: 'saved-preset', presetRevision: 1, setup: {} },
+        { kind: 'accountPreset', presetId: 'saved-preset', presetRevision: 1, contentEncryptionMode: 'plain' as const, setup: {} },
       ] },
     }) };
 }

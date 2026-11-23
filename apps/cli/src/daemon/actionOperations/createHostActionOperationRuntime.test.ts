@@ -1021,7 +1021,7 @@ describe('finite host operation custody', () => {
     const start = new Promise<void>(resolve => { started = resolve; });
     const request = runtime.observeExecution({ actionId: 'machines.setup.apply', input: { homeId: 'home', machineId: 'guest', targets: [{
       homeId: 'home', machineId: 'guest', desiredRevision: 0, recipePlans: [], sources: [
-      { kind: 'accountPreset', presetId: 'preset', presetRevision: 1, setup: { scripts: [{ body: 'echo retained', affects: 'none' }],  } },
+      { kind: 'accountPreset', presetId: 'preset', presetRevision: 1, contentEncryptionMode: 'plain' as const, setup: { scripts: [{ body: 'echo retained', affects: 'none' }],  } },
       { kind: 'direct', setup: {} },
     ] }] },
       actionRequestId: 'setup-request', execute: async ({ signal, operationOwnerUpdate }) => {

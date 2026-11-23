@@ -479,18 +479,18 @@ The inspected `../0.2` frontier at
 ## Prepared image freshness (unreleased 0.3)
 
 Prepared images bind authored launch, setup, reviewed source contents and selected
-Connected Account configuration revisions. Preset row revisions are CAS facts,
-not image freshness. The private binding reader accepts and discards the retired
-`presetRevision` field in retained development rows; new bindings omit it. The
-supplier CLI identity remains build provenance. A CLI-only change selects the
+Connected Account configuration revisions. Preset row revisions belong to
+compare-and-swap writes. The private binding records the original Prepare host
+and the supplier CLI identity used by the build. A CLI-only change selects the
 same warm image with private `preparationExecution.updateCli: true`, and the
 existing guest installer replaces the CLI during admitted Session startup.
 Launch or setup changes still select a cold launch. The optional encrypted
 `preparation.whenHappierUpdates` preference defaults to `update-at-start`.
 `rebuild-automatically` requests the existing finite Prepare on first use after
-a supplier CLI identity change only when the Session starter can Manage the
-preset. It uses that person's admission and the existing cost review. Team Use
-members retain the warm launch and CLI replacement. No author authority is
+a supplier CLI identity change. Prepare admission checks the requested preset
+revision and the Session starter’s Manage access, then uses the existing cost
+review. A stale revision or a Team Use refusal leaves the selected warm launch
+and CLI replacement in place. No author authority is
 borrowed, and no timer, poller or separate preference store is introduced.
 Foreign controllers holding only the existing codec also retain the warm image
 and CLI replacement, including when the starter can Manage: that custody contains

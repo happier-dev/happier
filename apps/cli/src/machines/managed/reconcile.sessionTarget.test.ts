@@ -59,7 +59,6 @@ import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecyc
 import { configuration } from '@/configuration';
 import { AccountProfileSchema } from '@happier-dev/protocol';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
-import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
@@ -247,16 +246,17 @@ describe('Session-target authority for managed provider channel roles', () => {
                 prepared: { operationId: 'original-build', status: 'ready', artifact: inspectedArtifact, cliBinaryPath: '/prepared/happier',
                     binding: createManagedMachinePresetPreparationBindingV1({ content: { launch: scenario === 'configuration-changed' || scenario === 'cloud-stale'
                         ? { ...launch, choices: { name: 'other-configuration' } } : launch }, credentialConfigurations: [],
-                        cliIdentity: builtCliIdentity }) } }) };
+                        machineId: 'prepare-host', cliIdentity: builtCliIdentity }) } }) };
             let current = row;
             let presetContent = scenario === 'latest-configuration-changed'
                 ? { ...content, v: { ...content.v, launch: { ...launch, choices: { name: 'later-configuration' } } } }
                 : scenario === 'optin-removed'
                     ? { ...content, v: { ...content.v, preparation: { enabled: true, whenHappierUpdates: 'update-at-start' as const } } }
                     : content;
-            let presetRevision = 1;
+            let presetRevision = scenario === 'latest-configuration-changed' || scenario === 'optin-removed'
+                || scenario === 'latest-already-rebuilt' ? 2 : 1;
             let prepareCalls = 0;
-            let capabilityReads = 0;
+            const prepareAdmissions: number[] = [];
             let presetReads = 0;
             let approvalReads = 0;
             let recordedApproval: ReturnType<typeof StoredApprovalRequestSchema.parse> | undefined;
@@ -265,7 +265,7 @@ describe('Session-target authority for managed provider channel roles', () => {
                 inspectedArtifact = artifact('new-image');
                 presetContent = { ...content, v: { ...content.v, prepared: { ...content.v.prepared,
                     artifact: inspectedArtifact, binding: createManagedMachinePresetPreparationBindingV1({ content: { launch },
-                        credentialConfigurations: [], cliIdentity: `home-payload:${'a'.repeat(64)}` }) } } };
+                        credentialConfigurations: [], machineId: 'prepare-host', cliIdentity: `home-payload:${'a'.repeat(64)}` }) } } };
             }
             const operations = createHostActionOperationRuntime({ machineId: machine.controller!.machineId,
                 resolveAccountId: async () => 'owner', generateOperationId: () => 'new-image-operation' });
@@ -275,16 +275,13 @@ describe('Session-target authority for managed provider channel roles', () => {
                     id: row.preset.id, homeId, revision: presetRevision, controller: machine.controller, contentEncryptionMode: 'plain',
                     owner: scenario === 'member' ? { kind: 'team', teamId: 'team' } : { kind: 'account', accountId: 'owner' },
                     content: presetContent, recipients: [] } } }; }
-                if (path.endsWith('/teams/get')) { capabilityReads++; return { status: 200, data: {
-                    id: 'team', name: 'Team', description: null, logo: null, archivedAt: null, recovery: null,
-                    policy: { v: 1, sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed',
-                        defaultSessionHistoryAccess: 'from_membership', admissionMode: 'invite_only', authenticationPolicy: null,
-                        authenticationPolicyStatus: 'available' }, viewerRole: 'member',
-                    capabilities: { ...NO_TEAM_CAPABILITIES_V1, viewTeam: true }, counts: null,
-                    admission: { historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' } },
-                } }; }
                 if (path.endsWith('/execution-authorization')) {
                     const request = body as { envelope: { v: 1; requestId: string; target: { kind: 'machine'; machineId: string }; input: unknown } };
+                    const { expectedRevision } = request.envelope.input as { expectedRevision: number };
+                    prepareAdmissions.push(expectedRevision);
+                    if (scenario === 'member' || expectedRevision !== presetRevision) {
+                        return { status: 403, data: { error: 'credential_scope_denied' } };
+                    }
                     return { status: 200, data: { v: 1, token: 'fresh-prepare-root', binding: { accountId: 'owner', custodianAccountId: 'owner',
                         authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain', serverIdentityId: homeId,
                         ...machine.controller, actionId: 'machines.presets.prepare', requestId: request.envelope.requestId,
@@ -303,7 +300,7 @@ describe('Session-target authority for managed provider channel roles', () => {
                             presetContent = { t: 'plain', v: ManagedMachinePresetContentV1Schema.parse({ ...content.v, name: 'Later rename',
                                 prepared: { ...content.v.prepared, operationId: accepted.operationId, artifact: inspectedArtifact,
                                     binding: createManagedMachinePresetPreparationBindingV1({ content: { launch }, credentialConfigurations: [],
-                                        cliIdentity: `home-payload:${'a'.repeat(64)}` }) } }) };
+                                        machineId: 'prepare-host', cliIdentity: `home-payload:${'a'.repeat(64)}` }) } }) };
                             presetRevision++;
                             return { ok: true, result: accepted };
                         } });
@@ -398,10 +395,10 @@ describe('Session-target authority for managed provider channel roles', () => {
             }
             expect(acquired, JSON.stringify(result)).toHaveLength(1);
             expect(prepareCalls).toBe(scenario === 'manager' || scenario === 'deferred-approval' ? 1 : 0);
-            expect(capabilityReads).toBe(scenario === 'member' ? 1 : 0);
-            expect(presetReads).toBe(scenario === 'manager' || scenario === 'deferred-approval' ? 2
-                : scenario === 'member' || scenario === 'latest-configuration-changed' || scenario === 'optin-removed'
-                    || scenario === 'latest-already-rebuilt' ? 1 : 0);
+            expect(prepareAdmissions).toEqual(
+                ['manager', 'member', 'latest-configuration-changed', 'optin-removed', 'deferred-approval',
+                    'latest-already-rebuilt'].includes(scenario) ? [1] : []);
+            expect(presetReads).toBe(scenario === 'manager' || scenario === 'deferred-approval' ? 1 : 0);
             expect(acquired).toMatchObject([{ managedId: row.id, launch: { name: scenario === 'manager'
                 || scenario === 'deferred-approval' || scenario === 'latest-already-rebuilt' ? 'new-image'
                 : scenario === 'configuration-changed' || scenario === 'cloud-stale'
@@ -414,7 +411,7 @@ describe('Session-target authority for managed provider channel roles', () => {
             expect(hydrator.readPresetDefinition(opened)?.preparationExecution?.updateCli).toBe(
                 scenario === 'member' || scenario === 'default' || scenario === 'codec-only'
                     || scenario === 'latest-configuration-changed' || scenario === 'optin-removed'
-                    || scenario === 'cloud-new-cli' ? true : undefined);
+                    || scenario === 'latest-already-rebuilt' || scenario === 'cloud-new-cli' ? true : undefined);
         });
     });
     it.each([false, true])('uses the author digest for a cold source without preparation guest metadata (Prepare %s)', async enabled => {

@@ -241,7 +241,7 @@ describe('preset authored configuration counter', () => {
     const { name: _guestName, ...launch } = original.launch;
     const preparation = { presetId: 'preset', content: initial.content, expectedOperationId: null,
       prepared: { operationId: 'prepare', status: 'building' as const,
-        binding: { configuration: { launch, setup: original.setup }, cliIdentity: 'home:0.3:payload', credentialConfigurations: [] } } };
+        binding: { configuration: { launch, setup: original.setup }, machineId: 'prepare-host', cliIdentity: 'home:0.3:payload', credentialConfigurations: [] } } };
     const operational = mode === 'plain' ? replaceManagedMachinePresetPreparationV1({ ...preparation, mode })
       : replaceManagedMachinePresetPreparationV1({ ...preparation, mode, recipients: initial.recipients,
         accountId: 'author', accountKey, randomBytes });

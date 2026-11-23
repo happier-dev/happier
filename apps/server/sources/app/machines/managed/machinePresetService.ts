@@ -46,7 +46,7 @@ import {
     type PresetContext,
     type PresetCreation,
 } from './machinePresetSave';
-import { hasStoredOpaquePresetEnvelope, readAdmittedOpaquePresetLaunch, readManagedController, readStoredPresetSnapshotContent } from './managedMachineProjection';
+import { readAdmittedOpaquePresetLaunch, readManagedController } from './managedMachineProjection';
 import { readOwedMachinePresetIdsInTx } from './machinePresetOwedQuery';
 import { selectMachinePoolCandidate } from '@happier-dev/protocol/machines/pools';
 import { createValidatedLaunchSnapshotV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -105,27 +105,8 @@ function inheritPresetOwnerArchive<T extends { archivedAt: Date | null }>(row: T
     return row.archivedAt === null && teamArchivedAt ? { ...row, archivedAt: teamArchivedAt } : row;
 }
 
-function readStoredPresetContent(row: StoredPreset) {
-    if (hasStoredOpaquePresetEnvelope(row.launch)) return readStoredOpaquePresetLaunch(row.launch);
-    if (row.launch !== null && (typeof row.launch !== 'object' || Array.isArray(row.launch))) {
-        throw new ManagedMachineError('invalid_request');
-    }
-    // Legacy database JSON is an object here; its member values remain unknown.
-    const { controllerPoolId, controllerDisplayName, ...launch } = (row.launch ?? {}) as Readonly<Record<string, unknown>>;
-    if (controllerPoolId !== undefined && typeof controllerPoolId !== 'string') throw new ManagedMachineError('invalid_request');
-    return storeOpaquePresetLaunch({
-        contentEncryptionMode: 'plain', recipients: [],
-        content: { t: 'plain', v: { v: 1, name: row.name,
-            ...(row.launch === null ? {} : { launch }),
-            ...(row.setup === null ? {} : { setup: row.setup }),
-            ...(controllerDisplayName === undefined ? {} : { controllerDisplayName }),
-        } },
-        ...(controllerPoolId === undefined ? {} : { controllerPoolId }),
-    });
-}
-
 function projectPreset(row: StoredPreset, lastUsedAt?: number): ManagedMachinePresetV1 {
-    const stored = readStoredPresetContent(row);
+    const stored = readStoredOpaquePresetLaunch(row.launch);
     return ManagedMachinePresetV1Schema.parse({
         id: row.id, homeId: row.homeId, revision: row.revision, configurationRevision: row.configurationRevision,
         setupRevision: row.setupRevision, owner: ownerOf(row),
@@ -303,7 +284,7 @@ export async function rewriteMachinePresetContentInTx(tx: Tx, input: Readonly<{
     const current = projectPreset(row);
     const next = ManagedMachinePresetV1Schema.parse({ ...current, ...input.replacement });
     await validatePresetRecipientsInTx(tx, input.context, next, input.context.accountId);
-    if (hasStoredOpaquePresetEnvelope(row.launch) && sameManagedInput(next, current)) return { kind: 'saved', revision: row.revision };
+    if (sameManagedInput(next, current)) return { kind: 'saved', revision: row.revision };
     const updated = await tx.managedMachinePreset.updateMany({
         where: { id: row.id, revision: input.expectedRevision },
         data: { name: '', setup: getActivePrismaRuntime().DbNull, launch: storeOpaquePresetLaunch(next), revision: { increment: 1 } },
@@ -506,8 +487,7 @@ export async function readMachinePresetRecipientCensus(params: PresetContext & R
                 if (!matchesRecipientCensusTarget(input, preset)) {
                     return { kind: 'refused', code: 'invalid_request' } as const;
                 }
-                const targetMode = hasStoredOpaquePresetEnvelope(row.launch) ? preset.contentEncryptionMode
-                    : (await tx.account.findUniqueOrThrow({ where: { id: params.accountId }, select: { encryptionMode: true } })).encryptionMode;
+                const targetMode = preset.contentEncryptionMode;
                 if (targetMode === 'plain') {
                     return { kind: 'ready', contentEncryptionMode: 'plain', recipients: [] } as const;
                 }
@@ -696,7 +676,7 @@ export async function readAccountManagedMachinePresetEncryptionMigrationInventor
     const rows = await readAccountManagedMachinePresetMigrationRowsInTx(tx, input.accountId);
     return ManagedMachinePresetAccountEncryptionMigrationInventoryV1Schema.parse({
         presets: rows.presets.map((preset) => {
-            const stored = readStoredPresetContent(preset);
+            const stored = readStoredOpaquePresetLaunch(preset.launch);
             const projection = projectManagedMachinePresetForRecipientV1({
                 content: stored.content,
                 recipients: stored.recipients,
@@ -713,7 +693,7 @@ export async function readAccountManagedMachinePresetEncryptionMigrationInventor
             if (snapshot.presetId === null) {
                 throw new Error('Managed preset snapshot is missing its source preset');
             }
-            const stored = readStoredPresetSnapshotContent(snapshot);
+            const stored = readStoredOpaquePresetLaunch(snapshot.launch);
             const projection = projectManagedMachinePresetForRecipientV1({
                 content: stored.content,
                 recipients: stored.recipients,
@@ -731,7 +711,7 @@ export async function readAccountManagedMachinePresetEncryptionMigrationInventor
 
 function readStoredPresetSnapshotForAccountMigration(row: StoredPresetSnapshot) {
     try {
-        return readStoredPresetSnapshotContent(row);
+        return readStoredOpaquePresetLaunch(row.launch);
     } catch {
         return null;
     }
@@ -847,7 +827,7 @@ export async function migrateAccountManagedMachinePresetsForModeInTx(
         if (
             source.owner.kind !== 'account'
             || source.owner.accountId !== input.accountId
-            || (hasStoredOpaquePresetEnvelope(row.launch) && source.contentEncryptionMode !== input.fromMode)
+            || source.contentEncryptionMode !== input.fromMode
             || !matchingPresetMigrationMode(source.contentEncryptionMode, source.content)
             || (input.toMode === 'e2ee'
                 && !await hasCurrentPersonalPresetCustodianInTx(tx, input.accountId, source))
@@ -931,7 +911,7 @@ export async function migrateAccountManagedMachinePresetsForModeInTx(
         }
         if (
             (input.toMode === 'e2ee' && row.custodianAccountId !== input.accountId)
-            || (hasStoredOpaquePresetEnvelope(row.launch) && stored.contentEncryptionMode !== input.fromMode)
+            || stored.contentEncryptionMode !== input.fromMode
             || !matchingPresetMigrationMode(stored.contentEncryptionMode, stored.content)
             || (stored.contentEncryptionMode === 'plain'
                 ? stored.recipients.length !== 0
@@ -1221,8 +1201,8 @@ export async function updateMachinePreset(params: PresetPreparationContext & Rea
         else if (requiresDelegationManager && nextCreation?.controllerPoolId) await authorizeMachinePresetCreationSaveInTx(tx, params, nextCreation);
         else if (delegatedControllerMachineId) await requireManagedLaunchManagerInTx(tx, params, delegatedControllerMachineId);
         await validatePresetRecipientsInTx(tx, params, next,
-            input.patch.content !== undefined || input.patch.contentEncryptionMode !== undefined || !hasStoredOpaquePresetEnvelope(row.launch) ? params.accountId : null);
-        if (hasStoredOpaquePresetEnvelope(row.launch) && sameManagedInput(next, current)) return { kind: "saved", preset: projectPreset(row) } as const;
+            input.patch.content !== undefined || input.patch.contentEncryptionMode !== undefined ? params.accountId : null);
+        if (sameManagedInput(next, current)) return { kind: "saved", preset: projectPreset(row) } as const;
         const result = await tx.managedMachinePreset.updateMany({ where: { id: row.id, revision: input.expectedRevision }, data: {
             // `name` is a legacy storage key only; private content remains in
             // the opaque envelope and is never projected or searched here.

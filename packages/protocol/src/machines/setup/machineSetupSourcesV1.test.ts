@@ -33,31 +33,6 @@ function publicationPort(initial: unknown) {
 }
 
 describe('Machine setup saved-copy publication', () => {
-  it('reads the retained direct/accountPreset shape without a captured mode until a normal save', async () => {
-    // FIN-FIX-MACHINE-META opened-shape.json: setup.sources[1] is an
-    // accountPreset copy with no contentEncryptionMode; sources[0] is direct.
-    const stored = { version: 1, revision: 7, exclusions: [], sources: [
-      { kind: 'direct', setup: {} },
-      { kind: 'accountPreset', presetId: 'legacy-preset', presetRevision: 4,
-        setup: { scripts: [{ body: 'echo retained' }] } },
-    ] };
-    const boundary = publicationPort(stored);
-    const opened = await getMachineSetupDesiredV1(boundary.port);
-    expect(opened).toMatchObject({ status: 'ready', policy: stored });
-    const metadata = { host: 'retained', platform: 'linux', happyCliVersion: '0.3.0',
-      homeDir: '/home/retained', happyHomeDir: '/home/retained/.happier', setup: stored };
-    expect(StoredMachinePublishedMetadataV1Schema.parse(metadata)).toEqual(metadata);
-    expect(boundary.compareAndSwap).not.toHaveBeenCalled();
-    expect(boundary.readStored().setup).toBe(stored);
-    expect(MachineSetupDesiredV1Schema.safeParse(stored).success).toBe(false);
-
-    const current = { ...stored, sources: [stored.sources[0], { ...stored.sources[1], contentEncryptionMode: 'plain' }] };
-    const saved = await mutateMachineSetupDesiredV1({ expectedDesiredRevision: 7,
-      sources: MachineSetupSourceV1Schema.parse(current.sources), exclusions: [] }, boundary.port);
-    expect(saved).toMatchObject({ status: 'applied', policy: { revision: 8, sources: current.sources } });
-    expect(MachineSetupDesiredV1Schema.safeParse(boundary.readStored().setup).success).toBe(true);
-  });
-
   it.each([
     { contentEncryptionMode: 'invalid' },
     { contentEncryptionMode: null },

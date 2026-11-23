@@ -40,18 +40,16 @@ export const ManagedMachinePresetPreparationConfigurationV1Schema = lazyZodSchem
 });
 
 /** Credential selections remain in the canonical launch; the supplier supplies its CLI identity. */
-export const ManagedMachinePresetPreparationBindingV1Schema = lazyZodSchema(() => z.pipe(z.strictObject({
-  /** Read retained development images; new bindings omit this retired freshness input. */
-  presetRevision: z.optional(z.number().check(z.int(), z.positive())),
+export const ManagedMachinePresetPreparationBindingV1Schema = lazyZodSchema(() => z.strictObject({
   configuration: ManagedMachinePresetPreparationConfigurationV1Schema,
   cliIdentity: id(),
-  /** Original Prepare host; legacy images omit it and cannot select a local cleanup host. */
-  machineId: z.optional(id()),
+  /** Original Prepare host for Machine-placement native effects. */
+  machineId: id(),
   credentialConfigurations: z.array(z.strictObject({
     account: asProtocolZod(QualifiedConnectedAccountRefSchema),
     revision: z.nullable(id()),
   })),
-}), z.transform(({ presetRevision: _retiredRevision, ...binding }) => binding)));
+}));
 export type ManagedMachinePresetPreparationBindingV1 = Readonly<
   z.infer<typeof ManagedMachinePresetPreparationBindingV1Schema>>;
 

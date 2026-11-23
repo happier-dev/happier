@@ -569,7 +569,7 @@ it.each((['machines.setup.apply', 'deployments.teardown'] as const).flatMap(acti
         expectedTargetLinkRevision: 1, requestKey: 'cleanup', reason: 'manual' }
       : { homeId: 'srv_home', machineId: 'receiver', targets: [{
       homeId: 'srv_home', machineId: 'receiver', desiredRevision: 0, recipePlans: [], sources: [
-      { kind: 'accountPreset', presetId: 'preset', presetRevision: 1, setup: { scripts: [{ body: 'echo retained', affects: 'none' }],  } },
+      { kind: 'accountPreset', presetId: 'preset', presetRevision: 1, contentEncryptionMode: 'plain' as const, setup: { scripts: [{ body: 'echo retained', affects: 'none' }],  } },
       { kind: 'direct', setup: {} },
     ] }] }, targetSessionId: null,
     context: { authority: 'account_automation', surface: 'agent', actionCaller: caller, serverId: 'profile',

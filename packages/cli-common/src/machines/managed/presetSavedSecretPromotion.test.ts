@@ -223,7 +223,7 @@ describe('managed preset Saved Secret promotion capture', () => {
       operationId: 'prepare-promotion',
       binding: { configuration: { launch: { provider: launch.provider,
         schemaVersion: launch.schemaVersion, choices: launch.choices }, setup: authored.setup },
-        cliIdentity: 'home-payload:0.3:promotion', credentialConfigurations: [] },
+        machineId: 'prepare-host', cliIdentity: 'home-payload:0.3:promotion', credentialConfigurations: [] },
       status: 'building' as const,
     };
     const preparedWrite = replaceManagedMachinePresetPreparationV1({

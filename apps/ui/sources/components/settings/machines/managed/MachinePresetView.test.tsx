@@ -565,7 +565,7 @@ describe('reachable preset detail', () => {
     const { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } = await import('@happier-dev/protocol/machines/managed/machinePresetActionsV1');
     const opened = { ...createPlainManagedMachinePresetFixture({ ...preset, preparation: { enabled: true } }).opened,
       prepared: { operationId: 'previous-build', status: 'building' as const,
-        binding: { presetRevision: preset.revision, cliIdentity: 'supplier-identity', credentialConfigurations: [], configuration: {
+        binding: { machineId: 'prepare-host', cliIdentity: 'supplier-identity', credentialConfigurations: [], configuration: {
           launch: { provider: preset.launch.provider, schemaVersion: preset.launch.schemaVersion, choices: preset.launch.choices },
         } } } };
     let displayed = opened;
@@ -662,7 +662,7 @@ describe('reachable preset detail', () => {
     const opened = createPlainManagedMachinePresetFixture({ ...preset, preparation: { enabled: true } }).opened;
     const prepared = { operationId: 'measured-build', status: 'ready' as const, artifactSizeBytes: 1024, builtAt: 1700000000000, builtFromRevision: 7,
       artifact: { contributionRef: preset.launch.provider, schemaVersion: preset.launch.schemaVersion, value: { image: 'native-snapshot' } },
-      binding: { presetRevision: preset.revision, cliIdentity: 'supplier-identity', credentialConfigurations: [], configuration: {
+      binding: { machineId: 'prepare-host', cliIdentity: 'supplier-identity', credentialConfigurations: [], configuration: {
         launch: { provider: preset.launch.provider, schemaVersion: preset.launch.schemaVersion, choices: preset.launch.choices },
       } } };
     let measured = true;
@@ -755,7 +755,7 @@ describe('reachable preset detail', () => {
       createMachineFixture({ id: selected.machineId, installationId: selected.installationId, activeAt: Date.now() }),
     ]);
     const prepared = { operationId: 'lost-builder-operation', status: 'building' as const,
-      binding: { presetRevision: preset.revision, cliIdentity: 'supplier-identity', credentialConfigurations: [], configuration: {
+      binding: { machineId: 'prepare-host', cliIdentity: 'supplier-identity', credentialConfigurations: [], configuration: {
         launch: { provider: preset.launch.provider, schemaVersion: preset.launch.schemaVersion, choices: preset.launch.choices },
       } } };
     const preparedContent = replaceManagedMachinePresetPreparationV1({ presetId: preset.id, mode: 'plain',
@@ -839,7 +839,7 @@ describe('reachable preset detail', () => {
     const { replaceManagedMachinePresetPreparationV1 } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
     const stored = createPlainManagedMachinePresetFixture({ ...preset, preparation: { enabled: true } });
     const prepared = { operationId: 'approval-build', status: 'building' as const,
-      binding: { presetRevision: preset.revision, cliIdentity: 'supplier-identity', credentialConfigurations: [], configuration: {
+      binding: { machineId: 'prepare-host', cliIdentity: 'supplier-identity', credentialConfigurations: [], configuration: {
         launch: { provider: preset.launch.provider, schemaVersion: preset.launch.schemaVersion, choices: preset.launch.choices },
       } } };
     const operational = replaceManagedMachinePresetPreparationV1({ presetId: preset.id, mode: 'plain',

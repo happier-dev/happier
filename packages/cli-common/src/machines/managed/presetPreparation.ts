@@ -19,11 +19,11 @@ function readPreparationConfiguration(content: PreparationContent): ManagedMachi
 
 export function createManagedMachinePresetPreparationBindingV1(params: PreparationIdentity & Readonly<{
   content: PreparationContent;
-  machineId?: string;
+  machineId: string;
 }>): ManagedMachinePresetPreparationBindingV1 {
   return { configuration: readPreparationConfiguration(params.content),
     cliIdentity: params.cliIdentity,
-    ...(params.machineId === undefined ? {} : { machineId: params.machineId }),
+    machineId: params.machineId,
     credentialConfigurations: params.credentialConfigurations };
 }
 
@@ -36,8 +36,6 @@ export type ManagedMachinePresetPreparationDecisionV1 = PreparedImageDecision | 
 
 type PreparationSelection = Pick<PreparationIdentity, 'credentialConfigurations'> & Readonly<{
   content: ManagedMachinePresetContentV1;
-  /** Consume the caller's canonical Manage decision; absence never authorizes a build. */
-  canManagePreset?: boolean;
 }>;
 
 type PreparedCandidate = Readonly<{ kind: 'candidate'; image: PreparedImage; boundCliIdentity: string; rebuildForCliChange: boolean }>;
@@ -61,7 +59,7 @@ function readPreparedCandidate(params: PreparationSelection): PreparedCandidate 
     ...(prepared.bakedSetup === undefined ? {} : { bakedSetup: prepared.bakedSetup }),
     ...(deferredSetup === undefined ? {} : { deferredSetup }) };
   return { kind: 'candidate', image, boundCliIdentity: prepared.binding.cliIdentity,
-    rebuildForCliChange: content.preparation.whenHappierUpdates === 'rebuild-automatically' && params.canManagePreset === true };
+    rebuildForCliChange: content.preparation.whenHappierUpdates === 'rebuild-automatically' };
 }
 
 function selectPreparedCli(candidate: PreparedCandidate, cliIdentity: string): PreparedImageDecision {

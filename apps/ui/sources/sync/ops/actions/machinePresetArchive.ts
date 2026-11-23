@@ -5,10 +5,9 @@ import { projectManagedMachinePresetForRecipientV1, type ManagedMachinePresetCon
 import { MachinePresetActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { resolveMachineSpawnReadinessV1 } from '@happier-dev/protocol/machines/machineSpawnReadinessV1';
 import { readMachineProvisionerActionRolesV1, type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import { MachineProvisionerPreparationInspectResultV1Schema, MachineProvisionerPreparationDestroyResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisionerPreparationSchemas';
-import { ManagedMachineControllerError, settleManagedMachinePresetPreparationOperationV1, managedMachinePresetPreparationNeedsNativeCleanupV1,
-    resolveManagedMachinePresetArchiveExecutionTargetV1,
-    type ManagedMachinePresetPreparationCustodyV1, type ManagedNativeInvocation } from '@happier-dev/cli-common/machines/managed';
+import { archiveManagedMachinePreset, ManagedMachineControllerError, managedMachinePresetPreparationNeedsNativeCleanupV1,
+    resolveManagedMachinePresetArchiveExecutionTargetV1, type ManagedMachinePresetPreparationOperationInputV1,
+    type ManagedMachinePresetPreparationCustodyV1 } from '@happier-dev/cli-common/machines/managed';
 import { readMachineProvisionerHostAvailability } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { createMachinePresetActionClient, MachinePresetActionError } from '@/sync/api/machines/managedMachinePresets';
 import { createUiManagedAccountNativeInvocationForLaunch } from '@/sync/api/machines/managedMachineAccountNative';
@@ -69,59 +68,43 @@ export async function prepareUiMachinePresetArchive(request: Parameters<NonNulla
 export async function executeUiMachinePresetArchive(request: ArchiveRequest, account: LazyActionAccountContext) {
     const { input, context, signal } = request;
     try {
-        return await withOpenedPreset(account, input, signal, async (preset, content, custody, read) => {
-            if (preset.revision !== input.expectedRevision) return { kind: 'conflict' as const, currentRevision: preset.revision };
-            let revision = preset.revision;
-            const prepared = content.prepared;
-            const client = createMachinePresetActionClient({ request: account.request });
-            if (prepared) {
-                let invoke: ManagedNativeInvocation = async () => { throw new ManagedMachineControllerError('invalid_request'); };
-                let cleanupUnavailable: Parameters<typeof settleManagedMachinePresetPreparationOperationV1>[0]['cleanupUnavailable'];
-                if (managedMachinePresetPreparationNeedsNativeCleanupV1(prepared)) {
-                    const launch = prepared.binding.configuration.launch;
-                    const selected = readPluginAccountAvailability(account.accountLifetime.scope).readCurrentAccountExecution(launch.provider.pluginId);
-                    if (selected.kind !== 'available') throw new ManagedMachineControllerError(selected.code);
-                    const provisioner = readProvisioner(selected.manifest.contributes.machineProvisioners, launch);
-                    const destroyId = provisioner.preparation!.actions.destroy;
-                    const destroy = selected.manifest.contributes.actions?.find(action => action.id === destroyId);
-                    if (!destroy) throw new ManagedMachineControllerError('provider_unavailable');
-                    if (destroy.execution?.target !== 'account' && prepared.binding.machineId) {
-                        cleanupUnavailable = await readCleanupUnavailable(account, prepared.binding.machineId, signal);
-                    }
-                    if (!cleanupUnavailable) invoke = createUiManagedAccountNativeInvocationForLaunch({ account, launch,
-                        credentialConfigurations: prepared.binding.credentialConfigurations, provisioner, selected,
-                        originalMachineId: prepared.binding.machineId, context, signal,
-                        requestId: context.actionRequestId ?? prepared.operationId });
+        const client = createMachinePresetActionClient({ request: account.request });
+        return await archiveManagedMachinePreset({
+            expectedRevision: input.expectedRevision, signal,
+            storage: { read: () => readPreset(account, input, signal),
+                compareAndSwap: update => client.execute('machines.presets.update', {
+                    homeId: input.homeId, id: input.id, expectedRevision: update.expectedRevision,
+                    patch: { content: update.content, recipients: update.recipients },
+                }, { signal }) },
+            withCustody: (preset, run) => withPresetCustody(account, preset, signal, (_custody, preparation) => run(preparation)),
+            resolveCleanup: async prepared => {
+                const launch = prepared.binding.configuration.launch;
+                const selected = readPluginAccountAvailability(account.accountLifetime.scope).readCurrentAccountExecution(launch.provider.pluginId);
+                if (selected.kind !== 'available') throw new ManagedMachineControllerError(selected.code);
+                const provisioner = readProvisioner(selected.manifest.contributes.machineProvisioners, launch);
+                const destroyId = provisioner.preparation!.actions.destroy;
+                const destroy = selected.manifest.contributes.actions?.find(action => action.id === destroyId);
+                if (!destroy) throw new ManagedMachineControllerError('provider_unavailable');
+                if (destroy.execution?.target !== 'account') {
+                    const unavailable = await readCleanupUnavailable(account, prepared.binding.machineId, signal);
+                    if (unavailable) return { unavailable };
                 }
-                let first = true;
-                const cleanup = await settleManagedMachinePresetPreparationOperationV1({ cleanupOnly: true,
-                    cleanupUnavailable,
-                    operationId: prepared.operationId, expectedRevision: input.expectedRevision, custody,
-                    credentialConfigurations: prepared.binding.credentialConfigurations,
-                    storage: { read: async () => { if (first) { first = false; return preset; } return await read(); },
-                        compareAndSwap: async update => await client.execute('machines.presets.update', {
-                            homeId: input.homeId, id: input.id, expectedRevision: update.expectedRevision,
-                            patch: { content: update.content, recipients: update.recipients },
-                        }, { signal }) },
-                    native: {
-                        build: async () => { throw new ManagedMachineControllerError('invalid_request'); },
-                        inspect: async body => MachineProvisionerPreparationInspectResultV1Schema.parse(await invoke('preparationInspect', body, {})),
-                        destroy: async body => MachineProvisionerPreparationDestroyResultV1Schema.parse(await invoke('preparationDestroy', body, {})),
-                    } });
-                if (cleanup.kind === 'conflict' || cleanup.kind === 'refused') return cleanup;
-                if (cleanup.kind !== 'cancelled') throw new ManagedMachineControllerError(cleanup.prepared.code ?? 'native_intent_unconfirmed');
-                revision = cleanup.revision;
-            }
-            return await client.execute('machines.presets.archive', { ...input, expectedRevision: revision }, { signal });
+                return { invoke: createUiManagedAccountNativeInvocationForLaunch({ account, launch,
+                    credentialConfigurations: prepared.binding.credentialConfigurations, provisioner, selected,
+                    originalMachineId: prepared.binding.machineId, context, signal,
+                    requestId: context.actionRequestId ?? prepared.operationId }) };
+            },
+            archive: expectedRevision => client.execute('machines.presets.archive', { ...input, expectedRevision }, { signal }),
         });
     } catch (error) {
+        if (error instanceof MachinePresetActionError) return new ManagedMachineControllerError(error.errorCode, error.status, undefined, undefined, error).toActionFailure('machines.presets.archive');
         if (error instanceof ManagedMachineControllerError) return error.toActionFailure('machines.presets.archive');
         throw error;
     }
 }
 
 async function readCleanupUnavailable(account: LazyActionAccountContext, machineId: string, signal?: AbortSignal):
-    Promise<Parameters<typeof settleManagedMachinePresetPreparationOperationV1>[0]['cleanupUnavailable']> {
+    Promise<ManagedMachinePresetPreparationOperationInputV1['cleanupUnavailable']> {
     const rows = await readMachineRows({ readTransport: account.readTransport, request: account.request,
         machineIds: [machineId], signal });
     const readiness = resolveMachineSpawnReadinessV1({ selectedMachineId: machineId,
@@ -137,33 +120,42 @@ function readProvisioner(declarations: readonly MachineProvisionerContributionV1
     return provisioner;
 }
 
-async function withOpenedPreset<TResult>(account: LazyActionAccountContext, input: Pick<ArchiveRequest['input'], 'homeId' | 'id'>,
-    signal: AbortSignal | undefined, run: (preset: ManagedMachinePresetV1, content: ManagedMachinePresetContentV1,
-        custody: ManagedMachinePresetPreparationCustodyV1, read: () => Promise<ManagedMachinePresetV1>) => Promise<TResult>): Promise<TResult> {
+async function readPreset(account: LazyActionAccountContext, input: Pick<ArchiveRequest['input'], 'homeId' | 'id'>,
+    signal?: AbortSignal): Promise<ManagedMachinePresetV1> {
+    if (input.homeId !== account.serverIdentityId) throw new ManagedMachineControllerError('server_target_mismatch');
+    const client = createMachinePresetActionClient({ request: account.request });
     try {
-        if (input.homeId !== account.serverIdentityId) throw new ManagedMachineControllerError('server_target_mismatch');
-        const client = createMachinePresetActionClient({ request: account.request });
-        const read = async () => {
-            const result = ManagedMachinePresetGetResultV1Schema.parse(await client.execute('machines.presets.get', {
-                homeId: input.homeId, id: input.id,
-            }, { signal }));
-            if (result.kind !== 'found') throw new ManagedMachineControllerError(result.code);
-            return result.preset;
-        };
-        const preset = await read();
-        const custody = await captureManagedMachinePresetCustodyV1({ account, resourceMode: preset.contentEncryptionMode, signal });
-        if (!custody) throw new ManagedMachineControllerError('credential_unavailable');
-        try {
-            const projection = projectManagedMachinePresetForRecipientV1({ ...preset, recipientAccountId: account.accountId });
-            const content = custody.open({ presetId: preset.id, mode: preset.contentEncryptionMode, projection });
-            if (!content) throw new ManagedMachineControllerError('credential_unavailable');
-            if (custody.mode === 'plain') return await run(preset, content, { mode: 'plain' }, read);
-            const result = custody.withAccountKey(key => run(preset, content, { mode: 'e2ee', ...key, randomBytes: getRandomBytes }, read));
-            if (!result) throw new ManagedMachineControllerError('credential_unavailable');
-            return await result;
-        } finally { custody.dispose(); }
+        const result = ManagedMachinePresetGetResultV1Schema.parse(await client.execute('machines.presets.get', {
+            homeId: input.homeId, id: input.id,
+        }, { signal }));
+        if (result.kind !== 'found') throw new ManagedMachineControllerError(result.code);
+        return result.preset;
     } catch (error) {
         if (error instanceof MachinePresetActionError) throw new ManagedMachineControllerError(error.errorCode, error.status, undefined, undefined, error);
         throw error;
     }
+}
+
+async function withOpenedPreset<TResult>(account: LazyActionAccountContext, input: Pick<ArchiveRequest['input'], 'homeId' | 'id'>,
+    signal: AbortSignal | undefined, run: (preset: ManagedMachinePresetV1, content: ManagedMachinePresetContentV1) => Promise<TResult>): Promise<TResult> {
+    const preset = await readPreset(account, input, signal);
+    return await withPresetCustody(account, preset, signal, async custody => {
+        const projection = projectManagedMachinePresetForRecipientV1({ ...preset, recipientAccountId: account.accountId });
+        const content = custody.open({ presetId: preset.id, mode: preset.contentEncryptionMode, projection });
+        if (!content) throw new ManagedMachineControllerError('credential_unavailable');
+        return await run(preset, content);
+    });
+}
+
+async function withPresetCustody<TResult>(account: LazyActionAccountContext, preset: ManagedMachinePresetV1,
+    signal: AbortSignal | undefined, run: (custody: NonNullable<Awaited<ReturnType<typeof captureManagedMachinePresetCustodyV1>>>,
+        preparation: ManagedMachinePresetPreparationCustodyV1) => Promise<TResult>): Promise<TResult> {
+    const custody = await captureManagedMachinePresetCustodyV1({ account, resourceMode: preset.contentEncryptionMode, signal });
+    if (!custody || custody.mode !== preset.contentEncryptionMode) throw new ManagedMachineControllerError('credential_unavailable');
+    try {
+        if (custody.mode === 'plain') return await run(custody, { mode: 'plain' });
+        const result = custody.withAccountKey(key => run(custody, { mode: 'e2ee', ...key, randomBytes: getRandomBytes }));
+        if (!result) throw new ManagedMachineControllerError('credential_unavailable');
+        return await result;
+    } finally { custody.dispose(); }
 }

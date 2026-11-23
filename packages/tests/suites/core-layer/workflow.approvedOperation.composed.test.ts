@@ -2863,7 +2863,7 @@ describe('server-stored combined Workflow approval across two receiving Action f
         if (created.kind !== 'saved' || !created.preset.setup) throw new Error('plain_setup_preset_required');
         const sources: NonNullable<MachineSetupCombinedPlanInputV1['targets'][number]['sources']> = [{
             kind: 'accountPreset', presetId: created.preset.id, presetRevision: created.preset.revision,
-            setup: created.preset.setup,
+            contentEncryptionMode: 'plain' as const, setup: created.preset.setup,
         }, { kind: 'direct', setup: {} }];
         const applyCopies = async (copies: typeof sources) => {
             const planned = await run.publicSetupPlan([{ homeId: run.server.homeId, machineId: run.first.id,

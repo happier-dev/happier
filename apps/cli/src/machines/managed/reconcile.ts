@@ -684,14 +684,15 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
                             signal: params.options.signal, ...(params.input.guestCliFetch ? { fetchImpl: params.input.guestCliFetch } : {}),
                         })).identity });
                     let decision: ManagedMachinePresetPreparationDecisionV1 = initial;
-                    if (initial.kind === 'warm' && initial.updateCli
-                        && content.preparation.whenHappierUpdates === 'rebuild-automatically') {
-                        await rebuildManagedPresetAtFirstUse({ input: params.input, options: params.options,
-                            machine, hydrator, content, cliIdentity: initial.cliIdentity,
-                            credentialConfigurations: credentialConfigurations! });
-                        content = hydrator.readPresetDefinition(machine)!;
-                        decision = readManagedMachinePresetPreparationV1({ content,
-                            cliIdentity: initial.cliIdentity, credentialConfigurations: credentialConfigurations! });
+                    if (initial.kind === 'rebuild') {
+                        const rebuilt = await rebuildManagedPresetAtFirstUse({ input: params.input, options: params.options, machine, hydrator });
+                        if (rebuilt) {
+                            content = hydrator.readPresetDefinition(machine)!;
+                            decision = readManagedMachinePresetPreparationV1({ content,
+                                cliIdentity: initial.cliIdentity, credentialConfigurations: credentialConfigurations! });
+                        } else {
+                            decision = { ...initial, kind: 'warm', updateCli: true };
+                        }
                     }
                     if (decision.kind === 'warm') {
                         const preparedLaunch = readMachineProvisionerPreparedLaunchV1({ provisioner: retainedProvisioner.identity,

@@ -228,7 +228,7 @@ describe('workflow Run Actions', () => {
     const child = { actionId: 'machines.setup.apply' as const,
       input: { homeId: 'home', machineId: 'target', targets: [{
         homeId: 'home', machineId: 'target', desiredRevision: 0, recipePlans: [], sources: [
-        { kind: 'accountPreset', presetId: 'preset', presetRevision: 1, setup: { scripts: [{ body: 'echo retained', affects: 'none' }],  } },
+        { kind: 'accountPreset', presetId: 'preset', presetRevision: 1, contentEncryptionMode: 'plain' as const, setup: { scripts: [{ body: 'echo retained', affects: 'none' }],  } },
         { kind: 'direct', setup: {} },
       ] }] } };
     const input = WorkflowRunStartRequestV1Schema.parse({ runId, executionTarget: { kind: 'session' },

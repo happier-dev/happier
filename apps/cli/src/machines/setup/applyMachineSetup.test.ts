@@ -295,7 +295,7 @@ describe('applyMachineSetup', () => {
     const toolchain = f.input.setup.toolchain;
     expect(await applyMachineSetup({ ...f.input, setup: { toolchain } })).toMatchObject({ ok: true });
     const prior = { kind: 'accountPreset' as const, presetId: 'preset', presetRevision: 1,
-      setup: { toolchain, scripts: [{ body: 'echo old', affects: 'none' as const }] } };
+      contentEncryptionMode: 'plain' as const, setup: { toolchain, scripts: [{ body: 'echo old', affects: 'none' as const }] } };
     const direct = { kind: 'direct' as const, setup: {} };
     const currentSources = [prior, direct];
     const sources = [{ ...prior, presetRevision: 2,

@@ -848,7 +848,7 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     const actionId = 'machines.setup.apply';
     const requestId = 'run/invocation/0';
     const childInput = { homeId: 'srv_bob_home', machineId: target.machineId, sources: [
-      { kind: 'accountPreset', presetId: 'reviewed', presetRevision: 1, setup: { scripts: [{ body: 'echo reviewed', affects: 'none' }],  } },
+      { kind: 'accountPreset', presetId: 'reviewed', presetRevision: 1, contentEncryptionMode: 'plain' as const, setup: { scripts: [{ body: 'echo reviewed', affects: 'none' }],  } },
       { kind: 'direct', setup: {} },
     ] };
     const context = { surface: 'agent', authority: 'account_automation', actionRequestId: requestId,

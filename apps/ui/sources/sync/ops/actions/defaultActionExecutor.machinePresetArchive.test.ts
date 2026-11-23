@@ -70,7 +70,7 @@ async function archiveFixture(originalMachineId?: string, accountNative = false,
     const credentialConfigurations = accountNative ? [{ account: connectedAccount, revision: 'original-account-revision' }] : [];
     const prepared = { operationId: 'original-prepare', status: cold || retainedCancelled ? 'cancelled' : 'ready', binding: {
         configuration: { launch }, cliIdentity: 'original-cli', credentialConfigurations,
-        ...(originalMachineId ? { machineId: originalMachineId } : {}) },
+        machineId: originalMachineId ?? 'original-prepare-host' },
         ...(cold ? {} : { artifact: { contributionRef: launch.provider, schemaVersion: launch.schemaVersion, value: { image: 'original-image' } } }) };
     let preset = ManagedMachinePresetV1Schema.parse({ id: 'preset', homeId, revision: 1,
         owner: { kind: 'account', accountId: 'owner' }, contentEncryptionMode: 'plain', recipients: [],
@@ -178,7 +178,7 @@ it.each([['executeConfirmed', 'plain'], ['prepare', 'plain'], ['executeConfirmed
     expect(fixture.row().revision).toBe(input.expectedRevision);
 });
 
-it('retains a prepared local image and refuses Archive when its original host is unknown', async () => {
+it('retains a prepared local image and refuses Archive when its recorded host is missing', async () => {
     const fixture = await archiveFixture();
     const { serverId, homeId } = fixture;
     const preset = fixture.row();

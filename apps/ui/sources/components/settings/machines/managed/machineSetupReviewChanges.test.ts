@@ -61,7 +61,7 @@ describe('Machine setup review changes', () => {
     it('counts a shared toolchain once and keeps every non-empty source script beside pending installs and removals', () => {
         const direct = { kind: 'direct' as const, setup: { toolchain, scripts: [{ body: 'echo first' }] } };
         const privateSource = { kind: 'accountPreset' as const, presetId: 'preset', presetRevision: 1,
-            setup: { toolchain, scripts: [{ body: 'echo second' }] } };
+            contentEncryptionMode: 'plain' as const, setup: { toolchain, scripts: [{ body: 'echo second' }] } };
         const plan = target({ sources: [
             direct,
             { kind: 'accountPresetOpaque', presetId: 'preset', presetRevision: 1, contentEncryptionMode: 'plain' },

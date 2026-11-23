@@ -41,7 +41,7 @@ describe('daemon state publication cost contract', () => {
       version: write.expectedVersion + 1, daemonState: write.daemonState }));
     const count = 1024;
     const sources: MachineSetupSourceV1 = Array.from({ length: count }, (_, index) => ({
-      kind: 'accountPreset', presetId: `preset-${index}`, presetRevision: 1, setup: {},
+      kind: 'accountPreset', presetId: `preset-${index}`, presetRevision: 1, contentEncryptionMode: 'plain' as const, setup: {},
     }));
     sources.splice(1, 0, { kind: 'direct', setup: {} }, { kind: 'bundledPreset',
       ref: { pluginId: 'example.machine', localId: 'base', revision: 'v2' }, setup: {} });
@@ -66,7 +66,7 @@ describe('daemon state publication cost contract', () => {
       desired.revision++;
       sources[1] = { kind: 'direct', setup: { items: [] } };
       expect(await boundary.client.publishMachineSetupUpdates(updates)).toBe('unchanged');
-      sources[0] = { kind: 'accountPreset', presetId: 'preset-0', presetRevision: 2, setup: {} };
+      sources[0] = { kind: 'accountPreset', presetId: 'preset-0', presetRevision: 2, contentEncryptionMode: 'plain' as const, setup: {} };
       await boundary.client.publishMachineSetupUpdates(updates);
       expect(boundary.attempts).toHaveLength(2);
       [sources[0], sources[2]] = [sources[2]!, sources[0]!];
@@ -97,7 +97,7 @@ describe('daemon state publication cost contract', () => {
       await boundary.client.publishMachineSetupUpdates({ status: 'satisfied', pendingAll: 4 });
       const settled = { ...desired, revision: desired.revision + 1, sources: [
         { kind: 'direct' as const, setup: { items: [{ kind: 'agent' as const, agentId: 'codex' }] } },
-        { kind: 'accountPreset' as const, presetId: 'build', presetRevision: 8, setupRevision: 2, setup: {} },
+        { kind: 'accountPreset' as const, presetId: 'build', presetRevision: 8, setupRevision: 2, contentEncryptionMode: 'plain' as const, setup: {} },
       ] };
       boundary.machine.metadata = { ...boundary.machine.metadata, setup: settled };
       await boundary.client.publishMachineSetupApplied([]);

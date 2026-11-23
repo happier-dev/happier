@@ -73,7 +73,7 @@ describe('machine preset content envelopes', () => {
         const prepared = {
             operationId: 'prepared-once', status: 'ready', builtFromRevision: 2,
             binding: { configuration: { launch: { provider: launch.provider, schemaVersion: 1, choices: launch.choices } },
-                cliIdentity: 'supplier', credentialConfigurations: [] },
+                machineId: 'prepare-host', cliIdentity: 'supplier', credentialConfigurations: [] },
             artifact: { contributionRef: launch.provider, schemaVersion: 1, value: {} },
         };
         const reviewedFacts = {
@@ -339,7 +339,7 @@ describe('machine preset content envelopes', () => {
                     launch: { provider: launch.provider, schemaVersion: launch.schemaVersion, choices: launch.choices },
                     setup,
                 },
-                cliIdentity: 'home-payload:0.3:prepared',
+                machineId: 'prepare-host', cliIdentity: 'home-payload:0.3:prepared',
                 credentialConfigurations: [],
             },
             status: 'ready' as const,
