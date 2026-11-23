@@ -2,6 +2,7 @@ import { expect, it } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { startProjectSetupAutostartServices } from './projectSetupAutostart';
 import type { ProjectSetupExecutionOutcome } from './projectSetupExecution';
 
@@ -49,7 +50,7 @@ it('retains the admitted caller authorization on the automatic Service child', a
         actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'localServices.launcher.start': { approvalRequiredSurfaces: ['agent'] } } }),
         executeHostReviewedChildAction: (actionId, input, current) => executor.execute(actionId, input, current) };
     expect(await startProjectSetupAutostartServices({ outcome: finished, manifest, context, callerInputAuthorization, parent })).toBeNull();
-    expect(Reflect.get(childContext, 'callerInputAuthorization')).toBe(callerInputAuthorization);
+    expect(childContext).toHaveProperty('callerInputAuthorization', callerInputAuthorization);
 });
 
 it.each([

@@ -1036,7 +1036,11 @@ describe('canonical Session creation admission', () => {
       ownCredentials: credentials, isCurrent: async () => true, createExecutor: () => executor });
     if (!requester) throw new Error('Managed Template requester custody was not admitted');
     onTestFinished(() => requester.dispose());
-    const execution = await invokeHostReviewedChildV1({ parent: { actionId: 'template.instantiate', input: envelope.input },
+    const parentInput = envelope.input;
+    if (parentInput === null || typeof parentInput !== 'object' || Array.isArray(parentInput)) {
+      throw new Error('Managed Template invocation must have an object input');
+    }
+    const execution = await invokeHostReviewedChildV1({ parent: { actionId: 'template.instantiate', input: parentInput },
       context: { surface: 'cli', authority: 'present_user', serverId: 'home-a', serverIdentityId: 'home-a',
         actionCaller: { kind: 'host' }, runtimeAccountId: 'owner', actionRequestId: envelope.requestId,
         externalActionExecutionAuthorization: requester.authorization, externalActionTarget: envelope.target,
