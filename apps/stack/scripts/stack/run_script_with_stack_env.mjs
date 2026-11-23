@@ -798,7 +798,8 @@ async function preflightRestartDevTargets({ rootDir, stackName, baseDir, scriptP
     if (runtimeMode?.mode !== 'source') {
       // Source preparation may have finished hours ago. Probe the same current
       // placement/sync owner as run.mjs, even for an already-prepared reload.
-      const placement = await resolveControlledRuntimePlacement({ stackName, stackBaseDir: baseDir, sourceDir, env },
+      const placement = await resolveControlledRuntimePlacement({ stackName, stackBaseDir: baseDir, sourceDir, env,
+        daemonLaunchRequested: resolveStackDaemonStartRequested({ env, noDaemon: args.includes('--no-daemon') }) },
         { runCaptureResult: capture });
       if (runtimeMode?.mode === 'source-snapshot') {
         // The replacement's supervisor flushes these targets before it can

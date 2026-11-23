@@ -2018,8 +2018,9 @@ for result_path in "$probe_tmp"/[0-9]* "$probe_tmp/local"; do
     candidate_cache=overflow-only
   fi
   if { [ "$candidate_available" = 1 ] || [ "$candidate_available" = busy ]; } \
-    && [ "$candidate_name" != local ] && [ "$command_class" != host-observation ]; then
-    candidate_host_floor=$(execution_target_auto_host_memory_floor_kib "$candidate_number")
+    && [ "$candidate_name" != local ] && [ "$command_class" != host-observation ] \
+    && [ "$command_mode" = auto ] && [ -z "$explicit_target_number" ]; then
+    candidate_host_floor=$(execution_target_host_memory_floor_kib "$candidate_number")
     if [ "${candidate_host_floor:-0}" -gt 0 ]; then
       candidate_host_memory=$(awk '{print $7, $8, $16}' "$cache_dir/$candidate_name.telemetry" 2>/dev/null) || candidate_host_memory='0 0 unknown'
       IFS=' ' read -r candidate_host_available candidate_host_total candidate_host_platform <<EOF
@@ -2422,9 +2423,13 @@ remote_cwd=$remote_repo
 pid_file="$remote_home/remote-exec/$execution_id.pid"
 remote_path_setup="export PATH=$(quote_remote "$remote_home/cache/pnpm-toolchain/bin${remote_path:+:$remote_path}"):\$PATH;"
 remote_script="set -euo pipefail; export HAPPIER_DEV_TARGET_EXECUTION=1; export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); export HAPPIER_WORKSPACE_BUILD_MODE=$(quote_remote "$remote_preparation_build_mode");"
-selected_host_floor=$(execution_target_auto_host_memory_floor_kib "$selected_number")
+selected_host_floor=$(execution_target_host_memory_floor_kib "$selected_number")
 if [ "${selected_host_floor:-0}" -gt 0 ] && [ "$telemetry_platform" = linux ] && [ "$command_class" != host-observation ]; then
-  remote_script="$remote_script export HAPPIER_ADMISSION_AUTO_HOST_MEMORY_FLOOR_KIB=$(quote_remote "$selected_host_floor");"
+  if [ "$command_mode" = auto ] && [ -z "$explicit_target_number" ]; then
+    remote_script="$remote_script export HAPPIER_ADMISSION_AUTO_HOST_MEMORY_FLOOR_KIB=$(quote_remote "$selected_host_floor");"
+  else
+    remote_script="$remote_script export HAPPIER_ADMISSION_PINNED_HOST_MEMORY_FLOOR_KIB=$(quote_remote "$selected_host_floor");"
+  fi
 fi
 # Worker mirrors omit Git metadata. Carry the primary checkout's baseline
 # into both preparation and payload admission without serializing any Git data.

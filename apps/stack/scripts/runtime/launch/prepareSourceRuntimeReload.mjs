@@ -90,7 +90,8 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
   const connection = resolveDevServerConnection({ flags, kv, env,
     resolvedLocalUrls: { internalServerUrl: '', publicServerUrl: '' } });
   const placement = onHost || flags.has('--no-dev-targets') ? null : await resolveControlledRuntimePlacement({
-    stackName, stackBaseDir, sourceDir: repoDir, env });
+    stackName, stackBaseDir, sourceDir: repoDir, env,
+    daemonLaunchRequested: resolveStackDaemonStartRequested({ env, noDaemon: flags.has('--no-daemon') }) });
   const pending = await beginPendingSourceStart({ stackBaseDir, onPhase, repoDir, env,
     requestId: sourceStartRequestId ?? kv.get('--source-start-request-id'),
     ...(onHost ? { replacePending: true } : {}) });

@@ -8,6 +8,7 @@ import {
   buildRemoteCancelCommand,
   buildRemoteExecCommand,
   buildSshWorkerArgs,
+  commandUsesHostMemoryFloor,
   resolvePackageCommandPolicy,
 } from './remote_commands.mjs';
 import {
@@ -413,6 +414,9 @@ export async function runDevTargetCommand(
     }),
     environment: {
       ...environment,
+      ...(target.autoHostMemoryFloorKiB > 0 && commandUsesHostMemoryFloor(commandPolicy, commandArgs) ? {
+        HAPPIER_ADMISSION_PINNED_HOST_MEMORY_FLOOR_KIB: String(target.autoHostMemoryFloorKiB),
+      } : {}),
       ...(sourceTree ? { HAPPIER_ADMISSION_SOURCE_TREE: sourceTree } : {}),
       ...(durationP99 === null ? {} : {
         HAPPIER_ADMISSION_DURATION_CLASS: commandPolicy.commandClass,

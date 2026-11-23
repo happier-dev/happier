@@ -227,9 +227,11 @@ async function main() {
       json,
     });
   }
+  const daemonRequested = resolveStackDaemonStartRequested({ env: process.env, noDaemon: flags.has('--no-daemon') });
   let controlledPlacement = resolveStackRuntimeMode({ argv, env: process.env }).mode !== 'source'
     && !flags.has('--no-dev-targets')
-    ? await resolveControlledRuntimePlacement({ stackName: autostart.stackName, stackBaseDir: autostart.baseDir, sourceDir: process.env.HAPPIER_STACK_REPO_DIR, env: process.env })
+    ? await resolveControlledRuntimePlacement({ stackName: autostart.stackName, stackBaseDir: autostart.baseDir,
+      sourceDir: process.env.HAPPIER_STACK_REPO_DIR, daemonLaunchRequested: daemonRequested, env: process.env })
     : null;
   const requiredComponents = process.env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK ? ['server'] : undefined;
   let runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env: process.env,
@@ -262,7 +264,8 @@ async function main() {
       unavailableTargets.push(controlledPlacement.target.name);
       console.warn(`[dev-targets] QA target ${controlledPlacement.target.name} became unavailable before dispatch; selecting another runtime host`);
       controlledPlacement = await resolveControlledRuntimePlacement({ stackName: autostart.stackName,
-        stackBaseDir: autostart.baseDir, sourceDir: getRepoDir(rootDir), env: process.env, excludeTargetNames: unavailableTargets });
+        stackBaseDir: autostart.baseDir, sourceDir: getRepoDir(rootDir), daemonLaunchRequested: daemonRequested,
+        env: process.env, excludeTargetNames: unavailableTargets });
       runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env: process.env,
         target: controlledPlacement.runtimeTarget, requiredComponents, purpose: 'deployment', placement: controlledPlacement });
       runtimeSnapshot = runtimeLaunchContext.snapshot;
@@ -289,7 +292,6 @@ async function main() {
         env: process.env, stackBaseDir: autostart.baseDir,
       })
     : null;
-  const daemonRequested = resolveStackDaemonStartRequested({ env: process.env, noDaemon: flags.has('--no-daemon') });
   const remoteSourceTargetPlans = sourceSnapshot && controlledPlacement ? resolvePreservedDaemonTargetPlans({
     targetPlans: controlledPlacement.targetPlans, targets: controlledPlacement.config.targets,
     runtimeState: !json && !daemonRequested ? await readStackRuntimeStateFile(cleanupStackCtx.runtimeStatePath) : null,

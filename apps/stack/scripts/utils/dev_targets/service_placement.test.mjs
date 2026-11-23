@@ -439,16 +439,19 @@ test('automatic QA placement cannot infer outer Windows disk health from a confi
 
 test('shared database QA pins its Machine to one named host independently of changing pools', async () => {
   await withQaPlacementFixture(async ({ root, config, env }) => {
-    await writeJsonAtomic(join(root, 'producer', 'dev-targets.json'), { ...config,
+    const workers = config.targets.map(target => target.name === 'mac3-linux'
+      ? { ...target, autoHostMemoryFloorKiB: 25 * 1024 * 1024 } : target);
+    await writeJsonAtomic(join(root, 'producer', 'dev-targets.json'), { ...config, targets: workers,
       runtimePlacement: { ...config.runtimePlacement, qa: { mode: 'local' } },
       commandExecution: { mode: 'auto', targets: ['mac3-linux', 'linux3'] },
     });
-    await writeJsonAtomic(join(root, 'qa', 'dev-targets.json'), { ...config, runtimePlacement: {
+    await writeJsonAtomic(join(root, 'qa', 'dev-targets.json'), { ...config, targets: workers, runtimePlacement: {
       server: { mode: 'prefer-target', target: 'mac-host', fallback: 'error' },
       qa: { mode: 'auto', targets: ['linux2', 'linux3'] },
       daemon: { mode: 'prefer-target', target: 'mac3-linux' } } });
-    const result = await placement.resolveControlledRuntimePlacement({ stackName: 'qa', sourceDir: '/repo',
-      env: { ...env, HAPPIER_STACK_SHARED_DB_SOURCE_STACK: 'producer' } }, {
+    const request = { stackName: 'qa', sourceDir: '/repo',
+      env: { ...env, HAPPIER_STACK_SHARED_DB_SOURCE_STACK: 'producer' } };
+    const probe = {
       runCaptureResult: async (command, args, options) => {
         const server = args.includes('--target=mac-host');
         if (!server) {
@@ -456,10 +459,14 @@ test('shared database QA pins its Machine to one named host independently of cha
           assert.ok(args.includes('--target=mac3-linux'), 'Machine placement must use the exact pin');
           assert.equal(projection.commandExecution.target, 'mac3-linux');
         }
-        return { ok: true, out: `HSTACK_QA_HOST=${JSON.stringify({ platform: server ? 'darwin' : 'linux', arch: server ? 'arm64' : 'x64', remote: true })}\n`,
+        return { ok: true, out: `HSTACK_QA_HOST=${JSON.stringify({ platform: server ? 'darwin' : 'linux',
+          arch: server ? 'arm64' : 'x64', remote: true, hostAvailableMemoryKiB: 14 * 1024 * 1024 })}\n`,
           err: server ? '' : '[preferred-execution] selected mac3-linux (load=0.1)\n' };
       }, logger: { warn() {} },
-    });
+    };
+    const result = await placement.resolveControlledRuntimePlacement(request, probe);
+    await assert.rejects(placement.resolveControlledRuntimePlacement({ ...request, daemonLaunchRequested: true }, probe),
+      { code: 'HSTACK_HOST_MEMORY_FLOOR', message: /host below memory floor on mac3-linux.*retry or pick another host/ });
     assert.equal(result.target.name, 'mac-host');
     assert.equal(result.daemonTarget.name, 'mac3-linux');
     assert.deepEqual(result.daemonRuntimeTarget, { platform: 'linux', arch: 'x64' });

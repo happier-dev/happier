@@ -715,3 +715,22 @@ test('a command identity names the program it runs, not its env prefix or packag
   assert.equal(identity('npx', 'vitest', 'run', 'sources/b.test.ts'), 'vitest');
   assert.equal(identity('vitest', 'sources/c.test.ts'), 'vitest');
 });
+
+test('pinned heavyweight admission refuses below the target host memory floor',
+  { skip: process.platform !== 'linux' }, async t => {
+    const fixture = await restartFixture(t);
+    const broker = createAdmissionBroker({ root: fixture.native.admissionRoot,
+      oldLockPath: join(fixture.root, 'old-admission.lock'),
+      sampleResources: async () => ({ availableMemoryKiB: 100, totalMemoryKiB: 100 }) });
+    await broker.start();
+    t.after(() => broker.close());
+    const messages = t.mock.method(console, 'error', () => {});
+    const options = { root: fixture.native.admissionRoot, className: 'compilation', floorKiB: 1,
+      machine: 'fixture', repoDir: fixture.root, failureId: 'pinned-floor',
+      command: process.execPath, args: ['-e', 'process.exit(42)'] };
+    const withHostFloor = floor => ({ ...buildNativeAdmissionFixtureEnv(),
+      HAPPIER_ADMISSION_PINNED_HOST_MEMORY_FLOOR_KIB: String(floor) });
+    assert.equal(await runAdmissionCommand({ ...options, env: withHostFloor(Number.MAX_SAFE_INTEGER) }), 75);
+    assert.ok(messages.mock.calls.some(call => /host below memory floor.*retry or pick another host/.test(call.arguments[0])));
+    assert.equal(await runAdmissionCommand({ ...options, env: withHostFloor(1) }), 42);
+  });

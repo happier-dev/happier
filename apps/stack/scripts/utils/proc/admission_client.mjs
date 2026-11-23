@@ -115,10 +115,22 @@ export async function* watchAdmissionSamples(root, { signal } = {}) {
 
 function failure(reason, failureId, cause) {
   const label = { HSTACK_MEMORY_BUSY: 'BUSY', HSTACK_CPU_BUSY: 'BUSY', HSTACK_WORKSPACE_RESOURCE_BUSY: 'BUSY',
+    HSTACK_HOST_MEMORY_FLOOR: 'BUSY',
     HSTACK_MEMORY_CAPACITY: 'CAPACITY', HSTACK_CPU_CAPACITY: 'CAPACITY', HSTACK_DISK_UNAVAILABLE: 'DISK' }[reason] ?? 'UNAVAILABLE';
   console.error(`[preferred-execution] heavyweight admission refused (${reason}${cause ? `: ${cause}` : ''})`);
   if (failureId) console.error(`HSTACK_ADMISSION_${label}:${failureId}`);
   return 75;
+}
+
+export function assertPinnedHostMemoryFloor(floorKiB, { machine, availableMemoryKiB } = {}) {
+  const floor = Number(floorKiB ?? 0);
+  if (!(floor > 0)) return;
+  const available = availableMemoryKiB ?? readLinuxHostAvailableMemoryKiB();
+  if (available >= floor) return;
+  const host = machine ? ` on ${machine}` : '';
+  const observed = Number.isFinite(available) ? `${available} KiB available` : 'available memory unknown';
+  throw new AdmissionRefusal('HSTACK_HOST_MEMORY_FLOOR',
+    `host below memory floor${host} (${observed}, ${floor} KiB required), retry or pick another host`);
 }
 
 async function runPayload({ command, args, env, signal }) {
@@ -206,6 +218,12 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
       throw Object.assign(new Error('producer requires inherited native admission'),
         { code: 'HSTACK_ADMISSION_INHERITANCE_REQUIRED' });
     }
+    const checkPinnedHost = () => {
+      if (process.platform === 'linux') {
+        assertPinnedHostMemoryFloor(env.HAPPIER_ADMISSION_PINNED_HOST_MEMORY_FLOOR_KIB, { machine });
+      }
+    };
+    checkPinnedHost();
     // A caller retaining publication custody must settle immediately, never
     // retain its lease while joining the host capacity queue.
     if (env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD || env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES) {
@@ -268,6 +286,7 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
           // The releases this waiter holds as the overdue head; resent if the broker is succeeded.
           if (response.kind === 'held') Object.assign(request, { heldKiB: response.memoryKiB, heldCpuCores: response.cpuCores });
           if (response.kind === 'reserved') {
+            checkPinnedHost();
             if (response.backfill) {
               console.error(`[preferred-execution] admitted as a backfill (class=${className}, floorKiB=${response.floorKiB}, borrowedKiB=${response.backfill.borrowedKiB}, headStartInMs=${response.backfill.headStartInMs})`);
             }
@@ -419,7 +438,7 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
 
 class AdmissionRefusal extends Error {
   constructor(reason, cause) {
-    super('Host admission refused the task');
+    super(cause ?? 'Host admission refused the task');
     this.code = reason;
     this.cause = cause;
   }

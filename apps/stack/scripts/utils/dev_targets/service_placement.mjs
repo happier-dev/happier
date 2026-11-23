@@ -9,6 +9,7 @@ import { resolveRuntimeBuildAuthority } from '../../runtime/shared/runtime_build
 import { getServerLightDataDirFromEnvOrDefault } from '../stack/dirs.mjs';
 import { hasRetainedServerData } from './retained_server_data.mjs';
 import { HOST_OBSERVATION_PROGRAMS } from './host_observation.mjs';
+import { assertPinnedHostMemoryFloor } from '../proc/admission_client.mjs';
 
 export const DEFAULT_QA_TARGET_NAMES = Object.freeze(['nl3', 'nl1']);
 // Managed QA browsers may also run on the Mac host (owner 2026-11-16, ORCH-TOP 11:52Z RULING; first
@@ -112,7 +113,7 @@ export async function resolveControlledQaBrowserTarget({ stackName, sourceDir, t
   sourceDir ||= getRepoDir(getRootDir(import.meta.url), env);
   const selected = await selectControlledTarget({ loaded, config: loaded.config,
     qa: { mode: 'prefer-target', targets: names }, retained: null,
-    authorityLabel: 'browser', selectMostAvailableMemory: !targetName,
+    authorityLabel: 'browser', selectMostAvailableMemory: !targetName, enforcePinnedFloor: Boolean(targetName),
     sourceDir, env, logger, runCaptureResultImpl });
   if (!selected) throw new Error('[dev-targets] no QA browser host has a valid available-memory observation; controller-local browser fallback is disabled');
   return { ...loaded, ...selected };
@@ -168,7 +169,8 @@ async function probeControlledPlacement({ config, sourceDir, env, targetName, ob
   }
 }
 
-export async function resolveControlledRuntimePlacement({ stackName, stackBaseDir, sourceDir, excludeTargetNames = [], env = process.env },
+export async function resolveControlledRuntimePlacement({ stackName, stackBaseDir, sourceDir,
+  excludeTargetNames = [], daemonLaunchRequested = false, env = process.env },
   { runCaptureResult: runCaptureResultImpl = runCaptureResult, logger = console } = {}) {
   const loaded = await loadControlledRuntimeConfig({ stackName, sourceDir, preserveLocalPlacement: true, env }, { logger, runCaptureResult: runCaptureResultImpl });
   sourceDir ||= getRepoDir(getRootDir(import.meta.url), env);
@@ -200,7 +202,8 @@ export async function resolveControlledRuntimePlacement({ stackName, stackBaseDi
   const daemon = daemonOverride?.mode === 'prefer-target'
     ? loaded.initializedQaDaemonPlacement ?? await selectControlledTarget({ loaded, config,
       qa: { mode: 'prefer-target', targets: [daemonOverride.target], fallback: 'error' },
-      retained: daemonOverride.target, authorityLabel: 'daemon', sourceDir, env, logger, runCaptureResultImpl }) : null;
+      retained: daemonOverride.target, authorityLabel: 'daemon', sourceDir, env, logger, runCaptureResultImpl,
+      enforcePinnedFloor: daemonLaunchRequested && env.HAPPIER_STACK_SOURCE_SELECTION_ROLLBACK !== '1' }) : null;
   const policy = { server: target ? { mode: 'prefer-target', target: target.name, fallback: 'error' } : { mode: 'local' },
     daemons: daemon ? { mode: 'prefer-target', target: daemon.target.name, fallback: 'error' } : { mode: 'local' },
     expo: { mode: 'local' }, commands: { mode: 'local' } };
@@ -210,7 +213,8 @@ export async function resolveControlledRuntimePlacement({ stackName, stackBaseDi
     daemonTarget: daemon?.target ?? null, daemonRuntimeTarget: daemon?.runtimeTarget ?? null };
 }
 
-async function selectControlledTarget({ loaded, config, qa, retained, authorityLabel = 'server', selectMostAvailableMemory = false, sourceDir, env, logger, runCaptureResultImpl }) {
+async function selectControlledTarget({ loaded, config, qa, retained, authorityLabel = 'server',
+  selectMostAvailableMemory = false, enforcePinnedFloor = false, sourceDir, env, logger, runCaptureResultImpl }) {
   const attempts = qa.mode === 'auto' ? [null] : qa.targets;
   let best = null;
   for (const targetName of attempts) {
@@ -221,9 +225,11 @@ async function selectControlledTarget({ loaded, config, qa, retained, authorityL
       return probeError;
     };
     try {
+      const pinnedFloor = enforcePinnedFloor
+        ? config.targets.find(target => target.name === targetName)?.autoHostMemoryFloorKiB : 0;
       result = await probeControlledPlacement({ config: retained ? config : { ...config, runtimePlacement: { ...config.runtimePlacement, qa } },
         syncStackBaseDir: loaded.authority.producerStackBaseDir, sourceDir, env, targetName,
-        observeMemory: selectMostAvailableMemory }, runCaptureResultImpl);
+        observeMemory: selectMostAvailableMemory || pinnedFloor > 0 }, runCaptureResultImpl);
       const diagnostic = redactFailureDiagnostic(result.err, env);
       if (diagnostic) logger.warn?.(diagnostic);
       if (!result.ok) {
@@ -254,7 +260,13 @@ async function selectControlledTarget({ loaded, config, qa, retained, authorityL
         throw failure('QA host probe did not identify a configured selected target');
       }
       const candidate = { target, runtimeTarget: { platform: host.platform, arch: host.arch } };
-      if (!selectMostAvailableMemory) return candidate;
+      if (!selectMostAvailableMemory) {
+        if (host.platform === 'linux') {
+          assertPinnedHostMemoryFloor(pinnedFloor, { machine: target.name,
+            availableMemoryKiB: host.hostAvailableMemoryKiB ?? NaN });
+        }
+        return candidate;
+      }
       if (target.autoHostMemoryFloorKiB > 0
         && !(host.hostAvailableMemoryKiB >= target.autoHostMemoryFloorKiB)) {
         logger.warn?.(`[dev-targets] QA browser host ${target.name} below the configured ${target.autoHostMemoryFloorKiB} KiB available-memory floor`);
@@ -263,6 +275,7 @@ async function selectControlledTarget({ loaded, config, qa, retained, authorityL
       if (!best || host.unreservedMemoryKiB > best.unreservedMemoryKiB) best = { ...candidate, unreservedMemoryKiB: host.unreservedMemoryKiB };
     } catch (error) {
       const message = error === probeError ? error.message : redactFailureDiagnostic(error instanceof Error ? error.message : String(error), env);
+      if (error.code === 'HSTACK_HOST_MEMORY_FLOOR') throw error;
       if (retained) throw new Error(`[dev-targets] persisted ${authorityLabel} placement is authoritative and ${retained} is unavailable: ${message}`);
       logger.warn?.(selectMostAvailableMemory
         ? `[dev-targets] QA ${authorityLabel} host skipped; no controller-local fallback: ${message}`
