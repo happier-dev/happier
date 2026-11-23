@@ -42,7 +42,7 @@ import { resolveRunnerSkills, type RunnerSkillsResult } from '@/prompts/skills/r
 import { renderSkillIndexV1 } from '@happier-dev/protocol/prompts/library/skills/skillIndexV1';
 import { publishRunnerSkillNotice } from '@/prompts/skills/runtime/publishRunnerSkillNotice';
 import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
-import { agentReceivesUserMcpServersV1 } from '@happier-dev/protocol/plugins/contributions/v2';
+import { agentReceivesUserMcpServersV1 } from '@happier-dev/protocol/plugins/contributions/agentContributionV2';
 import { projectMcpToolLaunchPolicies } from '@/mcp/runtime/projectMcpToolLaunchPolicy';
 import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
 import { applyRunnerMcpSessionContext, type RunnerMcpSessionWithContext } from '@/mcp/runtime/applyRunnerMcpSessionContext';

@@ -10,7 +10,7 @@ import { SessionStartupInputRefusalError } from '@/agent/runtime/session/input/s
 import { serveFailedStartupInputs } from './serveFailedStartupInputs';
 import { createRepositoryCheckpointCodeRollback } from '@/agent/runtime/checkpoints/repositoryCheckpointPromptLifecycle';
 import type { ScmCommandRunner } from '@/scm/runtime';
-import { agentReceivesUserMcpServersV1 } from '@happier-dev/protocol/plugins/contributions/v2';
+import { agentReceivesUserMcpServersV1 } from '@happier-dev/protocol/plugins/contributions/agentContributionV2';
 import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { refreshSavedSecretCatalogForOperation } from "@/settings/secrets/hydrateSavedSecretCatalog";
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';

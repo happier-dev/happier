@@ -20,7 +20,7 @@ import { ProviderRuntimeBindingBasisV1Schema, SessionProviderBindingMetadataV1Sc
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { PluginActionAvailabilityV2Schema, PluginActionDefinitionExamplesV1Schema } from '@happier-dev/protocol/plugins/actions/v2';
 import { PluginJsonSchemaV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
-import { PluginAgentContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/v2';
+import { PluginAgentContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/agentContributionV2';
 import { PluginRuntimeCapabilityFamilyV1Schema } from '@happier-dev/protocol/plugins/runtime/api';
 import { PluginSourceCustodyV1Schema } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderModelIdSchema } from '@happier-dev/protocol/providers/ids';

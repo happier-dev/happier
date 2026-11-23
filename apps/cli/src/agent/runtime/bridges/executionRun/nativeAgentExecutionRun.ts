@@ -104,7 +104,7 @@ import { publishSkillLaunchNotice } from '@/prompts/skills/runtime/publishRunner
 import { createExecutionRunCodedError, createExecutionRunDiagnosticError, readExecutionRunErrorCode, readExecutionRunRejectedStartDiagnostic, sanitizeExecutionRunError as sanitizeThrownError, type ExecutionRunRejectedStartError } from './errors';
 import { McpServerCatalogUnavailableError, readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
 import { resolveSessionCapabilitiesForDirectory } from '@/mcp/servers/resolveSessionCapabilitiesForDirectory';
-import { agentReceivesUserMcpServersV1 } from '@happier-dev/protocol/plugins/contributions/v2';
+import { agentReceivesUserMcpServersV1 } from '@happier-dev/protocol/plugins/contributions/agentContributionV2';
 import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
 import { listSelectedMcpSharedSecretReferences, materializeMcpServerConfigRecord } from '@/mcp/servers/materializeMcpServerConfigRecord';
 import { acquireSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';

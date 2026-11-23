@@ -8,7 +8,7 @@ import type {
 } from '@happier-dev/protocol';
 
 import { resolveSessionCapabilitiesForDirectory, type DirectoryCapabilitySessionProject } from '@/mcp/servers/resolveSessionCapabilitiesForDirectory';
-import { agentReceivesUserMcpServersV1 } from '@happier-dev/protocol/plugins/contributions/v2';
+import { agentReceivesUserMcpServersV1 } from '@happier-dev/protocol/plugins/contributions/agentContributionV2';
 import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
 import type { McpPluginItemV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 import type { SkillRuleV1 } from '@happier-dev/protocol/reach/reachRuleV1';

@@ -1,7 +1,7 @@
 import { createPluginEnablementUnavailableError } from '@/plugins/projection/registry/builtIn/enablement';
 import { randomBytes } from 'node:crypto';
 
-import { PluginAgentContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/v2';
+import { PluginAgentContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/agentContributionV2';
 import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 import { writePersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 

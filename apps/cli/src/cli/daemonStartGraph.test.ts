@@ -122,6 +122,7 @@ describe('daemon start graph in the single CLI graph', () => {
 
   it('keeps daemon and Session host control transport imports at their owners', () => {
     const coldEdges = [
+      ['apps/cli/src/api/session/sockets.ts', 'packages/protocol/src/sessions/index.ts'],
       ['apps/cli/src/session/transport/rpc/localSessionRpcChannel.ts',
         'packages/protocol/src/sessions/metadata/sessionMetadataSchemasV1.ts'],
       ['apps/cli/src/session/transport/rpc/localSessionRpcChannel.ts',
@@ -133,6 +134,20 @@ describe('daemon start graph in the single CLI graph', () => {
       const ownerInput = inputs[owner];
       expect(ownerInput, owner).toBeDefined();
       return ownerInput.imports.some((edge) => edge.path === dependency && edge.kind !== 'dynamic-import');
+    })).toEqual([]);
+  });
+
+  it('loads Agent-only runtime contracts without the full plugin contribution catalog', () => {
+    const agentConsumers = [
+      'apps/cli/src/agent/runtime/session/process/agentRuntimeRunnerProtocol.ts',
+      'apps/cli/src/agent/runtime/session/loop/runHostSessionRuntime.ts',
+      'apps/cli/src/daemon/spawn/prepareAgentRuntimeSessionBridge.ts',
+    ];
+    const aggregate = 'packages/protocol/src/plugins/contributions/v2.ts';
+    expect(agentConsumers.filter((owner) => {
+      const ownerInput = inputs[owner];
+      expect(ownerInput, owner).toBeDefined();
+      return ownerInput.imports.some((edge) => edge.path === aggregate && edge.kind !== 'dynamic-import');
     })).toEqual([]);
   });
 
