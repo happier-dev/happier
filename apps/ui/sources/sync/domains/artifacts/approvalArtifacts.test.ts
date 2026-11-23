@@ -11,8 +11,6 @@ import {
     isOpenApprovalInboxArtifact,
     listOpenApprovalInboxArtifactHydrationRequests,
     readOpenApprovalDiscussionAttention,
-    readOpenManagedMachineApprovalId,
-    readOpenManagedMachineStartApprovalId,
     listOpenApprovalArtifactsForSession,
     listApprovalArtifactIdsNeedingHydrationForSession,
     listTranscriptApprovalArtifactsForSession,
@@ -67,43 +65,6 @@ function approvalBody(sessionId: string, actionId = 'session.list') {
         summary: 'List sessions',
     };
 }
-
-describe('readOpenManagedMachineApprovalId', () => {
-    const deleteBody = (managedId: string, status = 'open') => ({ ...approvalBody('session-1', 'machines.managed.delete'), status,
-        summary: 'Delete managed machine',
-        actionArgs: { homeId: 'home-1', managedId, when: 'now', expectedRevision: 3, intent: 'delete', reviewedDependencies: true },
-        ...(status === 'rejected' ? { decision: { kind: 'reject', decidedAtMs: 2 } } : {}) });
-    const stored = (id: string, body: ReturnType<typeof deleteBody>) => artifact(id,
-        buildApprovalRequestArtifactHeaderV1(ApprovalRequestV1Schema.parse(body)), body);
-
-    it('finds the open Ask already filed for this managed resource and Action, so the page shows it instead of filing another', () => {
-        const artifacts = [stored('other-resource', deleteBody('managed-2')), stored('settled', deleteBody('managed-1', 'rejected')),
-            stored('pending', deleteBody('managed-1'))];
-        const entries = artifacts.flatMap(artifact => {
-            const entry = readOpenApprovalInboxEntry(artifact);
-            return entry ? [entry] : [];
-        });
-        expect(readOpenManagedMachineApprovalId(entries, { homeId: 'home-1', managedId: 'managed-1', actionId: 'machines.managed.delete' }))
-            .toBe('pending');
-        expect(readOpenManagedMachineApprovalId(entries, { homeId: 'home-2', managedId: 'managed-1', actionId: 'machines.managed.delete' }))
-            .toBeNull();
-        expect(readOpenManagedMachineApprovalId(entries.slice(0, 1), { homeId: 'home-1', managedId: 'managed-1',
-            actionId: 'machines.managed.delete' })).toBeNull();
-    });
-
-    it('names the one Start waiting for the person: an open Start of this machine, never its Stop or a settled Start', () => {
-        const powerBody = (managedId: string, intent: 'start' | 'stop', status = 'open') => ({
-            ...approvalBody('session-1', 'machines.managed.power.set'), status, summary: 'Change machine power.',
-            actionArgs: { homeId: 'home-1', managedId, when: 'now', expectedRevision: 1, intent },
-            ...(status === 'executed' ? { decision: { kind: 'approve', decidedAtMs: 2 }, execution: { executedAtMs: 3, ok: true } } : {}) });
-        const entries = [stored('stop', powerBody('managed-1', 'stop') as never), stored('done', powerBody('managed-1', 'start', 'executed') as never),
-            stored('start', powerBody('managed-1', 'start') as never), stored('other', powerBody('managed-2', 'start') as never)]
-            .flatMap(artifact => { const entry = readOpenApprovalInboxEntry(artifact); return entry ? [entry] : []; });
-        expect(readOpenManagedMachineStartApprovalId(entries, { homeId: 'home-1', managedId: 'managed-1' })).toBe('start');
-        expect(readOpenManagedMachineStartApprovalId(entries.filter(entry => entry.artifact.id !== 'start'),
-            { homeId: 'home-1', managedId: 'managed-1' })).toBeNull();
-    });
-});
 
 describe('ordinary plugin approvals for the selected Machine', () => {
     it('projects only open admitted requests for the exact Home, Account and Machine, and withdraws settled requests', () => {

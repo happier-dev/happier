@@ -31,9 +31,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useServerScopedMachine, useMachineListForServer } from '@/sync/domains/state/storage';
-import { storage } from '@/sync/domains/state/storageStore';
-import { useInboxArtifactBodyDemand } from '@/hooks/inbox/useInboxArtifactSource';
-import { readOpenManagedMachineApprovalId, readOpenManagedMachineStartApprovalId } from '@/sync/domains/artifacts/approvalArtifacts';
+import { useOpenManagedMachineApprovalIds } from '@/hooks/inbox/useOpenManagedMachineStartApprovalId';
 import { resolveActionTitle } from '@/text/actionTitles';
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
@@ -260,16 +258,8 @@ function ManagedMachineFullSections(props: FullSectionProps) {
             // invalidate in complete; a safe read must not restart itself.
         },
     });
-    // A Delete already waiting in Inbox (filed here earlier, elsewhere, or by Cancel's cleanup) is shown, never filed again.
-    // The waiting Delete is matched by its request body (Home and managed id).
-    useInboxArtifactBodyDemand();
-    const openApprovals = storage(state => state.artifactOpenApprovalEntries);
-    const storedDeleteApprovalId = React.useMemo(() => readOpenManagedMachineApprovalId(Object.values(openApprovals),
-        { homeId: machine.homeId, managedId: machine.id, actionId: 'machines.managed.delete' }),
-    [openApprovals, machine.homeId, machine.id]);
-    // A Start waiting for you (filed by a Send, Run or Resume while asleep) is named on the state row with its Review.
-    const startApprovalId = React.useMemo(() => readOpenManagedMachineStartApprovalId(Object.values(openApprovals),
-        { homeId: machine.homeId, managedId: machine.id }), [openApprovals, machine.homeId, machine.id]);
+    const { startId: startApprovalId, deleteId: storedDeleteApprovalId } = useOpenManagedMachineApprovalIds(
+        props.serverId, { homeId: machine.homeId, managedId: machine.id }, true);
     const approvalPresentation = projectManagedMachineApproval({ approvalId: approval.approvalId,
         submittedDeleteApprovalId: submittedDeleteApprovalIdRef.current, storedDeleteApprovalId });
     const pendingDeleteApprovalId = approvalPresentation?.kind === 'delete' ? approvalPresentation.artifactId : null;

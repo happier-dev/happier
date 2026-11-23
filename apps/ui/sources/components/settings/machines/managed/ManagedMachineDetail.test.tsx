@@ -29,6 +29,7 @@ import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarne
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { ManagedMachineDetail } from './ManagedMachineDetail';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 
 /** Pages render under the app shell, which owns the Account's one Investigate owner (D5). */
 const renderScreen: typeof renderTestScreen = (element, options = {}) => {
@@ -1414,7 +1415,7 @@ describe('managed Machine detail', () => {
             expect(screen.findByTestId('managed-machine.stop')).toBeNull();
         } finally { await screen.unmount(); }
     });
-    it('offers Remove only where Delete cannot end the resource and reads pending Delete from admitted approvals without scanning unrelated Artifact arrivals (UIR5)', async () => {
+    it('offers Remove only where Delete cannot end the resource and shows the pending Delete from its admitted header (UIR5)', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-remove-gate.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_remove_gate');
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
@@ -1442,6 +1443,9 @@ describe('managed Machine detail', () => {
             expect(screen.findByTestId('managed-machine.delete')).not.toBeNull();
         });
         expect(screen.findByTestId('managed-machine.remove')).toBeNull();
+        const { profileScope, settingsScope } = storage.getState();
+        const scope = { serverId: resolveServerProfileScopeIdForIdentifier(target.id), accountId: 'owner' };
+        await act(async () => storage.setState({ profileScope: scope, settingsScope: scope }));
         const priorArtifacts = storage.getState().artifacts;
         const row = (id: string, kind: string) => ({ id, header: { kind, title: null }, title: null,
             headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1, isDecrypted: true as const, draft: false });
@@ -1465,19 +1469,20 @@ describe('managed Machine detail', () => {
                 actionId: 'machines.managed.delete', actionArgs: { homeId: machine.homeId, managedId: machine.id, when: 'now',
                     expectedRevision: 1, intent: 'delete', reviewedDependencies: true }, summary: 'Delete managed resource' });
             const approval = { ...row('approval-cost-delete', 'approval_request.v1'),
-                header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request), bodyVersion: 1 };
+                header: buildApprovalRequestArtifactHeaderV1(request), bodyVersion: 1 };
             await act(async () => storage.getState().addArtifact(approval));
             expect(screen.findByTestId('managed-machine.approval')).not.toBeNull();
             const settled = StoredApprovalRequestSchema.parse({ ...request, status: 'rejected', updatedAtMs: 2,
                 decision: { kind: 'reject', decidedAtMs: 2 } });
             await act(async () => storage.getState().updateArtifact({ ...approval, headerVersion: 2, bodyVersion: 2,
-                header: buildApprovalRequestArtifactHeaderV1(settled), body: JSON.stringify(settled) }));
+                header: buildApprovalRequestArtifactHeaderV1(settled) }));
             expect(screen.findByTestId('managed-machine.approval')).toBeNull();
             expect(artifactVisits).toBe(0);
         } finally {
             enumeration.mockRestore();
             await screen.unmount();
             storage.getState().applyArtifacts(Object.values(priorArtifacts), storage.getState().artifacts);
+            storage.setState({ profileScope, settingsScope });
         }
     });
     it('keeps a bound acquire failure visible with its typed cause, same-resource Retry and Delete', async () => {
