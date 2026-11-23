@@ -10,7 +10,7 @@ import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServe
 import { useMachinePresenceSnapshot } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { resolveManagedWakeAvailability } from '@/sync/domains/pending/managedWakeProjection';
 import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLine';
-import { useManagedMachineAccountSettings } from '@/components/settings/machines/managed/useManagedMachineAccountSettings';
+import { useManagedMachineCreationEnabled } from '@/components/settings/machines/managed/useManagedMachineAccountSettings';
 import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
 import { MANAGED_PROVISIONER_MARK_SIZE, ManagedPresetCost, ManagedPresetMark, ManagedPresetOfferLine } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
 import { describeManagedPresetOffer } from '@/components/settings/machines/managed/managedConfigurationPresentation';
@@ -100,12 +100,12 @@ export function useManagedMachineConfigurator(input: Readonly<{
 /** Mounted only by an open creation-capable picker; Account opt-out precedes every preset read. */
 export function ManagedMachineSelectionOffers(props: OffersProps) {
     const { binding, resolution } = useServerCredentialAccountScopeBinding(props.serverId);
-    const account = useManagedMachineAccountSettings(binding, resolution);
+    const creationEnabled = useManagedMachineCreationEnabled(binding, resolution);
     React.useEffect(() => {
-        if (account.settings?.managedMachineCreationEnabled !== true) props.onOffers(props.serverId, [], {
-            state: account.settings?.managedMachineCreationEnabled === false ? 'unavailable' : 'pending', rowCount: 0 });
-    }, [account.settings, props.serverId, props.onOffers]);
-    if (!binding?.isCurrent() || account.settings?.managedMachineCreationEnabled !== true) return null;
+        if (creationEnabled !== true) props.onOffers(props.serverId, [], {
+            state: creationEnabled === false ? 'unavailable' : 'pending', rowCount: 0 });
+    }, [creationEnabled, props.serverId, props.onOffers]);
+    if (!binding?.isCurrent() || creationEnabled !== true) return null;
     return <CurrentManagedMachineSelectionOffers {...props} binding={binding} key={JSON.stringify([props.serverId, binding.accountId, binding.revision])} />;
 }
 

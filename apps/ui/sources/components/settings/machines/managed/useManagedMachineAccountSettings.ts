@@ -4,36 +4,51 @@ import type { ServerCredentialAccountScopeBinding, ServerCredentialAccountScopeR
 import { subscribeScopedAccountSettings } from '@/sync/ops/account/scopedAccountSettings';
 
 export type ManagedMachineAccountSettings = Pick<Settings, 'machineRetentionDefaultsV1' | 'managedMachineCreationEnabled'>;
-type SettingsState = Readonly<{
-    scopeKey: string; accountId: string | null; settings: ManagedMachineAccountSettings | null; loading: boolean; error: string | null;
-}>;
+type SettingsObservation<T> = Readonly<{ settings: T | null; loading: boolean; error: string | null }>;
+type SettingsState<T> = SettingsObservation<T> & Readonly<{ scopeKey: string; accountId: string | null }>;
 const NO_SETTINGS = Object.freeze({ settings: null, loading: false, error: null });
 const MANAGED_SETTINGS_KEYS = ['machineRetentionDefaultsV1', 'managedMachineCreationEnabled'] as const;
+const MANAGED_CREATION_KEYS = ['managedMachineCreationEnabled'] as const;
+const selectManagedSettings = ({ managedMachineCreationEnabled, machineRetentionDefaultsV1 }: ManagedMachineAccountSettings) => ({
+    managedMachineCreationEnabled, machineRetentionDefaultsV1,
+});
+const selectCreationEnabled = ({ managedMachineCreationEnabled }: Pick<Settings, (typeof MANAGED_CREATION_KEYS)[number]>) => managedMachineCreationEnabled;
+
+export function useManagedMachineAccountSettings(binding: ServerCredentialAccountScopeBinding | null | undefined,
+    resolution: ServerCredentialAccountScopeResolution): SettingsObservation<ManagedMachineAccountSettings> {
+    return useManagedMachineSettingsProjection(binding, resolution, MANAGED_SETTINGS_KEYS, selectManagedSettings);
+}
+
+export function useManagedMachineCreationEnabled(binding: ServerCredentialAccountScopeBinding | null | undefined,
+    resolution: ServerCredentialAccountScopeResolution): boolean | null {
+    return useManagedMachineSettingsProjection(binding, resolution, MANAGED_CREATION_KEYS, selectCreationEnabled).settings;
+}
 
 /**
  * Narrow display projection over the canonical exact-Account settings reader, not another settings store.
  * An exact Home credential/URL refresh can retire the binding and bind the same Account again (the resolution stays
  * `bound` meanwhile): the last answer stays while the replacement reads. Another Account never sees it.
  */
-export function useManagedMachineAccountSettings(binding: ServerCredentialAccountScopeBinding | null | undefined,
-    resolution: ServerCredentialAccountScopeResolution): Readonly<{
-    settings: ManagedMachineAccountSettings | null; loading: boolean; error: string | null;
-}> {
+function useManagedMachineSettingsProjection<K extends keyof Settings, T>(
+    binding: ServerCredentialAccountScopeBinding | null | undefined,
+    resolution: ServerCredentialAccountScopeResolution,
+    keys: readonly K[],
+    select: (settings: Pick<Settings, K>) => T,
+): SettingsObservation<T> {
     const scopeKey = JSON.stringify([binding?.serverId, binding?.accountId, binding?.revision]);
-    const [state, setState] = React.useState<SettingsState>({ scopeKey: '', accountId: null, settings: null, loading: false, error: null });
+    const [state, setState] = React.useState<SettingsState<T>>({ scopeKey: '', accountId: null, ...NO_SETTINGS });
     React.useEffect(() => {
         if (!binding?.isCurrent()) return;
         const accountId = binding.accountId;
         setState(current => ({ scopeKey, accountId, settings: current.accountId === accountId ? current.settings : null,
             loading: true, error: null }));
-        return subscribeScopedAccountSettings(binding, MANAGED_SETTINGS_KEYS, settings => {
+        return subscribeScopedAccountSettings(binding, keys, settings => {
             if (!binding.isCurrent()) return;
             setState({ scopeKey, accountId, loading: false,
                 error: settings === null ? 'managed_settings_unavailable' : null,
-                settings: settings === null ? null : { managedMachineCreationEnabled: settings.managedMachineCreationEnabled,
-                    machineRetentionDefaultsV1: settings.machineRetentionDefaultsV1 } });
+                settings: settings === null ? null : select(settings) });
         });
-    }, [binding, scopeKey]);
+    }, [binding, keys, scopeKey, select]);
 
     if (!binding?.isCurrent()) {
         return resolution.kind === 'bound' && state.accountId === resolution.scope.accountId

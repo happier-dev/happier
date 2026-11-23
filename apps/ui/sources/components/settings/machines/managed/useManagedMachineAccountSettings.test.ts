@@ -122,6 +122,50 @@ describe('managed creation preferences on the addressed Account', () => {
         await hook.unmount();
     });
 
+    it('keeps the managed picker quiet on retention changes and reports creation opt-out', async () => {
+        const { ManagedMachineSelectionOffers } = await import(
+            '@/components/sessions/new/components/machineSelection/ManagedMachineSelectionOffers'
+        );
+        const target = await harness.addHome({ name: 'Compute', serverUrl: 'https://compute.example',
+            serverIdentityId: 'srv_compute', accountId: 'picker-cost-owner' });
+        const disabled = { ...settingsDefaults, managedMachineCreationEnabled: false };
+        harness.answer(target, '/v2/account/settings', { body: { content: { t: 'plain', v: disabled }, version: 1 } });
+        const onOffers = vi.fn();
+        const onUse = vi.fn();
+        const counter = createRenderCommitCounter();
+        const hook = await renderHook(() => {
+            const { binding } = useServerCredentialAccountScopeBinding(target);
+            return binding?.scope;
+        });
+        const picker = await renderHook(() => {
+            useRenderCommitCounter(counter);
+            return ManagedMachineSelectionOffers({ serverId: target, onOffers, onUse });
+        });
+        try {
+            await waitForHomeGovernance(() => expect(onOffers).toHaveBeenLastCalledWith(target, [], {
+                state: 'unavailable', rowCount: 0,
+            }));
+            const scope = hook.getCurrent();
+            if (!scope) throw new Error('Expected a bound Account scope');
+            await act(async () => { saveAccountSettings(scope, disabled, 1); });
+            await flushHookEffects();
+            onOffers.mockClear();
+            counter.reset();
+            for (let version = 2; version <= 9; version++) {
+                await act(async () => saveAccountSettings(scope, { ...disabled, machineRetentionDefaultsV1: {
+                    v: 1, local: { retention: { kind: 'unused', afterMs: 17_500 + version, effect: 'stop' },
+                        wakeOnAcceptedMessage: true },
+                } }, version));
+                await flushHookEffects();
+            }
+            expect({ publications: onOffers.mock.calls.length, ...counter.read() })
+                .toEqual({ publications: 0, renders: 0, commits: 0 });
+        } finally {
+            await picker.unmount();
+            await hook.unmount();
+        }
+    });
+
     it('retains preferences while the replacement same-Account binding reads and receives its refreshed answer', async () => {
         const target = await harness.addHome({ name: 'Compute', serverUrl: 'https://compute.example', serverIdentityId: 'srv_compute', accountId: 'settings-refresh-owner' });
         await harness.addHome({ name: 'Other', serverUrl: 'https://other.example', serverIdentityId: 'srv_other', accountId: 'other' });
