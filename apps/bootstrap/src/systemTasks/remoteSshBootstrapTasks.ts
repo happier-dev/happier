@@ -5,7 +5,7 @@ import {
   RemoteHostTrustResolution,
   SystemTaskSshConnectionConfig,
   buildRemoteBootstrapCommand,
-  isRemoteBootstrapUnauthenticatedCliResult,
+  readRemoteBootstrapAuthStatusRefusal,
   normalizeRemoteBootstrapCliJsonResult,
   SystemTaskExecutionError,
   createOpenSshHappierJsonExecutor,
@@ -266,7 +266,7 @@ async function runRemoteJson(
 ): Promise<unknown> {
   const result = await runRemoteText(ssh, remoteCommand, knownHostsMode, signal);
   const parsed = parseFirstJsonObject(result.stdout);
-  if (result.status !== 0 && !(authStatus && isRemoteBootstrapUnauthenticatedCliResult(parsed, result.status))) {
+  if (result.status !== 0 && !(authStatus && readRemoteBootstrapAuthStatusRefusal(parsed, result.status))) {
     throw new SystemTaskExecutionError(
       'remote_command_failed',
       redactSshText(result.stderr.trim() || result.stdout.trim() || `SSH command failed for ${ssh.target}`),

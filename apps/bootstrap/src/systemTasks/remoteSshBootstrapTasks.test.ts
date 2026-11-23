@@ -347,11 +347,36 @@ describe('runRemoteBootstrapCommandDefault', () => {
         } finally { fakeSsh.cleanup(); }
     });
 
+    it('preserves the typed auth status refusal without displaying the guest diagnostic', async () => {
+        const guestDiagnostic = 'private guest credential validation detail';
+        const fakeSsh = createFakeSsh({ outputs: [{
+            status: 1,
+            stdout: JSON.stringify({
+                v: 1,
+                ok: false,
+                kind: 'auth_status',
+                error: { code: 'auth_status_unavailable', message: guestDiagnostic },
+            }),
+            stderr: guestDiagnostic,
+        }] });
+        try {
+            await withPatchedPath(fakeSsh.binDir, async () => {
+                const result = await runRemoteBootstrapCommandDefault({
+                    label: 'auth.status',
+                    parsed: createParsedRemoteBootstrapParams(),
+                    auth: { mode: 'agent' },
+                    knownHostsMode: 'system',
+                }).catch((error: unknown) => error);
+                expect(result).toMatchObject({ code: 'auth_status_unavailable' });
+                expect(result).toHaveProperty('message', expect.not.stringContaining(guestDiagnostic));
+            });
+        } finally { fakeSsh.cleanup(); }
+    });
+
     it.each([
         { name: 'transport failure with a signed-out envelope', status: 255, value: { v: 1, ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } } },
         { name: 'signal termination with a signed-out envelope', signal: 'SIGTERM' as const, value: { v: 1, ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } } },
         { name: 'unavailable auth at exit 0', status: 0, value: { v: 1, ok: false, kind: 'auth_status', error: { code: 'auth_status_unavailable' } } },
-        { name: 'unavailable auth at exit 1', status: 1, value: { v: 1, ok: false, kind: 'auth_status', error: { code: 'auth_status_unavailable' } } },
         { name: 'missing envelope', status: 0, value: { authenticated: false } },
         { name: 'missing version', status: 0, value: { ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } } },
         { name: 'malformed success', status: 0, value: { v: 1, ok: true, kind: 'auth_status', data: {} } },
