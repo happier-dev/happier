@@ -1091,11 +1091,13 @@ describe('CLI and MCP personal usage Account transport', () => {
     const result = UsageQueryBatchResultSchema.parse(await deps.usageActions!.query({ queries: Array.from({ length: count }, (_, index) => normalizeUsageQuery({ ...query, period: { startMs: index, endMs: index + 100 } })) }, { surface: 'api',
       externalActionTarget: target, externalActionExecutionAuthorization: authorization }));
     expect(result.results).toHaveLength(count);
-    expect(result.results[0]).toMatchObject({
-      requestedQuery: { machines: ['selected'] },
-      sources: expect.arrayContaining([{ source: 'accounting', status: 'error', errorCode: 'credential_scope_denied' }]),
-    });
-    expect(result.results[0]?.accounting).toBeUndefined();
+    for (const slice of result.results) {
+      expect(slice).toMatchObject({
+        requestedQuery: { machines: ['selected'] },
+        sources: expect.arrayContaining([{ source: 'accounting', status: 'error', errorCode: 'action_forbidden' }]),
+      });
+      expect(slice.accounting).toBeUndefined();
+    }
     await app.close();
   });
 });
