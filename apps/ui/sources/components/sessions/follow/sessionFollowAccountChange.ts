@@ -10,7 +10,7 @@ function hasFollowConfigurationEntity(ids: HomeAccountChangeEvent['entityIds']):
 /** Private Account configuration does not depend on the Session/filter corpus. */
 export function isAccountFollowConfigurationChangeRelevant(event: HomeAccountChangeEvent): boolean {
     const kinds = event.changeKinds;
-    return event.source === 'connected' || kinds === undefined || kinds.some(kind => !ChangeKindSchema.options.some(known => known === kind)) || kinds.includes('share')
+    return event.source === 'connected' || kinds === undefined || kinds.some(kind => !ChangeKindSchema.options.some(known => known === kind))
         || (kinds.includes('account') && hasFollowConfigurationEntity(event.entityIds));
 }
 

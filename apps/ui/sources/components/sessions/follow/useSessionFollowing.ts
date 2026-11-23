@@ -117,9 +117,10 @@ export function useSessionFollowing(address: SessionAddress | null, enabled: boo
         return subscribeHomeAccountChange(event => {
             if (!lifetime.isCurrent() || !areServerProfileIdentifiersEquivalent(event.serverId, serverId)) return;
             // Configuration changes publish through the single private census;
-            // only source facts demand another Following projection here.
-            if (isAccountFollowConfigurationChangeRelevant(event)
-                || !isSessionFollowAccountChangeRelevant(event, new Set([sessionId, ...sourceIdsRef.current]))) return;
+            // a share can reveal a source that was absent from the current projection.
+            if (isAccountFollowConfigurationChangeRelevant(event)) return;
+            const sourceIds = event.changeKinds?.includes('share') ? undefined : new Set([sessionId, ...sourceIdsRef.current]);
+            if (!isSessionFollowAccountChangeRelevant(event, sourceIds)) return;
             if (rules.snapshot) void read(rules.snapshot, true);
         });
     }, [enabled, lifetime, read, rules.snapshot, serverId, sessionId]);

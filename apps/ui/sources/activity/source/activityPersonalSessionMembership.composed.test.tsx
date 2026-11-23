@@ -30,6 +30,7 @@ let restored: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefine
 beforeEach(async () => { await homes.reset(); });
 afterEach(async () => {
     await standardCleanup();
+    if (vi.isFakeTimers()) vi.useRealTimers();
     await restored?.dispose();
     restored = undefined;
     getStorage().setState(initial, true);
@@ -71,6 +72,7 @@ it.each([false, true])('keeps unrelated arrivals at zero mute GETs and refreshes
         }
         publishHomeAccountChange(serverId, ['self'], { changeKinds: ['artifact'] });
         publishHomeAccountChange(serverId, ['other-account-setting'], { changeKinds: ['account'] });
+        publishHomeAccountChange(serverId, ['access-changed'], { changeKinds: ['share'] });
         publishHomeAccountChange('another-home', [ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID], { changeKinds: ['account'] });
     });
     await flushHookEffects();
@@ -83,7 +85,6 @@ it.each([false, true])('keeps unrelated arrivals at zero mute GETs and refreshes
         [serverId, undefined, { changeKinds: ['account'] }],
         [serverId, ['unclassified-source']],
         [serverId, ['unclassified-source'], { source: 'connected', changeKinds: [] }],
-        [serverId, ['access-changed'], { changeKinds: ['share'] }],
     ];
     for (const [index, change] of changes.entries()) {
         const next: FollowDeliveryMuteScopeV1[] = [{ kind: 'sender_session', sessionId: `sender-${index}` }];
@@ -229,6 +230,7 @@ it.each(['follow', 'rule', 'pending'] as const)('settles a foreign original only
     homes.answer(serverId, '/v2/account/session-follow-rules', { select: () => ({ body: { rules: [{ ...rule, sources: delivered }] } }) });
     homes.answer(serverId, '/v2/account/session-follow-preferences', { body: { assigned: false, direct: false, team: false, group: false } });
     homes.answer(serverId, mutePath, { body: { scopes: [] } });
+    let finishedTurnArrived = false;
     for (const session of [...candidates, ownSource, offScreen, gapSource]) {
         const response = createPlainSessionByIdResponseFixture(session);
         const viewer = session === source && represented ? session.viewer : createSessionViewerFixture({
@@ -238,16 +240,24 @@ it.each(['follow', 'rule', 'pending'] as const)('settles a foreign original only
         });
         homes.answer(serverId, `/v2/sessions/${session.id}`, { select: () => ({ body: { session: {
             ...response.session, ownerAccountId: session.ownerAccountId, viewer: readyToDeliver.has(session.id) ? viewer : session.viewer,
+            ...(session === source && finishedTurnArrived ? { seq: 2 } : {}),
         } } }) });
-        homes.answer(serverId, `/v1/sessions/${session.id}/messages`, { select: (_input, request) => ({ body: {
-            messages: Number(new URL(request.url).searchParams.get('afterSeq')) >= 1 ? [] : [{
+        homes.answer(serverId, `/v1/sessions/${session.id}/messages`, { select: (_input, request) => {
+            const afterSeq = Number(new URL(request.url).searchParams.get('afterSeq'));
+            const messages = [{
                 id: 'original-message', localId: 'original-local', seq: 1, createdAt: 10, messageRole: 'agent',
                 content: { t: 'plain', v: session === gapSource
                     ? { role: 'agent', content: { type: 'event', id: 'ready-event', data: { type: 'ready', completedTurnId: 'offline-turn' } } }
                     : { role: 'agent', content: { type: 'acp', agentId: 'codex',
                         data: { type: 'message', message: 'Committed update' } } } },
-            }], hasMore: false, nextAfterSeq: null,
-        } }) });
+            }];
+            if (session === source && finishedTurnArrived) messages.push({
+                id: 'new-terminal-message', localId: 'new-terminal-local', seq: 2, createdAt: 20, messageRole: 'agent',
+                content: { t: 'plain', v: { role: 'agent',
+                    content: { type: 'event', id: 'new-ready-event', data: { type: 'ready', completedTurnId: 'new-turn' } } } },
+            });
+            return { body: { messages: messages.filter(message => message.seq > afterSeq), hasMore: false, nextAfterSeq: null } };
+        } });
         homes.answer(serverId, `POST /v2/sessions/${session.id}/follows/occurrence-routes`, { body: {
             ok: true, v: 1, sourceSessionId: session.id, routes: [], originalCreatedAt: 10,
             receiverEvaluation: { ownerAccountId: session.ownerAccountId, production: 'source' },
@@ -257,13 +267,25 @@ it.each(['follow', 'rule', 'pending'] as const)('settles a foreign original only
     const progressPath = '/v2/account/session-follow-rules/personal-progress';
     homes.answer(serverId, `POST ${progressPath}`, { select: input => {
         const progress = SessionFollowPersonalProgressRequestV1Schema.parse(input);
-        const alreadyRepresented = delivered.some(source => source.sourceSessionId === progress.sourceSessionId);
+        if (!('evaluation' in progress)) throw new Error('Expected receiver progress');
+        const index = delivered.findIndex(source => source.sourceSessionId === progress.sourceSessionId);
+        const previous = delivered[index]?.delivered ?? SESSION_FOLLOW_ZERO_FRONTIER_V1;
+        let next = previous;
+        if ('sourceTurn' in progress) {
+            if (progress.terminalSourceMessage.seq > previous.readyEventSeq) {
+                next = { ...previous, turn: progress.sourceTurn, readyEventSeq: progress.terminalSourceMessage.seq };
+            }
+        } else if ('sourceMessage' in progress && progress.sourceMessage) {
+            if (progress.sourceMessage.seq > previous.transcriptSeq) next = { ...previous, transcriptSeq: progress.sourceMessage.seq };
+        } else {
+            throw new Error('Expected transcript or terminal Turn progress');
+        }
+        const alreadyRepresented = next === previous;
         if (!alreadyRepresented) {
             acceptedEffects++;
-            delivered.push({ sourceSessionId: progress.sourceSessionId, delivered: {
-                ...SESSION_FOLLOW_ZERO_FRONTIER_V1,
-                ...('sourceTurn' in progress ? { turn: progress.sourceTurn, readyEventSeq: 1 } : { transcriptSeq: 1 }),
-            } });
+            const sourceProgress = { sourceSessionId: progress.sourceSessionId, delivered: next };
+            if (index < 0) delivered.push(sourceProgress);
+            else delivered[index] = sourceProgress;
         }
         return { body: { accepted: true, alreadyRepresented } };
     } });
@@ -273,6 +295,7 @@ it.each(['follow', 'rule', 'pending'] as const)('settles a foreign original only
         request: createSessionReadBatchFetchBoundary(homes.request) });
     await vi.waitFor(() => expect(getStorage().getState().isDataReady).toBe(true));
     const publications = new Set<ReturnType<typeof useActivityPersonalSessionMembership>>();
+    if (!represented) vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
     const hook = await renderHook(() => {
         const membership = useActivityPersonalSessionMembership();
         publications.add(membership);
@@ -326,6 +349,10 @@ it.each(['follow', 'rule', 'pending'] as const)('settles a foreign original only
         console.info('Follow HTTP count cold', coldRoutes, queries().length, 'exhaustive', exhaustiveQueries.length);
 
         let before = mark();
+        await flushHookEffects({ cycles: 1, advanceTimersMs: 60_000 });
+        expect.soft(record('settled 60-second idle', before)).toEqual({ routes: [], queries: 0 });
+
+        before = mark();
         await act(async () => publishHomeAccountChange(serverId, undefined, { source: 'connected', changesCatchUp: true }));
         await flushHookEffects();
         expect.soft(record('equal reconnect', before)).toEqual({ routes: [], queries: 0 });
@@ -345,12 +372,16 @@ it.each(['follow', 'rule', 'pending'] as const)('settles a foreign original only
         expect.soft(record('one changed source', before)).toEqual({ routes: [route(source.id)], queries: 0 });
 
         before = mark();
+        const beforeShare = homes.requests.length;
         await act(async () => publishHomeAccountChange(serverId, [offScreen.id, siblings[0]!.id], {
             feedPageConsumed: true, changeKinds: ['share', 'machine'], sessionIdsToCatchUp: [offScreen.id], sessionListQueryAffects: false,
         }));
         await vi.waitFor(() => expect(acceptedEffects).toBe(2));
         await flushHookEffects();
         expect.soft(record('exact off-screen share', before)).toEqual({ routes: [route(offScreen.id)], queries: 0 });
+        expect(homes.requests.slice(beforeShare).filter(request => [
+            '/v2/account/session-follow-rules', '/v2/account/session-follow-preferences', mutePath,
+        ].includes(request.path))).toHaveLength(0);
 
         before = mark();
         await act(async () => publishHomeAccountChange(serverId, [ownSource.id], { changeKinds: ['share'], sessionListQueryAffects: true }));
@@ -375,6 +406,25 @@ it.each(['follow', 'rule', 'pending'] as const)('settles a foreign original only
         await act(async () => publishHomeAccountChange(serverId, [gapSource.id], { changeKinds: ['session'], sessionListQueryAffects: false }));
         await flushHookEffects();
         expect.soft(record('delivered Turn frontier', before)).toEqual({ routes: [], queries: 0 });
+
+        before = mark();
+        finishedTurnArrived = true;
+        const publishTurn = () => publishHomeAccountChange(serverId, [source.id], {
+            feedPageConsumed: true, changeKinds: ['session'], sessionIdsToCatchUp: [source.id], sessionListQueryAffects: false,
+        });
+        await act(async () => publishTurn());
+        await vi.waitFor(() => expect(acceptedEffects).toBe(4));
+        await flushHookEffects();
+        expect.soft(record('one new finished Turn', before)).toEqual({ routes: [route(source.id)], queries: 0 });
+        expect(homes.requests.filter(request => request.path === progressPath).at(-1)?.input).toMatchObject({
+            sourceTurn: { id: 'new-turn', status: 'completed' }, terminalSourceMessage: { localId: 'new-terminal-local', seq: 2 },
+        });
+
+        before = mark();
+        await act(async () => publishTurn());
+        await flushHookEffects();
+        expect.soft(record('unchanged finished Turn', before)).toEqual({ routes: [], queries: 0 });
+        expect(acceptedEffects).toBe(4);
     }
     await act(async () => getStorage().getState().clearProfileScope());
     await flushHookEffects();

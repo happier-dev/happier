@@ -406,6 +406,7 @@ it('does not read preferences for 1,000 unrelated detailed Account changes but r
     await act(async () => {
         for (let index = 0; index < 1_000; index++) publishHomeAccountChange(home.id, [`unrelated-${index}`],
             { changeKinds: [unrelatedKinds[index % unrelatedKinds.length]!], sessionListQueryAffects: true });
+        publishHomeAccountChange(home.id, ['shared-session'], { changeKinds: ['share'] });
     });
     await flushAsyncWork();
     expect(reads).toBe(baseline);
@@ -416,7 +417,6 @@ it('does not read preferences for 1,000 unrelated detailed Account changes but r
     expect(reads).toBe(baseline + 1);
     for (const event of [
         { entityIds: ['self'], changeKinds: ['account'] as const },
-        { entityIds: ['shared-session'], changeKinds: ['share'] as const },
         { source: 'connected' as const },
         { entityIds: ['future-entity'], changeKinds: ['future-kind'] },
         {},

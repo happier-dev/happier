@@ -182,7 +182,7 @@ it('reads its saved rule filter and Include again result back into the open edit
     } finally { await screen.unmount(); errors.mockRestore(); }
 });
 
-it('acquires one private census for Following rule counts and draft edits, and refreshes real rule changes', async () => {
+it('acquires one private census for Following rule counts, draft edits, and a newly accessible source', async () => {
     const { normalizeSessionListFilterV1 } = await import('@happier-dev/protocol/sessions/listFilter/sessionListFilterV1');
     const { SessionFollowRuleV1Schema } = await import('@happier-dev/protocol/sessions/follow/sessionFollowRuleV1');
     const { DEFAULT_SESSION_AUTO_FOLLOW_PREFERENCES_V1 } = await import('@happier-dev/protocol/sessions/follow/accountFollow');
@@ -199,6 +199,8 @@ it('acquires one private census for Following rule counts and draft edits, and r
     let rules = ['payments', 'daily'].map(ruleId => SessionFollowRuleV1Schema.parse({ ruleId,
         receiver: { kind: 'session', sessionId: 'destination' }, version: 1,
         content: { t: 'plain', v: { v: 1, enabled: true, filter, policy: { preset: 'important' } } } }));
+    const runSource = { kind: 'execution_run', sessionId: 'newly-accessible-parent', runId: 'run-from-shared-session' } as const;
+    let runSourceVisible = false;
     const sessions = Array.from({ length: 1_001 }, (_, index) => {
         const session = createSessionFixture({ id: `member-${index}`, serverId: home.id,
             metadata: { path: '/payments', host: 'test', projectId: 'payments' } });
@@ -211,7 +213,10 @@ it('acquires one private census for Following rule counts and draft edits, and r
         if (path === '/v1/account/profile') return Response.json({ id: home.accountId });
         if (path === '/v2/account/session-follow-preferences') return Response.json(DEFAULT_SESSION_AUTO_FOLLOW_PREFERENCES_V1);
         if (path === '/v2/account/session-follow-rules') return Response.json({ rules });
-        if (path === '/v2/sessions/destination/follows/sessions') return Response.json({ sources: [] });
+        if (path === '/v2/sessions/destination/follows/sessions') return Response.json({ sources: runSourceVisible ? [{
+            source: runSource, destinationSessionId: 'destination', policy: { preset: 'quiet' }, relation: 'follower',
+            deliveryState: 'eligible', sourceAvailability: 'available', hasPendingUpdates: false,
+        }] : [] });
         if (path === '/v2/sessions/query') {
             const query = SessionListQueryV1Schema.parse(JSON.parse(String(init?.body)));
             const offset = query.cursor ? offsets.get(query.cursor)! : 0;
@@ -251,6 +256,13 @@ it('acquires one private census for Following rule counts and draft edits, and r
         await act(async () => publishHomeAccountChange(home.id, ['destination'], { changeKinds: ['session'], sessionListQueryAffects: false }));
         await vi.waitFor(() => expect(sourceReads()).toBe(sourcesBeforeDetail + 1));
         await flushHookEffects();
+        expect(censusReads()).toBe(1);
+        const sourcesBeforeShare = sourceReads();
+        runSourceVisible = true;
+        await act(async () => publishHomeAccountChange(home.id, [runSource.sessionId], { changeKinds: ['share'] }));
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('session.follow.sources.executionRun'));
+        await flushHookEffects();
+        expect(sourceReads()).toBe(sourcesBeforeShare + 1);
         expect(censusReads()).toBe(1);
         await screen.pressByTestIdAsync(row('payments'));
         await screen.pressByTestIdAsync(`${row('payments')}-filter`);
