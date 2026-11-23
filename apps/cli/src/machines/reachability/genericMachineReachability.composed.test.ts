@@ -29,7 +29,7 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('public gen
 it('reviews keyless plugin membership without preparing a Saved Secret', async () => {
   const authoredProvider = createDockerNetworkAuthoredProvider(false, true, false, { keyless: true });
   const selected: AccessProviderSelectionV1 = { ...selection, credentialRefs: [] };
-  const fixture = await journey('external', [], { providerSelection: selected, authoredProvider });
+  const fixture = await journey('external', [], { providerSelection: selected, authoredProvider, keylessNetworkClient: true });
   const api = await createGenericDefaultFactoryJourney(fixture);
   try {
     const review = parseReachabilityInspectResult(await api.invoke('machines.reachability.inspect', {
@@ -41,6 +41,11 @@ it('reviews keyless plugin membership without preparing a Saved Secret', async (
       }) }) })] });
     expect(review.plan?.basis.credentialFileReview).toBeUndefined();
     expect(fixture.elevation.launches).toHaveLength(0);
+    const { result } = await executeReviewedReachabilityConfigure(fixture, api, review);
+    expect(parseCompletedReachabilityConfigure(result)).toMatchObject({ status: 'applied', selections: [selected] });
+    expect(fixture.hostNative.networkJoined()).toBe(true);
+    expect(await fixture.home.readConnectorGrantCount()).toBe(0);
+    expect(api.processBoundary.failures).toEqual([]);
   } finally { await api.dispose(); }
 }, 120_000);
 

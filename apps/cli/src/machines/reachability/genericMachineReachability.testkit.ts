@@ -18,6 +18,7 @@ import { ActionIdSchema, getActionSpec, isApprovalRequiredByActionsSettings, cre
   verifyMachineInstallationProof, ActionsSettingsV1Schema, setActionApprovalOverride,
   type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { readAuthTokenProvenance, AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken';
 import { ApprovalRequestSchema, ApprovalStaleFailureDetailsSchema, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
@@ -410,7 +411,13 @@ export function installReachabilityHomeHttpBoundary(params: Readonly<{
   };
   const request = vi.spyOn(axios, 'request').mockImplementation(async config => {
     const path = new URL(String(config.url)).pathname;
-    requests.push({ path, method: 'POST' });
+    const method = String(config.method).toUpperCase();
+    requests.push({ path, method: method === 'GET' ? 'GET' : 'POST' });
+    if (method === 'GET' && path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) {
+      requestAccountId(config.headers);
+      // The fixture Home has no Automations. The real admission owner still reads its index.
+      return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
+    }
     if (String(config.method).toUpperCase() === 'POST'
       && path === managedMachineActionEndpointPathV1('machines.managed.list')) {
       ManagedMachineActionInputSchemasV1['machines.managed.list'].parse(config.data);
@@ -1080,6 +1087,7 @@ export function installGenericDefaultHostProcessBoundary(params: Readonly<{
 export function createGenericHostNativeBoundary(params: Readonly<{
   filesystem: Awaited<ReturnType<typeof installGenericRootFileSystemBoundary>>;
   daemonPrimaryGroup: string;
+  keylessNetworkClient?: boolean;
   dockerUnitsAvailable?: boolean;
   dockerInventoryAvailable?: boolean;
 }>) {
@@ -1172,12 +1180,15 @@ export function createGenericHostNativeBoundary(params: Readonly<{
       if (!existsSync('/usr/bin/network-client')) return { code: 127, stdout: '', stderr: 'Fixture client is not installed' };
       if (args[0] === 'status') return ok(JSON.stringify({ joined: networkJoined, profileName: networkProfile }));
       if (args[0] === 'join') {
-        expect(args).toHaveLength(2);
-        const path = args[1]!;
-        expect(path).toBe(`/run/happier-machine-credentials/${encodeURIComponent(installationId)}.setup-key`);
-        const stat = await lstat(path);
-        expect({ uid: stat.uid, gid: stat.gid, mode: stat.mode & 0o777 }).toEqual({ uid: 0, gid: 0, mode: 0o600 });
-        expect((await readFile(path)).byteLength).toBeGreaterThan(0);
+        if (params.keylessNetworkClient) expect(args).toEqual(['join']);
+        else {
+          expect(args).toHaveLength(2);
+          const path = args[1]!;
+          expect(path).toBe(`/run/happier-machine-credentials/${encodeURIComponent(installationId)}.setup-key`);
+          const stat = await lstat(path);
+          expect({ uid: stat.uid, gid: stat.gid, mode: stat.mode & 0o777 }).toEqual({ uid: 0, gid: 0, mode: 0o600 });
+          expect((await readFile(path)).byteLength).toBeGreaterThan(0);
+        }
         networkJoined = true; networkMutations += 1; await onNetworkMutation?.(); return ok();
       }
       if (args[0] === 'leave') { networkJoined = false; networkMutations += 1; return ok(); }
@@ -1216,6 +1227,12 @@ export function createGenericHostNativeBoundary(params: Readonly<{
       return { code: names.every(name => installed.has(name)) ? 0 : 1, stdout: rows, stderr: '' };
     }
     if (command.executable === 'systemctl' || command.executable === '/usr/bin/systemctl') {
+      if (args.join(' ') === '--user show --property=ControlGroup') {
+        return { code: 1, stdout: '', stderr: 'No fixture user manager' };
+      }
+      if (args.join(' ') === '--user show happier-jobs.slice --property=LoadState --property=CPUWeight --property=IOWeight --property=MemoryHigh') {
+        return ok('LoadState=not-found\n');
+      }
       if (args.includes('happier-firewall.service')) {
         if (args[0] === 'show') return ok(`LoadState=${existsSync('/etc/systemd/system/happier-firewall.service') ? 'loaded' : 'not-found'}\nUnitFileState=${firewallEnabled ? 'enabled' : 'disabled'}\nActiveState=${firewallActive ? 'active' : 'inactive'}\n`);
         if (args[0] === 'enable') firewallEnabled = true;
@@ -1244,7 +1261,7 @@ export function createGenericHostNativeBoundary(params: Readonly<{
       else if (args[0] === 'stop') serviceRunning = false;
       else if (args[0] === 'enable') serviceEnabled = true;
       else if (args[0] === 'disable') serviceEnabled = false;
-      else if (args[0] !== 'daemon-reload') throw new Error(`Unexpected systemctl boundary command ${args[0]}`);
+      else if (args[0] !== 'daemon-reload') throw new Error(`Unexpected systemctl boundary command ${args.join(' ')}`);
       return ok();
     }
     throw new Error(`Unexpected P20 native process ${command.executable}`);
@@ -1325,6 +1342,7 @@ export async function installGenericNativeIdentityBoundary() {
 
 export async function createGenericComposedJourney(occurrence: 'external', managementProviders: AccessProviderSelectionV1[] = [selection],
   options: Readonly<{ authoredProvider: AuthoredProvider; nativeClientInitiallyAvailable?: boolean;
+    keylessNetworkClient?: boolean;
     providerSelection?: AccessProviderSelectionV1; nativeEffects?: MachineSetupNativeEffectsInput; dockerUnitsAvailable?: boolean;
     dockerInventoryAvailable?: boolean;
     builtinTailscale?: boolean;
@@ -1355,6 +1373,7 @@ export async function createGenericComposedJourney(occurrence: 'external', manag
     const identity = await installGenericNativeIdentityBoundary();
     disposals.push(() => identity.dispose());
     const hostNative = createGenericHostNativeBoundary({ filesystem, daemonPrimaryGroup: identity.daemonPrimaryGroup,
+      keylessNetworkClient: options.keylessNetworkClient,
       dockerUnitsAvailable: options.dockerUnitsAvailable,
       dockerInventoryAvailable: options.dockerInventoryAvailable });
     await os.installGenericNetworkTool(hostNative.runNative, options.nativeClientInitiallyAvailable !== false);
