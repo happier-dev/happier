@@ -211,13 +211,16 @@ describe('Team overview: Shared with this Team', () => {
     await screen.unmount();
   });
 
-  it('says a kind could not be counted rather than showing zero, and Retry asks again', async () => {
+  it.each([
+    ['team_authentication_required', 'teams.credentials.errors.teamAuthenticationRequired'],
+    ['team_authentication_policy_unavailable', 'teams.credentials.errors.teamAuthenticationPolicyUnavailable'],
+  ] as const)('shows the credential summary refusal %s, and Retry asks again', async (reason, message) => {
     const serverId = await addHome([
       {
-        kind: 'machines',
+        kind: 'credentials',
         status: 'unavailable',
         count: null,
-        reason: 'team_authentication_required',
+        reason,
       },
       { kind: 'projectSources', status: 'available', count: 3 },
     ]);
@@ -225,11 +228,13 @@ describe('Team overview: Shared with this Team', () => {
       <InPanes serverId={serverId} teamId="team-1" />,
     );
     await vi.waitFor(() =>
-      expect(ids(screen)).toContain('team-overview-shared-retry:machines'),
+      expect(ids(screen)).toContain('team-overview-shared-retry:credentials'),
     );
     expect(ids(screen)).not.toContain('team-overview-shared-empty');
+    expect(screen.getTextContent()).toContain(t(message));
+    expect(screen.findByTestId('team-overview-shared:credentials').props.accessibilityLabel).toContain(t(message));
 
-    screen.pressByTestId('team-overview-shared-retry:machines');
+    screen.pressByTestId('team-overview-shared-retry:credentials');
     await vi.waitFor(() =>
       expect(harness.requestsFor(SUMMARY.path)).toHaveLength(2),
     );

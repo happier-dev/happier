@@ -13,8 +13,10 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { useTeamSharedResourcesSummary } from '@/hooks/teams/useTeamSharedResourcesSummary';
+import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
 import { t } from '@/text';
 
+import { credentialFailureMessage } from './credentials/teamCredentialPresentation';
 import type { TeamSectionContext } from './teamSectionContext';
 import { teamReadFailureLabel } from './teamMutationPresentation';
 import { TEAM_SHARED_KIND_PRESENTATION, readTeamSharedListKind } from './shared/teamSharedKindPresentation';
@@ -166,16 +168,18 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
           const destination = props.destinationOf(row);
           const key = teamSharedResourceSummaryRowKeyV1(row);
           if (row.status === 'unavailable') {
+            const failure = homeDomainFailureFromActionFailure({ errorCode: row.reason });
+            const reason = (row.kind === 'credentials' ? credentialFailureMessage(failure) : null)
+              ?? teamReadFailureLabel(failure);
             return (
               <Item
                 key={key}
                 testID={`team-overview-shared:${key}`}
                 icon={<Icon name={presentation.icon} />}
                 title={title}
-                subtitle={collection?.pluginId}
-                accessibilityLabel={t('teams.overview.shared.unknownA11y', {
-                  kind: label,
-                })}
+                subtitle={collection ? `${collection.pluginId} · ${reason}` : reason}
+                subtitleLines={0}
+                accessibilityLabel={`${t('teams.overview.shared.unknownA11y', { kind: label })}. ${reason}`}
                 detail={t('teams.overview.shared.unknown')}
                 rightElement={
                   <TextLinkButton
