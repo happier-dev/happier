@@ -2,11 +2,13 @@
 import { createDockerNetworkAuthoredProvider, createGenericDefaultFactoryJourney, executeReviewedReachabilityConfigure,
   installationId, journey, machineId, parseCompletedReachabilityConfigure, parseReachabilityInspectResult, selection,
 } from './genericMachineReachability.testkit';
-import { lstat, mkdir, readFile } from 'node:fs/promises';
-import { userInfo } from 'node:os';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { homedir, userInfo } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import type { AccessProviderSelectionV1 } from '@happier-dev/plugin-sdk/access-providers';
+import { resolveRelayRuntimeDefaults } from '@happier-dev/cli-common/firstPartyRuntime';
 import { ActionsSettingsV1Schema, setActionApprovalOverride } from '@happier-dev/protocol';
 import { ActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { HostReviewedChildrenPlanV1Schema } from '@happier-dev/protocol/actions/executor/hostReviewedChildrenV1';
@@ -22,6 +24,12 @@ import * as terminalInput from '@/terminal/prompts/promptInput';
 import * as cliActionExecution from '@/cli/actions/executeCommand';
 import { inspectMachineReachability } from './machineReachabilityHost';
 import { prepareReachabilityReviewedChildrenForHost } from './reachabilityProviderHost';
+
+vi.mock('node:os', async importOriginal => {
+  const os = await importOriginal<typeof import('node:os')>();
+  return { ...os, homedir: vi.fn(os.homedir) };
+});
+afterEach(() => { vi.mocked(homedir).mockReset(); });
 
 // Generic physical plugin authoring drives the same production factory,
 // custody, parent Action, native admission and retained approval owners.
@@ -83,6 +91,51 @@ it('publishes live facts for the selected contributed default ingress', async ()
     expect(inspected.observation.ingress).toEqual([
       expect.objectContaining({ provider: selected.provider, state: 'needsSetup', remedies: ['configure'] }),
     ]);
+  } finally { await api.dispose(); }
+}, 120_000);
+
+it('applies and disables a contributed Home Relay route on the admitted Machine', async () => {
+  const authoredProvider = createDockerNetworkAuthoredProvider(false, true, false, { serviceIngress: 'homeRelay' });
+  const selected: AccessProviderSelectionV1 = { ...selection, credentialRefs: [] };
+  const fixture = await journey('external', [], { providerSelection: selected, authoredProvider });
+  vi.mocked(homedir).mockReturnValue(fixture.directory);
+  const relay = { channel: 'stable', mode: 'user' } as const;
+  const defaults = resolveRelayRuntimeDefaults({ ...relay, homeDir: fixture.directory });
+  await mkdir(defaults.installRoot, { recursive: true });
+  await writeFile(join(defaults.installRoot, 'self-host-state.json'), JSON.stringify({ version: '0.3.0' }));
+  const upstream = `http://${defaults.serverHost}:${defaults.serverPort}`;
+  // The local Relay and the signed-in address expose the same Home identity.
+  const fetchHome = vi.mocked(globalThis.fetch).getMockImplementation();
+  if (!fetchHome) throw new Error('The fixture Home HTTP boundary is unavailable');
+  vi.mocked(globalThis.fetch).mockImplementation(async (input, options) => {
+    if (String(input) === `${upstream}/v1/features`) {
+      return await fetchHome(`${fixture.accountRuntime.serverHttpBaseUrl}/v1/features`, options);
+    }
+    return await fetchHome(input, options);
+  });
+  const api = await createGenericDefaultFactoryJourney(fixture);
+  try {
+    const target = { serverId: 'generic-home', machineId };
+    const hostname = 'relay.example.test';
+    const publicUrl = `https://${hostname}`;
+    const configure = async (selection: AccessProviderSelectionV1 | null) => {
+      const review = parseReachabilityInspectResult(await api.invoke('machines.reachability.inspect', {
+        ...target, change: { kind: 'homeRelay', relay, selection, ...(selection ? { hostname } : {}) },
+      }));
+      expect(review.plan?.basis).toMatchObject({ machineId, installationId, homeRelay: {
+        ...(selection ? { route: { upstream, hostname } } : { currentRoute: { upstream, hostname } }),
+      } });
+      const { result } = await executeReviewedReachabilityConfigure(fixture, api, review);
+      return parseCompletedReachabilityConfigure(result);
+    };
+    const read = async () => parseReachabilityInspectResult(await api.invoke('machines.reachability.inspect',
+      { ...target, homeRelay: relay })).relayAccess;
+    expect(await configure(selected)).toMatchObject({ status: 'applied', relayAccess: {
+      configured: true, selection: selected, status: { state: 'enabled', shareUrl: publicUrl },
+    } });
+    expect(await read()).toMatchObject({ configured: true, status: { state: 'enabled', shareUrl: publicUrl } });
+    expect(await configure(null)).toMatchObject({ status: 'applied', relayAccess: { configured: false, status: { state: 'disabled' } } });
+    expect(await read()).toMatchObject({ configured: false, status: { state: 'disabled' } });
   } finally { await api.dispose(); }
 }, 120_000);
 

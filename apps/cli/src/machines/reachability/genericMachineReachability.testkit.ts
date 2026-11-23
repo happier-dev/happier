@@ -199,7 +199,11 @@ vi.mock('node:child_process', async importOriginal => {
   };
   const forwarded = { ...defaults, ChildProcess: actual.ChildProcess, spawn: (...args: unknown[]) => forward('spawn', args),
     execFile: (...args: unknown[]) => forward('execFile', args),
-    exec: denied, execSync: denied, execFileSync: denied, spawnSync: denied, fork: denied };
+    spawnSync: (command: string, args: readonly string[]) => command === 'systemctl'
+      && args.join('\0') === '--user\0show\0happier-server.service\0--property=UnitFileState,ActiveState,SubState,LoadState'
+      ? { status: 0, stdout: 'LoadState=loaded\nActiveState=inactive\nUnitFileState=enabled\n', stderr: '' }
+      : denied(),
+    exec: denied, execSync: denied, execFileSync: denied, fork: denied };
   return { ...forwarded, default: forwarded };
 });
 
@@ -1929,6 +1933,7 @@ export async function createGenericDefaultFactoryJourney(fixture: Awaited<Return
     const adminAccess = createDaemonMachineAdminAccessRoutes({ target: () => target, getMachineClient: () => installed,
       nativeDependencies: fixture.identity.nativeDependencies });
     installed.registerMachineReachabilityRoutes(createDaemonMachineReachabilityRoutes({ target: () => target,
+      homeIdentity: () => homeIdentity,
       getMachineClient: () => installed, agentIsolation: { read: () => ({ ...installed.getAgentIsolationSnapshot(), workspaceRoots: [] }) }, adminAccess }));
     expect(installed.getAgentIsolationSnapshot()).toEqual({ enabled: true,
       status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' } });
@@ -2249,6 +2254,9 @@ export function createDockerNetworkAuthoredProvider(enabled = false, nativeJoin 
   // registry callback. The real loader owns this exact authored module.
   const module = `export const manifest = ${JSON.stringify(authored.manifest)};
 let mutations = 0;
+${options.serviceIngress === 'homeRelay' ? `let activeRelayRoute = null;
+const activeRelayMatches = route => route && activeRelayRoute
+  && ['ownerId', 'hostname', 'httpsPort', 'path', 'upstream'].every(key => route[key] === activeRelayRoute[key]);` : ''}
 export const readMutations = () => mutations;
 function inspectDiagnostic(stage, error, facts = {}) {
   const value = error && typeof error === 'object' ? error : {};
@@ -2262,6 +2270,9 @@ function inspectDiagnostic(stage, error, facts = {}) {
 }
 export function activate(api) {
   api.actions.register('inspect', async (input, context) => {
+    ${options.serviceIngress === 'homeRelay' ? `if (input.route) return activeRelayMatches(input.route)
+      ? {kind:'confirmed',facts:{state:'ready',publicUrl:'https://' + activeRelayRoute.hostname}}
+      : {kind:'confirmed',facts:{state:'stopped'}};` : ''}
     let stage = 'entered';
     try {
     ${nativeJoin ? `stage = 'tool_resolution'; const tool = await context.services.exec.systemTools.resolve({toolId:'network-client-tool',purpose:'Observe fixture membership'}).catch(error => { inspectDiagnostic(stage, error); return null; });
@@ -2282,7 +2293,16 @@ export function activate(api) {
     return {kind:'refused',code:'unexpected_daemon_membership_action'};
   });
   api.actions.register('leave', async () => { mutations++; return {kind:'unknown',code:'unexpected_leave'}; });
-  ${options.serviceIngress ? `api.actions.register('configure', async () => ({kind:'refused',code:'unexpected_configure'}));
+  ${options.serviceIngress === 'homeRelay' ? `api.actions.register('configure', async input => {
+    if (input.machineId !== ${JSON.stringify(machineId)} || !input.route) return {kind:'refused',code:'target_mismatch'};
+    activeRelayRoute = input.route;
+    return {kind:'confirmed',facts:{state:'ready',publicUrl:'https://' + input.route.hostname}};
+  });
+  api.actions.register('disable', async input => {
+    if (input.machineId !== ${JSON.stringify(machineId)} || !activeRelayMatches(input.route)) return {kind:'refused',code:'target_mismatch'};
+    activeRelayRoute = null;
+    return {kind:'confirmed',facts:{state:'stopped'}};
+  });` : options.serviceIngress ? `api.actions.register('configure', async () => ({kind:'refused',code:'unexpected_configure'}));
   api.actions.register('disable', async () => ({kind:'refused',code:'unexpected_disable'}));` : ''}
 }`;
   return { pluginId, plugin: { manifest: authored.manifest, files: { 'daemon.mjs': module } } };
