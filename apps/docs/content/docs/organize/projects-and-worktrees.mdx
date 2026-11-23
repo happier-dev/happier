@@ -160,11 +160,22 @@ target.
   database where the query runs. **History** keeps the SQL on this device for
   that target. A query that returns zero rows still shows its result columns.
 
+In **Databases** on the Project's development services page, use **Turn on
+capture** under **Local capture**, then start or restart the service. The
+switch applies to the Project's worktrees on that Machine. Happier can observe
+queries through eligible PostgreSQL connections and receive traces and logs
+from an instrumented service. A collector you configure in the service's
+environment takes precedence over Happier's local OpenTelemetry endpoint.
+
+Use **Check capture status** for the selected worktree. **Retry capture**
+resumes recording after a coverage failure. **Clear capture** clears data for
+that worktree. Turning off capture stops recording and keeps running services
+connected until they stop.
+
 When an Environment has a collector, its **Telemetry** tab shows **Endpoints**,
 **Traces**, **Logs**, and **Queries** for the selected time window. Open a trace
 to inspect the request and the steps that contributed to its duration. Use the
-tab's menu to open Settings or, with write access, clear the Environment's
-captured data after confirming. An offline collector leaves that data
+tab's menu to open Settings. An offline collector leaves captured data
 unavailable until the Machine reconnects.
 
 On a wide **Services → Apps** list, enable **Requests · 24 h** from **Columns**
