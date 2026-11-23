@@ -2,6 +2,7 @@ import * as React from 'react';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { AttachedTriggerPage } from './useWorkflowTriggerSets';
 import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { isKeepGoingTriggerTargetV1 } from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
 
 import {
     listBuiltinWorkflowReferenceOptions,
@@ -15,9 +16,6 @@ export { useWorkflowReferenceDefinition as useTriggerWorkflowDefinition } from '
 
 import { NOTIFY_ME_ACTION_ID, readTriggerThen } from './sessionTriggerForm';
 import type { TriggerWorkflowOption } from './TriggerPopover';
-
-/** Keep going until done has one attach, the Goal control (04 §5.5, S16c); no trigger picker offers it. */
-const KEEP_GOING_REF = 'builtin:keep-going';
 
 /**
  * The workflows a trigger's **Run a workflow** can name (07 S16b: Built-in first, then your
@@ -45,7 +43,7 @@ export function useTriggerThenOptions(options?: Readonly<{ libraryEnabled?: bool
     const { title: resolveWorkflowTitle, isPending: isWorkflowTitlePending } = useWorkflowReferenceTitleRead(references, true, options?.accountLifetime);
     const workflowOptions = React.useMemo((): readonly TriggerWorkflowOption[] => [
         ...(libraryEnabled ? listBuiltinWorkflowReferenceOptions() : [])
-            .filter((option) => option.ref !== KEEP_GOING_REF)
+            .filter((option) => !isKeepGoingTriggerTargetV1({ kind: 'workflow', ref: option.ref }))
             .map((option) => ({ ref: option.ref, title: option.title, ...(option.origin === undefined ? {} : { origin: option.origin }) })),
         ...libraryOptions,
     ], [libraryEnabled, libraryOptions]);

@@ -142,6 +142,7 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
     const shownMachine = machines.find((entry) => entry.id === shownTarget?.machineId);
     const runComposer = useWorkflowRunComposerModal({ open, anchorRef: runAnchorRef, props: {
         inputs: plugin.definition.inputs, definition: plugin.definition, workflowName: plugin.title,
+        optionsConsumer: { kind: 'workflow', workflow: catalogSource.workflow },
         ...(inputPresentation === undefined ? {} : { inputPresentation }),
         preview: plugin.description ?? '', values, onChangeValues: setValues, rawTextValues, onChangeRawTextValues: setRawTextValues,
         machineId: shownTarget?.machineId ?? null, directory: shownTarget && isWorkflowProjectTarget(shownTarget) ? shownTarget.directory : null, serverId: props.serverId,

@@ -1317,6 +1317,35 @@ describe('editor workflow composer', () => {
         expect(screen.findByTestId('workflow-builtin-more-settings-session')).not.toBeNull();
     });
 
+    it('applies the Workflow Start Action policy to catalog Run input options', async () => {
+        const store = getStorage();
+        const settings = store.getState().settings;
+        await act(async () => home.setActionPolicy(appliedHome.serverId, 'workflow.run.start', 'ui', 'off'));
+        const screen = await renderScreen(<AppPaneProvider>
+            <WorkflowBuiltinEditorHostScreen workflow="builtin:plan-with-a-panel" intent="run" />
+        </AppPaneProvider>);
+        try {
+            const { WorkflowRunComposer } = await import('../run/WorkflowRunComposer');
+            const composer = screen.root.findByType(WorkflowRunComposer);
+            const chip = composer.findByType(AgentInput).props.extraActionChips.find(
+                (entry: { key: string }) => entry.key === 'workflow-start-inputs');
+            const content = chip?.collapsedContentPopover?.renderContent;
+            if (!React.isValidElement(content)) throw new Error('Expected the Workflow inputs panel');
+            const panel = await renderScreen(content);
+            try {
+                const readEngines = () => panel.root.findAll(node => node.props.field?.path === 'engines'
+                    && node.props.optionsStatus !== undefined)[0];
+                await waitForHomeGovernance(() => expect(readEngines()?.props.optionsStatus).toMatch(/^(ready|failed)$/u));
+                expect(readEngines()?.props.optionsNotice.props.diagnosticCode).toBe('action_disabled');
+            } finally {
+                await panel.unmount();
+            }
+        } finally {
+            await screen.unmount();
+            store.setState({ settings });
+        }
+    });
+
     it('applies the export Action policy to the built-in Workflow export', async () => {
         const { Modal } = await import('@/modal');
         const { WorkflowEditorBody } = await import('./WorkflowEditorBody');

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { getBuiltinWorkflowCatalogV1, type BuiltinWorkflowCatalogEntryV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
+import { isKeepGoingTriggerTargetV1 } from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import {
     HostCollection as Collection,
@@ -116,7 +117,7 @@ export function WorkflowBuiltinSessionButton(props: Readonly<{ entry: BuiltinWor
             if (!scope || accountLifetime === null || accountLifetime && !accountLifetime.isCurrent()
                 || !existingSessions.some((session) => session.sessionId === sessionId)) return;
             setOpen(false);
-            if (props.entry.id === 'builtin:keep-going') {
+            if (isKeepGoingTriggerTargetV1({ kind: 'workflow', ref: props.entry.id })) {
                 openSessionGoalControl({ serverId: scope.serverId, sessionId });
                 router.push(resolveSessionRoutePathForSurface(sessionId, 'chat', { serverId: scope.serverId }) as never);
             } else {
