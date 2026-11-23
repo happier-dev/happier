@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ACCOUNT_ERASURE_HTTP_PATH_V1 } from "@happier-dev/protocol/auth/accountErasure";
+import { ACCOUNT_ERASURE_PREVIEW_HTTP_PATH_V1, AccountErasurePreviewResponseV1Schema } from "@happier-dev/protocol/auth/accountErasureReview";
 
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
@@ -107,6 +108,38 @@ describe("registerAccountErasureRoute", () => {
             },
         } });
         expect(disconnect).not.toHaveBeenCalled();
+    });
+
+    it("previews only the signed-in Account's shared Environments and counts each active reader once", async () => {
+        for (const id of ["impact-owner", "impact-reader", "impact-disabled", "foreign-owner"]) await createAccount(id);
+        await db.account.update({ where: { id: "impact-disabled" }, data: { status: "disabled" } });
+        const addEnvironment = async (id: string, accountId: string, audienceIds: string[], deletedAt?: Date) => {
+            await db.machine.create({ data: { id, accountId, metadata: "{}" } });
+            await db.artifact.create({ data: { id, accountId, header: new Uint8Array(), body: new Uint8Array(),
+                dataEncryptionKey: new Uint8Array() } });
+            await db.projectSource.create({ data: { id, createdByAccountId: accountId, name: id, attachments: [],
+                audience: audienceIds.map(accountId => ({ level: "view", principal: { kind: "account", accountId } })) } });
+            await db.deploymentEnvironment.create({ data: { id, projectSourceId: id, createdByAccountId: accountId,
+                controllerMachineId: id, protection: "production", purpose: "standard", deployerMode: "members",
+                contentArtifactId: id, contentHeaderVersion: 1, contentBodyVersion: 1, deletedAt } });
+        };
+        await addEnvironment("shared", "impact-owner", ["impact-owner", "impact-disabled", "impact-reader"]);
+        await addEnvironment("private", "impact-owner", []);
+        await addEnvironment("removed", "impact-owner", ["impact-reader"], new Date());
+        await addEnvironment("foreign", "foreign-owner", ["impact-owner"]);
+        const disconnect = vi.fn();
+        await withAuthenticatedTestApp(app => {
+            app.decorate("disconnectAccountSockets", disconnect);
+            registerAccountErasureRoute(app);
+        }, async app => {
+            const response = await app.inject({ method: "GET", url: ACCOUNT_ERASURE_PREVIEW_HTTP_PATH_V1,
+                headers: { "x-test-user-id": "impact-owner" } });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(AccountErasurePreviewResponseV1Schema.parse(response.json())).toEqual({ sharedEnvironments: [{ environmentId: "shared", contentArtifactId: "shared",
+                contentHeaderVersion: 1, contentBodyVersion: 1, memberCount: 1 }] });
+        });
+        expect(disconnect).not.toHaveBeenCalled();
+        expect(await db.account.findUnique({ where: { id: "impact-owner" }, select: { status: true } })).toEqual({ status: "active" });
     });
 
     it("rejects malformed confirmation before deleting the Account or disconnecting sockets", async () => {

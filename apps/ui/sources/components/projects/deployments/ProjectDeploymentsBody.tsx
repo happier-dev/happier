@@ -237,6 +237,7 @@ const ProjectDeploymentsPage = React.memo(
     const routeEnvironmentId = readProjectRouteStringParam(params.deploymentEnvironment);
     const routeDeploymentId = readProjectRouteStringParam(params.deployment);
     const routeDatabase = readProjectRouteStringParam(params.deploymentService);
+    const routeDetachTarget = readProjectRouteStringParam(params.deploymentDetachTarget);
     const routeDefaults = readProjectRouteStringParam(params.deploymentSettings) === 'defaults';
     const routeTab = readProjectRouteStringParam(params.deploymentTab);
     const routeSection = readProjectRouteStringParam(params.deploymentSection);
@@ -287,6 +288,7 @@ const ProjectDeploymentsPage = React.memo(
         deploymentEnvironment: next.environmentId ?? undefined,
         deployment: next.deploymentId ?? undefined,
         deploymentService: next.database ?? undefined,
+        deploymentDetachTarget: undefined,
         // Another Environment opens on its Overview.
         ...(sameEnvironment ? {} : { deploymentTab: undefined, deploymentSection: undefined }),
       });
@@ -607,6 +609,8 @@ const ProjectDeploymentsPage = React.memo(
           onDeleted={leaveDeleted}
           destination={destination}
           onNavigate={navigateEnvironment}
+          detachReview={routeDetachTarget ? { targetLinkId: routeDetachTarget,
+            onOpened: () => router.setParams({ deploymentDetachTarget: undefined }) } : undefined}
           onOpenReceipt={(deploymentId) =>
             setSelection({ environmentId, deploymentId })
           }

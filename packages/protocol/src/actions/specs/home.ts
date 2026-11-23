@@ -1,3 +1,4 @@
+import { HOME_ACCOUNTS_DELETE_ACTION_ID_V1 } from '../accountLifecycleActionIdsV1.js';
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import {
   HomeAccountDeleteResultV1Schema,
@@ -251,7 +252,7 @@ function createHomeGovernanceActionSpecs() {
     inputHints: { fields: [ACCOUNT_ID_FIELD] },
   }),
   homeDomainActionRow({
-    id: 'home.accounts.delete', approval: {result: 'required'},
+    id: HOME_ACCOUNTS_DELETE_ACTION_ID_V1, approval: {result: 'required'},
     confirmVerb: { key: 'common.delete', fallback: 'Delete' }, irreversible: true,
     title: 'Delete Home Account',
     description: 'Erase one Account through the Home\'s single erasure owner. Incomplete cleanup is reported explicitly.',

@@ -1,9 +1,17 @@
 import { homeGovernanceErrorHttpStatusV1 } from '@happier-dev/protocol/home/governance';
 import { ACCOUNT_ERASURE_HTTP_PATH_V1, AccountErasureErrorV1Schema, AccountErasureRequestV1Schema, AccountErasureResponseV1Schema } from '@happier-dev/protocol/auth/accountErasure';
+import { ACCOUNT_ERASURE_PREVIEW_HTTP_PATH_V1, AccountErasurePreviewResponseV1Schema } from '@happier-dev/protocol/auth/accountErasureReview';
 import { accountErasureFailureResponse, deleteAccountForErasure } from "@/app/plugins/data/accountDataErase";
 import { requirePresentUser } from "@/app/api/utils/requirePresentUser";
+import { readAccountErasurePreviewInTx } from "@/app/deployments/deploymentAccountPurge";
+import { inTx } from "@/storage/inTx";
 import { type Fastify } from "../../types";
 export function registerAccountErasureRoute(app: Fastify): void {
+    app.get(
+        ACCOUNT_ERASURE_PREVIEW_HTTP_PATH_V1,
+        { preHandler: app.authenticate, schema: { response: { 200: AccountErasurePreviewResponseV1Schema } } },
+        async (request, reply) => await reply.send(await inTx(tx => readAccountErasurePreviewInTx(tx, request.userId))),
+    );
     app.post(
         ACCOUNT_ERASURE_HTTP_PATH_V1,
         {

@@ -4,6 +4,7 @@ import { readContributedActionReviewV1 } from '@happier-dev/protocol/actions/con
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { ActionIdSchema, REGISTRY_SOURCE_DELETE_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { PROVIDER_CONNECTION_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/providers/providerActionIdsV1';
+import { AccountErasureReviewV1Schema } from '@happier-dev/protocol/auth/accountErasureReview';
 import { buildApprovalPreviewSummary, readTeamCredentialApprovalSources } from '@happier-dev/protocol/actions/actionExecutor';
 import { formatPendingGovernanceSummary } from './governanceApprovalSummary';
 import { appendTeamCredentialSourceSummary } from '@happier-dev/protocol/actions/specs/teamCredentialApproval';
@@ -264,6 +265,8 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
         : t('actionPresentation.summary', { actionId: spec.id,
             source: summarySource === `${spec.title}.` ? `${titleSource}.`
                 : english ? summarySource : resolveActionSummary(spec.id, summarySource), subject, role: roleIdentity });
+    const erasure = AccountErasureReviewV1Schema.safeParse(readRecord(input.preview).accountErasure);
+    const shareLoss = erasure.success ? erasure.data.sharedEnvironments.map(row => t('homeGovernance.erasureSharedEnvironment', row)) : [];
     const visibleSummary = teamMember && !distinctAuthoredSummary ? null
         : !distinctAuthoredSummary && summarySource === `${spec.title}.`
         && (summary === titleSource || summary === `${titleSource}.`) ? null : summary;
@@ -279,7 +282,7 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
     return {
         confirmLabel,
         title,
-        summary: [confirmationDraftSubject, visibleSummary, disclosure].filter(Boolean).join('\n\n') || null,
+        summary: [confirmationDraftSubject, visibleSummary, disclosure, ...shareLoss].filter(Boolean).join('\n\n') || null,
         ...(spec.irreversible ? { destructive: true } : {}),
     };
 }

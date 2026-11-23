@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import fastify from 'fastify';
 import tweetnacl from 'tweetnacl';
-import { API_TOKEN_FULL_GRANT_V1, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol';
+import { API_TOKEN_FULL_GRANT_V1, ARTIFACT_PLAIN_DATA_KEY_MARKER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import type { ApprovalRequest } from '@happier-dev/protocol';
 import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams';
 
@@ -281,6 +281,98 @@ describe('Home family CLI adapter', () => {
       serverId: 'home',
     })).toMatchObject({ ok: false });
     expect(rebuilt).toBe(false);
+  });
+
+  it('discloses shared Environment access loss to the requesting agent before approval', async () => {
+    const accountId = 'impact-owner';
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    const binding = { token, serverId: 'home', serverHttpBaseUrl: 'http://home.test' };
+    const sharedEnvironments = [{ environmentId: 'shared', memberCount: 2, name: 'Shared staging' }];
+    const preflight = vi.fn();
+    const readHeaders = vi.fn();
+    const deleteAccount = vi.fn();
+    app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 0 }));
+    app.get('/v1/auth/account/delete/preview', async request => {
+      preflight(request.headers.authorization);
+      return { sharedEnvironments: [{ environmentId: 'shared', memberCount: 2, contentArtifactId: 'shared-content',
+        contentHeaderVersion: 1, contentBodyVersion: 1 }] };
+    });
+    app.post('/v1/artifacts/read', async request => {
+      readHeaders(request.body);
+      return { projection: 'headers', items: [{ artifactId: 'shared-content', ok: true, artifact: {
+        id: 'shared-content', ownerAccountId: accountId, access: 'owner', publicAudience: 'none', encryptionMode: 'plain',
+        header: encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Shared staging' }),
+        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      } }] };
+    });
+    app.post('/v1/home/accounts/delete', async () => { deleteAccount(); return { status: 'deleted' }; });
+    const { executor } = createCliActionExecutorHarness({ ...binding, sessionId: 'cli-global', mode: 'plain', ctx: null }, {
+      ...createAccountServerActionDeps(binding), approvalsCreate: async () => ({ artifactId: 'impact-approval' }),
+    });
+    expect(await executor.execute('home.accounts.delete', { accountId }, { surface: 'agent', authority: 'account_automation',
+      serverId: 'home', runtimeAccountId: accountId, actionRequestId: 'agent-erasure-impact', actionCaller: { kind: 'host' },
+    })).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'impact-approval',
+      accountErasure: { sharedEnvironments } } });
+    expect(preflight).toHaveBeenCalledExactlyOnceWith(`Bearer ${token}`);
+    expect(readHeaders).toHaveBeenCalledExactlyOnceWith({ artifactIds: ['shared-content'], projection: 'headers' });
+    expect(deleteAccount).not.toHaveBeenCalled();
+  });
+
+  it('returns the deployment blocker and its recovery from Home Account erasure', async () => {
+    const accountId = 'account-1';
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    const blocker = { reason: 'provider_resource', environmentId: 'env-1',
+      targetLinkId: 'link-1', targetKind: 'cloudflare-workers' };
+    let deletes = 0;
+    app.get('/v1/auth/account/delete/preview', async () => ({ sharedEnvironments: [] }));
+    app.post('/v1/home/accounts/delete', async (request, reply) => {
+      deletes += 1;
+      expect(request.body).toEqual({ accountId });
+      return reply.code(409).send({ error: 'account_erasure_deployment_cleanup_required', blocker });
+    });
+    const binding = { token, serverId: 'home', serverHttpBaseUrl: 'http://home.test' };
+    let stored: ApprovalRequest | null = null;
+    const { executor } = createCliActionExecutorHarness({ ...binding, sessionId: 'cli-global', mode: 'plain', ctx: null }, {
+      ...createAccountServerActionDeps(binding),
+      approvalsCreate: async ({ request }) => {
+        stored = ApprovalRequestV2Schema.parse(request);
+        return { artifactId: 'account-erasure-approval' };
+      },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => {
+        if (!stored) return { ok: false, errorCode: 'not_found', error: 'not_found' };
+        const transition = decideApprovalRequestTransition(stored, request);
+        if (!transition.ok) return transition;
+        stored = ApprovalRequestV2Schema.parse(request);
+        return { ok: true };
+      },
+      isApprovalExecutionOriginCurrent: async () => true,
+    });
+    const failure = {
+      ok: false, errorCode: 'account_erasure_deployment_cleanup_required',
+      details: { blocker, nextAction: 'detach_keep_running' },
+    };
+    const request = { accountId: 'account-1' };
+    await expect(executor.execute('home.accounts.delete', request, {
+      surface: 'cli', authority: 'present_user', serverId: 'home',
+      presentUserConfirmation: { actionId: 'home.accounts.delete' },
+    })).resolves.toMatchObject(failure);
+    expect(await executor.execute('home.accounts.delete', request, {
+      surface: 'agent', authority: 'account_automation', serverId: 'home', runtimeAccountId: 'account-1',
+      actionRequestId: 'agent-erasure-request', actionCaller: { kind: 'host' },
+    })).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'account-erasure-approval' } });
+    expect(deletes).toBe(1);
+    await expect(executor.execute('approval.request.decide', {
+      artifactId: 'account-erasure-approval', decision: 'approve',
+    }, { surface: 'ui', authority: 'present_user', serverId: 'home', runtimeAccountId: 'account-1',
+      actionCaller: { kind: 'host' },
+    })).resolves.toMatchObject({ ok: true, result: { status: 'failed', execution: failure } });
+    expect(stored).toMatchObject({ status: 'failed', execution: failure });
+    await expect(executor.execute('approval.request.get', { artifactId: 'account-erasure-approval' }, {
+      surface: 'rpc', authority: 'account_automation', serverId: 'home', runtimeAccountId: 'account-1',
+      actionCaller: { kind: 'host' },
+    })).resolves.toMatchObject({ ok: true, result: { request: { status: 'failed', execution: failure } } });
+    expect(deletes).toBe(2);
   });
 
   const summary = {

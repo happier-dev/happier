@@ -1,13 +1,43 @@
 import { DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import type { AccountErasureDeploymentBlockerV1 } from '@happier-dev/protocol/home/governance';
+import type { AccountErasurePreviewResponseV1 } from '@happier-dev/protocol/auth/accountErasureReview';
 import type { Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
-import { sourceFromRow, sourceOwner } from '@/app/projects/sources/projectSourceService';
+import { resolveProjectSourceAudiencesInTx, sourceFromRow, sourceOwner } from '@/app/projects/sources/projectSourceService';
 import { readProjectSourceContentReferencesInTx } from '@/app/projects/sources/projectSourceContentReferences';
 import { deploymentInProgressStates } from './deploymentAcceptedExecution';
 import { readDeploymentTargetCleanupBlockerInTx } from './deploymentDispositionService';
 import { readDeploymentPendingContent } from './deploymentPendingService';
 import { clearErasedAccountDeploymentEnvironmentReferencesInTx } from '@/app/automations/automationDeploymentEnvironment';
+
+/** Erasure disclosure opens only the deleting Account's shared Environment headers. */
+export async function readAccountErasurePreviewInTx(tx: Tx, accountId: string): Promise<AccountErasurePreviewResponseV1> {
+    const owned = await tx.projectSource.findMany({
+        where: {
+            createdByAccountId: accountId,
+            NOT: { audience: { equals: [] } },
+            deploymentEnvironments: { some: { createdByAccountId: accountId, deletedAt: null } },
+        },
+        orderBy: { id: 'asc' },
+        include: { deploymentEnvironments: {
+            where: { createdByAccountId: accountId, deletedAt: null },
+            orderBy: { id: 'asc' },
+            select: { id: true, contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true },
+        } },
+    });
+    const shared = owned.flatMap(row => {
+        const parsed = sourceFromRow(row);
+        if (!parsed.success || parsed.data.audience.length === 0) return [];
+        const owner = sourceOwner(parsed.data);
+        return owner.kind === 'account' && owner.accountId === accountId ? [{ row, source: parsed.data }] : [];
+    });
+    const audiences = await resolveProjectSourceAudiencesInTx(tx, shared.map(entry => entry.source));
+    return { sharedEnvironments: shared.flatMap(({ row }, index) => {
+        const memberCount = audiences[index].filter(id => id !== accountId).length;
+        if (!memberCount) return [];
+        return row.deploymentEnvironments.map(({ id, ...content }) => ({ environmentId: id, memberCount, ...content }));
+    }) };
+}
 
 const refused = (reason: AccountErasureDeploymentBlockerV1['reason'], scope: Omit<AccountErasureDeploymentBlockerV1, 'reason'> = {}) =>
     ({ status: 'rejected' as const, code: 'account_erasure_deployment_cleanup_required' as const, blocker: { reason, ...scope } });

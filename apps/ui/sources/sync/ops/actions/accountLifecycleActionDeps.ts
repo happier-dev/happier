@@ -1,3 +1,5 @@
+import { ACCOUNT_ERASURE_PREVIEW_HTTP_PATH_V1, AccountErasurePreviewResponseV1Schema, accountErasureReviewUnavailable,
+    openAccountErasureReviewV1 } from '@happier-dev/protocol/auth/accountErasureReview';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
@@ -10,6 +12,34 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { t } from '@/text';
 import type { LazyActionAccountContext } from './actionAccountContext';
+
+export function createUiAccountErasureReviewReader(account: LazyActionAccountContext):
+    NonNullable<ActionExecutorDeps['readAccountErasureReview']> {
+    return async ({ accountId, context: { signal } }) => {
+        if (accountId !== account.accountId) return null;
+        try {
+            account.assertCurrent();
+            const response = await account.request(ACCOUNT_ERASURE_PREVIEW_HTTP_PATH_V1, { signal });
+            const preview = response.ok && AccountErasurePreviewResponseV1Schema.safeParse(await response.json());
+            if (!preview || !preview.success) return accountErasureReviewUnavailable();
+            const review = await openAccountErasureReviewV1(preview.data, async ids => {
+                const headers = await account.readArtifactHeaders(ids, { signal, fresh: true });
+                return headers.flatMap(result => {
+                    const artifact = result.status === 'fulfilled' ? result.value : null;
+                    return artifact?.isDecrypted && artifact.rawHeader && typeof artifact.bodyVersion === 'number'
+                        ? [{ artifactId: artifact.id, header: artifact.rawHeader,
+                            revision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion } }] : [];
+                });
+            });
+            account.assertCurrent();
+            return review;
+        } catch {
+            signal?.throwIfAborted();
+            account.assertCurrent();
+            return accountErasureReviewUnavailable();
+        }
+    };
+}
 
 /** Admission supplies the original Account; Auth still owns credential custody and teardown. */
 export function createUiAccountLifecycleAction(account: LazyActionAccountContext,

@@ -111,7 +111,8 @@ export async function consumeDeferredCliApprovalResult(result: ActionExecuteResu
       localDecision = options.execute('approval.request.decide', { artifactId: pending.data.artifactId, decision },
         { ...options.context, signal, actionRequestId: randomUUID() });
       return localDecision;
-    }, async () => previewFromReceipt(await readReceipt())));
+    }, async () => pending.data.accountErasure
+      ? { accountErasure: pending.data.accountErasure } : previewFromReceipt(await readReceipt())));
     const observation = new Promise<ActionExecuteResult>((resolve, reject) => {
       let reading = false;
       let invalidated = false;

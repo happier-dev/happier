@@ -192,6 +192,12 @@ export const en = {
     errorErasureTransitionCleanupPending: 'Account deletion is waiting for encryption cleanup. Try deleting the account again.',
     errorErasureUploadPending: 'An upload is still in progress. Wait for the upload to finish, then try deleting the account again.',
     errorErasureDeploymentCleanupRequired: 'Ask a Home administrator to identify the deployment blocker before deleting the account.',
+    erasureSharedEnvironment: ({ name, memberCount }: { name: string; memberCount: number }) =>
+        `${name} will be deleted. ${memberCount} other ${memberCount === 1 ? 'member will' : 'members will'} lose access.`,
+    erasureReviewUnavailable: 'Could not check which shared Environments would be deleted. Try again.',
+    erasureDeploymentEnvironment: ({ name, message }: { name: string; message: string }) => `${name}\n\n${message}`,
+    erasureDetachTarget: 'Detach and keep running',
+    erasureViewDeployment: 'View deployment',
     erasureDeploymentBlocker: {
         running_work: 'Wait for the deployment work to finish before deleting the account.',
         provider_resource: 'Happier still manages this target. Choose Detach and keep running for it in Deployments before deleting the account.',

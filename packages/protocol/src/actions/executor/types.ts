@@ -154,6 +154,7 @@ import type {
   PUBLIC_ACTION_INPUT_SCHEMAS,
   SessionTranscriptGetResult,
 } from '../actionSpecs.js';
+import type { AccountErasureReviewV1 } from '../../auth/accountErasureReview.js';
 import type { HomeDomainActionIdV1 } from '../homeDomainActionFamily.js';
 import type { AdmittedActionInputById } from '../actionSpecs.js';
 import type { WorkspaceActionId } from '../workspaceActionFamily.js';
@@ -3396,6 +3397,8 @@ export type ActionExecutorDeps = Readonly<{
    * The Home's transaction — never this port — decides authority, feature
    * availability and conflict, so a host implements reachability only.
    */
+  readAccountErasureReview?: (args: Readonly<{ accountId: string; context: ActionExecutorContext }>) =>
+    Promise<AccountErasureReviewV1 | ActionExecuteFailure | null>;
   homeDomainAction?: (args: Readonly<{
     actionId: HomeDomainActionIdV1;
     input: unknown;

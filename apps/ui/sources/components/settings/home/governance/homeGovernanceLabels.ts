@@ -1,4 +1,4 @@
-import { HomeGovernanceErrorV1Schema } from '@happier-dev/protocol/home/governance';
+import { AccountErasureDeploymentBlockerV1Schema, projectAccountErasureDeploymentActionDetailsV1 } from '@happier-dev/protocol/home/governance';
 import type {
     AccountStatusV1,
     HomeAdmissionModeV1,
@@ -159,7 +159,7 @@ export function homeActionUnavailableReasonLabel(reason: HomeAccountActionUnavai
  */
 export function homeGovernanceFailureNotice(
     failure: HomeDomainFailure,
-    context?: Readonly<{ effect: 'read' | 'write' }>,
+    context?: Readonly<{ effect: 'read' | 'write'; environmentName?: string }>,
 ): Readonly<{ title: string; body: string }> {
     const effect = context?.effect ?? 'write';
     if (failure.code === 'username-changed') {
@@ -176,27 +176,33 @@ export function homeGovernanceFailureNotice(
     }
     return Object.freeze({
         title: effect === 'read' ? t('homeGovernance.unavailableTitle') : t('homeGovernance.changeFailedTitle'),
-        body: homeGovernanceFailureBody(failure, effect),
+        body: homeGovernanceFailureBody(failure, effect, context?.environmentName),
     });
 }
 
-/**
- * What a refused self-deletion is called.
- *
- * The Home answers the last active Home owner, or the last owner of a staffed
- * Team, with the same typed ownership-transfer verdicts it gives an
- * administrator, so they are shown with the same words: the deletion was
- * answered, repeating it cannot succeed, and the actionable step is to make
- * someone else an owner first. An encryption-cleanup or upload refusal instead
- * explains that the same deletion can be retried. Other typed refusals use the
- * Action presenter. An absent or unreadable answer keeps the "not confirmed"
- * notice because the deletion may still have happened.
- */
-export function accountErasureFailureNotice(error: unknown): Readonly<{ title: string; body: string }> {
+export function accountErasureDeploymentRecovery(error: unknown) {
+    if (!(error instanceof HappyError) || error.code !== 'account_erasure_deployment_cleanup_required') return null;
+    const blocker = readErasureDeploymentBlocker(error.details);
+    return blocker ? projectAccountErasureDeploymentActionDetailsV1(blocker) : null;
+}
+
+function readErasureDeploymentBlocker(details: unknown) {
+    const parsed = AccountErasureDeploymentBlockerV1Schema.safeParse(
+        details && typeof details === 'object' && 'blocker' in details ? details.blocker : undefined,
+    );
+    return parsed.success ? parsed.data : null;
+}
+
+/** Both erasure surfaces use the Home's typed verdict. An unreadable erasure result remains unconfirmed. */
+export function accountErasureFailureNotice(error: unknown, environmentName?: string): Readonly<{ title: string; body: string }> {
+    if (error instanceof HappyError && error.code === 'account_erasure_review_unavailable') {
+        return { title: t('homeGovernance.changeFailedTitle'), body: t('homeGovernance.erasureReviewUnavailable') };
+    }
     if (error instanceof HappyError && (error.code === 'account_erasure_transition_cleanup_pending'
         || error.code === 'account_erasure_upload_pending'
         || error.code === 'account_erasure_deployment_cleanup_required')) {
-        return homeGovernanceFailureNotice({ kind: 'conflict', retryable: true, code: error.code, details: error.details });
+        return homeGovernanceFailureNotice({ kind: 'conflict', retryable: true, code: error.code, details: error.details },
+            { effect: 'write', environmentName });
     }
     if (error instanceof HappyError
         && (error.code === 'home_owner_transfer_required' || error.code === 'team_owner_transfer_required')) {
@@ -217,7 +223,7 @@ export function accountErasureFailureNotice(error: unknown): Readonly<{ title: s
     });
 }
 
-function homeGovernanceFailureBody(failure: HomeDomainFailure, effect: 'read' | 'write'): string {
+function homeGovernanceFailureBody(failure: HomeDomainFailure, effect: 'read' | 'write', environmentName?: string): string {
     switch (failure.code) {
         case 'home_governance_forbidden':
             return t('homeGovernance.errorForbidden');
@@ -236,10 +242,10 @@ function homeGovernanceFailureBody(failure: HomeDomainFailure, effect: 'read' | 
         case 'account_erasure_upload_pending':
             return t('homeGovernance.errorErasureUploadPending');
         case 'account_erasure_deployment_cleanup_required': {
-            const parsed = HomeGovernanceErrorV1Schema.safeParse(failure.details);
-            if (!parsed.success || !('blocker' in parsed.data)) return t('homeGovernance.errorErasureDeploymentCleanupRequired');
-            const blocker = parsed.data.blocker;
+            const blocker = readErasureDeploymentBlocker(failure.details);
+            if (!blocker) return t('homeGovernance.errorErasureDeploymentCleanupRequired');
             const message = t(`homeGovernance.erasureDeploymentBlocker.${blocker.reason}`);
+            if (environmentName) return t('homeGovernance.erasureDeploymentEnvironment', { name: environmentName, message });
             const reference = blocker.targetLinkId
                 ? [blocker.targetKind, blocker.targetLinkId].filter(Boolean).join(' ')
                 : blocker.deploymentId ?? blocker.environmentId ?? blocker.projectSourceId ?? blocker.artifactId;

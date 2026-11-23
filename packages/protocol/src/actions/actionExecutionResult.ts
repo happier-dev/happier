@@ -1,3 +1,4 @@
+import { AccountErasureReviewV1Schema } from '../auth/accountErasureReview.js';
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { SessionGoalControlFailureV1Schema } from '../sessions/work/state/sessionWorkStateRpc.js';
@@ -153,6 +154,7 @@ export type ActionOperationAcceptedResult = z.infer<typeof ActionOperationAccept
 /** A policy-deferred Action has not failed or executed; the present user owns the next step. */
 export const ActionApprovalRequestCreatedResultSchema = lazyZodSchema(() => z.strictObject({
   approvalProfile: z.optional(ApprovalProfileResolutionV1Schema),
+  accountErasure: z.optional(AccountErasureReviewV1Schema),
   kind: z.literal('approval_request_created'),
   artifactId: z.string().check(z.trim(), z.minLength(1)),
   actionId: z.string().check(z.trim(), z.minLength(1)),

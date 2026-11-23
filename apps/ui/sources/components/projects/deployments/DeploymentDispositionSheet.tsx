@@ -51,6 +51,8 @@ export type DeploymentDispositionSheetInput = Readonly<{
     cancel: ReturnType<typeof createDeploymentActions>['cancel'] | null; review: DeploymentReviewHandle;
     onOpenReceipt: (deploymentId: string) => void; onHistory: () => void }>;
   name: string;
+  /** An explicit request to review Detach starts on that choice. */
+  initialChoice?: 'detach';
   /** Where its services run, by name ("vps-1"); null when no Machine is linked. */
   machine: string | null;
   /** The hosting provider, when the target is a contributed platform. */
@@ -99,8 +101,8 @@ function DeploymentDispositionSheet(
     // A provider resource starts where the removal owner says: Delete for what Happier created, Unlink otherwise.
     // On a Machine, something running starts on the choice that stops nothing; Stop and remove is one press away.
     // A subject Happier cannot remove never starts on that unavailable choice.
-    props.providerResource ? props.providerResource.defaultChoice === 'delete' ? 'remove' : 'detach'
-      : props.running || !props.canRemove ? 'detach' : 'remove',
+    props.initialChoice ?? (props.providerResource ? props.providerResource.defaultChoice === 'delete' ? 'remove' : 'detach'
+      : props.running || !props.canRemove ? 'detach' : 'remove'),
   );
   // Provider deletion is irreversible and outside Happier: the person types the resource's name to enable it.
   const [typedResource, setTypedResource] = React.useState('');

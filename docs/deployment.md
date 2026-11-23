@@ -15,14 +15,23 @@ revoked Machine. **Detach and keep running** releases Happier’s custody, inclu
 after a failed teardown or a disconnected provider credential. Detach works
 without the provider credential and leaves the provider resource running.
 
+Before confirming their own Account erasure, the person sees each shared
+Environment that will be deleted and the number of other members who will lose
+access. The Home’s preview reads the Account’s shared Environments and counts
+their active audiences. The client opens the names from the selected Artifact
+headers, including for encrypted Accounts. The same typed facts are available
+in the CLI or agent’s approval preview.
+
 The purge deletes the Account’s own deployment records and their access grants.
 It preserves other Accounts’ and Teams’ records and refuses when an independently
 owned record would lose an active Automation binding or a required graph
 reference. The HTTP 409 response `account_erasure_deployment_cleanup_required`
 carries a typed blocker and an owned deployment, Environment, target, Source or
-Artifact reference when available. Both erasure surfaces show the next action.
-For a managed target with no connected credential, choose **Detach and keep running**
-in Deployments before retrying erasure.
+Artifact reference when available. The public Action result carries the blocker
+and its typed `nextAction` for clients including the CLI. Settings names the
+Environment when its header is readable. For a still-managed target or an
+unfinished teardown, **Detach and keep running** opens the existing review
+for that target, where the person can confirm Detach before retrying erasure.
 
 Settled Receipts belong to their Environment's history. Erasing the requester
 clears their attribution. Erasing the Account that owns a settled Receipt's

@@ -243,6 +243,7 @@ export const DeploymentEnvironmentDetail = React.memo(
       onNavigate?: (destination: DeploymentEnvironmentDestinationV1) => void;
       /** The Action owner's target-membership Actions (Delete environment, Link and Unlink target); absent where the page cannot write. */
       disposition?: Pick<ReturnType<typeof createDeploymentActions>, 'deleteEnvironment' | 'unlink' | 'teardown' | 'link'> | null;
+      detachReview?: Readonly<{ targetLinkId: string; onOpened: () => void }>;
       /** The Environment was deleted: the page leaves it. */
       onDeleted?: () => void;
       /** Opens where a refused press's typed recovery leads (the Source, Variables, Machines…), as the receipt does. */
@@ -658,7 +659,7 @@ export const DeploymentEnvironmentDetail = React.memo(
     const hasNoDeploymentHistory = (targetLinkId: string | null) => knownHistory !== null && !knownHistory.hasNextPage
       && knownHistory.coverage !== 'partial' && !knownHistory.items.some(receipt => receipt.operation !== 'teardown'
         && (!targetLinkId || receipt.targetLinkId === targetLinkId));
-    const openDisposition = (targetLinkId: string | null) => {
+    const openDisposition = (targetLinkId: string | null, initialChoice?: 'detach') => {
       const links = disposition.review.retainedTargets;
       const subject = targetLinkId ? links.find((link) => link.id === targetLinkId) ?? null : null;
       const running = subject ? subject.activeDeploymentId !== null : links.some((link) => link.activeDeploymentId !== null);
@@ -677,6 +678,7 @@ export const DeploymentEnvironmentDetail = React.memo(
         platforms.state.status === 'ready' ? platforms.state.targets : [], dispositionRow?.content?.providerResourceOrigin);
       showDeploymentDispositionSheet({
         subject: targetLinkId ? { kind: 'target', targetLinkId } : { kind: 'environment' },
+        initialChoice,
         // Stop and remove tears down first; then the target is unlinked or the Environment deleted.
         agentApproval: { environment: detail.environment, actionIds: [DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
           targetLinkId ? DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1 : DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1] },
@@ -1024,8 +1026,15 @@ export const DeploymentEnvironmentDetail = React.memo(
       }
     })();
 
+    const detachReview = props.detachReview;
     return (
       <View style={styles.page}>
+        {detachReview && disposition.canDelete
+          && disposition.review.retainedTargets.some(link => link.id === detachReview.targetLinkId)
+          ? <OpenDetachReview key={detachReview.targetLinkId} open={() => {
+              openDisposition(detachReview.targetLinkId, 'detach');
+              detachReview.onOpened();
+            }} /> : null}
         <ItemList testID="project-deployments.environment">
           <PageHeader
             testID="project-deployments.environment.header"
@@ -1480,6 +1489,16 @@ export const DeploymentEnvironmentDetail = React.memo(
     );
   },
 );
+
+function OpenDetachReview({ open }: Readonly<{ open: () => void }>) {
+  const opened = React.useRef(false);
+  React.useEffect(() => {
+    if (opened.current) return;
+    opened.current = true;
+    open();
+  }, [open]);
+  return null;
+}
 
 /** The page's approval continuation, as the Environment and receipt pages use it. */
 export type DeploymentReviewHandle = Readonly<{

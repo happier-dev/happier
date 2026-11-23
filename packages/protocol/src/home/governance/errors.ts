@@ -77,6 +77,33 @@ export const AccountErasureDeploymentBlockerV1Schema = lazyZodSchema(() => z.str
 }));
 export type AccountErasureDeploymentBlockerV1 = z.infer<typeof AccountErasureDeploymentBlockerV1Schema>;
 
+const accountErasureDeploymentNextAction = {
+  running_work: 'wait_for_deployment',
+  provider_resource: 'detach_keep_running',
+  teardown_incomplete: 'detach_keep_running',
+  source_sharing: 'resolve_source_sharing',
+  environment_dependencies: 'identify_environment_dependency',
+  content_sharing: 'withdraw_artifact_sharing',
+  graph_dependencies: 'resolve_deployment_references',
+  foreign_automation: 'ask_automation_owner_to_delete',
+} as const satisfies Record<AccountErasureDeploymentBlockerV1['reason'], string>;
+
+export const AccountErasureDeploymentActionDetailsV1Schema = lazyZodSchema(() => z.strictObject({
+  error: z.literal('account_erasure_deployment_cleanup_required'),
+  blocker: AccountErasureDeploymentBlockerV1Schema,
+  nextAction: z.optional(z.enum(Object.values(accountErasureDeploymentNextAction))),
+}).check(z.refine(details => details.nextAction === undefined
+  || details.nextAction === accountErasureDeploymentNextAction[details.blocker.reason])));
+
+/** Recovery in a public Action result. The Home's HTTP refusal remains the source of the blocker. */
+export function projectAccountErasureDeploymentActionDetailsV1(blocker: AccountErasureDeploymentBlockerV1) {
+  return {
+    error: 'account_erasure_deployment_cleanup_required' as const,
+    blocker,
+    nextAction: accountErasureDeploymentNextAction[blocker.reason],
+  };
+}
+
 export const HomeGovernanceErrorV1Schema = lazyZodSchema(() => z.union([z.strictObject({
   error: z.enum(HomeGovernanceErrorCodeV1Schema.options.filter((value): value is Exclude<(typeof HomeGovernanceErrorCodeV1Schema.options)[number], 'account_erasure_managed_resources_review_required'> => !(['account_erasure_managed_resources_review_required'] as readonly string[]).includes(value))),
 }), z.strictObject({

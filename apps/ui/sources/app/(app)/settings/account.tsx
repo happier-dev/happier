@@ -28,7 +28,8 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { isComputerForDeviceSetup } from '@/components/hub/setup/useSetupDevice';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 import { Icon } from '@/components/ui/icons/Icon';
-import { accountErasureFailureNotice } from '@/components/settings/home/governance/homeGovernanceLabels';
+import { accountErasureDeploymentRecovery, accountErasureFailureNotice } from '@/components/settings/home/governance/homeGovernanceLabels';
+import { buildDeploymentEnvironmentHref } from '@/components/projects/deployments/deploymentNavigation';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
@@ -170,11 +171,40 @@ export const WorkspaceRouteBody = React.memo(() => {
             ...(actionId === 'account.credentials.forgetAll' ? { scope: 'all-credentials' } : {}) });
         if (!outcome.ok && isActionApprovalDeclinedErrorCode(outcome.errorCode)) return;
         if (!outcome.ok && actionId === 'account.delete') {
-            const notice = accountErasureFailureNotice(new HappyError(outcome.error, false, {
+            if (!accountExecution.isCurrent()) return;
+            const error = new HappyError(outcome.error, false, {
                 code: outcome.errorCode, details: outcome.details, failureCause: outcome.failureCause,
-            }));
+            });
+            const deploymentRecovery = accountErasureDeploymentRecovery(error);
+            const binding = accountExecution.binding;
+            const environmentId = deploymentRecovery?.blocker.environmentId;
+            const signal = accountExecution.getSignal();
+            let environment: { name: string; projectSourceId: string } | undefined;
+            if (environmentId && binding) {
+                const { createDeploymentReadTransport } = await import('@/components/projects/deployments/deploymentReadTransport');
+                const result = await createDeploymentReadTransport(binding).readEnvironmentNames(binding.scope, { environmentId }, { signal });
+                if (!accountExecution.isCurrent()) return;
+                if (result.ok) [environment] = result.value.items;
+            }
+            let recovery: { label: string; onPress: () => void } | undefined;
+            if (environment && environmentId && binding && deploymentRecovery) {
+                const { nextAction, blocker } = deploymentRecovery;
+                const address = { environmentId, serverId: binding.scope.serverId, projectSourceId: environment.projectSourceId };
+                const detach = nextAction === 'detach_keep_running' && blocker.targetLinkId;
+                const viewDeployment = nextAction === 'wait_for_deployment';
+                if (detach || viewDeployment) {
+                    const href = buildDeploymentEnvironmentHref(detach
+                        ? { ...address, tab: 'settings', detachTargetLinkId: detach }
+                        : { ...address, tab: 'history', deploymentId: blocker.deploymentId });
+                    recovery = {
+                        label: t(detach ? 'homeGovernance.erasureDetachTarget' : 'homeGovernance.erasureViewDeployment'),
+                        onPress: () => { if (accountExecution.isCurrent()) router.push(href); },
+                    };
+                }
+            }
+            const notice = accountErasureFailureNotice(error, environment?.name);
             alertActionFailure({ title: notice.title, reason: notice.body, code: outcome.errorCode,
-                requestId: outcome.requestId, context: readSafeFailureDetails(outcome.details) });
+                requestId: outcome.requestId, context: readSafeFailureDetails(outcome.details), recovery });
             return;
         }
         if (!outcome.ok) throw new HappyError(outcome.error, false, { code: outcome.errorCode, details: outcome.details });

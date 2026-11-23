@@ -1399,9 +1399,10 @@ describe('Project deployments page', () => {
   });
 
   it.each([
-    { origin: 'created' as const, starts: 'remove' },
-    { origin: undefined, starts: 'detach' },
-  ])('deletes a provider resource only after its name is typed (origin $origin starts on $starts)', async ({ origin, starts }) => {
+    { origin: 'created' as const, starts: 'remove', recovery: false },
+    { origin: undefined, starts: 'detach', recovery: false },
+    { origin: 'created' as const, starts: 'detach', recovery: true },
+  ])('reviews the provider disposition (origin $origin, recovery $recovery, starts on $starts)', async ({ origin, starts, recovery }) => {
     const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
     const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
     const { createDeploymentTargetsTestPlugin, DEPLOYMENT_TARGETS_TEST_EXECUTION } = await import('./deploymentPlatformTargetPlugin.testFixture');
@@ -1441,11 +1442,30 @@ describe('Project deployments page', () => {
     const actions = createDeploymentActions(context.accountLifetime, scope.projectSourceId);
     const teardown = vi.fn(async (_input: Parameters<typeof actions.teardown>[0]) => ({ ok: true as const, environmentId: detail.environment.id,
       revision: detail.environment.revision, deploymentId: 'provider-teardown', deploymentRevision: 1, state: 'queued' as const }));
+    const targetLinkId = detail.targetLinks[0]!.targetLink.id;
+    const unlink = vi.fn<typeof actions.unlink>(async () => ({ ok: true, targetLinkId,
+      targetLinkRevision: detail.targetLinks[0]!.targetLink.revision + 1, environmentId: detail.environment.id,
+      revision: detail.environment.revision + 1, detached: true }));
+    const onOpened = vi.fn();
     const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller}
       environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
       phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} lifetime={context.accountLifetime}
-      disposition={{ ...actions, teardown } as never} /></ModalProvider>);
+      detachReview={recovery ? { targetLinkId, onOpened } : undefined}
+      disposition={{ ...actions, teardown, unlink } as never} /></ModalProvider>);
     try {
+      if (recovery) {
+        await waitForContent(screen, 'project-deployments.disposition.confirm');
+        expect(onOpened).toHaveBeenCalledOnce();
+        expect(screen.findByTestId('project-deployments.disposition.choice:detach')?.props.accessibilityState)
+          .toMatchObject({ selected: true });
+        expect(unlink).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('project-deployments.disposition.confirm');
+        expect(unlink).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+          environmentId: detail.environment.id, targetLinkId, detachKeepRunning: true,
+        }), expect.objectContaining({ confirmed: true }));
+        expect(teardown).not.toHaveBeenCalled();
+        return;
+      }
       // The Account's declarations name the platform once they are read; the review offers Delete from them.
       await vi.waitFor(() => expect(screen.getTextContent()).toContain('Beta runtime'), { timeout: 15_000 });
       await waitForContent(screen, 'project-deployments.environment.menu');

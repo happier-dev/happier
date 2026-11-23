@@ -24,7 +24,7 @@ import {
 } from '../identity/githubApps.js';
 import { getActionSpec } from './actionSpecs.js';
 import { bindHomeDomainHttpRequestV1, type HomeDomainHttpRequestV1 } from './homeDomainHttpBinding.js';
-import { HomeGovernanceErrorV1Schema } from '../home/governance/errors.js';
+import { HomeGovernanceErrorV1Schema, projectAccountErasureDeploymentActionDetailsV1 } from '../home/governance/errors.js';
 import { HomeSettingsInvalidErrorV1Schema } from '../home/governance/settings.js';
 import { TeamErrorV1Schema } from '../teams/errors.js';
 import { TeamIdentityErrorV1Schema } from '../teams/identity/errors.js';
@@ -140,10 +140,17 @@ const SessionDeleteRefusalSchema = lazyZodSchema(() => z.strictObject({
 export function readHomeDomainActionErrorV1(value: unknown): Readonly<{
   code: HomeDomainActionErrorCodeV1;
   details: unknown;
+  actionDetails?: ReturnType<typeof projectAccountErasureDeploymentActionDetailsV1>;
 }> | null {
   for (const schema of HOME_DOMAIN_ERROR_SCHEMAS_V1) {
     const parsed = schema.safeParse(value);
-    if (parsed.success) return { code: parsed.data.error, details: parsed.data };
+    if (parsed.success) return {
+      code: parsed.data.error,
+      details: parsed.data,
+      ...(parsed.data.error === 'account_erasure_deployment_cleanup_required' && 'blocker' in parsed.data
+        ? { actionDetails: projectAccountErasureDeploymentActionDetailsV1(parsed.data.blocker) }
+        : {}),
+    };
   }
   const sessionDelete = SessionDeleteRefusalSchema.safeParse(value);
   if (sessionDelete.success) return {

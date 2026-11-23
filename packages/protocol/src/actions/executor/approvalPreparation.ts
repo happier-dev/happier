@@ -1,5 +1,6 @@
 import { PET_IMPORT_ACTION_ID_V1 } from '../actionIdsPetsV1.js';
 import { PetImportInputV1Schema } from '../../pets/importActionV1.js';
+import { ACCOUNT_DELETE_ACTION_ID_V1, HOME_ACCOUNTS_DELETE_ACTION_ID_V1 } from '../accountLifecycleActionIdsV1.js';
 import type { ActionExecutorContext, ActionExecutorDeps, ActionPreparedOperation, HostReviewedChildrenPlanV1, HostReviewedChildrenPreparationV1 } from './types.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
 import { SessionStatusResultSchema } from '../../sessions/control/contract.js';
@@ -553,7 +554,12 @@ export async function prepareApprovalRequest(params: Readonly<{
   }) ?? defaultPreview;
   const preparationFailure = readActionFailureEnvelope(customized);
   if (preparationFailure) return preparationFailure;
-  const customizedRecord = readRecord(customized);
+  const { accountErasure: _untrustedErasure, ...customizedRecord } = readRecord(customized);
+  const erasureAccountId = readRecord(params.input).accountId;
+  const accountErasure = (params.actionId === ACCOUNT_DELETE_ACTION_ID_V1 || params.actionId === HOME_ACCOUNTS_DELETE_ACTION_ID_V1)
+    && typeof erasureAccountId === 'string'
+    ? await params.deps.readAccountErasureReview?.({ accountId: erasureAccountId, context: params.context }) : null;
+  if (accountErasure && 'ok' in accountErasure) return accountErasure;
   // The target's passive inspection owns setup review. Caller-provided preview
   // fields cannot become commands, consent, or an independent effect calculator.
   const setupInput = params.actionId === 'projects.prepare' ? ProjectPrepareInputV1Schema.safeParse(params.input) : null;
@@ -608,6 +614,7 @@ export async function prepareApprovalRequest(params: Readonly<{
     ...(computerApprovalDisplay ? { computerApprovalDisplay } : {}),
     ...(widgetPresentation ? { widgetPresentation } : {}),
     ...(setupReview ? { setupReview } : {}),
+    ...(accountErasure ? { accountErasure } : {}),
     ...(machineAccessApprovalDisclosure(params.actionId, params.input)
       ? { machineAccessDisclosure: machineAccessApprovalDisclosure(params.actionId, params.input) } : {}),
   };

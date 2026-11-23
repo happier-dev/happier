@@ -7,6 +7,8 @@ import {
     type AccountErasureResponseV1,
     type AccountErasureRequestV1,
 } from '@happier-dev/protocol/auth/accountErasure';
+import { projectAccountErasureDeploymentActionDetailsV1 } from '@happier-dev/protocol/home/governance';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ManagedResourceDependencyV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { serverFetch, type ServerFetch } from '@/sync/http/client';
@@ -49,12 +51,20 @@ export async function deleteCurrentAccount(credentials: Pick<AuthCredentials, 't
             throw new AccountErasureManagedResourcesReviewRequiredError(parsed.data.resources);
         }
         const transient = readTransientAvailabilityFailure(payload && typeof payload === 'object' ? Reflect.get(payload, 'error') : undefined);
-        const code = parsed.success ? parsed.data.error : transient?.code ?? 'account_delete_failed';
+        const deploymentConflict = response.status === 409
+            && payload && typeof payload === 'object' && Reflect.get(payload, 'error') === 'account_erasure_deployment_cleanup_required';
+        const code = parsed.success ? parsed.data.error : deploymentConflict
+            ? 'account_erasure_deployment_cleanup_required' : transient?.code ?? 'account_delete_failed';
+        const deploymentFailure = parsed.success && parsed.data.error === 'account_erasure_deployment_cleanup_required' && 'blocker' in parsed.data
+            ? createActionExecuteFailureError({ ok: false, error: code, errorCode: code, effectAttempted: false,
+                details: projectAccountErasureDeploymentActionDetailsV1(parsed.data.blocker) })
+            : undefined;
         throw new HappyError(code, true, {
             status: response.status,
             kind: response.status === 403 ? 'auth' : 'server',
             code,
             ...(parsed.success ? { details: parsed.data } : {}),
+            ...(deploymentFailure ? { cause: deploymentFailure } : {}),
         });
     }
     const parsed = AccountErasureResponseV1Schema.safeParse(payload);

@@ -81,6 +81,7 @@ import { resolveSessionIdFromInput, resolveExecutionRunScope, withoutExecutionRu
 import { projectApprovalInvocationResult, projectActionExecutionObservation, projectActionObservationInput, readUnavailableApprovalReplayOrigin, buildApprovalDecisionResult, buildActionExecuteResultFromRecordedApprovalExecution, projectApprovalRequestPluginCaller, classifyApprovalExecutionOriginCurrentness, hasDeferredApprovalSessionResult, projectSettledApprovalExecution, projectApprovalResultDeliveryV1, projectThrownApprovalResultDeliveryV1, withApprovalResultDeliveryV1 } from './executor/approvalResults.js';
 import { isApprovalRequestV2TerminalStatus } from '../approvals/approvalRequestStatus.js';
 export { buildActionExecuteResultFromRecordedApprovalExecution, classifyApprovalExecutionOriginCurrentness } from './executor/approvalResults.js';
+import { AccountErasureReviewV1Schema } from '../auth/accountErasureReview.js';
 import { mapApprovalCreatedBySurface, buildApprovalSummary, buildApprovalPreviewSummary, projectPreparedActionOperation, resolveComputerActionSelection, readDeploymentPreparation, readDeploymentApprovalSemanticInput, readDeploymentRolloutSemanticInput, prepareApprovalRequest } from './executor/approvalPreparation.js';
 export { buildApprovalPreviewSummary, projectPreparedActionOperation } from './executor/approvalPreparation.js';
 import { resolveApprovalOriginForRequest, projectActionApprovalOrigin, projectActionObservationContext, resolveApprovalRequestingSessionId, projectApprovalExecutionOriginCaller, buildApprovalExecutionOriginV1, isApprovalActionId, isApprovalRequestActionReplayAdmitted, isBlockingApprovalRequest } from './executor/approvalOrigins.js';
@@ -4431,12 +4432,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }).finally(() => tokenExecution?.dispose());
           return executed.ok ? projectApprovalInvocationResult(actionId, executed.exec, ctx) : executed;
         }
+        const accountErasure = AccountErasureReviewV1Schema.safeParse(readRecord(preparedApproval.preview).accountErasure);
         return {
           ok: true,
           result: {
             kind: 'approval_request_created',
             artifactId,
             actionId,
+            ...(accountErasure.success ? { accountErasure: accountErasure.data } : {}),
             ...(baseApprovalRouting.profile ? { approvalProfile: baseApprovalRouting.profile } : {}),
           },
         };

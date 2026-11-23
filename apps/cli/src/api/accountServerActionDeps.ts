@@ -6,6 +6,8 @@ import { isManagedOpaquePresetMachineV1, type ManagedMachineFullV1 } from '@happ
 import { openManagedMachineRead } from '@/machines/managed/readManagedMachine';
 import { externalActionHeaderRefusalFailure, refuseExternalActionHeaders, requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
 import axios from '@/api/client/credentialAxios';
+import { ACCOUNT_ERASURE_PREVIEW_HTTP_PATH_V1, AccountErasurePreviewResponseV1Schema, accountErasureReviewUnavailable,
+  openAccountErasureReviewV1 } from '@happier-dev/protocol/auth/accountErasureReview';
 import { QualifiedProviderAccountUsageOwnershipError } from '@/api/client/qualifiedConnectedAccountApi';
 import { type AxiosResponse } from 'axios';
 import { createHash, randomUUID } from 'node:crypto';
@@ -127,6 +129,7 @@ export type AccountServerActionDeps = Pick<
   | 'machinePresetArchive'
   | 'managedMachineAction'
   | 'homeDomainAction'
+  | 'readAccountErasureReview'
   | 'privateLabelOpen'
   | 'privateLabelPrepare'
   | 'sessionAccessAction'
@@ -1179,6 +1182,42 @@ export function createAccountServerActionDeps(input: Readonly<{
         return opened ?? { ok: false, errorCode: 'private_label_unavailable', error: 'private_label_unavailable' };
       } finally { accountKey?.fill(0); }
     },
+    readAccountErasureReview: async ({ accountId, context }) => {
+      const actor = readAccountIdFromToken(input.token);
+      const requester = context.externalActionExecutionAuthorization?.binding.accountId ?? context.runtimeAccountId;
+      if (requester && requester !== accountId) return null;
+      if (actor !== accountId) return requester ? accountErasureReviewUnavailable() : null;
+      const mismatch = await accountServerTargetMismatch(context);
+      if (mismatch) return mismatch;
+      if (input.isCredentialCurrent && !await input.isCredentialCurrent()) {
+        return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
+      }
+      try {
+        const response = await axios.get<unknown>(`${serverHttpBaseUrl}${ACCOUNT_ERASURE_PREVIEW_HTTP_PATH_V1}`,
+          { headers: { Authorization: `Bearer ${input.token}` }, signal: context.signal });
+        const preview = AccountErasurePreviewResponseV1Schema.safeParse(response.data);
+        if (!preview.success) return accountErasureReviewUnavailable();
+        const review = await openAccountErasureReviewV1(preview.data, ids => runWithServerHttpBaseUrl(serverHttpBaseUrl, async () => {
+          const { createCredentialedAccountArtifactStore } = await import('@/api/artifacts/accountArtifactStore');
+          const store = createCredentialedAccountArtifactStore(credentials);
+          const headers = await store.readHeaders(ids, { signal: context.signal, prepareRecipients: false });
+          return headers.flatMap(result => {
+            const artifact = result.status === 'fulfilled' ? result.value : null;
+            return artifact?.ownerAccountId === actor && typeof artifact.bodyVersion === 'number'
+              ? [{ artifactId: artifact.artifactId, header: artifact.header,
+                revision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion } }] : [];
+          });
+        }));
+        context.signal?.throwIfAborted();
+        if (input.isCredentialCurrent && !await input.isCredentialCurrent()) {
+          return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
+        }
+        return review;
+      } catch {
+        context.signal?.throwIfAborted();
+        return accountErasureReviewUnavailable();
+      }
+    },
     /**
      * The Home family over the Home this process is already bound to. The Action
      * input names Home-local ids only, so nothing here selects a Home; the
@@ -1234,7 +1273,7 @@ export function createAccountServerActionDeps(input: Readonly<{
           // rather than a broken credential.
           const named = readHomeDomainActionErrorV1(response.data);
           if (named) {
-            return { ok: false, errorCode: named.code, error: named.code, details: named.details };
+            return { ok: false, errorCode: named.code, error: named.code, details: named.actionDetails ?? named.details };
           }
           if (isAuthenticationStatus(response.status)) {
             throw createAuthenticationHttpStatusError(

@@ -86,6 +86,21 @@ describe('CLI Action approval presenter', () => {
     }
   });
 
+  it('prints owned shared Environment losses before a CLI approval', async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation(message => { logs.push(String(message)); });
+    const decide = vi.fn(async () => {
+      expect(logs.join('\n')).toContain('Shared staging will be deleted. 1 other member will lose access.');
+      return { ok: true as const, result: {} };
+    });
+    const present = createCliActionApprovalPresenter({ actionId: 'home.accounts.delete', json: false,
+      envelopeKind: 'actions_invoke', approve: true });
+    await expect(present('erasure', new AbortController().signal, decide, async () => ({
+      accountErasure: { sharedEnvironments: [{ environmentId: 'staging', name: 'Shared staging', memberCount: 1 }] },
+    }))).resolves.toMatchObject({ ok: true });
+    expect(decide).toHaveBeenCalledExactlyOnceWith('approve');
+  });
+
   it('cancels the originating wait on terminal Ctrl+C without deciding the durable approval', async () => {
     // Exercise the real readline/confirmation path over the stdio boundary.
     const input = Object.assign(new PassThrough(), { isTTY: true });

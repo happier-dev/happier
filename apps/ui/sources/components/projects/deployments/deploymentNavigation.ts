@@ -39,6 +39,8 @@ type DeploymentEnvironmentAddress = Readonly<{
     setup?: 'backups';
     /** One of the Environment's databases, opened in place like a receipt (P9). */
     database?: string;
+    /** Open the existing Detach review for this target. */
+    detachTargetLinkId?: string;
 }>;
 
 /** Native Environment identity never needs a checkout/WorkspaceRef; `deploymentId` opens one of its receipts. */
@@ -54,6 +56,7 @@ export function deploymentEnvironmentRoute(input: DeploymentEnvironmentAddress) 
             ...(input.section ? { deploymentSection: input.section } : {}),
             ...(input.setup ? { deploymentSetup: input.setup } : {}),
             ...(input.database ? { deploymentService: input.database } : {}),
+            ...(input.detachTargetLinkId ? { deploymentDetachTarget: input.detachTargetLinkId } : {}),
         },
     };
 }
@@ -89,5 +92,6 @@ export function buildDeploymentEnvironmentHref(input: DeploymentEnvironmentAddre
         + ('deploymentTab' in params ? `&deploymentTab=${encodeURIComponent(params.deploymentTab!)}` : '')
         + ('deploymentSection' in params ? `&deploymentSection=${encodeURIComponent(params.deploymentSection!)}` : '')
         + ('deploymentSetup' in params ? `&deploymentSetup=${encodeURIComponent(params.deploymentSetup!)}` : '')
-        + ('deploymentService' in params ? `&deploymentService=${encodeURIComponent(params.deploymentService!)}` : '');
+        + ('deploymentService' in params ? `&deploymentService=${encodeURIComponent(params.deploymentService!)}` : '')
+        + ('deploymentDetachTarget' in params ? `&deploymentDetachTarget=${encodeURIComponent(params.deploymentDetachTarget!)}` : '');
 }

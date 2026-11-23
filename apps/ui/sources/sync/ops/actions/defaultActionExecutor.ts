@@ -264,7 +264,7 @@ import { createUiProfileActionExecuteV1 } from './profileActionDeps';
 import { createUiMcpServerActionExecuteV1 } from './mcpServerActionDeps';
 import { createUiRemoteHostActionExecuteV1 } from '@/sync/ops/remoteHosts/remoteHostOperations';
 import { createUiHomeRuntimeActionExecute } from './homeRuntimeActionDeps';
-import { createUiAccountLifecycleAction } from './accountLifecycleActionDeps';
+import { createUiAccountErasureReviewReader, createUiAccountLifecycleAction } from './accountLifecycleActionDeps';
 import { createUiNpmRegistryProfileAction } from './npmRegistryProfileActionDeps';
 import { createPluginAccountAdministrationActionDeps } from './pluginAccountAdministrationActionDeps';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
@@ -700,7 +700,8 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     return await operation();
   } catch (error) {
     if (error instanceof HappyError && error.code) {
-      return { ok: false as const, errorCode: error.code, error: error.message };
+      return parseActionExecuteFailure(error.cause)
+        ?? { ok: false as const, errorCode: error.code, error: error.message };
     }
     // Not reaching the Home is its own typed outcome. Left untyped it would settle as a generic
     // failure, which the form copy could not tell apart from a refusal of the person's credentials.
@@ -3942,7 +3943,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       }
     },
     homeRuntimeActionExecute: createUiHomeRuntimeActionExecute(accountContext, opts?.homeRuntimeRunner),
-    ...(accountContext ? { accountLifecycleAction: (args: Parameters<NonNullable<ActionExecutorDeps['accountLifecycleAction']>>[0]) =>
+    ...(accountContext ? { readAccountErasureReview: createUiAccountErasureReviewReader(accountContext), accountLifecycleAction: (args: Parameters<NonNullable<ActionExecutorDeps['accountLifecycleAction']>>[0]) =>
       settleAccountSecurityAction(() => createUiAccountLifecycleAction(accountContext, async path => {
         if (opts?.openRoute) await opts.openRoute(path);
         else {

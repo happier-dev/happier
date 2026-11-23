@@ -8,6 +8,8 @@ import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '../machines/managed/actionIdsV
 import { WorkflowActionFailureV1Schema } from '../workflows/workflowProgressV1.js';
 import { WorkflowMachineCommandOutputV1Schema } from '../workflows/commandOutputV1.js';
 import { isFilesystemActionId } from '../actions/filesystemActionFamily.js';
+import { ACCOUNT_DELETE_ACTION_ID_V1 } from '../actions/accountLifecycleActionIdsV1.js';
+import { ACCOUNT_LIFECYCLE_ACTION_INPUT_SCHEMAS } from '../actions/accountLifecycleActionFamily.js';
 import { PROJECT_ACTION_INPUT_SCHEMAS_V1 } from '../actions/projectActionFamily.js';
 import {
   ProjectWorkerNoAcceptanceFailureDetailsV1Schema,
@@ -18,7 +20,11 @@ import {
   SharedSavedSecretDeleteInputV1Schema,
 } from '../account/settings/savedSecretResourceActionsV1.js';
 import { HomeAccountDeleteInputV1Schema } from '../home/governance/accounts.js';
-import { HomeGovernanceErrorV1Schema } from '../home/governance/errors.js';
+import {
+  AccountErasureDeploymentActionDetailsV1Schema,
+  HomeGovernanceErrorV1Schema,
+  projectAccountErasureDeploymentActionDetailsV1,
+} from '../home/governance/errors.js';
 import { TEAM_CREATE_ACTION_ID_V1 } from '../teams/actionIdsV1.js';
 import { readTeamCreationPolicyRefusalV1 } from '../teams/errors.js';
 import { TeamCreateInputV1Schema } from '../teams/team.js';
@@ -421,10 +427,18 @@ function parseStrictApprovalFailure(input: Readonly<{
     : input.request.actionId === 'home.accounts.delete'
       ? {
         input: HomeAccountDeleteInputV1Schema,
-        failure: HomeGovernanceErrorV1Schema,
-        code: 'account_erasure_managed_resources_review_required',
+        ...(input.failure.errorCode === 'account_erasure_deployment_cleanup_required'
+          ? { failure: AccountErasureDeploymentActionDetailsV1Schema, code: input.failure.errorCode }
+          : { failure: HomeGovernanceErrorV1Schema, code: 'account_erasure_managed_resources_review_required' }),
       }
-      : null;
+      : input.request.actionId === ACCOUNT_DELETE_ACTION_ID_V1
+        && input.failure.errorCode === 'account_erasure_deployment_cleanup_required'
+        ? {
+          input: ACCOUNT_LIFECYCLE_ACTION_INPUT_SCHEMAS[ACCOUNT_DELETE_ACTION_ID_V1],
+          failure: AccountErasureDeploymentActionDetailsV1Schema,
+          code: input.failure.errorCode,
+        }
+        : null;
   if (removal) {
     if (input.failure.errorCode !== removal.code) return null;
     const args = (storedRead ? createStoredReadSchema(removal.input) : removal.input)
@@ -441,7 +455,8 @@ function parseStrictApprovalFailure(input: Readonly<{
     const details = (storedRead ? createStoredReadSchema(removal.failure) : removal.failure)
       .safeParse(domainDetails);
     return args.success && details.success && details.data.error === removal.code
-      ? { ...input.failure, details: details.data }
+      ? { ...input.failure, details: details.data.error === 'account_erasure_deployment_cleanup_required' && 'blocker' in details.data
+        ? projectAccountErasureDeploymentActionDetailsV1(details.data.blocker) : details.data }
       : null;
   }
   const actionId = SessionBoardActionIdV1Schema.safeParse(input.request.actionId);

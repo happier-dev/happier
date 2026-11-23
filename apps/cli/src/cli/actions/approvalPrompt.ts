@@ -1,4 +1,6 @@
 import { stripVTControlCharacters } from 'node:util';
+import { HOME_ACCOUNTS_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/accountLifecycleActionIdsV1';
+import { AccountErasureReviewV1Schema } from '@happier-dev/protocol/auth/accountErasureReview';
 import { DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentApprovalReviewV1Schema, type DeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
@@ -6,6 +8,8 @@ import type { CliApprovalRequestedHandler } from '@/session/actions/approvals/de
 import type { SessionControlJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { promptConfirmYesNo } from '@/terminal/prompts/promptConfirmYesNo';
 import { isInteractiveTerminal } from '@/terminal/prompts/promptInput';
+
+const terminalText = (value: string) => stripVTControlCharacters(value).replace(/\p{Cc}/gu, ' ');
 
 function versionLabel(revision: DeploymentReviewRevisionV1): string {
   return revision.kind === 'repository' ? revision.sha.slice(0, 7) : `stored revision ${revision.contentRevision}`;
@@ -22,7 +26,6 @@ function describeRollbackReview(preview: unknown): string | undefined {
     ? [review.platformName, review.providerResourceId, review.providerEnvironment].join(' · ')
     : review.runtimeMachines?.map(machine => machine.machineId).join(', ') || review.machineId;
   if (!target) return;
-  const terminalText = (value: string) => stripVTControlCharacters(value).replace(/\p{Cc}/gu, ' ');
   return [
     `Roll back ${terminalText(review.environment.name)} to ${versionLabel(review.revision)}`,
     review.replaces ? `Replaces ${versionLabel(review.replaces.revision)}` : 'No serving version to replace',
@@ -41,10 +44,18 @@ export function createCliActionApprovalPresenter(options: Readonly<{
   approve?: boolean;
 }>): CliApprovalRequestedHandler {
   return async (artifactId, signal, decide, readPreview) => {
+    const preview = options.actionId === HOME_ACCOUNTS_DELETE_ACTION_ID_V1 ? await readPreview?.() : null;
+    const erasure = AccountErasureReviewV1Schema.safeParse(readRecord(preview).accountErasure);
     if (options.json) console.error(JSON.stringify({ v: 1, ok: true, kind: options.envelopeKind,
-      data: { kind: 'approval_request_created', artifactId, actionId: options.actionId },
+      data: { kind: 'approval_request_created', artifactId, actionId: options.actionId,
+        ...(erasure.success ? { accountErasure: erasure.data } : {}) },
     } satisfies SessionControlJsonEnvelope));
-    else console.error(`Awaiting approval ${artifactId} — approve in the app`);
+    else {
+      console.error(`Awaiting approval ${artifactId} — approve in the app`);
+      if (erasure.success) for (const { name, memberCount } of erasure.data.sharedEnvironments) {
+        console.error(`${terminalText(name)} will be deleted. ${memberCount} other ${memberCount === 1 ? 'member will' : 'members will'} lose access.`);
+      }
+    }
     let approve = options.approve === true;
     if (!approve) {
       // Only a person at this terminal decides here. Without one, or when the
