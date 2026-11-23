@@ -98,8 +98,8 @@ export type ActionAutomationSelectArgsV1 = Readonly<{
   prepareMatching?: ActionAutomationPrepareMatchingV1;
   /** Native completion combines its Action buckets before opening selected private rows once. */
   deferPrivateMatching?: true;
-  /** Existing ActionSpec completion declares a later domain event instead of an immediate after bucket. */
-  includeAfter?: false;
+  /** For Actions with a later domain event, select After only for shared consent. */
+  includeAfter?: 'shared';
   /** Terminal native observations consume only after checks, including their selector notices. */
   includeBefore?: false;
   signal?: AbortSignal;
@@ -332,11 +332,13 @@ export function createActionAutomationPortV1(options: Readonly<{
         ? cause.triggerId : undefined;
       const candidates: ActionAutomationTriggerReferenceV1[] = [];
       for (const row of buckets.get(args.actionId) ?? []) {
-        if (row.phase === 'before' && row.triggerId === producingBeforeTriggerId) continue;
+        // C4 suppresses the producing Before trigger before it can deadlock in a nested Ask.
+        if (row.phase === 'before' && (args.includeBefore === false || row.triggerId === producingBeforeTriggerId)) continue;
+        if (row.phase === 'after' && args.includeAfter === 'shared' && row.ownerAccountId === options.accountId) continue;
         candidates.push(row);
       }
       let additionalSubjects: readonly AutomationSubjectContextV1[] = [];
-      if (args.loadSubjectFacts && candidates.some(row => args.includeAfter !== false || row.phase !== 'after')) {
+      if (args.loadSubjectFacts && candidates.length) {
         additionalSubjects = await args.loadSubjectFacts();
         signal?.throwIfAborted();
       }
@@ -344,8 +346,6 @@ export function createActionAutomationPortV1(options: Readonly<{
       const machineId = readActionAutomationExecutionMachineV1(args.context);
       const sharedRequester = isSharedRequesterActionV1(args.context);
       for (const row of candidates) {
-        if (row.phase === 'after' && args.includeAfter === false) continue;
-        if (row.phase === 'before' && args.includeBefore === false) continue;
         const own = row.ownerAccountId === options.accountId;
         const subjectKey = row.subjectKey;
         const matchedSubject = subjectKey ? subjects.find(context =>
@@ -354,9 +354,9 @@ export function createActionAutomationPortV1(options: Readonly<{
         const skip = (reason: string) => notices.push({ code: 'action_automation_skipped', reason,
           automationId: row.automationId, triggerId: row.triggerId, workflowId: row.workflowId });
         if (!machineId) {
-          // A person may explicitly override a light check, but an automatic
-          // before/wait admission cannot turn a missing Machine into success.
-          if (args.context.authority === 'account_automation' && row.phase === 'before' && row.mode !== 'notify') {
+          // R24 lets an external Account invocation continue when it has no Machine.
+          if (args.context.authority === 'account_automation' && row.phase === 'before' && row.mode !== 'notify'
+            && !args.context.externalActionCredential && !args.context.externalActionExecutionAuthorization) {
             return Object.freeze({ status: 'unavailable' as const, subjects, before: [], after: [],
               notices: [{ code: 'action_automations_not_checked' as const, reason: 'machineRequired' }] });
           }
@@ -395,9 +395,10 @@ export function createActionAutomationPortV1(options: Readonly<{
       }
       const selection: ActionAutomationSelectionV1 = { status: 'ready', subjects, before: Object.freeze(before), after: Object.freeze(after),
         notices: Object.freeze(notices) };
+      const matching = args.includeAfter === 'shared' ? { ...selection, after: [] } : selection;
       return Object.freeze({ ...selection,
-        ...(args.prepareMatching && !args.deferPrivateMatching && (before.length || after.length)
-          ? { privateMatching: await args.prepareMatching(selection, args.context) } : {}) });
+        ...(args.prepareMatching && !args.deferPrivateMatching && (matching.before.length || matching.after.length)
+          ? { privateMatching: await args.prepareMatching(matching, args.context) } : {}) });
     },
     async settle(args) { if (args.selection.after.length > 0) return await options.settle(args); },
     ...(options.start ? { start: options.start } : {}),

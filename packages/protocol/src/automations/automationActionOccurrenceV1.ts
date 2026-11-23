@@ -41,6 +41,8 @@ export const AutomationActionAdmitTriggerV1Schema = lazyZodSchema(() => z.strict
     automationId: identifier,
     triggerId: AutomationTriggerIdSchema,
     triggerRevision: AutomationTriggerRevisionSchema,
+    // A terminal receipt can complete more than one Action. Other evidence is common to the batch.
+    actionId: z.optional(AutomationTriggerActionIdV1Schema),
 }));
 export const AutomationActionAdmitRequestV1Schema = lazyZodSchema(() => z.strictObject({
     evidence: AutomationActionOccurrenceEvidenceV1Schema,

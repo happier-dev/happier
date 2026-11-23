@@ -15,6 +15,8 @@ import { createAutomaticApprovalContinuation, restoreApprovalAutomaticContextV1,
 import { ApprovalRequestV2Schema } from '../../approvals/approvalRequestV1.js';
 import { automationSubjectKeyV1 } from '../../automations/automationSubjectV1.js';
 import { AutomationRunCauseSchema } from '../../automations/automationRunCause.js';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
+import { ActionAutomationTriggerReferenceV1Schema } from '../../automations/automationActionTriggerV1.js';
 
 it('uses the invoking Machine for Account Action checks and visibly skips when it is absent', async () => {
   const rows = (['before', 'after'] as const).map(phase => ({ automationId: 'own', triggerId: phase,
@@ -31,7 +33,7 @@ it('uses the invoking Machine for Account Action checks and visibly skips when i
   })) });
 });
 
-it('excludes only the producing Before trigger from an admitted Workflow child', async () => {
+it('avoids a nested Ask by excluding only the producing Before trigger from an admitted Workflow child', async () => {
   const actionId = 'machines.command.run';
   const matching = { automationId: 'checks', triggerRevision: 1, workflowId: 'check', workflowRevision: 1,
     ownerAccountId: 'actor', actionIds: [actionId] };
@@ -50,6 +52,29 @@ it('excludes only the producing Before trigger from an admitted Workflow child',
   const selected = await port.select({ actionId, input: { command: 'exit 7' }, context });
   expect(selected.before.map(row => row.triggerId)).toEqual([otherBefore.triggerId]);
   expect(selected.after.map(row => row.triggerId)).toEqual([after.triggerId]);
+});
+
+it('keeps a retained native After match for the actual terminal event', async () => {
+  const actionId = DEPLOYMENT_DEPLOY_ACTION_ID_V1;
+  const row = ActionAutomationTriggerReferenceV1Schema.parse({
+    automationId: 'shared', triggerId: 'after', triggerRevision: 1, workflowId: 'workflow',
+    workflowRevision: 1, ownerAccountId: 'author', actionIds: [actionId], phase: 'after',
+  });
+  const actor = ActionAutomationTriggerReferenceV1Schema.parse({ ...row,
+    automationId: 'actor-consent', triggerId: 'actor-after', ownerAccountId: 'actor',
+    consentFor: { automationId: row.automationId, triggerId: row.triggerId }, consentedWorkflowRevision: row.workflowRevision,
+  });
+  const published: unknown[] = [];
+  const port = createActionAutomationPortV1({ accountId: 'actor', seed: async () => ({ v: 1, rows: [] }),
+    settle: async ({ event }) => { published.push(event); } });
+  const automaticChecks = createApprovalAutomaticChecksV1({ status: 'ready', subjects: [], before: [],
+    after: [{ ...row, consent: { status: 'current', row: actor } }], notices: [] }, false);
+  const restored = restoreApprovalAutomaticContextV1({ automaticChecks }, actionId,
+    { actionRequestId: 'accepted', defaultSessionMachineId: 'machine' }, port);
+  const result = { ok: true as const, result: { kind: 'pending' } };
+  expect(await restored.actionAutomationAdmission?.settle(result)).toEqual(result);
+  expect(restored.actionAutomationAdmission?.selection.after).toHaveLength(1);
+  expect(published).toEqual([]);
 });
 
 it('marks an automatic before wait check unavailable when its Machine is missing', async () => {

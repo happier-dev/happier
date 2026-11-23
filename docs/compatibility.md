@@ -395,7 +395,16 @@ An after-Action trigger remains one row and revision. Existing terminal Event
 declarations name their completed Actions and map their terminal state to the
 safe `outcome` field (`succeeded`, `failed`, `cancelled` or `outcome_unknown`).
 An Only-when filter on that field stays in the private trigger definition;
-the structural index does not receive it. No combined Event is introduced.
+the structural index does not receive it. The existing terminal Event remains
+the source. Shared After triggers ask for
+consent alongside shared Before triggers at Action admission. The terminal
+owner evaluates the outcome condition, so a person can Allow a trigger that
+does not fire for the eventual outcome. An external Account Action without
+an admitted Machine continues with the usual needs-Machine Skip notice.
+Native completion submits a single Action-admission batch. Trigger refs for
+a different Action completed by the same receipt carry its optional
+`actionId`. Earlier strict 0.3 Home readers accept single-Action batches
+and require a matching update for batches that use the per-ref Action id.
 Accepted V2 operations and deployment receipts retain the admitted Workflow
 origin separately from the approver, so terminal admission applies the ordinary
 ancestor loop rule. The V1 operation projection omits that provenance field.

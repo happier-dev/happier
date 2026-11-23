@@ -3747,7 +3747,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             Object.assign(ctx, originContext);
             return automationSubjects ?? [];
           } } : {}),
-          ...(spec.completion ? { includeAfter: false as const } : {}),
+          ...(spec.completion ? { includeAfter: 'shared' as const } : {}),
           ...(approvalScope ? { approvalScope } : {}),
           ...('automationSubjects' in scopeAdmission && scopeAdmission.automationSubjects
             ? { subjects: scopeAdmission.automationSubjects } : {}),
@@ -4034,7 +4034,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     try {
       // A continued execution or observed operation re-enters after its admitting
       // pass already ran these checks; starting them again duplicates Before runs.
-      if (!approvalRouting.required && !approvalRouting.uiConfirmationRequired && !isApprovalAction && !ctx.approvedActionReplay
+      // An in-flow confirmation can carry review details before automatic checks run.
+      if (!approvalRouting.required && !approvalRouting.uiConfirmationRequired && !isApprovalAction
+        && !options?.approvalReplay && !ctx.approvedActionReplay?.artifactId
         && !existingAdmission?.admittedExecutionContinued && !existingAdmission?.operationObserved) {
         const checks = automaticChecksFor(ctx, false);
         if (checks && (checks.selected.some(row => row.phase === 'before')

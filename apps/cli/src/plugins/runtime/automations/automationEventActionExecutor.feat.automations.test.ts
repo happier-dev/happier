@@ -1812,23 +1812,33 @@ it.each([
   const { createActionAutomationHttpPortV1 } = await import('@happier-dev/protocol/actions/executor/actionAutomationAdmission');
   const { createAccountWorkflowTriggerActions } = await import('@happier-dev/protocol/actions/executor/workflowTriggerAccountHost');
   const { createWorkflowActorConsentPortV1 } = await import('@happier-dev/protocol/actions/executor/workflowTriggerActions');
+  const { AutomationActionAdmitRequestV1Schema } = await import('@happier-dev/protocol/automations/automationActionOccurrenceV1');
   const { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionIdsV1');
+  const { PROJECT_PREPARE_ACTION_ID_V1 } = await import('@happier-dev/protocol/actions/projectActionIdsV1');
   const row = { automationId: 'completion', triggerId: triggerIdFor('completion'), triggerRevision: 1,
     workflowId: 'workflow', workflowRevision: 1, ownerAccountId: 'account',
-    actionIds: privateAvailable ? [DEPLOYMENT_DEPLOY_ACTION_ID_V1, 'projects.prepare'] : [DEPLOYMENT_DEPLOY_ACTION_ID_V1], phase: 'after' as const };
-  const privateTrigger = { kind: 'action' as const, phase: 'after' as const,
-    actionIds: row.actionIds, filter: { v: 1 as const, all: [{ op: 'eq' as const, field: '/outcome', value: 'failed' }] } };
-  const envelope = sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
-    binding: { v: 1, automationId: row.automationId, triggerId: row.triggerId, triggerRevision: 1, triggerKind: 'action' },
-    definition: privateTrigger });
+    actionIds: privateAvailable ? [DEPLOYMENT_DEPLOY_ACTION_ID_V1, PROJECT_PREPARE_ACTION_ID_V1] : [DEPLOYMENT_DEPLOY_ACTION_ID_V1], phase: 'after' as const };
+  const secondRow = { ...row, triggerId: triggerIdFor('second-completion'), actionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1] };
+  const rows = privateAvailable ? [row, secondRow] : [row];
+  const triggerRef = ({ automationId, triggerId, triggerRevision }: typeof row) => ({ automationId, triggerId, triggerRevision });
+  const storedTriggers = rows.map(indexRow => {
+    const definition = { kind: 'action' as const, phase: 'after' as const, actionIds: indexRow.actionIds,
+      filter: { v: 1 as const, all: [{ op: 'eq' as const, field: '/outcome', value: 'failed' }] } };
+    const envelope = sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, ...triggerRef(indexRow), triggerKind: 'action' }, definition });
+    return { id: indexRow.triggerId, revision: 1, kind: 'action', phase: 'after', actionIds: indexRow.actionIds,
+      enabled: true, createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: JSON.stringify(envelope) };
+  });
+  const skipReason = (triggerId: string) => triggerId === secondRow.triggerId ? 'triggerDisabled' : 'triggerRevisionMismatch';
   const admitted: unknown[] = [];
   // These boundaries model Home index/occurrence transport and private stored content reads.
   const http = createActionAutomationHttpPortV1({ accountId: 'account', request: async (_path, request) => {
-    if (request.method === 'GET') return { v: 1, rows: [row] };
-    admitted.push(request.body);
-    return { results: [{ automationId: row.automationId, triggerId: row.triggerId,
-      ...(admissionKind === 'skipped' ? { kind: admissionKind, reason: 'triggerRevisionMismatch' }
-        : { kind: admissionKind, runId: 'run' }) }] };
+    if (request.method === 'GET') return { v: 1, rows };
+    const body = AutomationActionAdmitRequestV1Schema.parse(request.body);
+    admitted.push(body);
+    return { results: body.triggers.map(({ automationId, triggerId }) => ({ automationId, triggerId,
+      ...(admissionKind === 'skipped' ? { kind: admissionKind, reason: skipReason(triggerId) }
+        : { kind: admissionKind, runId: 'run' }) })) };
   } });
   const unexpectedWrite = async (): Promise<never> => { throw new Error('Matching performs no write'); };
   let privateReads = 0;
@@ -1837,9 +1847,7 @@ it.each([
     newId: () => 'unused', resolveWorkflow: async () => { throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' }); },
     automations: { get: async () => { privateReads++; return privateAvailable ? ({ id: row.automationId, name: 'Completion', description: null,
       enabled: true, targetType: null, existingSessionId: null, templateVersion: 1, workflowDefinitionId: row.workflowId,
-      scopeSessionId: null, lastRunAt: null, createdAt: 1, updatedAt: 1, assignments: [], triggers: [{ id: row.triggerId, revision: 1,
-        kind: 'action', phase: 'after', actionIds: row.actionIds, enabled: true, createdAt: 1, updatedAt: 1,
-        triggerDefinitionEnvelope: JSON.stringify(envelope) }] }) : null; },
+      scopeSessionId: null, lastRunAt: null, createdAt: 1, updatedAt: 1, assignments: [], triggers: storedTriggers }) : null; },
       list: async () => ({ automations: [], nextCursor: null }), listDetails: async () => ({ automations: [], nextCursor: null }),
       create: unexpectedWrite, reconcile: unexpectedWrite, delete: unexpectedWrite } });
   const checks = createWorkflowActorConsentPortV1({ actions: triggerActions, accountId: 'account',
@@ -1865,25 +1873,29 @@ it.each([
     expect(admitted).toEqual([]);
     return;
   }
+  expect(admitted).toHaveLength(1);
+  const expectedTriggers = [triggerRef(row), triggerRef(secondRow), { ...triggerRef(row), actionId: PROJECT_PREPARE_ACTION_ID_V1 }];
+  expect(admitted).toEqual([{
+    evidence: expect.objectContaining({ actionId: DEPLOYMENT_DEPLOY_ACTION_ID_V1, status: 'failed', outcome: 'failed',
+      phase: 'after', originRunId: 'origin-run' }),
+    triggers: expectedTriggers,
+  }]);
   if (admissionKind === 'skipped') {
     expect(result).toMatchObject({ ok: false, errorCode: 'automation_event_host_evidence_unavailable',
-      automationNotices: row.actionIds.map(() => ({ code: 'action_automation_skipped', reason: 'triggerRevisionMismatch',
-        automationId: row.automationId, triggerId: row.triggerId, workflowId: row.workflowId })) });
-    expect(admitted).toHaveLength(row.actionIds.length);
+      automationNotices: expectedTriggers.map(({ automationId, triggerId }) => ({
+        code: 'action_automation_skipped', reason: skipReason(triggerId), automationId, triggerId, workflowId: row.workflowId,
+      })) });
     expect(privateReads).toBe(1);
     return;
   }
   expect(result).toEqual({ results: [] });
-  expect(admitted).toEqual(row.actionIds.map(actionId => ({ evidence: expect.objectContaining({ actionId,
-    status: 'failed', outcome: 'failed', phase: 'after', originRunId: 'origin-run' }), triggers: [{ automationId: row.automationId,
-    triggerId: row.triggerId, triggerRevision: 1 }] })));
   expect(privateReads).toBe(1);
   expect(JSON.stringify(admitted)).not.toContain('never disclose');
   await executor({ actionId: 'automation.event.admit', caller: actionCaller, input: {
     eventRef: { pluginId: actionCaller.pluginId, localId: 'deployment-succeeded' }, sourceInstanceId: 'native-receipts',
     occurrenceId: 'another-receipt-terminal', occurredAt: 100, observationReceivedAt: 101, payload: {}, definitions: [],
   } });
-  expect(admitted).toHaveLength(row.actionIds.length);
+  expect(admitted).toHaveLength(1);
 });
 
 it.each(['before', 'after'] as const)('preserves only a native after Action selector Skip (phase: %s)', async phase => {

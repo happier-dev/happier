@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER, AutomationDefinitionCreateRequestSchema } from '@happier-dev/protocol';
 import { AutomationActionAdmitRequestV1Schema } from '@happier-dev/protocol/automations/automationActionOccurrenceV1';
+import { PROJECT_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { decodeBase64 } from 'privacy-kit';
 import { admitAutomationActionOccurrencesV1 } from './automationActionAdmissionService';
 import { createAutomation } from './automationCrudService';
@@ -50,7 +51,7 @@ describe('Consent Run admission (real database)', () => {
         const created = await createAutomation({ accountId: account.id, input: AutomationDefinitionCreateRequestSchema.parse({
             automationId, name: 'Action Link', enabled: true, workflowDefinitionId: 'builtin:review-and-converge',
             executionRecipe, assignments: [], triggers: [{ triggerId, trigger: {
-                kind: 'action', enabled: true, actionIds: ['deployments.deploy'], phase: 'after',
+                kind: 'action', enabled: true, actionIds: ['deployments.deploy', PROJECT_PREPARE_ACTION_ID_V1], phase: 'after',
             } }],
         }) });
         const ref = { automationId, triggerId, triggerRevision: created.triggers[0]!.revision };
@@ -71,6 +72,20 @@ describe('Consent Run admission (real database)', () => {
             { machineId: machine.id, admittedMachineInstallationId: machine.installationId },
         ]);
         expect(await db.automationAssignment.count({ where: { automationId } })).toBe(0);
+
+        // A producer can complete two Actions that both use the same trigger.
+        const batch = AutomationActionAdmitRequestV1Schema.parse({
+            evidence: { ...evidence, machineId: machine.id, requestId: randomUUID() },
+            triggers: [ref, { ...ref, actionId: PROJECT_PREPARE_ACTION_ID_V1 }, ref],
+        });
+        const replay = () => admitAutomationActionOccurrencesV1({ accountId: account.id, input: batch });
+        const first = (await replay()).results;
+        const [deploy, setup, duplicate] = first;
+        if (deploy?.kind !== 'admitted' || setup?.kind !== 'admitted') throw new Error(JSON.stringify(first));
+        expect(deploy.runId).not.toBe(setup.runId);
+        expect(duplicate).toEqual(deploy);
+        expect((await replay()).results).toEqual(first.map(result => ({ ...result, kind: 'rejoined' })));
+        expect(await db.automationRun.count({ where: { automationId } })).toBe(3);
     });
 
     it('reads all selected actor consent Trigger references, including paused and deleted-definition history', async () => {

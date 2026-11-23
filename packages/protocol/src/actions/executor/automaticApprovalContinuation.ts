@@ -12,6 +12,7 @@ import type { ActionAutomationPortV1, ActionAutomationSelectionV1, ActionAutomat
 import { createActionAutomationInvocationV1 } from './actionSettlement.js';
 import { deriveActionActorV1 } from '../actionRequestAttributionV1.js';
 import { resolveHostStampedAuthority } from '../invocationAuthority.js';
+import { findActionSpec } from '../actionSpecs.js';
 
 /** Host-local subject matching stays with selected triggers, outside the structural actor-row reference. */
 function projectActorConsentReferenceV1(reference: ActionAutomationTriggerReferenceV1) {
@@ -88,7 +89,8 @@ export function restoreApprovalAutomaticContextV1(request: Readonly<{
   const continuation = { actionId, context: retained, selection, notices: request.automaticChecks?.notices };
   const continued = context.actionAutomationAdmission?.continue(continuation);
   if (continued) return { ...retained, actionAutomationAdmission: continued };
-  const pendingMatching = port?.prepareMatching?.(selection, retained);
+  const matching = selection.after.length && findActionSpec(actionId)?.completion ? { ...selection, after: [] } : selection;
+  const pendingMatching = matching.before.length || matching.after.length ? port?.prepareMatching?.(matching, retained) : undefined;
   const privateMatching: ActionAutomationPrivateMatchingV1 | undefined = pendingMatching
     ? (evidence, selected) => pendingMatching.then(match => match(evidence, selected))
     : undefined;

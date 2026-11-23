@@ -5,6 +5,7 @@ import { isDeferredApprovalResult } from './resultProjection.js';
 import type { AutomationActionOutcomeV1 } from '../../automations/automationActionIdentityV1.js';
 import { withActionAutomationNoticesV1, type ActionAutomationNoticeV1 } from '../actionExecutionResult.js';
 import { readActionWorkflowOriginRunIdV1 } from '../actionRequestAttributionV1.js';
+import { findActionSpec } from '../actionSpecs.js';
 
 /** Closed local evidence. The HTTP owner further projects subjects to structural digests. */
 export type ActionSettlementV1 = Readonly<{
@@ -67,7 +68,7 @@ export function createActionAutomationInvocationV1(args: ActionAutomationContinu
       publication ??= (async () => {
         // A terminal Skip of every after row also completes this invocation;
         // an outer prepared reference must never publish its older selection.
-        if (current.selection.after.length === 0) return;
+        if (current.selection.after.length === 0 || findActionSpec(current.actionId)?.completion) return;
         const requestId = context.actionRequestId;
         if (!requestId) return;
         const originRunId = readActionWorkflowOriginRunIdV1(context);

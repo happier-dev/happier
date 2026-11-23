@@ -1,7 +1,9 @@
 import { matchActionAutomationTriggersV1, projectActionAutomationAdmitOutcomesV1, type ActionAutomationPortV1,
-  type ActionAutomationSelectionV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
+  type ActionAutomationSelectionV1, type ActionAutomationSelectedTriggerV1,
+  type ActionAutomationTriggerReferenceV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { matchActionAutomationCompletionV1, type ActionAutomationCompletionObservationV1 } from '@happier-dev/protocol/actions/executor/actionAutomationCompletion';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { AutomationActionOccurrenceEvidenceV1 } from '@happier-dev/protocol/automations/automationActionOccurrenceV1';
 import type { PluginEventAutomationDeclarationV1 } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
 import type { ActionAutomationNoticeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
@@ -29,22 +31,30 @@ export async function admitNativeActionCompletion(host: NativeActionCompletionHo
   const combined: ActionAutomationSelectionV1 = { status: 'ready', subjects: observation.subjectContexts ?? [], before: [],
     after: [...selections.values()].flatMap(selection => selection.after) };
   const privateMatching = combined.after.length ? await host.port.prepareMatching?.(combined, context) : undefined;
+  const admitted: { row: ActionAutomationSelectedTriggerV1; trigger: ActionAutomationTriggerReferenceV1;
+    evidence: AutomationActionOccurrenceEvidenceV1 }[] = [];
   for (const [actionId, selection] of selections) {
     for (const selected of selection.after) {
       // Shared checks use the actor's existing consent row, as ordinary Action admission does.
       const reference = selected.consent ? selected.consent.status === 'current' ? selected.consent.row : undefined : selected;
       if (!reference) continue;
-      for (const evidence of matchActionAutomationCompletionV1({ trigger: { kind: 'action', phase: 'after',
+      const [completion] = matchActionAutomationCompletionV1({ trigger: { kind: 'action', phase: 'after',
         actionIds: selected.actionIds, ...(selected.subject ? { subject: selected.subject } : {}) },
-        declaration: { ...declaration, completesActionIds: [actionId] }, observation })) {
-        const privateMatch = await matchActionAutomationTriggersV1({ ...selection, privateMatching }, evidence, [selected]);
-        notices.push(...privateMatch.notices);
-        if (!privateMatch.matched.length) continue;
-        const response = await admit({ evidence, triggers: [{ automationId: reference.automationId,
-          triggerId: reference.triggerId, triggerRevision: reference.triggerRevision }] }, context);
-        notices.push(...projectActionAutomationAdmitOutcomesV1(response, [{ row: selected, trigger: reference }]).notices);
-      }
+        declaration: { ...declaration, completesActionIds: [actionId] }, observation });
+      if (!completion) continue;
+      const privateMatch = await matchActionAutomationTriggersV1({ ...selection, privateMatching }, completion, [selected]);
+      notices.push(...privateMatch.notices);
+      if (!privateMatch.matched.length) continue;
+      admitted.push({ row: selected, trigger: reference, evidence: completion });
     }
+  }
+  const evidence = admitted[0]?.evidence;
+  if (evidence) {
+    const response = await admit({ evidence, triggers: admitted.map(({ trigger, evidence: match }) => ({
+      automationId: trigger.automationId, triggerId: trigger.triggerId, triggerRevision: trigger.triggerRevision,
+      ...(match.actionId === evidence.actionId ? {} : { actionId: match.actionId }),
+    })) }, context);
+    notices.push(...projectActionAutomationAdmitOutcomesV1(response, admitted).notices);
   }
   return notices;
 }

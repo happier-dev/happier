@@ -352,10 +352,17 @@ preview and a write is checked only for its write operation.
 Before checks can wait for a Workflow or start a notification without waiting
 for its result. Waiting checks continue the original Action only after they
 pass; a trigger may instead let a person approve after a failed check. The
-Action's normal approval still applies. A shared Workflow needs the executing
-person's consent before it runs in their Account on their Machine. Skipping a
-shared check applies to that invocation, and changes to reviewed steps require
-consent again.
+Action's normal approval still applies. When you start an Action, one card
+covers its matching shared Before and After triggers that need your consent.
+These Workflows run in your Account on your Machine. An After trigger you
+allow runs only if the eventual outcome matches its **Only when** condition.
+Skipping a shared check applies to that invocation, and changes to reviewed
+steps require consent again.
+
+When an Account Action has no execution Machine, its before and after checks
+show a Skip explaining that the Workflow needs a Machine. The Account Action
+continues. A Machine configured on the Workflow does not replace the missing
+execution Machine for that Action.
 
 These Workflows can use safe Action event values, such as the original request
 identifier and the Action that ran. After values also describe its terminal

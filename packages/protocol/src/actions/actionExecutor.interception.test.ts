@@ -8,6 +8,8 @@ import * as credentials from '../auth/apiTokenGrant.js';
 import * as callerContext from './executor/callerContext.js';
 import { createActionAutomationPortV1 } from './executor/actionAutomationAdmission.js';
 import { createActionAutomationInvocationV1, type ActionSettlementV1 } from './executor/actionSettlement.js';
+import { automationSubjectKeyV1 } from '../automations/automationSubjectV1.js';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 
 function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
   return createActionExecutor({
@@ -251,6 +253,68 @@ describe('createActionExecutor execution interception', () => {
       expect(events.map(event => event.subjects.filter(context => context.subject.kind === 'session')
         .map(context => context.subject.kind === 'session' ? context.subject.sessionId : undefined))).toEqual([['s1'], ['s2']]);
     } finally { port.dispose(); }
+  });
+
+  it('asks once for both shared phases of a native completion Action at admission', async () => {
+    const actionId = DEPLOYMENT_DEPLOY_ACTION_ID_V1;
+    const input = { serverId: 'home', environmentId: 'staging', expectedRevision: 1, requestKey: 'redeploy',
+      targetLinkId: 'runtime', expectedTargetLinkRevision: 1, contentArtifactId: 'definition',
+      contentHeaderVersion: 1, contentBodyVersion: 1 };
+    const subject = { kind: 'environment', serverId: 'home', environmentId: 'staging' } as const;
+    const shared = { automationId: 'shared', triggerRevision: 1, workflowId: 'workflow',
+      workflowRevision: 1, ownerAccountId: 'author', actionIds: [actionId], reachesOthers: true,
+      subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject, 'workflow') };
+    const rows = [
+      { ...shared, triggerId: 'before', phase: 'before', mode: 'wait' },
+      { ...shared, triggerId: 'after', phase: 'after' },
+      { ...shared, triggerId: 'other-environment', phase: 'after',
+        subjectKey: automationSubjectKeyV1({ ...subject, environmentId: 'other' }, shared.workflowId) },
+      { ...shared, triggerId: 'own-after', phase: 'after', ownerAccountId: 'actor', subjectKey: automationSubjectKeyV1(subject) },
+    ];
+    const port = createActionAutomationPortV1({ accountId: 'actor', seed: async () => ({ v: 1, rows }),
+      settle: async () => {} });
+    const cards: unknown[] = [];
+    const deploy = vi.fn(async () => ({ ok: false as const, errorCode: 'deployment_boundary_observed', error: 'deployment_boundary_observed' }));
+    const executor = createExecutor({ actionAutomations: port, deploymentAction: deploy,
+      resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: subject.environmentId } }),
+      approvalsCreate: async ({ request }) => { cards.push(request); return { artifactId: 'check-consent' }; } });
+    const requestId = 'native-redeploy';
+    const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'actor', defaultSessionMachineId: 'machine',
+      actionRequestId: requestId, presentUserConfirmation: { actionId, requestId, accountId: 'actor', serverId: 'home',
+        target: null, inputDigest: authority.computeActionInputApprovalDigestV1(actionId, input) } };
+
+    const result = await executor.execute(actionId, input, context);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true,
+      result: { kind: 'approval_request_created', artifactId: 'check-consent' } });
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toMatchObject({ automaticChecks: { phase: 'consent', consents: [
+      { triggerId: 'before', decision: 'pending' }, { triggerId: 'after', decision: 'pending' },
+    ] } });
+    expect(deploy).not.toHaveBeenCalled();
+  });
+
+  it('gives an external Account Action a visible needs-Machine Skip and performs its effect', async () => {
+    const row = { automationId: 'own', triggerId: 'before', triggerRevision: 1, workflowId: 'workflow',
+      workflowRevision: 1, ownerAccountId: 'actor', actionIds: ['account.name.set'], phase: 'before', mode: 'wait' };
+    const port = createActionAutomationPortV1({ accountId: 'actor', seed: async () => ({ v: 1, rows: [row] }),
+      settle: async () => {} });
+    let effects = 0;
+    const profile = { name: 'QA', firstName: 'QA', lastName: null, timestamp: 1 };
+    const executor = createExecutor({ actionAutomations: port,
+      homeDomainAction: async () => { effects++; return profile; } });
+
+    const result = await executor.execute('account.name.set', { name: 'QA' }, {
+      surface: 'api', authority: 'account_automation', actionCaller: { kind: 'host' },
+      serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'actor', bypassApprovals: true,
+      externalActionCredential: { accountId: 'actor', principalId: 'token', credentialId: 'token',
+        grant: credentials.API_TOKEN_FULL_GRANT_V1 },
+    });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: profile, automationNotices: [{
+      code: 'action_automation_skipped', reason: 'machineRequired',
+      automationId: row.automationId, triggerId: row.triggerId, workflowId: row.workflowId,
+    }] });
+    expect(effects).toBe(1);
   });
 
   it('observes an admitted pending deployment without evaluating its grant again', async () => {

@@ -21,8 +21,11 @@ export async function admitAutomationActionOccurrencesV1(params: Readonly<{
     const input = AutomationActionAdmitRequestV1Schema.parse(params.input);
     if (input.triggers.length === 0) return { results: [] };
     return rejoinAutomationOccurrenceInsertRace(() => inTx(async tx => {
-        const occurrences = input.triggers.map(ref => ({ automationId: ref.automationId,
-            occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId: ref.triggerId, evidence: input.evidence }) }));
+        const occurrences = input.triggers.map(ref => {
+            const evidence = ref.actionId === undefined ? input.evidence : { ...input.evidence, actionId: ref.actionId };
+            return { automationId: ref.automationId, evidence,
+                occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId: ref.triggerId, evidence }) };
+        });
         // Current configuration is irrelevant to an immutable occurrence already admitted.
         // Ordinary admission remains the sole evidence-correspondence/rejoin decision.
         const existing = (await Promise.all(portableQueryChunks({ values: occurrences, bindingsPerValue: 2,
@@ -48,8 +51,9 @@ export async function admitAutomationActionOccurrencesV1(params: Readonly<{
         for (const [position, ref] of input.triggers.entries()) {
             const skip = (reason: string) => results.push({ automationId: ref.automationId,
                 triggerId: ref.triggerId, kind: 'skipped', reason });
-            const occurrenceKey = occurrences[position]!.occurrenceKey;
-            const rejoining = existingKeys.has(JSON.stringify([ref.automationId, occurrenceKey]));
+            const { evidence, occurrenceKey } = occurrences[position]!;
+            const key = JSON.stringify([ref.automationId, occurrenceKey]);
+            const rejoining = existingKeys.has(key);
             const row = rowsById.get(ref.triggerId);
             let consentForInvocation = false;
             if (!rejoining) {
@@ -59,30 +63,28 @@ export async function admitAutomationActionOccurrencesV1(params: Readonly<{
                 const definition = decodeAutomationActionTriggerConfiguration(row);
                 consentForInvocation = 'consentFor' in definition;
                 if (!('consentFor' in definition)) {
-                    if (definition.phase !== input.evidence.phase || !definition.actionIds.includes(input.evidence.actionId)) {
+                    if (definition.phase !== evidence.phase || !definition.actionIds.includes(evidence.actionId)) {
                         skip('triggerKindMismatch'); continue;
                     }
                     if (definition.subjectKey !== undefined && !automationSubjectKeyMatchesV1(
-                        definition.subjectKey, input.evidence.subjects, undefined, definition.subjectKind)) {
+                        definition.subjectKey, evidence.subjects, undefined, definition.subjectKind)) {
                         skip('subjectMismatch'); continue;
                     }
                 }
-                if (input.evidence.machineId === undefined && 'consentFor' in definition) { skip('machineRequired'); continue; }
+                if (evidence.machineId === undefined && consentForInvocation) { skip('machineRequired'); continue; }
             }
-            const key = JSON.stringify([ref.automationId, ref.triggerId]);
             let index = admissionIndexes.get(key);
             if (index === undefined) {
                 index = admissions.length;
                 admissionIndexes.set(key, index);
-                const { v: _v, kind: _kind, subjects: _subjects, occurredAt, ...evidence } = input.evidence;
+                const { v: _v, kind: _kind, subjects: _subjects, occurredAt, ...runEvidence } = evidence;
                 admissions.push({ automationId: ref.automationId,
-                    ...(consentForInvocation && input.evidence.machineId !== undefined
-                        ? { runTargetMachineId: input.evidence.machineId } : {}),
+                    ...(consentForInvocation && evidence.machineId !== undefined ? { runTargetMachineId: evidence.machineId } : {}),
                     now: new Date(occurredAt), cause: AutomationRunCauseSchema.parse({
                         kind: 'trigger', triggerKind: 'action', triggerId: ref.triggerId,
                         triggerRevision: ref.triggerRevision, occurredAt,
                         occurrenceKey,
-                        evidence,
+                        evidence: runEvidence,
                     }) });
             }
             pending.push({ position: results.length, index });
