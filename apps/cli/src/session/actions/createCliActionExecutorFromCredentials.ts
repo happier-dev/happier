@@ -70,7 +70,7 @@ import { ManagedMachineControllerError } from '@/machines/managed/controllerErro
 import { isPluginActionExecutionDispatchId, type PluginActionExecutionRequestOwner } from './createDaemonPluginActionExecutor';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
-import { ACTION_INVOKE_ACTION_ID_V1, ActionIdSchema, isApprovalRequestObservationActionIdV1, isLocalServiceStopActionIdV1, MACHINE_LIST_ACTION_ID_V1, SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_INVOKE_ACTION_ID_V1, ActionIdSchema, isApprovalRequestObservationActionIdV1, isLocalServiceStopActionIdV1, SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { isSettingsDeclarationActionIdV1, SettingsDeclarationActionInputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { deploymentPreparationOperationForActionV1 } from '@happier-dev/protocol/deployments/deploymentPreparationAdmissionV1';
 import { enrichCliActionApprovalContext } from './enrichCliActionApprovalContext';
@@ -2141,8 +2141,9 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       }
       // A semantic Machine selector needs the same admitted delivery as an
       // outer CLI selector, even for Machine-placed friendly commands.
-      const usesDaemonIngress = params.externalActionClient && allowsDaemonIngress || managedMachineDaemonIngress || Boolean(boundWorkflowStart) || requiresSessionDaemonAdmission
+      const needsDaemonIngress = managedMachineDaemonIngress || Boolean(boundWorkflowStart) || requiresSessionDaemonAdmission
         || selectedOriginalMachine?.kind === 'ready' || workspaceMachineId !== undefined || liveResultCustody || requireDaemonIngress || declaredDaemonIngress;
+      const usesDaemonIngress = needsDaemonIngress || params.externalActionClient && allowsDaemonIngress;
       const originalDaemonTarget = usesDaemonIngress && originalCliCaller
         ? await (await import('@/daemon/multiDaemon')).resolveLiveDaemonControlTargetForServer(
           fixedServerId ?? approvalServerId,
@@ -2228,12 +2229,14 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           target = { kind: 'machine', machineId: pairedSessionCreation.data.executionTarget.machineId };
         }
         const daemonControlTarget = originalDaemonTarget;
-        if (!target && !ownManagedNativeIngress && requiresOriginalAccountMachineActionProof(parsedActionId.data, admittedInput, context)
-          && ownDaemon && daemonControlTarget?.machineId) {
+        const needsMachineProof = !target && !ownManagedNativeIngress
+          && requiresOriginalAccountMachineActionProof(parsedActionId.data, admittedInput, context);
+        if (needsMachineProof && ownDaemon && daemonControlTarget?.machineId) {
           target = { kind: 'machine', machineId: daemonControlTarget.machineId };
         }
-        // The Account inventory is available through Home before this CLI has a daemon.
-        if (actionId === MACHINE_LIST_ACTION_ID_V1 && !target && !daemonControlTarget && !requireDaemonIngress) return { context };
+        // Untargeted Account Actions can use their authenticated Home executor before this CLI has a daemon.
+        if (!target && !daemonControlTarget && !needsDaemonIngress && !needsMachineProof
+          && executionPlacement === 'account' && !spec.machineRuntimeDemandForInput) return { context };
         return { context: originalContext, invocation: createOneShotPatInvocation(async () => {
           // Preparation captured the credential used by every receiving call.
           if (signal?.aborted) return actionFailure('cancelled');

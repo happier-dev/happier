@@ -6528,6 +6528,12 @@ strict definition through the same field owner; only a Home that explicitly does
 not support definition discovery receives the legacy JSON-only fallback. A denied,
 malformed, or mismatched definition never falls back to looser parsing.
 
+In 0.3 development, the credentialed CLI Action executor uses the ordinary
+authenticated Home executor for an untargeted Account Action when no local
+daemon is live and neither the Action declaration nor the invocation requires
+Machine execution or daemon ingress. A Machine ID used to look up Account-held
+metadata, as in `machines.roles.get`, is a resource identifier.
+
 When `actions invoke approval.request.decide` receives a failed execution
 receipt, the CLI exits 1 and projects the receipt's error code and diagnostic
 in its existing failure envelope. The approval record remains available for

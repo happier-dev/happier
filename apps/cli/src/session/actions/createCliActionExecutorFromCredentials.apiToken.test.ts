@@ -655,7 +655,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
   });
 
   it('uses the fixed-Home daemon for Machine inventory until its publication is withdrawn', async () => {
-    daemonPost.mockResolvedValueOnce({
+    daemonPost.mockResolvedValue({
       ok: true,
       result: { machines: [] },
     });
@@ -672,6 +672,14 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
         input: { limit: 10 },
       }, expect.objectContaining({ target: daemonTarget, mutation: false }));
 
+      const target = { kind: 'machine', machineId: daemonTarget.machineId } as const;
+      await expect(executor.execute('machines.list', { limit: 10 }, {
+        surface: 'cli', externalActionTarget: target,
+      })).resolves.toEqual({ ok: true, result: { machines: [] } });
+      expect(daemonPost).toHaveBeenLastCalledWith(SIGNED_ROOT_ACTION_EXECUTE_PATH, {
+        actionId: 'machines.list', input: { limit: 10 }, target,
+      }, expect.objectContaining({ target: daemonTarget, mutation: false }));
+
       await withdrawPublication();
       await expect(executor.execute(
         'machines.list',
@@ -682,7 +690,11 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
         errorCode: 'local_executor_used',
         error: 'local_executor_used',
       });
-      expect(daemonPost).toHaveBeenCalledTimes(1);
+      expect(daemonPost).toHaveBeenCalledTimes(2);
+      const explicit = await executor.prepare('machines.list', { limit: 10 }, {
+        surface: 'cli', externalActionTarget: target,
+      });
+      expect(explicit).toMatchObject({ kind: 'ready' });
     });
   });
 

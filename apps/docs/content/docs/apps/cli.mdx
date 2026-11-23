@@ -363,6 +363,11 @@ object and distinct field flags overlay it; supplying the same field twice is an
 error instead of silently choosing one value. Omitting both sends an empty
 object.
 
+In 0.3 development, you can run Home-owned Account Actions such as
+`machines.list` and `machines.roles.get` while signed in without a local daemon.
+Leave `--machine-id` off to use the selected Home for execution. For
+`machines.roles.get`, provide the Machine whose roles you want in the Action input.
+
 ```bash
 hdev actions invoke session.status.get \
   --machine-id <machine-id> \

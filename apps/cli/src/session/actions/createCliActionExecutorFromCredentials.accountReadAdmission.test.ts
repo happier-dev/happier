@@ -11,6 +11,7 @@ import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/enc
 import { projectPrivateLabelForRecipientV1, sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { AccessibleMachineAccessV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { TeamCredentialUsageQueryResultV1Schema } from '@happier-dev/protocol/teams';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import tweetnacl from 'tweetnacl';
@@ -23,19 +24,29 @@ import { createCliActionExecutorFromCredentials } from './createCliActionExecuto
 describe('original CLI Account admission', () => {
     afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-    it('lists the Account Machines through Home when the CLI has no local daemon', async () => {
-        await withConfiguredDaemonTestHome({ prefix: 'happier-cli-machines-list-' }, async () => {
+    it.each([
+        { actionId: 'machines.list', input: { refresh: true }, path: '/v1/machines',
+            result: { ok: true, result: { items: [{ machineId: 'offline-machine', active: false, serverId: 'srv_home' }] } } },
+        { actionId: 'machines.roles.get', input: { serverId: 'srv_home', machineId: 'offline-machine' }, path: '/v1/machines/offline-machine',
+            result: { ok: true, result: { status: 'ready', source: 'default', metadataVersion: 7 } } },
+        { actionId: 'plugins.enable', input: { pluginId: 'example', scope: 'account' }, path: null,
+            result: { ok: false, errorCode: 'daemon_unavailable' } },
+    ] as const)('routes $actionId when the CLI has no local daemon', async ({ actionId, input, path, result }) => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-cli-account-route-' }, async () => {
             const token = `header.${Buffer.from(JSON.stringify({ sub: 'operator', tokenEpoch: 4,
                 provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
             const serverId = configuration.activeServerId;
             const machine = { id: 'offline-machine', kind: 'persistent', active: false,
-                revokedAt: null, replacedByMachineId: null };
+                revokedAt: null, replacedByMachineId: null, managedMachineRef: null, storageMode: 'plain',
+                metadata: encodePlainMachineStoredContent({ host: 'offline-host', platform: 'linux', happyCliVersion: 'dev',
+                    homeDir: '/h/operator', happyHomeDir: '/h/operator/.happier' }), metadataVersion: 7,
+                daemonState: null, daemonStateVersion: 0, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER };
             const homeReads = vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
-                const path = new URL(url).pathname;
-                if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
-                expect(url).toBe('https://home.test/v1/machines');
+                const pathname = new URL(url).pathname;
+                if (pathname === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+                expect(url).toBe(`https://home.test${path}`);
                 expect(options?.headers?.Authorization).toBe(`Bearer ${token}`);
-                return { status: 200, data: [machine] };
+                return { status: 200, data: pathname === '/v1/machines' ? [machine] : { machine } };
             });
             const executor = createCliActionExecutorFromCredentials({
                 credentials: { token, encryption: null, credentialProvenance: 'stored_session' },
@@ -44,10 +55,11 @@ describe('original CLI Account admission', () => {
                     features: FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_home' } } }) }),
                 actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({}) }),
             });
-            await expect(executor.execute('machines.list', { refresh: true }, {
-                surface: 'cli', serverId, authority: 'present_user', presentUserConfirmation: { actionId: 'machines.list' },
-            })).resolves.toMatchObject({ ok: true, result: { items: [{ machineId: machine.id, active: false, serverId: 'srv_home' }] } });
-            expect(homeReads.mock.calls.filter(([url]) => new URL(url).pathname === '/v1/machines')).toHaveLength(1);
+            const execution = await executor.execute(actionId, input, {
+                surface: 'cli', serverId, authority: 'present_user', presentUserConfirmation: { actionId },
+            });
+            expect(execution, execution.ok ? undefined : execution.errorCode).toMatchObject(result);
+            if (path) expect(homeReads.mock.calls.filter(([url]) => new URL(url).pathname === path)).toHaveLength(1);
         });
     });
 
