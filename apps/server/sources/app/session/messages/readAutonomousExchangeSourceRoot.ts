@@ -40,7 +40,7 @@ export function isAutonomousExchangeRootReceiptForAccount(value: unknown, accoun
     return readAutonomousExchangeRootReceiptForAccount(value, accountId, sessionId) !== null;
 }
 
-function isDirectAutonomousExchangeRootReceipt(receipt: SessionInputAdmissionReceiptV1 | null): boolean {
+export function isDirectAutonomousExchangeRootReceipt(receipt: SessionInputAdmissionReceiptV1 | null): boolean {
     return receipt !== null && !receipt.followDeliveryV1 && !receipt.followSources && !receipt.followRelations
         && (receipt.issuer === 'authenticatedAccount' || !receipt.discussionAddressing);
 }
@@ -79,8 +79,7 @@ export async function readReceiverAutonomousExchangeRootInTx(tx: Tx, input: Read
             if (!candidate) return null;
             const receipt = createStoredReadSchema(SessionInputAdmissionReceiptV1Schema).safeParse(candidate.inputAdmissionReceipt);
             if (candidate.localId && receipt.success && receipt.data.issuer === 'authenticatedAccount'
-                && receipt.data.actorAccountId === input.accountId && !receipt.data.followDeliveryV1
-                && !receipt.data.followSources && !receipt.data.followRelations) {
+                && receipt.data.actorAccountId === input.accountId && isDirectAutonomousExchangeRootReceipt(receipt.data)) {
                 return { sessionId: input.sessionId, localId: candidate.localId };
             }
             beforeSeq = candidate.seq;

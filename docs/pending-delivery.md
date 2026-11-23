@@ -538,7 +538,10 @@ the exact accepted input must join its actual new-turn witness. Same-turn
 supplements, steering and returned answers do not count. At the exchange's
 check-in limit, the next autonomous input remains Pending with
 `autonomous_check_in`. The root's person can Continue, allow ten more starts, or
-Stop through the existing revision-bound exchange control.
+Stop through the existing revision-bound exchange control. A person’s own
+queued input can start a fresh exchange past this hold. It leaves the old
+autonomous original queued under the old exchange’s controls and starts with
+zero autonomous starts.
 
 When Pending initializes a Discussion-origin exchange, it reads the originating
 Discussion's check-in override. An absent override uses the Account setting.

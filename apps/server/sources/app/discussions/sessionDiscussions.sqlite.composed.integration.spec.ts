@@ -44,7 +44,7 @@ import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity
 import { changeDeliveryMute } from '@/app/session/follow/sessionDeliveryMuteService';
 import { resolveEffectiveSessionAccess } from '@/app/session/access/sessionAccess';
 import { registerDiscussionRoutes } from '@/app/api/routes/discussions/registerDiscussionRoutes';
-import { enqueuePendingMessageByAuthenticatedMachine, materializeNextPendingMessage, resolveAcceptedPendingDelivery, settlePendingInputAdmission } from '@/app/session/pending/pendingMessageService';
+import { enqueuePendingMessage, enqueuePendingMessageByAuthenticatedMachine, materializeNextPendingMessage, resolveAcceptedPendingDelivery, settlePendingInputAdmission } from '@/app/session/pending/pendingMessageService';
 import { reconcileAutonomousExchangeAcceptedTurnInTx } from '@/app/session/pending/reconcileAutonomousExchangeAcceptedTurnInTx';
 import { updateAccountFollowCreationPreferencesInTx } from '@/app/session/follow/accountFollowCreationPreferences';
 import { type FollowPolicyV1, resolveFollowDeliveryV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
@@ -2289,7 +2289,7 @@ describe('First-class Discussions service (SQLite)', () => {
                     metadata: JSON.stringify({ machineId: targetPublisher.machine.id, path: '/repo', claudeSessionId: 'target-native' }) } });
                 const intake = createDiscussionFollowInputIntake({ session, credentials });
                 expect(await intake({ observation, signal: new AbortController().signal }), JSON.stringify(admissions)).toBe(true);
-                const localId = deriveDiscussionFollowInputLocalIdV1(observation.addressing);
+                let localId = deriveDiscussionFollowInputLocalIdV1(observation.addressing);
                 expect(await db.sessionPendingMessage.findUnique({ where: { sessionId_localId: { sessionId: target.id, localId } } }))
                     .toMatchObject({ replyProgress: { sourceSession, discussion: observation.addressing }, inputAdmissionReceipt: { discussionAddressing: observation.addressing } });
                 expect((await db.sessionFollowEdge.findFirstOrThrow({ where: { destinationSessionId: target.id, sourceDiscussionId: discussionId } })).deliveredTranscriptSeq)
@@ -2324,16 +2324,41 @@ describe('First-class Discussions service (SQLite)', () => {
                         .toBeNull();
                     expect((await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: source.id, localId: sourceInputId } } }))
                         .autonomousExchangeState).toMatchObject({ observedStarts: expectedAfterTurns });
-                    continue;
+                    const heldLocalId = localId;
+                    localId = crypto.randomUUID();
+                    const personRequest = buildTrustedHostSessionInputAdmissionV1('cli').request;
+                    const personContent = { t: 'plain' as const, v: { role: 'user', content: { type: 'text', text: 'Person intervention' },
+                        meta: withSessionInputRequestV1({}, personRequest) } };
+                    expect(await enqueuePendingMessage({ actorUserId: owner.id, authentication, sessionId: target.id,
+                        localId, content: personContent, requestedAction: DEFAULT_PENDING_REQUESTED_ACTION_V1 })).toMatchObject({ ok: true });
+                    expect(await materializeNextPendingMessage({ actorUserId: owner.id, sessionId: target.id, publisherAuthority,
+                        deliveryState: 'provider', deliveryTiming: 'after_foreground_ready', foregroundState: 'ready' }))
+                        .toMatchObject({ ok: true, didMaterialize: true, message: { localId } });
+                    const person = await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: target.id, localId } } });
+                    const personReceipt = SessionInputAdmissionReceiptV1Schema.parse(person.inputAdmissionReceipt);
+                    const personFinal = { t: 'plain' as const, v: { ...personContent.v, meta: {
+                        ...withSessionInputAuthorityV1(personContent.v.meta, settleSessionInputRequestV1({ request: personRequest,
+                            currentSessionPermissionCeiling: 'default', inputAdmissionReceipt: personReceipt })),
+                        [SESSION_MESSAGE_PROVENANCE_META_KEY]: settleSessionMessageProvenanceV1({ request: personRequest,
+                            requestedProvenance: undefined, inputAdmissionReceipt: personReceipt }),
+                    } } };
+                    await getSocketHandler(targetPublisher.socket, SESSION_PENDING_ADMISSION_SETTLEMENT_EVENT_V1)({ v: 1,
+                        sessionId: target.id, localId, decision: { kind: 'admit', finalContent: personFinal,
+                            validation: { autonomousCheckIn: { afterTurns: accountAfterTurns } } } }, (value: unknown) => { settlement = value; });
+                    expect(SessionPendingAdmissionSettlementResponseV1Schema.parse(settlement).result).toEqual({ status: 'accepted', localId });
+                    expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: target.id, localId: heldLocalId } } }))
+                        .toMatchObject({ status: 'queued', deliveryState: 'blocked', deliveryBlockedReason: 'autonomous_check_in',
+                            autonomousExchangeRootSessionId: source.id, autonomousExchangeRootLocalId: sourceInputId });
+                } else {
+                    expect(settled, settled.result.status === 'rejected' || settled.result.status === 'held' ? settled.result.code : settled.result.status)
+                        .toMatchObject({ v: 1, result: { status: 'accepted', localId } });
+                    expect(await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: target.id, localId } } }))
+                        .toMatchObject({ autonomousExchangeRootSessionId: source.id, autonomousExchangeRootLocalId: sourceInputId,
+                            autonomousExchangeCause: 'agent_session' });
+                    // The person's initial Discussion wake is not an autonomous start.
+                    expect(await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: source.id, localId: sourceInputId } } }))
+                        .toMatchObject({ autonomousExchangeCause: null, autonomousExchangeState: { observedStarts: start } });
                 }
-                expect(settled, settled.result.status === 'rejected' || settled.result.status === 'held' ? settled.result.code : settled.result.status)
-                    .toMatchObject({ v: 1, result: { status: 'accepted', localId } });
-                expect(await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: target.id, localId } } }))
-                    .toMatchObject({ autonomousExchangeRootSessionId: source.id, autonomousExchangeRootLocalId: sourceInputId,
-                        autonomousExchangeCause: 'agent_session' });
-                // The person's initial Discussion wake is not an autonomous start.
-                expect(await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: source.id, localId: sourceInputId } } }))
-                    .toMatchObject({ autonomousExchangeCause: null, autonomousExchangeState: { observedStarts: start } });
                 // The real native adapter must expose its immutable input witness
                 // while the real host lifecycle consumes the synchronous start.
                 let emitNative: ((event: AgentSessionRuntimeEvent) => void) | undefined;
@@ -2379,7 +2404,8 @@ describe('First-class Discussions service (SQLite)', () => {
                 const turnId = `discussion-accepted-${start}`;
                 const applied: boolean[] = [];
                 const lifecycle = createSessionTurnLifecycle({ agentId: 'codex',
-                    readTurnFacts: () => ({ initiator: 'agent_session', workDepth: 1 }),
+                    readTurnFacts: () => start === expectedAfterTurns ? ({ initiator: 'user', workDepth: 0 })
+                        : ({ initiator: 'agent_session', workDepth: 1 }),
                     readStartingInput: id => {
                         const inputId = runtime.readTurnStartingInputId?.(id);
                         return inputId ? { turnId: id, inputId } : null;
@@ -2398,9 +2424,12 @@ describe('First-class Discussions service (SQLite)', () => {
                     expect(await resolveAcceptedPendingDelivery(accepted)).toMatchObject({ ok: true, didResolve: true });
                     expect(await resolveAcceptedPendingDelivery(accepted)).toMatchObject({ ok: true, didResolve: false });
                     expect((await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: source.id, localId: sourceInputId } } }))
-                        .autonomousExchangeState).toMatchObject({ observedStarts: start + 1 });
+                        .autonomousExchangeState).toMatchObject({ observedStarts: start === expectedAfterTurns ? start : start + 1 });
                     expect(await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: target.id, localId } } }))
-                        .toMatchObject({ turnStartWitnessId: turnId, acceptedTurnCounted: true });
+                        .toMatchObject(start === expectedAfterTurns
+                            ? { acceptedTurnId: turnId, autonomousExchangeCause: null, autonomousExchangeRootLocalId: null,
+                                autonomousExchangeState: { observedStarts: 0, afterTurns: accountAfterTurns } }
+                            : { turnStartWitnessId: turnId, acceptedTurnCounted: true });
                 } finally { unsubscribe(); await runtime.resetOrDisposeRuntime('runtime_recovery'); }
             } finally { restoreHttp(); await app.close(); }
             if (start === 0 && expectedAfterTurns === 3) {

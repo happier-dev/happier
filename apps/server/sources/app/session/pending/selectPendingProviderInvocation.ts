@@ -3,6 +3,7 @@ import {
     type PendingRequestedActionV1,
 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import type { PendingProviderAction } from '@happier-dev/protocol/sessions/pending/pendingProviderAction';
+import { isDirectAutonomousExchangeRootReceipt } from '@/app/session/messages/readAutonomousExchangeSourceRoot';
 import { readStoredSessionInputAdmissionReceipt } from '@/app/session/messages/sessionInputAdmission';
 
 export type PendingClaimForegroundState = 'ready' | 'active_steerable' | 'active_unsteerable';
@@ -38,6 +39,8 @@ type PendingInvocationCandidate = Readonly<{
     localId: string;
     position: number;
     requestedAction: PendingRequestedActionV1 | unknown;
+    messageRole?: string | null;
+    inputAdmissionReceipt?: unknown;
     deliveryState?: string | null;
     deliveryBlockedReason?: string | null;
 }>;
@@ -56,6 +59,26 @@ export type PendingProviderInvocationSelection =
 
 function compareRows(left: PendingInvocationCandidate, right: PendingInvocationCandidate): number {
     return left.position - right.position || left.localId.localeCompare(right.localId);
+}
+
+function isAutonomousCheckInHold(row: PendingInvocationCandidate): boolean {
+    return row.deliveryState === 'blocked' && row.deliveryBlockedReason === 'autonomous_check_in';
+}
+
+function selectFifoCandidate(ordered: readonly PendingInvocationCandidate[]): PendingInvocationCandidate {
+    const head = ordered[0]!;
+    if (!isAutonomousCheckInHold(head)) return head;
+
+    // Person intervention can start a fresh exchange while the previous
+    // autonomous original stays under its own check-in controls.
+    for (const row of ordered) {
+        if (isAutonomousCheckInHold(row)) continue;
+        if (row.deliveryState != null) break;
+        if (row.messageRole !== 'user') continue;
+        const receipt = readStoredSessionInputAdmissionReceipt(row.inputAdmissionReceipt);
+        if (receipt?.issuer === 'authenticatedAccount' && isDirectAutonomousExchangeRootReceipt(receipt)) return row;
+    }
+    return head;
 }
 
 function selectExactAction(
@@ -113,7 +136,7 @@ export function selectPendingProviderInvocation(params: Readonly<{
         if (exactAction) return exactAction;
     }
 
-    const candidate = ordered[0]!;
+    const candidate = selectFifoCandidate(ordered);
     if (candidate.deliveryState !== null && candidate.deliveryState !== undefined) {
         return { deferredReason: 'waiting_for_predecessor' };
     }

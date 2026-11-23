@@ -4075,6 +4075,7 @@ export async function resolveAcceptedPendingDelivery(params: {
                         content: true,
                         usageTimingV1: true,
                         requestedAction: true,
+                        providerAction: true,
                         position: true,
                         inputAdmissionReceipt: true,
                         requestEqualityEvidenceV1: true,
@@ -4150,7 +4151,11 @@ export async function resolveAcceptedPendingDelivery(params: {
 
                 const requestedAction = PendingRequestedActionV1StoredSchema.safeParse(existing.requestedAction);
                 const isExactAction = requestedAction.success && requestedAction.data.kind !== "enqueue";
-                const earlierUnresolved = isExactAction ? [] : await tx.sessionPendingMessage.findMany({
+                // The provider claim establishes queue order before dispatch. Settlement
+                // consumes that decision even if the earlier held original is still queued.
+                const hasProviderClaim = existing.providerAction !== null
+                    && isPendingDeliveryProviderEffectPossibleV1(readPendingDeliveryStatus(existing));
+                const earlierUnresolved = hasProviderClaim || isExactAction ? [] : await tx.sessionPendingMessage.findMany({
                     where: {
                         sessionId,
                         targetExecutionRunId,
