@@ -665,9 +665,10 @@ export function TriageEntryActionControls(
       )}
     </>
   );
-  const secondaryControls = (
+  const askControl = beside === null ? null
+    : compact ? <Stack style={COMPACT_KEEP_STYLE_V1}>{button(beside, press, undefined, 'conversations')}</Stack> : button(beside, press);
+  const moreControl = (
     <>
-      {beside === null ? null : compact ? <Stack style={COMPACT_KEEP_STYLE_V1}>{button(beside, press, undefined, 'conversations')}</Stack> : button(beside, press)}
       {hasOverflow ? (
         <Menu
           open={moreOpen}
@@ -684,15 +685,17 @@ export function TriageEntryActionControls(
       ) : null}
     </>
   );
-  // The wide row leads with Ask and ⋯ and ends with the primary (as the lab's write ends its row), so the primary grows
-  // into free space when its agent lands on a cold document and moves neither of them (F10). The pinned phone band keeps
-  // the primary first: there it holds its word and Ask yields into ⋯ by the band's own measured room.
+  // The wide row is the house header order (UI refinements 2026-11-23 08:22Z): Ask, then the primary, and "…" anchored on
+  // the trailing edge, at the same x on every page. The primary names its Agent from first paint (the surface context's
+  // preferred Agent), so nothing moves when the catalog read lands. The pinned phone band keeps the primary first: there
+  // it holds its word and Ask yields into ⋯ by the band's own measured room.
   const controls = (
     <>
-      {compact ? primaryControl : secondaryControls}
-      {compact ? secondaryControls : primaryControl}
-      {/* The source's own write follows ⋯. It arrives with the source's body, after the row has painted, so in this
-          place it joins the row without moving anything already there (lab b4/c7 drew it before ⋯). */}
+      {compact ? primaryControl : askControl}
+      {compact ? askControl : primaryControl}
+      {compact ? moreControl : null}
+      {/* The source's own write follows the row's actions. It arrives with the source's body, after the row has painted,
+          so in this place it joins the row without moving anything already there. */}
       {props.sourceWrite === undefined || (compact && writeShown) ? null
         : <TriageSourceWriteCluster write={props.sourceWrite} sourceLabel={props.sourceLabel} choices="host" />}
     </>
@@ -710,11 +713,15 @@ export function TriageEntryActionControls(
             </Row>
           </Row>
         ) : controls}
-        {/* The far end of the one action row (lab b4/c7) is why the entry is here, alone: never a control. */}
+        {/* Toward the far end of the one action row (lab b4/c7): why the entry is here, never a control. */}
         {props.trailing === undefined || props.trailing === null ? null : (
           <Row gap="small" align="center" wrap style={TRAILING_STYLE_V1}>
             {props.trailing}
           </Row>
+        )}
+        {/* "…" on the trailing edge of the wide row, after the reason, wherever the row's actions end. */}
+        {compact || !hasOverflow ? null : (
+          <Row style={props.trailing === undefined || props.trailing === null ? TRAILING_STYLE_V1 : undefined}>{moreControl}</Row>
         )}
       </Row>
       {refusal === null ? null : refusal.kind === 'missing' ? (

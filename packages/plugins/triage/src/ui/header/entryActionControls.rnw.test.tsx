@@ -353,9 +353,8 @@ describe('the mounted configured entry action controls', () => {
     expect(row()).toEqual(firstPaint);
   });
 
-  it('leads the wide row with Ask and ⋯, so the primary grows into free space when its agent lands (F10)', async () => {
-    // A cold document reads the default agent after first paint: the primary draws "Review" and then names its
-    // agent. Ask and ⋯ come first, so that growth moves neither of them; the primary ends the row as the lab's write does.
+  it('orders the wide row as the house header does: Ask, the primary, then ⋯ on the trailing edge', async () => {
+    // UI refinements 2026-11-23 08:22Z: "…" sits on the trailing edge at the same x on every page, the primary nearest it.
     const surface = defineUiSurface(() => (
       <TriageEntryActionControls
         target={{ kind: 'entry', sectionId: 'open', entryRef: testkitEntryRef({ entryId: 'pr-order', kindId: 'pull-request' }),
@@ -391,7 +390,7 @@ describe('the mounted configured entry action controls', () => {
     const primary = names.indexOf('Review with Claude Code');
     expect(names.indexOf('Ask')).toBeGreaterThanOrEqual(0);
     expect(names.indexOf('Ask')).toBeLessThan(primary);
-    expect(names.indexOf('More actions')).toBeLessThan(primary);
+    expect(names.indexOf('More actions')).toBeGreaterThan(primary);
   });
 
   it('dispatches the exact formal review action that was pressed', async () => {
