@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { AutomationSubjectPickerProps } from '@happier-dev/plugin-ui/components';
 import { HappierAutomationSubjectPicker } from '@happier-dev/plugin-ui/presentation';
-import { automationSubjectKeyV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
+import { automationSubjectKeyV1, type AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import type { PluginUiAutomationPresentationScope } from './pluginUiPrivatePresentationHost';
 import { useAutomationSubjectPicker, type AutomationSubjectPickerInput } from '@/sync/domains/workflows/useAutomationSubjectPicker';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
@@ -69,11 +69,14 @@ export function PluginAutomationSubjectPicker(props: PluginAutomationSubjectPick
         if (plugin && projection.phase === 'error') retryProjection();
         else void read.reload();
     }, [plugin, projection.phase, read.reload]);
+    // The public contract hands back the identity alone.
+    const { onChange } = props;
+    const choose = React.useCallback((subject: AutomationSubjectV1) => onChange(subject), [onChange]);
     const unavailable = props.accountLifetime === null || !props.isCurrent() || (props.kind.kind === 'database' && read.status === 'idle')
         || plugin && (!machineId || projection.phase === 'unsupported');
     return <HappierAutomationSubjectPicker Menu={DropdownMenu} testID={props.testID} open={open} onOpenChange={setOpen}
         value={props.value} options={read.items} subjectKey={automationSubjectKeyV1} waiting={waiting} failed={failed}
         hasMore={read.hasMore} disabled={props.disabled} canSelect={canSelect} onRetry={retry} onLoadMore={read.loadMore}
-        onChange={props.onChange} chooseLabel={t('common.choose')} emptyLabel={t(unavailable ? 'common.unavailable' : 'common.noMatches')}
+        onChange={choose} chooseLabel={t('common.choose')} emptyLabel={t(unavailable ? 'common.unavailable' : 'common.noMatches')}
         loadingLabel={t('common.loading')} retryLabel={t('common.retry')} failureLabel={t('common.requestFailed')} moreLabel={t('common.more')} />;
 }

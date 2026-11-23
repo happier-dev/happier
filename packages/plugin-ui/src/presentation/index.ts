@@ -41,4 +41,4 @@ export { resolveHappierRovingTabStop } from './collection/semantics.js';
 export { HappierCollapsibleBody, type HappierCollapsibleBodyActionProps } from './content/CollapsibleBody.js';
 // Host-only: the core controller and its public plugin bindings use the same Automations section and picker.
 export { HappierAutomationsSection, type HappierAutomationsSectionBindings } from './automations/AutomationsSection.js';
-export { HappierAutomationSubjectPicker } from './automations/AutomationSubjectPicker.js';
+export { HappierAutomationSubjectPicker, type HappierAutomationSubjectPickerRow } from './automations/AutomationSubjectPicker.js';
