@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
@@ -66,8 +67,6 @@ import { createCliActionExecutorHarness } from '@/session/actions/createCliActio
 import { createRegistryInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { normalizePluginUiInlineSurfaceBindingV1 } from '@happier-dev/protocol/plugins/ui';
-import { configuration } from '@/configuration';
-import { writeSettings, SUPPORTED_SCHEMA_VERSION } from '@/persistence';
 import { findCompiledActionCliCommand } from '@/cli/actions/compiledCommands';
 import { composeActionCliInput, parseActionCliCommandInput } from '@/cli/actions/parseCommandInput';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
@@ -915,8 +914,7 @@ describe('CLI Board Action family', () => {
     try {
       const sessionId = 'c111111111111111111111111';
       const metadata = createTestMetadata({ path: directory, machineId: 'machine-one' });
-      await writeSettings({ schemaVersion: SUPPORTED_SCHEMA_VERSION, onboardingCompleted: true,
-        machineIdByServerId: { [configuration.activeServerId]: 'machine-one' } });
+      await updateMachineRegistration(() => ({ machineId: 'machine-one' }));
       const token = surface === 'session-agent' ? 'runner-session-token' : `fixture.${Buffer.from(JSON.stringify({ sub: 'account',
         provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
       const credentials = { token, encryption: null };

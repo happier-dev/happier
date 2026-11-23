@@ -1,13 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { StoredCredentials } from '@/persistence';
-import type { Settings } from '@/persistence';
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 
 const {
     readCredentialsMock,
     readStoredCredentialsMock,
     readDaemonStateMock,
     resolveDaemonServiceInstallationSnapshotFromEnvMock,
-    readSettingsMock,
 } = vi.hoisted(() => ({
     readCredentialsMock: vi.fn(async () => null),
     readStoredCredentialsMock: vi.fn(
@@ -35,24 +34,25 @@ const {
         installedPath: '/tmp/com.happier.cli.daemon.default.plist',
         label: 'com.happier.cli.daemon.default',
     })),
-    readSettingsMock: vi.fn(async (): Promise<Settings> => ({ schemaVersion: 2, onboardingCompleted: false })),
 }));
 
-vi.mock('@/configuration', () => ({
-    configuration: {
+vi.mock('@/configuration', async (importOriginal) => {
+    const { configuration } = await importOriginal<typeof import('@/configuration')>();
+    return { configuration: {
+        serversDir: configuration.serversDir,
+        settingsFile: configuration.settingsFile,
         activeServerId: 'cloud',
         serverUrl: 'http://127.0.0.1:53288',
         apiServerUrl: 'http://127.0.0.1:53288',
         publicServerUrl: 'http://127.0.0.1:53288',
         webappUrl: 'http://127.0.0.1:19364',
-    },
-}));
+    } };
+});
 
 vi.mock('@/persistence', () => ({
     readCredentials: () => readCredentialsMock(),
     readStoredCredentials: () => readStoredCredentialsMock(),
     readDaemonState: () => readDaemonStateMock(),
-    readSettings: () => readSettingsMock(),
 }));
 
 vi.mock('@/daemon/service/cli', () => ({
@@ -61,13 +61,12 @@ vi.mock('@/daemon/service/cli', () => ({
 }));
 
 describe('readDaemonStatusSnapshot', () => {
-    afterEach(() => {
+    afterEach(async () => {
         readCredentialsMock.mockClear();
         readStoredCredentialsMock.mockClear();
         readDaemonStateMock.mockClear();
         resolveDaemonServiceInstallationSnapshotFromEnvMock.mockClear();
-        readSettingsMock.mockReset();
-        readSettingsMock.mockResolvedValue({ schemaVersion: 2, onboardingCompleted: false });
+        await updateMachineRegistration(() => ({}));
         readStoredCredentialsMock.mockReset();
         vi.unstubAllGlobals();
         vi.resetModules();
@@ -79,8 +78,7 @@ describe('readDaemonStatusSnapshot', () => {
             token: `header.${payload}.signature`,
             encryption: null,
         });
-        readSettingsMock.mockResolvedValueOnce({ schemaVersion: 2, onboardingCompleted: false,
-            machineId: 'machine-confirmed', machineIdConfirmedByServer: true });
+        await updateMachineRegistration(() => ({ machineId: 'machine-confirmed', confirmedByServer: true }));
         vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ id: 'acct_status', username: 'alice' }), { status: 200 })));
 
         const { readDaemonStatusSnapshot } = await import('./statusSnapshot');
@@ -101,8 +99,7 @@ describe('readDaemonStatusSnapshot', () => {
 
     it('preserves unknown validation and local-only machine identity without declaring either ready', async () => {
         readStoredCredentialsMock.mockResolvedValueOnce({ token: 'fixture-status', encryption: null });
-        readSettingsMock.mockResolvedValueOnce({ schemaVersion: 2, onboardingCompleted: false,
-            machineId: 'machine-local', machineIdConfirmedByServer: false });
+        await updateMachineRegistration(() => ({ machineId: 'machine-local', confirmedByServer: false }));
         vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('connection refused'); }));
 
         const { readDaemonStatusSnapshot } = await import('./statusSnapshot');
@@ -119,8 +116,7 @@ describe('readDaemonStatusSnapshot', () => {
     });
 
     it.each(['unreachable', 'rejected', 'missing'] as const)('reports a confirmed Machine with %s sign-in accurately', async (state) => {
-        readSettingsMock.mockResolvedValueOnce({ schemaVersion: 2, onboardingCompleted: false,
-            machineId: 'machine-confirmed', machineIdConfirmedByServer: true });
+        await updateMachineRegistration(() => ({ machineId: 'machine-confirmed', confirmedByServer: true }));
         if (state !== 'missing') readStoredCredentialsMock.mockResolvedValueOnce({ token: 'fixture-status', encryption: null });
         const fetch = vi.fn(async () => {
             if (state === 'unreachable') throw new TypeError('connection refused');

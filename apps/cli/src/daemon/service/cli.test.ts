@@ -4432,10 +4432,6 @@ describe('runDaemonServiceCliCommand', () => {
             onboardingCompleted: false,
             activeServerId: 'home',
             servers: { home: profile('home'), work: profile('work') },
-            machineIdByServerId: {},
-            machineIdByServerIdByAccountId: {},
-            lastTokenSubByServerId: {},
-            machineIdConfirmedByServerByServerId: {},
           });
           reloadConfiguration();
           writeInstalledLinuxDaemonService({ userHomeDir: homeDir, happierHomeDir, targetMode: 'default-following' });

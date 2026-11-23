@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -464,7 +465,7 @@ vi.mock('@/persistence', () => ({
   releaseDaemonLock: vi.fn(async () => {}),
   readCredentials: vi.fn(async () => harness.credentials),
   readStoredCredentials: vi.fn(async () => harness.credentials),
-  readSettings: vi.fn(async () => ({ machineId: 'machine-1' })),
+  readSettings: vi.fn(async () => ({})),
 }));
 
 vi.mock('./controlClient', async (importOriginal) => ({
@@ -715,6 +716,10 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     configuredBackendId: 'review-bot',
     sourceKind: 'configured',
   } as const;
+
+  beforeEach(async () => {
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
+  });
 
   afterEach(() => {
     vi.clearAllMocks();

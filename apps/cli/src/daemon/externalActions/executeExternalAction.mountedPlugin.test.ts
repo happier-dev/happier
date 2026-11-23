@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -13,7 +14,6 @@ import { executeExternalAction } from './executeExternalAction';
 import { arePluginMachineMaterializationRefsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1, PluginInstallationManifestPublisherHeaderV1Schema, createPluginInstallationManifestPublisherSigningInputV1, stringifyPluginInstallationManifestCanonicalJsonV1 } from '@happier-dev/protocol/plugins/installations/manifests';
 import { AutomationConversationActionHttpPathsV1 } from '@happier-dev/protocol/automations/event';
-import * as persistence from '@/persistence';
 import * as installationStore from '@/daemon/identity/store';
 import axios from 'axios';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol';
@@ -157,9 +157,7 @@ describe('external Action mounted plugin admission', () => {
   it('lists Channels targets through the real conversation executor and locally signed publisher, refusing missing publisher and stale custody', async () => {
     const { fixture, invocation } = await bundledMountedFixture('happier.channels', 'session-conversations');
     const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(43));
-    const settings = vi.spyOn(persistence, 'readSettings').mockResolvedValue({
-      schemaVersion: 6, onboardingCompleted: true, machineId: 'machine-1',
-    });
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
     vi.spyOn(installationStore, 'readOrCreateInstallationIdentity').mockResolvedValue({
       version: 1, installationId: 'local-installation', createdAt: 1,
       publicKey: Buffer.from(key.publicKey).toString('base64url'),
@@ -229,7 +227,7 @@ describe('external Action mounted plugin admission', () => {
         errorCode: 'plugin_action_caller_required' } },
     });
     expect(axios.post).not.toHaveBeenCalled();
-    settings.mockResolvedValue({ schemaVersion: 6, onboardingCompleted: true });
+    await updateMachineRegistration(() => ({}));
     expect(await run()).toMatchObject({ kind: 'response', response: { execution: {
       ok: false, errorCode: 'automation_conversation_publisher_proof_unavailable' } } });
     expect(axios.post).not.toHaveBeenCalled();

@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import axios, { AxiosHeaders, type AxiosResponse } from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { definePlugin } from '@happier-dev/plugin-sdk';
@@ -23,7 +24,7 @@ async function fixtureWithReviews(present: () => boolean, hasUnclassified = fals
     const broker = createStablePluginEventsBroker();
     // Only filesystem credentials and authenticated HTTP are substituted. The
     // actual Triage activation declaration, runtime adoption and service run stay real.
-    vi.spyOn(persistence, 'readSettings').mockResolvedValue({ schemaVersion: 6, onboardingCompleted: true, machineId: 'review-demand-machine' });
+    await updateMachineRegistration(() => ({ machineId: 'review-demand-machine' }));
     vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(axios, 'get').mockImplementation(async raw => {
         const url = new URL(String(raw));

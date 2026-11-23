@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -45,7 +46,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/persistence', async importOriginal => ({
   ...await importOriginal<typeof import('@/persistence')>(),
   readStoredCredentials: mocks.readStoredCredentials,
-  readSettings: async () => ({ machineId: 'configured-machine' }),
+  readSettings: async () => ({}),
 }));
 
 const BACKEND_ID = 'review-bot';
@@ -302,6 +303,7 @@ function createComposedRuntime(resolution: EngineAdapterResolution | null, cwd: 
 
 describe('Account-configured ACP composed Session journey', () => {
   beforeEach(async () => {
+    await updateMachineRegistration(() => ({ machineId: 'configured-machine' }));
     mocks.readStoredCredentials.mockReset();
     mocks.readStoredCredentials.mockResolvedValue(createCredentials());
     launchFixture = await createNativeAgentLaunchPreparationFixture();

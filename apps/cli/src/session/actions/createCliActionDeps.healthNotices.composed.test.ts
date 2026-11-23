@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { randomUUID } from 'node:crypto';
 import axios from 'axios';
 import tweetnacl from 'tweetnacl';
@@ -11,7 +12,6 @@ import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/te
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { createPlainAccountArtifactHttpBoundary } from '@/api/artifacts/accountArtifactStore.testkit';
 import { createAutomationEventAdoptedDefinitionSetHostV1 } from '@/plugins/runtime/automations/automationEventAdoptedDefinitionSetHost';
-import * as persistence from '@/persistence';
 import * as installationStore from '@/daemon/identity/store';
 import { healthTransition } from '../../../../../packages/plugins/machine-services/src/healthObserver';
 import { createCliActionDeps } from './createCliActionDeps';
@@ -55,7 +55,7 @@ it.each(['inbox', 'auto_start', 'retired_caller'] as const)(
         body: encodePlainArtifactStoredContent({ body: JSON.stringify(detail.content) }) });
     // Account HTTP and installation/key storage are the system boundaries. The
     // factory, Event admission, Environment opener and notice writer stay real.
-    vi.spyOn(persistence, 'readSettings').mockResolvedValue({ schemaVersion: 6, machineId: caller.machineId });
+    await updateMachineRegistration(() => ({ machineId: caller.machineId }));
     const keys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9));
     vi.spyOn(installationStore, 'readOrCreateInstallationIdentity').mockResolvedValue({ version: 1, installationId: randomUUID(), createdAt: 1,
         publicKey: Buffer.from(keys.publicKey).toString('base64url'), privateKey: Buffer.from(keys.secretKey).toString('base64url') });

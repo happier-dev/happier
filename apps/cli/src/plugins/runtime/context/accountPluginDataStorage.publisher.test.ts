@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
@@ -15,9 +16,8 @@ import {
     stringifyPluginInstallationManifestCanonicalJsonV1,
 } from '@happier-dev/protocol/plugins/installations/manifests';
 
-import { configuration, reloadConfiguration } from '@/configuration';
+import { reloadConfiguration } from '@/configuration';
 import { readCurrentMachineInstallation } from '@/daemon/identity/currentMachineInstallation';
-import { writeSettings } from '@/persistence';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { createAccountPluginDataStorageHost } from './accountPluginDataStorage';
@@ -62,8 +62,7 @@ describe('release-less declaration installation publisher', () => {
         env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_SERVER_URL: 'https://declaration-home.invalid',
             HAPPIER_LOCAL_SERVER_URL: '', HAPPIER_ACTIVE_SERVER_ID: '' });
         reloadConfiguration();
-        await writeSettings({ schemaVersion: 6, onboardingCompleted: true,
-            machineIdByServerId: { [configuration.activeServerId]: machineId } });
+        await updateMachineRegistration(() => ({ machineId }));
         await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
         const address = server.address();
         if (!address || typeof address === 'string') throw new Error('Missing declaration test listener');

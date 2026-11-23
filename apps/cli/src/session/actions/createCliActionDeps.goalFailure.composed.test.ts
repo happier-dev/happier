@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -55,7 +56,7 @@ describe('normal CLI early native Goal failure', () => {
         machineId: 'goal-machine', metadata: JSON.stringify({ machineId: 'goal-machine', path: '/repo',
           agentRuntimeDescriptorV1: buildTestCodexRuntimeDescriptorV1({ backendMode: 'appServer' }) }) });
       vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
-      vi.spyOn(persistence, 'readSettings').mockResolvedValue({ schemaVersion: 6, onboardingCompleted: true, machineId: 'goal-machine' });
+      await updateMachineRegistration(() => ({ machineId: 'goal-machine' }));
       vi.spyOn(axios, 'get').mockImplementation(async url => {
         if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
         if (String(url).includes(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: rawSession } };

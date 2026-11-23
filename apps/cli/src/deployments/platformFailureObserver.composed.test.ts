@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { randomUUID } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createActionExecutor, sealAutomationTriggerDefinitionStoredEnvelopeV1,
@@ -16,7 +17,6 @@ import { DeploymentFailedEventV1ProtocolSchema, DeploymentReceiptOutcomeEventV1P
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import axios from 'axios';
 import tweetnacl from 'tweetnacl';
-import * as persistence from '@/persistence';
 import * as installationStore from '@/daemon/identity/store';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { AutomationEventActionHttpPathsV1, AutomationEventAdmitHttpRequestV1Schema } from '@happier-dev/protocol/automations/event';
@@ -65,7 +65,7 @@ it.each(['failed', 'succeeded'] as const)('commits %s C1 through the default CLI
             body: encodePlainArtifactStoredContent({ body: JSON.stringify(index === 0 ? detail.content : index === 1 ? link.content : receipt.content) }) });
     }
     // Local registration/key storage is the OS boundary; the default publisher signer stays real.
-    vi.spyOn(persistence, 'readSettings').mockResolvedValue({ schemaVersion: 6, machineId: fixture.caller.machineId });
+    await updateMachineRegistration(() => ({ machineId: fixture.caller.machineId }));
     const keys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9));
     vi.spyOn(installationStore, 'readOrCreateInstallationIdentity').mockResolvedValue({ version: 1, installationId: randomUUID(), createdAt: 1,
         publicKey: Buffer.from(keys.publicKey).toString('base64url'), privateKey: Buffer.from(keys.secretKey).toString('base64url') });

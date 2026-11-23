@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import Fastify from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
@@ -13,7 +14,6 @@ import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { createManagedPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
-import * as persistence from '@/persistence';
 
 import { createPluginInvocationActionsService } from './actions';
 import { createPluginActionCallerMaterializationFixture } from './actionCaller.testkit';
@@ -37,7 +37,7 @@ describe('plugin Review publication claim approval', () => {
             const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
                 encryption: null, credentialProvenance: 'stored_session' as const };
             // The daemon's persisted Machine identity is a filesystem boundary.
-            vi.spyOn(persistence, 'readSettings').mockResolvedValue({ schemaVersion: 6, machineId: 'machine-1' });
+            await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
             const settings = accountSettingsParse({});
             const features = registerAccountHomeHttp(app, { accountId, serverId: 'srv_review-claim', settings });
             registerPlainArtifactRoutes(app, accountId);

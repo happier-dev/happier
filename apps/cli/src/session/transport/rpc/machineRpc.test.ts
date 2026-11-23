@@ -61,13 +61,15 @@ vi.mock('axios', () => ({
     request: (...args: unknown[]) => axiosRequest(...args),
   },
 }));
-vi.mock('@/configuration', async () => {
+vi.mock('@/configuration', async (importOriginal) => {
+  const { configuration } = await importOriginal<typeof import('@/configuration')>();
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
   return { configuration: {
     serverUrl: 'https://api.example.test', apiServerUrl: 'https://api.example.test',
     activeServerId: 'home', activeServerDir: join(tmpdir(), 'happier-machine-rpc-test'),
     happyHomeDir: join(tmpdir(), 'happier-machine-rpc-test'),
+    serversDir: configuration.serversDir, settingsFile: configuration.settingsFile,
     organizationPolicy: { status: 'absent' },
   } };
 });
@@ -108,7 +110,7 @@ import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sess
 import { openSessionRequesterBootstrapRpcRequestV1, sealSessionRequesterBootstrapRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
-import * as persistence from '@/persistence';
+import { readMachineRegistration, updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { createManagedGuestActivityTransport } from '@/machines/managed/managedActivityTransport';
@@ -2057,8 +2059,8 @@ describe('callMachineRpc', () => {
   });
 
   it.each(['replay', 'memory', 'memory search', 'memory status'] as const)('keeps the containing %s operation open beyond the generic RPC cutoff', async (operation) => {
-    const settings = await persistence.readSettings();
-    const settingsRead = vi.spyOn(persistence, 'readSettings').mockResolvedValue({ ...settings, machineId: 'machine-plain' });
+    const previousRegistration = await readMachineRegistration();
+    await updateMachineRegistration(() => ({ machineId: 'machine-plain' }));
     vi.useFakeTimers();
     const credentials = { token: 'plain-token', encryption: null };
     axiosGet.mockResolvedValueOnce({ data: { machine: { storageMode: 'plain', id: 'machine-plain',
@@ -2100,8 +2102,8 @@ describe('callMachineRpc', () => {
           : operation === 'memory status' ? RPC_METHODS.DAEMON_MEMORY_STATUS : RPC_METHODS.DAEMON_MEMORY_ENSURE_UP_TO_DATE}` });
     } finally {
       await pending;
-      settingsRead.mockRestore();
       vi.useRealTimers();
+      await updateMachineRegistration(() => previousRegistration);
     }
   });
 

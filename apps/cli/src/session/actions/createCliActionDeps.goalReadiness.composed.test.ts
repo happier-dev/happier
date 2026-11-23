@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
@@ -7,7 +8,6 @@ import { ApiSessionClient } from '@/api/session/sessionClient';
 import { createTestApiSessionClient } from '@/testkit/backends/createTestApiSessionClient';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { createAccountEncryptionCurrentnessFixture, createPlainSessionFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
-import * as persistence from '@/persistence';
 import { createCliActionDeps } from './createCliActionDeps';
 
 const boundary = vi.hoisted(() => ({
@@ -82,7 +82,7 @@ describe('Keep going capability discovery during native controls installation', 
     boundary.dispatch = (method, request, signal) => session.rpcHandlerManager.invokeLocal(method, request, { signal });
     const rawSession = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', active: true,
       machineId: 'goal-machine', metadata: JSON.stringify({ machineId: 'goal-machine', path: '/repo' }) });
-    vi.spyOn(persistence, 'readSettings').mockResolvedValue({ schemaVersion: 6, onboardingCompleted: true, machineId: 'goal-machine' });
+    await updateMachineRegistration(() => ({ machineId: 'goal-machine' }));
     const writes: string[] = [];
     vi.spyOn(axios, 'get').mockImplementation(async url => {
       if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };

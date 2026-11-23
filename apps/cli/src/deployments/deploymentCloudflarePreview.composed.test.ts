@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -43,7 +44,6 @@ import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createAutomationEventAdoptedDefinitionSetHostV1 } from '@/plugins/runtime/automations/automationEventAdoptedDefinitionSetHost';
 import { createPluginInvocationActionsService } from '@/plugins/runtime/invocation/services/actions';
 import type { PluginInvocationServicesSeed } from '@/plugins/runtime/invocation/services/types';
-import * as persistence from '@/persistence';
 import { createDeploymentReceiptEventSourceAdapter, deploymentEventActions } from '../../../../packages/plugins/machine-services/src/deploymentEvents';
 import { readServerIdentityIdFromFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
@@ -449,7 +449,7 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
                 const sourceCustody = daemon.registry.readPluginSourceCustody?.(machineServices.manifest.id);
                 const pluginOccurrenceId = daemon.registry.readPluginOccurrenceId?.(machineServices.manifest.id);
                 if (!sourceCustody || !pluginOccurrenceId) throw new Error('Expected the admitted background source occurrence');
-                vi.spyOn(persistence, 'readSettings').mockResolvedValue({ schemaVersion: 6, machineId: 'machine-a' });
+                await updateMachineRegistration(() => ({ machineId: 'machine-a' }));
                 vi.spyOn(installationStore, 'readOrCreateInstallationIdentity').mockResolvedValue({ version: 1,
                     installationId: 'installation-a', createdAt: 1, publicKey: encodeBase64(installation.publicKey, 'base64url'),
                     privateKey: encodeBase64(installation.secretKey, 'base64url') });

@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -301,7 +302,7 @@ describe('runBackendSessionCliCommand', () => {
 
     const authSpy = vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials } as any);
     const readStoredCredentialsSpy = vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
     const bootstrapSpy = vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'none',
       settings: {} as any,
@@ -354,7 +355,7 @@ describe('runBackendSessionCliCommand', () => {
     };
 
     vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
     vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
     vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'none',
@@ -418,7 +419,7 @@ describe('runBackendSessionCliCommand', () => {
       },
     });
     vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
     vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
     vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'none',
@@ -482,9 +483,7 @@ describe('runBackendSessionCliCommand', () => {
     vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(
       credentials,
     );
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({
-      machineId: 'machine-1',
-    } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
     vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({
       machineId: 'machine-1',
     } as any);
@@ -551,9 +550,7 @@ describe('runBackendSessionCliCommand', () => {
     vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(
       credentials,
     );
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({
-      machineId: 'machine-1',
-    } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
     vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({
       machineId: 'machine-1',
     } as any);
@@ -601,7 +598,7 @@ describe('runBackendSessionCliCommand', () => {
   it('resolves the configured Connected Services default and normalizes legacy binding ingress before foreground admission', async () => {
     const credentials = { token: 'x' } as any;
     vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
     vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
     vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'cache',
@@ -659,7 +656,7 @@ describe('runBackendSessionCliCommand', () => {
   it('passes explicit terminal-mode intent from the CLI owner to the host session runtime', async () => {
     const credentials = { token: 'x' } as any;
     vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
     runSessionCommandSpy.mockResolvedValue(undefined);
 
     await runBackendSessionCliCommand({
@@ -688,7 +685,7 @@ describe('runBackendSessionCliCommand', () => {
       },
     });
     vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
     runSessionCommandSpy.mockResolvedValue(undefined);
 
     await runBackendSessionCliCommand({
@@ -723,7 +720,7 @@ describe('runBackendSessionCliCommand', () => {
       },
     };
     vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
     runSessionCommandSpy.mockResolvedValue(undefined);
 
     await runBackendSessionCliCommand({
@@ -750,7 +747,7 @@ describe('runBackendSessionCliCommand', () => {
     const credentials = { token: 'x' } as any;
     const sessionCreationTag = 'create:v1:9Qf8pTqHIQxEYXv3sHohC0y7sD2pRqclZxY_V_GKcJ0';
     vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
     runSessionCommandSpy.mockResolvedValue(undefined);
 
     await runBackendSessionCliCommand({
@@ -778,7 +775,7 @@ describe('runBackendSessionCliCommand', () => {
 
     const credentials = { token: 'x' } as any;
     vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
 
     runSessionCommandSpy.mockResolvedValue(undefined);
 
@@ -796,7 +793,7 @@ describe('runBackendSessionCliCommand', () => {
     const credentials = { token: 'x' } as any;
 
     vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
 
     const cachedSettings = { schemaVersion: 6, marker: 'cached' } as any;
     let refreshed = false;
@@ -832,7 +829,7 @@ describe('runBackendSessionCliCommand', () => {
 
     const authSpy = vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials } as any);
     vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
     const bootstrapSpy = vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'none',
       settings: {} as any,
@@ -869,7 +866,7 @@ describe('runBackendSessionCliCommand', () => {
     const credentials = { token: 'x' } as any;
 
     vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
     const cachedSettings = { schemaVersion: 6, marker: 'cached' } as any;
     let refreshed = false;
     const whenRefreshed = new Promise<any>(() => {});
@@ -905,7 +902,7 @@ describe('runBackendSessionCliCommand', () => {
     const credentials = { token: 'x' } as any;
 
     vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
 
     runSessionCommandSpy.mockResolvedValue(undefined);
 
@@ -1287,7 +1284,7 @@ describe('runBackendSessionCliCommand', () => {
     };
 
     vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
     vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
 
     const profile = AIBackendProfileSchema.parse({
@@ -1635,9 +1632,7 @@ describe('runBackendSessionCliCommand', () => {
       version: '1.0.0',
     });
     vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({
-      machineId: 'machine-1',
-    } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
     vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({
       machineId: 'machine-1',
     } as any);
@@ -1724,7 +1719,7 @@ describe('runBackendSessionCliCommand', () => {
     };
 
     vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
     vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
 
     const profile = AIBackendProfileSchema.parse({
@@ -1788,7 +1783,7 @@ describe('runBackendSessionCliCommand', () => {
     };
 
     vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
     vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
 
     const profile = AIBackendProfileSchema.parse({
@@ -1845,7 +1840,7 @@ describe('runBackendSessionCliCommand', () => {
   it('applies an in-memory scoped environment without mutating the parent process', async () => {
     const credentials = { token: 'x' } as Credentials;
     vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
     const previous = process.env.PROVIDER_SCOPED_SECRET;
 
     runSessionCommandSpy.mockImplementation(async (_backendId: string, options: any) => {
@@ -1872,7 +1867,7 @@ describe('runBackendSessionCliCommand', () => {
   it('releases foreground admission before a fatal command exit', async () => {
     const credentials = { token: 'x' } as Credentials;
     vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
     runSessionCommandSpy.mockRejectedValue(new Error('runtime failed after foreground admission'));
     let cleanedAtExit = false;
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
@@ -1898,7 +1893,7 @@ describe('runBackendSessionCliCommand', () => {
   it('reports a daemon-started host rejection after session creation and before its webhook', async () => {
     const credentials = { token: 'x' } as Credentials;
     vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
     const startupError = Object.assign(
       new Error('post-session startup failure'),
       {
@@ -1935,7 +1930,7 @@ describe('runBackendSessionCliCommand', () => {
   it('uses the terminal continuation exit code for a required continuation refusal', async () => {
     const credentials = { token: 'x' } as Credentials;
     vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
     const continuationError = new Error('Agent session continuation is unreachable.');
     continuationError.name = 'AgentSessionContinuationUnreachableError';
     runSessionCommandSpy.mockRejectedValue(continuationError);
@@ -1968,7 +1963,7 @@ describe('runBackendSessionCliCommand', () => {
       },
     });
     vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
-    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
     vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
     foregroundAdmissionMocks.admit.mockResolvedValueOnce({
       ok: false,

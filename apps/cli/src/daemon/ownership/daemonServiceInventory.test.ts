@@ -136,10 +136,6 @@ describe('daemonServiceInventory', () => {
                         updatedAt: 1,
                     },
                 },
-                machineIdByServerId: {},
-                machineIdByServerIdByAccountId: {},
-                lastTokenSubByServerId: {},
-                machineIdConfirmedByServerByServerId: {},
             });
 
             const runtime = resolveDaemonServiceCliRuntimeFromEnv({ processEnv: process.env });
@@ -332,10 +328,6 @@ describe('daemonServiceInventory', () => {
                         updatedAt: 1,
                     },
                 },
-                machineIdByServerId: {},
-                machineIdByServerIdByAccountId: {},
-                lastTokenSubByServerId: {},
-                machineIdConfirmedByServerByServerId: {},
             });
 
             mkdirSync(serviceCliHomeDir, { recursive: true });
@@ -459,10 +451,6 @@ describe('daemonServiceInventory', () => {
                         updatedAt: 1,
                     },
                 },
-                machineIdByServerId: {},
-                machineIdByServerIdByAccountId: {},
-                lastTokenSubByServerId: {},
-                machineIdConfirmedByServerByServerId: {},
             });
 
             mkdirSync(serviceCliHomeDir, { recursive: true });
@@ -574,10 +562,6 @@ describe('daemonServiceInventory', () => {
                         updatedAt: 1,
                     },
                 },
-                machineIdByServerId: {},
-                machineIdByServerIdByAccountId: {},
-                lastTokenSubByServerId: {},
-                machineIdConfirmedByServerByServerId: {},
             });
 
             const servicesDir = join(userHomeDir, 'Library', 'LaunchAgents');

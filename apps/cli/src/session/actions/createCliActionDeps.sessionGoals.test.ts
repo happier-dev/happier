@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
@@ -22,7 +23,7 @@ describe('CLI inactive goal transport', () => {
                 acpConfiguredBackendV1: { v: 1, updatedAt: 1, backendId: 'configured-test', title: 'Configured Agent' },
             }) });
         vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
-        vi.spyOn(persistence, 'readSettings').mockResolvedValue({ schemaVersion: 6, onboardingCompleted: true, machineId: 'target-machine' });
+        await updateMachineRegistration(() => ({ machineId: 'target-machine' }));
         vi.spyOn(axios, 'get').mockImplementation(async url => {
             if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
             if (String(url).includes(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: rawSession } };
@@ -71,7 +72,7 @@ describe('CLI inactive goal transport', () => {
                 agentRuntimeDescriptorV1: buildTestCodexRuntimeDescriptorV1({ backendMode: 'appServer', providerSessionId: 'thread-1' }) }) });
         // Only persisted credentials/settings and the HTTP/process transport are replaced.
         vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
-        vi.spyOn(persistence, 'readSettings').mockResolvedValue({ schemaVersion: 6, onboardingCompleted: true, machineId: 'target-machine' });
+        await updateMachineRegistration(() => ({ machineId: 'target-machine' }));
         const transportReads: string[] = [];
         vi.spyOn(axios, 'get').mockImplementation(async url => {
             if (String(url).endsWith('/v1/account/encryption/currentness')) {
@@ -129,7 +130,7 @@ describe('CLI inactive goal transport', () => {
         const rawSession = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain',
             machineId: 'remote-machine', metadata: JSON.stringify({ machineId: 'remote-machine', path: '/repo' }) });
         // HTTP and device-local persistence are genuine boundaries; routing and resume admission stay real.
-        vi.spyOn(persistence, 'readSettings').mockResolvedValue({ schemaVersion: 6, onboardingCompleted: true, machineId: 'local-machine' });
+        await updateMachineRegistration(() => ({ machineId: 'local-machine' }));
         vi.spyOn(axios, 'get').mockImplementation(async url => {
             if (String(url).endsWith('/v1/account/encryption/currentness')) {
                 return { status: 200, data: createAccountEncryptionCurrentnessFixture() };

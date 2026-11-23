@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import axios from 'axios';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -46,7 +47,7 @@ vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
 }));
 vi.mock('@/persistence', async importOriginal => ({
   ...await importOriginal<typeof import('@/persistence')>(),
-  readSettings: async () => ({ schemaVersion: 6, onboardingCompleted: true, machineId: 'machine-1' }),
+  readSettings: async () => ({ schemaVersion: 6, onboardingCompleted: true }),
   // A live daemon owns registration; the actual initializer follows its normal
   // same-process PID check instead of replacing the initializer or ApiClient.
   readDaemonState: async () => ({ pid: process.pid, httpPort: 1, startedAt: 1,
@@ -67,7 +68,8 @@ function bootstrapToolSettings(raw: Readonly<Record<string, unknown>> = {}): typ
   });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
   exactHomeOrigin = 'https://home.example.test';
   openToolConnections = 0;
   resetInMemoryAccountSettingsContextForTests();

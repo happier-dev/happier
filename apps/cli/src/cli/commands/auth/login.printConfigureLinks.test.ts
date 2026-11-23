@@ -1,6 +1,6 @@
 import { type MachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Settings, StoredCredentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import type { ActiveServerStoredTokenValidationResult } from '@/auth/validateStoredAuthTokenAgainstActiveServer';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 
@@ -405,13 +405,13 @@ describe('happier auth login', () => {
     }
   });
 
-  it('preserves force-auth replacement candidate using existing credential subject when settings are legacy', async () => {
+  it('preserves force-auth replacement candidate using existing credential subject when the registration has no Account binding', async () => {
     readStoredCredentialsMock.mockResolvedValue({
       token: createJwtWithSubject('account-legacy'),
       encryption: { type: 'legacy', secret: new Uint8Array(32) },
     });
     readMachineRegistrationMock.mockResolvedValue({
-      machineIdByServerId: { cloud: 'machine-legacy' },
+      machineId: 'machine-legacy',
     });
 
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});

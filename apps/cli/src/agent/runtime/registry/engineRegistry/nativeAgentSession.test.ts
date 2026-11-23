@@ -1,3 +1,4 @@
+import { readMachineRegistration, updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { SESSION_HOLDER_ADOPT_ENV_KEY } from '@/subprocess/supervision/sessionHolder';
 import { describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
@@ -5879,8 +5880,8 @@ describe('native Agent session host adapter', () => {
             return { socket, transport: { connect: async () => {}, destroy: async () => {}, onDisconnected: () => () => {} } } as
                 unknown as ReturnType<typeof sockets.createUserScopedSocketConnection>;
         });
-        const settingsBoundary = vi.spyOn(persistence, 'readSettings').mockResolvedValue({ schemaVersion: 6,
-            onboardingCompleted: true, machineId: 'machine-1' });
+        const previousRegistration = await readMachineRegistration();
+        await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
         try {
             const caller = createCliActionDeps({ token: 'selector-test', credentials: { token: 'selector-test', encryption: null },
                 sessionId: 'different-caller-session', mode: 'plain', ctx: null,
@@ -5891,7 +5892,10 @@ describe('native Agent session host adapter', () => {
                         machineId: 'machine-1', metadata: JSON.stringify({ path: '/tmp/acme-direct-controls-agent', machineId: 'machine-1' }) }) },
             });
             await expect(caller.sessionGoalGet!({ sessionId: hostSession.sessionId })).resolves.toMatchObject({ workState: null });
-        } finally { socketBoundary.mockRestore(); settingsBoundary.mockRestore(); }
+        } finally {
+            socketBoundary.mockRestore();
+            await updateMachineRegistration(() => previousRegistration);
+        }
         await controls.setGoal('Ship direct facets', { status: 'active', tokenBudget: 1000 });
         expect(nativeGoalRetirements).toBe(1);
         await controls.clearGoal();

@@ -358,10 +358,6 @@ describe('handleDaemonCliCommand: daemon start-sync', () => {
                     onboardingCompleted: false,
                     activeServerId: params.activeServerId,
                     servers: { home: profile('home'), work: profile('work') },
-                    machineIdByServerId: {},
-                    machineIdByServerIdByAccountId: {},
-                    lastTokenSubByServerId: {},
-                    machineIdConfirmedByServerByServerId: {},
                 });
                 writeInstalledLinuxDaemonService({ userHomeDir, happierHomeDir, targetMode: 'default-following' });
                 writeInstalledLinuxDaemonService({

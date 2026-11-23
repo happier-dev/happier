@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -10,7 +11,6 @@ import { buildHomeHubArtifactIdV1, HOME_HUB_ARTIFACT_KIND_V1, HomeHubLayoutV1Sch
 import { BUILTIN_WIDGET_DESCRIPTORS_V1, buildWidgetDefinitionArtifactHeaderV1, WidgetInstanceActionOutputSchemasV1, type WidgetDefinitionV1 } from '@happier-dev/protocol/widgets';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { BotTemplateArtifactV1Schema, projectBotTemplateArtifactHeaderV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
-import * as persistence from '@/persistence';
 import { configuration } from '@/configuration';
 import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { AccountEncryptionCurrentnessResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
@@ -84,8 +84,7 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
     });
     machineTransport.exact.mockReset();
     // Machine identity is persistent machine-local configuration, a system boundary.
-    await persistence.writeSettings({ schemaVersion: persistence.SUPPORTED_SCHEMA_VERSION,
-      onboardingCompleted: true, machineIdByServerId: { [configuration.activeServerId]: 'local-machine' } });
+    await updateMachineRegistration(() => ({ machineId: 'local-machine' }));
   });
   afterEach(async () => { clearActiveAccountSettingsSnapshot(); vi.restoreAllMocks(); vi.unstubAllGlobals(); await rm(root, { recursive: true, force: true }); });
   function deps(onPublicLinkIssued?: (link: ArtifactPublicLinkIssuedV1) => void) {
@@ -1370,8 +1369,7 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
         expect(method).toBe(getActionSpec('artifact.publish_from_file').bindings?.rpcMethod);
         const request = TargetedActionRpcRequestV1Schema.parse(input);
         expect(request.target).toMatchObject({ kind: 'machine', machineId: 'other-machine' });
-        await persistence.writeSettings({ schemaVersion: persistence.SUPPORTED_SCHEMA_VERSION,
-          onboardingCompleted: true, machineIdByServerId: { [configuration.activeServerId]: 'other-machine' } });
+        await updateMachineRegistration(() => ({ machineId: 'other-machine' }));
         return await remote.artifactAction!({ actionId: 'artifact.publish_from_file', input: request.input,
           context: { surface: 'rpc', runtimeAccountId: 'owner', externalActionTarget: request.target,
             ...(request.defaultSessionId ? { defaultSessionId: request.defaultSessionId } : {}) } });

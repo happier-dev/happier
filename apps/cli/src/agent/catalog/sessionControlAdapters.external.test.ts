@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -130,7 +131,7 @@ describe('inactive session control adapters for an externally contributed Agent'
     // Catalog admission, native adapter, router, RPC registration, metadata CAS,
     // comparator, durable journal and strict transcript consumer remain real.
     vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
-    vi.spyOn(persistence, 'readSettings').mockResolvedValue({ schemaVersion: 6, onboardingCompleted: true, machineId: 'goal-machine' });
+    await updateMachineRegistration(() => ({ machineId: 'goal-machine' }));
     vi.spyOn(axios, 'get').mockImplementation(async url => {
       if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
       if (String(url).includes(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: row } };

@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
@@ -260,7 +261,7 @@ describe('Goal RPC acknowledgement lifetime through the CLI owner', () => {
     const credentials = { token: 'goal-token', encryption: null };
     const session = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', active: true,
       machineId: 'goal-machine', metadata: JSON.stringify({ machineId: 'goal-machine', path: '/repo' }) });
-    vi.spyOn(persistence, 'readSettings').mockResolvedValue({ schemaVersion: 6, onboardingCompleted: true, machineId: 'goal-machine' });
+    await updateMachineRegistration(() => ({ machineId: 'goal-machine' }));
     vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
     vi.spyOn(axios, 'get').mockImplementation(async url => {
       if (String(url).endsWith('/v1/account/encryption/currentness')) {
@@ -303,7 +304,7 @@ describe('Goal RPC acknowledgement lifetime through the CLI owner', () => {
     const credentials = { token: 'goal-token', encryption: null };
     const session = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', active: true,
       machineId: 'goal-machine', metadata: JSON.stringify({ machineId: 'goal-machine', path: '/repo' }) });
-    vi.spyOn(persistence, 'readSettings').mockResolvedValue({ schemaVersion: 6, onboardingCompleted: true, machineId: 'goal-machine' });
+    await updateMachineRegistration(() => ({ machineId: 'goal-machine' }));
     vi.spyOn(axios, 'get').mockImplementation(async url => {
       if (String(url).endsWith('/v1/account/encryption/currentness')) {
         return { status: 200, data: createAccountEncryptionCurrentnessFixture() };

@@ -1,10 +1,11 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import { createNativeAgentSessionInteractionOperations } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 import type { DisposableCodexAppServerClient } from '../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/client';
 import { createCodexNativeEventFixture } from '../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/client.test-support';
 import { createCodexNativeAppServerSessionRuntime } from '../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/native';
 import { createCodexAppServerRuntime, startCodexAppServerRuntime } from '../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/runtime';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
 import type { Credentials, StoredCredentials } from '@/persistence';
@@ -57,7 +58,7 @@ vi.mock('@/agent/runtime/startup/releasedStartupOverridesCacheV1', () => ({
 
 vi.mock('@/persistence', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/persistence')>(),
-  readSettings: vi.fn(async () => ({ machineId: 'machine-1' })),
+  readSettings: vi.fn(async () => ({})),
 }));
 
 const credentials: Credentials = {
@@ -199,6 +200,9 @@ function createHostFactoryParams() {
 }
 
 describe('plugin session runtime adapters', () => {
+  beforeEach(async () => {
+    await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
+  });
   it('preserves native command classification across Session runtime replacement', async () => {
     let opens = 0;
     const plan = await createPublicPluginSessionRuntimePlan({

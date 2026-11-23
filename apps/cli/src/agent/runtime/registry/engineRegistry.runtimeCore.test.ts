@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -30,13 +31,12 @@ import {
     type ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
 
-import { configuration } from '@/configuration';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { HostSessionRuntimeFactoryParams } from '@/agent/runtime/session/loop/runHostSessionRuntime';
 import type { Metadata } from '@/api/types';
 import type { RegisteredSessionStateFieldMutationV1 } from '../../../api/session/client/transport/mutations/sessionClientDurableMutationTypes';
-import { writeSettings, type Credentials } from '@/persistence';
+import { type Credentials } from '@/persistence';
 import type {
     ProviderAccountUsageAdoptionV1,
 } from '@/daemon/connectedServices/accountUsage/adoption';
@@ -281,10 +281,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             } : null;
         });
         // Vitest's canonical Home setup provides disposable real persistence.
-        await writeSettings({
-            schemaVersion: 6, onboardingCompleted: true,
-            machineIdByServerId: { [configuration.activeServerId]: 'machine-1' },
-        });
+        await updateMachineRegistration(() => ({ machineId: 'machine-1' }));
         setActiveAccountSettingsSnapshot({
             source: 'none',
             settings: accountSettingsParse({ schemaVersion: 6 }),

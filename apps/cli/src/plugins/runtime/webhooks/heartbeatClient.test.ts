@@ -1,3 +1,4 @@
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import tweetnacl from 'tweetnacl';
@@ -27,9 +28,9 @@ import {
   PluginWebhookEndpointEnsureInputV1Schema,
   PluginWebhookHeartbeatReadInputV1Schema,
 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
-import { configuration, reloadConfiguration } from '@/configuration';
+import { reloadConfiguration } from '@/configuration';
 import { readCurrentMachineInstallation } from '@/daemon/identity/currentMachineInstallation';
-import { writeSettings, type StoredCredentials } from '@/persistence';
+import { type StoredCredentials } from '@/persistence';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { createPluginWebhookHeartbeatClient } from './heartbeatClient';
@@ -60,8 +61,7 @@ describe('finite heartbeat Home client', () => {
     env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_SERVER_URL: 'https://wrong-ambient-home.invalid',
       HAPPIER_LOCAL_SERVER_URL: '', HAPPIER_ACTIVE_SERVER_ID: '' });
     reloadConfiguration();
-    await writeSettings({ schemaVersion: 6, onboardingCompleted: true,
-      machineIdByServerId: { [configuration.activeServerId]: caller.machineId } });
+    await updateMachineRegistration(() => ({ machineId: caller.machineId }));
     credentials = { token: 'synthetic-heartbeat-account', encryption: null };
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
@@ -155,7 +155,7 @@ describe('finite heartbeat Home client', () => {
     await expect(client().enroll(enrollRequest)).rejects.toMatchObject({ code: 'endpoint_unavailable' });
     await expect(client().read(readRequest)).rejects.toMatchObject({ code: 'endpoint_unavailable' });
     credentials = { token: 'synthetic-heartbeat-account', encryption: null };
-    await writeSettings({ schemaVersion: 6, onboardingCompleted: true });
+    await updateMachineRegistration(() => ({}));
     await expect(client().enroll(enrollRequest)).rejects.toMatchObject({ code: 'endpoint_unavailable' });
     await expect(client().read(readRequest)).rejects.toMatchObject({ code: 'endpoint_unavailable' });
     expect(requests).toHaveLength(0);
@@ -182,7 +182,7 @@ describe('finite heartbeat Home client', () => {
       phase: 'heartbeat.endpoint.enroll', errorClass: 'AxiosError', errorCode: 'ERR_BAD_RESPONSE', httpStatus: 503,
     } } });
     expect(JSON.stringify(rejected)).not.toMatch(/secret-ping-url|synthetic-heartbeat-account/);
-    await writeSettings({ schemaVersion: 6, onboardingCompleted: true });
+    await updateMachineRegistration(() => ({}));
     await expect(client().enroll(enrollRequest)).rejects.toMatchObject({ code: 'endpoint_unavailable', data: { failureCause: {
       phase: 'heartbeat.endpoint.publisher', errorCode: 'endpoint_unavailable', httpStatus: null,
     } } });
