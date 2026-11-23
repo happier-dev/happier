@@ -154,8 +154,14 @@ describe('Provider connection usage data resource', () => {
         finish({ status: 'success', sources: [{ sourceId: 'credits', status: 'ok', snapshot: updated }] });
         await waitForHomeGovernance(() => expect(picker.resource.getSnapshot().refreshing).toBe(false));
         expect(picker.resource.getCurrent()?.snapshotsBySourceId.credits).toEqual(updated);
+        const settled = picker.resource.getSnapshot();
+        const onUpdate = vi.fn();
+        const unsubscribe = picker.resource.subscribe(onUpdate);
         picker.release();
         expect(picker.resource.getCurrent()?.snapshotsBySourceId.credits).toEqual(updated);
+        expect(picker.resource.getSnapshot()).toBe(settled);
+        expect(onUpdate).not.toHaveBeenCalled();
+        unsubscribe();
         const reopened = acquireProviderConnectionUsageRefreshResource(input);
         expect(reopened.resource).toBe(picker.resource);
         expect(requests()).toHaveLength(2);

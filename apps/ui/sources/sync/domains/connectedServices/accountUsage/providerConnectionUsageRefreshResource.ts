@@ -73,7 +73,9 @@ export function createProviderConnectionUsageRefreshResource(input: ResourceInpu
         controller.abort();
         controller = new AbortController();
         reading = null;
-        publish({ ...snapshot, refreshing: false, pendingApproval: null });
+        if (snapshot.refreshing || snapshot.pendingApproval !== null) {
+            publish({ ...snapshot, refreshing: false, pendingApproval: null });
+        }
     };
     const dispose = () => {
         if (disposed) return;
