@@ -163,6 +163,23 @@ it.each([
 });
 
 it.each([
+  { inherited: undefined, selection: undefined, expected: undefined },
+  { inherited: undefined, selection: null, expected: null },
+  { inherited: null, selection: undefined, expected: null },
+])('preserves the attached Run profile choice for the Session owner ($inherited, $selection)', async ({ inherited, selection, expected }) => {
+  const requests: ReturnType<typeof ExecutionRunStartRequestSchema.parse>[] = [];
+  const executor = createActionExecutor(createDeps({ executionRunStart: async (_sessionId, request) => {
+    requests.push(ExecutionRunStartRequestSchema.parse(request));
+    return { runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' };
+  } }));
+  expect(await executor.execute('execution.run.start', {
+    ...RUN_START_BASE, ...(selection === undefined ? {} : { approvalProfileId: selection }),
+  }, { ...UI_CALLER, approvalProfileId: inherited })).toMatchObject({ ok: true });
+  expect(requests).toHaveLength(1);
+  expect(requests[0]?.approvalProfileId).toBe(expected);
+});
+
+it.each([
   { actionId: 'execution.run.start', surface: 'ui' },
   { actionId: 'review.start', surface: 'cli' },
   { actionId: 'subagents.plan.start', surface: 'agent' },

@@ -39,10 +39,12 @@ export async function startExecutionRunWithSelectionV1(
   const machineId = opts?.targetMachineId ?? context.executionRunTargetMachineId;
   const current = resolved && machineId && machineId !== resolved.baseline.machineId
     ? { ...resolved, baseline: { machineId: resolved.baseline.machineId, directory: resolved.baseline.directory } } : resolved;
+  // Only the attached Session host can inherit its captured profile when the caller has no context.
+  const leaveProfileToHost = input.approvalProfileId === undefined && (sessionId === null
+    ? !input.resumeHandle && context.approvalProfileId == null
+    : context.approvalProfileId === undefined);
   const request = { ...input,
-    // An absent root choice remains unset; authored null is an opt-out and attached children inherit.
-    approvalProfileId: sessionId === null && !input.resumeHandle && input.approvalProfileId === undefined
-      && context.approvalProfileId == null ? undefined
+    approvalProfileId: leaveProfileToHost ? undefined
       : resolveInheritedApprovalProfileIdV1(input.approvalProfileId, context.approvalProfileId) };
   const admitted = current
     ? stampAgentStartSelectionV1(request, { workDepth: context.agentStartWorkDepth ?? 0 }, 'execution_run', current) : request;
