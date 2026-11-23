@@ -7529,7 +7529,7 @@ export function useSessionComposerController({
                                     return currentDrafts.length === 0
                                         || currentDrafts.every((draft) => submittedAttachmentDraftIds.has(draft.id));
                                 };
-                                let attachmentDraftsForRestore = readSubmittedAttachmentDraftsFromCurrent();
+                                let attachmentDraftsForRestore: readonly AttachmentDraft[] = readSubmittedAttachmentDraftsFromCurrent();
                                 let uploaded: readonly IssuedUploadedAttachment[] | undefined;
                                 const recoverAttachmentDraftsAfterRejection = (failure: unknown) => {
                                     if (!uploaded) return;
