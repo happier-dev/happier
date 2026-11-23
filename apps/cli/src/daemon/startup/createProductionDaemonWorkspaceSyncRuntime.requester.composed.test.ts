@@ -1071,6 +1071,18 @@ it.skipIf(process.platform !== 'linux').each([
   expect(await readFile(join(secondPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
 });
 
+function readAccountLinks(setup: Awaited<ReturnType<typeof createRequesterWorkspaceSyncFixture>>) {
+  const graph = setup.rows.map(row => ProjectAccountRowV1Schema.parse(row)).find(row => row.key.kind === 'relationship-graph');
+  if (graph?.content?.t !== 'plain') throw new Error('Expected the plain Account graph row');
+  return ProjectAccountRelationshipGraphV1Schema.parse(graph.content.v.value).relationships;
+}
+
+async function listSourceLinks(setup: Awaited<ReturnType<typeof createRequesterWorkspaceSyncFixture>>) {
+  const controller = setup.fixture.parentManagedWorkspaceSync;
+  if (!(controller instanceof WorkspaceSyncController)) throw new Error('SOURCE controller is unavailable');
+  return (await controller.listRelationships({})).relationships.map(value => [value.definition.relationshipId, value.status.state]);
+}
+
 // READY208 e3b96ce8: a person's own-Machine "Replace link" reached the TARGET
 // preflight and Home refused its Project rows read, signed under the Replace
 // root, at verification_purpose. That root verifies only its own effect; the
@@ -1087,7 +1099,7 @@ it.skipIf(process.platform !== 'linux').each(['member-a', 'requester'] as const)
   const original = WorkspaceSyncRelationshipCreateResultV1Schema.parse(created.result);
   const replace = async (operationId: string, input: Partial<typeof setup.request.actionInput> & { replaceRelationshipId: string }) =>
     setup.executeRelationshipAction(await setup.prepareInvocation({ ...setup.request, operationId,
-      actionInput: { ...setup.request.actionInput, destinationIntent: 'use_existing', ...input } }), false);
+      actionInput: { ...setup.request.actionInput, destinationIntent: 'use_existing', ...input } }));
   // A link the person does not own lends nothing: its root stays held.
   const foreign = await replace('member-sync-replace-foreign', { replaceRelationshipId: 'another-link' });
   expect(foreign, JSON.stringify(foreign)).toMatchObject({ ok: false, failureCause: { errorCode: 'workspace_root_in_use' } });
@@ -1104,7 +1116,56 @@ it.skipIf(process.platform !== 'linux').each(['member-a', 'requester'] as const)
   });
   const replaced = await replace('member-sync-replace', { replaceRelationshipId: original.relationshipId });
   expect(preflights, JSON.stringify({ replaced, rejectedSelfCalls })).toEqual([{ value: expect.objectContaining({ type: 'not_required' }) }]);
+  expect(replaced, JSON.stringify(replaced)).toMatchObject({ ok: true, result: { created: true } });
+  // The replaced link is retired on SOURCE and TARGET: only its successor is in
+  // the graph and Watching, on the roots the predecessor held.
+  const successor = WorkspaceSyncRelationshipCreateResultV1Schema.parse(replaced.ok ? replaced.result : null).relationshipId;
+  expect(successor).not.toBe(original.relationshipId);
+  expect(readAccountLinks(setup)).toEqual([expect.objectContaining({ relationshipId: successor, enabled: true })]);
+  expect(await listSourceLinks(setup)).toEqual([[successor, 'watching']]);
   expect(rejectedSelfCalls).toEqual([]);
+  expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+});
+
+// A failed Replace must never cost the person the link it was replacing: the
+// graph row, its TARGET custody and its running state stay exactly as they were.
+it.skipIf(process.platform !== 'linux').each(['member-a', 'requester'] as const)(
+  'keeps a person\'s original link exactly as it was when its Replace fails (custodian %s)', async sourceCustodianAccountId => {
+  executionBoundary.member = false;
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', sourceCustodianAccountId, socketIo,
+    accountMode: 'plain', targetResourceMode: 'plain', allowRelationshipAction: true });
+  await setup.prepareActionIngress();
+  const created = await setup.executeRelationshipAction();
+  if (!created.ok) throw new Error(`Original link refused: ${JSON.stringify(created)}`);
+  const original = WorkspaceSyncRelationshipCreateResultV1Schema.parse(created.result);
+  const before = readAccountLinks(setup);
+  expect(before).toEqual([expect.objectContaining({ relationshipId: original.relationshipId, enabled: true })]);
+  // Home refuses the write that would commit the replacement: the last step,
+  // after the original's runtime and TARGET custody were handed over.
+  const post = vi.mocked(axios.post).getMockImplementation();
+  if (!post) throw new Error('HTTP boundary is unavailable');
+  const enablesAnotherLink = (body: unknown) => {
+    const enabled: string[] = [];
+    JSON.stringify(body, (_key, value: unknown) => {
+      if (value && typeof value === 'object' && 'relationshipId' in value && 'enabled' in value && value.enabled === true
+        && typeof value.relationshipId === 'string') enabled.push(value.relationshipId);
+      return value;
+    });
+    return enabled.some(id => id !== original.relationshipId);
+  };
+  vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => String(url).includes('/v1/account/project-rows/')
+    && !/\/(list|read)$/u.test(String(url)) && enablesAnotherLink(body)
+    ? { status: 200, data: { status: 'invalid-request' } } : await post(url, body, config));
+  const replaced = await setup.executeRelationshipAction(await setup.prepareInvocation({ ...setup.request,
+    operationId: 'member-sync-replace-fails', actionInput: { ...setup.request.actionInput, destinationIntent: 'use_existing',
+      replaceRelationshipId: original.relationshipId } }));
+  // Home's refusal is outside the Sync RPC vocabulary: it settles as the owner's
+  // closed code with Home's cause in the diagnostic.
+  expect(replaced, JSON.stringify(replaced)).toMatchObject({ ok: false, errorCode: 'workspace_sync_unavailable',
+    error: expect.stringContaining('project_account_rows_invalid-request') });
+  // Row, TARGET custody and running state: the same row, Watching again on its roots.
+  expect(readAccountLinks(setup), JSON.stringify(replaced)).toEqual(before);
+  expect(await listSourceLinks(setup)).toEqual([[original.relationshipId, 'watching']]);
   expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
 });
 

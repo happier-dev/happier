@@ -449,6 +449,25 @@ describe('WorkspaceSyncRelationshipOwner', () => {
       .rejects.toMatchObject({ code: 'relationship_replacement_required' });
   });
 
+  it('refuses a Replace whose selected link changed after review and leaves that link as it now is', async () => {
+    const harness = createHarness();
+    const first = await harness.owner.prepareCreate(createInput);
+    await first.commit();
+    // Another writer pauses the link after this Replace read it, before its graph write.
+    harness.waitForProjectReconciliation.mockImplementationOnce(async () => {
+      harness.beforeNextSettingsMutation(current => {
+        const snapshot = parseProjectAccountSnapshotV1(current);
+        return { ...snapshot, relationships: snapshot.relationships.map(value => ({ ...value, enabled: false, updatedAtMs: 200 })) };
+      });
+    });
+    harness.terminateRelationshipRuntime.mockClear();
+    await expect(harness.owner.prepareCreate({ ...createInput, operationId: 'handoff_2', replaceRelationshipId: 'relationship_1' }))
+      .rejects.toMatchObject({ code: 'relationship_definition_conflict' });
+    expect(parseProjectAccountSnapshotV1(harness.read()).relationships).toEqual([
+      expect.objectContaining({ relationshipId: 'relationship_1', enabled: false, updatedAtMs: 200 })]);
+    expect(harness.terminateRelationshipRuntime).not.toHaveBeenCalled();
+  });
+
   it('re-admits the same relationship against a fresh row census after a proven CAS conflict', async () => {
     const harness = createHarness();
     const prepared = await harness.owner.prepareCreate(createInput);

@@ -1805,30 +1805,47 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       };
       const mutateSnapshot = createProjectAccountSnapshotMutation({ credentials: capture.credentials,
         sessionCustody: capture.accountRowsCustody, serverId: semanticServerId });
-      const releaseTarget = async (relationship: WorkspaceSyncRelationshipV1, reason: 'abort' | 'relationship_committed') => {
-        const target = resolveRelationshipBootstrapTarget(capture.getSnapshot?.() ?? null, relationship, semanticServerId);
+      // TARGET custody is released through the capture that admitted it: a
+      // Replace's predecessor is held under its own capture's routing.
+      const releaseTarget = async (relationship: WorkspaceSyncRelationshipV1, reason: 'abort' | 'relationship_committed',
+        holder: typeof retained = retained) => {
+        const execution = holder.execution;
+        const target = resolveRelationshipBootstrapTarget(execution.getSnapshot?.() ?? null, relationship, semanticServerId);
         const wire = { v: 1 as const, bootstrapOperationId: relationship.relationshipId,
           targetWorkspaceRefId: target.workspaceRefId, reason };
-        if (capture.managedTarget) {
+        if (execution.managedTarget) {
           await targetAuthority.releaseBootstrapHere(wire);
           return;
         }
-        if (!capture.callTargetPhase && target.machineId === input.localMachineId && capture.nativeSync) {
-          await capture.nativeSync.releaseBootstrapHere(wire);
+        if (!execution.callTargetPhase && target.machineId === input.localMachineId && execution.nativeSync) {
+          await execution.nativeSync.releaseBootstrapHere(wire);
           return;
         }
-        if (!capture.callTargetPhase) throw compositionError('workspace_sync_unavailable', 'Private Sync target transport is unavailable');
-        await capture.callTargetPhase({ machineId: target.machineId,
+        if (!execution.callTargetPhase) throw compositionError('workspace_sync_unavailable', 'Private Sync target transport is unavailable');
+        await execution.callTargetPhase({ machineId: target.machineId,
           method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE, request: wire,
-          routing: { v: 1, phase: 'release', operationId: retained.input.operationId, accountServerId: semanticServerId,
-            targetMachineId: retained.input.targetMachineId, targetRootPath: retained.input.targetRootPath,
+          routing: { v: 1, phase: 'release', operationId: holder.input.operationId, accountServerId: semanticServerId,
+            targetMachineId: holder.input.targetMachineId, targetRootPath: holder.input.targetRootPath,
             ...(target.targetManaged ? { targetManaged: target.targetManaged } : {}) } });
       };
+      let siblingCaptureChanged = false;
       return factories.createRelationshipOwner({ localMachineId: input.localMachineId,
         mutateProjectSnapshot: async (request, signal) => {
           const result = await mutateSnapshot(request, signal);
           if (result.status === 'applied' || result.status === 'unchanged') {
             await capture.replaceSnapshot?.({ ...await readSnapshot(), ...result.snapshot, graphRevision: result.version });
+            // Every retained capture of this Account projects the same graph. An
+            // acknowledged write supersedes their older copies, or a capture still
+            // holding a link this write retired (a Replace's predecessor) keeps it live.
+            for (const other of runtime!.handoffAdapter.listPrivateExecutions?.() ?? []) {
+              const previous = other.execution.getSnapshot?.();
+              if (other.execution === capture || !previous
+                || other.execution.accountRowsCustody.accountId !== capture.accountRowsCustody.accountId
+                || other.execution.accountRowsCustody.serverId !== capture.accountRowsCustody.serverId
+                || previous.graphRevision !== 'absent' && previous.graphRevision >= result.version) continue;
+              await other.execution.replaceSnapshot?.({ ...previous, ...result.snapshot, graphRevision: result.version });
+              if (other.relationshipId) siblingCaptureChanged = true;
+            }
           }
           return result;
         },
@@ -1845,6 +1862,15 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         commitRelationshipTarget: async relationship => releaseTarget(relationship, 'relationship_committed'),
         terminateRelationshipRuntime: async relationship => {
           await runtime!.managedWorkspaceSync.terminate(relationship.relationshipId);
+          const bound = runtime!.handoffAdapter.resolvePrivateExecution?.({ relationshipId: relationship.relationshipId });
+          if (bound && bound.execution !== capture
+            && bound.execution.accountRowsCustody.accountId === capture.accountRowsCustody.accountId
+            && bound.execution.accountRowsCustody.serverId === capture.accountRowsCustody.serverId) {
+            // A sibling capture keeps its execution: a failed Replace restores
+            // its link, and reconciliation prepares that TARGET again.
+            await releaseTarget(relationship, 'abort', bound);
+            return;
+          }
           await releaseTarget(relationship, 'abort');
           if (capture.managedTarget) await runtime!.handoffAdapter.releasePrivateExecution?.(retained.input.operationId);
         },
@@ -1852,8 +1878,12 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
           await readSnapshot(signal);
           const currentCapture = runtime!.handoffAdapter.resolvePrivateExecution?.({ operationId: retained.input.operationId });
           // The disabled preparation row precedes native relationship admission.
-          // Only a bound relationship has runtime state to reconcile.
-          if (currentCapture?.relationshipId) await runtime!.reconcilePrivateRelationships();
+          // Only a bound relationship, here or in a sibling capture this write
+          // changed, has runtime state to reconcile.
+          if (currentCapture?.relationshipId || siblingCaptureChanged) {
+            siblingCaptureChanged = false;
+            await runtime!.reconcilePrivateRelationships();
+          }
           if (capture.managedTarget && currentCapture?.phase === 'relationship') {
             const relationshipId = currentCapture.relationshipId;
             const current = capture.getSnapshot?.()?.relationships.find(value => value.relationshipId === relationshipId);

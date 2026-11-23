@@ -367,6 +367,17 @@ export function createWorkspaceSyncRelationshipOwner(
     }
   };
 
+  const assertNoDependencies = async (relationship: WorkspaceSyncRelationshipV1, snapshot: ProjectAccountSnapshotV1,
+    retirement?: WorkspaceSyncRelationshipRetirement) => {
+    if (retirement && !options.readRelationshipDependencies) {
+      throw ownerError('workspace_sync_dependencies_unavailable', 'Workspace relationship dependencies are unavailable');
+    }
+    const dependencies = await options.readRelationshipDependencies?.(relationship, snapshot, retirement?.removeTargetCopy) ?? [];
+    if (dependencies.length > 0) {
+      throw Object.assign(ownerError('workspace_sync_relationship_in_use', 'Workspace relationship has dependent work'), { dependencies });
+    }
+  };
+
   const stop: WorkspaceSyncRelationshipOwner['stop'] = async (relationshipId, signal, retirement) => {
     const removal = retirement?.removeTargetCopy;
     const currentRelationship = (snapshot: ProjectAccountSnapshotV1) => {
@@ -385,20 +396,11 @@ export function createWorkspaceSyncRelationshipOwner(
       }
       return current;
     };
-    const assertNoDependencies = async (relationship: WorkspaceSyncRelationshipV1, snapshot: ProjectAccountSnapshotV1) => {
-      if (retirement && !options.readRelationshipDependencies) {
-        throw ownerError('workspace_sync_dependencies_unavailable', 'Workspace relationship dependencies are unavailable');
-      }
-      const dependencies = await options.readRelationshipDependencies?.(relationship, snapshot, removal) ?? [];
-      if (dependencies.length > 0) {
-        throw Object.assign(ownerError('workspace_sync_relationship_in_use', 'Workspace relationship has dependent work'), { dependencies });
-      }
-    };
     let definitionRetired = false;
     const retire = async () => {
       const result = await mutateProjectSnapshot(async settings => {
         const current = currentRelationship(settings);
-        if (!removal) await assertNoDependencies(current, settings);
+        if (!removal) await assertNoDependencies(current, settings, retirement);
         return admitProjectSnapshotTransition(settings, { ...settings,
           relationships: settings.relationships.filter(relationship => relationship.relationshipId !== relationshipId),
         });
@@ -426,7 +428,7 @@ export function createWorkspaceSyncRelationshipOwner(
         || approval.actionInput.removeTargetCopy?.rootFingerprint !== removal.rootFingerprint) {
         throw ownerError('approval_stale', 'Committed copy removal differs from the reviewed Action');
       }
-      await assertNoDependencies(relationship, snapshot);
+      await assertNoDependencies(relationship, snapshot, retirement);
       await options.removeCommittedRelationshipTarget(relationship, approval, async () => {
         try {
           await retire();
@@ -499,11 +501,6 @@ export function createWorkspaceSyncRelationshipOwner(
         && (endpoints.target.projectKey ?? endpoints.target.id) !== (endpoints.source.projectKey ?? endpoints.source.id)) {
         throw ownerError('project_workspace_changed', 'The chosen worker folder belongs to a different Project');
       }
-      if (replacedRelationship) {
-        // Retirement and creation use the existing owners. If creation fails,
-        // both folders remain available for an explicit new link attempt.
-        await stop(replacedRelationship.relationshipId, input.signal);
-      }
       const relationship = existing ?? candidate;
       const runtimeRelationship = relationship.enabled
         ? relationship
@@ -519,12 +516,24 @@ export function createWorkspaceSyncRelationshipOwner(
       let publishedSettingsVersion: number | null = null;
       let reconciliationComplete = false;
       let targetCommitted = false;
+      let predecessorReleased = false;
 
       const stageDurableIntent = async (): Promise<void> => {
         if (!durableIntentStaged) {
           let stagedRelationship: WorkspaceSyncRelationshipV1 | null = null;
-          const result = await mutateProjectSnapshot((settings) => {
-            const relationships = parseRelationships(settings);
+          const result = await mutateProjectSnapshot(async (settings) => {
+            let relationships = parseRelationships(settings);
+            if (replacedRelationship) {
+              // A Replace is one graph transition: the predecessor leaves in the
+              // same write that stages its successor, so topology admission sees
+              // the graph the Replace produces. A failure restores it below.
+              const predecessor = relationships.find(value => value.relationshipId === replacedRelationship!.relationshipId);
+              if (!predecessor || !matchesReviewedRelationship(predecessor, replacedRelationship)) {
+                throw ownerError('relationship_definition_conflict', 'The link selected for replacement changed');
+              }
+              await assertNoDependencies(predecessor, settings);
+              relationships = relationships.filter(value => value.relationshipId !== predecessor.relationshipId);
+            }
             const winner = resolveEndpointPair(relationships, relationship);
             const staged = validateWorkspaceSyncRelationship(winner
               ? { ...winner, enabled: false, updatedAtMs: nowMs() }
@@ -549,6 +558,14 @@ export function createWorkspaceSyncRelationshipOwner(
             stagedSettingsVersion = result.version;
           }
         }
+        if (replacedRelationship && !predecessorReleased) {
+          // The predecessor left the graph with the swap. Its runtime and TARGET
+          // custody end before the staged successor is fenced on the same roots.
+          // A failure from here on restores the predecessor row, and
+          // reconciliation re-establishes its runtime as after a daemon restart.
+          predecessorReleased = true;
+          await options.terminateRelationshipRuntime(replacedRelationship);
+        }
         if (!stagedReconciliationComplete && stagedSettingsVersion !== null) {
           await options.waitForProjectReconciliation(stagedSettingsVersion, input.signal);
           stagedReconciliationComplete = true;
@@ -563,7 +580,10 @@ export function createWorkspaceSyncRelationshipOwner(
           if (existing) {
             return relationships.map((value) => value.relationshipId === relationship.relationshipId ? existing : value);
           }
-          return relationships.filter((value) => value.relationshipId !== relationship.relationshipId);
+          const remaining = relationships.filter((value) => value.relationshipId !== relationship.relationshipId);
+          // A failed Replace puts the person's original link back exactly as reviewed.
+          return replacedRelationship && !remaining.some(value => value.relationshipId === replacedRelationship!.relationshipId)
+            ? [...remaining, replacedRelationship] : remaining;
         });
         await options.waitForProjectReconciliation(rollbackVersion);
       };
@@ -585,7 +605,16 @@ export function createWorkspaceSyncRelationshipOwner(
         return cleanupErrors;
       };
 
-      await stageDurableIntent();
+      try {
+        await stageDurableIntent();
+      } catch (error) {
+        // A Replace whose swap landed but did not settle puts the original back.
+        if (replacedRelationship && durableIntentStaged && !isIndeterminate(error)) {
+          const cleanupErrors = await cleanupFailedCreation(relationship);
+          if (cleanupErrors.length) throw withCleanupErrors(error, cleanupErrors);
+        }
+        throw error;
+      }
       let status: WorkspaceSyncStatusV1;
       try {
         status = await options.ensureRelationship(
