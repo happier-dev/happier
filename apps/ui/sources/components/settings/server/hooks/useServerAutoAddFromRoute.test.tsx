@@ -18,10 +18,6 @@ vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock().module;
 });
-// Network adapters are boundaries; profile adoption and its persistence rules stay real.
-vi.mock('@/utils/system/runtimeFetch', () => ({
-    runtimeFetch: (...args: unknown[]) => boundary.fetch(...args),
-}));
 // Collection pays source compilation; per-case deadlines measure the real connection behavior.
 await import('./useServerAutoAddFromRoute');
 describe('route-supplied Home connection', () => {
@@ -36,12 +32,13 @@ describe('route-supplied Home connection', () => {
         vi.stubGlobal('window', { location: { origin: 'https://client.example.test' } });
         const features = createRootLayoutFeaturesResponse({ capabilities: {
             server: { canonicalServerUrl: 'https://canonical.example.test' },
-            serverIdentity: { serverIdentityId: 'route-home-identity' },
+            serverIdentity: { serverIdentityId: 'srv_route_home_identity' },
         } });
         boundary.fetch.mockReset().mockImplementation(async (url: string) => new Response(
             JSON.stringify(url.endsWith('/health') ? { status: 'ok' } : features),
             { status: 200, headers: { 'Content-Type': 'application/json' } },
         ));
+        (await import('@/utils/system/runtimeFetch')).setRuntimeFetch((input) => boundary.fetch(String(input)));
         (await import('@/sync/domains/server/serverProfiles')).resetServerProfilesRuntimeForTests();
     });
 
@@ -98,9 +95,10 @@ describe('route-supplied Home connection', () => {
         props.confirmCanonicalUrl.mockResolvedValue(false);
         const hook = await renderHook(() => useServerAutoAddFromRoute(props));
         expect(props.confirmCanonicalUrl).toHaveBeenCalled();
-        expect(profiles.listServerProfiles().filter((profile) => !before.some((saved) => saved.id === profile.id))
-            .map((profile) => profile.serverUrl)).toEqual(['https://entered.example.test']);
-        expect(hook.getCurrent().result).toMatchObject({ kind: 'connected', profile: { serverUrl: 'https://entered.example.test' } });
+        const { resolveHomeConnectionAddress } = await import('@/sync/domains/server/homeAddressSelection');
+        const added = profiles.listServerProfiles().filter((profile) => !before.some((saved) => saved.id === profile.id));
+        expect(added.map(resolveHomeConnectionAddress)).toEqual(['https://entered.example.test']);
+        expect(hook.getCurrent().result).toMatchObject({ kind: 'connected', profile: { id: added[0]?.id } });
         expect(profiles.getActiveServerId()).toBe(beforeActiveId);
         expect(props.validateServerReachable).not.toHaveBeenCalled();
         expect(props.onSwitchServerById).not.toHaveBeenCalled();

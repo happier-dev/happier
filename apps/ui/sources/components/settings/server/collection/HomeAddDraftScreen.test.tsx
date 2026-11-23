@@ -18,7 +18,6 @@ installTokenStorageWebPlatformMocks();
 vi.mock('expo-router', () => routes.module);
 // HTTP, authentication, modal UI and locale are environment boundaries. The
 // draft, form, connect operation, readiness probe and profile persistence stay real.
-vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: network.fetch }));
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ isAuthenticated: false, refreshFromActiveServer: async () => {} }),
 }));
@@ -39,6 +38,7 @@ beforeEach(async () => {
     routes.state.router.setParams({ path: 'direct' });
     vi.stubEnv('EXPO_PUBLIC_HAPPY_STORAGE_SCOPE', `home-address-draft-${crypto.randomUUID()}`);
     network.fetch.mockImplementation(async () => new Response('{}', { status: 404 }));
+    (await import('@/utils/system/runtimeFetch')).setRuntimeFetch(network.fetch);
     (await import('@/sync/domains/server/serverProfiles')).resetServerProfilesRuntimeForTests();
 });
 afterEach(() => {
@@ -97,6 +97,7 @@ describe('Home address draft', () => {
         const screen = await renderDraft();
         const { listServerProfiles } = await import('@/sync/domains/server/serverProfiles');
         const before = listServerProfiles();
+        await vi.waitFor(() => expect(screen.findHostByTestId('already-use-happier.home-connect')?.props.accessibilityState?.disabled).toBe(false));
         await act(async () => screen.changeTextByTestId('already-use-happier.home-address', 'https://unavailable.example.test'));
         await screen.pressByTestIdAsync('already-use-happier.home-connect');
         const pending = screen.findAllByProps({ testID: 'already-use-happier.home-connect' })
