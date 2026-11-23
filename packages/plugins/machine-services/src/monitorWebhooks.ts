@@ -15,9 +15,22 @@ const basisFor = (source: HealthCheckSourceConfigV1) => createCanonicalJsonSigni
 const mapping = (kind: MonitorKind, check: HealthCheckSourceConfigV1['checks'][number]) =>
     check.kind.pluginId === MACHINE_SERVICES_PLUGIN_ID && check.kind.localId === kind
         ? monitorDefinitions[kind].configSchema.parse(check.config) : null;
-const unknown = (observedAt: number): HealthCheckResultV1 => ({ status: 'unknown', observedAt,
-    evidence: { v: 1, items: [{ source: { kind: 'alert', label: 'External monitor' }, author: { kind: 'process' },
-        text: 'No observation for this saved mapping.' }] } });
+function unknown(kind: MonitorKind, context: PluginInvocationContext,
+    reason: 'monitor_mapping_unavailable' | 'monitor_webhook_missing' | 'monitor_observation_missing'): HealthCheckResultV1 {
+    const title = monitorDefinitions[kind].title;
+    const disclosure = reason === 'monitor_mapping_unavailable' ? `The saved ${title} mapping is unavailable.`
+        : reason === 'monitor_webhook_missing' ? `Connect the ${title} webhook to receive results.`
+        : `Waiting for ${title} to send its first result.`;
+    const observerMachineId = context.chosenMachine?.machineId;
+    return {
+        status: 'unknown',
+        observedAt: context.invokedAtMs,
+        ...(observerMachineId ? { cause: { kind: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: kind },
+            vantage: 'outside', observerMachineId, reason, disclosure } } : {}),
+        evidence: { v: 1, items: [{ source: { kind: 'alert', label: title }, author: { kind: 'process' },
+            text: disclosure }] },
+    };
+}
 const settled = (disposition: 'accepted' | 'ignored') => ({ kind: 'settled' as const, disposition });
 
 const readAction = (kind: MonitorKind) => ({
@@ -29,10 +42,12 @@ const readAction = (kind: MonitorKind) => ({
         const selector = SavedHealthCheckSelectorV1ProtocolSchema.parse(value);
         const source = await context.services.healthChecks.readSource({ sourceInstanceId: selector.sourceInstanceId }, { signal: context.signal });
         const check = source.checks.find(item => item.checkId === selector.checkId);
-        if (!check || !mapping(kind, check)) return unknown(context.invokedAtMs);
+        const config = check ? mapping(kind, check) : null;
+        if (!config) return unknown(kind, context, 'monitor_mapping_unavailable');
+        if (!config.webhookEndpointId) return unknown(kind, context, 'monitor_webhook_missing');
         const entry = await requireAccountStorage(context, { code: 'health_check_storage_unavailable', message: 'Health status storage is unavailable' }).kv.get(keyFor(selector.sourceInstanceId, selector.checkId), { signal: context.signal });
         const retained = entry && !('deleted' in entry) ? retainedSchema.parse(entry.value) : null;
-        return retained?.basis === basisFor(source) ? retained.result : unknown(context.invokedAtMs);
+        return retained?.basis === basisFor(source) ? retained.result : unknown(kind, context, 'monitor_observation_missing');
     },
 });
 const receiveAction = (kind: MonitorKind) => ({

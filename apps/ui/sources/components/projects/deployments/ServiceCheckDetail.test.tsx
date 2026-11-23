@@ -16,6 +16,8 @@ import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/aut
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
+import type { HealthCheckSourceConfigV1 } from '@happier-dev/plugin-sdk';
+import { HealthCheckResultV1Schema } from '@happier-dev/protocol/deployments/healthCheckV1';
 import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
 import { createAutomationDefinitionSummary } from '@/sync/domains/automations/automationDefinitionProjection';
 
@@ -38,6 +40,7 @@ await loadSyncSingletonForTests();
 const { ItemList } = await import('@/components/ui/lists/ItemList');
 const { Item } = await import('@/components/ui/lists/Item');
 const { ServiceCheckDetail } = await import('./ServiceCheckDetail');
+const { ServiceCheckList } = await import('./ServiceCheckList');
 const { storage } = await import('@/sync/domains/state/storageStore');
 
 afterEach(async () => {
@@ -89,6 +92,42 @@ it('opens a Check with a recent failing result and says that result in words', a
   );
   expect(result).toBeTruthy();
   expect(screen.getTextContent()).toContain('Down');
+});
+
+it.each([
+  { kind: 'uptime-kuma', title: 'Uptime Kuma', config: { monitorId: '7' } },
+  { kind: 'gatus', title: 'Gatus', config: { endpointGroup: '', endpointName: 'Shop' } },
+] as const)('explains why a saved $title check has no result before its first delivery', async ({ kind, title, config }) => {
+  const source: HealthCheckSourceConfigV1 = {
+    v: 1, subject: { kind: 'machineService', machineId: 'observer', serviceId: 'shop' },
+    checks: [{ checkId: 'shop', kind: { pluginId: healthPlugin.manifest.id, localId: kind },
+      binding: { kind: 'healthCheck' }, config: { ...config, webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA', observingSince: NOW - 60_000 }, periodMs: 60_000, consecutiveFailuresBeforeAlerting: 2 }],
+  };
+  const get = vi.fn(async () => null);
+  const kit = await createPluginTestkit({ manifest: healthPlugin.manifest, module: healthPlugin, services: {
+    healthChecks: { readSource: async () => source }, storage: { account: { kv: { get } as never } },
+  } });
+  try {
+    const result = HealthCheckResultV1Schema.parse(await kit.invokeAction(`health/${kind}`, {
+      sourceInstanceId: 'health:shop', checkId: 'shop',
+    }, { chosenMachine: { machineId: 'observer', installationId: 'installation' } }));
+    const row = {
+      kind: 'configuredCheck', key: 'check-monitor', scope: { serverId: 'server-1', accountId: 'account-1' },
+      automationId: 'automation-1', triggerId: 'trigger-1',
+      native: { name: 'Availability', templateVersion: 1, enabled: true, triggers: [] },
+      definitionFacts: { kind: 'available', observerMachineId: 'observer',
+        checks: [{ checkId: 'shop', name: title, targetLabel: null, periodMs: 60_000, domainId: null }] },
+      lastResults: { kind: 'available', checks: [{ checkId: 'shop', result }] },
+    } as ManagedConfiguredCheckRow;
+    const screen = await renderScreen(<ServiceCheckDetail row={row} nowMs={NOW} />);
+    expect(screen.getTextContent()).toContain(`Waiting for ${title}`);
+    expect(result.cause?.reason).toBe('monitor_observation_missing');
+    expect(screen.findByTestId(`services.check.result.${result.observedAt}`)).not.toBeNull();
+    const list = await renderScreen(<ServiceCheckList testID="checks" rows={[row]} scope={row.scope}
+      selection={{ selectedKey: null, onSelect: () => {}, onSelectedRow: () => {} }} accessibilityLabel="Checks" />);
+    expect(list.getTextContent()).toContain(`Waiting for ${title}`);
+    expect(get).toHaveBeenCalledTimes(1);
+  } finally { await kit.dispose(); }
 });
 
 it('describes the last passing result as stale until its observer returns', async () => {

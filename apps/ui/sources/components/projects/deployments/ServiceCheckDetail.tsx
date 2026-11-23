@@ -61,7 +61,6 @@ import {
   serviceCheckAverageLatency,
   serviceCheckTodayUptime,
   serviceCheckUptimeText,
-  serviceCheckResultWord,
   serviceCheckStatusTone,
   serviceCheckStatusWord,
   serviceCheckStale,
@@ -482,7 +481,9 @@ export function ServiceCheckDetail(
               <Text variant="meta" style={styles.captionText}>
                 {stale
                   ? t(`${m}.staleState`, { time: formatServiceCheckMoment(shown.result.observedAt, nowMs) })
-                  : [statusText, t(`${m}.checkedAt`, { time: formatServiceCheckMoment(shown.result.observedAt) })].join(' · ')}
+                  : shown.result.status === 'unknown' && shown.result.cause?.disclosure
+                    ? shown.result.cause.disclosure
+                    : [statusText, t(`${m}.checkedAt`, { time: formatServiceCheckMoment(shown.result.observedAt) })].join(' · ')}
               </Text>
             </View>
           </View>
@@ -562,9 +563,7 @@ export function ServiceCheckDetail(
               key={result.observedAt}
               testID={`services.check.result.${result.observedAt}`}
               // The result's word in its tone through the shared Status (as Checks list rows draw it; FIDELITY G6b).
-              title={serviceCheckResultWord(result.status)
-                ? <InlineStatus tone={serviceCheckStatusTone(result.status) ?? 'secondary'} label={serviceCheckResultWord(result.status)!} />
-                : '—'}
+              title={<InlineStatus tone={serviceCheckStatusTone(result.status) ?? 'secondary'} label={serviceCheckStatusWord(result.status)} />}
               // When, what it answered and from where on line 2; the response alone on the right, the same short value
               // on every row so a phone never switches one row to stacked facts (lab A3 recent results).
               subtitle={[

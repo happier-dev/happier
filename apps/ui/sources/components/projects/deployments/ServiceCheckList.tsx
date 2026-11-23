@@ -349,7 +349,8 @@ function checkStateSpeaks(
     !row.native.enabled ||
     stale ||
     serviceCheckStatusTone(facts.status) !== null ||
-    facts.status === 'notChecked'
+    facts.status === 'notChecked' ||
+    facts.observationDisclosure !== null
   );
 }
 
@@ -517,6 +518,7 @@ const CheckState = React.memo(function CheckState(
 function checkBylineEmpty(row: ManagedConfiguredCheckRow, facts: ServiceCheckListFacts, stale: boolean, columns: boolean): boolean {
   if (!columns && !checkStateSpeaks(row, facts, stale)) return false;
   if (stale && facts.observerMachineId) return false;
+  if (row.native.enabled && facts.observationDisclosure) return false;
   const failing = row.native.enabled && (facts.status === 'down' || (facts.status === 'degraded' && facts.causeText !== null));
   if (failing) return !facts.causeText && facts.failingSince === null;
   const slow = row.native.enabled && facts.status === 'degraded' && facts.latencyMs !== null && facts.usualMs !== null;
@@ -579,8 +581,9 @@ const CheckByline = React.memo(function CheckByline(
             })
           // What it reaches is meta beside how often (R12-D5); a title that is the address, or already says the kind, is
           // not repeated. How often stays whole; the address ends the line, where an ellipsis cuts only its tail.
-          : [facts.kind && !facts.title.startsWith(facts.kind) ? facts.kind : null,
-            every, facts.titleIdentifier ? null : facts.targetLabel].filter(Boolean).join(' · ') || null;
+          : (row.native.enabled ? facts.observationDisclosure : null)
+            ?? ([facts.kind && !facts.title.startsWith(facts.kind) ? facts.kind : null,
+              every, facts.titleIdentifier ? null : facts.targetLabel].filter(Boolean).join(' · ') || null);
   const meta = {
     ...Typography.variant('meta'),
     color: theme.colors.text.secondary,

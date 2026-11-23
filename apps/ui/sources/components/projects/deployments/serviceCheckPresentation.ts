@@ -653,6 +653,7 @@ export type ServiceCheckListFacts = Readonly<{
   uptimePercent: number | null;
   failingSince: number | null;
   causeText: string | null;
+  observationDisclosure: string | null;
   observerMachineId: string | null;
 }>;
 
@@ -703,6 +704,7 @@ export function serviceCheckListFacts(row: ListedCheck, slots: number = SERVICE_
     causeText: shown && keyFlow && (serviceCheckStatusTone(shown.result.status) !== null || shown.result.status === 'unknown')
       ? serviceCheckKeyFlowCauseText(keyFlow, shown.result)
       : shown && serviceCheckStatusTone(shown.result.status) !== null ? serviceCheckCauseText(shown.result.cause) : null,
+    observationDisclosure: shown?.result.status === 'unknown' ? shown.result.cause?.disclosure ?? null : null,
     observerMachineId,
   };
 }
