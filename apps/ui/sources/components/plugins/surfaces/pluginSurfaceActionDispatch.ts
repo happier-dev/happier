@@ -2653,8 +2653,7 @@ async function executeContributedAction(
                 input.onInvocationAdmitted?.();
                 const result = await executeAccountActionAtRuntimeHost({ accountScope, action: identity, execution,
                     input: value, sourceMachineId, readOnly,
-                    ...(sourceMachineId ? { expectedContributorOccurrenceId: action.occurrenceId }
-                        : { bindReceiverOccurrence: true as const }),
+                    expectedContributorOccurrenceId: action.occurrenceId,
                     ...(isActionSessionReadSetV1(action.sessionTarget) ? { useSelectedHost: true as const } : {}),
                     signal: input.signal ?? new AbortController().signal,
                     context: { ...context, surface: input.invocationSurface ?? 'ui',

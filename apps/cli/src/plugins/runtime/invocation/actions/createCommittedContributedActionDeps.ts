@@ -205,6 +205,13 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
     try {
       const { executeContributedAction } = await import('./executeContributedAction');
       invocationSignal.throwIfAborted();
+      // The relay's Account custody belongs to the reviewed wrapper. Bind it
+      // to this executor's occurrence only after admitting the exact wrapper.
+      const accountSelection = expectedContributorOccurrenceId !== undefined && lease.registry.executionRealm === 'account'
+        ? lease.registry.readAccountExecutionSelection?.(action.pluginId) : undefined;
+      const admittedOccurrenceId = accountSelection?.kind === 'available' && accountSelection.custodyId === expectedContributorOccurrenceId
+        ? lease.registry.readPluginOccurrenceId?.(action.pluginId) ?? expectedContributorOccurrenceId
+        : expectedContributorOccurrenceId;
       const machine = context.invocationServices?.managedMachine;
       const launch = machine?.launch;
       const seed = context.invocationServices?.connectedAccountPurposeBinding;
@@ -248,7 +255,7 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
           retire: (error?: import('@happier-dev/protocol/plugins/errors').PluginErrorContract) => observation.retire(error),
           accept: (subscription: import('@happier-dev/plugin-sdk').Disposable) => observation.accept(subscription),
         } } : {}),
-        ...(expectedContributorOccurrenceId === undefined ? {} : { expectedContributorOccurrenceId }),
+        ...(admittedOccurrenceId === undefined ? {} : { expectedContributorOccurrenceId: admittedOccurrenceId }),
         ...(clientId === undefined ? {} : { clientId }),
         ...(messageActionReference ? { messageActionReference } : {}),
         ...(requiredDangerLevel ? { requiredDangerLevel } : {}),

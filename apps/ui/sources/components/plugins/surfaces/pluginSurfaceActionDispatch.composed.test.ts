@@ -3230,7 +3230,8 @@ describe('Account Action placement through the executable dispatcher', () => {
         const action = createClientTargetAction({ identity, accountPlacement: true });
         const guest = state === 'guest-read' || state === 'guest-explicit-read' || state === 'guest-write';
         const accountProjection = state === 'account-projection' || state === 'account-projection-explicit';
-        const receiverOccurrence = 'acme.placement:725';
+        const receiverOccurrence = 'happier.scm.forge.github:79';
+        const accountCustody = JSON.stringify(['fixture-package', identity.pluginId, '1.2.3']);
         const artifactFailure = { errorCode: 'artifact_source_unavailable', error: 'artifact_source_unavailable' };
         let effects = 0;
         let receivedOccurrenceId: string | undefined;
@@ -3282,7 +3283,7 @@ describe('Account Action placement through the executable dispatcher', () => {
         accountBrowserRelay.enabled = true;
         const accountActivation = accountProjection ? createClientActionActivation({
             pluginId: identity.pluginId, localId: identity.localId, accountPlacement: true, accountLifetime: lifetime,
-            occurrenceId: JSON.stringify(['fixture-package', identity.pluginId, '1.2.3']), readOnly: true,
+            occurrenceId: accountCustody, readOnly: true,
             sessionTarget: { field: 'sessionIds.*', cardinality: 'many' },
             accountHandler: () => { throw new Error('Browser read set must use the Machine'); },
         }) : undefined;
@@ -3307,11 +3308,11 @@ describe('Account Action placement through the executable dispatcher', () => {
                             ? { externalActionTarget: { kind: 'machine', machineId: 'usable' } } : {}),
                     } },
                 });
-                expect(receivedOccurrenceId).toBe(receiverOccurrence);
+                expect(receivedOccurrenceId).toBe(accountCustody);
                 expect(outcome).toEqual({ ok: true, result: { selected: 'usable' } });
                 expect(effects).toBe(1);
                 expect(network.requests.filter(request => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
-                    && !(request.payload as { sectionRead?: unknown }).sectionRead)).toHaveLength(state === 'account-projection-explicit' ? 1 : 2);
+                    && !(request.payload as { sectionRead?: unknown }).sectionRead)).toHaveLength(state === 'account-projection-explicit' ? 0 : 2);
                 return;
             }
             const result = executeAccountActionAtRuntimeHost({ accountScope: lifetime.scope, action: identity,

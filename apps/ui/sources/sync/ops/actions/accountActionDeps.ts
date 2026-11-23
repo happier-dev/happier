@@ -49,18 +49,6 @@ function readReceiverAccountAction(projection: PluginProjectionV2 | null | undef
     return action?.execution.target === 'account' ? action : undefined;
 }
 
-/** Bind an Account declaration to the selected Machine's current registry answer. */
-export async function readUiAccountActionReceiverOccurrenceId(account: LazyActionAccountContext,
-    params: Readonly<{ machineId: string; action: PluginContributionIdentityV1; signal: AbortSignal }>,
-): Promise<string | undefined> {
-    const demand = { machineId: params.machineId, serverId: account.serverId, accountLifetime: account.accountLifetime,
-        sections: ACTION_RELAY_SECTIONS, signal: params.signal };
-    const held = readObservedDaemonMergedProjectionCacheEntry(demand);
-    const answer = held?.kind === 'ready' ? held : await loadDaemonMergedProjectionCacheEntry({ ...demand, reuseFreshReady: true });
-    return answer?.kind === 'ready'
-        ? readReceiverAccountAction(answer.inputs.pluginProjectionV2, params.action)?.occurrenceId : undefined;
-}
-
 /** Automatic Account execution stays on an own Machine; explicit native targets retain their reviewed path. */
 export function resolveUiAccountActionFallbackMachineId(account: Pick<ActionAccountContext, 'serverId' | 'accountId'>,
     options?: Readonly<{

@@ -415,11 +415,23 @@ it('accepts the Account selection custody occurrence for a retained Account Acti
             input: { action: { pluginId: authored.pluginId, localId: 'echo' }, input: { key: 'custody' } },
             context: { surface: 'ui', expectedContributedActionOccurrenceId: selection.custodyId } });
         expect(attempt).toEqual({ matched: true, result: { ok: true, result: { key: 'custody', surface: 'ui' } } });
-        const stale = await executeAccountPluginAction({ host, deps, accountRuntime: retained,
-            actionId: 'action.invoke',
-            input: { action: { pluginId: authored.pluginId, localId: 'echo' }, input: { key: 'stale' } },
-            context: { surface: 'ui', expectedContributedActionOccurrenceId: `${selection.custodyId}-stale` } });
-        expect(stale).toMatchObject({ matched: true, result: { ok: false, errorCode: 'plugin_action_generation_retired' } });
+        const executor = createCliActionExecutor({ ...host, pluginActionExecutionOwner: 'current_process', accountPluginActions: true });
+        const invoke = (key: string, expectedContributorOccurrenceId?: string) => executor.execute('action.invoke', {
+            action: { pluginId: authored.pluginId, localId: 'echo' }, input: { key },
+            ...(expectedContributorOccurrenceId === undefined ? {} : { expectedContributorOccurrenceId }),
+        }, { surface: 'ui' });
+        await expect(invoke('control')).resolves.toEqual({ ok: true, result: { key: 'control', surface: 'ui' } });
+        // PR #4 sent :79 from the Machine projection to two separately
+        // constructed Account executors, which reported :921 and :1705.
+        await expect(invoke('machine-occurrence', 'happier.scm.forge.github:79')).resolves.toMatchObject({
+            ok: false, errorCode: 'plugin_action_generation_retired', effectAttempted: false,
+        });
+        for (const key of ['first', 'retry']) {
+            await expect(invoke(key, selection.custodyId)).resolves.toEqual({ ok: true, result: { key, surface: 'ui' } });
+        }
+        await expect(invoke('stale', `${selection.custodyId}-stale`)).resolves.toMatchObject({
+            ok: false, errorCode: 'plugin_action_generation_retired', effectAttempted: false,
+        });
     } finally {
         await retained.dispose();
         restore();
