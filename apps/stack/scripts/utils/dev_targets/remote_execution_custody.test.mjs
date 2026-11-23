@@ -225,10 +225,19 @@ test('command scratch is removed after failure and every trappable cancellation 
   delete env.TMPDIR;
   delete env.TMP;
   delete env.TEMP;
-  for (const mode of ['failure', 'SIGHUP', 'SIGINT', 'SIGTERM', 'lifeline']) {
+  for (const mode of ['completed', 'failure', 'SIGHUP', 'SIGINT', 'SIGTERM', 'lifeline']) {
     await t.test(mode, async () => {
       const child = spawn('/bin/bash', [custody, 'run', join(root, `worker-home/remote-exec/${mode}.pid`), mode,
-        process.execPath, '-e', `console.log(process.env.TMPDIR);${mode === 'failure' ? 'process.exit(23)' : 'process.stdin.resume();setInterval(()=>{},1000)'}`], {
+        process.execPath, '-e', `
+          const { writeFileSync, utimesSync } = require('node:fs');
+          const output = require('node:path').join(process.env.TMPDIR, 'build-output');
+          writeFileSync(output, 'build artifact');
+          // Build tools can preserve timestamps from a host with a newer clock.
+          const future = new Date(Date.now() + 60_000);
+          utimesSync(output, future, future);
+          console.log(process.env.TMPDIR);
+          ${mode === 'completed' ? 'process.exit(0)' : mode === 'failure' ? 'process.exit(23)' : 'setInterval(() => {}, 1000)'}
+        `], {
         env: { ...env, ...(mode === 'lifeline' ? { HAPPIER_REMOTE_EXEC_LIFELINE: '1' } : {}) },
         stdio: ['pipe', 'pipe', 'pipe'],
       });
@@ -239,12 +248,15 @@ test('command scratch is removed after failure and every trappable cancellation 
       t.after(() => child.kill('SIGTERM'));
       await waitFor(() => output.includes('\n'), 'payload did not publish command scratch');
       if (mode === 'lifeline') child.stdin.end();
-      else if (mode !== 'failure') child.kill(mode);
+      else if (mode !== 'failure' && mode !== 'completed') child.kill(mode);
       const [code, signal] = await closed;
       assert.equal(signal, null, error);
       if (mode === 'lifeline') assert.ok([130, 143].includes(code), error);
-      else assert.equal(code, mode === 'failure' ? 23 : 130, error);
-      await assert.rejects(access(output.trim()), { code: 'ENOENT' }, error);
+      else assert.equal(code, mode === 'completed' ? 0 : mode === 'failure' ? 23 : 130, error);
+      const scratch = output.trim();
+      assert.match(scratch, /^\/var\/tmp\/hstack-[a-zA-Z0-9]{6}$/);
+      t.after(() => rm(scratch, { recursive: true, force: true }));
+      await assert.rejects(access(scratch), { code: 'ENOENT' }, error);
     });
   }
 });

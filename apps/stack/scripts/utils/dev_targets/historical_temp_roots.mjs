@@ -154,7 +154,7 @@ export function reapHistoricalTempRoots(tempParent, procRoot = '/proc', {
   const result = { reclaimedBytes: 0, reclaimedRoots: 0, retainedRoots: 0, observationUnavailable: null,
     reclaimableBytes: 0, reclaimableRoots: 0, reclaimedNames: [] };
   const parent = realpathSync(tempParent);
-  const cutoff = Date.now() - minimumAgeMs;
+  const cutoff = minimumAgeMs === null ? Infinity : Date.now() - minimumAgeMs;
   const candidates = [];
   const isChildName = name => typeof name === 'string' && name && name !== '.' && name !== '..' && !/[\\/\0]/.test(name);
   const names = candidateNames ?? readdirSync(parent).filter(name => {
@@ -287,12 +287,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       process.exitCode = 2;
     }
   } else if (process.argv[2] === '--reap-command-temp-root') {
-    // The command owns lifetime, not an age deadline. Reuse historical tree,
-    // inode and complete live-reference qualification before removing it.
+    // Custody supplies the lifetime boundary. Build artifacts can preserve
+    // future timestamps, so only historical discovery applies an age cutoff.
     const directory = process.argv[3];
     if (process.argv.length !== 4 || !knownRoot.test(basename(directory))) throw new Error('Owned temporary root required');
     reapHistoricalTempRoots(dirname(directory), '/proc', {
-      candidateNames: [basename(directory)], minimumAgeMs: 0, processIds: readProcessCensus(),
+      candidateNames: [basename(directory)], minimumAgeMs: null, processIds: readProcessCensus(),
     });
   } else if (process.argv[2] === '--remove-owned-temp-root') {
     // Native custody already proved creator/group and inherited-binding
