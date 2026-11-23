@@ -2303,6 +2303,11 @@ Plain Workflow resources carry plain content; E2EE resources carry ciphertext
 readable through the Workflow's existing recipient grants. Account-private
 Automation context remains outside the shared index.
 
+The Project Overview links checks to the logical Project key. Those checks
+are Account-private. Team ownership and grants belong to the Project Source.
+Its App Link uses the Source ID and the existing Source audience to review
+Workflow access for shared checks.
+
 Development Action discovery summaries expose `automation.before`,
 `automation.after`, `automation.workflowStep`, `automation.subjectKinds`
 and an optional `automation.primarySubject` containing its declared `kind` and
