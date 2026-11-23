@@ -66,7 +66,7 @@ import type { DeploymentBindingsSetResultV1 } from '@happier-dev/protocol/deploy
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
 import type { DeploymentPlatformLinkActions } from './DeploymentPlatformTargetSheet';
-import { railwayDatabaseReferenceChoices } from './railwayDatabaseVariables';
+import { providerDatabaseReferenceChoices } from './railwayDatabaseVariables';
 const providerKeyOf = (fact: DeploymentTargetVariableMetadataV1) => fact.key;
 type ProviderSaveResult = NonNullable<Extract<DeploymentBindingsSetResultV1, { ok: true }>['providerVariables']>;
 
@@ -84,7 +84,7 @@ type BindingsDraft = ReturnType<typeof useEnvironmentSecretBindingsDraft>;
 type SavedSecretBindings = ReturnType<typeof useEnvironmentSavedSecretBindings>;
 type SecretSources = EnvironmentSavedSecretBindingResult['sources'];
 type PanelMode = 'table' | 'bulk';
-type Adding = 'plain' | 'secret' | 'saved' | 'reference' | 'fact' | 'railwayDatabase';
+type Adding = 'plain' | 'secret' | 'saved' | 'reference' | 'fact' | 'providerDatabase';
 type SecretSource = Extract<VariableBinding['source'], { kind: 'secret' }>;
 
 const PHASES: readonly Phase[] = ['build', 'runtime', 'both'];
@@ -132,8 +132,9 @@ export const DeploymentVariablesPanel = React.memo(
       projectSourceId?: string;
       providerTargetLinkId?: string | null;
       providerVariablesActive?: boolean;
-      railwayDatabase?: Readonly<{
+      providerDatabase?: Readonly<{
         detail: DeploymentEnvironmentReadDetailV1;
+        declarations: Parameters<typeof providerDatabaseReferenceChoices>[1];
         inspect: DeploymentPlatformLinkActions['inspectPlatformTarget'];
       }>;
       /** The Home/Account a new secret is saved under (Settings → Secrets); null while it is not current. */
@@ -161,9 +162,10 @@ export const DeploymentVariablesPanel = React.memo(
     const editor = draft.editor;
     const provider = useDeploymentProviderVariables({ lifetime: props.lifetime, active: props.providerVariablesActive, projectSourceId: props.projectSourceId,
       environmentId: props.environmentId, targetLinkId: props.providerTargetLinkId });
-    const railwayDetail = props.railwayDatabase?.detail;
-    const railwayChoices = React.useMemo(() => props.lifetime ? railwayDatabaseReferenceChoices(railwayDetail) : [],
-      [props.lifetime, railwayDetail]);
+    const { detail: providerDetail, declarations: targetDeclarations } = props.providerDatabase ?? {};
+    const providerDatabaseChoices = React.useMemo(() => props.lifetime && providerDetail && targetDeclarations
+      ? providerDatabaseReferenceChoices(providerDetail, targetDeclarations) : [], [props.lifetime, providerDetail, targetDeclarations]);
+    const databaseProviderName = providerDatabaseChoices[0]?.providerName;
     const providerByKey = React.useMemo(() => new Map(provider.value?.variables.map(row => [row.key, row]) ?? []), [provider.value]);
     // The provider column holds its place while the read is pending; a read that failed says so once, in its notice,
     // instead of a column of dashes.
@@ -488,7 +490,7 @@ export const DeploymentVariablesPanel = React.memo(
             disabled={adding !== null}
             secretsAvailable={props.scope !== null}
             savedAvailable={props.lifetime !== null}
-            railwayDatabaseAvailable={railwayChoices.length > 0}
+            databaseProviderName={databaseProviderName}
             referenceAvailable={(props.referenceTargets ?? NO_REFERENCE_TARGETS).length > 0
               || (props.referenceEnvironments?.size ?? 0) > 1}
             onSelect={(choice) => {
@@ -592,13 +594,14 @@ export const DeploymentVariablesPanel = React.memo(
             }}
           />
         ) : null}
-        {mode === 'table' && adding === 'railwayDatabase' ? (
-          props.lifetime && props.railwayDatabase ? <AddRailwayDatabaseVariable
-            key={props.railwayDatabase.detail.environment.runtimeTargetLinkId ?? props.environmentId}
-            machineId={props.railwayDatabase.detail.environment.controllerMachineId}
-            inspect={props.railwayDatabase.inspect}
+        {mode === 'table' && adding === 'providerDatabase' ? (
+          props.lifetime && props.providerDatabase && databaseProviderName ? <AddProviderDatabaseVariable
+            key={props.providerDatabase.detail.environment.runtimeTargetLinkId ?? props.environmentId}
+            machineId={props.providerDatabase.detail.environment.controllerMachineId}
+            inspect={props.providerDatabase.inspect}
             lifetime={props.lifetime}
-            choices={railwayChoices}
+            choices={providerDatabaseChoices}
+            providerName={databaseProviderName}
             taken={rows}
             requestReview={props.review.request}
             onCancel={() => setAdding(null)}
@@ -983,11 +986,12 @@ function AddValueVariable(
   );
 }
 
-function AddRailwayDatabaseVariable(props: Readonly<{
+function AddProviderDatabaseVariable(props: Readonly<{
   machineId: string;
   inspect: DeploymentPlatformLinkActions['inspectPlatformTarget'];
   lifetime: ServerAccountScopeLifetime;
-  choices: ReturnType<typeof railwayDatabaseReferenceChoices>;
+  choices: ReturnType<typeof providerDatabaseReferenceChoices>;
+  providerName: string;
   taken: readonly VariableRow[];
   requestReview: DeploymentReviewHandle['request'];
   onCancel: () => void;
@@ -1002,11 +1006,11 @@ function AddRailwayDatabaseVariable(props: Readonly<{
   return <AddValueVariable taken={props.taken} secret={false} reading={reading}
     valueReady={selected !== undefined}
     valueControl={<>
-      <ValueFieldSelect testID={id + '.source'} label={t('projects.deployments.managedData.railwayReference')}
-        placeholder={t('projects.deployments.managedData.railwayReferenceChoose')} fill items={props.choices}
+      <ValueFieldSelect testID={id + '.source'} label={t('projects.deployments.managedData.providerReference', { provider: props.providerName })}
+        placeholder={t('projects.deployments.managedData.providerReferenceChoose')} fill items={props.choices}
         selectedId={selectedId} disabled={reading} onSelect={nextId => { setSelectedId(nextId); setCode(null); }} />
       {code ? <SurfaceStateCard testID={id + '.failed'} kind="error" size="line"
-        title={code === 'target_mismatch' ? t('projects.deployments.managedData.railwayReferenceMismatch') : t('common.unavailable')}
+        title={code === 'target_mismatch' ? t('projects.deployments.managedData.providerReferenceMismatch', { provider: props.providerName }) : t('common.unavailable')}
         diagnosticCode={code} /> : null}
     </>}
     onCancel={props.onCancel}
@@ -1176,7 +1180,7 @@ function AddMenu(
     secretsAvailable: boolean;
     savedAvailable: boolean;
     referenceAvailable: boolean;
-    railwayDatabaseAvailable: boolean;
+    databaseProviderName?: string;
     onSelect: (choice: Adding | 'paste') => void;
   }>,
 ) {
@@ -1210,11 +1214,11 @@ function AddMenu(
         title: t('projects.deployments.addPlain'),
         icon: <Icon name="code" size={16} color={theme.colors.text.secondary} />,
       },
-      ...(props.railwayDatabaseAvailable ? [{
-        id: 'railwayDatabase',
+      ...(props.databaseProviderName ? [{
+        id: 'providerDatabase',
         testID: `${id}.railwayDatabase`,
-        title: t('projects.deployments.managedData.railwayReference'),
-        subtitle: t('projects.deployments.managedData.railwayReferenceHint'),
+        title: t('projects.deployments.managedData.providerReference', { provider: props.databaseProviderName }),
+        subtitle: t('projects.deployments.managedData.providerReferenceHint', { provider: props.databaseProviderName }),
         icon: <Icon name="link" size={16} color={theme.colors.text.secondary} />,
       }] : []),
       ...(props.referenceAvailable
@@ -1241,7 +1245,7 @@ function AddMenu(
         icon: <Icon name="file-text" size={16} color={theme.colors.text.secondary} />,
       },
     ],
-    [props.railwayDatabaseAvailable, props.referenceAvailable, props.savedAvailable, props.secretsAvailable, theme.colors.text.secondary],
+    [props.databaseProviderName, props.referenceAvailable, props.savedAvailable, props.secretsAvailable, theme.colors.text.secondary],
   );
   return (
     <DropdownMenu

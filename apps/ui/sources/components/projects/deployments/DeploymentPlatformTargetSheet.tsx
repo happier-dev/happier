@@ -183,7 +183,7 @@ export function useDeploymentTargetDeclarations(lifetime: ServerAccountScopeLife
 export function useDeploymentPlatformTargets(lifetime: ServerAccountScopeLifetime | null) {
   const { state, retry } = useDeploymentTargetDeclarations(lifetime);
   const projected = React.useMemo(() => state.status === 'ready'
-    ? { status: 'ready' as const, targets: readDeploymentPlatformTargets(state.declarations) } : state, [state]);
+    ? { ...state, targets: readDeploymentPlatformTargets(state.declarations) } : state, [state]);
   return { state: projected, retry };
 }
 

@@ -712,7 +712,7 @@ export const DeploymentEnvironmentDraft = React.memo(
         : storedDefinition ? { kind: 'compose' } : branch ? { kind: 'repository', ref: branch } : null,
       runsOn: onPlatform && platformTarget ? { kind: 'platform', platform: platformTarget.title, pluginId: platformTarget.pluginId,
         machine: machineName(chosen.id), machineId: chosen.id, resource: platformProvider?.kind === 'existing' ? 'existing' : 'create',
-        resourceName: readPreparedPlatformResourceName(platformProvider) }
+        resourceName: readPreparedPlatformResourceName(platformProvider, platformTarget.title) }
         : { kind: 'machine', machine: machineName(chosen.id), machineId: chosen.id },
       answered: refusal !== null,
       refused: refusal?.kind === 'refused' && !platformRefusal,

@@ -676,7 +676,7 @@ export const DeploymentEnvironmentDetail = React.memo(
         hasRetainedAssociations: targetLinkId ? subject !== null : links.length > 0,
         canRemove: removal.choices.includes('delete'),
         ...(dispositionPlatformRef && provider ? { providerResource: {
-          name: readPlatformResourceName(dispositionRow?.content) ?? detail.content.name,
+          name: readPlatformResourceName(dispositionRow?.content, provider) ?? detail.content.name,
           consequence: dispositionPlatform?.teardownConsequence ?? null, defaultChoice: removal.defaultChoice } } : {}),
         ...(dispositionLink?.source.kind === 'host'
           ? { reviewVolumes: async (signal: AbortSignal) => {
@@ -1319,7 +1319,8 @@ export const DeploymentEnvironmentDetail = React.memo(
               projectSourceId={detail.environment.projectSourceId}
               providerTargetLinkId={runtime?.source.kind === 'plugin' ? runtime.id : null}
               providerVariablesActive={props.demand.mounted && props.demand.visible && props.demand.focused}
-              railwayDatabase={props.platformLink ? { detail, inspect: props.platformLink.inspectPlatformTarget } : undefined}
+              providerDatabase={props.platformLink && platforms.state.status === 'ready'
+                ? { detail, declarations: platforms.state.declarations, inspect: props.platformLink.inspectPlatformTarget } : undefined}
               secretRevisions={detail.secretRevisions}
               onDeploy={deployBlocked || !ready ? null : () => { void pressDeploy(); }}
               referenceTargets={referenceTargets}

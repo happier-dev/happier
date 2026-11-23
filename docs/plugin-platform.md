@@ -13734,7 +13734,10 @@ A data target declaring `dataV1.database.engineId` also supplies its in-process
 from the portable descriptor and registers it under the same target identity
 through `api.deploymentTargets`. Protocol derives that conditional daemon
 registration from the engine association; targets without a database association
-remain descriptor-only. The existing activation scope owns its withdrawal.
+remain descriptor-only. The existing activation scope owns its withdrawal. The optional data role
+`connectionSecret.reference` points to a declared read-only Action. Variables
+uses that Action when the selected runtime and data target declare the same
+Connected Account service, and displays the runtime target’s title.
 The deployment host passes the admitted preparation, selected managed target and
 access class and captured execution placement with its Account invocation
 context. The same runtime's

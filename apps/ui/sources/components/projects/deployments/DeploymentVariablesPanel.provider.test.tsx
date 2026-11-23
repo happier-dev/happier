@@ -110,6 +110,12 @@ it('adds a scoped Railway database reference to the reviewed Variables draft', a
   const serverId = await homes.addHome({ name: 'Railway Variables', serverUrl: 'https://railway-variables.test',
     serverIdentityId: `srv_${'a'.repeat(32)}`, accountId: 'owner', currentAccount: true });
   const { plugin: railwayData } = await import('../../../../../../packages/plugins/deployment-railway/src/manifest');
+  const { manifest: railwayRuntime } = await import('../../../../../../packages/plugins/deploy-railway/src/manifest');
+  const runtimeTitle = 'Connected Railway';
+  const runtimeTarget = railwayRuntime.contributes.deploymentTargets![0]!;
+  const declarations = [{ manifest: railwayData.manifest }, { manifest: { ...railwayRuntime,
+    contributes: { ...railwayRuntime.contributes, deploymentTargets: [{ ...runtimeTarget, title: runtimeTitle }] } },
+  }];
   const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
   const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
   const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployments/testing/v1');
@@ -170,7 +176,7 @@ it('adds a scoped Railway database reference to the reviewed Variables draft', a
     return <DeploymentVariablesPanel draft={draft} phone environmentName={() => null} sealedOn={null}
       review={{ pendingId: null, request() {}, open() {} }} environmentId={detail.environment.id}
       projectSourceId={detail.environment.projectSourceId} providerTargetLinkId={app.targetLink.id} providerVariablesActive={false}
-      scope={lifetime.scope} lifetime={lifetime} railwayDatabase={{ detail, inspect: actions.inspectPlatformTarget }} />;
+      scope={lifetime.scope} lifetime={lifetime} providerDatabase={{ detail, declarations, inspect: actions.inspectPlatformTarget }} />;
   }
   const screen = await renderScreen(<ListPresentationProvider value="page"><Page /></ListPresentationProvider>, {
     createNodeMock: element => element.type === 'div' ? document.createElement('div')
@@ -181,9 +187,10 @@ it('adds a scoped Railway database reference to the reviewed Variables draft', a
     const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
     expect(observations).toEqual([]);
     await screen.pressByTestIdAsync(add);
-    const menu = () => screen.findAllByType(DropdownMenu).find(node => node.props.items?.some((item: { id: string }) => item.id === 'railwayDatabase'));
+    const menu = () => screen.findAllByType(DropdownMenu).find(node => node.props.items?.some((item: { id: string }) => item.id === 'providerDatabase'));
     await vi.waitFor(() => expect(menu()?.props.open).toBe(true));
-    await act(async () => menu()!.props.onSelect('railwayDatabase'));
+    expect(menu()!.props.items.find((item: { id: string }) => item.id === 'providerDatabase')?.title).toContain(runtimeTitle);
+    await act(async () => menu()!.props.onSelect('providerDatabase'));
     await act(async () => screen.changeTextByTestId(`${add}.name`, 'APP_DATABASE'));
     const { ValueFieldSelect } = await import('@/components/ui/forms/ValueFieldSelect');
     const selector = () => screen.findAllByType(ValueFieldSelect).find(node => node.props.testID === `${add}.railwayDatabase.source`)!;

@@ -59,6 +59,7 @@ export const plugin = definePlugin({
     return [[engine, { role: 'data', title: `Railway ${engines[engine].label}`, icon: 'server-outline',
       targetKind: 'railway-' + engine, targetSchema: empty, linkSchema: empty, nativeSelectorSchema,
       dataV1: { database: { engineId: engine, runtime: railwayDatabaseRuntime(engine) },
+        connectionSecret: { reference: ids.reference },
         projects: { list: resourceId(ids.list), listAction: ids.list, provision: ids.provision, link: ids.link, delete: deleteActionId, observe: observeRemovalActionId } },
     }]];
   }),

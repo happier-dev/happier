@@ -60,7 +60,7 @@ export function createDeploymentTargetDataV1Schema<TAction extends z.ZodMiniType
             create: z.optional(action), delete: z.optional(action),
             /** Plugin-owned preview operands, evaluated against the occurrence's neutral preview input. */
             previewInput: z.optional(z.record(z.string().check(z.minLength(1)), WorkflowActionFieldBindingV1Schema)) })),
-        connectionSecret: z.optional(z.strictObject({ save: z.optional(action) })),
+        connectionSecret: z.optional(z.strictObject({ save: z.optional(action), reference: z.optional(action) })),
     });
 }
 
@@ -149,7 +149,7 @@ export function isDeploymentTargetRoleReadOnlyV1(role: string): boolean {
     const [group, operation] = role.split('.');
     return operation === undefined ? group === 'inspect' || group === 'observe'
         : operation === 'list' || operation === 'provisionOptions' || operation === 'link' || operation === 'observe'
-            || operation === 'read' || operation === 'verify' || group === 'logs';
+            || operation === 'read' || operation === 'verify' || role === 'connectionSecret.reference' || group === 'logs';
 }
 
 /** One traversal supplies kind-aware reference admission and normalized catalog projection. */

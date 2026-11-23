@@ -171,6 +171,28 @@ function readDeploymentTargetConnectedServiceV1(target: DeploymentTargetV1, mani
     return manifest && typeof inspect === 'string' ? readPluginActionCredentialPurposeV1(manifest, inspect)?.service ?? null : null;
 }
 
+/** A provider's presentation name comes from its declaration; qualified identities are selectors. */
+export function readDeploymentTargetDisplayNameV1(target: Pick<DeploymentTargetV1, 'title'>): string {
+    return resolvePluginLocalizedStringV2Text(target.title);
+}
+
+/** Reference Actions can join Links backed by the same declared Connected Account service. */
+export function readDeploymentDatabaseReferenceV1(runtime: DeploymentTargetV1, data: DeploymentTargetV1,
+    manifests: readonly Readonly<{ manifest: PluginPortableReleaseManifestV1 }>[],
+): Readonly<{ actionId: string; providerName: string }> | null {
+    if (data.role !== 'data' || data.source.kind !== 'plugin') return null;
+    const reference = data.dataV1?.connectionSecret?.reference;
+    if (reference?.kind !== 'plugin') return null;
+    const service = readDeploymentTargetConnectedServiceV1(runtime, manifests);
+    const { pluginId, localId } = data.source.contribution;
+    const manifest = manifests.find(entry => entry.manifest.id === pluginId)?.manifest;
+    const declaration = manifest?.contributes.deploymentTargets?.find(entry => entry.id === localId);
+    const action = declaration?.role === 'data' ? declaration.dataV1?.connectionSecret?.reference : undefined;
+    const dataService = action && manifest ? readPluginActionCredentialPurposeV1(manifest, action)?.service : null;
+    if (!service || !dataService || buildQualifiedPluginContributionKey(service) !== buildQualifiedPluginContributionKey(dataService)) return null;
+    return { actionId: reference.actionId, providerName: readDeploymentTargetDisplayNameV1(runtime) };
+}
+
 /** Both hosts consume the normalized catalog; no suggestion-specific target list is maintained. */
 export function projectDeploymentSuggestionTargetsV1(targets: readonly DeploymentTargetV1[],
     manifests: readonly Readonly<{ manifest: ConnectedAccountManifest }>[] = [],
@@ -179,7 +201,7 @@ export function projectDeploymentSuggestionTargetsV1(targets: readonly Deploymen
         targets: targets.flatMap(target => target.role === 'runtime' ? [{
             id: target.source.kind === 'host' ? target.source.id
                 : buildQualifiedPluginContributionKey(target.source.contribution),
-            title: resolvePluginLocalizedStringV2Text(target.title),
+            title: readDeploymentTargetDisplayNameV1(target),
             targetClass: target.source.kind === 'host' ? 'ownServer' as const : 'platform' as const,
             availability: 'available' as const,
             ...(() => {
@@ -196,7 +218,7 @@ export function projectDeploymentSuggestionTargetsV1(targets: readonly Deploymen
         stores: targets.flatMap(target => target.role === 'data' && target.source.kind === 'plugin' && target.dataV1?.database ? [{
             id: buildQualifiedPluginContributionKey(target.source.contribution),
             engine: target.dataV1.database.engineId,
-            title: resolvePluginLocalizedStringV2Text(target.title),
+            title: readDeploymentTargetDisplayNameV1(target),
         }] : []),
     };
 }

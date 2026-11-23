@@ -6,7 +6,7 @@ import { normalizePluginActionInputHintsV2 } from '@happier-dev/protocol/plugins
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { isRecord } from '@happier-dev/protocol/common/records';
-import { readPluginActionCredentialPurposeV1 } from '@happier-dev/deployments';
+import { readDeploymentTargetDisplayNameV1, readPluginActionCredentialPurposeV1 } from '@happier-dev/deployments';
 import { readTeardownConsequence, type DeploymentPlatformTarget } from './platformTargetLink';
 
 const roleInputSchemas = new Map(Object.entries(DeploymentTargetRoleInputProtocolSchemasV1));
@@ -16,7 +16,7 @@ export function managedDataTargets(declarations: readonly Readonly<{ manifest: P
   return declarations.flatMap(({ manifest }) => (manifest.contributes.deploymentTargets ?? []).flatMap(target => {
     if (target.role !== 'data') return [];
     const operations = readDeploymentTargetActionRolesV1(target).flatMap(binding => {
-      if (binding.role === 'projects.delete' || binding.role === 'projects.observe') return [];
+      if (binding.role === 'projects.delete' || binding.role === 'projects.observe' || binding.role === 'connectionSecret.reference') return [];
       const action = manifest.contributes.actions?.find(value => value.id === binding.action);
       if (!action) return [];
       const hints = normalizePluginActionInputHintsV2(action.inputHints, action.inputSchema);
@@ -35,7 +35,7 @@ export function managedDataTargets(declarations: readonly Readonly<{ manifest: P
     const removal: Pick<DeploymentPlatformTarget, 'teardown' | 'teardownConsequence'> = target.dataV1?.projects?.delete
       ? { teardown: true, ...readTeardownConsequence(manifest.contributes.actions ?? [], target.dataV1.projects.delete) } : {};
     return [{ key: `${manifest.id}/${target.id}`, pluginId: manifest.id, targetId: target.id, target, ...removal,
-      title: resolvePluginLocalizedStringV2Text(target.title), operations }];
+      title: readDeploymentTargetDisplayNameV1(target), operations }];
   }));
 }
 

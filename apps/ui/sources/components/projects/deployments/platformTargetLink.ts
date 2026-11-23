@@ -14,7 +14,7 @@ import type { DeploymentTargetCredentialPrincipalV1 } from '@happier-dev/protoco
 import type { ScmHostingRepositoryIdentityV1 } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import type { DeploymentTargetLinkCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploySuggestionCatalogV1 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
-import { listDeploymentTargetsFromManifestsV1, readPluginActionCredentialPurposeV1 } from '@happier-dev/deployments';
+import { listDeploymentTargetsFromManifestsV1, readDeploymentTargetDisplayNameV1, readPluginActionCredentialPurposeV1 } from '@happier-dev/deployments';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 
 import { readDeploymentRefusal, type DeploymentRefusalReason } from './deploymentActionOutcome';
@@ -85,14 +85,15 @@ export function readTeardownConsequence(actions: readonly unknown[], localId: st
 
 /**
  * The name a person knows a linked provider resource by, as the provider recorded it: a Preview's name, else the
- * project or Worker name captured at preparation, else the provider's resource id.
+ * project or Worker name captured at preparation, else the selected target's declared presentation name.
  */
-export function readPlatformResourceName(content: Partial<DeploymentTargetLinkProviderContentV1> | undefined): string | null {
+export function readPlatformResourceName(content: Partial<DeploymentTargetLinkProviderContentV1> | undefined,
+    providerName?: string | null): string | null {
   const environment = content?.providerEnvironment?.selection;
   if (environment?.kind === 'preview' && typeof environment.previewName === 'string') return environment.previewName;
   return content?.preparedNative?.projectName
     ?? (environment?.kind === 'script' && typeof environment.scriptName === 'string' ? environment.scriptName : null)
-    ?? content?.providerIdentity?.providerResourceId ?? null;
+    ?? providerName ?? null;
 }
 
 export function readDeploymentPlatformTargets(
@@ -153,7 +154,7 @@ export function readDeploymentPlatformTargets(
           key: `${manifest.id}/${target.id}`,
           pluginId: manifest.id,
           targetId: target.id,
-          title: target.title,
+          title: readDeploymentTargetDisplayNameV1({ title: target.title }),
           ...(text(target.description)
             ? { description: target.description }
             : {}),
@@ -242,10 +243,10 @@ export type PreparedPlatformTargetLink =
   | Readonly<{ kind: 'create'; requestKey: string; providerCreate: PlatformTargetProviderCreate; reviewNotice: string | null;
       reviewRuntime?: PlatformTargetReviewRuntime & Readonly<{ machineName: string }> }>;
 
-export function readPreparedPlatformResourceName(prepared: PreparedPlatformTargetLink | null): string | null {
+export function readPreparedPlatformResourceName(prepared: PreparedPlatformTargetLink | null, providerName: string): string | null {
   if (!prepared) return null;
   if (prepared.kind === 'existing') {
-    return prepared.provider.preparedNative?.projectName ?? readPlatformResourceName(prepared.provider);
+    return readPlatformResourceName(prepared.provider, providerName);
   }
   const name = prepared.providerCreate.resourceName;
   return text(name) ? name : null;

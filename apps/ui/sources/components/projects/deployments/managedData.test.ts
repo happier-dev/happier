@@ -87,5 +87,7 @@ it('keeps the linked service name so an opaque provider id never becomes the dat
   const content = managedDataLinkContent(principal, linked);
   expect(content).toMatchObject({ preparedNative: { projectName: 'orders-db' } });
   expect(readPlatformResourceName(content ?? undefined)).toBe('orders-db');
-  expect(managedDataLinkContent(principal, { ...linked, serviceName: undefined })).not.toHaveProperty('preparedNative');
+  const unnamed = managedDataLinkContent(principal, { ...linked, serviceName: undefined });
+  expect(unnamed).not.toHaveProperty('preparedNative');
+  expect(readPlatformResourceName(unnamed ?? undefined)).toBeNull();
 });

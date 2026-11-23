@@ -280,6 +280,7 @@ export const DeploymentTargetRoleInputSchemasV1 = {
     'branches.list': DeploymentTargetBranchesListInputV1Schema, 'branches.create': DeploymentTargetDataInputV1Schema,
     'branches.delete': DeploymentTargetDataInputV1Schema,
     'connectionSecret.save': DeploymentTargetDataInputV1Schema,
+    'connectionSecret.reference': DeploymentTargetPreparationBaseV1Schema,
 } as const;
 export type DeploymentTargetRoleV1 = keyof typeof DeploymentTargetRoleInputSchemasV1;
 export type DeploymentTargetDataRoleV1 = Exclude<DeploymentTargetRoleV1, DeploymentTargetRuntimeRoleV1>;
@@ -312,6 +313,7 @@ export const DeploymentTargetRoleInputProtocolSchemasV1 = {
     'branches.create': DeploymentTargetDataInputV1ProtocolSchema,
     'branches.delete': DeploymentTargetDataInputV1ProtocolSchema,
     'connectionSecret.save': DeploymentTargetDataInputV1ProtocolSchema,
+    'connectionSecret.reference': DeploymentTargetPreparationBaseV1ProtocolSchema,
 } as const;
 
 export const DeploymentTargetRoleResultV1Schema = lazyZodSchema(() => z.strictObject({
