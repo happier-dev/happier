@@ -1602,6 +1602,13 @@ and never fall back to an unrestricted list. See
 - `GET /v2/sessions/active?limit=...`
 - `GET /v2/sessions?cursor=cursor_v1_<id>&limit=...&changedSince=...`
 - `POST /v1/sessions` (create or load by `tag`)
+  In 0.3 development, a new layout-1 Session with a primary Team or an initial
+  Team grant requires the creator's verified credential to satisfy that Team's
+  sign-in policy. The same admission applies to setting a new primary Team via
+  `/v2/sessions/access-context/set` and adding a Team grant. The Home returns
+  `403 session_access_authentication_required` when a supported sign-in method
+  is available and `503 session_access_authentication_unavailable` when none
+  can be used. A tag rejoin consumes the existing Session.
   In 0.3 development, the External Sessions link can supply `externalSourceDates`
   on the first layout-1 `machine_only` creation. Initial activity uses the
   source update time, then the source creation time, then the server’s current

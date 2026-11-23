@@ -8,6 +8,8 @@ import {
     V2SessionByIdResponseSchema,
 } from "@happier-dev/protocol";
 import { db } from "@/storage/db";
+import { createDbMaintenanceClient, onDbClientQuery } from "@/storage/prisma";
+import { auth } from "@/app/auth/auth";
 import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
@@ -20,7 +22,7 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
     beforeAll(async () => {
         vi.stubEnv("HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED", "1");
         harness = await createLightSqliteHarness({
-            tempDirPrefix: "happier-session-access-http-", initAuth: false,
+            tempDirPrefix: "happier-session-access-http-", initAuth: true,
             env: {
                 HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "1",
                 HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
@@ -681,6 +683,179 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
         expect(session.grants).toHaveLength(1);
         expect(session.grants[0]).toMatchObject({
             teamId: team.id, accessLevel: "edit", canApprovePermissions: false, requiredByTeamPolicy: true,
+        });
+    });
+
+    async function restrictedTeamFixture() {
+        const data = await fixture();
+        const binding = createSignedAccountContentBinding(tweetnacl.box.keyPair().publicKey);
+        await db.account.update({ where: { id: data.recipient.id }, data: {
+            encryptionMode: "e2ee", publicKey: binding.publicKey,
+            contentPublicKey: Buffer.from(binding.contentPublicKey),
+            contentPublicKeySig: Buffer.from(binding.contentPublicKeySig),
+        } });
+        await db.team.update({ where: { id: data.team.id }, data: {
+            sessionCreationPolicy: "team_required",
+            authenticationPolicy: {
+                v: 1, mode: "restricted",
+                accepted: [{ kind: "home_method", methodId: "key_challenge" }],
+            },
+        } });
+        return data;
+    }
+
+    const restrictedBody = (tag: string) => ({
+        ...body(tag),
+        ownerMetadata: { t: "encrypted", c: "oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==" },
+    });
+
+    const keyChallengeHeaders = (accountId: string) => ({
+        ...headers(accountId),
+        "x-test-authentication-evidence": JSON.stringify([{ kind: "home_method", methodId: "key_challenge" }]),
+    });
+
+    async function signedHeaders(accountId: string, kind: "account" | "terminal", keyChallenge = false) {
+        const token = await auth.createToken(accountId, undefined, {
+            kind,
+            authority: kind === "account" ? "present_user" : "account_automation",
+            ...(keyChallenge ? { authenticationEvidence: [{ kind: "home_method", methodId: "key_challenge" }] } : {}),
+        });
+        return { authorization: `Bearer ${token}`, "x-happier-account-stored-content-protocol": "2" };
+    }
+
+    it("records statements for an accepted restricted primary Team creation", async () => {
+        const { recipient, team } = await restrictedTeamFixture();
+        const qualified = await signedHeaders(recipient.id, "account", true);
+        const client = await createDbMaintenanceClient("sqlite", undefined, { log: [{ emit: "event", level: "query" }] });
+        const statements: string[] = [];
+        onDbClientQuery(client, ({ query }) => statements.push(query));
+        const originalTransaction = db.$transaction;
+        try {
+            await withAuthenticatedTestApp(sessionRoutes, async (app) => {
+                db.$transaction = client.$transaction.bind(client);
+                for (const mode of ["restricted", "inherit"] as const) {
+                    if (mode === "inherit") await db.team.update({ where: { id: team.id }, data: { authenticationPolicy: { v: 1, mode } } });
+                    statements.length = 0;
+                    const response = await app.inject({
+                        method: "POST", url: "/v1/sessions", headers: qualified,
+                        payload: { ...restrictedBody(`measure-${mode}-team-create`), primaryTeamId: team.id },
+                    });
+                    expect(response.statusCode, response.body).toBe(200);
+                    const reads = statements.filter(query => /^SELECT\b/i.test(query)).length;
+                    expect(reads).toBeGreaterThan(0);
+                    console.info("Primary Team creation statements", { mode, total: statements.length, reads });
+                }
+            }, { authentication: "real" });
+        } finally {
+            db.$transaction = originalTransaction;
+            await client.$disconnect();
+        }
+    });
+
+    it.each(["account", "terminal"] as const)("qualifies restricted primary Team creation for a %s credential", async (kind) => {
+        const { recipient, team } = await restrictedTeamFixture();
+        const tag = "restricted-primary-team";
+        const unqualified = await signedHeaders(recipient.id, kind);
+        await withAuthenticatedTestApp(sessionRoutes, async (app) => {
+            const create = (credential: Record<string, string>, sessionTag = tag) => app.inject({
+                method: "POST", url: "/v1/sessions", headers: credential,
+                payload: { ...restrictedBody(sessionTag), primaryTeamId: team.id },
+            });
+            const rejected = await create(unqualified);
+            expect.soft(rejected.statusCode, rejected.body).toBe(403);
+            expect.soft(rejected.json()).toEqual({ error: "session_access_authentication_required" });
+            expect.soft(await db.session.count({ where: { accountId: recipient.id, tag } })).toBe(0);
+            expect.soft(await db.sessionGrant.count({ where: { principalKind: "team", teamId: team.id } })).toBe(0);
+            if (kind === "terminal") {
+                await db.team.update({ where: { id: team.id }, data: { authenticationPolicy: { v: 1, mode: "inherit" } } });
+            }
+            const accepted = await create(kind === "terminal"
+                ? unqualified
+                : await signedHeaders(recipient.id, kind, true), "qualified-primary-team");
+            expect(accepted.statusCode, accepted.body).toBe(200);
+            expect(await db.session.findUnique({
+                where: { accountId_tag: { accountId: recipient.id, tag: "qualified-primary-team" } },
+                select: { primaryTeamId: true, grants: { select: { teamId: true, requiredByTeamPolicy: true } } },
+            })).toEqual({ primaryTeamId: team.id, grants: [{ teamId: team.id, requiredByTeamPolicy: true }] });
+        }, { authentication: "real" });
+    });
+
+    it("qualifies a new child of an attached Session and rejoins the admitted child with the same tag", async () => {
+        const { recipient, team } = await restrictedTeamFixture();
+        const qualified = await signedHeaders(recipient.id, "account", true);
+        const unqualified = await signedHeaders(recipient.id, "terminal");
+        await withAuthenticatedTestApp(sessionRoutes, async (app) => {
+            const create = (payload: ReturnType<typeof restrictedBody> & Record<string, unknown>, credential = qualified) => app.inject({
+                method: "POST", url: "/v1/sessions", headers: credential, payload: { ...payload, primaryTeamId: team.id },
+            });
+            const parent = await create(restrictedBody("restricted-parent"));
+            expect(parent.statusCode, parent.body).toBe(200);
+            const parentRow = await db.session.findUniqueOrThrow({
+                where: { accountId_tag: { accountId: recipient.id, tag: "restricted-parent" } },
+            });
+            const child = { ...restrictedBody("restricted-child"), originKind: "session", originSessionId: parentRow.id, workDepth: 1 };
+            const rejected = await create(child, unqualified);
+            expect.soft(rejected.statusCode, rejected.body).toBe(403);
+            expect.soft(rejected.json()).toEqual({ error: "session_access_authentication_required" });
+            const admitted = await create(child);
+            expect(admitted.statusCode, admitted.body).toBe(200);
+            const retry = await create(child, unqualified);
+            expect(retry.statusCode, retry.body).toBe(200);
+            const children = await db.session.findMany({
+                where: { accountId: recipient.id, tag: child.tag },
+                select: { primaryTeamId: true, originSessionId: true },
+            });
+            expect(children).toEqual([{ primaryTeamId: team.id, originSessionId: parentRow.id }]);
+        }, { authentication: "real" });
+    });
+
+    it("qualifies the actor when setting a restricted primary Team", async () => {
+        const { recipient, team } = await restrictedTeamFixture();
+        const session = await db.session.create({ data: {
+            accountId: recipient.id, tag: "reattach-restricted-team", encryptionMode: "plain",
+            metadata: "{}", currentStorageState: "hosted",
+        } });
+        await withAuthenticatedTestApp(sessionRoutes, async (app) => {
+            const setContext = (credential: Record<string, string>) => app.inject({
+                method: "POST", url: "/v2/sessions/access-context/set", headers: credential,
+                payload: { sessionId: session.id, primaryTeamId: team.id },
+            });
+            const rejected = await setContext(headers(recipient.id));
+            expect.soft(rejected.statusCode, rejected.body).toBe(403);
+            expect.soft(rejected.json()).toEqual({ error: "session_access_authentication_required" });
+            expect.soft(await db.session.findUnique({ where: { id: session.id }, select: { primaryTeamId: true } }))
+                .toEqual({ primaryTeamId: null });
+            expect.soft(await db.sessionGrant.count({ where: { sessionId: session.id } })).toBe(0);
+            const accepted = await setContext(keyChallengeHeaders(recipient.id));
+            expect(accepted.statusCode, accepted.body).toBe(200);
+            expect(accepted.json()).toMatchObject({ primaryTeamId: team.id });
+        });
+    });
+
+    it.each(["initial access", "grant mutation"] as const)("qualifies a new restricted Team grant through %s", async (entry) => {
+        const { recipient, team } = await restrictedTeamFixture();
+        const grant = { subject: { kind: "team", teamId: team.id }, accessLevel: "view", canApprovePermissions: false };
+        await withAuthenticatedTestApp(sessionRoutes, async (app) => {
+            const session = entry === "grant mutation" ? await db.session.create({ data: {
+                accountId: recipient.id, tag: "share-with-restricted-team", encryptionMode: "plain",
+                metadata: "{}", currentStorageState: "hosted",
+            } }) : null;
+            const share = (credential: Record<string, string>, tag: string) => session
+                ? app.inject({
+                    method: "POST", url: "/v2/sessions/access-grants/set", headers: credential,
+                    payload: { sessionId: session.id, ...grant },
+                })
+                : app.inject({
+                    method: "POST", url: "/v1/sessions", headers: credential,
+                    payload: { ...restrictedBody(tag), initialAccess: { grants: [grant] } },
+                });
+            const rejected = await share(headers(recipient.id), "unqualified-team-share");
+            expect.soft(rejected.statusCode, rejected.body).toBe(403);
+            expect.soft(rejected.json()).toEqual({ error: "session_access_authentication_required" });
+            expect.soft(await db.sessionGrant.count({ where: { principalKind: "team", teamId: team.id } })).toBe(0);
+            const accepted = await share(keyChallengeHeaders(recipient.id), "qualified-team-share");
+            expect(accepted.statusCode, accepted.body).toBe(200);
+            expect(await db.sessionGrant.count({ where: { principalKind: "team", teamId: team.id } })).toBe(1);
         });
     });
 

@@ -13,6 +13,7 @@ const {
 } = await import('@/text');
 const {
   resolveSessionSpawnErrorDetailFailureMessage,
+  resolveSessionSpawnNewOperationFailureMessage,
   resolveSessionSpawnNewResultFailureMessage,
 } = await import('./sessionSpawnFailurePresentation');
 
@@ -31,6 +32,30 @@ function refusal(reason: (typeof REASONS)[number]) {
 }
 
 describe('a refused Team credential binding, said once for New Session and Fork', () => {
+  it('uses the Session access sign-in recovery for a refused restricted Team attachment', async () => {
+    await preloadTranslations('en');
+    setPreferredLanguageFromSettings('en');
+    const parsed = SessionSpawnNewResultV1Schema.parse({
+      type: 'error',
+      code: 'session_access_authentication_required',
+      retryable: false,
+    });
+    if (parsed.type !== 'error') throw new Error('Expected a creation refusal');
+    expect(resolveSessionSpawnNewResultFailureMessage(parsed)).toBe(t('session.access.authenticationRequired'));
+    expect(resolveSessionSpawnErrorDetailFailureMessage(normalizeSpawnSessionErrorDetail({
+      kind: 'session_creation_access_refused',
+      code: parsed.code,
+    }))).toBe(t('session.access.authenticationRequired'));
+  });
+
+  it('uses the same sign-in recovery when creation settles as a retained operation', async () => {
+    await preloadTranslations('en');
+    setPreferredLanguageFromSettings('en');
+    const errorCode = 'session_access_authentication_required';
+    expect(resolveSessionSpawnNewOperationFailureMessage({ errorCode, error: errorCode }))
+      .toBe(t('session.access.authenticationRequired'));
+  });
+
   it('gives every closed reason its own sentence in every locale, never a code or a key', async () => {
     for (const language of SUPPORTED_LANGUAGE_CODES) {
       await preloadTranslations(language as never);

@@ -1501,6 +1501,10 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           && typeof (error as { code?: unknown }).code === 'string'
           ? (error as { code: string }).code
           : '';
+        const accessRefusal = spawnErrorDetails.find(detail => detail?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_ACCESS_REFUSED);
+        if (accessRefusal) {
+          return projectSessionSpawnFailure({ errorCode: code, errorMessage: readRecord(error).message, errorDetail: accessRefusal });
+        }
         if (code === 'target_unavailable') {
           return { type: 'error', code: 'target_unavailable', retryable: false,
             failureCause: projectActionFailureCauseV1(error, 'session.spawn_new') };
@@ -1552,9 +1556,6 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         for (const detail of spawnErrorDetails) {
           if (detail?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.TERMINAL_HOST_UNAVAILABLE) {
             return { ...incompatibleSessionSpawnTarget('terminal_host_unavailable'), terminalHostError: detail };
-          }
-          if (detail?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_ACCESS_REFUSED) {
-            return { type: 'error', code: detail.code, retryable: false };
           }
           if (detail?.kind === 'update_required') {
             return { type: 'error', code: 'update_required', retryable: false, details: detail };

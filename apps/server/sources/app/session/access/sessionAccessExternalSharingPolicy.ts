@@ -110,6 +110,8 @@ export async function enforceTeamExternalSharingPolicyInTx(
         actorAccountId: string;
         primaryTeamId: string;
         authentication: SessionAccessAuthentication;
+        /** This actor qualified for this Team earlier in the deciding transaction. */
+        qualifiedTeamId?: string;
     }>,
 ): Promise<SessionExternalSharingPolicyError | null> {
     const context = await resolveTeamActorContextInTx(tx, {
@@ -128,6 +130,7 @@ export async function enforceTeamExternalSharingPolicyInTx(
             if (!context.capabilities.managePolicy) {
                 return "session_access_external_sharing_requires_team_admin";
             }
+            if (input.qualifiedTeamId === context.team.id) return null;
             const qualification = await qualifySessionTeamAuthenticationInTx(tx, {
                 accountId: input.actorAccountId,
                 team: context.team,
@@ -151,6 +154,7 @@ export async function enforceSessionGrantExternalSharingPolicyInTx(
         previous: StoredGrantValue | null;
         next: GrantValue;
         authentication: SessionAccessAuthentication;
+        qualifiedTeamId?: string;
     }>,
 ): Promise<SessionExternalSharingPolicyError | null> {
     if (!input.primaryTeamId || !isSessionAccessGrantIncreaseV1(input.previous, input.next)) return null;
@@ -163,6 +167,7 @@ export async function enforceSessionGrantExternalSharingPolicyInTx(
         actorAccountId: input.actorAccountId,
         primaryTeamId,
         authentication: input.authentication,
+        qualifiedTeamId: input.qualifiedTeamId,
     });
 }
 
@@ -197,6 +202,7 @@ export async function enforceSessionContextExternalSharingPolicyInTx(
         sessionId: string;
         primaryTeamId: string | null;
         authentication: SessionAccessAuthentication;
+        qualifiedTeamId: string | undefined;
     }>,
 ): Promise<SessionExternalSharingPolicyError | null> {
     if (!input.primaryTeamId) return null;
@@ -257,6 +263,7 @@ export async function enforceSessionContextExternalSharingPolicyInTx(
             actorAccountId: input.actorAccountId,
             primaryTeamId,
             authentication: input.authentication,
+            qualifiedTeamId: input.qualifiedTeamId,
         })
         : null;
 }

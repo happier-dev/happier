@@ -306,11 +306,13 @@ it.each([
   }
 });
 
-it.each(['provider', 'agent_signed_out', 'child_exit', 'admission', 'wait_admission'] as const)('preserves the typed %s cause through public Action transport and JSON or thrown Session-create errors', async (kind) => {
+it.each(['provider', 'agent_signed_out', 'child_exit', 'admission', 'wait_admission', 'team_authentication'] as const)('preserves the typed %s cause through public Action transport and JSON or thrown Session-create errors', async (kind) => {
   const providerError = createProviderErrorV1('provider_endpoint_unavailable', {
     connectionId: 'pc_gateway', machineId: 'machine-a',
   });
-  const result = kind === 'provider'
+  const result = kind === 'team_authentication'
+    ? SessionSpawnNewResultV1Schema.parse({ type: 'error', code: 'session_access_authentication_required', retryable: false })
+    : kind === 'provider'
     ? SessionSpawnNewResultV1Schema.parse({ type: 'error', code: 'spawn_failed',
         retryable: providerError.retryable, providerError })
     : kind === 'child_exit'
@@ -365,6 +367,7 @@ it.each(['provider', 'agent_signed_out', 'child_exit', 'admission', 'wait_admiss
             code: 'CHILD_EXITED_BEFORE_WEBHOOK', childExit: { code: 1, signal: null },
           } }
           : kind === 'provider' ? { code: 'spawn_failed', retryable: true, providerError }
+          : kind === 'team_authentication' ? { code: 'session_access_authentication_required' }
           : { code: 'agent_signed_out', agentId: 'custom-agent', launchError: {
               kind: 'launch_error', code: 'agent_signed_out',
               message: expect.stringMatching(/select.*connected account profile.*configure.*default profile/i),
@@ -373,7 +376,8 @@ it.each(['provider', 'agent_signed_out', 'child_exit', 'admission', 'wait_admiss
         await expect(cmdSessionCreate(argv, deps)).rejects.toMatchObject({ ...expected,
           ...(kind === 'agent_signed_out' ? {
             message: expect.stringMatching(/select.*connected account profile.*configure.*default profile/i),
-          } : kind === 'child_exit' ? { message: expect.stringContaining('module_not_found: nacl-fast.js') } : {}),
+          } : kind === 'child_exit' ? { message: expect.stringContaining('module_not_found: nacl-fast.js') }
+          : kind === 'team_authentication' ? { message: expect.stringMatching(/sign in.*method.*team/i) } : {}),
         });
         expect(requests).toEqual(kind === 'wait_admission'
           ? ['POST /v1/actions/session.spawn_new', 'POST /v1/actions/session.wait.idle',

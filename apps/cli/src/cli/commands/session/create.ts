@@ -188,9 +188,14 @@ export async function cmdSessionCreate(
       return;
     }
     const launchError = 'launchError' in created ? created.launchError : undefined;
-    const message = code === 'agent_signed_out'
+    const launchMessage = code === 'agent_signed_out'
       || (launchError?.code === 'CHILD_EXITED_BEFORE_WEBHOOK' && launchError.childExit)
       ? launchError?.message ?? code : code;
+    const message = code === 'session_access_authentication_required'
+      ? 'Sign in with a method accepted by this Team, then try again.'
+      : code === 'session_access_authentication_unavailable'
+        ? 'This Team’s required sign-in methods are unavailable. Contact your Home administrator.'
+        : launchMessage;
     throw Object.assign(new Error(message), error);
   }
   if (created.type === 'pending') {

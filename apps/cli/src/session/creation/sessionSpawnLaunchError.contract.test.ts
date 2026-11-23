@@ -10,6 +10,7 @@ import { SpawnSessionControlErrorResponseSchema, projectSpawnSessionControlError
 import { projectSessionSpawnFailure } from './projectSessionSpawnFailure';
 import { AccountEncryptionCurrentnessUnavailableError } from '@/api/client/accountEncryptionCurrentness';
 import { readSessionCreationTerminalSpawnErrorDetail } from '@/api/session/sessionCreationTerminalSpawnErrorDetail';
+import { readSessionInitialAccessServerError } from '@/api/session/sessionCreationInitialAccess';
 import { buildSessionCreationTerminalSpawnErrorResult } from '@/daemon/sessions/onHappySessionWebhook';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { buildProviderSpawnErrorResult } from '@/daemon/spawn/buildProviderSpawnErrorResult';
@@ -30,6 +31,17 @@ import { appendBoundedChildStderr, buildChildExitBeforeWebhookFailure } from '@/
 import { logger } from '@/ui/logger';
 
 describe('Session launch cause transport', () => {
+  it('retains the Home sign-in refusal through daemon control and the strict Action result', () => {
+    const error = readSessionInitialAccessServerError({ error: 'session_access_authentication_required' }, 403);
+    const detail = readSessionCreationTerminalSpawnErrorDetail(error);
+    if (!detail) throw new Error('Expected a terminal Session creation refusal');
+    const daemon = buildSessionCreationTerminalSpawnErrorResult(detail);
+    const result = projectSessionSpawnFailure(daemon);
+    expect(SessionSpawnNewResultV1Schema.parse(result)).toEqual({
+      type: 'error', code: 'session_access_authentication_required', retryable: false,
+    });
+  });
+
   it.each(['session_launch_material_missing', 'managed_binary_missing', 'session_mcp_context_missing'] as const)(
     'retains %s through runner dispatch, daemon control and the strict Action result', cause => {
       const source = new PluginError({ code: 'agent_isolation_unavailable', message: 'PRIVATE_MESSAGE', retryable: false,

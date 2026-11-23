@@ -5,7 +5,8 @@ import { resolveCurrentSessionRecipientAccountIdsInTx } from "./sessionRecipient
 import { deriveAccountRecipientEnvelopeReadinessFromRow } from "@/app/encryption/accountRecipientEnvelopeReadiness";
 import { admitDirectSessionRecipientEnvelope, type DirectSessionRecipientEnvelopeError } from "@/app/session/encryption/sessionDataKeyEnvelopeAdmission";
 import { inTx, type Tx } from "@/storage/inTx";
-import { ShareAccessLevel, TeamMembershipStatus, TeamSessionCreationPolicy } from "@/storage/prisma";
+import { ShareAccessLevel, TeamSessionCreationPolicy } from "@/storage/prisma";
+import { EFFECTIVE_TEAM_MEMBERSHIP_WHERE } from "@/app/teams/memberships/effectiveMembership";
 import { readTransactionDatabaseTime } from "@/storage/transactionDatabaseTime";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import { markAccountsChanged, type AccountChangePublication } from "@/app/changes/markAccountChanged";
@@ -18,7 +19,7 @@ import {
     resolveSessionAccessForOperation,
     type EffectiveSessionAccess,
 } from "./sessionAccess";
-import type { SessionAccessAuthentication } from "./sessionAccessAuthentication";
+import { qualifySessionTeamAuthenticationInTx, type SessionAccessAuthentication } from "./sessionAccessAuthentication";
 import {
     resolveSubjectMemberAccountIdsInTx,
 } from "./sessionGrantSubjects";
@@ -207,33 +208,53 @@ export async function assertSessionAccessManageAccessInTx(
     return admission === "allowed" ? null : projectMutationAdmissionError(admission);
 }
 
-/** The shared share-eligibility owner decides; Session callers receive its verdict under their wire prefix. */
+/** A new Team grant uses Session attachment admission. Other grants use shared subject eligibility. */
 async function resolveSessionGrantSubjectInTx(
     tx: Tx,
-    params: Parameters<typeof resolveShareSubjectInTx>[1],
-): Promise<Readonly<{ ok: true; subject: ShareSubject }> | Readonly<{ ok: false; error: SessionAccessGrantSubjectError }>> {
+    params: Parameters<typeof resolveShareSubjectInTx>[1] & Readonly<{
+        authentication: SessionAccessAuthentication;
+        admittedPrimaryTeamId?: string;
+    }>,
+): Promise<Readonly<{ ok: true; subject: ShareSubject }> | Readonly<{ ok: false; error: SessionAccessGrantErrorCode }>> {
+    if (params.subject.kind === "team" && !params.hasExistingGrant && !params.removingExistingGrant) {
+        if (params.subject.teamId !== params.admittedPrimaryTeamId) {
+            const admission = await validateSessionContextTeamInTx(tx, { ...params, teamId: params.subject.teamId });
+            if (!admission.ok) return admission;
+        }
+        return { ok: true, subject: params.subject };
+    }
     const resolution = await resolveShareSubjectInTx(tx, params);
     return resolution.ok ? resolution : { ok: false, error: `session_access_${resolution.error}` };
 }
 
 async function validateSessionContextTeamInTx(
     tx: Tx,
-    params: Readonly<{ actorAccountId: string; teamId: string }>,
-): Promise<SessionAccessGrantErrorCode | null> {
+    params: Readonly<{
+        actorAccountId: string;
+        teamId: string;
+        authentication: SessionAccessAuthentication;
+    }>,
+) {
     const team = await tx.team.findUnique({
         where: { id: params.teamId },
-        select: { id: true, archivedAt: true },
+        select: { id: true, authenticationPolicy: true, sessionCreationPolicy: true },
     });
-    if (!team) return "session_access_subject_not_found";
-    if (team.archivedAt !== null) return "session_access_subject_ineligible";
+    if (!team) return { ok: false, error: "session_access_subject_not_found" } as const;
     const membership = await tx.teamMembership.findUnique({
-        where: { teamId_accountId: { teamId: team.id, accountId: params.actorAccountId } },
-        select: { status: true },
+        where: {
+            teamId_accountId: { teamId: team.id, accountId: params.actorAccountId },
+            ...EFFECTIVE_TEAM_MEMBERSHIP_WHERE,
+        },
+        select: { id: true },
     });
-    if (membership?.status !== TeamMembershipStatus.active) {
-        return "session_access_subject_ineligible";
-    }
-    return null;
+    if (!membership) return { ok: false, error: "session_access_subject_ineligible" } as const;
+    const qualification = await qualifySessionTeamAuthenticationInTx(tx, {
+        accountId: params.actorAccountId, team, authentication: params.authentication,
+    });
+    if (qualification.status !== "satisfied") return { ok: false, error: projectMutationAdmissionError(
+        qualification.status === "authentication_required" ? "authentication_required" : "authentication_unavailable",
+    ) } as const;
+    return { ok: true, team } as const;
 }
 
 type InitialSessionAccessInput = Readonly<{
@@ -254,7 +275,7 @@ export class SessionInitialAccessError extends Error {
 type InitialSessionAccessAdmission = Readonly<{
     ok: true;
     session: Readonly<{ accountId: string; primaryTeamId: string | null; encryptionMode: string }>;
-    primaryTeam: Readonly<{ sessionCreationPolicy: TeamSessionCreationPolicy; archivedAt: Date | null }> | null;
+    primaryTeam: Readonly<{ id: string; sessionCreationPolicy: TeamSessionCreationPolicy }> | null;
     resolved: readonly Readonly<{
         subject: ShareSubject;
         grant: SessionAccessGrantValue;
@@ -277,12 +298,15 @@ async function admitInitialSessionAccessInTx(tx: Tx, params: InitialSessionAcces
             : null;
     if (sessionEncryptionMode === null) return { ok: false, error: "invalid_request" };
 
+    let primaryTeam: Extract<InitialSessionAccessAdmission, { ok: true }>["primaryTeam"] = null;
     if (session.primaryTeamId !== null) {
-        const contextError = await validateSessionContextTeamInTx(tx, {
+        const admission = await validateSessionContextTeamInTx(tx, {
             actorAccountId: params.creatorAccountId,
             teamId: session.primaryTeamId,
+            authentication: params.authentication,
         });
-        if (contextError) return { ok: false, error: contextError };
+        if (!admission.ok) return admission;
+        primaryTeam = admission.team;
     }
     if (session.accountId !== params.creatorAccountId) {
         return { ok: false, error: "session_initial_access_creator_mismatch" };
@@ -301,6 +325,8 @@ async function admitInitialSessionAccessInTx(tx: Tx, params: InitialSessionAcces
             resourceOwnerAccountId: session.accountId,
             subject: grant.subject,
             hasExistingGrant: false,
+            authentication: params.authentication,
+            admittedPrimaryTeamId: primaryTeam?.id,
         });
         if (!subject.ok) return { ok: false, error: subject.error };
         const value = normalizeGrantValue(grant);
@@ -331,19 +357,13 @@ async function admitInitialSessionAccessInTx(tx: Tx, params: InitialSessionAcces
         }
         resolved.push({ subject: subject.subject, grant: value, accountEnvelopeInput });
     }
-    const primaryTeam = session.primaryTeamId
-        ? await tx.team.findUnique({
-            where: { id: session.primaryTeamId },
-            select: { sessionCreationPolicy: true, archivedAt: true },
-        })
-        : null;
     const primaryTeamGrant = resolved.find(
         (item) => item.subject.kind === "team" && item.subject.teamId === session.primaryTeamId,
     );
-    if (teamPolicyRequiresGrant(primaryTeam) && session.primaryTeamId) {
+    if (primaryTeam?.sessionCreationPolicy === TeamSessionCreationPolicy.team_required) {
         if (!primaryTeamGrant) {
             resolved.push({
-                subject: { kind: "team", teamId: session.primaryTeamId },
+                subject: { kind: "team", teamId: primaryTeam.id },
                 grant: applyRequiredTeamGrantFloor(null),
             });
         } else {
@@ -359,6 +379,7 @@ async function admitInitialSessionAccessInTx(tx: Tx, params: InitialSessionAcces
             previous: null,
             next: item.grant,
             authentication: params.authentication,
+            qualifiedTeamId: primaryTeam?.id,
         });
         if (policyError) return { ok: false, error: policyError };
     }
@@ -681,6 +702,7 @@ export async function putSessionAccessGrantInTx(
         resourceOwnerAccountId: session.accountId,
         subject: params.subject,
         hasExistingGrant: stored !== null,
+        authentication: params.authentication,
     });
     if (!resolution.ok) return { ok: false, error: resolution.error };
     const subject = resolution.subject;
@@ -954,6 +976,7 @@ export async function deleteSessionAccessGrantInTx(
         subject: params.subject,
         hasExistingGrant: true,
         removingExistingGrant: true,
+        authentication: params.authentication,
     });
     if (!resolution.ok) return { ok: false, error: resolution.error };
     const subject = resolution.subject;
@@ -1070,17 +1093,14 @@ export async function setSessionAccessContextInTx(
         canApprovePermissions: boolean;
     }> | null = null;
     if (params.primaryTeamId !== null) {
-        const contextError = await validateSessionContextTeamInTx(tx, {
+        const admission = await validateSessionContextTeamInTx(tx, {
             actorAccountId: params.actorAccountId,
             teamId: params.primaryTeamId,
+            authentication: params.authentication,
         });
-        if (contextError) return { ok: false, error: contextError };
-        const team = await tx.team.findUniqueOrThrow({
-            where: { id: params.primaryTeamId },
-            select: { sessionCreationPolicy: true },
-        });
+        if (!admission.ok) return admission;
 
-        targetTeamRequired = team.sessionCreationPolicy === TeamSessionCreationPolicy.team_required;
+        targetTeamRequired = admission.team.sessionCreationPolicy === TeamSessionCreationPolicy.team_required;
         if (targetTeamRequired) {
             targetTeamGrant = await tx.sessionGrant.findUnique({
                 where: { principalKind: 'team', sessionId_teamId: { sessionId: params.sessionId, teamId: params.primaryTeamId } },
@@ -1095,6 +1115,7 @@ export async function setSessionAccessContextInTx(
             sessionId: params.sessionId,
             primaryTeamId: params.primaryTeamId,
             authentication: params.authentication,
+            qualifiedTeamId: params.primaryTeamId ?? undefined,
         });
         if (externalPolicyError) return { ok: false, error: externalPolicyError };
     }
