@@ -193,7 +193,7 @@ async function installedInputIdentity(installDir, env, signal) {
   }
 }
 
-async function verifiedGraphInputs({ repo, tree, installDir, root, selected, env, signal }) {
+async function verifiedGraphInputs({ repo, tree, installDir, root, selected, env, signal, environment = commitEntryLoadEnvironmentKey(env) }) {
   const installed = await installedInputIdentity(installDir, env, signal);
   if (!installed) return null;
   const cacheDir = join(root, 'verified-entry-graphs');
@@ -221,14 +221,19 @@ async function verifiedGraphInputs({ repo, tree, installDir, root, selected, env
   // application closure. Git records include path, mode and blob identity.
   const common = blobs.filter(({ path, owner }) => !owner || path.endsWith('/package.json')
     || /^(?:apps\/stack\/|packages\/cli-common\/|apps\/server\/(?:prisma|scripts)\/|packages\/protocol\/scripts\/)/u.test(path));
-  const basis = createHash('sha256').update(JSON.stringify([installed, process.execPath, process.versions, entryLoadEnvironment(env)]))
+  const basis = createHash('sha256').update(JSON.stringify([installed, process.execPath, process.versions, environment]))
     .update(readFileSync(self)).update(JSON.stringify(common.map(({ line }) => line))).digest('hex');
   const records = new Map();
   for (const id of selected) {
     const graph = graphs.find(candidate => candidate.id === id);
     const owner = graph && ownerOf(graph.entry);
-    // Route composition and diagnostic probes can access dynamic inputs
-    // outside the declared workspace graph. Keep their existing full probe.
+    // Route composition has a wider source footprint. A live ticket can carry
+    // its result only for the identical candidate tree, never across a rebase.
+    if (id === SERVER_ROUTES_GRAPH) {
+      const key = createHash('sha256').update(JSON.stringify([basis, id, tree])).digest('hex');
+      records.set(id, { key });
+      continue;
+    }
     if (!owner || graph.args || graph.testFiles || graph.preparationComponent) continue;
     const closure = workspaceSourcePackageClosure(packages, [owner]);
     const owned = blobs.filter(entry => closure.has(entry.owner)
@@ -259,17 +264,28 @@ function readFileIfPresent(file) {
   }
 }
 
-async function compareWithVerifiedGraphs(request, { env, signal, run }) {
+async function compareWithVerifiedGraphs(request, { env, signal, run, entryProof, expectedEnvironment, prepare }) {
   const { selected, graphs, installDir } = request;
-  const cache = await verifiedGraphInputs({ ...request, env, signal });
-  const hits = selected.filter(id => cache?.records.get(id)?.hit);
-  const missing = selected.filter(id => !cache?.records.get(id)?.hit);
+  const environment = expectedEnvironment ?? commitEntryLoadEnvironmentKey(env);
+  const remoteEnvironment = environment !== commitEntryLoadEnvironmentKey(env);
+  if (remoteEnvironment && entryProof?.environment !== environment) throw new EntryLoadAdmissionRequired();
+  const cache = await verifiedGraphInputs({ ...request, env, signal, environment });
+  // The accepted graph must still see the same tracked inputs and installation.
+  // A ticket's proof is bound to the original writer, not the lock holder.
+  const hit = id => {
+    const record = cache?.records.get(id);
+    return record && (record.hit || (entryProof?.environment === environment && entryProof?.keys?.[id] === record.key));
+  };
+  if (prepare && !selected.every(id => cache?.records.has(id))) return;
+  const hits = selected.filter(hit);
+  const missing = selected.filter(id => !hit(id));
   const probed = missing.length ? await run({ ...request, selected: missing })
     : { findings: [], preexisting: [], results: [], timings: {} };
-  if (cache && missing.length && cache.installed === await installedInputIdentity(installDir, env, signal)) {
+  const stable = cache && (!missing.length || cache.installed === await installedInputIdentity(installDir, env, signal));
+  if (stable) {
     for (const row of probed.results) {
       const record = cache.records.get(row.graph);
-      if (row.status !== 'passed' || !record) continue;
+      if (row.status !== 'passed' || !record?.file) continue;
       const temporary = `${record.file}.${process.pid}.tmp`;
       try {
         writeFileSync(temporary, record.key, { mode: 0o600 });
@@ -282,6 +298,10 @@ async function compareWithVerifiedGraphs(request, { env, signal, run }) {
   }
   const rows = new Map(probed.results.map(row => [row.graph, row]));
   for (const id of hits) rows.set(id, { graph: id, status: 'passed', elapsedMs: 0 });
+  if (prepare) {
+    return stable && selected.every(id => rows.get(id)?.status === 'passed')
+      ? { environment, keys: Object.fromEntries(selected.map(id => [id, cache.records.get(id).key])) } : undefined;
+  }
   return { ...probed, selected, graphs, results: selected.map(id => rows.get(id)).filter(Boolean),
     timings: { ...probed.timings, ...(hits.length ? { cacheHits: hits.length } : {}) } };
 }
@@ -298,19 +318,16 @@ async function compareWithVerifiedGraphs(request, { env, signal, run }) {
  * Other graphs report failures they share with the base. Extraction, derivation or missing harness results make
  * the check unavailable.
  */
-export async function commitTreeEntryLoads({ repo, base, tree, installDir = repo, root = defaultRoot(), env = process.env, signal, graphIds, phase = 'report', compareAdmittedEntryLoads, expectedEnvironment }) {
+export async function commitTreeEntryLoads({ repo, base, tree, installDir = repo, root = defaultRoot(), env = process.env, signal, graphIds, phase = 'report', compareAdmittedEntryLoads, expectedEnvironment, entryProof, prepare = false }) {
   const git = gitAt(repo);
   [base, tree] = git(['rev-parse', `${base}^{tree}`, `${tree}^{tree}`]).toString().trim().split('\n');
   const selection = await selectCommitTreeEntryGraphs({ repo, base, tree, phase });
   const selected = graphIds ? selection.graphs.filter(id => graphIds.includes(id)) : selection.selected;
   const empty = { findings: [], preexisting: [], results: [], selected, graphs: selection.graphs.length, timings: {} };
-  if (!selected.length) return empty;
-  if (expectedEnvironment !== undefined && expectedEnvironment !== commitEntryLoadEnvironmentKey(env)) {
-    throw new EntryLoadAdmissionRequired();
-  }
+  if (!selected.length) return prepare ? undefined : empty;
   const request = { repo, base, tree, installDir, root, selected, graphs: selection.graphs.length, waitForDependencies: !compareAdmittedEntryLoads };
   const run = compareAdmittedEntryLoads ?? (candidate => admitEntryLoads(candidate, { env, signal }));
-  return phase === 'commit' ? await compareWithVerifiedGraphs(request, { env, signal, run }) : await run(request);
+  return phase === 'commit' ? await compareWithVerifiedGraphs(request, { env, signal, run, entryProof, expectedEnvironment, prepare }) : await run(request);
 }
 
 function entryLoadAdmissionCommand(repo, projects, payload, { base, tree, admissionClass = ENTRY_LOAD_ADMISSION_CLASS } = {}) {
@@ -351,11 +368,11 @@ export async function withAdmittedCommitEntryPhase({ repo, base, tree, phase, en
     }
   };
   if (!projects.length) return await run(assertCovered, (combined, output, projections) =>
-    regenerateCommitProjections({ repo, tree: combined, output, projections }, env));
+    regenerateCommitProjections({ repo, tree: combined, output, projections }, env), false);
   const cached = await verifiedGraphInputs({ repo, tree, installDir: repo, root: defaultRoot(), selected: projects, env });
   if (projects.every(id => cached?.records.get(id)?.hit)) {
     const requireAdmission = () => { throw new EntryLoadAdmissionRequired(); };
-    try { return await run(requireAdmission, requireAdmission); }
+    try { return await run(requireAdmission, requireAdmission, true); }
     catch (error) { if (!(error instanceof EntryLoadAdmissionRequired)) throw error; }
   }
   const child = await spawnEntryLoadCommand({ repo, projects, env, stdio: ['pipe', 'pipe', 'inherit'],
@@ -389,7 +406,7 @@ export async function withAdmittedCommitEntryPhase({ repo, base, tree, phase, en
     return await run(request => {
       assertCovered(request);
       return send(request);
-    }, (combined, output, projections) => send({ repo, tree: combined, projectionOutput: output, projections }));
+    }, (combined, output, projections) => send({ repo, tree: combined, projectionOutput: output, projections }), true);
   } finally {
     child.stdin.end();
     output.close();

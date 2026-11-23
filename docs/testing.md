@@ -752,6 +752,11 @@ holder can publish consecutive waiting packets on the same ref while their
 exact rebased trees pass the same checks using previously verified inputs.
 The next writer takes over if it needs its own entry probe or projection
 generation, or if its packet cannot be replayed and checked in the group.
+When an admitted writer has one predecessor, it can use its own admission to
+load affected entries against the tree expected after that predecessor lands.
+The holder reruns the fast checks and reuses a passing entry verdict only when
+the rebased graph inputs, installed dependencies, and waiting writer's environment
+match its proof. Server route composition requires the identical Git tree.
 Each packet retains its own commit and post-commit report.
 
 The synchronous local import check reads changed source files and their relative

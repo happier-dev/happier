@@ -31,7 +31,7 @@ function openTicket(dir) {
 /** The record exists only while this admitted writer is waiting or landing. Its
  * flock releases if the process dies, even if the pathname survives the writer.
  */
-export async function withCommitLock({ repo, ref = 'HEAD', label = 'commit-gate', arrival, packet }, run) {
+export async function withCommitLock({ repo, ref = 'HEAD', label = 'commit-gate', arrival, packet, prepare }, run) {
   const git = gitIn(repo);
   const moveRef = ({ commit, head, reason }) => git(['update-ref', '-m', reason, ref, commit, head]);
   if (process.platform === 'win32') return await run(moveRef);
@@ -61,10 +61,19 @@ export async function withCommitLock({ repo, ref = 'HEAD', label = 'commit-gate'
 
     const ordered = () => readdirSync(queue).filter(entry => /^\d{16}-[\w]+$/u.test(entry)).sort();
     const grouped = () => readRecord(join(dir, 'landing'));
-    const previousTicket = () => ordered().findLast(entry => entry < name);
+    const olderTickets = () => ordered().filter(entry => entry < name);
+    const waitForTicket = async entry => {
+      const waiting = join(queue, entry);
+      const fd = openTicket(waiting);
+      if (fd === undefined) return;
+      try {
+        await flock(repo, fd, ['-s']);
+        rmSync(waiting, { recursive: true, force: true });
+      } finally { closeSync(fd); }
+    };
     const queued = async function* () {
       for (const entry of ordered()) {
-        if (previousTicket()) return;
+        if (olderTickets().length) return;
         if (entry <= name) continue;
         const waiting = join(queue, entry);
         const fd = openTicket(waiting);
@@ -76,7 +85,7 @@ export async function withCommitLock({ repo, ref = 'HEAD', label = 'commit-gate'
           }
           const record = readRecord(join(waiting, 'writer'));
           if (!record || record.repo !== repo || record.ref !== scopeRef) return;
-          yield { packet: record.packet, saveLanding: result => {
+          yield { packet: record.packet, entryProof: readRecord(join(waiting, 'entry-proof')), saveLanding: result => {
             const pending = join(waiting, 'landing.tmp');
             writeFileSync(pending, JSON.stringify(result), { mode: 0o600 });
             renameSync(pending, join(waiting, 'landing'));
@@ -84,24 +93,35 @@ export async function withCommitLock({ repo, ref = 'HEAD', label = 'commit-gate'
         } finally { closeSync(fd); }
       }
     };
+    // Prepare near the front instead of probing a tree many commits before landing.
+    let predecessor;
+    if (prepare) {
+      let older = olderTickets();
+      while (older.length > 1) {
+        await waitForTicket(older.at(-2));
+        older = olderTickets();
+      }
+      if (older.length) predecessor = readRecord(join(queue, older[0], 'writer'));
+    }
+    const entryProof = predecessor?.repo === repo && predecessor.ref === scopeRef
+      ? await prepare(predecessor.packet) : undefined;
+    if (entryProof) {
+      const pending = join(dir, 'entry-proof.tmp');
+      writeFileSync(pending, JSON.stringify(entryProof), { mode: 0o600 });
+      renameSync(pending, join(dir, 'entry-proof'));
+    }
     for (;;) {
       const landed = grouped();
       if (landed && isLanded(git, landed.commit, ref)) return landed;
-      const older = previousTicket();
+      const older = olderTickets().at(-1);
       if (older) {
-        const previous = join(queue, older);
-        const fd = openTicket(previous);
-        if (fd === undefined) continue;
-        try {
-          await flock(repo, fd, ['-s']);
-          rmSync(previous, { recursive: true, force: true });
-        } finally { closeSync(fd); }
+        await waitForTicket(older);
         continue;
       }
       lock = openSync(path, 'a');
       await flock(repo, lock, ['-x']);
       // A writer with an earlier arrival can finish admission while we wait.
-      if (!previousTicket()) break;
+      if (!olderTickets().length) break;
       closeSync(lock);
       lock = undefined;
     }
@@ -109,7 +129,7 @@ export async function withCommitLock({ repo, ref = 'HEAD', label = 'commit-gate'
     if (landed && isLanded(git, landed.commit, ref)) return landed;
     mark = `${path}.holder`;
     writeFileSync(mark, `pid=${process.pid} since=${new Date().toISOString().slice(11, 19)}Z msg=${label}\n`);
-    return await run(moveRef, queued);
+    return await run(moveRef, queued, entryProof);
   } finally {
     try { if (mark) rmSync(mark, { force: true }); }
     finally {

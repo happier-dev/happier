@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { commitFromPrivateIndex } from './commitFromPrivateIndex.mjs';
 import { runCommitGate } from '../workspaces/commitGate.mjs';
+import { publishDependencyRefreshMarker } from '../../apps/stack/scripts/utils/proc/dependency_refresh.mjs';
 
 
 // The commit lock is flock(1); hosts without it (native Windows, stock macOS) run no commit wrapper and take a plain CAS.
@@ -502,7 +503,7 @@ while [ "$1" != -- ]; do
   shift
 done
 shift
-if ! "$TEST_FLOCK" -n "$TEST_LOCK" true; then
+if [ "$TEST_GROUP_QUEUE" != 1 ] && ! "$TEST_FLOCK" -n "$TEST_LOCK" true; then
   printf 'Entry load requested admission while the commit lock was held\n' >&2
   exit 92
 fi
@@ -555,6 +556,91 @@ export async function loadEntryGraph(graph) {
   const packet = 'apps/ui/src/index.mjs';
   f.write(packet, 'export const value = 2;\n');
   return { f, base, winner, packet };
+}
+
+for (const scenario of ['unrelated predecessor', 'dependency-changing predecessor', 'unexpected dependency change']) {
+  test(`grouped writer uses its own admitted proof with ${scenario}`, { skip: !hasFlock }, async t => {
+    const { f } = treeGraphReplayFixture(t);
+    fs.mkdirSync(path.join(f.cwd, 'apps/other'));
+    f.write('package.json', '{"private":true,"workspaces":["apps/*"]}');
+    f.write('apps/other/package.json', '{"name":"@fixture/other"}');
+    f.write('apps/other/notes.md', 'base\n');
+    f.git('add', '--', 'package.json', 'apps/other');
+    f.git('commit', '-qm', 'test: unrelated workspace');
+    const base = f.git('rev-parse', 'HEAD').trim();
+    fs.mkdirSync(path.join(f.cwd, 'node_modules'));
+    await publishDependencyRefreshMarker({ installDir: f.cwd, identity: 'fixture-install' });
+    const lock = path.join(f.cwd, '.git', 'p03-commit-partial.lock');
+    const bin = path.join(f.cwd, 'bin');
+    fs.mkdirSync(bin);
+    const flock = execFileSync('sh', ['-c', 'command -v flock'], { encoding: 'utf8' }).trim();
+    const queued = path.join(f.cwd, 'second-queued');
+    fs.writeFileSync(path.join(bin, 'flock'), `#!/bin/sh
+if [ "$TEST_GROUP_LANE" = second ] && [ "$1" = -s ]; then
+  : > "$TEST_GROUP_QUEUED"
+fi
+exec "$TEST_FLOCK" "$@"
+`, { mode: 0o755 });
+    const blocker = spawn(flock, ['-x', lock, 'sh', '-c', 'printf "ready\n"; cat >/dev/null'], {
+      stdio: ['pipe', 'pipe', 'inherit'],
+    });
+    const blockerDone = once(blocker, 'exit');
+    t.after(() => blocker.stdin.end());
+    await once(blocker.stdout, 'data');
+    const entry = 'apps/cli/src/index.mjs';
+    const firstPath = scenario === 'dependency-changing predecessor' ? 'apps/cli/new-input.txt' : 'apps/other/notes.md';
+    const commit = (lane, file, content, arrival) => {
+      const messageFile = path.join(f.cwd, lane + '-message');
+      f.write(lane + '-message', `test: ${lane}\n`);
+      f.write(file, content);
+      const child = spawn(process.execPath, [
+        fileURLToPath(new URL('./commitFromPrivateIndex.mjs', import.meta.url)), '--message-file', messageFile, '--', file,
+      ], { cwd: f.cwd, stdio: ['ignore', 'ignore', 'pipe'], env: {
+        ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+        HAPPIER_COMMIT_GATE_ARRIVED_AT: String(arrival), HAPPIER_COMMIT_TYPECHECK_GATE: 'report',
+        HAPPIER_COMMIT_TYPECHECK_DIR: path.join(f.cwd, '.git', 'typecheck-state'),
+        TEST_FLOCK: flock, TEST_LOCK: lock, TEST_GROUP_LANE: lane, TEST_GROUP_QUEUED: queued,
+        TEST_GROUP_QUEUE: '1', TEST_TREE_GATE_LOCKS: path.join(f.cwd, lane + '-graph-results'),
+      } });
+      t.after(() => { if (child.exitCode === null) child.kill(); });
+      let stderr = '';
+      child.stderr.on('data', chunk => { stderr += chunk; });
+      return { closed: once(child, 'close'), stderr: () => stderr };
+    };
+    const waitUntil = async (ready, writer) => {
+      const deadline = performance.now() + 15000;
+      while (!ready()) {
+        assert.ok(performance.now() < deadline, writer.stderr());
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+    };
+    const older = commit('first', firstPath, 'first landed\n', 1);
+    await waitUntil(() => fs.existsSync(lock + '.writers') &&
+      fs.readdirSync(lock + '.writers').some(name => /^\d/u.test(name)), older);
+    const younger = commit('second', entry, 'export const value = 3;\n', 2);
+    await waitUntil(() => fs.existsSync(queued), younger);
+    let parent = base;
+    if (scenario === 'unexpected dependency change') {
+      f.write('apps/cli/unexpected-input.txt', 'this arrived from a legacy writer\n');
+      f.git('add', '--', 'apps/cli/unexpected-input.txt');
+      f.git('commit', '-qm', 'test: legacy writer');
+      parent = f.git('rev-parse', 'HEAD').trim();
+    }
+    blocker.stdin.end();
+    await blockerDone;
+    for (const writer of [older, younger]) assert.equal((await writer.closed)[0], 0, writer.stderr());
+    const reflog = f.git('reflog', '-2', '--format=%gs', 'HEAD');
+    assert.equal(f.git('rev-parse', 'HEAD^^').trim(), parent);
+    assert.equal(f.git('show', 'HEAD:' + entry), 'export const value = 3;\n');
+    assert.equal(f.git('show', 'HEAD:' + firstPath), 'first landed\n');
+    if (scenario === 'unexpected dependency change') {
+      assert.doesNotMatch(reflog, /grouped by pid/u);
+      assert.match(fs.readFileSync(path.join(f.cwd, 'second-graph-results'), 'utf8'), /^cli:1\ncli:1\n$/u);
+    } else {
+      assert.match(reflog, /grouped by pid/u);
+      assert.equal(fs.readFileSync(path.join(f.cwd, 'second-graph-results'), 'utf8'), 'cli:1\n');
+    }
+  });
 }
 
 test('refuses a duplicate TypeScript import in the committed CLI entry closure before moving HEAD by default', { skip: !hasFlock }, t => {
