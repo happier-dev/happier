@@ -32,19 +32,22 @@ import type { TeamSetupBatch } from './useTeamSetupPlan';
 await import('@/sync/domains/actionOperations/observeActionOperationByRequestId');
 const { captureServerCredentialAccountScopeLifetime, resolveServerCredentialAccountScope } =
     await import('@/sync/domains/scope/serverCredentialAccountScope');
+const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
 let lifetime: ServerAccountScopeLifetime;
+let homeProfileId: string;
+const homeId = 'srv_team_setup_progress';
 beforeEach(async () => {
     await homes.reset();
     daemonRequests.length = 0;
     daemonReply.mockReset();
-    const profileId = await homes.addHome({ name: 'Team Home', serverUrl: 'https://team-home.test',
-        serverIdentityId: 'team-home', accountId: 'member', currentAccount: true });
-    query.serverId = profileId;
+    homeProfileId = await homes.addHome({ name: 'Team Home', serverUrl: 'https://team-home.test',
+        serverIdentityId: homeId, accountId: 'member', currentAccount: true });
+    query.serverId = resolveServerProfileScopeIdForIdentifier(homeProfileId);
     preparedResult = preparedResultFixture();
-    homes.answer(profileId, '/v1/machines/member-machine', { body: { machine: createPlainMachineRowFixture({
+    homes.answer(homeProfileId, '/v1/machines/member-machine', { body: { machine: createPlainMachineRowFixture({
         id: 'member-machine', accountId: 'member',
     }) } });
-    const resolution = await resolveServerCredentialAccountScope(profileId);
+    const resolution = await resolveServerCredentialAccountScope(query.serverId);
     if (resolution.kind !== 'bound') throw new Error(`Expected bound Home Account, received ${resolution.kind}`);
     lifetime = captureServerCredentialAccountScopeLifetime(resolution);
 });
@@ -99,7 +102,7 @@ describe('selected Team batch progress', () => {
         const execute = createFrontDoorActionExecute({ ...executor, executeConfirmed: (id, input, context) =>
             executor.execute(id, input, bindPresentUserActionConfirmation(id, input, context ?? {})) });
         const context = { serverId: query.serverId, surface: 'ui', authority: 'present_user',
-            runtimeAccountId: query.accountId, expectedAccountId: query.accountId, serverIdentityId: 'team-home',
+            runtimeAccountId: query.accountId, expectedAccountId: query.accountId, serverIdentityId: homeId,
             actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) } as const;
         let controller!: ReturnType<typeof useRetainedTeamSetupPlan>;
         let leaveReview!: () => void;
@@ -119,7 +122,7 @@ describe('selected Team batch progress', () => {
         daemonReply.mockReturnValue(new Promise(() => {}));
         const screen = await renderScreen(<App />);
         const source = { id: query.sourceId, name: 'Shared repository', revision: 2 };
-        const plan = await controller.prepare({ target: { serverId: query.serverId, homeId: 'team-home', machineId: query.machineId },
+        const plan = await controller.prepare({ target: { serverId: query.serverId, homeId, machineId: query.machineId },
             repositories: [{ id: source.id, input: { source: kind === 'source' ? { kind, id: source.id, revision: source.revision,
                 selector: { provider: { id: 'github', kind: 'github', baseUrl: 'https://github.com', displayName: 'GitHub' },
                     repository: { nameWithOwner: 'example/repo', cloneUrl: 'https://github.com/example/repo.git' }, protocol: 'https' },
@@ -186,8 +189,9 @@ describe('selected Team batch progress', () => {
         await hook.unmount();
     });
     it('follows a later checkout’s native review and settlement on the mounted batch', async () => {
-        const [{ TeamSetupPageView }, { ItemList }, { Modal, ModalProvider }] = await Promise.all([
+        const [{ TeamSetupPageView }, { ItemList }, { ModalProvider }, { answerExternalActionAccountForHome }] = await Promise.all([
             import('./TeamSetupScreen'), import('@/components/ui/lists/ItemList'), import('@/modal'),
+            import('@/dev/testkit/harness/externalActionAccountHttpBoundary'),
         ]);
         daemonReply.mockReturnValue(new Promise(() => {}));
         let batch = selectedBatch();
@@ -198,6 +202,15 @@ describe('selected Team batch progress', () => {
             repositories: [{ id: 'source', result: { ok: true, result: first } }] } };
         const repositories = [teamProjectSourceFixture({ id: 'source', name: 'First', nameWithOwner: 'team/first' }),
             teamProjectSourceFixture({ id: 'next', name: 'Next', nameWithOwner: 'team/next' })];
+        const settled = setupOperation({ revision: 2, createdAt: 5, startedAt: 5, state: 'succeeded', settledAt: 6 });
+        const approve = vi.fn((_input: unknown) => ({ operation: settled }));
+        homes.answer(homeProfileId, '/v2/account/settings', { body: { version: 1, content: { t: 'plain', v: {
+            actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'projects.prepare': ['ui'] } },
+        } } } });
+        await answerExternalActionAccountForHome(homes, homeProfileId, {
+            machineId: query.machineId, actionId: 'projects.prepare', tokenEpoch: 0, requesterInvocation: 'none',
+            execute: approve,
+        });
         const view = () => <ModalProvider><ItemList pageColumn="wide"><TeamSetupPageView
             header={null} teamName="Team" selection={createMachineAdministrationTargetSelectionFixture()}
             machineId={query.machineId} machineLabel="Member Machine" homeDir="/home/member"
@@ -224,11 +237,16 @@ describe('selected Team batch progress', () => {
             ] }));
             expect(screen.findByTestId('team-setup-repository-start:next')).toBeNull();
             await screen.pressByTestIdAsync('team-setup-repository:next');
-            await vi.waitFor(() => expect(screen.findByTestId(`project-setup-session-review:${review.operationId}`)).not.toBeNull());
-            await act(async () => Modal.hideAll());
-            act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshots: [
-                setupOperation({ revision: 2, createdAt: 5, startedAt: 5, state: 'succeeded', settledAt: 6 }),
-            ] }));
+            const reviewId = `project-setup-session-review:${review.operationId}`;
+            await vi.waitFor(() => expect(screen.findByTestId(`${reviewId}.scope:thisTime`)).not.toBeNull());
+            expect(approve).not.toHaveBeenCalled();
+            await screen.pressByTestIdAsync(`${reviewId}.scope:thisTime`);
+            await screen.pressByTestIdAsync(`${reviewId}-approve`);
+            await vi.waitFor(() => expect(approve).toHaveBeenCalledOnce());
+            expect(approve.mock.calls[0]?.[0]).toMatchObject({ phase: 'setup', heldOperationId: review.operationId,
+                expectedEffectDigest: 'effect', consentScope: 'thisTime',
+                workspace: { serverId: query.serverId, machineId: query.machineId, workspaceId: 'repo', rootPath: '/repo' } });
+            act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshots: [settled] }));
             expect(screen.findByTestId('team-setup-repository-start:source')).not.toBeNull();
             expect(screen.findByTestId('team-setup-repository-start:next')).not.toBeNull();
         } finally { await screen.unmount(); }
