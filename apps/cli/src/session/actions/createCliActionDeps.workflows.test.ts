@@ -297,6 +297,41 @@ describe('createCliActionDeps workflow boundary', () => {
           failureCause: { phase: 'workflow.run.encryption', errorCode: 'encryption_material_unavailable' } });
   });
 
+  it('names an unusable E2EE currentness reading instead of an unknown Run encryption failure', async () => {
+    // C114 (BL4-CONFIRM-B 11-23): the person saw content_unavailable with
+    // errorClass UnknownThrownValue and no code at workflow.run.encryption.
+    const runId = '55555555-5555-4555-8555-555555555555';
+    const home = 'https://e2ee-currentness-invalid.test';
+    const credentials = { token: workflowAccountPersonToken,
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(20) } };
+    // Home reports E2EE without a content key: the Account mode owner fails closed.
+    const currentness = { mode: 'e2ee', version: 1, signingKeyFingerprint: 'a'.repeat(64), contentKeyFingerprint: null, updatedAt: 1 };
+    const run = WorkflowRunSummaryV1Schema.parse({ id: runId, ownerAccountId: 'account-1', sourceArtifactId: null,
+      visibleTeamId: null, origin: { kind: 'direct' }, state: 'running', revision: 1, machineId: 'machine-1',
+      workflowCustodyState: 'pending', originDeliveryAckRevision: null, attentionRequired: false, failureUnseen: false,
+      invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
+      availability: { pause: false, resumeBoundary: false, restoreWorkspace: false, cancel: false,
+        inspectExecution: false, disabledReasons: [] }, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:01.000Z' });
+    const sealedKey = Buffer.alloc(105, 7).toString('base64');
+    const keyCensus = WorkflowRunRecipientCensusResponseV1Schema.parse({ runId, ownerAccountId: 'account-1',
+      encryptionMode: 'e2ee', access: 'owner', dataEncryptionKey: sealedKey, callerDataEncryptionKey: sealedKey,
+      recipients: [], visibleTeamId: null, ownerAccountCurrentness: { mode: 'e2ee', version: 1, contentKeyFingerprint: 'b'.repeat(64) } });
+    http.get.mockImplementation(async (url: string) => {
+      expect(url).toBe(`${home}/v1/account/encryption/currentness`);
+      return { status: 200, data: currentness };
+    });
+    http.post.mockImplementation(async (url: string, body: Record<string, unknown>) => {
+      expect(url).toBe(`${home}/v3/automations/runs/workflow-storage`);
+      if (body.operation === 'get') return { data: { run, acceptedEnvelope: 'sealed', checkpointEnvelope: null, resultEnvelope: null, keyCensus } };
+      throw new Error(`unexpected_workflow_read:${String(body.operation)}`);
+    });
+    const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null,
+      serverHttpBaseUrl: home, resolveServerFeaturesSnapshot: () => enabledFeatures });
+    await expect(deps.workflowAction!({ actionId: 'workflow.run.get', input: { runId, includeUsage: false },
+      context: { surface: 'cli' } })).resolves.toMatchObject({ ok: false, errorCode: 'content_unavailable',
+      failureCause: { phase: 'workflow.run.encryption', errorCode: 'account_encryption_currentness_invalid' } });
+  });
+
   it.each(['plain', 'unknown'] as const)('keeps an admitted approval mode %s when Home mode changes before the Artifact write', async admittedAccountEncryptionMode => {
     const credentials = { token: workflowAccountPersonToken, encryption: null, credentialProvenance: 'stored_session' as const };
     const modeReads: string[] = [];
