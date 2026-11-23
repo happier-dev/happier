@@ -148,6 +148,40 @@ describe('acquireEligibleHomeCarrier', () => {
         await expect(acquireEligibleHomeCarrier(baseInput)).resolves.toMatchObject({ kind: 'unavailable' });
     });
 
+    it('verifies the same-computer listener for a completed Personal Home without advertising it to other devices', async () => {
+        setHost('desktop');
+        const profiles = await import('@/sync/domains/server/serverProfiles');
+        const descriptor = {
+            ...baseInput.descriptor,
+            canonicalServerUrl: 'http://127.0.0.1:3005',
+            endpoints: [{ kind: 'iroh' as const, endpointId: endpoint.endpointId }],
+        };
+        const input = { ...baseInput, descriptor };
+        acquireNativeSpy.mockRejectedValue(new IrohError('home_unreachable', 'Home tunnel has no reachable address'));
+        const learned = await profiles.adoptHomeProfile({ source: 'qr', descriptor });
+        const noLocalReceiptRequests = serveHome();
+        await expect(acquireEligibleHomeCarrier(input)).resolves.toMatchObject({ kind: 'unavailable' });
+        expect(noLocalReceiptRequests).toEqual([]);
+
+        const completed = await profiles.adoptPersonalHomeProfileAndComplete({ source: 'desktop-personal-home', descriptor });
+        expect(completed.id).toBe(learned.id);
+        expect(profiles.buildHomeConnectionDescriptorForProfile(completed)).toEqual(descriptor);
+
+        const sameHome = serveHome();
+        await expect(acquireEligibleHomeCarrier(input)).resolves.toEqual({
+            kind: 'https', runtimeOrigin: descriptor.canonicalServerUrl,
+        });
+        expect(sameHome).toEqual([
+            { url: `${descriptor.canonicalServerUrl}/v1/features`, authorization: null },
+            { url: `${descriptor.canonicalServerUrl}/v1/auth/ping`, authorization: 'Bearer home-token' },
+        ]);
+
+        const wrongHome = serveHome({ identity: 'wrong-home' });
+        await expect(acquireEligibleHomeCarrier(input)).resolves.toMatchObject({ kind: 'fail_closed', fallbackAllowed: false });
+        expect(wrongHome.map(request => request.authorization)).toEqual([null]);
+        await profiles.removeServerProfile(completed.id);
+    });
+
     it('proves the Home once when Standard only reaches declared HTTPS without the browser preference', async () => {
         const { getStorage } = await import('@/sync/domains/state/storageStore');
         const store = getStorage();

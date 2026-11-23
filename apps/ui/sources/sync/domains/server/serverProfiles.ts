@@ -1915,9 +1915,16 @@ function projectHomeRuntimeOrigin(
 export function getSavedHomeConnectionSnapshot(target: SavedHomeConnectionTarget): Readonly<{
     homeConnectionDescriptor?: HomeConnectionDescriptorV1;
     runtimeOrigin?: string;
+    personalHomeBootstrapCompleted?: true;
 }> | null {
     const profile = resolveSavedHomeConnectionProfile(target);
-    return profile ? { homeConnectionDescriptor: profile.homeConnectionDescriptor, ...projectHomeRuntimeOrigin(profile) } : null;
+    return profile ? {
+        homeConnectionDescriptor: profile.homeConnectionDescriptor,
+        ...projectHomeRuntimeOrigin(profile),
+        ...(isServerProfilePersonalHomeBootstrapCompleted(profile) && profile.serverIdentityId === target.serverIdentityId
+            ? { personalHomeBootstrapCompleted: true as const }
+            : {}),
+    } : null;
 }
 
 export function getServerProfilesGeneration(): number {

@@ -52,6 +52,12 @@ Account; Iroh must not expose the preceding signup window. An existing non-loopb
 declared non-loopback ingress retains its own signup policy. Carrier failures leave ordinary
 HTTP/HTTPS running.
 
+On its hosting desktop, a completed managed Personal Home can use its canonical
+loopback listener even when its shareable Iroh descriptor has no reachable address.
+The app checks that the listener serves the saved Home identity before sending the
+Home-scoped token for the readiness probe. The same-computer path leaves the
+server-published descriptor available for other devices to use as published.
+
 The existing layout owner (`resolveHomeIrohEndpointKeyPath`, also consumed by
 `PersonalHomeRuntimeLayout.irohEndpointKeyPath`) supplies the key for full servers too:
 `<resolved dataDir>/runtime/iroh/endpoint.key`. Persist that data directory across restarts.

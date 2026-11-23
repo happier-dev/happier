@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/cli-common/homeEnrollment';
 import { classifyIrohHomeCarrierFailure, IrohError, IROH_HOME_TUNNEL_PROBE_FAILED_ERROR } from '@happier-dev/iroh-native';
 import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import { isLiteralLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -86,6 +87,23 @@ export async function acquireEligibleHomeCarrier(input: HomeCarrierAcquisitionIn
         if (!result.ok) throw new Error(`${IROH_HOME_TUNNEL_PROBE_FAILED_ERROR}:${result.reason}`);
         verifiedApplicationOrigin = runtimeOrigin;
     };
+    // The device's managed Home receipt admits this local candidate without publishing
+    // a loopback address in the descriptor other devices use. Verify the current listener
+    // before using it, just as we do for an independently declared fallback.
+    if (selected?.personalHomeBootstrapCompleted && !browserHost.eligible && browserHost.reason === 'desktop_host'
+        && input.verification.kind === 'authenticated') {
+        const canonical = new URL(input.descriptor.canonicalServerUrl);
+        if (canonical.protocol === 'http:' && isLiteralLoopbackHostname(canonical.hostname)) {
+            try {
+                await verifyApplicationOrigin(canonical.origin);
+                return { kind: 'https', runtimeOrigin: canonical.origin };
+            } catch (error) {
+                if (!classifyIrohHomeCarrierFailure(error).fallbackAllowed) {
+                    return { kind: 'fail_closed', error, fallbackAllowed: false };
+                }
+            }
+        }
+    }
     const result = await acquireHomeCarrierByPolicy<UiIrohCarrierValue>({
         applicationCarrierEligibility: readHomeApplicationCarrierEligibility() === 'standard_only'
             ? 'standard_only'
