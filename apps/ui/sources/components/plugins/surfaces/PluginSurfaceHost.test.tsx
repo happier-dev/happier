@@ -15939,6 +15939,7 @@ describe('Composer physical surface mount', () => {
         const { useSessionManagedWakePresentation } = await import('@/components/sessions/pending/useSessionManagedWakePresentation');
         const { SessionComposerAgentInput } = await import('@/components/sessions/composer/SessionComposerAgentInput');
         const { useExternalSessionRuntime } = await import('@/components/sessions/model/useExternalSessionRuntime');
+        const { resolveExternalSessionIdentityPresentation } = await import('@/components/sessions/presentation/externalSessionIdentityPresentation');
         const { AppSessionTranscriptSourceProvider } = await import('@/components/sessions/transcript/source/appSessionTranscriptSource');
         const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
         const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
@@ -16022,7 +16023,9 @@ describe('Composer physical surface mount', () => {
                 presence: PRESENTED_FOCUSED_SURFACE, isEncryptedSessionLocked: false, executionRunsEnabled: false, participantTargets: [], approvalRequests: [],
                 initialAttachmentDrafts: null, attachmentsUploadsEnabled: false, attachmentsUploadsAvailable: false,
                 browserContextStateForComposer: null, browserContextComposerContext: null, pendingMessages: [], managedWakePresentation,
-                externalSessionRuntime, sessionRunnerRuntimeStatus: null, sessionRunnerRuntimeStatusMachineId: null,
+                externalSessionRuntime, externalSessionRuntimePresentation: null,
+                externalSessionIdentityPresentation: resolveExternalSessionIdentityPresentation(session.metadata, 'machine-compose'),
+                sessionRunnerRuntimeStatus: null, sessionRunnerRuntimeStatusMachineId: null,
                 onSessionRunnerRuntimeStatusInvalidated: () => {}, collaborationTarget: null, collaborationAvailable: false,
                 foldCollaborationHeaderEntry: false, openSessionAccess: () => {}, openWorkStateRequestKey: null });
             const input = findComposerInput(controller.composer.content);
