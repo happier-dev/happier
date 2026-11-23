@@ -1,3 +1,7 @@
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
+import type { TeamCredentialSourceBindingV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import type { z } from 'zod/mini';
 import type { TeamCredentialResourceReadinessV1 } from '@happier-dev/protocol/teams/credentials/readinessV1';
 
 import type { Fastify } from '@/app/api/types';
@@ -8,7 +12,6 @@ import { getMachinePoolCandidateSnapshots, type MachinePoolCandidateSnapshot } f
 import { readTeamCredentialBrokerPlacement, resolveTeamCredentialBrokerPlacementInTx,
     type TeamCredentialBrokerPlacementResource } from './brokerPlacementResolver';
 import type { readTeamCredentialCatalogInTx } from './resourceRead';
-import { sourceRequiresReconnect } from './sourceReadiness';
 
 type CatalogRead = Extract<Awaited<ReturnType<typeof readTeamCredentialCatalogInTx>>, { ok: true }>;
 type BrokerReadinessObservation = Readonly<{
@@ -17,6 +20,56 @@ type BrokerReadinessObservation = Readonly<{
     poolSnapshots: ReadonlyMap<string, MachinePoolCandidateSnapshot>;
 }>;
 export type TeamCredentialCatalogReadinessProjection = CatalogRead & Readonly<{ brokerReadiness: BrokerReadinessObservation }>;
+
+export type TeamCredentialBrokerEligibility = z.infer<typeof DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema>;
+
+export async function readTeamCredentialBrokerSourceEligibility(
+    app: Fastify,
+    input: Readonly<{
+        custodianAccountId: string;
+        machineIds: readonly string[];
+        teamId: string;
+        resourceId: string;
+        resourceRevision: number;
+        source: TeamCredentialSourceBindingV1;
+    }>,
+): Promise<readonly Readonly<{ machineId: string; eligibility: TeamCredentialBrokerEligibility | null }>[]> {
+    return await Promise.all(input.machineIds.map(async machineId => {
+        const rpc = await app.forwardRpcForUser({
+            userId: input.custodianAccountId,
+            method: `${machineId}:${RPC_METHODS.DAEMON_PROVIDERS_TEAM_CREDENTIAL_BROKER_ELIGIBILITY}`,
+            params: {
+                machineId,
+                teamId: input.teamId,
+                resourceId: input.resourceId,
+                expectedResourceRevision: input.resourceRevision,
+                source: input.source,
+                scope: input.source.kind === 'connected_account' && !input.source.providerPurpose
+                    ? 'source_credential'
+                    : 'source_any',
+            },
+        });
+        if (!rpc.ok) return { machineId, eligibility: null };
+        const parsed = DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema.safeParse(rpc.result);
+        return { machineId, eligibility: parsed.success ? parsed.data : null };
+    }));
+}
+
+export function projectTeamCredentialBrokerSourceRefusal(
+    candidates: readonly Readonly<{ eligibility: TeamCredentialBrokerEligibility | null }>[],
+): Extract<TeamCredentialResourceReadinessV1, { kind: 'source_unavailable' }> | null {
+    // Pool candidates can disagree. A working source takes precedence, and an
+    // unanswered observation cannot establish that the source is unavailable.
+    if (candidates.length === 0 || candidates.some(({ eligibility }) => eligibility?.status !== 'unavailable')) return null;
+    if (candidates.every(({ eligibility }) => eligibility?.status === 'unavailable'
+        && eligibility.reason === 'connected_service_credential_reconnect_required')) {
+        return { kind: 'source_unavailable', reason: 'connected_service_credential_reconnect_required' };
+    }
+    return candidates.every(({ eligibility }) => eligibility?.status === 'unavailable'
+        && (eligibility.reason === 'source_changed' || eligibility.reason === 'source_unavailable'))
+        ? { kind: 'source_unavailable' }
+        : null;
+}
 
 /**
  * Generic and application-specific reads consume launch's placement decision.
@@ -29,7 +82,7 @@ export async function readTeamCredentialBrokerReadiness(
     currentPresence?: ReadonlyMap<string, MachineDaemonPresenceInventory>,
     wholeAccountIds: ReadonlySet<string> = new Set(),
     currentPoolSnapshots?: ReadonlyMap<string, MachinePoolCandidateSnapshot>,
-): Promise<BrokerReadinessObservation> {
+): Promise<BrokerReadinessObservation & Readonly<{ candidateMachineIds: ReadonlyMap<string, readonly string[]> }>> {
     // One observation for resources sharing the same placement; resource ids
     // do not change exact-Machine admission or Pool candidate discovery.
     const groups = new Map<string, TeamCredentialBrokerPlacementResource[]>();
@@ -61,6 +114,7 @@ export async function readTeamCredentialBrokerReadiness(
             ...(wholeAccountIds.has(accountId) ? {} : { machineIds: [...machineIds] }), io: app.machineDaemonPresence })] as const
     ))));
     const unavailable = new Map<string, TeamCredentialResourceReadinessV1>();
+    const candidateMachineIds = new Map<string, readonly string[]>();
     const poolSnapshots = new Map(currentPoolSnapshots);
     if (!currentPoolSnapshots) await Promise.all([...poolIdsByAccount].map(async ([accountId, poolIds]) => {
         // Pool acquisition owns roster changes during discovery and exact room
@@ -69,7 +123,7 @@ export async function readTeamCredentialBrokerReadiness(
             ...(wholeAccountIds.has(accountId) ? { presence: presenceByAccount.get(accountId)! } : { io: app.machineDaemonPresence }) });
         for (const [poolId, snapshot] of snapshots) poolSnapshots.set(`${accountId}\u0000${poolId}`, snapshot);
     }));
-    if (demands.length === 0) return { unavailable, presenceByAccount, poolSnapshots };
+    if (demands.length === 0) return { unavailable, presenceByAccount, poolSnapshots, candidateMachineIds };
     await inTx(async tx => {
         for (const { resource, group } of demands) {
             const placement = await resolveTeamCredentialBrokerPlacementInTx(tx, {
@@ -89,17 +143,37 @@ export async function readTeamCredentialBrokerReadiness(
                 : placement.broker === null && placement.candidateMachineIds.length === 0
                     ? { kind: 'broker_unavailable', ...(placement.poolSnapshot?.presenceState !== 'known'
                         ? { reason: 'projection_unavailable' as const } : {}) } : null;
-            if (refusal) for (const member of group) unavailable.set(member.id, refusal);
+            if (refusal) {
+                for (const member of group) unavailable.set(member.id, refusal);
+            } else if (placement.ok) {
+                const machineIds = placement.candidateMachineIds.length > 0
+                    ? placement.candidateMachineIds
+                    : placement.broker ? [placement.broker.machineId] : [];
+                for (const member of group) candidateMachineIds.set(member.id, machineIds);
+            }
         }
     });
-    return { unavailable, presenceByAccount, poolSnapshots };
+    return { unavailable, presenceByAccount, poolSnapshots, candidateMachineIds };
 }
 
 export async function projectTeamCredentialCatalogBrokerReadiness(app: Fastify, result: CatalogRead): Promise<TeamCredentialCatalogReadinessProjection> {
     const brokerReadiness = await readTeamCredentialBrokerReadiness(app,
         result.brokerReadinessRequests.map(request => request.resource), undefined,
         new Set(result.projectionRequests.filter(request => request.deliveryMode === 'direct').map(request => request.custodianAccountId)));
-    const { unavailable } = brokerReadiness;
+    const unavailable = new Map(brokerReadiness.unavailable);
+    await Promise.all(result.brokerReadinessRequests.map(async request => {
+        const { resource, credentialSource } = request;
+        // Provider applications own their own model and connection observations.
+        // An unqualified Connected Account uses the same source observation as administration.
+        if (!credentialSource || request.hasCurrentDirectMaterial) return;
+        const machineIds = brokerReadiness.candidateMachineIds.get(resource.id);
+        if (!machineIds?.length) return;
+        const observations = await readTeamCredentialBrokerSourceEligibility(app, {
+            ...credentialSource, resourceId: resource.id, custodianAccountId: resource.custodianAccountId, machineIds,
+        });
+        const refusal = projectTeamCredentialBrokerSourceRefusal(observations);
+        if (refusal) unavailable.set(resource.id, refusal);
+    }));
     const directResourceIds = new Set(result.brokerReadinessRequests.filter(request => request.hasCurrentDirectMaterial).map(request => request.resource.id));
     return {
         ...result,
@@ -107,7 +181,7 @@ export async function projectTeamCredentialCatalogBrokerReadiness(app: Fastify, 
         projectionRequests: result.projectionRequests.filter(request => request.deliveryMode !== 'brokered' || !unavailable.has(request.resourceId)),
         page: { ...result.page, resources: result.page.resources.map(resource => {
             const refusal = unavailable.get(resource.id);
-            if (!refusal || sourceRequiresReconnect(resource.readiness)) return resource;
+            if (!refusal || resource.readiness.kind === 'source_unavailable') return resource;
             // An unavailable-only row keeps its configured choice for recovery.
             // When Direct remains ready, withdraw only the unavailable brokered
             // choice so resource-wide readiness cannot admit that route.
@@ -115,8 +189,10 @@ export async function projectTeamCredentialCatalogBrokerReadiness(app: Fastify, 
                 ? resource.connectedServiceSelections.filter(selection => selection.deliveryMode !== 'brokered')
                 : resource.connectedServiceSelections;
             if (directResourceIds.has(resource.id)
-                || (resource.readiness.kind !== 'available' && resource.readiness.kind !== 'source_unavailable'
-                    && resource.readiness.kind !== 'broker_unavailable')) return { ...resource, connectedServiceSelections };
+                || (resource.readiness.kind !== 'available' && resource.readiness.kind !== 'broker_unavailable')) return { ...resource, connectedServiceSelections };
+            if (refusal.kind === 'source_unavailable') return {
+                ...resource, readiness: refusal, connectedServiceSelections: [], recoveryAction: 'source_owner_action' as const,
+            };
             return { ...resource, readiness: refusal, connectedServiceSelections,
                 recoveryAction: refusal.kind === 'update_required' ? 'update_required' as const
                     : refusal.kind === 'resource_corrupt'

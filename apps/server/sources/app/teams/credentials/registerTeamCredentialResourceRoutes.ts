@@ -13,7 +13,7 @@ import { PROVIDER_BROKER_READINESS_AUTHORIZE_HTTP_PATH_V1 } from '@happier-dev/p
 import { resolveTeamCredentialExternalApiAvailability } from '@happier-dev/protocol/features/payload/capabilities/teamCredentialCapabilities';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { parseProviderContributionIdentityV1 } from "@happier-dev/protocol/providers/contribution-identity";
-import { DaemonProviderConnectionsDescribeResponseV1Schema, DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema, DaemonProviderTeamCredentialResourceTestCandidateResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
+import { DaemonProviderConnectionsDescribeResponseV1Schema, DaemonProviderTeamCredentialResourceTestCandidateResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 import { z } from "zod/mini";
 import { logger } from "@/utils/logging/log";
 import type { Fastify } from "@/app/api/types";
@@ -53,7 +53,8 @@ import { authorizeRunnerBrokerReadiness } from "./runnerBrokerReadinessAuthoriza
 import { registerTeamCredentialProviderBrokerRoutes } from "./providerBrokerRoutes";
 import { projectTeamCredentialCatalogModels } from './catalogModels';
 import { readTeamCredentialBrokerPresenceDemand } from './brokerPlacementResolver';
-import { projectTeamCredentialCatalogBrokerReadiness, readTeamCredentialBrokerReadiness } from './brokerReadiness';
+import { projectTeamCredentialCatalogBrokerReadiness, projectTeamCredentialBrokerSourceRefusal,
+    readTeamCredentialBrokerReadiness, readTeamCredentialBrokerSourceEligibility, type TeamCredentialBrokerEligibility } from './brokerReadiness';
 import {
     prepareTeamCredentialRecipientMaterialInTx,
     readTeamCredentialDirectMaterialCensusInTx,
@@ -115,7 +116,6 @@ class TeamCredentialCreateProjectionFailure extends Error {
 type TeamCredentialResourceSummary = z.infer<typeof TeamCredentialResourceSummaryV1Schema>;
 type TeamCredentialResourceTestCandidate = z.infer<typeof DaemonProviderTeamCredentialResourceTestCandidateResponseV1Schema>
     | Readonly<{ status: 'unavailable'; reason: 'response_invalid' }>;
-type TeamCredentialBrokerEligibility = z.infer<typeof DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema>;
 
 async function readTeamCredentialProviderConnectionPresentation(
     app: Fastify,
@@ -182,38 +182,6 @@ async function readTeamCredentialResourceCandidates(
         const parsed = DaemonProviderTeamCredentialResourceTestCandidateResponseV1Schema.safeParse(rpc.result);
         // Preserve the Home's content-free parse observation without echoing broker payloads.
         return { machineId, candidate: parsed.success ? parsed.data : { status: 'unavailable', reason: 'response_invalid' } as const };
-    }));
-}
-
-async function readTeamCredentialBrokerSourceEligibility(
-    app: Fastify,
-    input: Readonly<{
-        custodianAccountId: string;
-        machineIds: readonly string[];
-        teamId: string;
-        resourceId: string;
-        resourceRevision: number;
-        source: NonNullable<TeamCredentialResourceSummary['source']>;
-    }>,
-): Promise<readonly Readonly<{ machineId: string; eligibility: TeamCredentialBrokerEligibility | null }>[]> {
-    return await Promise.all(input.machineIds.map(async machineId => {
-        const rpc = await app.forwardRpcForUser({
-            userId: input.custodianAccountId,
-            method: `${machineId}:${RPC_METHODS.DAEMON_PROVIDERS_TEAM_CREDENTIAL_BROKER_ELIGIBILITY}`,
-            params: {
-                machineId,
-                teamId: input.teamId,
-                resourceId: input.resourceId,
-                expectedResourceRevision: input.resourceRevision,
-                source: input.source,
-                scope: input.source.kind === 'connected_account' && !input.source.providerPurpose
-                    ? 'source_credential'
-                    : 'source_any',
-            },
-        });
-        if (!rpc.ok) return { machineId, eligibility: null };
-        const parsed = DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema.safeParse(rpc.result);
-        return { machineId, eligibility: parsed.success ? parsed.data : null };
     }));
 }
 
@@ -439,12 +407,12 @@ async function projectTeamCredentialBrokerAdministrationReadiness(
             }
         }
         // A Provider connection can still match its offer while the broker has no usable model.
-        const sourceChanged = source.kind === 'provider_connection'
-            ? providerSourceState === 'changed'
-            : eligibility.some(candidate => candidate.eligibility?.status === 'unavailable'
-                && (candidate.eligibility.reason === 'source_changed' || candidate.eligibility.reason === 'source_unavailable'));
-        const sourceAuthenticationFailure = eligibility.some(candidate => candidate.eligibility?.status === 'unavailable'
-            && candidate.eligibility.reason === 'connected_service_credential_reconnect_required');
+        const sourceRefusal = projectTeamCredentialBrokerSourceRefusal(eligibility);
+        const sourceReadiness = source.kind === 'provider_connection' && providerSourceState === 'changed'
+            ? { kind: 'source_unavailable' as const }
+            : source.kind === 'provider_connection' && sourceRefusal?.reason === undefined
+                ? null
+                : sourceRefusal;
         const nonBrokerAllowed = resource.deliveryPolicy.preferredAllowedModes.some(route => route !== 'brokered');
         const brokerReady = nonBrokerAllowed
             ? hasEligibleSource
@@ -459,10 +427,8 @@ async function projectTeamCredentialBrokerAdministrationReadiness(
             ? resource.readiness
             : source.kind !== 'provider_connection' && nonBrokerAllowed
                 ? resource.readiness
-            : sourceAuthenticationFailure
-            ? { kind: 'source_unavailable' as const, reason: 'connected_service_credential_reconnect_required' as const }
-            : sourceChanged
-            ? { kind: 'source_unavailable' as const }
+            : sourceReadiness
+            ? sourceReadiness
             : !nonBrokerAllowed && placementReadiness.has(resource.id)
                 ? placementReadiness.get(resource.id)!
             : brokerReady && (source.kind !== 'provider_connection' || providerSourceState === 'current')

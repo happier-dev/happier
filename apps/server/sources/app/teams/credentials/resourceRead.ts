@@ -1228,6 +1228,12 @@ async function readAdmittedTeamCredentialCatalogInTx(tx: Tx, input: Omit<Credent
         resource: { id: row.id, custodianAccountId: row.custodianAccountId,
             brokerMachineId: row.brokerMachineId, brokerPoolId: row.brokerPoolId },
         hasCurrentDirectMaterial: resource.mayReceiveDirect && resource.directMaterialState === 'current',
+        credentialSource: (() => {
+            const source = projectionFactsByResourceId.get(row.id)?.source;
+            return source?.kind === 'connected_account' && !source.providerPurpose
+                ? { source, teamId: row.teamId, resourceRevision: row.revision }
+                : null;
+        })(),
     }] : []),
     };
 }

@@ -740,10 +740,12 @@ describe("Team credential resource routes (SQLite integration)", () => {
         }
     });
 
-    it("projects a current owner-only Boat share from exact credential readiness", async () => {
+    it("projects the same connected credential readiness to administrators and recipients", async () => {
         const owner = await createAccount();
         const team = await db.team.create({ data: { name: "Boat credential readiness" } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: "owner" } });
+        const recipient = await createAccount();
+        const member = await db.teamMembership.create({ data: { teamId: team.id, accountId: recipient.id, role: "member" } });
         const service = { pluginId: "happier.machine.boat", localId: "boat-account" };
         const account = { service, accountId: "boat-account" };
         const credential = await db.serviceAccountToken.create({ data: {
@@ -763,27 +765,34 @@ describe("Team credential resource routes (SQLite integration)", () => {
             teamId: team.id, custodianAccountId: owner.id, displayName: "Boat share",
             disclosureCeiling: "brokered_only", sessionUsePolicy: "personal_allowed", brokerMachineId: broker.id,
             sourceBindingJson: JSON.stringify(source),
+            memberGrants: { create: { teamMembershipId: member.id, deliveryMode: "brokered" } },
         } });
         const previousPresence = app.machineDaemonPresence;
         const previousRpc = app.forwardRpcForUser;
         app.machineDaemonPresence = { in: () => ({ fetchSockets: async () => [{
             data: { clientType: "machine-scoped", userId: owner.id, machineId: broker.id },
         }] }) };
+        let sourceAvailable = false;
         app.forwardRpcForUser = async ({ params }: Parameters<FastifyInstance["forwardRpcForUser"]>[0]) => {
             const isSourceCredential = typeof params === "object" && params !== null
                 && "scope" in params && params.scope === "source_credential";
-            return { ok: true, result: isSourceCredential
+            return { ok: true, result: isSourceCredential && sourceAvailable
                 ? { status: "eligible" }
                 : { status: "unavailable", reason: "source_unavailable" } };
         };
         try {
-            const point = await post("/v1/teams/credential-resources/get", owner.id, { resourceId: resource.id });
-            const list = await post("/v1/teams/credential-resources/list", owner.id, { teamId: team.id });
-            const ready = { id: resource.id, readiness: { kind: "available" }, recoveryAction: null };
-            expect(point.statusCode, point.body).toBe(200);
-            expect(point.json()).toMatchObject(ready);
-            expect(list.statusCode, list.body).toBe(200);
-            expect(list.json().resources).toContainEqual(expect.objectContaining(ready));
+            for (const kind of ["source_unavailable", "available"] as const) {
+                sourceAvailable = kind === "available";
+                const recoveryAction = sourceAvailable ? null : "source_owner_action";
+                const expected = { id: resource.id, readiness: { kind }, recoveryAction };
+                const point = await post("/v1/teams/credential-resources/get", owner.id, { resourceId: resource.id });
+                expect(point.statusCode, point.body).toBe(200);
+                expect(point.json()).toMatchObject(expected);
+                const catalog = await post("/v1/teams/credential-resources/entitled/list", recipient.id, { teamId: team.id, resourceId: resource.id });
+                expect(catalog.statusCode, catalog.body).toBe(200);
+                expect(catalog.json().resources).toContainEqual(expect.objectContaining(expected));
+                expect(catalog.body).not.toContain(credential.id);
+            }
         } finally {
             app.machineDaemonPresence = previousPresence;
             app.forwardRpcForUser = previousRpc;
