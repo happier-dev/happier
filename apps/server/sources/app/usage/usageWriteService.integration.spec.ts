@@ -331,6 +331,49 @@ describe("usageWriteService", () => {
         expect(accounting).not.toHaveProperty('inferenceId');
     });
 
+    it.each(['native', 'runtime'] as const)('does not count replayed %s deltas or cumulative checkpoints twice', async (path) => {
+        const account = await db.account.create({ data: { publicKey: 'usage-replay-counter-account' } });
+        const machine = await db.machine.create({ data: { id: 'usage-replay-restart-machine', accountId: account.id, metadata: 'ciphertext' } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: 'usage-replay-counter', encryptionMode: 'plain', metadata: '{}' } });
+        const subject = { kind: 'native', machineId: machine.id,
+            agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            sourceRootKey: 'configured-root', nativeSessionKey: 'native-counter' };
+        const start = Date.parse('2026-07-01T10:00:00Z');
+        const measure = (step: number, total: number, incarnation: string) => UsageEventIngestRequestSchema.parse({
+            ...(path === 'native' ? {
+                subject, accounting: { status: 'available', historyComplete: true, counterEpoch: 'stable-epoch',
+                    ...(step === 0 ? { inferenceKey: 'first-inference' } : {}) },
+            } : {
+                sessionId: session.id, metadata: { accountingSubject: subject,
+                    usageAccounting: { path: 'runtime', status: 'available', historyComplete: true, counterEpoch: 'stable-epoch',
+                        runtimeEventOrder: { runtimeIncarnationId: incarnation, sequence: step + 1 },
+                        ...(step === 0 ? { inferenceId: 'first-inference' } : {}) } },
+            }),
+            source: 'codex-native-accounting', agentId: 'codex', observedAt: start + step * 1_000,
+            externalKey: `observation-${step}`, scope: step === 0 ? 'turn_delta' : 'session_cumulative', isCumulative: step !== 0,
+            tokens: { input: total, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total },
+            cost: { reportedUsd: null, estimatedUsd: null, currency: 'USD' },
+        });
+        const query = () => queryUsageAnalytics(account.id, UsageAnalyticsQueryRequestSchema.parse({ granularity: 'day', includeSeries: true }));
+        const counters = [8, 10, 16];
+        const ingested = [];
+        for (const [step, total] of counters.entries()) {
+            const result = await recordUsageEvent(account.id, measure(step, total, 'first-runtime'));
+            expect(result.ok).toBe(true);
+            ingested.push(result);
+        }
+        expect((await query()).totals.tokens.total).toBe(16);
+        for (const [step, total] of counters.entries()) {
+            expect(await recordUsageEvent(account.id, measure(step, total, 'restarted-runtime'))).toEqual(ingested[step]);
+        }
+        expect(await db.usageEvent.count({ where: { accountId: account.id } })).toBe(3);
+        expect((await query()).totals.tokens.total).toBe(16);
+
+        expect((await recordUsageEvent(account.id, measure(3, 22, 'restarted-runtime'))).ok).toBe(true);
+        expect(await db.usageEvent.count({ where: { accountId: account.id } })).toBe(4);
+        expect((await query()).totals.tokens.total).toBe(22);
+    });
+
     it('reconciles Session runtime and null-Session native replay before Account, Session and dimension filtering', async () => {
         const account = await db.account.create({ data: { publicKey: 'runtime-native-query-account' } });
         const otherAccount = await db.account.create({ data: { publicKey: 'runtime-native-other-account' } });
