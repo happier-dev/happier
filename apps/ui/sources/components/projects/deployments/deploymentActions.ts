@@ -1,3 +1,6 @@
+import { DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentTargetCheckResultV1Schema, type DeploymentTargetCheckInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+
 import { WorkflowDefinitionCreateResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { MachineServicesListResultV1Schema } from '@happier-dev/protocol/actions/specs/machine/services';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
@@ -441,6 +444,11 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
             assertCurrent();
             return DeploymentEnvironmentCreateResultV1Schema.parse(await invoke(
                 'deployments.environments.create', { ...input, serverId: lifetime.scope.serverId, projectSourceId }, operation));
+        },
+        async checkPlatformTarget(input: Omit<DeploymentTargetCheckInputV1, 'serverId'>) {
+            assertCurrent();
+            return DeploymentTargetCheckResultV1Schema.parse(await execute(DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1,
+                { ...input, serverId: lifetime.scope.serverId }));
         },
         /**
          * A platform target's inspect Action (Connect / Check again), named by its plugin descriptor. It only reads the

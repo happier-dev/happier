@@ -175,7 +175,7 @@ export const ProjectDeploymentsView = React.memo(
       >;
       /** The Action owner's callbacks; the dev specimen renders without them. */
       actions?: (Pick<NonNullable<ReturnType<typeof useDeploymentProject>['actions']>,
-        'rollback' | 'restore' | 'restart' | 'cancel' | 'deploy' | 'readLogs' | 'prepareCreate' | 'setBindings' | 'deleteEnvironment' | 'unlink' | 'teardown' | 'link' | 'inspectPlatformTarget' | 'addDomain' | 'removeDomain' | 'verifyDomain' | 'setController' | 'updateEnvironment'> &
+        'rollback' | 'restore' | 'restart' | 'cancel' | 'deploy' | 'readLogs' | 'prepareCreate' | 'setBindings' | 'deleteEnvironment' | 'unlink' | 'teardown' | 'link' | 'checkPlatformTarget' | 'inspectPlatformTarget' | 'addDomain' | 'removeDomain' | 'verifyDomain' | 'setController' | 'updateEnvironment'> &
         Partial<Pick<NonNullable<ReturnType<typeof useDeploymentProject>['actions']>, 'promote'>>) | null;
       demand: DeploymentReadDemandV1;
       accountId: string;
@@ -411,9 +411,10 @@ const ProjectDeploymentsPage = React.memo(
       [deleteEnvironment, link, teardown, unlink],
     );
     const inspectPlatformTarget = props.actions?.inspectPlatformTarget;
+    const checkPlatformTarget = props.actions?.checkPlatformTarget;
     const platformLink = React.useMemo(
-      () => inspectPlatformTarget && link ? { inspectPlatformTarget, link } : null,
-      [inspectPlatformTarget, link],
+      () => checkPlatformTarget && inspectPlatformTarget && link ? { checkPlatformTarget, inspectPlatformTarget, link } : null,
+      [checkPlatformTarget, inspectPlatformTarget, link],
     );
     // A deleted Environment hands the page to its nearest sibling in this Project, or to the empty state; a phone
     // returns to the list.

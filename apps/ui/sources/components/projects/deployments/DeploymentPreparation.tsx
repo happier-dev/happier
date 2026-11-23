@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { DeploymentPrepareInputV1Schema, type DeploymentPrepareResultV1 } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
-import { readScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
+import { readProjectSourceRepositoryIdentityV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { ProjectDetectedApplicationV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { projectActionExecuteFailure, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -160,8 +160,7 @@ function DeploymentPreparationSheet(props: DeploymentPreparationContext & Readon
     const { lifetime, projectSourceId } = props;
     const sourceRead = useProjectSource(lifetime, projectSourceId);
     const source = sourceRead.source?.source ?? null;
-    const repository = source?.repository ? readScmHostingRepositoryIdentity({ ...source.repository.provider,
-        nameWithOwner: source.repository.repository.nameWithOwner }) : null;
+    const repository = readProjectSourceRepositoryIdentityV1(source?.repository);
     const [workspaces, setWorkspaces] = React.useState<readonly WorkspaceRefV1[] | null>(null);
     const [readFailure, setReadFailure] = React.useState<string | null>(null);
     const [retry, setRetry] = React.useState(0);

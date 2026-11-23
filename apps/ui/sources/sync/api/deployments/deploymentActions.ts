@@ -1,5 +1,5 @@
-import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, readDeploymentActionOperationRequestIdV1, isDeploymentEnvironmentPlacementActionV1, resolveDeploymentEnvironmentExecutionMachineIdV1, resolveDeploymentPreviewExecutionMachineIdV1, isDeploymentTemplatePreviewInputV1, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentCancelTransitionInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinkInputV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DEPLOYMENT_CANCEL_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1, isDeploymentActionIdV1, isDeploymentReadActionIdV1, isDeploymentTargetLinkActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentTargetLinksListResultV1Schema, readDeploymentActionOperationRequestIdV1, isDeploymentEnvironmentPlacementActionV1, resolveDeploymentEnvironmentExecutionMachineIdV1, resolveDeploymentPreviewExecutionMachineIdV1, isDeploymentTemplatePreviewInputV1, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentCancelTransitionInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinkInputV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DEPLOYMENT_CANCEL_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1, isDeploymentActionIdV1, isDeploymentReadActionIdV1, isDeploymentTargetLinkActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { isActionOutcomeUnknownErrorCodeV1, ActionApprovalRequestCreatedResultSchema, type ActionExecuteFailure, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -26,11 +26,12 @@ import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs
 import { DeploymentPrepareResultV1Schema, type DeploymentPrepareInputV1 } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
 import { projectDeploymentCancellationConsequenceV1, readDeploymentReceiptActionFactsV1 } from '@happier-dev/deployments/contracts/v1';
 import { readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol/v1';
-import { listDeploymentTargetsFromManifestsV1, projectDeploymentSuggestionTargetsV1 } from '@happier-dev/deployments';
+import { checkDeploymentTargetV1, listDeploymentTargetsFromManifestsV1, projectDeploymentSuggestionTargetsV1 } from '@happier-dev/deployments';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { completeActionResult } from '@happier-dev/protocol/actions/actionExecutor';
 import { DeploySuggestionCatalogV1Schema } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
 import { createUiAccountAction } from '@/sync/ops/actions/accountActionDeps';
+import { createProjectSourceActionDeps } from '@/sync/api/projects/projectSourceActions';
 import { requireActionSuccess } from '@/sync/ops/actions/actionResult';
 
 /** Both deployment roots route through the person's admitted checkout census. */
@@ -86,7 +87,7 @@ export async function recoverUiDeploymentActionResult(params: Readonly<{
 
 /** Account-bound storage and the existing Machine Action transport; no UI native effects. */
 export function createUiDeploymentActionDeps(account: LazyActionAccountContext): Pick<ActionExecutorDeps,
-    'deploymentAction' | 'deploymentSuggestionTargets' | 'deploymentSuggestionForges' | 'resolveEnvironmentApprovalScope' | 'prepareDeploymentEnvironmentCreate'
+    'deploymentAction' | 'deploymentTargetCheck' | 'deploymentSuggestionTargets' | 'deploymentSuggestionForges' | 'resolveEnvironmentApprovalScope' | 'prepareDeploymentEnvironmentCreate'
     | 'deploymentPrepare' | 'deploymentTemplateInstantiate' | 'prepareDeploymentTemplateInstantiation' | 'deploymentMoveToRepository'> & Readonly<{
         readEnvironmentCreateController(input: DeploymentEnvironmentCreateInputV1 | DeploymentEnvironmentCreateIntentInputV1, context: ActionExecutorContext):
             ReturnType<typeof resolveDeploymentPreviewExecutionMachineIdV1>;
@@ -191,14 +192,46 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
     };
     const deliverEnvironmentRecipients = (route: NonNullable<ActionExecutorDeps['deploymentAction']>) =>
         withDeploymentEnvironmentRecipientDeliveryV1(route, createUiDeploymentContentRecipientPorts(account, route));
+    const readTargetDeclarations = async () => {
+        account.assertCurrent();
+        const read = await readPluginAccountAvailability(account.accountLifetime.scope)
+            .ensureCurrentAccountExecutionDeclarations({ family: 'deploymentTargets' });
+        account.assertCurrent();
+        if (read.kind !== 'available') throw Object.assign(new Error(read.code), { code: read.code });
+        return read.declarations;
+    };
     return { readEnvironmentController, readEnvironmentCreateController, resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(storage),
+        deploymentTargetCheck: async (input, context, inspect) => {
+            if (!areServerProfileIdentifiersEquivalent(input.serverId, account.serverId)) return failure('action_account_scope_changed');
+            return checkDeploymentTargetV1(input, {
+                accountId: account.accountId, inspect, assertCurrent: () => account.assertCurrent(),
+                readSource: () => createProjectSourceActionDeps(account).projectSourcesRead(
+                    { serverId: input.serverId, sourceId: input.projectSourceId }, context),
+                async readEnvironment(environmentId) {
+                    const result = await storage(DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, { serverId: input.serverId, environmentId }, context);
+                    return isDeploymentActionFailure(result) ? result : DeploymentEnvironmentGetResultV1Schema.parse(result);
+                },
+                async readTarget() {
+                    const manifests = await readTargetDeclarations();
+                    const target = listDeploymentTargetsFromManifestsV1(manifests).find(
+                        item => item.source.kind === 'plugin' && item.source.contribution.pluginId === input.target.pluginId
+                            && item.source.contribution.localId === input.target.localId,
+                    );
+                    return { target, manifests };
+                },
+                async list(scope, selection, cursor) {
+                    const answer = await requestHomeDomain({ scope: account.accountLifetime.scope, path: '/v1/deployments/targets/list',
+                        effect: 'read', requestAuthority: account, schema: DeploymentTargetLinksListResultV1Schema, signal: context.signal,
+                        input: { serverId: account.serverIdentityId ?? input.serverId, scope, selection, ...(cursor ? { cursor } : {}) } });
+                    if (!answer.ok) throw Object.assign(new Error(homeDomainFailureCode(answer.failure)), { code: homeDomainFailureCode(answer.failure) });
+                    return answer.value;
+                },
+                artifact: link => account.readArtifactContent(link.contentArtifactId, { signal: context.signal }),
+            });
+        },
         deploymentSuggestionTargets: async () => {
-            account.assertCurrent();
-            const read = await readPluginAccountAvailability(account.accountLifetime.scope)
-                .ensureCurrentAccountExecutionDeclarations({ family: 'deploymentTargets' });
-            account.assertCurrent();
-            if (read.kind !== 'available') throw Object.assign(new Error(read.code), { code: read.code });
-            return projectDeploymentSuggestionTargetsV1(listDeploymentTargetsFromManifestsV1(read.declarations), read.declarations);
+            const manifests = await readTargetDeclarations();
+            return projectDeploymentSuggestionTargetsV1(listDeploymentTargetsFromManifestsV1(manifests), manifests);
         },
         deploymentSuggestionForges: async context => {
             const execution = completeActionResult(await createUiAccountAction({ account })({

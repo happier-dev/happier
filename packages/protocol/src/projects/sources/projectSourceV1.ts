@@ -69,6 +69,11 @@ export const ProjectSourceV1Schema = lazyZodSchema(() => z.strictObject({
   audienceTeams: z.optional(z.array(ProjectSourceAudienceTeamV1Schema)),
 }));
 export type ProjectSourceV1 = z.infer<typeof ProjectSourceV1Schema>;
+
+/** Only the saved repository selector supplies the logical Source's hosting identity. */
+export function readProjectSourceRepositoryIdentityV1(selector: ProjectSourceRepositorySelectorV1 | null | undefined) {
+  return selector ? readScmHostingRepositoryIdentity({ ...selector.provider, nameWithOwner: selector.repository.nameWithOwner }) : null;
+}
 export const ProjectSourceV1StoredSchema = createStoredReadSchema(ProjectSourceV1Schema);
 export const ProjectSourceListItemV1Schema = lazyZodSchema(() => z.extend(ProjectSourceV1Schema, {
   sharedWithTeamScope: z.optional(ResourceTeamShareScopeV1Schema),
@@ -185,7 +190,7 @@ export type ProjectSourceAdmissionV1 = Readonly<{
 
 function effectiveSourceSelection(selection: ProjectSourceSelectionV1, overrides: Readonly<{ ref?: string; subdir?: string }>) {
   const selector = ProjectSourceRepositorySelectorV1Schema.parse(selection.selector);
-  const identity = readScmHostingRepositoryIdentity({ ...selector.provider, nameWithOwner: selector.repository.nameWithOwner });
+  const identity = readProjectSourceRepositoryIdentityV1(selector);
   if (!identity) throw new Error('source_invalid');
   const locator = (value: string | undefined) => value === undefined ? null
     : value.includes('://') ? new URL(value.trim()).href : value.trim();

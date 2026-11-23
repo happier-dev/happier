@@ -3,7 +3,7 @@ import { composeWidgetGroupContextV1, type WidgetBindingResolutionInputV1 } from
 import { projectWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { sameWorkspaceProject } from '@/sync/domains/workspaces/workspaceRefs';
-import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { readProjectSourceRepositoryIdentityV1, type ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { PluginUiHostApiSurfaceTargetV1 } from '@happier-dev/protocol/plugins/ui';
 import { normalizeScmHostingRepositoryIdentity, readScmHostingRepositoryIdentity, type ScmHostingRepositoryIdentityV1 } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
@@ -54,8 +54,7 @@ export function readProjectRepositoryIdentityV1(input: Readonly<{
     source?: ProjectSourceV1 | null; checkout?: WorkspaceRefV1 | null; snapshot?: Pick<ScmWorkingSnapshot, 'hostingProvider'> | null;
 }>): ScmHostingRepositoryIdentityV1 | null {
     const source = input.source;
-    if (source) return source.repository
-        ? readScmHostingRepositoryIdentity({ ...source.repository.provider, nameWithOwner: source.repository.repository.nameWithOwner }) : null;
+    if (source) return readProjectSourceRepositoryIdentityV1(source.repository);
     if (input.snapshot) return readScmHostingRepositoryIdentity(input.snapshot.hostingProvider);
     return normalizeScmHostingRepositoryIdentity(input.checkout?.repositoryIdentity);
 }

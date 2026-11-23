@@ -344,3 +344,64 @@ it.each([false, true])('retains a native create acknowledgment before a failed H
         expect(timeline.filter(step => step === 'native')).toHaveLength(1);
     } finally { await app.close(); await rm(directory, { recursive: true, force: true }); }
 });
+
+it('gives the agent and UI the same read-only target Check that can report an existing link', async () => {
+    const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
+    const { DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionIdsV1');
+    const spec = getActionSpec(DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1);
+    expect(spec).toMatchObject({ sideEffectClass: 'read', surfaces: { ui: true, agent: true, mcp: true, cli: true } });
+    const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+    const { checkDeploymentTargetV1, listDeploymentTargetsFromManifestsV1, readPluginActionCredentialPurposeV1 } = await import('@happier-dev/deployments');
+    const { parseQualifiedPluginActionId } = await import('@happier-dev/protocol/plugins/actions/qualifiedActionId');
+    const { manifest } = await import('../../../../packages/plugins/deploy-railway/src/manifest');
+    const manifests = [{ manifest }];
+    const target = listDeploymentTargetsFromManifestsV1(manifests).find(target => target.source.kind === 'plugin');
+    if (!target || target.role !== 'runtime' || target.source.kind !== 'plugin' || target.actions.inspect.kind !== 'plugin') throw new Error('Missing declared runtime fixture');
+    const action = parseQualifiedPluginActionId(target.actions.inspect.actionId)!;
+    const credentials = readPluginActionCredentialPurposeV1(manifest, action.localId)!;
+    const credentialRef = { service: credentials.service, accountId: 'connected-service-account' };
+    const owner = { kind: 'team', teamId: 'shared-team' } as const;
+    const environment = createDeploymentEnvironmentHeaderV1({ owner, projectSourceId: 'other-source', id: 'production' });
+    const link = createDeploymentTargetLinkHeaderV1({ id: 'existing', environmentId: environment.id, source: target.source,
+        targetKind: target.targetKind, machines: [], members: [] });
+    const providerIdentity = { providerAccountId: 'native-account', providerResourceId: 'native-resource', providerEnvironment: 'production' };
+    const reads: string[] = [];
+    const executor = createActionExecutor({
+        deploymentTargetCheck: (input, _context, inspect) => checkDeploymentTargetV1(input, {
+            accountId: 'owner', assertCurrent() {},
+            readSource: async () => ({ ok: true, canManage: true, source: { id: 'app', revision: 1, name: 'App',
+                owner, audience: [], createdByAccountId: 'owner' } }),
+            readEnvironment: async () => { throw new Error('An existing Environment is optional'); },
+            readTarget: async () => ({ target, manifests }), inspect,
+            list: async (scope, selection) => {
+                reads.push('scope');
+                expect(scope).toEqual(owner);
+                expect(selection).toEqual({ source: target.source, targetKind: target.targetKind });
+                return { ok: true, items: [{ environment, targetLink: link }], coverage: 'complete', nextCursor: null };
+            },
+            artifact: async row => {
+                reads.push('artifact');
+                return { artifactId: row.contentArtifactId, header: { kind: 'deployment-target-link.v1', title: 'Existing destination' },
+                    revision: { headerVersion: row.contentHeaderVersion, bodyVersion: row.contentBodyVersion }, body: JSON.stringify({ providerIdentity }) };
+            },
+        }),
+        routeHostChildAction: async request => {
+            reads.push('inspect');
+            expect(request.input).toMatchObject({ action, input: { credentialPrincipal: {
+                accountId: 'owner', purpose: { consumer: action, purpose: credentials.purpose },
+                target: { kind: 'account', account: credentialRef },
+            } } });
+            return { ok: true, result: { credentialPrincipal: { kind: 'account', accountId: 'owner',
+                purpose: { consumer: action, purpose: credentials.purpose }, target: { kind: 'account', account: credentialRef } },
+                providerIdentity, providerEnvironment: { kind: 'native', selection: { kind: 'production' } } } };
+        },
+    });
+    const result = await executor.execute(DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1, {
+        serverId: 'home', projectSourceId: 'app', target: target.source.contribution, credentialRef, fields: {},
+    }, { surface: 'agent', serverId: 'home', authority: 'account_automation' });
+    expect(result).toMatchObject({ ok: true, result: { kind: 'alreadyLinked', association: {
+        ok: false, error: 'provider_scope_already_linked', targetLinkId: link.id,
+        environment: { serverId: 'home', projectSourceId: environment.projectSourceId, environmentId: environment.id },
+    } } });
+    expect(reads).toEqual(['inspect', 'scope', 'artifact']);
+});

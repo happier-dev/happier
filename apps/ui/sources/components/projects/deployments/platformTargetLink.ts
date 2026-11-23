@@ -1,18 +1,18 @@
 import { seedInputByFieldHints } from '@happier-dev/protocol/inputs/inputFieldRuntime';
+import { readDeploymentTargetInspectionV1 } from '@happier-dev/deployments';
 import type { DeploymentRuntimeTargetV1, DeploymentSourceMethodV1 } from '@happier-dev/deployments/contracts/v1';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 import type { EffectiveActionInputField } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { patchHappierActionInputPath, readHappierActionInputPath } from '@happier-dev/plugin-ui/presentation';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import {
-  DeploymentTargetLinkProviderContentV1Schema,
   describeDeploymentTargetGitCreateV1,
   type DeploymentTargetLinkProviderContentV1,
 } from '@happier-dev/protocol/plugins/contributions/v2';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import type { DeploymentTargetCredentialPrincipalV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import type { ScmHostingRepositoryIdentityV1 } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
-import type { DeploymentTargetLinkCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import type { DeploymentTargetCheckResultV1, DeploymentTargetLinkCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploySuggestionCatalogV1 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
 import { listDeploymentTargetsFromManifestsV1, readDeploymentTargetDisplayNameV1, readPluginActionCredentialPurposeV1 } from '@happier-dev/deployments';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
@@ -361,34 +361,15 @@ export function buildPlatformTargetLinkInput(
 }
 
 export type PlatformInspectOutcome =
-  | Readonly<{ kind: 'ready'; provider: DeploymentTargetLinkProviderContentV1 }>
-  | Readonly<{
-      kind: 'needsGitAccess';
-      provider: DeploymentTargetLinkProviderContentV1;
-      grantUrl: string | null;
-    }>
+  | Exclude<DeploymentTargetCheckResultV1, { kind: 'alreadyLinked' }>
   | Readonly<{ kind: 'refused'; reason: DeploymentRefusalReason; code: string }>;
 
 export function readPlatformInspectOutcome(
-  result:
-    | Readonly<{ ok: true; value: unknown }>
-    | Readonly<{ ok: false; code: string }>,
+  result: Readonly<{ ok: true; value: unknown }> | Readonly<{ ok: false; code: string }>,
 ): PlatformInspectOutcome {
   if (!result.ok) return readDeploymentRefusal(result.code);
-  const parsed = DeploymentTargetLinkProviderContentV1Schema.safeParse(
-    result.value,
-  );
-  if (!parsed.success)
-    return readDeploymentRefusal('provider_response_invalid');
-  const provider = parsed.data;
-  const access = provider.repositoryAccess;
-  return access?.status === 'needsGitAccess'
-    ? {
-        kind: 'needsGitAccess',
-        provider,
-        grantUrl: access.grantUrl ?? null,
-      }
-    : { kind: 'ready', provider };
+  const inspection = readDeploymentTargetInspectionV1(result.value);
+  return 'kind' in inspection ? inspection : readDeploymentRefusal(inspection.errorCode);
 }
 
 /**

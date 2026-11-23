@@ -475,6 +475,9 @@ it('selects independent third-party targets before resolving their account, fiel
   const actions = createDeploymentActions(context.accountLifetime, projectSourceId);
   const receiver = await answerDeploymentTargetInspectForHome({ homes, serverId, accountId: 'owner', machineId: 'runtime', plugin: authored });
   try {
+    const environment = createDeploymentEnvironmentHeaderV1({ id: 'environment', revision: 4, projectSourceId,
+      serverId: context.serverIdentityId ?? serverId, controllerMachineId: 'runtime', owner: { kind: 'account', accountId: 'owner' } });
+    homes.answer(serverId, 'GET /v1/deployments/environments/environment', { body: { ok: true, environment, targetLinks: [] } });
     homes.answer(serverId, `GET /v1/projects/sources/${projectSourceId}`, { body: { ok: true, canManage: true, source: {
       id: projectSourceId, revision: 1, name: 'App', owner: { kind: 'account', accountId: 'owner' },
       audience: [], createdByAccountId: 'owner',
@@ -542,9 +545,6 @@ it('selects independent third-party targets before resolving their account, fiel
     await screen.pressByTestIdAsync('project-deployments.platform.check');
     await waitForHomeGovernance(async () => { await act(async () => {});
       expect(screen.findByTestId('project-deployments.platform.link')).not.toBeNull(); });
-    const environment = createDeploymentEnvironmentHeaderV1({ id: 'environment', revision: 4, projectSourceId,
-      serverId: context.serverIdentityId ?? serverId, controllerMachineId: 'runtime', owner: { kind: 'account', accountId: 'owner' } });
-    homes.answer(serverId, 'GET /v1/deployments/environments/environment', { body: { ok: true, environment, targetLinks: [] } });
     let linkedResourceTitle: string | undefined;
     await answerExternalActionAccountForHome(homes, serverId, { machineId: environment.controllerMachineId, installationId: 'runtime-installation',
       actionId: 'deployments.targets.link', tokenEpoch: 0, execute: raw => {
@@ -582,6 +582,9 @@ it('shows the existing association when Check finds the same provider scope in a
     });
     const environment = createDeploymentEnvironmentHeaderV1({ id: 'linked-environment', projectSourceId, owner,
       serverId: account.serverIdentityId ?? serverId, controllerMachineId: 'runtime' });
+    homes.answer(serverId, 'GET /v1/deployments/environments/another-environment', { body: {
+      ok: true, environment: { ...environment, id: 'another-environment' }, targetLinks: [],
+    } });
     const targetLink = createDeploymentTargetLinkHeaderV1({ id: 'platform-link', environmentId: environment.id,
       machines: [], members: [], targetKind: 'beta', source: { kind: 'plugin', contribution: { pluginId, localId: 'beta' } },
       contentArtifactId: artifact.artifactId, contentHeaderVersion: artifact.revision.headerVersion, contentBodyVersion: artifact.revision.bodyVersion });
@@ -989,7 +992,7 @@ it('explains why a stored Compose Environment under a repository Project cannot 
     const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
     await act(async () => showDeploymentPlatformTargetSheet({ name: 'App',
       environment: { id: 'stored-environment', revision: 1, projectSourceId, definition: { kind: 'stored' } },
-      lifetime: context.accountLifetime, ownerAccountId: 'owner', actions: { inspectPlatformTarget, link }, onApproval: () => {} }));
+      lifetime: context.accountLifetime, ownerAccountId: 'owner', actions: { checkPlatformTarget: vi.fn(), inspectPlatformTarget, link }, onApproval: () => {} }));
     await waitForHomeGovernance(() =>
       expect(screen.findHostByTestId('project-deployments.platform.sourceRefused'), screen.getTextContent()).not.toBeNull());
     expect(screen.getTextContent()).toMatch(/repository.*own server/i);
@@ -1025,9 +1028,17 @@ it('says a repository refusal with the shared remedy after another target was in
   const opened: string[] = [];
   const receiver = await answerDeploymentTargetInspectForHome({ homes, serverId, accountId: 'owner', machineId: 'runtime', plugin: authored });
   try {
+    const projectSourceId = 'source-without-repository';
+    const owner = { kind: 'account', accountId: 'owner' } as const;
+    const environment = createDeploymentEnvironmentHeaderV1({ id: 'environment', revision: 4, projectSourceId,
+      serverId: context.serverIdentityId ?? serverId, controllerMachineId: 'runtime', owner });
+    homes.answer(serverId, 'GET /v1/deployments/environments/environment', { body: { ok: true, environment, targetLinks: [] } });
+    homes.answer(serverId, 'GET /v1/projects/sources/' + projectSourceId, { body: { ok: true, canManage: true, source: {
+      id: projectSourceId, revision: 1, name: 'App', owner, audience: [], createdByAccountId: owner.accountId,
+    } } });
     const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
-    await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { id: 'environment', revision: 4, definition: { kind: 'repository' }, projectSourceId: '', controllerMachineId: 'runtime' },
-      ownerAccountId: 'owner', lifetime: context.accountLifetime, actions: createDeploymentActions(context.accountLifetime, ''), onApproval: () => {},
+    await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { ...environment, definition: { kind: 'repository' } },
+      ownerAccountId: 'owner', lifetime: context.accountLifetime, actions: createDeploymentActions(context.accountLifetime, projectSourceId), onApproval: () => {},
       initialTargetKey: `${pluginId}/beta`, onOpenRecoveryDestination: destination => opened.push(destination) }));
     await waitForHomeGovernance(async () => {
       await act(async () => {});

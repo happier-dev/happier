@@ -166,7 +166,7 @@ export {
   BROWSER_DIAGNOSTICS_INTERACTION_ACTION_IDS, isBrowserDiagnosticsInteractionActionIdV1,
 } from './actionIdsBrowser.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_PREPARE_ACTION_ID_V1, DEPLOYMENT_SUGGESTION_ACTION_IDS_V1 } from '../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_PREPARE_ACTION_ID_V1, DEPLOYMENT_SUGGESTION_ACTION_IDS_V1, DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { CODE_INTELLIGENCE_ACTION_IDS } from './codeIntelligenceActionIdsV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS, MACHINE_MANAGED_INSTALLATION_ACTION_IDS, PERSONAL_HOME_CREATE_ACTION_ID_V1 } from './specs/machineConnectionActionIdsV1.js';
@@ -394,7 +394,7 @@ const otherReviewCommentMutationActionIds = REVIEW_COMMENT_MUTATION_ACTION_IDS_V
 
 export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   plugin_collection_sharing: PLUGIN_COLLECTION_SHARING_ACTION_IDS_V1,
-  deployments: DEPLOYMENT_ACTION_IDS_V1,
+  deployments: [...DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1],
   deployment_suggestions: DEPLOYMENT_SUGGESTION_ACTION_IDS_V1,
   registries: REGISTRY_ACTION_IDS_V1,
   personal_saved_secrets: PERSONAL_SAVED_SECRET_ACTION_IDS_V1,

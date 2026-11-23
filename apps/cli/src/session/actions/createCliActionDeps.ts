@@ -138,6 +138,11 @@ import type { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import type { readCliMemoryInheritedContext, readCliMemoryScopeContext } from './readCliMemoryInheritedContext';
+import axios from '@/api/client/credentialAxios';
+import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
+import { DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentTargetLinksListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { checkDeploymentTargetV1, readDeploymentTargetV1 } from '@happier-dev/deployments';
 import { createCliProjectSourceActionDeps } from './projectSourceActionDeps';
 import { createCliDeploymentActionDeps } from '@/deployments/createCliDeploymentActionDeps';
 import { createPrepareEnvironmentContentForHost } from '@/deployments/prepareEnvironmentContentForHost';
@@ -860,23 +865,30 @@ export function createCliActionDeps(params: CliActionDepsParams,
     readActionAutomationPort: () => actionDeps.actionAutomations,
   });
 
+  const assertDeploymentCredentialCurrent = async (context: ActionExecutorContext) => {
+    context.signal?.throwIfAborted();
+    if (params.isCredentialCurrent && !await params.isCredentialCurrent()) {
+      throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
+    }
+  };
   const assertDeploymentReadCurrent = async (context: ActionExecutorContext) => {
     context.signal?.throwIfAborted();
     const denied = await admitAccountStorage(projectHomeId, context);
     if (denied) throw createActionExecuteFailureError(denied);
     await assertProjectRequesterCurrent(context);
-    if (params.isCredentialCurrent && !await params.isCredentialCurrent()) {
-      throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
-    }
+    await assertDeploymentCredentialCurrent(context);
   };
-  const openDeploymentArtifact = async (artifactId: string, context: ActionExecutorContext) => {
-    await assertDeploymentReadCurrent(context);
+  const readAdmittedDeploymentArtifact = async (artifactId: string, context: ActionExecutorContext) => {
     if (context.externalActionExecutionAuthorization) return (await readProjectRequesterArtifact({
       kind: 'doc', serverId: projectHomeId, artifactId,
     }, { signal: context.signal }, context))?.document ?? null;
     if (!roleArtifactStore) throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
     return withProjectHome(() => roleArtifactStore.read(artifactId, { signal: context.signal,
       prepareRecipients: false, includeSharedAudience: false }));
+  };
+  const openDeploymentArtifact = async (artifactId: string, context: ActionExecutorContext) => {
+    await assertDeploymentReadCurrent(context);
+    return readAdmittedDeploymentArtifact(artifactId, context);
   };
   const readOpenedDeploymentEnvironment = async (environmentId: string, context: ActionExecutorContext,
     backupPolicy?: import('@happier-dev/protocol/deployments/deploymentBackupActionsV1').DeploymentBackupPolicyV1,
@@ -1339,6 +1351,34 @@ export function createCliActionDeps(params: CliActionDepsParams,
       credentials: params.credentials, isCredentialCurrent: params.isCredentialCurrent,
       readWorkspaceRows: readAdmittedProjectRows,
       readSource: (input, context) => (readEffectiveDeps?.() ?? actionDeps).projectSourcesRead!(input, context) }),
+    deploymentTargetCheck: async (input, context, inspect) => {
+      const denied = await admitAccountStorage(input.serverId, context);
+      if (denied) return denied;
+      const accountId = context.externalActionExecutionAuthorization?.binding.accountId ?? homeAccountId;
+      if (!accountId) return executionRunActionFailure('not_authenticated');
+      return checkDeploymentTargetV1(input, {
+        accountId, inspect, assertCurrent: () => assertDeploymentCredentialCurrent(context),
+        readSource: () => actionDeps.projectSourcesRead!({ serverId: input.serverId, sourceId: input.projectSourceId }, context),
+        async readEnvironment(environmentId) {
+          const result = await deploymentStorage(DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, { serverId: input.serverId, environmentId }, context);
+          return isActionExecuteFailure(result) ? result : DeploymentEnvironmentGetResultV1Schema.parse(result);
+        },
+        async readTarget() {
+          const registry = readCurrentContributionRegistry();
+          return { target: readDeploymentTargetV1({ kind: 'plugin', contribution: input.target }, registry.deploymentTargets),
+            manifests: registry.activationTargets };
+        },
+        async list(scope, selection, cursor) {
+          const path = '/v1/deployments/targets/list';
+          const body = { serverId: projectHomeId, scope, selection, ...(cursor ? { cursor } : {}) };
+          const response = await axios.request({ method: 'POST', url: new URL(path, todoHomeBaseUrl).href,
+            data: body, signal: context.signal, validateStatus: () => true,
+            headers: await resolveAccountStorageHeaders(context, DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1, { method: 'POST', path, body }) });
+          return DeploymentTargetLinksListResultV1Schema.parse(response.data);
+        },
+        artifact: link => readAdmittedDeploymentArtifact(link.contentArtifactId, context),
+      });
+    },
     deploymentBackupAction: async (actionId, input, context) => {
       const execution = await dispatchDeploymentBackupTarget(actionId, input, context);
       if (!execution.ok) return execution;

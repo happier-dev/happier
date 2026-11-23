@@ -144,7 +144,7 @@ export const DeploymentEnvironmentDraft = React.memo(
       previewEnvironmentId?: string | null;
       projectChoice?: DeploymentProjectChoiceModel;
       phone: boolean;
-      actions: Pick<Actions, 'prepareCreate' | 'inspectPlatformTarget' | 'link'> | null;
+      actions: Pick<Actions, 'prepareCreate' | 'checkPlatformTarget' | 'inspectPlatformTarget' | 'link'> | null;
       copyFrom?: DeploymentEnvironmentDetailV1 | null;
       /** A door that names what it starts from (Store → Apps): a stored definition, in any Project. */
       definitionKind?: DeploymentNewDefinitionKind | null;
@@ -911,7 +911,7 @@ export const DeploymentEnvironmentDraft = React.memo(
           {platformTarget && platformDefinitionAccepted && platformEnvironment && props.lifetime && actions ? (
             <DeploymentPlatformTargetEditor key={`${platformTarget.key}:${chosen?.id ?? ''}:${source?.revision ?? ''}`}
               name={name} environment={platformEnvironment} ownerAccountId={props.lifetime.scope.accountId}
-              lifetime={props.lifetime} actions={{ inspectPlatformTarget: actions.inspectPlatformTarget, link: actions.link }}
+              lifetime={props.lifetime} actions={actions}
               initialTargetKey={platformTarget.key} onPrepared={setPlatformProvider}
               onApproval={onApprovalRequested} onClose={props.onDiscard} />
           ) : null}

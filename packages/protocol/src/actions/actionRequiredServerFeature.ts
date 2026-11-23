@@ -8,7 +8,7 @@ import { MACHINE_POOL_ACTION_IDS_V1 } from '../machines/pools/actionsV1.js';
 import { EPHEMERAL_RUNNER_ACTION_IDS_V1 } from '../ephemeralRunner/actionIdsV1.js';
 import { isRemoteHostActionIdV1, isRemoteHostDeviceLocalActionIdV1 } from '../remoteHosts/remoteHostActionIdsV1.js';
 import type { ActionExecutorContext } from './executor/types.js';
-import { isDeploymentActionIdV1, isDeploymentSuggestionActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
+import { isDeploymentActionIdV1, isDeploymentSuggestionActionIdV1, DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 
 // The same navigation Action serves Agent automation and present-human UI
 // browsing. Trusted execution context distinguishes those capability tiers.
@@ -96,7 +96,7 @@ export function getActionRequiredServerFeatureId(
   input?: unknown,
 ): FeatureId | null {
   // Admission only. Inspection and withdrawal remain available after opt-out.
-  if (isDeploymentSuggestionActionIdV1(actionId)) return 'deployments';
+  if (actionId === DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1 || isDeploymentSuggestionActionIdV1(actionId)) return 'deployments';
   if (isDeploymentActionIdV1(actionId)) {
     switch (actionId) {
       case 'deployments.domains.get': case 'deployments.domains.list': case 'deployments.domains.remove':

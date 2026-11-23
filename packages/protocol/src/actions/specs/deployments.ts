@@ -4,7 +4,7 @@ import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { deploymentTeardownOperationReentryV1 } from '../operations/v1.js';
 import type { ActionSpecProjectionMetadata, PreNormalizedActionSpec } from './definition.js';
 import { createDeploymentDeployActionCompletionV1 } from '../actionCompletion.js';
-import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, type DeploymentActionIdV1 } from '../../deployments/deploymentActionsV1.js';
+import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentTargetCheckInputV1Schema, DeploymentTargetCheckResultV1Schema, type DeploymentActionIdV1 } from '../../deployments/deploymentActionsV1.js';
 import { deploymentBindingSelectionNarrowing } from '../../deployments/deploymentBindingSelectionNarrowing.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { actionInputServerId } from './definition.js';
@@ -401,11 +401,19 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
   } as const satisfies DeploymentActionSpec<TId>;
 }
 
+type DeploymentTargetCheckActionSpec = ActionSpecProjectionMetadata & Readonly<{
+  id: typeof deploymentActionIds.DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1;
+  inputSchema: typeof DeploymentTargetCheckInputV1Schema;
+  outputSchema: typeof DeploymentTargetCheckResultV1Schema;
+  approval: { result: 'none' };
+}>;
+
 // Name the per-id schema union so declaration emission does not serialize the
-// factory's entire inferred tuple of spread Action metadata and schemas.
-export type DeploymentActionSpecsV1 = ReadonlyArray<{
-  [TId in DeploymentActionIdV1]: DeploymentActionSpec<TId>;
-}[DeploymentActionIdV1]>;
+// factory's entire inferred array of spread Action metadata and schemas.
+export type DeploymentActionSpecsV1 = ReadonlyArray<
+  { [TId in DeploymentActionIdV1]: DeploymentActionSpec<TId> }[DeploymentActionIdV1]
+  | DeploymentTargetCheckActionSpec
+>;
 
 /** Storage declarations and real daemon effects share this single Action front door. */
 function createDeploymentActionSpecsV1(): DeploymentActionSpecsV1 {
@@ -479,6 +487,16 @@ function createDeploymentActionSpecsV1(): DeploymentActionSpecsV1 {
     deploymentReadScope: createDeploymentReadScopeV1({ childReadOnly: true }), operationReentry: deploymentTeardownOperationReentryV1, requesterAccountContentDemandForInput: (input: unknown) => !('detachKeepRunning' in readRecord(input)) },
   { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, 'Read deployment environment', '/v1/deployments/environments/:environmentId', true),
     originalExecution: { daemonIngressSurfaces: [] } },
+  {
+    id: deploymentActionIds.DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1, title: 'Check deployment target',
+    description: 'Check a chosen provider target and report a saved Environment already linked to the same provider scope. Fields are the target Inspect Action’s product operands. No resource is attached.',
+    executionPlacement: 'account', originalExecution: { accountRoot: 'allowed' },
+    approval: { result: 'none' }, safety: 'safe', sideEffectClass: 'read', placements: [],
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    inputSchema: DeploymentTargetCheckInputV1Schema, outputSchema: DeploymentTargetCheckResultV1Schema,
+    bindings: { mcpToolName: 'deployments_targets_check' },
+    cli: { acceptsServerId: true, commands: [{ path: ['deployments', 'targets', 'check'], visibility: 'canonical' }] },
+  },
   deploymentSpec(deploymentActionIds.DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, 'Read deployment receipt', '/v1/deployments/receipts/:deploymentId', true),
   { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1, 'Observe provider deployment receipt', undefined, true), requesterAccountContentDemandForInput: () => true },
   { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_OBSERVATION_GET_ACTION_ID_V1, 'Read recorded deployment observation', undefined, true), requesterAccountContentDemandForInput: () => true },

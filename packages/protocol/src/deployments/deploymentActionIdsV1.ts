@@ -121,6 +121,7 @@ export function isDeploymentApprovalMetadataPreparationActionIdV1(value: string)
 }
 
 export const DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1 = 'deployments.environments.delete';
+export const DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1 = 'deployments.targets.check';
 export const DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1 = 'deployments.targets.unlink';
 
 /** Template composition spends these writes through the exact preparation owner. */

@@ -65,7 +65,7 @@ import { t } from '@/text';
 import { readDeploymentActionError, readDeploymentRefusal } from './deploymentActionOutcome';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import type { createDeploymentActions } from './deploymentActions';
-import { readExistingPlatformTargetAssociation } from './deploymentReadTransport';
+import { isJsonObject, projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { DeploymentSourceMethodChoice } from './DeploymentSourceMethodChoice';
 import { DeploymentPlatformInspectState } from './DeploymentPlatformInspectState';
 import {
@@ -75,8 +75,6 @@ import {
   readDeploymentPlatformTargets,
   readProviderCreate,
   type PreparedPlatformTargetLink,
-  readPlatformInspectOutcome,
-  platformTargetAssociation,
   readPlatformReviewNotice,
   readPlatformGitCreateReview,
   readPlatformReviewRuntime,
@@ -92,7 +90,7 @@ type LinkRefusal = Extract<Awaited<ReturnType<Actions['link']>>, { ok: false }>
   | Readonly<{ ok: false; error: 'action_outcome_unknown' }>;
 export type DeploymentPlatformLinkActions = Pick<
   Actions,
-  'inspectPlatformTarget' | 'link'
+  'checkPlatformTarget' | 'inspectPlatformTarget' | 'link'
 >;
 
 type PlatformLinkEnvironment = Readonly<{
@@ -509,34 +507,29 @@ export function DeploymentPlatformTargetEditor(
   const { onClose, onApproval, actions } = props;
   const connect = firstConnection.connect;
   const check = async () => {
-    if (!target || !draft || busy) return;
+    if (!target || !draft || !account || busy) return;
     setBusy('check');
     setOutcome(null);
     props.onPrepared?.(null);
     setLinkRefused(null);
+    setLinkSettlement(null);
     try {
-      const result = await actions.inspectPlatformTarget(
-        target.inspectActionId,
-        draft,
-        props.environment.controllerMachineId ? { externalActionTarget: { kind: 'machine', machineId: props.environment.controllerMachineId } } : undefined,
-      );
+      const { repository: _repository, environmentId: _environmentId, expectedRevision: _revision, credentialRef: _ref,
+        credentialPrincipal: _principal, v: _version, serverId: _serverId, ...fields } = draft;
+      const operands = projectNativeJsonValueForTransport(fields);
+      if (!isJsonObject(operands)) throw new TypeError('Invalid deployment target operands');
+      const inspected = await actions.checkPlatformTarget({
+        projectSourceId: props.environment.projectSourceId,
+        ...(props.environment.id ? { environmentId: props.environment.id } : {}),
+        ...(props.environment.controllerMachineId ? { controllerMachineId: props.environment.controllerMachineId } : {}),
+        target: { pluginId: target.pluginId, localId: target.targetId },
+        credentialRef: account,
+        fields: operands,
+      });
       if (!shouldContinue() || !props.lifetime.isCurrent()) return;
-      const inspected = readPlatformInspectOutcome(result);
-      if (inspected.kind === 'ready') {
-        const currentSource = await sourceRead.resolveSource();
-        if (!shouldContinue() || !props.lifetime.isCurrent()) return;
-        if (!currentSource) {
-          setOutcome(readDeploymentRefusal('deployment_content_unavailable'));
-          return;
-        }
-        const linked = await readExistingPlatformTargetAssociation(props.lifetime, currentSource.owner, {
-          ...platformTargetAssociation(target), environmentId: props.environment.id, provider: inspected.provider,
-        });
-        if (!shouldContinue() || !props.lifetime.isCurrent()) return;
-        if (linked) {
-          setLinkSettlement(linked);
-          return;
-        }
+      if (inspected.kind === 'alreadyLinked') {
+        setLinkSettlement(inspected.association);
+        return;
       }
       setOutcome(inspected);
       if (inspected.kind === 'ready') props.onPrepared?.({ kind: 'existing', provider: inspected.provider,

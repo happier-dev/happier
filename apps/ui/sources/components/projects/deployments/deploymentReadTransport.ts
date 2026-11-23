@@ -13,7 +13,6 @@ import {
     DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResultV1Schema, DeploymentDataSizeResultV1Schema,
     DeploymentReceiptGetResultV1Schema, DeploymentReceiptListResultV1Schema,
     DeploymentDomainListResultV1Schema, DeploymentDomainPageResultV1Schema, DeploymentDataPageResultV1Schema,
-    DeploymentTargetLinksListResultV1Schema, type DeploymentTargetLinksListInputV1,
     type DeploymentDataPageSuccessV1, hasDeploymentReceiptContentV1,
 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import {
@@ -32,7 +31,7 @@ import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRun
 import { HappyError } from '@/utils/errors/errors';
 import { domainHealthObserver, environmentCollectionHealthObserver, environmentHealthObserver } from './observeEnvironmentHealth';
 import { projectDeploymentReceiptHistoryEntryV1, projectDeploymentReceiptUrlFactsV1, projectDeploymentReceiptSourceFactsV1,
-    deploymentDataTargetOperands, readDeploymentDatabaseRuntimeNameV1, selectDeploymentRuntimeTargetLinkV1, isDeploymentDatabaseMoveCandidateV1, findExistingDeploymentTargetLinkV1 } from '@happier-dev/deployments';
+    deploymentDataTargetOperands, readDeploymentDatabaseRuntimeNameV1, selectDeploymentRuntimeTargetLinkV1, isDeploymentDatabaseMoveCandidateV1 } from '@happier-dev/deployments';
 import { DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { DeploymentDatabaseSizeV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { deploymentLiveAddressDemand, resolveDeploymentLiveAddress } from './deploymentLiveAddressFacts';
@@ -59,32 +58,6 @@ async function readArtifactsByRow<T>(artifactIds: readonly (string | null)[], re
     const results = ids.length ? await read(ids) : [];
     const byId = new Map(ids.map((id, index) => [id, results[index]]));
     return artifactIds.map(id => id === null ? undefined : byId.get(id));
-}
-
-/** Open the same private Link candidates that write admission compares on its executor. */
-export async function readExistingPlatformTargetAssociation(
-    lifetime: ServerAccountScopeLifetime,
-    owner: DeploymentTargetLinksListInputV1['scope'],
-    candidate: Omit<Parameters<typeof findExistingDeploymentTargetLinkV1>[0], 'serverId'>,
-) {
-    const scope = lifetime.scope;
-    const account = await captureLazyActionAccountContext(scope.serverId, undefined, undefined, scope);
-    try {
-        const result = await findExistingDeploymentTargetLinkV1({ ...candidate, serverId: scope.serverId }, {
-            async list(selection, cursor) {
-                const answer = await requestHomeDomain({ scope, path: '/v1/deployments/targets/list', effect: 'read',
-                    requestAuthority: account, schema: DeploymentTargetLinksListResultV1Schema,
-                    input: { serverId: account.serverIdentityId ?? scope.serverId, scope: owner, selection, ...(cursor ? { cursor } : {}) } });
-                if (!answer.ok) throw new HappyError('Could not read deployment target links', false, { code: homeDomainFailureCode(answer) });
-                return answer.value;
-            },
-            artifact: link => account.readArtifactContent(link.contentArtifactId),
-        });
-        account.assertCurrent();
-        return result;
-    } finally {
-        account.dispose();
-    }
 }
 
 export type DeploymentTargetLinkChoiceV1 = Readonly<{

@@ -68,6 +68,10 @@ import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { MachineInstallationProofV1Schema } from '../machines/identity/installationKeySchemas.js';
 import { MachineAvailabilityDiagnosticV1Schema } from '../machines/machineAccessV1.js';
+import { QualifiedConnectedAccountRefSchema } from '../connect/qualifiedConnectedAccountPersistence.js';
+import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
+import { withStrictJsonInput } from '../json/strictJsonValue.js';
+import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { ProjectSourceOwnerV1Schema, ProjectSourceV1Schema, ProjectSourcesListInputV1Schema } from '../projects/sources/projectSourceV1.js';
 import { ScmHostingRepositoryIdentityV1Schema } from '../scm/hostingRepositoryIdentity.js';
 import { ArtifactJsonUpdateHttpInputV1Schema } from '../artifacts/artifactMutationHttpV1.js';
@@ -519,6 +523,25 @@ export const DeploymentTargetLinkAlreadyLinkedResultV1Schema = lazyZodSchema(() 
   environment: DeploymentEnvironmentRefV1Schema, targetLinkId: DeploymentIdentifierV1Schema,
 }));
 export type DeploymentTargetLinkAlreadyLinkedResultV1 = z.infer<typeof DeploymentTargetLinkAlreadyLinkedResultV1Schema>;
+
+export const DeploymentTargetCheckInputV1Schema = lazyZodSchema(() => z.strictObject({
+  serverId: DeploymentIdentifierV1Schema,
+  projectSourceId: DeploymentIdentifierV1Schema,
+  environmentId: z.optional(DeploymentIdentifierV1Schema),
+  controllerMachineId: z.optional(DeploymentIdentifierV1Schema),
+  target: asProtocolZod(PluginContributionIdentityV1Schema),
+  credentialRef: asProtocolZod(QualifiedConnectedAccountRefSchema),
+  fields: withStrictJsonInput(z.record(z.string(), z.json())),
+}));
+export type DeploymentTargetCheckInputV1 = z.infer<typeof DeploymentTargetCheckInputV1Schema>;
+export const DeploymentTargetCheckResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('ready'), provider: DeploymentTargetLinkProviderContentV1Schema }),
+  z.strictObject({ kind: z.literal('needsGitAccess'), provider: DeploymentTargetLinkProviderContentV1Schema,
+    grantUrl: z.nullable(z.string()) }),
+  z.strictObject({ kind: z.literal('alreadyLinked'), association: DeploymentTargetLinkAlreadyLinkedResultV1Schema }),
+]));
+export type DeploymentTargetCheckResultV1 = z.infer<typeof DeploymentTargetCheckResultV1Schema>;
+
 /** The native resource exists; retry only this retained exact association, never create again. */
 export const DeploymentTargetLinkProvisionedResultV1Schema = lazyZodSchema(() => z.strictObject({
   ok: z.literal(false), error: z.literal('deployment_link_incomplete'),

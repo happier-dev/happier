@@ -517,7 +517,7 @@ import { FileSaveInputSchema } from './fileSaveActionFamily.js';
 import { executeFileSave } from './executor/fileSave.js';
 import { executeDeploymentAction } from './executor/deploymentAction.js';
 import { readDeploySuggestionCatalogV1 } from './executor/deploySuggestions.js';
-import { DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1, DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1, DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1, DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { checkDeploySuggestionV1 } from '../deployments/suggestions/deploySuggestionsV1.js';
 import { isInternalActionId } from './pluginActionSurface.js';
 import {
@@ -6984,6 +6984,15 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: true, result: await readDeploySuggestionCatalogV1(ctx, deps,
             (childId, childInput) => executeHostChild(childId, childInput, ctx),
             data as AdmittedActionInputById[typeof DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1]) };
+        }
+        if (actionId === DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1) {
+          if (!deps.deploymentTargetCheck) return { ok: false, errorCode: 'client_required', error: 'client_required' };
+          const result = await deps.deploymentTargetCheck(data as AdmittedActionInputById[typeof DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1],
+            ctx, (action, input, machineId) => executeHostChild('action.invoke', { action, input }, {
+              ...ctx, requiredContributedActionDangerLevel: 'safe',
+              ...(machineId ? { externalActionTarget: { kind: 'machine', machineId } } : {}),
+            }));
+          return 'errorCode' in result ? result : { ok: true, result };
         }
         if (actionId === DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1) {
           const input = parsed.data as AdmittedActionInputById[typeof DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1];

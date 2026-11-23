@@ -2328,6 +2328,10 @@ export type ActionExecutorDeps = Readonly<{
     context: ActionExecutorContext,
     creationReview?: import('../../deployments/deploymentActionsV1.js').DeploymentEnvironmentCreationReviewV1,
   ) => Promise<DeploymentActionOutputV1 | ActionApprovalRequestCreatedResult | ActionExecuteFailure>;
+  deploymentTargetCheck?: (input: import('../../deployments/deploymentActionsV1.js').DeploymentTargetCheckInputV1,
+    context: ActionExecutorContext, executeInspect: (action: Readonly<{ pluginId: string; localId: string }>,
+      input: unknown, machineId?: string) => Promise<ActionExecuteResult>,
+  ) => Promise<import('../../deployments/deploymentActionsV1.js').DeploymentTargetCheckResultV1 | ActionExecuteFailure>;
   /** Header-only Artifact port under the invoking Account; list presentation never opens bodies. */
   deploymentReadArtifactHeaders?: (artifactIds: readonly string[], context: ActionExecutorContext) =>
     Promise<readonly PromiseSettledResult<import('../../deployments/deploymentArtifactContentReferenceV1.js').OpenedDeploymentArtifactV1 | null>[]>;
