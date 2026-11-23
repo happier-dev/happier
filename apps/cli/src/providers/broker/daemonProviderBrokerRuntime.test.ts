@@ -704,39 +704,6 @@ describe('startDaemonProviderBrokerRuntime', () => {
     };
     const dispatchOrder: string[] = [];
     const cleanup = vi.fn(async () => {});
-    const resource: TeamCredentialResourceSummaryV1 = {
-      id: 'resource-1', teamId: 'team-1', custodianAccountId: 'custodian-account',
-      sourceOwnerDisplayName: null,
-      displayName: 'Shared Codex', enabled: true, revision: 7,
-      deliveryPolicy: { preferredAllowedModes: ['brokered'] }, sessionUsePolicy: 'personal_allowed',
-      source,
-      sourcePresentation: { kind: 'connected_service', service: source.target.account.service },
-      directExportSupport: 'unsupported', activeUsageLimitCount: 0,
-      requestPolicy: null,
-      brokerPlacement: { kind: 'machine', machineId: 'broker-machine' },
-      allMembersAllowedRoutes: null,
-      groupGrants: [], memberGrants: [], readiness: { kind: 'available' }, recoveryAction: null,
-      brokerPresentation: {
-        selectedTarget: null,
-        eligibleTargets: [],
-        selectedPool: null,
-        eligiblePools: [],
-      },
-      capabilities: {
-        manageAudience: false,
-        managePolicy: false,
-        manageLimits: false,
-        updateBrokerPlacement: false, updateDeliveryPolicy: false,
-        narrowDisclosure: false,
-        widenDisclosure: false,
-        refreshDirectMaterial: false,
-        disable: false,
-        enable: false,
-        delete: false,
-      },
-      createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),
-    };
-    const readResource = vi.fn(async () => resource);
     const unusedBoundary = (): never => { throw new Error('Unexpected effect boundary'); };
     const bindingOwner = createConnectedAccountPurposeBindingOwner({
       store: { read: async () => ({ v: 1, bindings: [] }), update: unusedBoundary, subscribe: () => ({ dispose() {} }) },
@@ -759,7 +726,6 @@ describe('startDaemonProviderBrokerRuntime', () => {
     });
     const openConnectedServicesSource = createConnectedServicesBrokerSourceOpen({
       withRegistry: async (read) => await read(createBrokerProviderRegistry()),
-      readResource,
       resolveBindingIntentSelection,
       custody,
     });
@@ -847,7 +813,7 @@ describe('startDaemonProviderBrokerRuntime', () => {
         materializationKey: 'request-1', status: 'completed', phaseId: expect.any(String), durationMs: expect.any(Number) }),
     ]);
     expect(sourceScopes[1]?.phaseId).toBe(sourceScopes[0]?.phaseId);
-    for (const phase of ['group_selection', 'binding_read', 'materialization_invoke']) {
+    for (const phase of ['group_selection', 'materialization_invoke']) {
       const children = sourcePhases.filter(row => row.phase === phase && row.parentPhaseId === sourceScopes[0]?.phaseId);
       expect(children.some(row => row.status === 'completed'), phase).toBe(true);
       for (const start of children.filter(row => row.status === 'started')) {
@@ -1552,7 +1518,7 @@ describe('Provider-broker release after grant expiry (machine/1 admission + brok
     const custody = createManagedProviderExplicitStartCustody({ machineId: 'broker-machine', happyHomeDir: '/unreached-source' });
     const bindings = createConnectedAccountPurposeBindingOwner({
       store: { read: async () => ({ v: 1, bindings: [] }), update: unused, subscribe: () => ({ dispose() {} }) },
-      selectTarget: unused, resolveTarget: async () => ({ displayName: 'Account', account: source.target.account }),
+      selectTarget: unused, resolveTarget: async () => null,
       materializeAccount: unused, projectTargetAccounts: unused, assertTargetAccountMaterializable: unused,
     });
     const sourceOwner = createTeamCredentialBrokerSourceOwner({
@@ -1561,10 +1527,7 @@ describe('Provider-broker release after grant expiry (machine/1 admission + brok
         withRegistry: async read => await read(createBrokerProviderRegistry()), resolveBindingIntentSelection: bindings.resolveBindingIntentSelection,
       }),
       openConnectedServicesSource: createConnectedServicesBrokerSourceOpen({
-        withRegistry: async read => await read(createBrokerProviderRegistry()), resolveBindingIntentSelection: bindings.resolveBindingIntentSelection,
-        // The Home resource HTTP read is unavailable. Selection, currentness,
-        // source acquisition, policy, application handling and TCP stay real.
-        readResource: async () => null, custody,
+        withRegistry: async read => await read(createBrokerProviderRegistry()), resolveBindingIntentSelection: bindings.resolveBindingIntentSelection, custody,
       }),
       openProviderConnectionSource: unused,
     });
@@ -1608,9 +1571,9 @@ describe('Provider-broker release after grant expiry (machine/1 admission + brok
     const code = ingress === 'private' ? 'resource_unavailable' : 'source_unavailable';
     expect(response).toContain(`x-happier-provider-broker-error-code: ${code}`);
     expect(diagnostics).toHaveBeenCalledWith('[provider-broker-application]', expect.objectContaining({
-      stage: 'application_response', code, sourceOpenFailureReason: 'resource_not_current',
+      stage: 'application_response', code, sourceOpenFailureReason: 'source_selection_unavailable',
     }));
-    expect(response).toContain('resource_not_current');
+    expect(response).toContain('source_selection_unavailable');
   });
 
   it.each(['unavailable', 'cancelled'] as const)('admits the personal carrier before private source acquisition (%s Home read)', async outcome => {
@@ -1959,7 +1922,7 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
         withRegistry: async read => await read(createBrokerProviderRegistry()), resolveBindingIntentSelection: bindings.resolveBindingIntentSelection,
       }),
       openConnectedServicesSource: createConnectedServicesBrokerSourceOpen({
-        withRegistry: async read => await read(createBrokerProviderRegistry()), readResource: async () => ({ ...brokerResource, revision: resourceRevision }),
+        withRegistry: async read => await read(createBrokerProviderRegistry()),
         resolveBindingIntentSelection: bindings.resolveBindingIntentSelection, custody,
         readModelProjection: async () => { sourceProjectionReads++; return readRawCatalog(); },
       }),
@@ -2264,6 +2227,7 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
         { ...request, before: () => target.advanceAdmittedJob(8, 'd'.repeat(64)) }]);
       expect(original).toContain('HTTP/1.1 200');
       expect(withdrawn).toContain('HTTP/1.1 403');
+      expect(target.sourceProjectionReads()).toBe(1);
       await target.infer();
       expect(target.catalogReads()).toBe(2);
       target.changeCatalogRevision('later-provider-publication');
@@ -2478,7 +2442,6 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
         }),
         openConnectedServicesSource: createConnectedServicesBrokerSourceOpen({
           withRegistry: async (read) => await read(createBrokerProviderRegistry()),
-          readResource: async () => ({ ...brokerResource, source: brokerSource, revision: resourceRevision() }),
           resolveBindingIntentSelection,
           custody,
           ...(options.sourceCatalogError ? { readModelProjection: async () => ({ status: 'error' as const, error: options.sourceCatalogError! }) } : {}),

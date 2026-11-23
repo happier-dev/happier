@@ -3968,7 +3968,6 @@ export async function startDaemon(
                   }),
                   openConnectedServicesSource: createConnectedServicesBrokerSourceOpen({
                     withRegistry: withBrokerProviderRegistry,
-                    readResource,
                     resolveBindingIntentSelection: connectedAccountPurposeBindingRuntime.resolveBindingIntentSelection,
                     purposeBindings: connectedAccountPurposeBindingRuntime,
                     requestAuth: connectedAccountProviderRequestAuth,

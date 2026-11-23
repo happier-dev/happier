@@ -2,11 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { resolveManagedProviderBrokerPurpose, resolveTeamCredentialPurposeProvider } from './applicationProjection';
 import type { ProviderConnectionRegistryReader } from './providerConnectionSource';
-import {
-  type TeamCredentialResourceSummaryV1,
-  type TeamCredentialSourceBindingV1,
-  type TeamCredentialSourceMemberV1,
-} from '@happier-dev/protocol/teams';
+import type { TeamCredentialSourceBindingV1, TeamCredentialSourceMemberV1 } from '@happier-dev/protocol/teams';
 
 import { resolveManagedProviderPurposeBindingSnapshot } from '@/providers/managed/resolvePurposeBindingSnapshot';
 import { readConnectedAccountCatalogSources } from '@/providers/modelManagement/connectedAccountCatalog';
@@ -19,11 +15,7 @@ import { acquireBrokerSourceOperation } from './brokerSourceOperationAcquisition
 import { readConnectedAccountBrokerModelCatalog, type ReadConnectedAccountBrokerModelProjection } from './connectedAccountModelCatalog';
 import { observeCurrentConnectedServiceMaterializationPhase as observeMaterializationPhase } from '@/daemon/connectedServices/materialize/materializationPhase';
 import { openConnectedAccountProviderTransport } from './connectedAccountTransport';
-import {
-  isCpxBrokerApplication,
-  sameTeamCredentialBrokerSource,
-  teamCredentialBrokerResourceAcceptsMachine,
-} from './teamCredentialBrokerSourceOwner';
+import { isCpxBrokerApplication } from './teamCredentialBrokerSourceOwner';
 
 type ConnectedSource = Extract<
   TeamCredentialSourceBindingV1,
@@ -117,10 +109,6 @@ export function createConnectedServicesBrokerSourceMemberSelect(input: Readonly<
  */
 export function createConnectedServicesBrokerSourceOpen(input: Readonly<{
   withRegistry: ProviderConnectionRegistryReader;
-  readResource(
-    resourceId: string,
-    signal: AbortSignal,
-  ): Promise<TeamCredentialResourceSummaryV1 | null>;
   resolveBindingIntentSelection: ConnectedAccountPurposeBindingOwner['resolveBindingIntentSelection'];
   custody: ManagedProviderExplicitStartCustody;
   readModelProjection?: ReadConnectedAccountBrokerModelProjection;
@@ -131,17 +119,6 @@ export function createConnectedServicesBrokerSourceOpen(input: Readonly<{
 }>): (request: ConnectedOpenInput) => Promise<TeamCredentialBrokerOpenedSource
   | Readonly<{ unavailable: TeamCredentialBrokerSourceOpenFailureReason }>> {
   return async (request) => {
-    const readsResourceCurrent = async (
-      signal: AbortSignal,
-    ): Promise<boolean> => {
-      if (signal.aborted) return false;
-      const resource = await observeMaterializationPhase('binding_read', () => input.readResource(request.resourceId, signal));
-      // Source currentness is enabled, placement and source identity. The
-      // Home checks the admitted job's revision with its active-job lookup;
-      // a policy edit is not a source replacement.
-      return teamCredentialBrokerResourceAcceptsMachine(resource, request.brokerMachineId)
-        && sameTeamCredentialBrokerSource(resource.source, request.source);
-    };
     const chosen = await observeMaterializationPhase('group_selection', () => resolveConnectedServicesBrokerSelection(
       input.withRegistry,
       input.resolveBindingIntentSelection,
@@ -189,7 +166,6 @@ export function createConnectedServicesBrokerSourceOpen(input: Readonly<{
       };
       return await reopen(request.signal);
     }
-    if (!await readsResourceCurrent(request.signal)) return { unavailable: 'resource_not_current' };
     const purposeBindings = await resolveManagedProviderPurposeBindingSnapshot({
       implementationIdentity: request.application.implementationIdentity,
       connectedAccounts: [{
@@ -219,7 +195,6 @@ export function createConnectedServicesBrokerSourceOpen(input: Readonly<{
       projectModels: readCatalog, signal: request.signal })) : undefined;
     if (catalog === null) return { unavailable: 'projection_not_current' };
 
-    let sourceAdmitted = false;
     const reopen = async (signal: AbortSignal): Promise<TeamCredentialBrokerOpenedSource
       | Readonly<{ unavailable: TeamCredentialBrokerSourceOpenFailureReason }>> => {
       const acquired = await observeMaterializationPhase('materialization_invoke', () => acquireBrokerSourceOperation({
@@ -233,16 +208,12 @@ export function createConnectedServicesBrokerSourceOpen(input: Readonly<{
         // Selection already admitted the declared CPX application above.
         sourceEnvelopeTransport: 'cpx-v1',
         ...(catalog?.modelCatalogs ? { modelCatalogs: catalog.modelCatalogs } : {}),
-        isSourceCurrent: async (signal) => (
-          sourceAdmitted || await readsResourceCurrent(signal) && await selection.isCurrent(signal)
-          && (!readCatalog || (await readConnectedAccountBrokerModelCatalog({ request, purpose,
-            projectModels: readCatalog, signal }))?.sourceRevision === catalog?.sourceRevision)
-        ),
+        // Home owns live admission. Custody follows the admitted operation's cancellation.
+        isSourceCurrent: async (signal) => !signal.aborted,
         callerSignal: signal,
       }));
       if (!acquired) return { unavailable: 'managed_custody_unavailable' };
       if ('unavailable' in acquired) return acquired;
-      sourceAdmitted = true;
       const { projection, retire } = acquired;
       return Object.freeze({
         projection,

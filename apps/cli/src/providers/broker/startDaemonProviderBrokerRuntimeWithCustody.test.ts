@@ -45,7 +45,7 @@ import { logger } from '@/ui/logger';
 import { createBrokerProviderRegistry } from './providerBroker.testkit';
 import { createConnectedServicesBrokerSourceMemberSelect, createConnectedServicesBrokerSourceOpen } from './connectedServicesSource';
 import { createTeamCredentialBrokerSourceOwner } from './teamCredentialBrokerSourceOwner';
-import { readTeamCredentialBrokerResource, startDaemonProviderBrokerRuntimeWithCustody } from './startDaemonProviderBrokerRuntimeWithCustody';
+import { startDaemonProviderBrokerRuntimeWithCustody } from './startDaemonProviderBrokerRuntimeWithCustody';
 import { revalidateExternalProviderBrokerAuthorization } from './daemonProviderBrokerRuntime';
 
 const { axiosGet, axiosPost, readCursor, writeCursor } = vi.hoisted(() => ({
@@ -213,7 +213,6 @@ it('keeps admitted Team custody through a missing Home resource on wakes and clo
       withRegistry, resolveBindingIntentSelection: purposes.resolveBindingIntentSelection,
     }),
     openConnectedServicesSource: createConnectedServicesBrokerSourceOpen({ withRegistry, custody,
-      readResource: async (id, signal) => await readTeamCredentialBrokerResource(api, id, signal),
       resolveBindingIntentSelection: purposes.resolveBindingIntentSelection,
     }),
     openProviderConnectionSource: unused,
@@ -274,8 +273,8 @@ it('keeps admitted Team custody through a missing Home resource on wakes and clo
   };
   expect(homeReads).toEqual([]);
   for (const sessionId of currentConsumers) await infer(sessionId);
+  expect(resourceReads).toBe(0);
   homeReads.length = 0;
-  resourceReads = 0;
   await syncChange('savedSecretResource', 'unrelated-saved-secret');
   expect(invalidatedFacts).toEqual([['saved-secrets']]);
   expect(resourceReads).toBe(0);
