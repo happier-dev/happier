@@ -21,6 +21,7 @@ import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/action
 import { bindApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 import { ApprovalProfileV1Schema } from '@happier-dev/protocol/actions/approvalProfiles';
 import { createActionExecutor, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { DeploymentDeployInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
@@ -593,7 +594,10 @@ describe('Workflow approved operation private custody', () => {
       return { ok: true,
         environment: createDeploymentEnvironmentHeaderV1({ id: concrete.environmentId, serverId: 'home' }), targetLinks: [] };
     };
-    const executor = createActionExecutor({ deploymentAction,
+    const actionAutomations = createActionAutomationPortV1({
+      accountId, seed: async () => ({ v: 1, rows: [] }), settle: async () => {},
+    });
+    const executor = createActionExecutor({ deploymentAction, actionAutomations,
       resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(deploymentAction),
       readApprovedOperation: async request => request.runId ? reader({ ...request, runId: request.runId }) : null });
     const executionContext: ActionExecutorContext = { ...h.context, surface: 'agent', authority: 'account_automation',
@@ -607,7 +611,7 @@ describe('Workflow approved operation private custody', () => {
       approvedOperation: proof }).required).toBe(true);
     const beforePrepare = storage.calls.length;
     const prepared = await executor.prepare('deployments.deploy', concrete, executionContext);
-    expect(prepared.kind).toBe('ready');
+    expect(prepared.kind, prepared.kind === 'settled' ? JSON.stringify(prepared.result) : undefined).toBe('ready');
     expect(effects).toBe(0);
     expect(storage.calls.slice(beforePrepare).map(call => call.operation))
       .toEqual(['get', 'invocations.get', 'invocations.get', 'invocations.current']);
@@ -643,7 +647,7 @@ describe('Workflow approved operation private custody', () => {
       return { ok: true, environmentId: concrete.environmentId, revision: concrete.expectedRevision,
         deploymentId: 'direct-created-deployment', deploymentRevision: 1, state: 'queued' };
     };
-    const directExecutor = createActionExecutor({ deploymentAction: directTransport,
+    const directExecutor = createActionExecutor({ deploymentAction: directTransport, actionAutomations,
       resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(directTransport) });
     const executeIssued = async (context: ActionExecutorContext) => {
       const admission = await reader({ runId, actionId: 'deployments.deploy', input: concrete,
