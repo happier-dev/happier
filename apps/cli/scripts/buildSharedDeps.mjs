@@ -2014,6 +2014,7 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
         force: false,
         includeDevDependencies: false,
         timeoutMs: workspaceBuildTimeoutMs,
+        waitForAdmission: opts.waitForWorkspaceBuildAdmission,
         isolatePluginFailures: true,
         onPackageBuildStart: (context) => {
           const activeBuild = describePackageBuild(context);

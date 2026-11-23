@@ -180,6 +180,59 @@ process.exitCode = result.status ?? 1;
   assert.equal(isWorkspacePackageOutputCurrent(packageDir), true);
 });
 
+test('source SDK publication can refuse busy package-dist admission without queuing', { skip: process.platform !== 'linux', timeout: 30_000 }, async t => {
+  const root = mkdtempSync(join(tmpdir(), 'happier-source-sdk-admission-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repoRoot = join(root, 'workspace');
+  mkdirSync(repoRoot);
+  writePnpmWorkspaceFixture(repoRoot, { private: true, workspaces: ['packages/*'] });
+  writeFileSync(join(repoRoot, 'pnpm-lock.yaml'), '# fixture\n');
+  const packageDir = join(repoRoot, 'packages', 'plugin-sdk');
+  mkdirSync(join(packageDir, 'src'), { recursive: true });
+  writeFileSync(join(packageDir, 'src', 'index.ts'), 'export const ready = true;\n');
+  writeFileSync(join(packageDir, 'tsconfig.json'), '{}\n');
+  writeFileSync(join(packageDir, 'package.json'), JSON.stringify({
+    name: '@happier-dev/plugin-sdk', main: './dist/index.js', scripts: { build: 'fixture-build' },
+  }));
+  mkdirSync(join(repoRoot, 'apps', 'cli'), { recursive: true });
+  writeFileSync(join(repoRoot, 'apps', 'cli', 'package.json'), JSON.stringify({
+    name: '@fixture/cli', dependencies: { '@happier-dev/plugin-sdk': 'workspace:*' },
+  }));
+  for (const app of ['server', 'ui']) {
+    const appDir = join(repoRoot, 'apps', app);
+    mkdirSync(appDir, { recursive: true });
+    writeFileSync(join(appDir, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
+  }
+  // The process boundary represents a saturated native admission host. It
+  // refuses nonblocking requests and identifies a request that would queue.
+  const launcher = join(root, 'busy-admission.sh');
+  writeFileSync(launcher, `#!/bin/sh
+for arg do
+  case "$arg" in
+    --no-wait) printf '%s\\n' 'heavyweight admission refused (HSTACK_MEMORY_BUSY)' >&2; exit 75 ;;
+    --) break ;;
+  esac
+done
+printf '%s\\n' 'package-dist would enter its admission queue' >&2
+exit 75
+`);
+  const options = {
+    repoRoot, workspaceNames: ['plugin-sdk'], stampPath: join(root, 'source-dev.json'),
+    includeRuntimeDependencies: false, publishBundledPluginArtifacts: false,
+    prepareBundledPluginCompilerInputs: false,
+    env: { ...buildNativeAdmissionFixtureEnv(), CI: '', HAPPIER_DEV_TARGET_EXECUTION: '1' },
+    ensureWorkspacePackagesBuiltByNameImpl: (workspace, names, options) => ensureWorkspacePackagesBuiltByName(workspace, names, {
+      ...options, signal: t.signal,
+      workspaceBuildBoundary: { ...defaultWorkspaceBuildBoundary, workerLauncherPath: launcher },
+    }),
+  };
+  await assert.rejects(syncSharedDepsForSourceDev({ ...options, waitForWorkspaceBuildAdmission: false }),
+    { code: 'EEXIT', exitCode: 75, message: /\bHSTACK_MEMORY_BUSY\b/ });
+  await assert.rejects(syncSharedDepsForSourceDev(options),
+    { code: 'EEXIT', exitCode: 75, message: /would enter its admission queue/ });
+  assert.equal(existsSync(join(packageDir, 'dist', 'index.js')), false);
+});
+
 test('compound build:packages publishes the real transitive closure before the raw Vitest admission', { skip: process.platform !== 'linux', timeout: 30_000 }, async t => {
   const root = mkdtempSync(join(tmpdir(), 'happier-compound-build-admission-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));

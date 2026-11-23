@@ -334,6 +334,8 @@ async function materializeSourceCliBundledPrepublicationPackages(
     workspaceNames: packageNames.map((name) => name.slice('@happier-dev/'.length)),
     publishBundledPluginArtifacts: false,
     prepareBundledPluginCompilerInputs: false,
+    // An interactive registration can retry when the native broker has capacity.
+    waitForWorkspaceBuildAdmission: false,
   });
   return await materializePrepublicationAuthorWorkspacePackages({
     projectRoot,

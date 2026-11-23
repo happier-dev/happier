@@ -1638,6 +1638,7 @@ async function ensureWorkspacePackageBuilt(packageDir, {
   dependencyDirs,
   signal,
   inheritedAdmission,
+  waitForAdmission,
 }) {
   signal?.throwIfAborted();
   const packageJsonPath = join(packageDir, 'package.json');
@@ -1709,6 +1710,7 @@ async function ensureWorkspacePackageBuilt(packageDir, {
         admissionRequired: requiresTypeScriptAdmission({ env }),
         admissionClass: await resolveWorkspacePackageBuildAdmissionClass({ packageJson, cwd: packageDir, env, repoRoot: monorepoRoot }),
         inheritedAdmission,
+        waitForAdmission,
         stdio: ['inherit', 'pipe', 'inherit'], stderrTail: true,
         captureStdout: false,
         onStdout: consumeStdout,
@@ -1824,6 +1826,7 @@ async function ensureWorkspacePackageNamesBuiltPass(monorepoRoot, packageNames, 
   buildMode,
   maxConcurrentBuilds,
   inheritedAdmission,
+  waitForAdmission,
   isolatePluginFailures = false,
   signal,
 }) {
@@ -1894,6 +1897,7 @@ async function ensureWorkspacePackageNamesBuiltPass(monorepoRoot, packageNames, 
             dependencyDirs,
             signal,
             inheritedAdmission,
+            waitForAdmission,
           });
         });
       } catch (error) {
@@ -1945,6 +1949,7 @@ export async function ensureWorkspacePackagesBuiltByName(monorepoPath, packageNa
   signal,
   inheritedAdmission = false,
   batchAdmission = true,
+  waitForAdmission,
   visitedNames = [],
 } = {}) {
   signal?.throwIfAborted();
@@ -1963,7 +1968,7 @@ export async function ensureWorkspacePackagesBuiltByName(monorepoPath, packageNa
   if (batchAdmission && !inheritedAdmission && workspaceBuildBoundary.workerModule && requiresTypeScriptAdmission({ env })) {
     const batch = await withSingleTrailingBuildPass({ run: () => buildWorkspacePackageNamesInOneAdmission(monorepoRoot, normalizedPackageNames, {
       ...batchOptions, env: { ...env, [WORKSPACE_BUILD_MODE_ENV]: resolvedBuildMode }, workspaceBuildBoundary,
-      onPackageBuildStart, onPackageBuildDone, onPackageBuildResult, signal }) });
+      onPackageBuildStart, onPackageBuildDone, onPackageBuildResult, signal, waitForAdmission }) });
     if (batch) return { ok: true, ...batch, skipped: [] };
   }
   const result = await ensureWorkspacePackageNamesBuilt(monorepoRoot, normalizedPackageNames, {
@@ -1982,6 +1987,7 @@ export async function ensureWorkspacePackagesBuiltByName(monorepoPath, packageNa
     isolatePluginFailures,
     signal,
     inheritedAdmission,
+    waitForAdmission,
     visitedNames,
   });
   return { ok: true, ...result, skipped: [] };
@@ -1993,7 +1999,7 @@ export async function ensureWorkspacePackagesBuiltByName(monorepoPath, packageNa
  * when every package is current (no admission; the caller reports already-built results as before).
  */
 async function buildWorkspacePackageNamesInOneAdmission(monorepoRoot, packageNames, { env, workspaceBuildBoundary,
-  onPackageBuildStart, onPackageBuildDone, onPackageBuildResult, signal, ...options }) {
+  onPackageBuildStart, onPackageBuildDone, onPackageBuildResult, signal, waitForAdmission, ...options }) {
   const { packageDirsByName, packageJsonByDir } = await readWorkspacePackageGraph(monorepoRoot);
   const closure = [...await collectWorkspaceDependencyClosure(packageNames, packageDirsByName, {
     includeDevDependencies: options.includeDevDependencies, packageJsonByDir })].sort();
@@ -2029,7 +2035,7 @@ async function buildWorkspacePackageNamesInOneAdmission(monorepoRoot, packageNam
   try {
     const terminal = await runWorkspaceBuildAdmission({ command: process.execPath,
       args: [fileURLToPath(import.meta.url), '--workspace-package-batch-worker', JSON.stringify(request)],
-      locks: resources.locks, admissionClass: resources.admissionClass, admissionRequired: true,
+      locks: resources.locks, admissionClass: resources.admissionClass, admissionRequired: true, waitForAdmission,
       ...(workspaceBuildBoundary.workerLauncherPath ? { launcherPath: workspaceBuildBoundary.workerLauncherPath } : {}),
       cwd: monorepoRoot, env, signal, stdio: ['inherit', 'pipe', 'inherit'], stderrTail: true, captureStdout: false,
       onStdout: chunk => {

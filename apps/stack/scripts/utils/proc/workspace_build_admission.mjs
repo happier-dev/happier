@@ -85,7 +85,7 @@ export async function hasInheritedPackageBuildCustody(env) {
 export function resolveWorkspaceBuildAdmissionInvocation({ command, args = [], locks = [],
   repoDir = sourceRoot, launcherPath = resolve(repoDir, 'apps/stack/bin/hstack-exec'), env = process.env,
   admissionClass = 'package-dist', admissionRequired = true, devStartup = false,
-  inheritedAdmission = false }) {
+  inheritedAdmission = false, waitForAdmission = true }) {
   if (inheritedAdmission) {
     const workerArgs = [workerPath, '--inherited-resources', JSON.stringify(locks), launcherPath, admissionClass, '--', command, ...args];
     return { command: process.execPath, args: workerArgs };
@@ -102,13 +102,14 @@ export function resolveWorkspaceBuildAdmissionInvocation({ command, args = [], l
     ? { command: process.execPath, args: [workerPath, '--standalone', JSON.stringify(locks), launcherPath, admissionClass, '--', command, ...args] }
     : { command: '/bin/sh', args: [launcherPath, '--heavyweight-admission', `--class=${admissionClass}`,
       `--machine=${env.HAPPIER_DEV_TARGET_EXECUTION === '1' ? 'worker' : 'local'}`,
-      `--workspace-locks=${JSON.stringify(locks)}`, '--', command, ...args] };
+      `--workspace-locks=${JSON.stringify(locks)}`,
+      ...(waitForAdmission ? [] : ['--no-wait']), '--', command, ...args] };
 }
 
 export async function runWorkspaceBuildAdmission({ command, args = [], locks = [], cwd = process.cwd(),
   repoDir = sourceRoot, launcherPath = resolve(repoDir, 'apps/stack/bin/hstack-exec'), env = process.env,
   signal, admissionClass = 'package-dist', admissionRequired = true, devStartup = false,
-  inheritedAdmission = false,
+  inheritedAdmission = false, waitForAdmission,
   stdio = 'inherit', onStdout, onStderr, captureStdout = true, captureStderr = true, stderrTail = false }) {
   // A worker whose result file is its outcome can still end before writing it
   // (an admission refusal, a crash, a signal). Its cause is on stderr: keep
@@ -116,7 +117,7 @@ export async function runWorkspaceBuildAdmission({ command, args = [], locks = [
   const tailsStderr = stderrTail && (stdio === 'inherit' || (Array.isArray(stdio) && stdio[2] === 'inherit'));
   if (tailsStderr) stdio = Array.isArray(stdio) ? [stdio[0], stdio[1], 'pipe'] : ['inherit', 'inherit', 'pipe'];
   const invocation = resolveWorkspaceBuildAdmissionInvocation({ command, args, locks, repoDir,
-    launcherPath, env, admissionClass, admissionRequired, devStartup, inheritedAdmission });
+    launcherPath, env, admissionClass, admissionRequired, devStartup, inheritedAdmission, waitForAdmission });
   if (isWorkspaceBuildStartup({ env, devStartup })) env = { ...env, HAPPIER_HSTACK_DISPATCH_CONTROL: '1' };
   return await new Promise(resolveResult => {
     const child = spawnForegroundCommand(invocation.command, invocation.args, {
