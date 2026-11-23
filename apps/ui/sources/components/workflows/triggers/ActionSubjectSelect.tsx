@@ -86,6 +86,7 @@ export const ActionSubjectSelect = React.memo(function ActionSubjectSelect(
     machineId: string | null;
     serverId: string | null;
     onChange: (subject: AutomationSubjectV1 | undefined) => void;
+    onSubjectNamed?: (subject: Readonly<{ key: string; label: string }> | null) => void;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -148,6 +149,10 @@ export const ActionSubjectSelect = React.memo(function ActionSubjectSelect(
   }, [savedKey, savedUnnamed, lifetime]);
   const selectedKey =
     props.subject === undefined ? ANY : automationSubjectKeyV1(props.subject);
+  const { onSubjectNamed } = props;
+  React.useEffect(() => {
+    onSubjectNamed?.(chosen?.key === selectedKey ? chosen : null);
+  }, [chosen, onSubjectNamed, selectedKey]);
   const iconColor = theme.colors.text.secondary;
   const items = React.useMemo<ValueFieldSelectItem[]>(() => {
     const listed = read.items.map((item) => {

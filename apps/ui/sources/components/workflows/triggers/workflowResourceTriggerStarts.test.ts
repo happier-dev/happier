@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { ActionDiscoveryDefinitionSummaryV1 } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import { serializeActionSpec } from '@happier-dev/protocol/actions/actionCatalog';
 import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { PluginEventAutomationDeclarationV1Schema } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
 import { listWorkflowStepActionSpecs } from '../presentation/workflowActionCatalog';
-import { buildResourceWorkflowTriggerStartOptions } from './workflowTriggerStarts';
+import { buildResourceWorkflowTriggerStartOptions, formatWorkflowLinkStartLabel } from './workflowTriggerStarts';
 
 const subject = { kind: 'environment', serverId: 'home', environmentId: 'production' } as const;
 const action = serializeActionSpec(getActionSpec('deployments.deploy'), { includeOutputSchema: false });
@@ -17,6 +18,18 @@ const event = (localId: string, subjectKinds: readonly ('environment' | 'machine
 });
 
 describe('resource Link When choices', () => {
+  it('names each restore from the Database resource perspective while preserving the two Action phases', () => {
+    const discovery = serializeActionSpec(getActionSpec(DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1), { includeOutputSchema: false });
+    const actions = listWorkflowStepActionSpecs(null, null, undefined, [{
+      ...discovery, automation: { before: true, after: true, workflowStep: true, subjectKinds: ['database'] },
+    }], 'automation');
+    const database = { kind: 'database', serverId: 'home', target: { kind: 'environment', environmentId: 'production', service: 'db', database: 'orders' } as const } as const;
+    const options = buildResourceWorkflowTriggerStartOptions({ subject: database, actions, events: [], machineId: 'runner' });
+    expect(options.map(option => [option.relation, formatWorkflowLinkStartLabel(option)])).toEqual([
+      ['before', 'Before each restore of this database'], ['after', 'After each restore of this database'],
+    ]);
+    expect(options.map(option => option.subject)).toEqual([database, database]);
+  });
   it('uses admitted phase and subject metadata, with one after row and declared Events requiring source setup', () => {
     const discovery: ActionDiscoveryDefinitionSummaryV1[] = [{ ...action, automation: { before: false, after: true, workflowStep: true,
       subjectKinds: ['environment', 'app'] } }];

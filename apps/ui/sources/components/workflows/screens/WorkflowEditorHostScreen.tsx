@@ -31,7 +31,7 @@ import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAcc
 import { matchesWorkflowAcceptedDefinitionV1 } from '@happier-dev/protocol/workflows/workflowValidationV1';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { readDeviceTimeZone, type TriggerWhenValue } from '../triggers/sessionTriggerForm';
-import { addWorkflowTriggerWhen } from '../triggers/workflowTriggerStarts';
+import { addWorkflowTriggerWhen, removeWorkflowTriggerRow } from '../triggers/workflowTriggerStarts';
 import { WORKFLOW_STARTER_EXAMPLES_V1, type WorkflowStarterExampleSelection, type WorkflowStarterExampleV1 } from '@happier-dev/protocol/workflows/builtins/examples';
 import { getBuiltinWorkflowCatalogV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
 import type { ArtifactCallerAccessV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
@@ -2004,6 +2004,22 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     const onChangeTriggerDraft = useEventCallback((next: React.ComponentProps<typeof WorkflowTriggerSection>['draft']) => {
         editMountedDraft({ expectedDraftRevision: history.getRevision(), settings: { triggers: triggers.captureSnapshot(next) } }, t('workflows.editor.history.triggers'));
     });
+    const canUndoAddedTrigger = React.useCallback((clientId: string) => (
+        triggers.draft.adds.some(add => add.clientId === clientId)
+        || triggers.incomplete.pending.some(row => row.clientId === clientId)
+    ), [triggers.draft.adds, triggers.incomplete.pending]);
+    const onUndoAddedTrigger = useEventCallback((clientId: string) => {
+        if (!canUndoAddedTrigger(clientId)) return;
+        const current = snapshotRef.current;
+        if (current === null) return;
+        const currentDraft = triggers.draft;
+        const next = removeWorkflowTriggerRow(currentDraft, { kind: 'new', clientId });
+        editMountedDraft({ expectedDraftRevision: history.getRevision(), settings: {
+            triggers: triggers.captureSnapshot(next),
+            incompleteTriggers: { ...current.incompleteTriggers,
+                pending: current.incompleteTriggers.pending.filter(row => row.clientId !== clientId) },
+        } }, t('workflows.editor.history.triggers'));
+    });
     const triggerIncomplete = React.useMemo(() => ({ state: triggers.incomplete, onChange: triggers.updateIncomplete }),
         [triggers.incomplete, triggers.updateIncomplete]);
 
@@ -2210,7 +2226,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                                 editMountedDraft({ expectedDraftRevision: history.getRevision(),
                                     settings: { incompleteTriggers: update(current.incompleteTriggers) } }, t('workflows.editor.history.triggers'));
                             } }),
-                        hasTriggerRow: triggers.hasTriggerRow,
+                        hasTriggerRow: triggers.hasTriggerRow, canUndoAddedTrigger, onUndoAddedTrigger,
                         resultDecides: formatTriggerResultDecides(projectWorkflowTriggerRows(triggers.set, triggers.draft).map((row) => row.trigger)),
                         triggersSection: <WorkflowEditorTriggerSection draftStore={bodyDraftStore} {...section} />,
                         triggersSentence: <WorkflowEditorTriggerSection draftStore={bodyDraftStore} {...section} presentation="sentence" /> };

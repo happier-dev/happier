@@ -174,8 +174,8 @@ export function useWorkflowEventMatch(
   return {
     selectable: Object.keys(subjects).length > 0, selected, subjects, toggle, match,
     projectLine: subjects.project ? { key: 'project', label: t('workflows.events.eventProject'), value: subjects.project.label } : null,
-    startsLine: fact === null ? null : readWorkflowEventStartsLine(fact, match),
-    addsLine: fact === null ? null : readWorkflowEventAddsLine(fact, match),
+    startsLine: fact === null ? null : readWorkflowEventStartsLine(fact, match, machineName),
+    addsLine: fact === null ? null : readWorkflowEventAddsLine(fact, match, machineName),
   };
 }
 

@@ -1,5 +1,5 @@
 import { readAutomationEventSubjectKindsV1, type PluginEventAutomationDeclarationV1 } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
-import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import type { WorkflowActionSpec } from '../presentation/workflowActionCatalog';
@@ -14,6 +14,8 @@ import { t } from '@/text';
 
 import { buildTriggerDefinition, createDefaultWhen, isSessionLifecycleWhen, SESSION_TRIGGER_WHEN_KINDS, type TriggerWhenValue } from './sessionTriggerForm';
 import { ACTION_PHASE_GLYPHS, resolveTriggerEventGroup, TRIGGER_LIFECYCLE_GLYPHS } from './triggerEventGroups';
+import { isDeployFinishedTrigger } from './formatTriggerSummary';
+export { isDeployFinishedTrigger } from './formatTriggerSummary';
 import { editWorkflowTriggerDraft, type WorkflowTriggerDraft } from './workflowTriggerDraft';
 
 type SessionEventKind = keyof typeof AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1;
@@ -62,6 +64,15 @@ export function buildActionWorkflowTriggerStartOptions(params: Readonly<{
         return [{ id: `${actionStartId(phase)}:${action.id}`, label: action.title,
             relation: phase, when, setupRequired: false as const, trigger: { ...when, enabled: true } }];
     }));
+}
+
+export function formatWorkflowLinkStartLabel(option: WorkflowLinkTriggerStartOption): string {
+    if (option.relation === 'event') return option.label;
+    const before = option.relation === 'before';
+    if ('subject' in option && option.subject.kind === 'database' && option.when.actionIds.includes(DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1)) {
+        return t(before ? 'workflows.triggers.link.beforeDatabaseRestore' : 'workflows.triggers.link.afterDatabaseRestore');
+    }
+    return t(before ? 'workflows.triggers.link.beforeAction' : 'workflows.triggers.link.afterAction', { action: option.label });
 }
 
 export function buildResourceWorkflowTriggerStartOptions(params: Readonly<{
@@ -138,14 +149,23 @@ type ActionPhase = (typeof ACTION_PHASES)[number];
 const actionStartId = (phase: ActionPhase) => `action:${phase}`;
 const DEPLOY_FINISHED_START_ID = `${actionStartId('after')}:${DEPLOYMENT_DEPLOY_ACTION_ID_V1}`;
 
-export function isDeployFinishedTrigger(when: Extract<TriggerWhenValue, { kind: 'action' }>): boolean {
-    return when.phase === 'after' && when.actionIds.length === 1 && when.actionIds[0] === DEPLOYMENT_DEPLOY_ACTION_ID_V1;
-}
-
 function isDeployTerminalEvent(event: WorkflowTriggerEventOption): boolean {
     return event.automation?.completionOutcome !== undefined
         && event.automation.completesActionIds?.includes(DEPLOYMENT_DEPLOY_ACTION_ID_V1) === true;
 }
+const NATIVE_EVENT_GROUPS = [
+    'groupDeployments', 'groupHealthChecks', 'groupMachines', 'groupDatabasesAndBackups',
+] as const;
+
+function readNativeEventGroup(event: WorkflowTriggerEventOption): (typeof NATIVE_EVENT_GROUPS)[number] | undefined {
+    const kinds = readAutomationEventSubjectKindsV1(event.automation);
+    if (kinds.includes('healthCheck')) return 'groupHealthChecks';
+    if (kinds.includes('database') || kinds.includes('backup')) return 'groupDatabasesAndBackups';
+    if (isDeployTerminalEvent(event) || kinds.includes('environment') || kinds.includes('app')) return 'groupDeployments';
+    if (event.automation?.source.nativeActivity?.kind === 'machinePresence' || kinds.includes('machine')) return 'groupMachines';
+    return undefined;
+}
+
 const sessionId = (kind: SessionEventKind) => `session:${kind}`;
 const eventId = (eventRef: Readonly<{ pluginId: string; localId: string }>) => `event:${eventRef.pluginId}/${eventRef.localId}`;
 
@@ -170,11 +190,9 @@ export function readWorkflowTriggerStartId(when: TriggerWhenValue): string | nul
 }
 
 /**
- * Every start in menu order, decided once here. Built-in triggers come first, grouped by resource kind in
- * the fixed order of lab round 1116c "Add a trigger, grouped once" (Time, Sessions, Projects, Machines,
- * Deployments, Health checks, Databases and backups, Sites, Workflows, Accounts, Actions; today Happier ships
- * Time, Sessions and Actions), then each plugin's
- * Events grouped by plugin and sorted by plugin name, in declaration order within a plugin. A resource
+ * Every start in menu order, decided here. Time, Actions and Sessions come first, followed by the
+ * declared resource categories in the Plan 05 order. Other Events are grouped by plugin and
+ * sorted by plugin name, in declaration order within a plugin. A resource
  * context moves its own starts to the front under its name. `current` keeps a saved start that the
  * catalog no longer offers (an Event whose plugin is gone, "A session starts") choosable as it is.
  */
@@ -185,6 +203,10 @@ export function buildWorkflowTriggerStartOptions(
 ): readonly WorkflowTriggerStartOption[] {
     const options: WorkflowTriggerStartOption[] = [
         { id: SCHEDULE_ID, group: t('workflows.triggers.card.groupTime'), section: 'builtin', title: t('workflows.triggers.card.schedule'), glyph: 'clock' },
+        { id: actionStartId('before'), group: t('workflows.triggers.card.groupActions'), section: 'builtin',
+            title: t('workflows.triggers.card.actionBefore'), glyph: ACTION_PHASE_GLYPHS.before },
+        { id: actionStartId('after'), group: t('workflows.triggers.card.groupActions'), section: 'builtin',
+            title: t('workflows.triggers.card.actionAfter'), glyph: ACTION_PHASE_GLYPHS.after },
         ...WORKFLOW_SESSION_EVENT_KINDS.map((kind): WorkflowTriggerStartOption => ({
             id: sessionId(kind), group: t('workflows.triggers.card.groupSessions'), section: 'builtin',
             title: t(`workflows.triggers.card.sessionStart.${kind}`), glyph: TRIGGER_LIFECYCLE_GLYPHS[kind],
@@ -193,35 +215,33 @@ export function buildWorkflowTriggerStartOptions(
             kind === 'prComment' || kind === 'ciFailed' ? [{
                 group: t('workflows.triggers.card.groupSessions'), section: 'builtin',
                 ...resolveTriggerEventGroup({ kind }), id: `session:${kind}` }] : [])),
-        // Before and after an Action (PROGRAM D1–D3), the built-ins' last group: the Action and its subject are
-        // chosen on the trigger's own rows.
-        { id: actionStartId('before'), group: t('workflows.triggers.card.groupActions'), section: 'builtin',
-            title: t('workflows.triggers.card.actionBefore'), glyph: ACTION_PHASE_GLYPHS.before },
-        { id: actionStartId('after'), group: t('workflows.triggers.card.groupActions'), section: 'builtin',
-            title: t('workflows.triggers.card.actionAfter'), glyph: ACTION_PHASE_GLYPHS.after },
     ];
-    // Named plugins come first; unnamed plugins keep their declaration order without a group heading.
-    const plugins = [...new Map(events.map((event) => [event.eventRef.pluginId, event.pluginName])).entries()]
+    let offeredDeploy = false;
+    const append = (event: WorkflowTriggerEventOption, group: string, section: WorkflowTriggerStartOption['section']) => {
+        if (eventId(event.eventRef) === eventId(DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1)) return;
+        if (isDeployTerminalEvent(event)) {
+            if (!offeredDeploy) {
+                options.push({ id: DEPLOY_FINISHED_START_ID, group, section,
+                    title: t('workflows.triggers.card.deployFinished'), glyph: 'lightning' });
+                offeredDeploy = true;
+            }
+            return;
+        }
+        options.push({ id: eventId(event.eventRef), group, section, title: event.title, glyph: 'lightning' });
+    };
+    const grouped = events.map(event => ({ event, group: readNativeEventGroup(event) }));
+    for (const group of NATIVE_EVENT_GROUPS) {
+        for (const row of grouped) if (row.group === group) append(row.event, t(`workflows.triggers.card.${group}`), 'builtin');
+    }
+    const pluginEvents = grouped.flatMap(row => row.group === undefined ? [row.event] : []);
+    // Remaining plugins keep their declaration order within each named plugin group.
+    const plugins = [...new Map(pluginEvents.map((event) => [event.eventRef.pluginId, event.pluginName])).entries()]
         .sort(([, left], [, right]) => {
             if (left === null) return right === null ? 0 : 1;
             return right === null ? -1 : left.localeCompare(right);
         });
-    let offeredDeploy = false;
     for (const [pluginId, pluginName] of plugins) {
-        for (const event of events) {
-            if (event.eventRef.pluginId !== pluginId) continue;
-            if (isDeployTerminalEvent(event)) {
-                if (!offeredDeploy) {
-                    options.push({ id: DEPLOY_FINISHED_START_ID, group: pluginName ?? '', section: 'plugins',
-                        title: t('workflows.triggers.card.deployFinished'), glyph: 'lightning' });
-                    offeredDeploy = true;
-                }
-                continue;
-            }
-            // Receipt invalidation serves preview publication. New deployment starters represent terminal outcomes.
-            if (eventId(event.eventRef) === eventId(DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1)) continue;
-            options.push({ id: eventId(event.eventRef), group: pluginName ?? '', section: 'plugins', title: event.title, glyph: 'lightning' });
-        }
+        for (const event of pluginEvents) if (event.eventRef.pluginId === pluginId) append(event, pluginName ?? '', 'plugins');
     }
     const currentId = current ? readWorkflowTriggerStartId(current.when) : null;
     if (current && currentId !== null && !options.some((option) => option.id === currentId)) {

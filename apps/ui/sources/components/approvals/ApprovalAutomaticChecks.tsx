@@ -12,6 +12,8 @@ import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
+import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useWorkflowReferenceTitles } from '@/components/workflows/presentation/workflowReferenceOptions';
 import { useApprovalAccountLabel } from '@/components/approvals/ApprovalRequesterConfirmationSection';
 import { resolveUnknownAccountActorName } from '@/sync/domains/account/accountActorPresentation';
@@ -195,6 +197,7 @@ export const ApprovalAutomaticChecks = React.memo(
       onOpenRoute?: (route: string) => void;
       /** The settled request's failure reason, which a refusal's block carries (the card then leaves it out). */
       failureReason?: string | null;
+      accountLifetime?: ServerAccountScopeLifetime | null;
       testID?: string;
     }>,
   ) {
@@ -205,7 +208,7 @@ export const ApprovalAutomaticChecks = React.memo(
       () => checks.selected.map((selected) => selected.workflowId),
       [checks.selected],
     );
-    const resolveTitle = useWorkflowReferenceTitles(workflowRefs, true);
+    const resolveTitle = useWorkflowReferenceTitles(workflowRefs, true, props.accountLifetime);
     const selectedByKey = React.useMemo(
       () =>
         new Map(
@@ -381,7 +384,10 @@ export const ApprovalAutomaticChecks = React.memo(
     } else if (checks.phase === 'refused' && failed) {
       // The refusal settled the request: its reason leads the block (said once, here), the check's name and Run beneath
       // (lab `wait-v-arefused`). Without a reason the block says which check refused or couldn't run.
-      const reason = failed.reason ?? props.failureReason ?? null;
+      const rawReason = failed.reason ?? props.failureReason ?? null;
+      const reason = rawReason === 'content_unavailable'
+        ? presentActionFailureOutcome({ error: rawReason, errorCode: rawReason }).reason
+        : rawReason;
       body = (
         <View style={[styles.block, styles.dangerBlock]} testID={props.testID ? `${props.testID}:refused` : undefined}>
           {reason ? (

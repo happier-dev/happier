@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { automationSubjectKeyV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { AutomationActionOutcomeV1Schema } from '@happier-dev/protocol/automations/automationActionIdentityV1';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
@@ -44,6 +45,8 @@ import { t } from '@/text';
 import { SessionLifecycleFilterFields } from './SessionLifecycleFilterFields';
 
 import {
+  DEPLOY_OUTCOME_FIELD,
+  readDeployOutcomeSelection,
   formatNextScheduledRunTime,
   formatTriggerInterval,
   formatTriggerSummary,
@@ -174,6 +177,10 @@ export function WorkflowTriggerBlock(
 ): React.ReactElement {
   const { theme } = useUnistyles();
   const { when } = props;
+  const [namedSubject, setNamedSubject] = React.useState<Readonly<{ key: string; label: string }> | null>(null);
+  const title = when?.kind === 'action' && isDeployFinishedTrigger(when)
+    ? formatTriggerSummary(when, { subjectTitle: subject => namedSubject?.key === automationSubjectKeyV1(subject) ? namedSubject.label : undefined })
+    : props.title;
   const startId = when === null ? null : readWorkflowTriggerStartId(when);
   const selected =
     props.startOptions.find((option) => option.id === startId) ?? null;
@@ -223,7 +230,7 @@ export function WorkflowTriggerBlock(
           color={theme.colors.text.secondary}
         /></View>
         <Text testID={`${props.testID}-title`} style={styles.title}>
-          {props.title}
+          {title}
         </Text>
         <View style={styles.actions}>
           <Switch
@@ -231,10 +238,10 @@ export function WorkflowTriggerBlock(
             value={props.enabled && !props.incomplete}
             disabled={props.onToggleEnabled === undefined}
             onValueChange={() => props.onToggleEnabled?.()}
-            accessibilityLabel={props.title}
+            accessibilityLabel={title}
           />
           <WorkflowBlockActionsMenu
-            blockLabel={props.title}
+            blockLabel={title}
             actions={actions}
             testID={`${props.testID}-more`}
           />
@@ -248,7 +255,7 @@ export function WorkflowTriggerBlock(
           // Created from the run it follows, or from the Session whose pull request it watches; here
           // it is listed, turned off or removed.
           <Text testID={`${props.testID}-starts`} style={styles.value}>
-            {when === null ? '' : formatListedWhen(when)}
+            {when?.kind === 'pluginEvent' ? title : when === null ? '' : formatListedWhen(when)}
           </Text>
         ) : (
           <View style={styles.selectBox}>
@@ -306,6 +313,7 @@ export function WorkflowTriggerBlock(
         <ActionTrackRows
           testID={props.testID}
           when={when}
+          onSubjectNamed={isDeployFinishedTrigger(when) ? setNamedSubject : undefined}
           machineId={props.machineId}
           serverId={props.serverId}
           onChange={props.onChangeWhen}
@@ -345,12 +353,11 @@ export function WorkflowTriggerBlock(
  * while it waits, **If it fails** (Refuse · Let a person approve), each with the one line that says what
  * it does. After carries no wait policy (P02).
  */
-const deployOutcomeField = '/outcome';
-
 function ActionTrackRows(
   props: Readonly<{
     testID: string;
     when: ActionWhen;
+    onSubjectNamed?: (subject: Readonly<{ key: string; label: string }> | null) => void;
     machineId: string | null;
     serverId: string | null;
     onChange: (next: TriggerWhenValue) => void;
@@ -409,7 +416,7 @@ function ActionTrackRows(
               const { subject, filter, ...rest } = when;
               const next = catalog.specs.find((spec) => spec.id === id)?.operand;
               const predicates = isDeployFinishedTrigger(when)
-                ? filter?.all.filter(clause => clause.field !== deployOutcomeField)
+                ? filter?.all.filter(clause => clause.field !== DEPLOY_OUTCOME_FIELD)
                 : filter?.all;
               props.onChange({ ...rest, actionIds: [id],
                 ...(subject !== undefined && isActionOperandSubject(next, subject) ? { subject } : {}),
@@ -429,6 +436,7 @@ function ActionTrackRows(
               testID={`${props.testID}-subject`}
               operand={operand}
               subject={when.subject}
+              onSubjectNamed={props.onSubjectNamed}
               machineId={props.machineId}
               serverId={props.serverId}
               onChange={(subject) => {
@@ -462,9 +470,7 @@ export function ActionTriggerPolicyRows(
   const asks = when.onFailure === 'ask';
   if (isDeployFinishedTrigger(when)) {
     const clauses = when.filter?.all ?? [];
-    const outcomeClauses = clauses.filter(clause => clause.field === deployOutcomeField);
-    const outcome = outcomeClauses.length === 1 && outcomeClauses[0]?.op === 'eq'
-      ? AutomationActionOutcomeV1Schema.safeParse(outcomeClauses[0].value) : null;
+    const outcome = readDeployOutcomeSelection(when);
     const label = t('workflows.triggers.card.deployOutcome.label');
     return (
       <TrackRow label={label} trackKey={`${props.testID}-outcome`}>
@@ -478,14 +484,14 @@ export function ActionTriggerPolicyRows(
                 id: kind, title: t(`workflows.triggers.card.deployOutcome.${kind}`),
               })),
             ]}
-            selectedId={outcome?.success ? outcome.data : outcomeClauses.length === 0 ? 'any' : null}
+            selectedId={outcome === 'custom' ? null : outcome}
             placeholder={t('workflows.triggers.card.deployOutcome.custom')}
             onSelect={id => {
-              const next = clauses.filter(clause => clause.field !== deployOutcomeField);
+              const next = clauses.filter(clause => clause.field !== DEPLOY_OUTCOME_FIELD);
               if (id !== 'any') {
                 const selected = AutomationActionOutcomeV1Schema.safeParse(id);
                 if (!selected.success) return;
-                next.push({ field: deployOutcomeField, op: 'eq', value: selected.data });
+                next.push({ field: DEPLOY_OUTCOME_FIELD, op: 'eq', value: selected.data });
               }
               const { filter: _filter, ...rest } = when;
               props.onChange(next.length === 0 ? rest : { ...rest, filter: { v: 1, all: next } });

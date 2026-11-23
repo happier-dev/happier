@@ -132,7 +132,9 @@ export function readWorkflowEventLinkWhen(fact: WorkflowActivityFact, match?: Wo
   return when !== null && isSessionLifecycleWhen(when) ? when : null;
 }
 
-function readWorkflowEventStartClause(fact: WorkflowActivityFact, match: WorkflowEventMatch | null | undefined): string | null {
+function readWorkflowEventStartClause(fact: WorkflowActivityFact, match: WorkflowEventMatch | null | undefined, machineName?: string): string | null {
+  if (fact.kind === 'machine') return t(fact.event === 'online' ? 'workflows.events.whenMachineOnline' : 'workflows.events.whenMachineOffline',
+    { machine: machineName ?? t('workflows.events.someMachine') });
   const trigger = readWorkflowEventTrigger(fact);
   if (trigger === null || (trigger.kind !== 'sessionLifecycle' && trigger.kind !== 'runLifecycle')) return null;
   const useUnscopedSessionStart = fact.kind === 'session' && fact.event === 'started' && !match;
@@ -140,16 +142,16 @@ function readWorkflowEventStartClause(fact: WorkflowActivityFact, match: Workflo
     ? t('workflows.events.whenASessionStarts') : formatTriggerSummary(trigger, { form: 'clause' }));
 }
 
-export function readWorkflowEventStartsLine(fact: WorkflowActivityFact, match: WorkflowEventMatch | null | undefined): string | null {
-  const when = readWorkflowEventStartClause(fact, match);
+export function readWorkflowEventStartsLine(fact: WorkflowActivityFact, match: WorkflowEventMatch | null | undefined, machineName?: string): string | null {
+  const when = readWorkflowEventStartClause(fact, match, machineName);
   if (when === null) return null;
   return fact.kind === 'session' && match
     ? t('workflows.events.wouldStartInSession', { when, session: match.label })
     : t('workflows.events.wouldStart', { when });
 }
 
-export function readWorkflowEventAddsLine(fact: WorkflowActivityFact, match: WorkflowEventMatch | null | undefined): string | null {
-  const when = readWorkflowEventStartClause(fact, match);
+export function readWorkflowEventAddsLine(fact: WorkflowActivityFact, match: WorkflowEventMatch | null | undefined, machineName?: string): string | null {
+  const when = readWorkflowEventStartClause(fact, match, machineName);
   if (when === null) return null;
   return fact.kind === 'session' && match
     ? t('workflows.events.addsInSession', { when, session: match.label })

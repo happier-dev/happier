@@ -55,6 +55,8 @@ export const WorkflowLiveEventsPane = React.memo(
       onAddTrigger: ((when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => string) | null;
       /** The trigger editor's answer to whether a row an add created is still there (Undo takes it away). */
       hasTriggerRow: ((clientId: string) => boolean) | null;
+      canUndoAddedTrigger?: (clientId: string) => boolean;
+      onUndoAddedTrigger?: (clientId: string) => void;
       /** Closes the companion; `null` where the host's own title and close already stand above. */
       onClose: (() => void) | null;
       /** `sheet`: the phone sheet, which carries the open row's actions in a bar at its foot (S2). */
@@ -82,27 +84,37 @@ export const WorkflowLiveEventsPane = React.memo(
     const picked = React.useMemo(() => ({ pickedSubject, setPickedSubject }), [pickedSubject]);
     // The phone sheet carries the open row's actions in a bar over the list (S2), not inside the row.
     const barred = props.presentation === 'sheet';
-    const { onAddTrigger } = props;
+    const { onAddTrigger, canUndoAddedTrigger, onUndoAddedTrigger } = props;
     const add = useEventCallback((key: string, when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => {
       const clientId = onAddTrigger?.(when, seed);
       if (clientId !== undefined) setAddedRows((current) => new Map(current).set(key, clientId));
     });
     const renderExpanded = React.useCallback(
-      (key: string) => (
-        <LiveEventBody
+      (key: string) => {
+        const clientId = addedRows.get(key);
+        if (clientId !== undefined && isAdded(key)) {
+          return <View style={styles.actions}>
+            <InlineStatus tone="success" label={t('workflows.events.added')} />
+            {onUndoAddedTrigger && canUndoAddedTrigger?.(clientId) ? (
+              <RoundButton title={t('workflows.editor.undo')} size="small" display="inverted"
+                testID={`${props.testID}:undo-add`} onPress={() => onUndoAddedTrigger(clientId)} />
+            ) : null}
+          </View>;
+        }
+        return <LiveEventBody
           projection={feed.projection}
           active={props.active}
           eventKey={key}
           scope={scope}
           retainedRuns={feed.retained?.runs}
-          added={isAdded(key)}
           onAdd={onAddTrigger === null ? null : add}
           picked={picked}
           barred={barred}
           testID={props.testID}
-        />
-      ),
-      [feed.projection, feed.retained?.runs, scope, isAdded, onAddTrigger, add, picked, barred, props.testID, props.active],
+        />;
+      },
+      [feed.projection, feed.retained?.runs, scope, addedRows, isAdded, canUndoAddedTrigger, onUndoAddedTrigger,
+        onAddTrigger, add, picked, barred, props.testID, props.active],
     );
     return (
       // The pane owns its insets in both hosts: inside the phone sheet its list adds no card gutter of its own, so the
@@ -145,14 +157,13 @@ export const WorkflowLiveEventsPane = React.memo(
             renderExpanded={renderExpanded}
           />
         </ItemList>
-        {barred && expanded !== null ? (
+        {barred && expanded !== null && !isAdded(expanded) ? (
           <LiveEventBar
             projection={feed.projection}
             active={props.active}
             eventKey={expanded}
             scope={scope}
             retainedRuns={feed.retained?.runs}
-            added={isAdded(expanded)}
             onAdd={onAddTrigger === null ? null : add}
             picked={picked}
             testID={props.testID}
@@ -170,7 +181,6 @@ type LiveEventProps = Readonly<{
   eventKey: string;
   scope: ServerAccountScope | null;
   retainedRuns: readonly WorkflowRunSummaryV1[] | undefined;
-  added: boolean;
   onAdd: ((key: string, when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => void) | null;
   picked: WorkflowEventMatchSelection;
   testID: string;
@@ -230,7 +240,7 @@ function LiveEventActions(props: LiveEventProps & Readonly<{
     : readWorkflowEventWhen(presentation.fact, props.match.match);
   const open = presentation.open;
   const canAdd = when !== null && onAdd !== null;
-  const addsLine = canAdd && !props.added ? props.match.addsLine : null;
+  const addsLine = canAdd ? props.match.addsLine : null;
   // One primary in the pane (Add to this workflow); the rest of what the event allows waits behind its ⋯ (S2).
   const menu: WorkflowEventMenuItem[] = [
     ...(intents.make === null ? [] : [{ id: 'make', title: t('workflows.events.newWorkflowFromThis'), run: intents.make }]),
@@ -241,9 +251,7 @@ function LiveEventActions(props: LiveEventProps & Readonly<{
   const more = (
     <WorkflowEventMoreMenu items={menu} hint={presentation.title} anchorRef={intents.anchorRef} testID={`${props.testID}:more`} />
   );
-  const primary = !canAdd ? null : props.added ? (
-    <InlineStatus tone="success" label={t('workflows.events.added')} />
-  ) : (
+  const primary = !canAdd ? null : (
     <RoundButton
       testID={`${props.testID}:add`}
       size={props.bar ? 'normal' : 'small'}

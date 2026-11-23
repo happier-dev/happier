@@ -27,7 +27,7 @@ import {
 } from './WorkflowTriggerBlock';
 import type { ResourceAutomationsSectionRead } from './useResourceAutomationsSection';
 import { useTriggerThenOptions } from './useTriggerThenOptions';
-import type { ResourceWorkflowTriggerStartOption } from './workflowTriggerStarts';
+import { formatWorkflowLinkStartLabel, type ResourceWorkflowTriggerStartOption } from './workflowTriggerStarts';
 
 const stylesheet = StyleSheet.create((theme) => ({
   body: {
@@ -161,16 +161,7 @@ export function ResourceLinkWorkflowSheet(
     () =>
       link.whenOptions.map((option) => ({
         id: option.id,
-        title:
-          option.relation === 'before'
-            ? t('workflows.triggers.link.beforeAction', {
-                action: option.label,
-              })
-            : option.relation === 'after'
-              ? t('workflows.triggers.link.afterAction', {
-                  action: option.label,
-                })
-              : option.label,
+        title: formatWorkflowLinkStartLabel(option),
         category: t(
           option.relation === 'event'
             ? 'workflows.triggers.link.groupEvents'

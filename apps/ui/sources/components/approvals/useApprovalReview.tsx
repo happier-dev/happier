@@ -765,6 +765,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
                 canAllow={canAllow} automaticCheckSkips={automaticCheckSkips}
                 automaticChecksExecutionAccountName={automaticChecksExecutionAccountName}
                 failureReason={failureSummary ?? null}
+                accountLifetime={approvalAccountLifetime}
                 onOpenRoute={openRoute} testID="approvals.automatic-checks" />
             </SectionContentRow>
           </ItemGroup>

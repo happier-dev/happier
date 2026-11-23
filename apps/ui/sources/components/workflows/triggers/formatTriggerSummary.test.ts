@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { AutomationActionConsentTriggerSchema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 
 const language = vi.hoisted(() => ({ value: 'en' }));
@@ -24,6 +26,24 @@ function interval(everyMs: number) {
 }
 
 describe('formatTriggerSummary', () => {
+    it('names retained Health events without a Machine catalog or private source label', () => {
+        expect(formatTriggerSummary({ kind: 'pluginEvent', eventRef: HEALTH_CHECK_EVENT_REFS_V1.failed }, { projection: null }))
+            .toBe('workflows.triggers.summary.offlineHealthFailed');
+        expect(formatTriggerSummary({ kind: 'pluginEvent', eventRef: HEALTH_CHECK_EVENT_REFS_V1.recovered }, { projection: null }))
+            .toBe('workflows.triggers.summary.offlineHealthRecovered');
+    });
+
+    it('says the exact Deploy outcome and selected environment once in the start sentence', () => {
+        const trigger = { kind: 'action' as const, phase: 'after' as const,
+            actionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1],
+            subject: { kind: 'environment' as const, serverId: 'home', environmentId: 'env-1' },
+            filter: { v: 1 as const, all: [{ field: '/outcome', op: 'eq' as const, value: 'failed' }] } };
+        const context = { subjectTitle: () => 'happier-web' };
+        expect(formatTriggerSummary(trigger, context))
+            .toBe('workflows.triggers.summary.deploy.failedIn(environment=happier-web)');
+        expect(formatTriggerSetSentence([trigger, trigger], { ...context, form: 'clause' }))
+            .toBe('workflows.triggers.summary.deploy.failedIn(environment=happier-web)');
+    });
     it('summarizes a consent-only Action trigger without reading undisclosed matching details', () => {
         const consent = AutomationActionConsentTriggerSchema.parse({ kind: 'action',
             consentFor: { automationId: 'check', triggerId: 'shared-check' }, consentedWorkflowRevision: 1 });
@@ -184,8 +204,10 @@ describe('formatTriggerSummary', () => {
             .toBe('workflows.triggers.kind.needsYou');
         expect(formatTriggerSummary({ kind: 'pluginEvent', eventRef: { pluginId: 'example.github', localId: 'pull_request.merged' }, displayLabel: 'When a pull request merges' }))
             .toBe('When a pull request merges');
-        expect(formatTriggerSummary({ kind: 'pluginEvent', eventRef: { pluginId: 'example.github', localId: 'pull_request.merged' } }))
+        expect(formatTriggerSummary({ kind: 'pluginEvent', eventRef: { pluginId: 'example.github', localId: '9edb6c87-48da-46f7-8d5a-d6bdd91a4cad' } }))
             .toBe('workflows.triggers.kind.pluginEvent');
+        expect(formatTriggerSummary({ kind: 'pluginEvent', eventRef: { pluginId: 'example.github', localId: 'automation/pull-request-checks-failed-v1' } }))
+            .toBe('Pull request checks failed');
     });
 });
 

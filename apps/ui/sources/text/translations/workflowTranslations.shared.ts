@@ -305,6 +305,8 @@ export const en = {
         sessionArchived: 'Session archived',
         turnStarted: 'A turn started',
         whenASessionStarts: 'When a session starts',
+        whenMachineOnline: ({ machine }: { machine: string }) => `when ${machine} comes online`,
+        whenMachineOffline: ({ machine }: { machine: string }) => `when ${machine} goes offline`,
         eventProject: 'Project',
         machineOnline: ({ machine }: { machine: string }) => `${machine} came online`,
         machineOffline: ({ machine }: { machine: string }) => `${machine} went offline`,

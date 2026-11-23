@@ -1713,7 +1713,7 @@ describe('ApprovalDetailScreen', () => {
     expect(approvalItem(screen, 'approvals.status')?.props.detail).toBe('approvals.status.rejected');
     expect(screen.findByTestId('approvals.automatic-checks:override')).toBeNull();
     expect(screen.findByTestId('approvals.automatic-checks:refused')).not.toBeNull();
-    expect(screen.getTextContent()).toContain('content_unavailable');
+    expect(screen.findByTestId('approvals.automatic-checks:reason').props.children).toBe('workflows.contentUnavailable');
   });
 
   it('uses the executed receipt when the deciding Home loses its reply', async () => {

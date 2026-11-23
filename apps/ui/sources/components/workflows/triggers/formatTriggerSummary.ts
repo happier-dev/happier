@@ -1,5 +1,8 @@
 import { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1, type AutomationSessionLifecycleEvent } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import type { AutomationRunLifecycleTrigger } from '@happier-dev/protocol/automations/automationRunLifecycle';
+import { AutomationActionOutcomeV1Schema } from '@happier-dev/protocol/automations/automationActionIdentityV1';
+import { HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { AutomationActionConsentTrigger, AutomationActionTrigger } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { findActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { AutomationPluginEventTrigger } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
@@ -92,7 +95,7 @@ export function formatNextScheduledRunAccessibilityLabel(nextRunAt: number | nul
  * kind and the fields this reads. A plugin event without a display label names its event.
  */
 export type TriggerSummarySource =
-    | Pick<AutomationActionTrigger, 'kind' | 'phase' | 'actionIds' | 'mode' | 'onFailure'>
+    | Pick<AutomationActionTrigger, 'kind' | 'phase' | 'actionIds' | 'mode' | 'onFailure' | 'subject' | 'filter'>
     | AutomationActionConsentTrigger
     | Readonly<{
         kind: 'schedule';
@@ -175,6 +178,7 @@ export type TriggerSummaryContext = Readonly<{
     localize?: PluginLocalizedTextResolver;
     /** A mounted Action catalog may supply its already-localized contributed titles. */
     actionTitle?: (actionId: string) => string | undefined;
+    subjectTitle?: (subject: NonNullable<AutomationActionTrigger['subject']>) => string | undefined;
 }>;
 
 export type ActionTriggerSummaryFacts = Readonly<Pick<AutomationActionTrigger, 'phase' | 'mode' | 'onFailure'> & {
@@ -227,10 +231,51 @@ function readDeclaredEventTitle(trigger: Extract<TriggerSummarySource, { kind: '
     return readEligibleEventPresentation(event, localize).title;
 }
 
+function formatOfflineEventSummary(event: Extract<TriggerSummarySource, { kind: 'pluginEvent' }>['eventRef']): string {
+    const health = HEALTH_CHECK_EVENT_REFS_V1;
+    if (event.pluginId === health.status.pluginId) {
+        if (event.localId === health.failed.localId) return t('workflows.triggers.summary.offlineHealthFailed');
+        if (event.localId === health.recovered.localId) return t('workflows.triggers.summary.offlineHealthRecovered');
+        if (event.localId === health.status.localId) return t('workflows.triggers.summary.offlineHealthStatus');
+    }
+    // Older rows can retain only the declaration identity. Read descriptive identifiers without
+    // showing their namespace or contract version. Opaque names keep the generic label.
+    const label = event.localId.split('/').at(-1)?.replace(/[-_.]v[0-9]+$/iu, '');
+    if (label && /^\p{L}+(?:[-_.]\p{L}+)+$/u.test(label)) {
+        const words = label.replace(/[-_.]/gu, ' ');
+        return words[0]!.toLocaleUpperCase(getPreferredLanguage()) + words.slice(1);
+    }
+    return t('workflows.triggers.kind.pluginEvent');
+}
+
+export const DEPLOY_OUTCOME_FIELD = '/outcome';
+
+export function isDeployFinishedTrigger(trigger: Pick<AutomationActionTrigger, 'phase' | 'actionIds'>): boolean {
+    return trigger.phase === 'after' && trigger.actionIds.length === 1 && trigger.actionIds[0] === DEPLOYMENT_DEPLOY_ACTION_ID_V1;
+}
+
+/** The built-in scalar is shared by the outcome select and the trigger's sentence. */
+export function readDeployOutcomeSelection(trigger: Pick<AutomationActionTrigger, 'filter'>) {
+    const clauses = trigger.filter?.all.filter(clause => clause.field === DEPLOY_OUTCOME_FIELD) ?? [];
+    if (clauses.length === 0) return 'any';
+    if (clauses.length !== 1 || clauses[0]?.op !== 'eq') return 'custom';
+    const outcome = AutomationActionOutcomeV1Schema.safeParse(clauses[0].value);
+    return outcome.success ? outcome.data : 'custom';
+}
+
 export function formatTriggerSummary(trigger: TriggerSummarySource, context?: TriggerSummaryContext): string {
     switch (trigger.kind) {
         case 'action': {
             if (!('phase' in trigger)) return t('workflows.triggers.card.action');
+            if (isDeployFinishedTrigger(trigger)) {
+                const outcome = readDeployOutcomeSelection(trigger);
+                if (trigger.subject?.kind === 'environment') {
+                    const environment = context?.subjectTitle?.(trigger.subject)
+                        ?? t('workflows.triggers.card.subjectKinds.environment.this');
+                    return t(`workflows.triggers.summary.deploy.${outcome}In`, { environment });
+                }
+                return t(`workflows.triggers.summary.deploy.${outcome}`);
+            }
             // The trigger block's sentence (lab `actrig:v:before`): before waits or starts beside, after follows.
             const facts = readActionTriggerSummaryFacts(trigger, context);
             if (facts.actions.length === 0) return t(facts.phase === 'before' ? 'workflows.triggers.card.actionBefore' : 'workflows.triggers.card.actionAfter');
@@ -258,7 +303,7 @@ export function formatTriggerSummary(trigger: TriggerSummarySource, context?: Tr
             const label = trigger.displayLabel?.trim();
             if (label) return label;
             const title = readDeclaredEventTitle(trigger, context);
-            return title ? t('workflows.triggers.summary.event', { event: title }) : t('workflows.triggers.kind.pluginEvent');
+            return title ? t('workflows.triggers.summary.event', { event: title }) : formatOfflineEventSummary(trigger.eventRef);
         }
         case 'sessionLifecycle':
             return t(`workflows.triggers.kind.${readSessionLifecycleKind(trigger.events)}`);

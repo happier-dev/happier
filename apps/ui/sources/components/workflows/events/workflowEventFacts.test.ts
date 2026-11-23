@@ -112,7 +112,7 @@ describe('workflowEventFacts', () => {
 
   it('says which start an added event brings, and links a saved workflow only from a Session start', () => {
     expect(readWorkflowEventAddsLine(turn, null)).toBe('workflows.events.adds(when=workflows.triggers.kind.turnStarts)');
-    expect(readWorkflowEventAddsLine(machine, null)).toBeNull();
+    expect(readWorkflowEventAddsLine(machine, null, 'Build Mac')).toBe('workflows.events.adds(when=workflows.events.whenMachineOffline(machine=Build Mac))');
     expect(readWorkflowEventAddsLine(started, null))
       .toBe('workflows.events.adds(when=workflows.events.whenASessionStarts)');
     expect(readWorkflowEventLinkWhen(started)).toEqual(readWorkflowEventWhen(started));
@@ -142,7 +142,7 @@ describe('workflowEventFacts', () => {
     expect(readWorkflowEventStartsLine(turn, match))
       .toBe('workflows.events.wouldStartInSession(when=workflows.triggers.kind.turnStarts,session=Fix flaky test)');
     expect(readWorkflowEventStartsLine(run, null)).toBe('workflows.events.wouldStart(when=workflows.triggers.kind.runEnds)');
-    expect(readWorkflowEventStartsLine(machine, null)).toBeNull();
+    expect(readWorkflowEventStartsLine(machine, null, 'Build Mac')).toBe('workflows.events.wouldStart(when=workflows.events.whenMachineOffline(machine=Build Mac))');
     expect(readWorkflowEventAddsLine(turn, match))
       .toBe('workflows.events.addsInSession(when=workflows.triggers.kind.turnStarts,session=Fix flaky test)');
   });

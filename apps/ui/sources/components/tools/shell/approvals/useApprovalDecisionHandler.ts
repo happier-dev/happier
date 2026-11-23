@@ -88,6 +88,7 @@ export function presentApprovalFailure(
         return { reason: t('approvals.decisionAuthorityError'), code: null };
     }
     // The reviewed change met a newer revision, so the executor applied nothing; its English diagnostic is not product copy.
+    if (code === 'content_unavailable') return { reason: t('workflows.contentUnavailable'), code };
     if (code === 'conflict') return { reason: t('approvals.conflictFailure'), code: null };
     // The approved plugin change never reached the Machine's plugin service; the code stays in Technical details.
     if (code === 'plugin_change_daemon_unavailable') return { reason: t('approvals.pluginChangeDaemonUnavailable'), code };

@@ -207,6 +207,19 @@ describe('Action before checks on the approval card', () => {
     await hook.unmount();
   });
 
+  it('shows a human unavailable reason on a refused check while retaining its Workflow name and Run', async () => {
+    const screen = await renderScreen(<ApprovalAutomaticChecks
+      checks={checks({ phase: 'refused', selected: [{ ...selected, workflowId: 'builtin:open-a-pull-request' }],
+        runs: [{ ...ref, runId: 'run-214' }],
+        results: [{ ...ref, runId: 'run-214', outcome: 'unavailable', reason: 'content_unavailable' }] })}
+      actionTitle="Deploy" serverId={null} onOpenRoute={() => undefined} testID="checks" />);
+    expect(screen.getTextContent()).toContain('workflows.contentUnavailable');
+    expect(screen.getTextContent()).not.toContain('content_unavailable');
+    expect(screen.getTextContent()).toContain('workflows.builtins.openAPullRequest.title');
+    expect(screen.getTextContent()).toContain('workflows.triggers.checks.openRun');
+    await screen.unmount();
+  });
+
   it('turns a failed wait check into Approve anyway, and says a visible Skip', async () => {
     const override = checks({
       phase: 'override',

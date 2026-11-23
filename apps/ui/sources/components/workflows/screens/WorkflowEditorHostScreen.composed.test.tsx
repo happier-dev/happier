@@ -677,7 +677,7 @@ describe('unresolved editor create identity (FIX194)', () => {
             sourceRevision: 999_999, occurredAt: 10, coverage: 'live' } as const;
         const definitionDraftSeedId = storeWorkflowDefinitionDraftSeed({ name: 'A Machine went offline', definition: definition(), nativeEvent });
         await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new', definitionDraftSeedId }} />);
-        expect(await save()).toMatchObject({ status: 'refused', reason: 'invalid_workflow' });
+        expect(await save()).toMatchObject({ status: 'refused', reason: 'workflow_trigger_setup_required' });
         expect(createdRows()).toEqual([]);
         expect(readBodyProps()!.currentWorkflowRef).toBeNull();
         expect(readBodyProps()!.draftStore.get().blocks).toEqual(definition().blocks);
@@ -1225,6 +1225,21 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(readBodyProps()!.hasTriggerRow!(clientId)).toBe(false);
         await act(async () => { readBodyProps()!.history!.redo(); });
         expect(readBodyProps()!.hasTriggerRow!(clientId)).toBe(true);
+    });
+
+    it('undoes the companion Machine Add while preserving a later title edit', async () => {
+        await serveMountedDraftActionHome();
+        await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        const nativeEvent = { kind: 'machine', key: 'machine-online', machineId: 'machine-a', event: 'online',
+            sourceRevision: 1, occurredAt: 10, coverage: 'retained' } as const;
+        let clientId = '';
+        await act(async () => { clientId = readBodyProps()!.onAddTriggerWhen!({ kind: 'pluginEvent', value: null }, { nativeEvent }); });
+        await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Keep this title' }); });
+        expect(readBodyProps()!.canUndoAddedTrigger?.(clientId)).toBe(true);
+        await act(async () => { readBodyProps()!.onUndoAddedTrigger!(clientId); });
+        expect(readBodyProps()!.hasTriggerRow!(clientId)).toBe(false);
+        expect(readBodyProps()!.draftStore.get().name).toBe('Keep this title');
+        expect(readBodyProps()!.saveStatus).toEqual({ kind: 'unsaved' });
     });
 
     it('records a Machine event awaiting setup in the mounted draft, with one Undo and Redo', async () => {

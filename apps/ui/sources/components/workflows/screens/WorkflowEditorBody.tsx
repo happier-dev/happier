@@ -453,6 +453,8 @@ export type WorkflowEditorBodyProps = Readonly<{
     onAddTriggerWhen?: (when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => string;
     /** Whether the row an add created is still one of the triggers (Undo takes it away), from the trigger editor. */
     hasTriggerRow?: (clientId: string) => boolean;
+    canUndoAddedTrigger?: (clientId: string) => boolean;
+    onUndoAddedTrigger?: (clientId: string) => void;
     /** The document's reading presentation (04 §4.11), for a read-only workflow. */
     documentPresentation?: WorkflowDocumentPresentation;
     /** Options for Action-step fields with an `optionsSourceId`, for the workflow's Where Machine. */
@@ -1727,7 +1729,8 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         pane: (
             <View testID={`${testIDPrefix}-${shownCompanion}-pane`} style={styles.paneBody}>
                 {shownCompanion === 'events' ? <WorkflowLiveEventsPane testID={`${testIDPrefix}-live-events`} active
-                    onAddTrigger={props.onAddTriggerWhen ?? null} hasTriggerRow={props.hasTriggerRow ?? null} onClose={closeSettings} /> : null}
+                    onAddTrigger={props.onAddTriggerWhen ?? null} hasTriggerRow={props.hasTriggerRow ?? null} canUndoAddedTrigger={props.canUndoAddedTrigger}
+                    onUndoAddedTrigger={props.onUndoAddedTrigger} onClose={closeSettings} /> : null}
                 {companionHeader}
                 {agentCompanionAvailable ? agentSessionPane : null}
                 {shownCompanion === 'agent' && !props.authoringSessionId && props.authoringDraft !== undefined ? (
@@ -1764,7 +1767,8 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                     portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false }}>
                     {({ maxHeight }) => <View style={{ height: maxHeight }}>
                         <WorkflowLiveEventsPane testID={`${testIDPrefix}-live-events`} active presentation="sheet"
-                            onAddTrigger={props.onAddTriggerWhen ?? null} hasTriggerRow={props.hasTriggerRow ?? null} onClose={closeSettings} />
+                            onAddTrigger={props.onAddTriggerWhen ?? null} hasTriggerRow={props.hasTriggerRow ?? null} canUndoAddedTrigger={props.canUndoAddedTrigger}
+                            onUndoAddedTrigger={props.onUndoAddedTrigger} onClose={closeSettings} />
                     </View>}
                 </Popover>
             ) : null}

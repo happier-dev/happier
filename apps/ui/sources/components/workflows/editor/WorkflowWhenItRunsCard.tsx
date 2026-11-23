@@ -6,8 +6,8 @@ import { WorkflowCardGutterRow, WorkflowKindCard } from './WorkflowKindCard';
 
 /**
  * "When it runs" (owner 2026-11-15, lab round 1115 r16 "Two cards"): the page's first card, triggers
- * only. Its header says when the workflow runs in one sentence (the trigger owner's summary); its
- * body is the trigger owner's section, so every trigger kind is added and edited where it reads.
+ * only. The collapsed header reads the trigger owner's summary. The expanded body presents the
+ * individual trigger sentences beside their controls.
  */
 export function WorkflowWhenItRunsCard(
   props: Readonly<{
@@ -26,7 +26,7 @@ export function WorkflowWhenItRunsCard(
       <WorkflowKindCard
         testID={`${props.testIDPrefix}-when`}
         title={t('workflows.page.sections.whenTitle')}
-        summary={props.summary}
+        summary={props.expanded ? undefined : props.summary}
         disclosure={{
           expanded: props.expanded,
           onExpandedChange: props.onExpandedChange,

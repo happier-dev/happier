@@ -43,7 +43,7 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
     expect(createWorkflowTriggerStartWhen('session:ciFailed', null, context))
       .toEqual({ kind: 'ciFailed', pullRequest: context.session.pullRequestLinks[0] });
   });
-  it('lists Time, then Sessions, then each plugin\'s declared Events grouped by plugin, and reads every start back', () => {
+  it('lists Time, Actions and Sessions before other declared Events and reads every start back', () => {
     const options = buildWorkflowTriggerStartOptions([
       { eventRef: { pluginId: 'happier.github', localId: 'pr-opened' }, title: 'A pull request opens', pluginName: 'GitHub' },
       { eventRef: { pluginId: 'happier.sentry', localId: 'issue' }, title: 'A new issue appears', pluginName: 'Sentry' },
@@ -51,9 +51,9 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
     ]);
     expect(options.map((option) => [option.id, option.group])).toEqual([
       ['schedule', t('workflows.triggers.card.groupTime')],
-      ...lifecycleKinds.map(kind => [`session:${kind}`, t('workflows.triggers.card.groupSessions')]),
       ['action:before', t('workflows.triggers.card.groupActions')],
       ['action:after', t('workflows.triggers.card.groupActions')],
+      ...lifecycleKinds.map(kind => [`session:${kind}`, t('workflows.triggers.card.groupSessions')]),
       ['event:happier.github/pr-opened', 'GitHub'],
       ['event:happier.github/issue-opened', 'GitHub'],
       ['event:happier.sentry/issue', 'Sentry'],
@@ -72,13 +72,27 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
     ]);
     expect(options.map((option) => [option.section, option.group, option.id])).toEqual([
       ['builtin', t('workflows.triggers.card.groupTime'), 'schedule'],
-      ...lifecycleKinds.map(kind => ['builtin', t('workflows.triggers.card.groupSessions'), `session:${kind}`]),
       ['builtin', t('workflows.triggers.card.groupActions'), 'action:before'],
       ['builtin', t('workflows.triggers.card.groupActions'), 'action:after'],
+      ...lifecycleKinds.map(kind => ['builtin', t('workflows.triggers.card.groupSessions'), `session:${kind}`]),
       ['plugins', 'GitHub', 'event:happier.github/pr-opened'],
       ['plugins', 'GitHub', 'event:happier.github/pr-merged'],
       ['plugins', 'GitLab', 'event:happier.gitlab/push'],
       ['plugins', 'Sentry', 'event:happier.sentry/issue'],
+    ]);
+  });
+
+  it('orders declared native starts by resource category even when one plugin declares several categories', () => {
+    const events = (['backup', 'machine', 'healthCheck', 'environment'] as const).map(kind => ({
+      eventRef: { pluginId: 'acme.operations', localId: kind }, title: kind, pluginName: 'Acme',
+      automation: { v: 1 as const, eligible: true as const, subjectKinds: [kind],
+        source: { sourceContractVersion: 1, supportedObservationTransports: [],
+          setupActionRef: { pluginId: 'acme.operations', localId: 'setup' },
+          sourceConfigSchema: { type: 'object' as const } } },
+    }));
+    expect(buildWorkflowTriggerStartOptions(events)
+      .filter(option => option.id.startsWith('event:')).map(option => [option.title, option.group])).toEqual([
+      ['environment', 'Deployments'], ['healthCheck', 'Health checks'], ['machine', 'Machines'], ['backup', 'Databases and backups'],
     ]);
   });
 
@@ -126,9 +140,9 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
       ['resource', 'Production · happier-web', 'event:happier.deploy/failed'],
       ['resource', 'Production · happier-web', 'session:needsYou'],
       ['builtin', t('workflows.triggers.card.groupTime'), 'schedule'],
-      ...lifecycleKinds.filter(kind => kind !== 'needsYou').map(kind => ['builtin', t('workflows.triggers.card.groupSessions'), `session:${kind}`]),
       ['builtin', t('workflows.triggers.card.groupActions'), 'action:before'],
       ['builtin', t('workflows.triggers.card.groupActions'), 'action:after'],
+      ...lifecycleKinds.filter(kind => kind !== 'needsYou').map(kind => ['builtin', t('workflows.triggers.card.groupSessions'), `session:${kind}`]),
       ['plugins', 'GitHub', 'event:happier.github/pr-opened'],
     ]);
   });
