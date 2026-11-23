@@ -114,9 +114,10 @@ export function createWorkspaceBrowserTransport(input: Readonly<{
             return admittedEntryHref;
         },
         enterHref(href, replace, admitted = false) {
-            // This exact public-flow address survives replacing the mounted workspace.
-            admittedEntryHref = admitted ? href : null;
+            admittedEntryHref = null;
             const id = writeHref(href, replace);
+            // Retain the exact address as serialized by the browser on its first write.
+            if (admitted) admittedEntryHref = input.getHref();
             // A replaced unbound URL must not retain the old tab's identity.
             entries.delete(id);
             currentPosition = readBrowserHistoryIndex(input.history) ?? null;

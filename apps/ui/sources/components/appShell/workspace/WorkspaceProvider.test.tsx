@@ -1944,7 +1944,7 @@ describe('consumed workspace navigation owner', () => {
             externalSessions: false, inbox: false, workflows: false, friends: false,
         } });
         const passwordHref = '/settings/account/security?serverId=home-a&verificationToken=disposable';
-        const href = source ? '/projects/setup?source=source-a&target=FO9%20Home' :
+        const href = source ? "/projects/setup?source=source-a&target=FO9%20person's%20Home" :
             admittedRecovery ? '/settings/appearance' : password ? passwordHref : '/settings/teams/home-a/team-1';
         const leaf = new URL(href, location.origin);
         const parentPath = source || password ? '/' : '/settings';
@@ -1989,8 +1989,8 @@ describe('consumed workspace navigation owner', () => {
             await screen.update(element(true));
         }
         if (source) {
-            // Expo acknowledges the same leaf with a different query encoding.
-            // Publishing that rewrite releases the pending intent to its index.
+            // The browser normalizes the admitted address on its first write.
+            // Expo then acknowledges the same leaf with different query encoding.
             await act(async () => {
                 history.replaceState(history.state, '', `${leaf.pathname}?${leaf.searchParams.toString()}`);
             });
@@ -2007,10 +2007,11 @@ describe('consumed workspace navigation owner', () => {
         const state = navigation().state;
         const target = state.tabs[state.groups[state.focusedGroupId].activeTabId].target;
         expect(hrefForDestinationRef(catalog, target)).toBe(source ? `${leaf.pathname}?${leaf.searchParams.toString()}` : href);
-        expect(location.pathname + location.search).toBe(href);
+        const browserHref = leaf.pathname + leaf.search;
+        expect(location.pathname + location.search).toBe(browserHref);
 
         if (admittedRecovery || password) {
-            expect(navigations).toEqual([href]);
+            expect(navigations).toEqual([browserHref]);
             await act(async () => { expect(navigation().openHref('/settings', { replace: true })).toBe(true); });
             expect(location.pathname).toBe('/settings');
         }
