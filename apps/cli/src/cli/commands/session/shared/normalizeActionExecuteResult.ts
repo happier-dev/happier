@@ -1,6 +1,7 @@
 import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/protocol';
 import { ActionFailureCauseV1Schema, parseActionExecuteFailure, projectActionExecuteFailure, projectActionFailureForAgentV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { readDeploymentInstallationReplacementRefusalV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { SessionGoalControlFailureV1Schema, type SessionGoalControlFailureV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
 
@@ -64,7 +65,8 @@ function resolveActionFailureMessage(
     && isRecord(details) && details.reasonCode === 'credential_scope_denied') {
     return 'Approve this request in the Happier app. A terminal credential cannot approve its own request.';
   }
-  return message;
+  const replacement = readDeploymentInstallationReplacementRefusalV1(errorCode, details);
+  return replacement && (!message || message === errorCode) ? replacement.remedy : message;
 }
 
 export function normalizeActionExecuteResult(result: ActionExecuteResult): NormalizedCliActionExecuteResult {

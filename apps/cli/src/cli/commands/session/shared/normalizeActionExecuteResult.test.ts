@@ -12,6 +12,15 @@ describe('CLI Action failure presentation', () => {
     expect(projectCliActionFailure(normalized)).toMatchObject({ code: errorCode, details });
   });
 
+  it.each(['outer', 'nested'] as const)('presents the existing reinstall remedy in an %s Action refusal', kind => {
+    const details = { reason: 'machine_installation_replaced', requiredFact: 'installationId=retired',
+      remedy: 'This Machine was reinstalled. Create a new Environment on its current installation and add the required secrets.' };
+    const refusal = { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied', details } as const;
+    const normalized = normalizeActionExecuteResult(kind === 'outer' ? refusal : { ok: true, result: refusal });
+    if (normalized.ok) throw new Error('Expected refusal');
+    expect(projectCliActionFailure(normalized)).toMatchObject({ code: refusal.errorCode, message: details.remedy, details });
+  });
+
   it('retains the CLI target parser refusal and its cause at the command boundary', () => {
     const failure = normalizeCliActionThrownError(Object.assign(new Error('--machine-id is required for a Workflow project target.'), {
       code: 'invalid_arguments',
