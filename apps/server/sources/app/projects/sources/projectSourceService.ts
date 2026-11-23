@@ -148,9 +148,9 @@ export function composeProjectSourceAdmission(input: Readonly<{
 
 /** Accounts pass the one share-eligibility rule (Accounts already in the previous audience are existing shares);
  * Team and Group principals additionally need the actor's Team settings authority. */
-async function validateAudienceInTx(tx: Tx, actorAccountId: string, audience: readonly ProjectSourceGrantV1[], authentication: Authentication,
+async function validateAudienceInTx(tx: Tx, actorAccountId: string, audience: readonly ProjectSourceGrantV1[],
+    admission: ReturnType<typeof composeProjectSourceAdmission>,
     previousAudience: readonly ProjectSourceGrantV1[] = []): Promise<boolean> {
-    const admission = await resolveProjectSourceAdmissionInTx(tx, actorAccountId, audience, authentication);
     if (!admission.active) return false;
     const accountIds = (principals: readonly ProjectSourceGrantV1[]) => principals.flatMap(({ principal }) =>
         principal.kind === 'account' && principal.accountId !== actorAccountId ? [principal.accountId] : []);
@@ -287,17 +287,21 @@ function admitProjectSourceEntries(entries: readonly Readonly<{ row: ProjectSour
         const parsed = sourceFromRow(row);
         if (!parsed.success) { result.set(row.id, { ok: false, failure: invalid() }); continue; }
         const currentOwner = sourceOwner(parsed.data);
-        const teamIds = new Set([currentOwner, ...grants.map(grant => grant.principal)]
-            .flatMap(principal => principal.kind === 'account' ? [] : [principal.teamId]));
-        const audienceTeams = [...teamIds].flatMap(teamId => {
-            const team = admission.admittedTeam(teamId)?.team;
-            return team ? [{ teamId: team.id, name: team.name }] : [];
-        });
-        result.set(row.id, { ok: true, source: { ...parsed.data, audienceTeams }, owner: currentOwner, canManage: admission.canManage(currentOwner, grants),
+        result.set(row.id, { ok: true, source: projectSourceWithAudienceTeams(parsed.data, admission), owner: currentOwner, canManage: admission.canManage(currentOwner, grants),
             canManageOwner: admission.canManageOwner(currentOwner), canDeployMember: admission.canDeployMember(currentOwner, grants),
             effectivePrincipals: admission.effectivePrincipals(currentOwner, grants) });
     }
     return result;
+}
+
+function projectSourceWithAudienceTeams(source: ProjectSourceV1, admission: ReturnType<typeof composeProjectSourceAdmission>): ProjectSourceV1 {
+    const teamIds = new Set([sourceOwner(source), ...source.audience.map(grant => grant.principal)]
+        .flatMap(principal => principal.kind === 'account' ? [] : [principal.teamId]));
+    const audienceTeams = [...teamIds].flatMap(teamId => {
+        const team = admission.admittedTeam(teamId)?.team;
+        return team ? [{ teamId: team.id, name: team.name }] : [];
+    });
+    return { ...source, audienceTeams };
 }
 
 export async function resolveProjectSourceAccessInTx(tx: Tx, actorAccountId: string, sourceId: string, authentication: Authentication = {},
@@ -441,8 +445,6 @@ export async function createProjectSourceInTx(tx: Tx, actorAccountId: string, in
     const owner = parsed.data.owner ?? { kind: 'account' as const, accountId: actorAccountId };
     const requestKey = `projects.sources.create:${actorAccountId}:${parsed.data.requestKey}`;
     await lockPostgresRepeatKeyInTx(tx, requestKey);
-    const actor = await tx.account.findUnique({ where: { id: actorAccountId }, select: { status: true } });
-    if (actor?.status !== 'active') return denied();
     const digestInput: unknown[] = [parsed.data.serverId, parsed.data.name,
         parsed.data.repository ?? null, parsed.data.defaultRef ?? null, parsed.data.subdir ?? null, audience];
     if (owner.kind !== 'account' || owner.accountId !== actorAccountId) digestInput.push(owner);
@@ -450,14 +452,16 @@ export async function createProjectSourceInTx(tx: Tx, actorAccountId: string, in
     const now = await readTransactionDatabaseTime(tx);
     const recorded = await fetchRepeatKey(tx, requestKey, now);
     if (recorded !== null) {
+        const actor = await tx.account.findUnique({ where: { id: actorAccountId }, select: { status: true } });
+        if (actor?.status !== 'active') return denied();
         const [recordedDigest, sourceId] = recorded.split(':');
         if (recordedDigest !== digest || !sourceId) return { ok: false, error: 'source_conflict' };
         const replay = await resolveProjectSourceAccessInTx(tx, actorAccountId, sourceId, authentication);
         return replay.ok ? { ok: true, source: replay.source, canManage: replay.canManage, canManageSessionDefaults: replay.canManageOwner }
             : { ok: false, error: 'source_conflict' };
     }
-    if (!(await validateAudienceInTx(tx, actorAccountId, audience, authentication))) return denied();
-    if (!await canManageProjectSourceOwnerInTx(tx, actorAccountId, owner, authentication)) return denied();
+    const admission = await resolveProjectSourceAdmissionInTx(tx, actorAccountId, audience, authentication, [owner]);
+    if (!admission.canManageOwner(owner) || !await validateAudienceInTx(tx, actorAccountId, audience, admission)) return denied();
     const row = await tx.projectSource.create({ data: { createdByAccountId: actorAccountId,
         name: parsed.data.name, repository: parsed.data.repository === undefined ? prismaRuntime.DbNull : json(parsed.data.repository),
         owner: json(owner), defaultRef: parsed.data.defaultRef,
@@ -466,7 +470,7 @@ export async function createProjectSourceInTx(tx: Tx, actorAccountId: string, in
     if (!source.success) throw new Error('Canonical Source write failed stored admission');
     await saveRepeatKey(tx, requestKey, `${digest}:${row.id}`, defaultRepeatKeyExpiresAt(now));
     await publishInTx(tx, [source.data]);
-    return { ok: true, source: source.data, canManage: true, canManageSessionDefaults: true };
+    return { ok: true, source: projectSourceWithAudienceTeams(source.data, admission), canManage: true, canManageSessionDefaults: true };
 }
 
 /** Read disclosure is admitted from current Account, Team and Group lifetimes. */
@@ -484,18 +488,23 @@ export async function readProjectSourceInTx(tx: Tx, actorAccountId: string, inpu
 export async function prepareProjectSourcePublicationInTx(tx: Tx, actorAccountId: string,
     loaded: Readonly<{ source: ProjectSourceV1; owner: ProjectSourceOwnerV1; canManage: boolean; canManageOwner: boolean }>,
     patch: ProjectSourcePublicationPatchV1, authentication: Authentication = {},
-): Promise<Readonly<{ ok: true; source: ProjectSourceV1; owner: ProjectSourceOwnerV1 }> | ProjectSourcesFailureV1> {
+): Promise<Readonly<{ ok: true; source: ProjectSourceV1; owner: ProjectSourceOwnerV1; canManage: boolean; canManageOwner: boolean }> | ProjectSourcesFailureV1> {
     if (!loaded.canManage) return denied();
     const source = loaded.source;
-    if (patch.owner && !isDeepStrictEqual(patch.owner, loaded.owner)) {
-        if (!loaded.canManageOwner || loaded.owner.kind !== 'account' || patch.owner.kind !== 'team') return denied();
-        const admission = await resolveProjectSourceAdmissionInTx(tx, actorAccountId, patch.audience ?? source.audience, authentication, [patch.owner]);
-        if (!admission.canManageOwner(patch.owner)) return denied();
+    const owner = patch.owner ?? loaded.owner;
+    const ownerChanged = !isDeepStrictEqual(owner, loaded.owner);
+    if (ownerChanged && (!loaded.canManageOwner || loaded.owner.kind !== 'account' || owner.kind !== 'team')) return denied();
+    if (!ownerChanged && patch.audience === undefined) {
+        return { ok: true, source, owner, canManage: loaded.canManage, canManageOwner: loaded.canManageOwner };
     }
-    if (patch.audience && !(await validateAudienceInTx(tx, actorAccountId, patch.audience, authentication, source.audience))) return denied();
-    const next = { ...source, ...(patch.owner === undefined ? {} : { owner: patch.owner }),
-        ...(patch.audience === undefined ? {} : { audience: patch.audience }) };
-    return { ok: true, source: next, owner: sourceOwner(next) };
+
+    const audience = patch.audience ?? source.audience;
+    const admission = await resolveProjectSourceAdmissionInTx(tx, actorAccountId, audience, authentication, [owner]);
+    const canManageOwner = admission.canManageOwner(owner);
+    if (ownerChanged && !canManageOwner) return denied();
+    if (patch.audience && !await validateAudienceInTx(tx, actorAccountId, patch.audience, admission, source.audience)) return denied();
+    return { ok: true, source: projectSourceWithAudienceTeams({ ...source, owner, audience }, admission), owner,
+        canManage: admission.canManage(owner, audience), canManageOwner };
 }
 
 /** Revision CAS protects metadata and exact attachment intents, never document rights or bytes. */
@@ -560,11 +569,9 @@ export async function updateProjectSourceInTx(tx: Tx, actorAccountId: string, in
     }
     if (changed) { next.revision++; await publishInTx(tx, [source, next]); }
     if (defaults?.ok && defaults.write) await defaults.write();
-    const admission = await resolveProjectSourceAdmissionInTx(tx, actorAccountId, next.audience, authentication, [nextOwner]);
     const leaf = defaults?.ok ? { ok: true as const, sessionDefaults: defaults.sessionDefaults }
         : previousDefaults!;
-    return { ...leaf, source: next, canManage: admission.canManage(nextOwner, next.audience),
-        canManageSessionDefaults: admission.canManageOwner(nextOwner) };
+    return { ...leaf, source: next, canManage: publication.canManage, canManageSessionDefaults: publication.canManageOwner };
 }
 
 /** Tombstone metadata uniformly; retained Environment and receipt references keep their identity. */

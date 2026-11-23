@@ -146,7 +146,8 @@ describe('Source catalog real SQLite owner', () => {
         const audience = teams.map(team => ({ principal: { kind: 'team', teamId: team.id }, level: 'view' }));
         const input = { serverId, requestKey: crypto.randomUUID(), name: 'Owned source', repository, audience };
         const personal = await inTx(tx => createProjectSourceInTx(tx, creator.id, input));
-        expect(personal).toMatchObject({ ok: true, source: { owner: { kind: 'account', accountId: creator.id } } });
+        expect(personal).toMatchObject({ ok: true, source: { owner: { kind: 'account', accountId: creator.id },
+            audienceTeams: teams.map(({ id, name }) => ({ teamId: id, name })) } });
         if (!personal.ok) throw new Error(personal.error);
         expect(await inTx(tx => createProjectSourceInTx(tx, creator.id, { ...input,
             owner: { kind: 'account', accountId: creator.id } }))).toEqual(personal);
@@ -165,10 +166,13 @@ describe('Source catalog real SQLite owner', () => {
             .toMatchObject({ ok: true, canManage: true });
         const moved = await inTx(tx => updateProjectSourceInTx(tx, creator.id, { serverId, sourceId: personal.source.id,
             expectedRevision: personal.source.revision, patch: { owner: teamOwner, audience: [] } }));
-        expect(moved).toMatchObject({ ok: true, source: { owner: teamOwner, createdByAccountId: creator.id, audience: [] } });
+        expect(moved).toMatchObject({ ok: true, source: { owner: teamOwner, createdByAccountId: creator.id, audience: [],
+            audienceTeams: [{ teamId: teams[0].id, name: teams[0].name }] } });
         if (!moved.ok) throw new Error(moved.error);
         expect(await inTx(tx => readProjectSourceInTx(tx, administrator.id, { serverId, sourceId: personal.source.id })))
             .toMatchObject({ ok: true, canManage: true, source: { owner: teamOwner } });
+        expect(await inTx(tx => readProjectSourceInTx(tx, creator.id, { serverId, sourceId: personal.source.id })))
+            .toEqual(moved);
         expect(await inTx(tx => listProjectSourcesInTx(tx, administrator.id, { serverId, query: 'Owned source' })))
             .toMatchObject({ ok: true, sources: expect.arrayContaining([expect.objectContaining({ id: personal.source.id })]) });
         const mutations: string[] = [];
