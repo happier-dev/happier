@@ -263,6 +263,56 @@ describe('the phone document, as a browser lays it out', () => {
     });
 });
 
+describe('nesting, as a browser lays it out', () => {
+    const nested = [
+        { kind: 'loop', id: 'each', name: 'Each issue', repetition: { kind: 'items', items: { kind: 'input', name: 'issues' }, execution: 'sequential', failurePolicy: 'fail_stop' },
+            body: [{ kind: 'if', id: 'outer', name: 'If it is open', when: { kind: 'exists', value: { kind: 'input', name: 'issues' } }, otherwise: [],
+                then: [{ kind: 'if', id: 'inner', name: 'If it has a fix', when: { kind: 'exists', value: { kind: 'input', name: 'issues' } }, otherwise: [],
+                    then: [step('deep', 'Review the fix', 'Review the proposed fix.')] }] }] },
+    ];
+    async function measureNesting(width: number, grid: 'wide' | 'phone') {
+        const container = await renderDocument(nested, width, null, grid);
+        const layout = await measureWebLayout(container, { viewport: { width, height: 1600 }, settle });
+        const marks = [
+            layout.rect('workflow-editor-loop-each-label-ordinal-mark'),
+            layout.rect('workflow-editor-if-outer-label-ordinal-mark'),
+            layout.rect('workflow-editor-if-inner-label-ordinal-mark'),
+            layout.rect('workflow-editor-step-deep-label-ordinal'),
+        ];
+        const gutter = layout.rect('workflow-editor-loop-each-label').left - marks[0]!.left;
+        const indents = marks.slice(1).map((mark, index) => mark.left - marks[index]!.left);
+        // Each lane's fork leaves its container's spine (the mark's axis) and bends in before the lane's own marks.
+        const forks = ['workflow-editor-loop-each-body-label-tick', 'workflow-editor-if-outer-then-label-tick', 'workflow-editor-if-inner-then-label-tick']
+            .map((id, index) => ({ fork: layout.rect(id), parent: marks[index]!, lane: marks[index + 1]! }));
+        return { gutter, indents, forks };
+    }
+    const axis = (rect: Readonly<{ left: number; width: number }>) => rect.left + rect.width / 2;
+
+    it('on a phone, keeps the first level at the full gutter and steps each nested level in by half of it, spine and fork attached (owner 2026-11-23)', async () => {
+        const { gutter, indents, forks } = await measureNesting(390, 'phone');
+        expect(gutter).toBeGreaterThan(0);
+        for (const indent of indents) expect(Math.abs(indent - gutter / 2)).toBeLessThanOrEqual(1);
+        for (const { fork, parent, lane } of forks) {
+            expect(Math.abs(fork.left - axis(parent))).toBeLessThanOrEqual(1);
+            expect(fork.right).toBeLessThan(axis(lane));
+        }
+    });
+
+    it('on the wide grid, steps every nested level in by the full gutter', async () => {
+        pointer.coarse = false;
+        try {
+            const { gutter, indents, forks } = await measureNesting(900, 'wide');
+            for (const indent of indents) expect(Math.abs(indent - gutter)).toBeLessThanOrEqual(1);
+            for (const { fork, parent, lane } of forks) {
+                expect(Math.abs(fork.left - axis(parent))).toBeLessThanOrEqual(1);
+                expect(fork.right).toBeLessThan(axis(lane));
+            }
+        } finally {
+            pointer.coarse = true;
+        }
+    });
+});
+
 describe('the flow, as a browser lays it out', () => {
     it('joins every mark to the next with one spine, and forks a branch off it and back (lab round 1106 F1)', async () => {
         pointer.coarse = false;

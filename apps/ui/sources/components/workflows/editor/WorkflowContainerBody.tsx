@@ -11,11 +11,12 @@ import { InlineTextField, type InlineTextEditor } from '@/components/ui/text/Inl
 import { WorkflowBlockActionsMenu, type WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { useWorkflowDocumentGridStyles, workflowEditorStyles } from './workflowEditorStyles';
 
-/** A container's body (lab `.uwe-cb`): its lanes one ordinal column in, each forking off its spine. */
+/** A container's body (lab `.uwe-cb`): its lanes one ordinal column in (half a column on a phone), each forking off its spine. */
 export function WorkflowContainerBody(props: Readonly<{
     children: React.ReactNode;
 }>): React.ReactElement {
-    return <View style={workflowEditorStyles.containerBody}>{props.children}</View>;
+    const grid = useWorkflowDocumentGridStyles();
+    return <View style={grid.containerBody}>{props.children}</View>;
 }
 
 /**

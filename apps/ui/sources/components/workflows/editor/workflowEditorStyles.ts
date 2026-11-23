@@ -1007,7 +1007,14 @@ export const WorkflowDocumentGridContext = React.createContext<WorkflowDocumentG
 
 const COMPACT_ORDINAL_GAP_PX = HAPPIER_PAGE_METRICS.pageHeaderMarkGapPx;
 const COMPACT_GUTTER_PX = ORDINAL_SIZE + COMPACT_ORDINAL_GAP_PX;
-const COMPACT_LANE_LEFT_PX = -(COMPACT_GUTTER_PX - ORDINAL_SIZE / 2) - SPINE_WIDTH / 2;
+/**
+ * A nested list's indent from its parent's edge on the narrow grids (owner 2026-11-23): half the gutter, so the
+ * innermost card keeps a usable width at three and four levels. The root list keeps its full gutter, and every
+ * list keeps it between its own numbers and names; only the step in from a container to its lanes halves. The
+ * wide grid indents a full gutter. The body's pull, the fork and the join all derive from this one value.
+ */
+const NARROW_NESTED_INDENT_PX = COMPACT_GUTTER_PX / 2;
+const COMPACT_LANE_LEFT_PX = -(NARROW_NESTED_INDENT_PX - ORDINAL_SIZE / 2) - SPINE_WIDTH / 2;
 /** The phone document's name edge from its column (its number column and the gap after it): where the page's own words start in the Steps view. */
 export const WORKFLOW_PHONE_NAME_EDGE_PX = COMPACT_GUTTER_PX;
 
@@ -1020,8 +1027,9 @@ const narrowDocumentGrid = StyleSheet.create({
     laneEndInserter: { paddingLeft: COMPACT_GUTTER_PX },
     laneLabelRow: { paddingLeft: COMPACT_GUTTER_PX },
     laneTurn: { paddingLeft: COMPACT_GUTTER_PX },
-    laneFork: { left: COMPACT_LANE_LEFT_PX, width: COMPACT_GUTTER_PX - LANE_BEND },
-    laneJoinBend: { left: COMPACT_LANE_LEFT_PX, width: COMPACT_GUTTER_PX + SPINE_WIDTH },
+    containerBody: { marginLeft: NARROW_NESTED_INDENT_PX - COMPACT_GUTTER_PX },
+    laneFork: { left: COMPACT_LANE_LEFT_PX, width: NARROW_NESTED_INDENT_PX - LANE_BEND },
+    laneJoinBend: { left: COMPACT_LANE_LEFT_PX, width: NARROW_NESTED_INDENT_PX + SPINE_WIDTH },
     heading: { gap: COMPACT_ORDINAL_GAP_PX, marginLeft: -COMPACT_GUTTER_PX },
 });
 /** `compact` only: the lone card takes the column's whole width, running under its number. */
@@ -1040,6 +1048,7 @@ const WIDE_GRID_STYLES = {
     laneEndInserter: workflowEditorStyles.laneEndInserter,
     laneLabelRow: workflowEditorStyles.laneLabelRow,
     laneTurn: workflowEditorStyles.laneTurn,
+    containerBody: workflowEditorStyles.containerBody,
     laneFork: workflowEditorStyles.laneFork,
     laneJoinBend: workflowEditorStyles.laneJoinBend,
     heading: workflowEditorStyles.heading,
@@ -1058,6 +1067,7 @@ const PHONE_GRID_STYLES = {
     laneEndInserter: [workflowEditorStyles.laneEndInserter, narrowDocumentGrid.laneEndInserter],
     laneLabelRow: [workflowEditorStyles.laneLabelRow, narrowDocumentGrid.laneLabelRow],
     laneTurn: [workflowEditorStyles.laneTurn, narrowDocumentGrid.laneTurn],
+    containerBody: [workflowEditorStyles.containerBody, narrowDocumentGrid.containerBody],
     laneFork: [workflowEditorStyles.laneFork, narrowDocumentGrid.laneFork],
     laneJoinBend: [workflowEditorStyles.laneJoinBend, narrowDocumentGrid.laneJoinBend],
     heading: [workflowEditorStyles.heading, narrowDocumentGrid.heading],
