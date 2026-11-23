@@ -6,6 +6,7 @@ import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { ApiMachineClient } from '@/api/apiMachine';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
+import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { executeMachineGuardAction } from '@/api/machine/machineGuard';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { createBrowserDaemonControlBroker } from '@/daemon/browser/control/broker';
@@ -136,6 +137,8 @@ async function setup(useDefaultApiOwner = false, withCeilingOwner = false,
     approvalWaivedSurfaces: { 'localServices.launcher.start': ['ui'] } });
   let guardLocalAction: NonNullable<ActionExecutorDeps['machineGuardAction']>;
   const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+    actionAutomations: createActionAutomationPortV1({ accountId: initialTarget.custodianAccountId,
+      seed: async () => ({ v: 1, rows: [] }), settle: async () => {} }),
     ...(machineTerminalAction ? { machineTerminalAction } : {}),
     sessionOpen: async request => { opened.push(request.sessionId); onSessionOpen?.(); return output; },
     // Session metadata RPC is the system boundary; the permission/grant admission below is real.
