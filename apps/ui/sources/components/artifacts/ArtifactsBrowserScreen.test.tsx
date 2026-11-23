@@ -45,6 +45,7 @@ import { sealArtifactPrivateRevisionMetadata } from '@/sync/domains/artifacts/ac
 import { ArtifactView } from './ArtifactView';
 import { NavigationTitleChromeProvider } from '@/components/ui/layout/navigationTitleChrome';
 import { DestinationInstanceContext } from '@/components/appShell/workspace/destinationInstanceContext';
+import { useArtifactCollectionPresentation } from '@/components/ui/lists/collection/useCollectionDisplayOptions';
 
 // Keep the lazy executable graph's first load outside the operation's behavior deadline.
 await import('@/sync/ops/actions/defaultActionExecutor');
@@ -230,6 +231,14 @@ describe('Artifacts browser folders view', () => {
             expect(vi.mocked(Modal.confirm).mock.calls[0]?.slice(0, 2)).toEqual(['projects.dashboard.deleteConfirmTitle(name=Notes)', 'projects.dashboard.deleteConfirmBody']);
             expect(Modal.alert).not.toHaveBeenCalled();
         }
+        await hook.unmount();
+    });
+
+    it('uses the current Artifact presentation owner and ignores an intermediate local choice', async () => {
+        const obsoleteLocalChoice = { artifactsBrowserViewV1: { presentation: 'folders' as const } };
+        getStorage().setState(state => ({ localSettings: { ...state.localSettings, ...obsoleteLocalChoice } }));
+        const hook = await renderHook(() => useArtifactCollectionPresentation('grid'));
+        expect(hook.getCurrent()[0]).toBe('grid');
         await hook.unmount();
     });
 

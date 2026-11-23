@@ -118,13 +118,6 @@ const localSettingInputs = {
         description: 'How Storage → Whole disk shows a folder on this device, per machine: list, map or rings, and the list sort',
         storageScope: 'local',
     },
-    artifactsBrowserViewV1: {
-        // Grid, List or Folders for the Artifacts browser on this device; unset follows the device (phones list, else grid).
-        schema: z.catch(z.object({ presentation: z.optional(z.enum(['grid', 'list', 'folders'])) }), {}),
-        default: {},
-        description: 'Whether the Artifacts browser shows cards, a list or the folder tree on this device',
-        storageScope: 'local',
-    },
     pluginsCollectionViewV1: {
         // Grid (default) or List, remembered per Plugins view on this device.
         schema: z.catch(z.object({

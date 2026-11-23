@@ -75,8 +75,8 @@ async function mount(phone: boolean, theme: 'light' | 'dark', singleDefinition =
     primeServerFeaturesSnapshot({ serverId: home.id, snapshot: { status: 'ready', features: createRootLayoutFeaturesResponse() } });
     storage.setState({ profileScope: { serverId: home.id, accountId: 'account-a' }, isDataReady: true, isSessionDraftsReady: true,
         settingsScope: { serverId: home.id, accountId: 'account-a' }, settingsVersion: 1,
-        settings: { ...settingsDefaults, experiments: true, featureToggles: { automations: true } },
-        ...(surface === 'artifacts' ? { localSettings: { ...storage.getState().localSettings, artifactsBrowserViewV1: { presentation: 'list' as const } } } : {}),
+        settings: { ...settingsDefaults, experiments: true, featureToggles: { automations: true },
+            ...(surface === 'artifacts' ? { collectionDisplayPreferencesV1: { artifact: { presentation: 'list' as const } } } : {}) },
         workflowRunListWindows: {}, workflowRunsById: {} });
     installUrlMirror();
     createRoot(document.getElementById('root')!).render(<WorkspaceBrowserPresentation><SafeAreaProvider initialMetrics={{ frame: { x: 0, y: 0, width: innerWidth, height: innerHeight }, insets: { top: 0, right: 0, bottom: 0, left: 0 } }}>

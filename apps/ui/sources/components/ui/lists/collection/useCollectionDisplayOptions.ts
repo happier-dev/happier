@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { CollectionArtifactPresentation, CollectionLines, CollectionTableCardPresentation, CollectionWorkflowGrouping, CollectionWorkflowRunGrouping, SessionCollectionRowDetails } from '@happier-dev/protocol/account/settings/accountSettings';
 import { useSettingActionFeedback, type DeclaredSettingsWrite } from '@/components/settings/shell/useSettingActionFeedback';
 import type { Settings } from '@/sync/domains/settings/settings';
-import { useLocalSetting, useSettingsSelector } from '@/sync/store/settingsReadHooks';
+import { useSettingsSelector } from '@/sync/store/settingsReadHooks';
 
 import { COLLECTION_DISPLAY_SETTING_ANCHOR, readSessionCollectionLines, readSessionCollectionRowDetails } from './collectionDisplaySettings';
 
@@ -99,9 +99,8 @@ export function useWorkflowRunDisplayOptions() {
 
 export function useArtifactCollectionPresentation(defaultPresentation: CollectionArtifactPresentation) {
     const preferred = useSettingsSelector(readArtifactPresentation, DISPLAY_KEYS, 'collection.display.artifact');
-    const retained = useLocalSetting('artifactsBrowserViewV1');
     const { setSetting } = useSettingActionFeedback();
     const setPresentation = React.useCallback((presentation: CollectionArtifactPresentation) =>
         setSetting({ anchor: COLLECTION_DISPLAY_SETTING_ANCHOR }, { kind: 'artifact', presentation }, { confirmed: true }), [setSetting]);
-    return [preferred ?? retained?.presentation ?? defaultPresentation, setPresentation] as const;
+    return [preferred ?? defaultPresentation, setPresentation] as const;
 }

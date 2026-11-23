@@ -122,6 +122,7 @@ describe('Artifacts browser storage numbers (owner 11-19, audit 42a/42b)', () =>
           key: 'owner',
           serverUrl: 'https://artifact-storage-numbers.test',
           accountId,
+          settings: { collectionDisplayPreferencesV1: { artifact: { presentation: 'list' } } },
         },
       ],
       route: (request) => {
@@ -134,9 +135,10 @@ describe('Artifacts browser storage numbers (owner 11-19, audit 42a/42b)', () =>
     });
     disposeHome = served.dispose;
     const disconnect = await served.restoreActiveConnection();
-    // This device chose the list: a wide page draws it as the table, whose end column is Size.
+    // The Account chose the list: a wide page draws it as the table, whose end column is Size.
     getStorage().setState((state) => ({
-      localSettings: { ...state.localSettings, artifactsBrowserViewV1: { presentation: 'list' } },
+      settings: { ...state.settings, collectionDisplayPreferencesV1: { ...state.settings.collectionDisplayPreferencesV1,
+        artifact: { ...state.settings.collectionDisplayPreferencesV1.artifact, presentation: 'list' } } },
     }));
     try {
       const screen = await renderScreen(

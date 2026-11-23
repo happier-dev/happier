@@ -117,7 +117,9 @@ it.each([1440, 390])('keeps the Artifacts list sheet on the page edge at %i px',
     document.body.appendChild(host);
     const root = createRoot(host);
     try {
-        getStorage().setState({ localSettings: { ...initialState.localSettings, artifactsBrowserViewV1: { presentation: 'list' } } });
+        getStorage().setState({ settings: { ...initialState.settings,
+            collectionDisplayPreferencesV1: { ...initialState.settings.collectionDisplayPreferencesV1,
+                artifact: { ...initialState.settings.collectionDisplayPreferencesV1.artifact, presentation: 'list' } } } });
         await act(async () => root.render(<InjectedAuthProvider credentials={null}><View style={{ width }}><AppPaneProvider>
             <ArtifactsBrowser artifacts={[artifact]} loaded loadFailed={false} onRetry={() => {}} usage={null} />
         </AppPaneProvider></View></InjectedAuthProvider>));

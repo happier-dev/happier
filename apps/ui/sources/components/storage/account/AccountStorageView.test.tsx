@@ -642,9 +642,10 @@ describe('Settings › Storage (storage-view lab scenes 1–4)', () => {
     routerMock.state = { pathname: '/artifacts', params: {} };
     const disconnect = await serve(null);
     getStorage().setState((state) => ({
-      localSettings: {
-        ...state.localSettings,
-        artifactsBrowserViewV1: { presentation: 'list' },
+      settings: {
+        ...state.settings,
+        collectionDisplayPreferencesV1: { ...state.settings.collectionDisplayPreferencesV1,
+          artifact: { ...state.settings.collectionDisplayPreferencesV1.artifact, presentation: 'list' } },
       },
     }));
     try {
