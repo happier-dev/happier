@@ -1,8 +1,13 @@
 import { PluginUiJsonValueV1Schema, type PluginUiDeviceStateRequestV1, type PluginUiDeviceStateResultV1 } from '@happier-dev/protocol/plugins/ui';
+import { Platform } from 'react-native';
+
 export type PluginDeviceStorage = Readonly<{ getString(key: string): string | undefined; set(key: string, value: string): void; delete(key: string): void }>;
 export function createPluginDeviceState(storage: PluginDeviceStorage, namespace: readonly string[]) {
     return (request: PluginUiDeviceStateRequestV1): PluginUiDeviceStateResultV1 => {
-        const key = `plugin-device-state:${JSON.stringify([...namespace, request.key])}`;
+        const tuple = JSON.stringify([...namespace, request.key]);
+        // MMKV web reserves backslashes. Encoded tuples start with %5B, keeping them distinct from existing [ tuples.
+        const storageKey = Platform.OS === 'web' && tuple.includes('\\') ? encodeURIComponent(tuple) : tuple;
+        const key = `plugin-device-state:${storageKey}`;
         if (request.operation === 'write') storage.set(key, JSON.stringify(request.value));
         else if (request.operation === 'remove') storage.delete(key);
         else {
