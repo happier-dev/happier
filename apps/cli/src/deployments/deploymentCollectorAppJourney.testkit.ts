@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { expect } from 'vitest';
+import { expect, vi } from 'vitest';
 import { z } from 'zod';
 import { readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployments';
+import { isDeploymentRollbackSourceEligibleV1 } from '@happier-dev/deployments/contracts/v1';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries/registryActionsV1';
 import { DeploymentTemplateInstantiateResultV1Schema,
     type DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
@@ -15,6 +16,7 @@ import { createEnrollMachineFlowExecutorFromHappierJsonExecutor } from '../../..
 import { createHappierJsonExecutorFromTextRunner } from '../../../../packages/cli-common/src/systemTasks/executors/happierJsonExecutorFromTextRunner';
 import { resolveRemoteInstalledFirstPartyBinaryPath } from '../../../../packages/cli-common/src/systemTasks/ssh/remoteFirstPartyInstallPath';
 import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
+import * as serverLogging from '../../../server/sources/utils/logging/log';
 import { ApiClient } from '@/api/api';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -95,29 +97,57 @@ export const runCollectorAppJourney: ProductionTelemetryCollectorAppJourney = as
         contentHeaderVersion: detail.environment.contentHeaderVersion, contentBodyVersion: detail.environment.contentBodyVersion,
         patch: { definition: { from: 'compose', document: JSON.stringify(document),
             profiles: definition.profiles, services: definition.services } } });
-    // A failed deploy is explained by the collector container's own lifecycle;
-    // the suite cleanup removes it, so record its state and redacted tail first.
-    const reportCollectorContainers = async () => {
-        const listed = await nativeDocker(['ps', '--all', '--filter', projectFilter, '--format', '{{.ID}}']);
-        for (const id of listed.stdout.trim().split('\n').filter(Boolean)) {
-            const state = await nativeDocker(['inspect', '--format',
-                '{{index .Config.Labels "com.docker.compose.service"}} restarts={{.RestartCount}} {{json .State}}', id]);
-            const logs = await nativeDocker(['logs', '--tail', '80', id]);
-            console.info('F14 collector container', { id, state: state.stdout.trim(),
-                logs: redactBugReportSensitiveText(`${logs.stdout}${logs.stderr}`) });
-        }
+    const serviceFilter = `label=com.docker.compose.service=${serviceName}`;
+    const listCollectorContainers = async () => {
+        const listed = await nativeDocker(['ps', '--all', '--filter', projectFilter, '--filter', serviceFilter, '--format', '{{.ID}}']);
+        return listed.stdout.trim().split('\n').filter(Boolean);
     };
+    const captureCollectorContainers = async (trigger: string, observedAt: string, machineId?: string) => {
+        const ids = await listCollectorContainers().catch(() => null);
+        const containers = ids && await Promise.all(ids.map(async id => {
+            const [state, logs] = await Promise.allSettled([
+                nativeDocker(['inspect', '--format', 'restarts={{.RestartCount}} {{json .State}}', id]),
+                nativeDocker(['logs', '--timestamps', '--tail', '80', id]),
+            ]);
+            return {
+                id,
+                state: state.status === 'fulfilled' ? redactBugReportSensitiveText(state.value.stdout.trim()) : null,
+                logs: logs.status === 'fulfilled' ? redactBugReportSensitiveText(
+                    `${logs.value.stdout}\n${logs.value.stderr}`.replace(
+                        /(x-happier-plugin-installation-manifest-publisher:\s*)[^\s'"\\]+/gi, '$1[REDACTED]')) : null,
+            };
+        }));
+        return { trigger, observedAt, machineId, containers };
+    };
+    // Start the Docker reads at the Home's child disconnect, before the deploy
+    // failure can remove the candidate. Keep the real logger and socket path.
+    let disconnectCapture: ReturnType<typeof captureCollectorContainers> | undefined;
+    const log = serverLogging.log;
+    const socketObservation = vi.spyOn(serverLogging, 'log').mockImplementation((facts: unknown, ...args: unknown[]) => {
+        log(facts, ...args);
+        if (disconnectCapture || typeof facts !== 'object' || facts === null
+            || !('module' in facts) || facts.module !== 'websocket'
+            || !('clientType' in facts) || facts.clientType !== 'machine-scoped'
+            || !('reason' in facts)
+            || !('machineId' in facts) || typeof facts.machineId !== 'string'
+            || facts.machineId === home.machineId || facts.machineId === 'none') return;
+        disconnectCapture = captureCollectorContainers('child-socket-disconnect', new Date().toISOString(), facts.machineId);
+    });
     let receipt: DeploymentReceiptResultV1;
     try {
         receipt = DeploymentReceiptResultV1Schema.parse(await initiator.accepted('deployments.deploy', {
             serverId: home.serverId, environmentId, targetLinkId: applied.targetLinkId, requestKey: randomUUID() }));
+        if (!receipt.ok || !('state' in receipt) || !isDeploymentRollbackSourceEligibleV1(receipt.state)) {
+            throw new Error(`The collector App deployment must settle successfully: ${JSON.stringify(receipt)}`);
+        }
     } catch (error) {
-        await reportCollectorContainers();
+        const capture = await disconnectCapture;
+        const remaining = await captureCollectorContainers('deployment-failure', new Date().toISOString());
+        console.info('F14 collector Docker evidence', JSON.stringify({ capture, remaining }));
         throw error;
-    }
-    if (!receipt.ok || !('state' in receipt) || receipt.state !== 'succeeded') {
-        await reportCollectorContainers();
-        throw new Error(`The collector App deployment must settle successfully: ${JSON.stringify(receipt)}`);
+    } finally {
+        socketObservation.mockRestore();
+        await disconnectCapture;
     }
     const machines = ListedMachines.parse(await initiator.accepted('machines.list', { serverId: home.serverId, refresh: true })).items
         .filter(machine => machine.deploymentApp?.environmentId === environmentId);
@@ -133,9 +163,7 @@ export const runCollectorAppJourney: ProductionTelemetryCollectorAppJourney = as
     await initiator.accepted('machines.access.grant.set', { serverId: home.serverId, machineId,
         principal: { kind: 'team', teamId: initiator.teamId }, level: 'view' });
     await initiator.accepted('machines.access.prepareKeys', { serverId: home.serverId, machineId });
-    const containers = await nativeDocker(['ps', '--all', '--filter', projectFilter,
-        '--filter', `label=com.docker.compose.service=${serviceName}`, '--format', '{{.ID}}']);
-    const ids = containers.stdout.trim().split('\n').filter(Boolean);
+    const ids = await listCollectorContainers();
     if (ids.length !== 1) throw new Error('The collector must run in its admitted native container');
     const containerId = ids[0];
     const assertReady = async () => {
