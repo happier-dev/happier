@@ -4,6 +4,7 @@ import tweetnacl from 'tweetnacl';
 import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { auth } from '@/app/auth/auth';
 import { removeMachineAccessGrantInTx, resolveMachineAdmission } from '@/app/machines/machineAccess';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
@@ -59,6 +60,15 @@ describe('admitted requester Event publisher', () => {
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target,
         });
         const requesterOperation = { authorizationToken: authorization.token, requestId };
+        const carrierRequestId = randomUUID();
+        const carrier = await auth.mintExternalActionExecutionAuthorization({
+            serverIdentityId: authorization.binding.serverIdentityId, accountId: requester.id,
+            authentication: { kind: 'account', tokenEpoch: requester.tokenEpoch },
+            machineId, target, actionId: ACTION_OPERATION_GET_ACTION_ID_V1, requestId: carrierRequestId,
+            requesterOperationRead: true,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ ...envelope, requestId: carrierRequestId }),
+        });
+        const carrierOperation = { authorizationToken: carrier.token, requestId: carrierRequestId };
         const path = '/v1/automations/events/stored-definitions/read';
         const verify = async (operation = requesterOperation, publisherAccountId = custodian.id) => {
             const body = { caller: { requesterOperation: operation } };
@@ -132,6 +142,8 @@ describe('admitted requester Event publisher', () => {
                 .toMatchObject({ accountId: requester.id, reporterMachineId: machineId,
                     reporterMachineInstallationId: installationId, reporterMaterializationId: materializationId });
             expect(await db.automationEventSourceCatalogStatus.count({ where: { accountId: custodian.id } })).toBe(0);
+            const carrierWithGrant = await read(carrierOperation);
+            expect(carrierWithGrant.statusCode, 'operation carrier cannot publish even with a current grant').toBe(401);
             const removed = await inTx(tx => removeMachineAccessGrantInTx(tx, {
                 actorAccountId: custodian.id, machineId,
                 principal: { kind: 'account', accountId: requester.id },
@@ -141,6 +153,7 @@ describe('admitted requester Event publisher', () => {
                 .toMatchObject({ kind: 'denied' });
             await expect(verify()).rejects.toBeInstanceOf(PluginInstallationPublisherProofError);
             expect((await read()).statusCode).toBe(401);
+            expect((await read(carrierOperation)).statusCode).toBe(401);
         } finally { await app.close(); }
     });
 });

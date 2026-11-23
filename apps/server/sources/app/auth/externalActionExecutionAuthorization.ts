@@ -5020,7 +5020,8 @@ export async function verifyExternalActionMachinePublicationRequester(input: Rea
     requestId?: string;
 }>): Promise<string | null> {
     const binding = await auth.verifyExternalActionExecutionAuthorization(input.authorizationToken);
-    if (!binding
+    // Retained operation access is a transport purpose without requester publication authority.
+    if (!binding || binding.requesterOperationRead
         || binding.serverIdentityId !== await initializeServerIdentityCache()
         || binding.custodianAccountId !== input.custodianAccountId
         || binding.machineId !== input.machineId || binding.installationId !== input.installationId

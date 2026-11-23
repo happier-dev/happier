@@ -526,9 +526,12 @@ describe("Action occurrence admission through the real router", () => {
                 { artifactId: resourceId, principalKind: "account", accountId: viewerId, accessLevel: "view", createdByAccountId: ownerId },
             ] });
         } else {
+            const team = kind === "app" ? await db.team.create({ data: { name: "Accepted Source audience" } }) : null;
+            if (team) await db.teamMembership.create({ data: { teamId: team.id, accountId: editorId, role: "admin" } });
             const source = await db.projectSource.create({ data: { ...(kind === "app" ? { id: resourceId } : {}),
                 createdByAccountId: ownerId, owner: { kind: "account", accountId: ownerId }, name: "Reach source",
-                audience: [{ principal: { kind: "account", accountId: viewerId }, level: "view" }], attachments: [] } });
+                audience: [{ principal: { kind: "account", accountId: viewerId }, level: "view" },
+                    ...(team ? [{ principal: { kind: "team", teamId: team.id }, level: "view" }] : [])], attachments: [] } });
             if (kind !== "app") {
                 const machine = await db.machine.create({ data: { id: randomUUID(), accountId: ownerId,
                     metadata: "private-controller", installationId: randomUUID() } });
@@ -549,7 +552,7 @@ describe("Action occurrence admission through the real router", () => {
         try {
             for (const [accountId, home, id, expected] of [
                 [ownerId, serverId, resourceId, true],
-                ...(kind === "machine" || kind === "session" || kind === "approvalProfile"
+                ...(kind === "machine" || kind === "session" || kind === "approvalProfile" || kind === "app"
                     ? [[editorId, serverId, resourceId, true] as const] : []),
                 [viewerId, serverId, resourceId, false], [ownerId, "srv_wrong_home", resourceId, false],
                 [ownerId, serverId, randomUUID(), false],
@@ -583,6 +586,7 @@ describe("Action occurrence admission through the real router", () => {
                     if (kind === "machine") await db.machineGrant.updateMany({ where: { machineId: resourceId, accountId }, data: { accessLevel: "view" } });
                     if (kind === "session") await db.sessionGrant.updateMany({ where: { sessionId: resourceId, accountId }, data: { accessLevel: "view" } });
                     if (kind === "approvalProfile") await db.artifactGrant.updateMany({ where: { artifactId: resourceId, accountId }, data: { accessLevel: "view" } });
+                    if (kind === "app") await db.teamMembership.updateMany({ where: { accountId }, data: { role: "member" } });
                     const nextEnvelope = sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: "e2ee", material,
                         randomBytes: length => new Uint8Array(length).fill(2),
                         binding: { v: 1, automationId, triggerId, triggerRevision: 1, triggerKind: "action" }, definition });
