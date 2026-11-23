@@ -1583,6 +1583,20 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           || (context.serverIdentityId ?? context.serverId) !== (origin.serverIdentityId ?? origin.serverId)) {
           return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
         }
+        if (request.delivery) return { delivery: request.delivery };
+        const recordDelivery = async (delivery: SessionInputAdmissionResultV1) => {
+          if (deps.approvalsUpdate && (delivery.status === 'held'
+            || (delivery.status === 'rejected' && delivery.code === 'session_input_target_unavailable'
+              && delivery.effectAttempted === false))) {
+            try {
+              await deps.approvalsUpdate({ artifactId, request: { ...request, delivery },
+                serverId: context.serverId ?? origin.serverId, expectedStatus: request.status });
+            } catch {
+              // The transport's receipt still answers this decision if Artifact storage is unavailable.
+            }
+          }
+          return { delivery };
+        };
         const localId = `approval-result:${artifactId}`;
         let publication: unknown;
         try {
@@ -1593,7 +1607,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (publication != null) {
           const outcome = readApprovalReplayResult(publication);
           // The origin publisher answers with its own decision result and receipt.
-          if (!outcome.ok) return { delivery: projectApprovalResultDeliveryV1(outcome, localId) };
+          if (!outcome.ok) return await recordDelivery(projectApprovalResultDeliveryV1(outcome, localId));
           const delivered = SessionInputAdmissionResultV1Schema.safeParse(readRecord(outcome.result).delivery);
           return delivered.success ? { delivery: delivered.data } : null;
         }
@@ -1636,7 +1650,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         // Accepted, held on the Machine path, refused with its cause, or unknown:
         // each is the Session sender's receipt, beside the unchanged run record.
-        return { delivery: projectApprovalResultDeliveryV1(response, localId) };
+        return await recordDelivery(projectApprovalResultDeliveryV1(response, localId));
       }
     }
     if (request.v !== 2 || request.actionId !== 'discussion.reply' || request.status !== 'failed'

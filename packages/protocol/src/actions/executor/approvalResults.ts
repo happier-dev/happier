@@ -48,7 +48,8 @@ export function projectApprovalResultDeliveryV1(response: unknown, localId: stri
   const code = SessionInputAdmissionRejectionCodeV1Schema.safeParse(failure.data.errorCode);
   if (code.success) {
     const cause = rejectUnavailableSessionInputV1('approval.result.delivery', failure.data).failureCause;
-    return { status: 'rejected', code: code.data, failureCause: cause };
+    return { status: 'rejected', code: code.data, failureCause: cause,
+      ...(failure.data.effectAttempted === false ? { effectAttempted: false } : {}) };
   }
   if (isActionOutcomeUnknownErrorCodeV1(failure.data.errorCode)) {
     return { status: 'outcomeUnknown', localId, code: failure.data.errorCode.slice(0, 128) };

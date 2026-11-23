@@ -6,17 +6,13 @@ import { SessionMessageProvenanceV1Schema } from '@happier-dev/protocol/sessions
 import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 import { materializeActionRequestAttributionV1, type ActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
-import { rejectUnavailableSessionInputV1, supportsAccountPendingForSessionInput } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { buildUnavailableSessionInputTargetFailureV1, rejectUnavailableSessionInputV1, supportsAccountPendingForSessionInput } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { ActionPluginCaller, ActionCaller, ActionSurfaces, ExternalActionExecutionAuthorizationV1, PluginInvocationSurfaceV1, PluginSessionInputSourceV1, SessionInputCausalPermissionAuthorityV1, SessionInputRequestV1, SessionInputRequestV2, SessionInputRequest, SessionInputSourceAuthorityV1, SessionInputWorkflowV2, SessionMessageProvenanceV1, SessionMessageProvenanceV2 } from '@happier-dev/protocol';
 
 export { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 
 export function rejectMissingOrArchivedSessionInputV1() {
-  return rejectUnavailableSessionInputV1('session.message.target_lookup', {
-    ok: false,
-    errorCode: 'session_input_target_unavailable',
-    error: 'session_input_target_unavailable',
-  });
+  return rejectUnavailableSessionInputV1('session.message.target_lookup', buildUnavailableSessionInputTargetFailureV1());
 }
 
 export function supportsAccountPendingForCliSessionInput(

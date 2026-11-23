@@ -121,6 +121,7 @@ function immutableSubject(request: ApprovalRequest, actionArgs: unknown): Readon
     updatedAtMs: _updatedAtMs,
     decision: _decision,
     execution: _execution,
+    delivery: _delivery,
     actionArgs: _actionArgs,
     storageRetryResults: _storageRetryResults,
     automaticChecks: _automaticChecks,
@@ -206,6 +207,14 @@ export function decideApprovalRequestTransition(
     && (next.storageRetryResults?.length ?? 0) > (existing.storageRetryResults?.length ?? 0)
     && durablyEqual(existing.storageRetryResults ?? [], next.storageRetryResults?.slice(0, existing.storageRetryResults?.length ?? 0));
   if (!durablyEqual(existing.storageRetryResults, next.storageRetryResults) && !isStorageRetryReceipt) return SUBJECT_MISMATCH;
+  const isDeliveryReceipt = existing.v === 2 && next.v === 2
+    && isSettled(existing.status) && next.status === existing.status
+    && existing.delivery === undefined && next.delivery !== undefined
+    && durablyEqual(existing.execution, next.execution)
+    && durablyEqual(existing.automaticChecks, next.automaticChecks)
+    && durablyEqual(existing.storageRetryResults, next.storageRetryResults)
+    && ApprovalRequestV2Schema.safeParse(next).success;
+  if (!durablyEqual(existing.delivery, next.delivery) && !isDeliveryReceipt) return SUBJECT_MISMATCH;
   if (durablyEqual(existing, next)) {
     return existing.status === 'executing' ? INVALID_TRANSITION : { ok: true, changed: false };
   }
@@ -275,7 +284,8 @@ export function decideApprovalRequestTransition(
       && !isLegacyApprovedStaleFailure
       && !isExecutingTerminal
       && !isWorkspaceLinkReadBack
-      && !isStorageRetryReceipt)
+      && !isStorageRetryReceipt
+      && !isDeliveryReceipt)
     || next.updatedAtMs < existing.updatedAtMs
   ) {
     return INVALID_TRANSITION;

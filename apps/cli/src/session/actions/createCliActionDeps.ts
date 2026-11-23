@@ -26,6 +26,7 @@ import { prepareCliManagedProvisionerAdmission } from '@/machines/managed/provis
 import { prepareCliManagedMachinePresetAuthoring } from '@/machines/managed/presetAuthoring';
 import { prepareCliManagedMachineWake } from './cliActionDeps/managedMachineWake';
 import { prepareDeploymentTargetEnablementRetention } from '@/deployments/targetEnablementRetention';
+import { buildUnavailableSessionInputTargetFailureV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { resolveSessionInputTargetMachineId } from '@/session/services/sessionInputAdmissionIdentity';
 import { createCliOccurrenceAction } from './cliActionDeps/occurrences';
 import { createPrepareDeployment } from '@/workspaces/prepareDeployment';
@@ -1881,8 +1882,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
       if (retained.type === 'not_found') return null;
       if (retained.type !== 'found') {
         if (isTranscriptSessionUnavailableError(retained.error)) {
-          const code = 'session_input_target_unavailable';
-          return { ok: false, errorCode: code, error: code, effectAttempted: false };
+          return buildUnavailableSessionInputTargetFailureV1();
         }
         throw retained.error;
       }

@@ -1145,10 +1145,17 @@ export const SessionInputEnqueueResultV1Schema = lazyZodSchema(() => z.discrimin
     status: z.literal('rejected'),
     code: SessionInputAdmissionRejectionCodeV1Schema,
     failureCause: z.optional(ActionFailureCauseV1Schema),
+    effectAttempted: z.optional(z.literal(false)),
   }),
   SessionInputOutcomeUnknownV1Schema,
 ]));
 export type SessionInputEnqueueResultV1 = z.infer<typeof SessionInputEnqueueResultV1Schema>;
+
+/** An exact Home lookup established that the Session is missing or archived before sending. */
+export function buildUnavailableSessionInputTargetFailureV1() {
+  const code = 'session_input_target_unavailable';
+  return { ok: false, errorCode: code, error: code, effectAttempted: false } as const;
+}
 
 export function rejectUnavailableSessionInputV1(phase: string, error?: unknown) {
   return {

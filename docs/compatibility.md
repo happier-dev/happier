@@ -924,9 +924,19 @@ A direct CLI Session Send to a missing or archived Session returns the same
 `rejected` receipt with code `session_input_target_unavailable` and a
 `session.message.target_lookup` cause. The receipt does not identify which
 target state caused the refusal.
-Deferred approval-result delivery reports `session_input_target_unavailable`
-when Home reports that the exact originating Session is unavailable before
-Pending admission. The run record still reports the approved Action's outcome.
+In unreleased 0.3, deferred approval-result delivery records a rejected receipt
+with `session_input_target_unavailable` and `effectAttempted: false` when the
+exact Home establishes that the asking Session is missing or archived before
+admission. An app-owned Account Action can settle independently of its asking
+Session. Its result enters the Session sender as automation, so a person-Stop
+hold parks admitted input and returns `held` / `held_by_person`. A Session-owned
+replay checks the admitted Session before claiming the Action and can settle
+`approval_stale` / `session_changed` before the effect.
+The approval Artifact stores the definite unavailable or held delivery
+receipt separately from execution. `approval.request.get` exposes it as
+`request.delivery`. Earlier records can omit this field. Strict 0.3 development
+readers require matching source for records carrying it. The released 0.2
+ApprovalRequest V1 has no V2 execution origin for this delivery path.
 
 Execution-run Action completion observations and review, plan and narration terminal
 values retain optional `runtimeIssueV1`. External-linked takeover operation errors

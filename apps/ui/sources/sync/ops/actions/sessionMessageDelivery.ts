@@ -3,13 +3,14 @@ import { ActionExecuteFailureSchema, projectActionFailureCauseV1 } from '@happie
 import { supportsMachineOperationProtocolCapabilityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { supportsSessionMessageInputJsonSchema } from '@happier-dev/protocol/actions/actionInputJsonSchemaValidation';
 import { withSessionMessageModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
-import { rejectUnavailableSessionInputV1, supportsAccountPendingForSessionInput } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { buildUnavailableSessionInputTargetFailureV1, rejectUnavailableSessionInputV1, supportsAccountPendingForSessionInput } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { readMachineRows } from '@/sync/api/machines/machineRowsApi';
 import { isSessionAccessRecipient } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { storage } from '@/sync/domains/state/storage';
 import type { readMachineControlTargetForSessionAuthority } from '@/sync/ops/sessionMachineTarget';
+import { SessionSnapshotReadError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
 import { projectServerScopedSessionSendMessageResult, sendSessionMessageWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { captureLazyActionAccountContext, withActionAccountRequestSignal, type LazyActionAccountContext } from './actionAccountContext';
@@ -22,7 +23,7 @@ export function projectSessionMessageTarget({ session, target }: Awaited<ReturnT
   const metadata = readSessionOwnerMetadataView(session);
   const processStartTime = metadata?.hostProcessStartTimeMs;
   const processFingerprint = metadata?.hostProcessInstanceFingerprint;
-  return { sessionId: session.id, machineId: target?.machineId ?? null,
+  return { sessionId: session.id, machineId: target?.machineId ?? null, archived: session.archivedAt != null,
     isRecipient: isSessionAccessRecipient(session.access, session.accessLevel),
     hostOccurrence: [metadata?.hostPid ?? null, typeof processStartTime === 'number' ? processStartTime : null,
       typeof processFingerprint === 'string' ? processFingerprint : null] as const };
@@ -101,10 +102,20 @@ export function createSessionMessageDelivery(params: Readonly<{
       account.assertCurrent();
       throwIfAborted(signal);
       const { [preparedSessionMessageTarget]: prepared, ...actionContext } = args.context as SessionMessageTargetContext;
-      const { machineId, isRecipient, hostOccurrence } = prepared?.facts.sessionId === sessionId
-        && prepared.serverId === account.serverId && prepared.accountId === account.accountId
-        && prepared.endpointUrl === account.endpointUrl && prepared.credentialAuthorityKind === account.credentialAuthorityKind
-        ? prepared.facts : projectSessionMessageTarget(await readAccountSessionControlTarget(account, sessionId, signal));
+      let target: ReturnType<typeof projectSessionMessageTarget>;
+      try {
+        target = prepared?.facts.sessionId === sessionId
+          && prepared.serverId === account.serverId && prepared.accountId === account.accountId
+          && prepared.endpointUrl === account.endpointUrl && prepared.credentialAuthorityKind === account.credentialAuthorityKind
+          ? prepared.facts : projectSessionMessageTarget(await readAccountSessionControlTarget(account, sessionId, signal));
+      } catch (error) {
+        if (error instanceof SessionSnapshotReadError && error.errorCode === 'not_found') {
+          return buildUnavailableSessionInputTargetFailureV1();
+        }
+        throw error;
+      }
+      if (target.archived) return buildUnavailableSessionInputTargetFailureV1();
+      const { machineId, isRecipient, hostOccurrence } = target;
       const pendingDuringStart = !isRecipient && machineId !== null
         && resolveServerScopedMachine(storage.getState(), account.serverId, machineId)?.managedInputRuntime?.state === 'starting'
         && args.requestedAction?.kind !== 'reset_start';

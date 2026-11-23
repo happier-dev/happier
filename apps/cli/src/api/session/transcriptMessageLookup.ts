@@ -2,6 +2,7 @@ import { createExternalActionHeaderRefusalError } from '@/api/externalActionHead
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from '@/api/client/credentialAxios';
 import { type AxiosError } from 'axios';
+import { V2SessionByIdNotFoundSchema } from '@happier-dev/protocol/sessions/control/contract';
 import type { ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
 import { Agent as HttpAgent } from 'node:http';
 import { Agent as HttpsAgent } from 'node:https';
@@ -86,7 +87,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 /** Home conceals missing Sessions and Sessions outside the reader's access with the same response. */
 export function isTranscriptSessionUnavailableError(error: unknown): boolean {
     return axios.isAxiosError(error) && error.response?.status === 404
-        && asRecord(error.response.data)?.error === 'Session not found';
+        && V2SessionByIdNotFoundSchema.safeParse(error.response.data).success;
 }
 
 function isV2MessageNotFoundError(error: unknown): error is AxiosError<unknown> {

@@ -1301,6 +1301,74 @@ describe('createDefaultActionExecutor approvals', () => {
         } });
         expect(outgoing).toEqual([]);
     });
+    it.each(['deleted', 'archived', 'stopped', 'lost acknowledgement'] as const)(
+        'settles an app-run Ask separately from delivery to its Session (%s)', async state => {
+            const { artifactId } = await invitationApproval('ui.voice_global.get', true, true);
+            const { createPlainSessionWithDisplayRecordFixture } = await import('@/dev/testkit/fixtures/sessionDisplayFixtures');
+            const detail = state === 'deleted' ? { status: 404, body: { error: 'Session not found' } } : { body: {
+                session: createPlainSessionWithDisplayRecordFixture({
+                    id: 's1', active: state === 'lost acknowledgement',
+                    archivedAt: state === 'archived' ? 10 : null,
+                    metadata: { machineId: 'machine-exact', path: '/repo', host: 'tester.local',
+                        ...(state === 'stopped' ? { sessionExplicitStopV1: {
+                            v: 1, cause: 'explicit_stop', requestId: 'person-stop', requestedAtMs: 10,
+                        } } : {}) },
+                }),
+            } };
+            for (const path of ['/v2/sessions/s1', '/v2/sessions/s1?accessProjectionVersion=1']) {
+                homes.answer(homeId, path, detail);
+            }
+            const { actionSpecToActionDefinitionV1 } = await import('@happier-dev/protocol/actions/actionCatalog');
+            const { projectActionFailureCauseV1 } = await import('@happier-dev/protocol/actions/actionExecutionResult');
+            for (const actionId of ['action.spec.get', 'session.message.send'] as const) {
+                homes.answer(homeId, `POST /v1/actions/${actionId}/execution-authorization`, { select: body => {
+                    const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                    return { body: { v: 1, token: 'result-root', binding: { actionId, machineId: 'machine-exact',
+                        accountId: 'account-a', serverIdentityId: 'srv_approval_home', custodianAccountId: 'account-a',
+                        accountEncryptionMode: 'plain', installationId: 'installation-1', authentication: { kind: 'account', tokenEpoch: 0 },
+                        requestId: envelope.requestId, target: envelope.target,
+                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) } } };
+                } });
+            }
+            homes.answer(homeId, 'POST /v1/actions/action.spec.get', { select: body => {
+                const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                return { body: { v: 1, actionId: 'action.spec.get', requestId: envelope.requestId, execution: { ok: true,
+                    result: { actionSpec: actionSpecToActionDefinitionV1(getActionSpec('session.message.send'),
+                        { surface: 'mcp', includeOutputSchema: false }) } } } };
+            } });
+            const outcome = { status: 'held', code: 'session_input_target_unavailable', localId: `approval-result:${artifactId}`,
+                failureCause: projectActionFailureCauseV1({ code: 'held_by_person' }, 'session.message.send', { allowUnknownErrorCode: true }) };
+            const dispatched: unknown[] = [];
+            homes.answer(homeId, 'POST /v1/actions/session.message.send', { select: body => {
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                dispatched.push(request.envelope.input);
+                expect(openExternalActionRequesterAccountContextV1({ authorization: request.executionAuthorization,
+                    purpose: { kind: 'external_action' }, machineId: 'machine-exact', installationId: 'installation-1',
+                    serverIdentityId: 'srv_approval_home', installationPrivateKey: installation.secretKey,
+                    includeInvocation: true })?.invocation).toMatchObject({ caller: { kind: 'host' }, authority: 'account_automation' });
+                if (state === 'lost acknowledgement') throw new TypeError('Failed to fetch');
+                return { body: { v: 1, actionId: 'session.message.send', requestId: request.envelope.requestId,
+                    execution: { ok: true, result: outcome } } };
+            } });
+            const decided = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context());
+            const unavailable = state === 'deleted' || state === 'archived';
+            const delivery = unavailable ? { status: 'rejected', code: 'session_input_target_unavailable', effectAttempted: false }
+                : state === 'stopped' ? outcome : { status: 'outcomeUnknown' };
+            expect(outgoing).toEqual([]);
+            expect(homes.requestsFor('/v2/sessions/s1/pending')).toHaveLength(0);
+            if (unavailable) expect(dispatched).toEqual([]);
+            else expect(dispatched).toEqual([expect.objectContaining({
+                sessionId: 's1', localId: `approval-result:${artifactId}`, requestedAction: { v: 1, kind: 'enqueue' },
+            })]);
+            expect(decided).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true }, delivery } });
+            if (state !== 'lost acknowledgement') {
+                expect(await executor.execute('approval.request.get', { artifactId }, context())).toMatchObject({
+                    ok: true, result: { request: { status: 'executed', delivery } },
+                });
+            }
+        },
+    );
+
     it('settles a worker link created on another device through this reader profile and portable Home WorkspaceRef', async () => {
         const { computeWorkspaceSyncPolicyDigest } = await import('@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas');
         const { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } = await import('@happier-dev/protocol/projects/projectAccountRowsV1');

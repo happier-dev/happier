@@ -2,6 +2,7 @@ import { isWorkspaceSyncRelationshipWriteActionId } from '../actions/actionIds.j
 import { readInitiatingActionCallerV1 } from '../actions/invocationAuthority.js';
 import * as zMini from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { SessionInputAdmissionResultV1Schema } from '../sessions/messages/sessionInputAdmission.js';
 import { ApprovalAutomaticChecksV1Schema, isApprovalRequestExecutionApproved } from './approvalAutomaticChecks.js';
 import { resolveApprovalExecutor } from './resolveApprovalExecutor.js';
 import { ApprovalRequestStatusSchema, ApprovalRequestV2StatusSchema } from './approvalRequestStatus.js';
@@ -749,6 +750,7 @@ export const ApprovalRequestV2Schema: z.ZodMiniObject<{
   decision: z.ZodMiniOptional<typeof ApprovalDecisionV2Schema>;
   automaticChecks: z.ZodMiniOptional<typeof ApprovalAutomaticChecksV1Schema>;
   execution: z.ZodMiniOptional<typeof ApprovalExecutionV2Schema>;
+  delivery: z.ZodMiniOptional<typeof SessionInputAdmissionResultV1Schema>;
   storageRetryResults: z.ZodMiniOptional<z.ZodMiniArray<typeof PileApplyResultV1Schema>>;
 }, z.core.$strict> = lazyZodSchema(() => z.strictObject({
   v: z.literal(2),
@@ -780,6 +782,8 @@ export const ApprovalRequestV2Schema: z.ZodMiniObject<{
   decision: z.optional(ApprovalDecisionV2Schema),
   automaticChecks: z.optional(ApprovalAutomaticChecksV1Schema),
   execution: z.optional(ApprovalExecutionV2Schema),
+  /** Receipt for returning the result to its asking Session. */
+  delivery: z.optional(SessionInputAdmissionResultV1Schema),
   /** Settled results of new UI retries; original execution and approval authority stay immutable. */
   storageRetryResults: z.optional(z.array(PileApplyResultV1Schema).check(z.minLength(1))),
 }).check(z.superRefine((value, ctx) => {

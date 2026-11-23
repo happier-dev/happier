@@ -242,6 +242,15 @@ describe('approval result delivery is a receipt beside the run record', () => {
     },
   );
 
+  it('retains the initial person-Stop delivery receipt alongside the executed approval', async () => {
+    const receipt = { status: 'held', localId: 'approval-result:title-proposal',
+      code: 'session_input_target_unavailable', failureCause: { phase: 'session.message.send',
+        errorClass: 'Error', errorCode: 'held_by_person', httpStatus: null } } as const;
+    const flow = await askAndDecide({ deliver: async () => receipt });
+    expect(await flow.decide()).toMatchObject({ ok: true, result: { status: 'executed', delivery: receipt } });
+    expect(flow.read()).toMatchObject({ status: 'executed', execution: { ok: true }, delivery: receipt });
+  });
+
   it('delivers a failed execution to the requesting Session', async () => {
     const failed = await askAndDecide({
       effectFails: true,
