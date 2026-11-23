@@ -8,6 +8,7 @@ import { inReadSnapshot, type Tx } from '@/storage/inTx';
 import * as prismaStorage from '@/storage/prisma';
 import { createCreatorFixture } from './managedCreatorAccess.testkit';
 import { listManagedMachines, readManagedResourceDependenciesInTx } from './managedRead';
+import { storeOpaquePresetLaunch } from './managedRows';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { readManagedWakeTargets } from './managedWake';
 import { enqueuePendingMessageByAuthenticatedMachine } from '@/app/session/pending/pendingMessageService';
@@ -330,11 +331,11 @@ describe('managed query selection on disposable databases', () => {
     });
 
     it('selects only one preset history and one enrolled association while enforcing creator access', async () => {
-        const { homeId, custodian, creator, stranger, controller, row, launch } = await createCreatorFixture();
+        const { homeId, custodian, creator, stranger, controller, row, presetLaunch } = await createCreatorFixture();
         const guest = await db.machine.create({ data: { id: randomUUID(), accountId: creator.id, metadata: '{}' } });
         await db.managedMachine.update({ where: { id: row.id }, data: { enrolledMachineId: guest.id } });
         const base = { homeId, custodianAccountId: custodian.id, controllerMachineId: controller.id,
-            controllerInstallationId: controller.installationId!, admittedInput: { enrollmentAccountId: creator.id }, launch,
+            controllerInstallationId: controller.installationId!, admittedInput: { enrollmentAccountId: creator.id }, launch: presetLaunch,
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
         const archived = await db.managedMachine.create({ data: { ...base, admittedActionRequestId: randomUUID(),
             presetId: row.presetId, presetRevision: 1, archivedAt: new Date() } });
@@ -357,7 +358,7 @@ describe('managed query selection on disposable databases', () => {
         expect((await listManagedMachines({ actorAccountId: creator.id, input: { homeId, presetId: 'other', enrolledMachineId: guest.id } })).machines).toEqual([]);
     });
 
-    it('excludes unrelated allocations from Account dependency reads while preserving both ownership directions and setup references', async () => {
+    it('limits Account dependencies to retained custody and keeps preset Setup references opaque', async () => {
         const { homeId, custodian, stranger, controller, launch, row } = await createCreatorFixture();
         const base = { homeId, custodianAccountId: stranger.id, controllerMachineId: randomUUID(),
             controllerInstallationId: randomUUID(), admittedInput: {}, launch, allocation: 'may-exist',
@@ -371,9 +372,11 @@ describe('managed query selection on disposable databases', () => {
         const bootstrap = await db.managedMachine.create({ data: { ...base, admittedActionRequestId: randomUUID(),
             bootstrapCredentialRef: { kind: 'shared_resource', resourceId } } });
         const setup = await db.managedMachine.create({ data: { ...base, admittedActionRequestId: randomUUID(), archivedAt: new Date(),
-            presetId: row.presetId, presetRevision: row.presetRevision,
-            machineSetup: { state: 'pending', setup: { secretRefs: { v: 1,
-                bindings: { SETUP: { ref: `happier:shared-secret:v1:${resourceId}`, revision: 1 } } } } } } });
+            custodianAccountId: custodian.id, presetId: row.presetId, presetRevision: row.presetRevision,
+            launch: storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', recipients: [], content: { t: 'plain', v: {
+                v: 1, name: launch.name, launch, setup: { secretRefs: { v: 1,
+                    bindings: { SETUP: { ref: `happier:shared-secret:v1:${resourceId}`, revision: 1 } } } },
+            } } }), machineSetup: { state: 'pending' } } });
         const unrelated = Array.from({ length: 128 }, () => ({ ...base, id: randomUUID(), admittedActionRequestId: randomUUID(),
             bootstrapCredentialRef: { kind: 'shared_resource', resourceId: randomUUID() } }));
         await db.managedMachine.createMany({ data: unrelated });
@@ -383,6 +386,7 @@ describe('managed query selection on disposable databases', () => {
         const read = () => inReadSnapshot(tx => readManagedResourceDependenciesInTx(tx, { kind: 'account', accountId: custodian.id }));
         const initial = await measureManagedRows(read);
         expect(initial.value.map(dependency => dependency.managedId).sort()).toEqual([owned.id, controlled.id, bootstrap.id, setup.id].sort());
+        expect(initial.value.find(dependency => dependency.managedId === setup.id)).toMatchObject({ opaquePreset: true });
         expect.soft(initial.rows).toBe(4);
         expect(initial.largestIdSet).toBeLessThanOrEqual(999);
         const changed = unrelated[64]!;
@@ -390,18 +394,18 @@ describe('managed query selection on disposable databases', () => {
         const updated = await measureManagedRows(read);
         expect(updated.value.map(dependency => dependency.managedId).sort()).toEqual([...initial.value.map(dependency => dependency.managedId), changed.id].sort());
         expect.soft(updated.rows).toBe(5);
-        // The same immutable references protect direct resource retirement too,
-        // including archived setup, but confirmed absence releases custody.
+        // Direct resource retirement follows the visible bootstrap references.
+        // Preset Setup stays opaque and confirmed absence releases custody.
         const direct = () => inReadSnapshot(tx => readManagedResourceDependenciesInTx(tx, { kind: 'saved-secret', resourceId }));
         const beforeReferenceChange = await measureManagedRows(direct);
-        expect(beforeReferenceChange.value.map(dependency => dependency.managedId).sort()).toEqual([bootstrap.id, setup.id].sort());
+        expect(beforeReferenceChange.value.map(dependency => dependency.managedId)).toEqual([bootstrap.id]);
         expect.soft(beforeReferenceChange.rows).toBe(2);
         const referenceChanged = unrelated[65]!;
         await db.managedMachine.update({ where: { id: referenceChanged.id }, data: {
             bootstrapCredentialRef: { kind: 'shared_resource', resourceId } } });
         const afterReferenceChange = await measureManagedRows(direct);
         expect(afterReferenceChange.value.map(dependency => dependency.managedId).sort())
-            .toEqual([bootstrap.id, setup.id, referenceChanged.id].sort());
+            .toEqual([bootstrap.id, referenceChanged.id].sort());
         expect.soft(afterReferenceChange.rows).toBe(3);
         const accountAfterReferenceChange = await measureManagedRows(read);
         expect(accountAfterReferenceChange.value.map(dependency => dependency.managedId).sort())

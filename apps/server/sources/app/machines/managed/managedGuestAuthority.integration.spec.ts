@@ -18,7 +18,7 @@ import { registerManagedMachineRoutes } from './managedRoutes';
 import { applyManagedCreationScopeEndInTx } from './managedCreationBirth';
 import { readManagedMachinePolicyPublicationAudienceInTx, storeOpaquePresetLaunch } from './managedRows';
 import { publishManagedGuestActivityAvailable } from './managedGuestActivity';
-import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedListOutputV1Schema, managedMachineActionEndpointPathV1, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createCreatorFixture } from './managedCreatorAccess.testkit';
 import tweetnacl from 'tweetnacl';
@@ -168,12 +168,14 @@ describe('managed guest grants and controller Manage', () => {
         const get = (url: string) => app.inject({ method: 'GET', url, headers: { 'x-test-user-id': stranger.id, ...currentAccountStoredContentCompatibilityHeaders } });
         const managed = (action: 'machines.managed.list' | 'machines.managed.get', input: object) => app.inject({ method: 'POST',
             url: managedMachineActionEndpointPathV1(action), headers: { 'x-test-user-id': stranger.id }, payload: input });
+        const managedIds = async () => ManagedListOutputV1Schema.parse((await managed('machines.managed.list', { homeId })).json())
+            .machines.map(machine => unwrapManagedMachineReadV1(machine).id);
         try {
             expect(await grant(controller.id, custodian.id, 'view')).toMatchObject({ kind: 'saved' });
             expect(await inTx(tx => resolveCurrentMachineRecipientAccountIdsInTx(tx, guest.id))).not.toContain(stranger.id);
             expect((await inTx(tx => readManagedMachinePolicyPublicationAudienceInTx(tx, { ...row, enrolledMachineId: guest.id }))).resourceAccountIds).not.toContain(stranger.id);
             expect(await db.accountChange.count({ where: { accountId: stranger.id, entityId: guest.id } })).toBe(0);
-            expect((await managed('machines.managed.list', { homeId })).json()).toMatchObject({ machines: [] });
+            expect(await managedIds()).toEqual([]);
             expect((await managed('machines.managed.get', { homeId, managedId: row.id })).statusCode).toBe(403);
             expect((await get(`/v1/machines/${guest.id}`)).statusCode).toBe(404);
             expect(await role()).toBeNull();
@@ -187,7 +189,7 @@ describe('managed guest grants and controller Manage', () => {
             expect(await inTx(tx => resolveCurrentMachineRecipientAccountIdsInTx(tx, guest.id))).toEqual(expect.arrayContaining([creator.id, custodian.id, stranger.id]));
             expect((await inTx(tx => readManagedMachinePolicyPublicationAudienceInTx(tx, { ...row, enrolledMachineId: guest.id }))).resourceAccountIds).toContain(stranger.id);
             expect(await db.accountChange.count({ where: { accountId: stranger.id, entityId: guest.id } })).toBeGreaterThan(0);
-            expect((await managed('machines.managed.list', { homeId })).json()).toMatchObject({ machines: [{ id: row.id }] });
+            expect(await managedIds()).toEqual([row.id]);
             expect((await managed('machines.managed.get', { homeId, managedId: row.id })).statusCode).toBe(200);
             expect((await get(`/v1/machines/${guest.id}`)).statusCode).toBe(200);
             expect((await get('/v1/machines')).json()).toEqual(expect.arrayContaining([expect.objectContaining({ id: guest.id })]));
@@ -199,7 +201,7 @@ describe('managed guest grants and controller Manage', () => {
             expect(await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: controller.id,
                 principal: { kind: 'account', accountId: stranger.id } }))).toMatchObject({ kind: 'removed' });
             expect(await role()).toBe('use');
-            expect((await managed('machines.managed.list', { homeId })).json()).toMatchObject({ machines: [{ id: row.id }] });
+            expect(await managedIds()).toEqual([row.id]);
             expect((await managed('machines.managed.get', { homeId, managedId: row.id })).statusCode).toBe(200);
             expect(await admission(RPC_METHODS.MACHINES_SERVICE_LIST)).toMatchObject({ kind: 'admitted', role: 'use' });
             expect(await admission(RPC_METHODS.MACHINES_SERVICE_WATCH, 'manage')).toMatchObject({ kind: 'denied', code: 'access_denied' });

@@ -5,7 +5,7 @@ import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_M
 import tweetnacl from 'tweetnacl';
 import { decodeBase64 } from 'privacy-kit';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { isManagedOpaquePresetReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { isManagedOpaquePresetReadV1, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { expect } from 'vitest';
 import { db, getActivePrismaRuntime } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
@@ -127,14 +127,16 @@ export async function createCreatorFixture() {
         metadata: '{}', installationId: randomUUID() } });
     const launch = { provider: { pluginId: 'fixture.creator', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} };
     const presetId = randomUUID();
+    const presetLaunch = storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', recipients: [],
+        content: { t: 'plain', v: { v: 1, name: launch.name, launch } } });
     const create = (enrollmentAccountId?: string) => db.managedMachine.create({ data: {
         homeId, custodianAccountId: custodian.id, controllerMachineId: controller.id,
         controllerInstallationId: controller.installationId!, admittedActionRequestId: randomUUID(),
         admittedInput: enrollmentAccountId ? { enrollmentAccountId } : {}, presetId, presetRevision: 1,
-        launch, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        launch: presetLaunch, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
     } });
     const row = await create(creator.id);
-    return { homeId, custodian, creator, stranger, controller, launch, row, create };
+    return { homeId, custodian, creator, stranger, controller, launch, presetLaunch, row, create };
 }
 
 export async function exerciseManagedCreatorAccess() {
@@ -143,8 +145,8 @@ export async function exerciseManagedCreatorAccess() {
     const legacy = await create();
     const target = { homeId, managedId: row.id };
     expect(await inTx(tx => resolveEffectiveMachineRoleInTx(tx, { actorAccountId: creator.id, machineId: controller.id }))).toBeNull();
-    expect(await getManagedMachine({ actorAccountId: creator.id, input: target })).toMatchObject({ id: row.id });
-    expect((await listManagedMachines({ actorAccountId: creator.id, input: { homeId } })).machines.map(machine => machine.id)).toEqual([row.id]);
+    expect(unwrapManagedMachineReadV1(await getManagedMachine({ actorAccountId: creator.id, input: target }))).toMatchObject({ id: row.id });
+    expect((await listManagedMachines({ actorAccountId: creator.id, input: { homeId } })).machines.map(machine => unwrapManagedMachineReadV1(machine).id)).toEqual([row.id]);
     for (const managedId of [unrelated.id, legacy.id]) {
         await expect(getManagedMachine({ actorAccountId: creator.id, input: { homeId, managedId } })).rejects.toMatchObject({ code: 'permission_denied' });
         await expect(cancelManagedCreation({ actorAccountId: creator.id, input: { homeId, managedId, expectedIntentRevision: 0 } })).rejects.toMatchObject({ code: 'permission_denied' });
@@ -171,6 +173,7 @@ export async function exerciseManagedCreatorAccess() {
     await db.machineGrant.create({ data: { principalKind: 'account', machineId: guest.id, accountId: stranger.id,
         accessLevel: 'admin', createdByAccountId: creator.id } });
     await db.managedMachine.update({ where: { id: enrolled.id }, data: { enrolledMachineId: guest.id, allocation: 'bound',
+        presetId: null, presetRevision: null,
         resource: { contributionRef: launch.provider, schemaVersion: 1, value: { id: 'guest-native-resource' } },
         launch: { ...launch, credentials: [{ purpose: { consumer: launch.provider, purpose: 'native' },
             account: { service: { pluginId: 'fixture.creator', localId: 'native-account' }, accountId: 'private-company-connection' } }] },
@@ -189,9 +192,9 @@ export async function exerciseManagedCreatorAccess() {
     }
     expect(await cancelManagedCreation({ actorAccountId: creator.id, input: { ...target, expectedIntentRevision: 0 } }))
         .toMatchObject({ machine: { id: row.id, creationState: 'canceled', desired: 'delete' } });
-    expect(await getManagedMachine({ actorAccountId: custodian.id, input: target })).toMatchObject({ id: row.id });
+    expect(unwrapManagedMachineReadV1(await getManagedMachine({ actorAccountId: custodian.id, input: target }))).toMatchObject({ id: row.id });
     await db.managedMachine.update({ where: { id: row.id }, data: { archivedAt: new Date() } });
-    expect((await listManagedMachines({ actorAccountId: creator.id, input: { homeId, archived: true } })).machines.map(machine => machine.id)).toEqual([row.id]);
+    expect((await listManagedMachines({ actorAccountId: creator.id, input: { homeId, archived: true } })).machines.map(machine => unwrapManagedMachineReadV1(machine).id)).toEqual([row.id]);
 }
 
 /** Owner ruling 2026-11-16: a member deletes the Team container they created; nobody else's. */
@@ -234,7 +237,7 @@ export async function exerciseManagedCreatorControllerProjection() {
     await db.machine.update({ where: { id: controller.id }, data: { installationPublicKey: new Uint8Array(installationPublicKey) } });
     const credentials = [{ purpose: { consumer: launch.provider, purpose: 'native' },
         account: { service: { pluginId: launch.provider.pluginId, localId: 'native-account' }, accountId: 'private-company-connection' } }];
-    await db.managedMachine.update({ where: { id: row.id }, data: { launch: { ...launch, credentials },
+    await db.managedMachine.update({ where: { id: row.id }, data: { presetId: null, presetRevision: null, launch: { ...launch, credentials },
         bootstrapCredentialRef: { kind: 'shared_resource', resourceId: 'private-bootstrap' } } });
     const input = { homeId, managedId: row.id };
     const visible = await getManagedMachine({ actorAccountId: creator.id, input });
@@ -324,7 +327,9 @@ export async function exerciseManagedBoundSetupRecovery() {
     await db.managedMachine.update({ where: { id: row.id }, data: { allocation: 'bound',
         admittedInput: { enrollmentAccountId: creator.id, acquisitionMode: 'resource-bound' },
         resource: { contributionRef: launch.provider, schemaVersion: 1, value: { id: randomUUID() } },
-        machineSetup: { setup, state: 'pending' } } });
+        launch: storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', recipients: [],
+            content: { t: 'plain', v: { v: 1, name: launch.name, launch, setup } } }),
+        machineSetup: { state: 'pending' } } });
     const params = { actorAccountId: creator.id, custodianAccountId: custodian.id, creationManagedId: row.id };
     const input = { homeId, managedId: row.id, presetId: row.presetId!, presetRevision: row.presetRevision!,
         target: { kind: 'bound' as const, controller: { machineId: controller.id, installationId: controller.installationId! } },
@@ -359,17 +364,25 @@ export async function exerciseManagedBoundSetupRecovery() {
         expect(response.json().machine.machineSetup).toMatchObject({ state: 'running' });
     } finally { await app.close(); }
     const sourceFacts = { 'accountPreset:preset:1': { pendingScripts: [1] } };
-    await reportMachineSetup({ ...params, input: { ...input, state: 'failed', errorCode: 'setup_failed', sourceFacts } });
+    await reportMachineSetup({ ...params, input: { ...input, state: 'failed', errorCode: 'setup_failed', presetContent: {
+        content: { t: 'plain', v: { v: 1, name: launch.name, launch, setup, setupSourceFacts: sourceFacts } },
+    } } });
     const stored = await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
     expect(stored.enrolledMachineId).toBeNull();
-    expect(stored.machineSetup).toMatchObject({ state: 'failed', sourceFacts });
+    expect(stored.machineSetup).toMatchObject({ state: 'failed' });
     const retry = { ...input, operation: { operationId: randomUUID() } };
     const running = await reportMachineSetup({ ...params, input: { ...retry, state: 'running' } });
-    expect(running.machine.machineSetup).toMatchObject({ state: 'running', sourceFacts });
+    expect(running.machine.machineSetup).toMatchObject({ state: 'running' });
+    const retried = await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
+    expect(readStoredOpaquePresetLaunch(retried.launch).content).toMatchObject({ t: 'plain', v: { setupSourceFacts: sourceFacts } });
     await expect(reportMachineSetup({ ...params, input: { ...input, state: 'succeeded' } }))
         .rejects.toMatchObject({ code: 'intent_changed' });
-    const settled = await reportMachineSetup({ ...params, input: { ...retry, state: 'succeeded', sourceFacts: {} } });
-    expect(settled.machine.machineSetup).toMatchObject({ state: 'succeeded', sourceFacts: {} });
+    const settled = await reportMachineSetup({ ...params, input: { ...retry, state: 'succeeded', presetContent: {
+        content: { t: 'plain', v: { v: 1, name: launch.name, launch, setup, setupSourceFacts: {} } },
+    } } });
+    expect(settled.machine.machineSetup).toMatchObject({ state: 'succeeded' });
+    const completedSetup = await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
+    expect(readStoredOpaquePresetLaunch(completedSetup.launch).content).toMatchObject({ t: 'plain', v: { setupSourceFacts: {} } });
     const accountKey = new Uint8Array(32).fill(73);
     const publicKey = tweetnacl.box.keyPair.fromSecretKey(accountKey).publicKey;
     const randomBytes = (length: number) => new Uint8Array(length).fill(19);
