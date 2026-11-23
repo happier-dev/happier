@@ -15,11 +15,19 @@ async function confirm(context: Pick<ConnectedAccountAuthenticationContext, 'ser
             headers: { Accept: 'application/json', authorization: authorization(email, token) } }, { signal });
         if (response.status !== 200) {
             const failure = jiraResponseFailure(response.status, response.headers);
-            const evidence = { diagnostic: diagnostic(failure.code), ...(failure.class === 'rateLimit'
-                ? { failureClass: failure.class, ...(failure.retryNotBeforeMs === undefined ? {} : { retryNotBeforeMs: failure.retryNotBeforeMs }) } : {}) };
-            return response.status === 401 || response.status === 403
-                ? { status: 'rejected', ...evidence }
-                : { status: 'unavailable', ...evidence };
+            const failureDiagnostic = diagnostic(failure.code);
+            if (response.status === 401 || response.status === 403) {
+                return { status: 'rejected', diagnostic: failureDiagnostic };
+            }
+            if (failure.class === 'rateLimit') {
+                return {
+                    status: 'unavailable',
+                    diagnostic: failureDiagnostic,
+                    failureClass: failure.class,
+                    ...(failure.retryNotBeforeMs === undefined ? {} : { retryNotBeforeMs: failure.retryNotBeforeMs }),
+                };
+            }
+            return { status: 'unavailable', diagnostic: failureDiagnostic };
         }
         const user = object(JSON.parse(new TextDecoder().decode(response.body)));
         if (!string(user.accountId)) return { status: 'unavailable', diagnostic: diagnostic('jira/viewerUnavailable') };
