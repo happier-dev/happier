@@ -398,7 +398,8 @@ test('guest payload and daemon retain the same captured source after live edits 
 
 
 test('tree reload publishes a native guest payload from the selected revision in its completed record', compilerFixtureOptions, async t => {
-  const { fixture, repoDir, cliDir, env } = await createGuestPayloadFixture(t);
+  const { fixture, repoDir, cliDir, native, env } = await createGuestPayloadFixture(t);
+  const prepareTree = native?.prepareTreeRuntime ?? prepareSourceTreeRuntimeComponents;
   const supportLoader = await createCliSourceLoader('source-tree-guest-support-fixture');
   try {
     const { CLI_RUNTIME_EXTERNAL_PACKAGES } = await supportLoader.import(
@@ -436,6 +437,15 @@ test('tree reload publishes a native guest payload from the selected revision in
   await writeFile(join(repoDir, 'apps/stack/scripts/build/build_daemon_artifact.mjs'), `
     export { ensureDaemonSupportArtifact } from ${JSON.stringify(new URL('./build_daemon_artifact.mjs', import.meta.url).href)};
   `);
+  await writeFile(join(cliDir, 'scripts/prepareSourcePluginUiArtifacts.mjs'), `
+    export { prepareSourceCliPluginUiArtifacts } from ${JSON.stringify(new URL('../../../cli/scripts/prepareSourcePluginUiArtifacts.mjs', import.meta.url).href)};
+  `);
+  const pluginLocators = join(cliDir, 'src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts');
+  await mkdir(dirname(pluginLocators), { recursive: true });
+  await writeFile(pluginLocators, `
+    export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES = ['@happier-dev/plugins-cliproxyapi'];
+    export const BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS = [];
+  `);
   // Use physical module directories, as a real checkout does, before snapshotting.
   const commonModules = join(repoDir, 'packages/cli-common/node_modules');
   await rm(commonModules);
@@ -453,7 +463,7 @@ test('tree reload publishes a native guest payload from the selected revision in
   const revision = await resolveSourceTreeRevision({ repoDir, treesRoot: fixture.path('trees'),
     outputDir: fixture.path('descriptors') });
   await writeFile(join(cliDir, 'src/index.ts'), 'export const snapshot = "foreign dirty edit";');
-  const { daemon } = await prepareSourceTreeRuntimeComponents({ repoDir, stackBaseDir: fixture.path('stacks/tree-guest'),
+  const { daemon } = await prepareTree({ repoDir, stackBaseDir: fixture.path('stacks/tree-guest'),
     descriptorPath: revision.descriptorPath, components: [{ component: 'daemon' }], env, logger: { error() {} } });
   assert.ok(daemon.guestPayload, 'tree reload must produce a payload without an operator root');
   const record = await readSourceRuntimeBundleRecord(daemon.entrypoint);
@@ -469,9 +479,32 @@ test('tree reload publishes a native guest payload from the selected revision in
   assert.equal((await import(pathToFileURL(join(record.guestPayload.root, 'package-dist/index.mjs')))).snapshot, 'captured',
     'guest payload uses the selected tree, never the moving checkout');
   assert.equal(daemon.guestPayload.archives, undefined, 'default-off source preparation does not export archives');
-  const { server } = await prepareSourceTreeRuntimeComponents({ repoDir, stackBaseDir: fixture.path('stacks/tree-home'),
-    descriptorPath: revision.descriptorPath, components: [{ component: 'server' }],
-    env: { ...env, HAPPIER_DEV_GUEST_CLI_EXPORT: '1' }, logger: { error() {} } });
+  const repeatDiagnostics = [];
+  const repeatStarted = performance.now();
+  const { daemon: repeated } = await prepareTree({ repoDir,
+    stackBaseDir: fixture.path('stacks/tree-guest-repeat'), descriptorPath: revision.descriptorPath,
+    components: [{ component: 'daemon' }], env, logger: { error(message) { repeatDiagnostics.push(message); } } });
+  t.diagnostic(`same-cut warm component preparation: ${Math.round(performance.now() - repeatStarted)} ms`);
+  assert.equal(repeatDiagnostics.filter(message => message.includes('phase=guest-native-payload')).length, 0,
+    'a second Stack on the same cut performs zero native payload builds');
+  assert.equal(repeated.guestPayload.identity, daemon.guestPayload.identity);
+  assert.equal(repeated.guestPayload.root, daemon.guestPayload.root, 'both Stacks read one completed payload tree');
+  assert.deepEqual(repeated.guestPayload.sourceCapture, repeated.sourceCapture);
+  assert.equal((await import(pathToFileURL(join(repeated.guestPayload.root, 'package-dist/index.mjs')))).snapshot, 'captured');
+  const exportDiagnostics = [];
+  const { daemon: exportingDaemon, server } = await prepareTree({
+    repoDir, stackBaseDir: fixture.path('stacks/tree-home'), descriptorPath: revision.descriptorPath,
+    components: [{ component: 'daemon' }, { component: 'server' }],
+    env: { ...env, HAPPIER_DEV_GUEST_CLI_EXPORT: '1' },
+    logger: { error(message) { exportDiagnostics.push(message); } },
+  });
+  assert.equal(exportDiagnostics.filter(message => message.includes('phase=guest-native-payload')).length, 0,
+    'archive export reuses the native payload already built on this cut');
+  assert.equal(exportingDaemon.guestPayload.identity, daemon.guestPayload.identity);
+  assert.equal(exportDiagnostics.filter(message => message.includes('phase=guest-archive-export')).length, 1);
+  assert.equal(server.guestPayload.identity, exportingDaemon.guestPayload.identity);
+  assert.equal(server.guestPayload.archives[0].sha256, exportingDaemon.guestPayload.archives[0].sha256);
+  assert.equal(server.guestPayload.archives[0].archivePath, exportingDaemon.guestPayload.archives[0].archivePath);
   const serverRecord = JSON.parse(await readFile(join(server.runtimeDir, '../../source-bundle.json'), 'utf8'));
   assert.deepEqual(serverRecord.guestPayload, server.guestPayload);
   assert.equal(serverRecord.env.HAPPIER_DEV_GUEST_CLI_EXPORT, undefined, 'producer metadata never enables the runtime operator setting');

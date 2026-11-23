@@ -371,12 +371,15 @@ The Stack placed-daemon launcher forwards this explicit payload-root input to
 the execution target without translating the path; the directory must exist on
 the creating daemon's host. In 0.3 development, source-runtime preparation builds
 the current host's canonical native guest payload when no payload root is configured.
-Configured targets are rebuilt from the daemon's selected sources: its captured
-workspace for bundle reloads, or its revision tree for tree reloads. Both producers
-use `source_guest_payload` and publish the root and metadata in the completed
-`source-bundle.json` record and launch environment (`sourceRuntimeLaunch.env`).
-The replacement payload lives with that retained runtime;
-preparation does not overwrite the operator's input directory. The daemon consumes
+Both bundle and revision-tree reloads build guest payloads from the daemon's
+selected sources through `source_guest_payload`. On each host, revision-tree
+reloads without a local overlay share the completed native payload for matching
+captured inputs, dependency installation, native support, and compiler recipe
+and target. Each selecting Stack tree retains its base and payload. The same
+producer retains a checksum-verified archive when a Home opts into export.
+The completed `source-bundle.json` record and launch environment
+(`sourceRuntimeLaunch.env`) publish the selected root and metadata.
+Preparation preserves the operator's input directory. The daemon consumes
 the replacement root, and reload READY records its identity and source capture in
 `identities.daemon.guestPayload` alongside the loaded daemon identity. A payload
 build failure leaves the incumbent runtime selected.
@@ -2206,17 +2209,17 @@ Happier MCP relay runs the Session holder shipped beside that selected CLI.
 Isolation requires a managed CLI
 installation. A missing or unreadable payload reports a typed unavailability,
 and an older installed payload runs older isolation code under a newer daemon.
-Each source daemon bundle carries a revision-matched native payload at
-`source-runtime/tree-daemon-*/guest-payload`, but a reload neither promotes it
-into an identity's CLI home nor refreshes an earlier hand-installed one; the
-reload verdict only checks that a managed CLI is present at an unchanged path.
+The selected daemon's runtime record publishes the revision-matched native
+payload path as `guestPayload.root`. Reload keeps any managed CLI already
+installed in an identity's CLI home. The reload verdict checks that the managed
+CLI is present at its existing path.
 Before a Separate users Agent turn on a source Stack, install that payload for the
 identity with the first-party installer (it consumes its `--payload-root`, so
 pass a fresh copy, never an installed version directory):
 
 ```bash
 stage=$(mktemp -d "<identity CLI home>/payload-stage.XXXXXX")
-cp -a <stack-state>/source-runtime/<selected tree-daemon>/guest-payload "$stage/payload"
+cp -a "<selected daemon guestPayload.root>" "$stage/payload"
 node apps/stack/bin/hstack.mjs stack happier <stack> --identity=<name> -- self __install-payload \
   --component happier-cli --channel <identity channel> --payload-root "$stage/payload" \
   --version local-<guest payload identity> --managed-guest

@@ -1,5 +1,5 @@
 import { captureRuntimeDependencies } from './captured_runtime_dependencies.mjs';
-import { removeOwnedDirectorySync } from '../utils/fs/fs.mjs';
+import { removeOwnedDirectorySync, setBundleReadOnly } from '../utils/fs/fs.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, renameSync, statSync } from 'node:fs';
 import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from 'node:fs/promises';
@@ -45,6 +45,7 @@ import { readRevisionServerClientRoots, requestRevisionInstallArchive, resolveRe
 import { applySourceRevision, canResolveSourceRevisions, parseSourceOverlayPaths, readSourceCaptureBuildInputs, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
 import { SOURCE_CONDITION, SOURCE_RUNTIME_COMMONJS_BANNER, SOURCE_RUNTIME_COMMONJS_DEFINE, SOURCE_RUNTIME_OUTPUT_OPTIONS, assertSourceRuntimeCodeAscii, dropRedundantSourceRuntimeChunkImports, stripUnusedSourceRuntimeBanners, sourceExport, readWorkspacePackages, resolveWorkspaceSource, packageNameOfSpecifier, readCliSourceEntries, createCliSourceProjectionResolver, createWorkspaceSourceResolver, bundleCliSourceSidecars, runtimePackageExports } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
+export { setBundleReadOnly };
 export { readWorkspacePackages, resolveWorkspaceSource } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 
 const SHARED_SOURCE_INPUT_MANIFEST = '.source-runtime-shared-inputs.json';
@@ -371,28 +372,6 @@ export function resolveSourceRuntimeProducerContext({ repoDir, stackBaseDir, env
     HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: authority.producerStackName,
     HAPPIER_STACK_STORAGE_DIR: dirname(authority.producerStackBaseDir) });
   return { ...authority, env: producerEnv };
-}
-
-export async function setBundleReadOnly(directory, readOnly) {
-  // Unlocking only prepares a bundle for deletion, so an entry a concurrent producer already removed
-  // needs nothing; locking a published bundle still fails closed when an entry vanishes.
-  const ignoreRemoved = error => { if (readOnly || error?.code !== 'ENOENT') throw error; };
-  let entries;
-  try { entries = await readdir(directory, {withFileTypes:true}); } catch (error) { ignoreRemoved(error); return; }
-  for (const entry of entries) {
-    const path = join(directory, entry.name);
-    if (entry.isSymbolicLink()) continue; // Installed dependencies keep their own lifecycle.
-    try {
-      if (entry.isDirectory()) {
-        if (!readOnly) await chmod(path, 0o755);
-        await setBundleReadOnly(path, readOnly);
-      } else {
-        const mode = (await lstat(path)).mode;
-        await chmod(path, readOnly ? mode & ~0o222 : mode | 0o200);
-      }
-    } catch (error) { ignoreRemoved(error); }
-  }
-  try { await chmod(directory, readOnly ? 0o555 : 0o755); } catch (error) { ignoreRemoved(error); }
 }
 
 async function readOptionalJson(path) {

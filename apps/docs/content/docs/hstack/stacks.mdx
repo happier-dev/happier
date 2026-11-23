@@ -329,7 +329,7 @@ node ./apps/stack/scripts/repo_local.mjs stack info agent-qa-17 --json
 
 Require each requested role's nonempty `runtime.sourceRuntimeIdentities.<role>.selected` to equal `.loaded`, and verify that role is actually running on its configured host. Moving source edits do not change the already emitted code. `stack happier agent-qa-17 --runtime=source -- <args>` uses the retained source CLI bundle rather than requesting publication.
 
-For source-built guest QA in 0.3 development, a stack configured with `HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT` rebuilds its canonical native guest payloads from the daemon's captured workspace during source preparation. The daemon uses the replacement retained with its bundle, and reload READY includes both identities in `identities.daemon`, with the payload under `guestPayload`. The original payload directory is preserved. A failed guest build leaves the incumbent running. Custom interpreter-script roots without canonical target metadata remain manual overrides without a source-build identity.
+For source-built guest QA in 0.3 development, source preparation selects a native guest payload from the daemon's captured sources. Revision-tree reloads on the same host reuse a completed native payload when the revision and build inputs match and the stack has no local overlay. The daemon uses the retained payload. Reload READY includes both identities in `identities.daemon`, with the payload under `guestPayload`. The original payload directory is preserved. A failed guest build leaves the incumbent running. Custom interpreter-script roots without canonical target metadata remain manual overrides without a source-build identity.
 
 ### Serve a development Home's CLI to new guests
 
@@ -362,7 +362,7 @@ the Home server, register the archive in the existing
 Use the producer's exact target and SHA-256. The archive path is local to the
 Home's preparation host, so transfer it there first. Leave
 `HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT` unset unless you also supply a native
-unpacked payload root. Preparation builds its native payload, verifies and copies
+unpacked payload root. Preparation selects its native payload, verifies and copies
 the registered archive into the same retained archive collection, and publishes
 both through the existing export. A checksum mismatch refuses preparation.
 Replacing or removing a registration takes effect on the next server preparation

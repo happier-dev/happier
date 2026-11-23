@@ -1,10 +1,13 @@
 import { createHash } from 'node:crypto';
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
-import { copyFile, mkdir, symlink } from 'node:fs/promises';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { chmod, copyFile, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { CLI_BINARY_TARGETS, resolveCliToolsPlatformDir, resolveCurrentBinaryTarget, resolveExecutableName } from '../../../../packages/cli-common/src/componentArtifacts/targets.ts';
+import { readBuildInputIdentity } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { run } from '../utils/proc/proc.mjs';
+import { removeOwnedDirectorySync, setBundleReadOnly } from '../utils/fs/fs.mjs';
+import { withBaseLock } from './source_revision_install.mjs';
 
 // Preserve the installer's existing flat or target-directory layout. The tools
 // producer's platform metadata identifies a native flat payload without parsing
@@ -57,10 +60,16 @@ export function readSourceGuestPayloadArchiveImports(env, { logger = console } =
   return [...imports.values()].sort((a, b) => `${a.target.os}-${a.target.arch}`.localeCompare(`${b.target.os}-${b.target.arch}`));
 }
 
+function guestArchivePath(outputDir, target) {
+  return join(outputDir, 'guest-payload-archives', `${target.os}-${target.arch}.tar.gz`);
+}
+
 async function retainGuestArchive({ target, archivePath: source, sha256 }, outputDir, signal) {
-  const archivePath = join(outputDir, 'guest-payload-archives', `${target.os}-${target.arch}.tar.gz`);
-  await mkdir(dirname(archivePath), { recursive: true });
-  await copyFile(source, archivePath);
+  const archivePath = outputDir ? guestArchivePath(outputDir, target) : source;
+  if (outputDir) {
+    await mkdir(dirname(archivePath), { recursive: true });
+    await copyFile(source, archivePath);
+  }
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(archivePath, { signal })) hash.update(chunk);
   const digest = hash.digest('hex');
@@ -75,12 +84,88 @@ export function sourceGuestPayloadEnvironment(payload) {
       ...(payload.archives ? { archives: payload.archives } : {}) }) };
 }
 
-export async function buildSourceGuestPayload({ repoDir, sourceRepoDir, dependencyRootDir, outputDir, targets, sourceCapture, env, signal, onTiming }) {
+// Revision tree references keep the shared payload alive for every Stack
+// reading it. Neither a reload nor its remote installer writes to this tree.
+export function sourceGuestPayloadRetainedRoot(baseDir) {
+  return baseDir + '.guest-payload';
+}
+
+async function retainLocalGuestPayload({ retention, outputDir, targets, exportArchives, sourceCapture, buildTarget, archiveTarget, reportTiming, signal }) {
+  if (!retention || sourceCapture.overlayDigest || targets.length !== 1) {
+    const targetIdentities = {};
+    const archives = [];
+    for (const entry of targets) {
+      targetIdentities[`${entry.target.os}-${entry.target.arch}`] = await buildTarget(outputDir, entry);
+      if (exportArchives) archives.push(await archiveTarget(outputDir, entry));
+    }
+    return { root: join(outputDir, 'guest-payload'), targetIdentities, archives };
+  }
+
+  const [entry] = targets;
+  const { target, relativeDir } = entry;
+  const recipe = fileURLToPath(import.meta.url);
+  const fingerprint = await readBuildInputIdentity({
+    sourceDir: dirname(recipe), files: [basename(recipe)],
+    options: [retention.inputIdentity, retention.installIdentity, retention.supportFingerprint,
+      process.version, target.os, target.arch, relativeDir],
+  });
+  const directory = join(sourceGuestPayloadRetainedRoot(retention.baseDir), sourceCapture.revision, fingerprint);
+  const root = join(directory, 'guest-payload');
+  // A prepared tree pins its revision base. Serialize only consumers of
+  // this artifact so another revision can prepare while its compiler runs.
+  const started = performance.now();
+  await mkdir(dirname(directory), { recursive: true });
+  return await withBaseLock(directory, signal, async () => {
+    const readRecord = path => readFile(path, 'utf8').then(JSON.parse).catch(error =>
+      error.code === 'ENOENT' ? null : Promise.reject(error));
+    const recordPath = path => join(path, 'payload.json');
+    const current = await readRecord(recordPath(directory));
+    const hit = current?.fingerprint === fingerprint;
+    let identity = current?.identity;
+    if (!hit) {
+      const staging = directory + '.building';
+      removeOwnedDirectorySync(staging);
+      try {
+        if (current) throw new Error('[source-bundle] retained guest payload identity mismatch');
+        identity = await buildTarget(staging, entry);
+        // This product has its own inodes. Seal them before its name is visible.
+        await setBundleReadOnly(join(staging, 'guest-payload'), true);
+        signal?.throwIfAborted();
+        await writeFile(recordPath(staging), JSON.stringify({ fingerprint, identity }));
+        await rename(staging, directory);
+      } finally {
+        removeOwnedDirectorySync(staging);
+      }
+    }
+    const archives = [];
+    if (exportArchives) {
+      const archiveRecordPath = join(directory, 'archive.json');
+      const archivePath = guestArchivePath(directory, target);
+      const sha256 = await readRecord(archiveRecordPath);
+      if (sha256) {
+        archives.push(await retainGuestArchive({ target, sha256, archivePath }, null, signal));
+      } else {
+        // An interrupted publisher can leave sealed bytes without a receipt.
+        await rm(archivePath, { force: true });
+        const archive = await archiveTarget(directory, entry);
+        await chmod(archive.archivePath, 0o444);
+        signal?.throwIfAborted();
+        await writeFile(archiveRecordPath + '.building', JSON.stringify(archive.sha256));
+        await rename(archiveRecordPath + '.building', archiveRecordPath);
+        archives.push(archive);
+      }
+    }
+    if (hit) reportTiming('guest-payload-adoption', target, started);
+    return { root, targetIdentities: { [`${target.os}-${target.arch}`]: identity }, archives };
+  });
+}
+
+export async function buildSourceGuestPayload({ repoDir, sourceRepoDir, dependencyRootDir, outputDir, targets, sourceCapture, env, signal, onTiming, retention }) {
   const reportTiming = (phase, target, started) => onTiming?.({
     phase, target: `${target.os}-${target.arch}`, elapsedMs: Math.round(performance.now() - started),
   });
-  const root = join(outputDir, 'guest-payload');
   const importedArchives = readSourceGuestPayloadArchiveImports(env);
+  const exportArchives = env.HAPPIER_DEV_GUEST_CLI_EXPORT === '1';
   // The caller owns these captured inputs. Reuse canonical capture containment
   // for mounted installed dependencies; tree callers also name their pinned install.
   const captureContext = { HAPPIER_STACK_REPO_DIR: repoDir,
@@ -106,27 +191,29 @@ export async function buildSourceGuestPayload({ repoDir, sourceRepoDir, dependen
     const runCommand = (command, args, options) => run(command, args, {
       ...options, env: { ...captureEnv, ...options?.env }, signal, stdio: 'ignore', captureFailureDiagnostic: true,
     });
-    const targetIdentities = {};
-    const exportedArchives = [];
-    for (const { target, relativeDir } of targets) {
+    const buildTarget = async (directory, { target, relativeDir }) => {
       signal?.throwIfAborted();
       // The payload owner builds the Iroh addon and Session holders from repoDir's Rust sources.
       const started = performance.now();
       const payload = await buildCliBinaryArtifactPayload({
-        repoRoot: repoDir, payloadDir: join(root, relativeDir), target, runCommand,
+        repoRoot: repoDir, payloadDir: join(directory, 'guest-payload', relativeDir), target, runCommand,
       });
       reportTiming('guest-native-payload', target, started);
-      targetIdentities[`${target.os}-${target.arch}`] = payload.identity;
-      if (env.HAPPIER_DEV_GUEST_CLI_EXPORT === '1') {
-        const archiveStarted = performance.now();
-        const archive = await createScpReadyPayloadArchive(join(root, relativeDir));
-        try {
-          exportedArchives.push(await retainGuestArchive({ target,
-            archivePath: join(archive.archiveStageRoot, archive.archiveFileName) }, outputDir, signal));
-        } finally { await archive.cleanup(); }
-        reportTiming('guest-archive-export', target, archiveStarted);
-      }
-    }
+      return payload.identity;
+    };
+    const archiveTarget = async (directory, { target, relativeDir }) => {
+      const started = performance.now();
+      const archive = await createScpReadyPayloadArchive(join(directory, 'guest-payload', relativeDir));
+      try {
+        const retained = await retainGuestArchive({ target,
+          archivePath: join(archive.archiveStageRoot, archive.archiveFileName) }, directory, signal);
+        reportTiming('guest-archive-export', target, started);
+        return retained;
+      } finally { await archive.cleanup(); }
+    };
+    const { root, targetIdentities, archives: exportedArchives } = await retainLocalGuestPayload({
+      retention, outputDir, targets, exportArchives, sourceCapture, buildTarget, archiveTarget, reportTiming, signal,
+    });
     for (const archive of importedArchives) {
       signal?.throwIfAborted();
       const started = performance.now();

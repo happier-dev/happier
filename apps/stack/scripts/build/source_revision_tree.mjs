@@ -12,7 +12,8 @@ import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspa
 import { isPidAlive } from '../utils/proc/pids.mjs';
 import { isJsonOwnerFileLockActive } from '../utils/proc/jsonOwnerFileLock.mjs';
 import { captureSourceWebBuildInputs, readSourceRuntimeProcessCommands, resolveSourceRuntimeProducerContext, setBundleReadOnly } from './build_source_runtime.mjs';
-import { readSourceGuestPayloadTargets, sourceGuestPayloadEnvironment } from './source_guest_payload.mjs';
+import { removeOwnedDirectorySync } from '../utils/fs/fs.mjs';
+import { readSourceGuestPayloadTargets, sourceGuestPayloadEnvironment, sourceGuestPayloadRetainedRoot } from './source_guest_payload.mjs';
 import { run, runCapture } from '../utils/proc/proc.mjs';
 import { publishDependencyRefreshMarker, resolveDependencyInstallRoot, resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
 import { cloneTree, extractRevision, isRevisionDependencyInput, mountRevisionWorkspaceDependencies, prepareRevisionInstall, readRevisionInstallWorkspaceLinks, revisionInstallDir, sourceRevisionTreesRoot, sweepUnreferencedInstalls, withBaseLock } from './source_revision_install.mjs';
@@ -470,7 +471,10 @@ export async function sweepSourceRevisionBases({ treesRoot, signal }) {
       }
       await setSourceRevisionTreeWritable(dir);
       await rm(dir, { recursive: true, force: true });
-      if (dir === baseDir) await rm(`${baseDir}.refs`, { recursive: true, force: true });
+      if (dir === baseDir) {
+        await rm(`${baseDir}.refs`, { recursive: true, force: true });
+        removeOwnedDirectorySync(sourceGuestPayloadRetainedRoot(baseDir));
+      }
       deleted.push(dir);
     });
   }
@@ -487,6 +491,7 @@ export async function sweepSourceRevisionBases({ treesRoot, signal }) {
       await rm(baseDir, { recursive: true, force: true });
       await rm(`${baseDir}.refs`, { recursive: true, force: true });
       await rm(`${baseDir}${DESCRIBED_SUFFIX}`, { force: true });
+      removeOwnedDirectorySync(sourceGuestPayloadRetainedRoot(baseDir));
       deleted.push(baseDir);
     });
   }
@@ -676,6 +681,45 @@ export async function prepareSourceTreeRuntimeComponents({ repoDir, stackBaseDir
     // The shared capture record shape: 64-hex input identity, full overlay digest.
     const sourceCapture = { revision: tree.revision, ...(tree.overlayDigest ? { overlayDigest: tree.overlayDigest } : {}),
       base: tree.base, capturedAt: new Date().toISOString(), inputIdentity: createHash('sha256').update(tree.key).digest('hex') };
+    // Role launchers contain each Stack's paths. Capture the guest compiler's
+    // real source inputs while the two roles still select the same bytes.
+    const targets = component === 'daemon' || env.HAPPIER_DEV_GUEST_CLI_EXPORT === '1' ? readSourceGuestPayloadTargets(env) : null;
+    let guestPayload;
+    if (targets) {
+      // Payload staging rewrites copied scripts. Capture writable inputs through
+      // the bundle owner instead of carrying the base's read-only hardlinks.
+      const workspace = join(t, 'guest-workspace');
+      try {
+        const captured = await captureSourceWebBuildInputs({ repoDir: t, component: 'daemon', outputDir: workspace, signal });
+        finishPhase('guest-input-capture');
+        await setBundleReadOnly(workspace, false);
+        finishPhase('guest-input-permissions');
+        // As in bundle preparation, the finite compiler owns its process env
+        // and loader; tool subprocesses must inherit this host's build inputs.
+        const code = `const { buildSourceGuestPayload } = await import(${JSON.stringify(new URL('./source_guest_payload.mjs', import.meta.url).href)});
+const timings = [];
+const payload = await buildSourceGuestPayload({ ...JSON.parse(process.argv[1]), env: process.env, onTiming: timing => timings.push(timing) });
+console.log('HSTACK_GUEST_PAYLOAD ' + JSON.stringify({ payload, timings }));`;
+        const output = await runCapture(process.execPath, sourceBuildNodeArgs({ repoDir: t, scriptPath: '--input-type=module',
+          args: ['-e', code, JSON.stringify({ repoDir: captured.repoDir, sourceRepoDir: repoDir,
+            dependencyRootDir: dependencyInstallDir, outputDir: t, targets, sourceCapture,
+            retention: { baseDir: tree.baseDir, inputIdentity: captured.inputIdentity,
+              installIdentity: tree.installIdentity, supportFingerprint: tree.supportFingerprint } })] }),
+        { cwd: t, env, signal });
+        const line = String(output).split(/\r?\n/u).find(line => line.startsWith('HSTACK_GUEST_PAYLOAD '));
+        if (!line) throw new Error('[source-tree] guest payload preparation returned no artifact');
+        const { payload, timings } = JSON.parse(line.slice('HSTACK_GUEST_PAYLOAD '.length));
+        guestPayload = payload;
+        finishPhase('guest-payload-worker');
+        for (const { phase, target, elapsedMs } of timings) {
+          logger.error(`[source-tree] phase=${phase} component=${component} target=${target} elapsedMs=${elapsedMs}`);
+        }
+      } finally {
+        phaseStarted = performance.now();
+        await rm(workspace, { recursive: true, force: true });
+        finishPhase('guest-input-cleanup');
+      }
+    }
     let record;
     if (component === 'daemon') {
       const cliDir = join(t, 'apps/cli');
@@ -716,40 +760,9 @@ await runSqliteMigrationDeploy({ serverRoot: ${JSON.stringify(serverDir)}, runSc
         migration: { mode: 'external', command: migrate, args: [], cwd: serverDir } };
     }
     finishPhase('role-launchers');
-    const targets = component === 'daemon' || env.HAPPIER_DEV_GUEST_CLI_EXPORT === '1' ? readSourceGuestPayloadTargets(env) : null;
-    if (targets) {
-      // Payload staging rewrites copied scripts. Capture writable inputs through
-      // the bundle owner instead of carrying the base's read-only hardlinks.
-      const workspace = join(t, 'guest-workspace');
-      try {
-        const captured = await captureSourceWebBuildInputs({ repoDir: t, component: 'daemon', outputDir: workspace, signal });
-        finishPhase('guest-input-capture');
-        await setBundleReadOnly(workspace, false);
-        finishPhase('guest-input-permissions');
-        // As in bundle preparation, the finite compiler owns its process env
-        // and loader; tool subprocesses must inherit this host's build inputs.
-        const code = `const { buildSourceGuestPayload } = await import(${JSON.stringify(new URL('./source_guest_payload.mjs', import.meta.url).href)});
-const timings = [];
-const payload = await buildSourceGuestPayload({ ...JSON.parse(process.argv[1]), env: process.env, onTiming: timing => timings.push(timing) });
-console.log('HSTACK_GUEST_PAYLOAD ' + JSON.stringify({ payload, timings }));`;
-        const output = await runCapture(process.execPath, sourceBuildNodeArgs({ repoDir: t, scriptPath: '--input-type=module',
-          args: ['-e', code, JSON.stringify({ repoDir: captured.repoDir, sourceRepoDir: repoDir,
-            dependencyRootDir: dependencyInstallDir, outputDir: t, targets, sourceCapture })] }),
-        { cwd: t, env, signal });
-        const line = String(output).split(/\r?\n/u).find(line => line.startsWith('HSTACK_GUEST_PAYLOAD '));
-        if (!line) throw new Error('[source-tree] guest payload preparation returned no artifact');
-        const { payload, timings } = JSON.parse(line.slice('HSTACK_GUEST_PAYLOAD '.length));
-        record.guestPayload = payload;
-        finishPhase('guest-payload-worker');
-        for (const { phase, target, elapsedMs } of timings) {
-          logger.error(`[source-tree] phase=${phase} component=${component} target=${target} elapsedMs=${elapsedMs}`);
-        }
-      } finally {
-        phaseStarted = performance.now();
-        await rm(workspace, { recursive: true, force: true });
-        finishPhase('guest-input-cleanup');
-      }
-      Object.assign(record.env, sourceGuestPayloadEnvironment(record.guestPayload));
+    if (guestPayload) {
+      record.guestPayload = guestPayload;
+      Object.assign(record.env, sourceGuestPayloadEnvironment(guestPayload));
     }
     // The tree runs its base's pinned installation snapshot: launches never consult
     // the moving checkout's dependency publication (the captured-closure contract).

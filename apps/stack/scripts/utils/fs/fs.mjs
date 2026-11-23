@@ -1,4 +1,4 @@
-import { access } from 'node:fs/promises';
+import { access, chmod, lstat, readdir } from 'node:fs/promises';
 import { chmodSync, lstatSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -25,6 +25,28 @@ export function removeOwnedDirectorySync(directory, { force = true } = {}) {
     makeOwnedDirectoriesWritable(directory);
     rmSync(directory, options);
   }
+}
+
+export async function setBundleReadOnly(directory, readOnly) {
+  // Unlocking only prepares a bundle for deletion, so an entry a concurrent producer already removed
+  // needs nothing; locking a published bundle still fails closed when an entry vanishes.
+  const ignoreRemoved = error => { if (readOnly || error?.code !== 'ENOENT') throw error; };
+  let entries;
+  try { entries = await readdir(directory, {withFileTypes:true}); } catch (error) { ignoreRemoved(error); return; }
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    if (entry.isSymbolicLink()) continue; // Installed dependencies keep their own lifecycle.
+    try {
+      if (entry.isDirectory()) {
+        if (!readOnly) await chmod(path, 0o755);
+        await setBundleReadOnly(path, readOnly);
+      } else {
+        const mode = (await lstat(path)).mode;
+        await chmod(path, readOnly ? mode & ~0o222 : mode | 0o200);
+      }
+    } catch (error) { ignoreRemoved(error); }
+  }
+  try { await chmod(directory, readOnly ? 0o555 : 0o755); } catch (error) { ignoreRemoved(error); }
 }
 
 export async function pathExists(path) {

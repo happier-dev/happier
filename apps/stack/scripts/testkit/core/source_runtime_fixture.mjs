@@ -6,6 +6,7 @@ import { chmod, copyFile, mkdir, readFile, readdir, realpath, symlink, writeFile
 import { basename, dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { buildNativeAdmissionFixtureEnv, installNativeAdmissionFixture } from './native_admission_fixture.mjs';
+import { CLI_RUNTIME_SIDECAR_ENTRIES } from '../../../../../packages/cli-common/cliRuntimeSidecars.mjs';
 import { readWorkspacePackages } from '../../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 
 /** Compiler/cache fixtures exercise the producer. QA fixtures name a separate
@@ -23,7 +24,8 @@ export async function installSourceAdmissionFixture(root) {
   const adapterSource = new URL('../utils/proc/runSourceBuildCommand.mjs', runtimeSource);
   const adapter = join(root,'native-owner/apps/stack/scripts/utils/proc/runSourceBuildCommand.mjs');
   await writeFile(adapter,(await readFile(adapterSource,'utf8')).replace(
-    "from '../dev/devReloadCoordinator.mjs'",`from ${JSON.stringify(new URL('../dev/devReloadCoordinator.mjs',adapterSource).href)}`));
+    "from '../dev/devReloadCoordinator.mjs'",`from ${JSON.stringify(new URL('../dev/devReloadCoordinator.mjs',adapterSource).href)}`).replace(
+    "from './sourceBuildNodeArgs.mjs'", `from ${JSON.stringify(new URL('./sourceBuildNodeArgs.mjs', adapterSource).href)}`));
   const runtimePath = join(root,'native-owner/apps/stack/scripts/build/build_source_runtime.mjs');
   await mkdir(dirname(runtimePath),{recursive:true});
   // Install the genuine owner beside the fixture's genuine native launcher.
@@ -48,13 +50,26 @@ export async function installSourceAdmissionFixture(root) {
     const { prepareSourceRuntimeReload } = await import(pathToFileURL(reloadPath));
     return await prepareSourceRuntimeReload(options);
   };
+  const prepareTreeRuntime = async options => {
+    const treeSource = new URL('./source_revision_tree.mjs', runtimeSource);
+    const treePath = join(dirname(runtimePath), 'source_revision_tree.mjs');
+    const source = (await readFile(treeSource, 'utf8'))
+      .replace(/^((?:import|export) [^\n]*from )'(\.[^']+)'/gm, (_match, prefix, path) =>
+        `${prefix}${JSON.stringify(path === '../utils/proc/runSourceBuildCommand.mjs'
+          ? pathToFileURL(adapter).href : new URL(path, treeSource).href)}`)
+      .replace(/new URL\('(\.[^']+)', import.meta.url\)/g, (_match, path) =>
+        `new URL(${JSON.stringify(new URL(path, treeSource).href)})`);
+    await writeFile(treePath, source);
+    const { prepareSourceTreeRuntimeComponents } = await import(pathToFileURL(treePath));
+    return await prepareSourceTreeRuntimeComponents(options);
+  };
   const {runSourceBuildCommand:runSourceCommand} = await import(pathToFileURL(adapter));
   await mkdir(join(root,'bin'));
   await writeFile(join(root,'bin/awk'),`#!/bin/sh\ncase "$*" in\n  */proc/meminfo*) printf '16777216 16777216\\n' ;;\n  */proc/loadavg*|*/proc/pressure/*) printf '0\\n' ;;\n  *) exec /usr/bin/awk "$@" ;;\nesac\n`);
   await chmod(join(root,'bin/awk'),0o755);
   const env = {...buildNativeAdmissionFixtureEnv(),PATH:`${join(root,'bin')}:/usr/bin:/bin`,HAPPIER_DEV_TARGET_EXECUTION:'1',
     ...await installManualGuestPayloadEnv(root)};
-  return {...native,runtimePath,build,prepareReload,runSourceCommand,env};
+  return {...native,runtimePath,build,prepareReload,prepareTreeRuntime,runSourceCommand,env};
 }
 
 
@@ -79,6 +94,14 @@ export async function installSourcePreparationInputs(repoDir, component) {
   if (!existsSync(join(repoDir, 'pnpm-lock.yaml'))) await writeFile(join(repoDir, 'pnpm-lock.yaml'), '');
   await writeFile(join(repoDir, 'pnpm-workspace.yaml'), 'packages: []\n');
   if (component !== 'daemon') return;
+  // Even tiny daemon graphs publish the required executable sidecar closure.
+  for (const [name] of CLI_RUNTIME_SIDECAR_ENTRIES) {
+    const path = join(repoDir, 'apps/cli/scripts', name, ...(name.endsWith('.cjs') ? [] : ['fixture.cjs']));
+    if (!existsSync(path)) {
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, 'module.exports = {};');
+    }
+  }
   const sdk = join(repoDir, 'packages/plugin-sdk/package.json');
   if (existsSync(sdk) && JSON.parse(await readFile(sdk, 'utf8')).happier?.publicSdkRelease) {
     const canonicalRoot = fileURLToPath(new URL('../../../../../packages/cli-common/', import.meta.url));
