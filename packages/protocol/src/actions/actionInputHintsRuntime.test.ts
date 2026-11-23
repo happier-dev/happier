@@ -1,6 +1,9 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import { getActionSpec } from './actionSpecs.js';
+import { DATABASE_STATEMENT_RUN_ACTION_ID_V1 } from './actionIdsDatabaseV1.js';
+import { databaseActionMetadata } from './databaseActionMetadata.js';
+import { projectTargetActionApprovalInput } from './actionApprovalPresentation.js';
 import type { ActionSpec } from './actionSpecs.js';
 import { ActionInputOptionSchema } from './actionInputHints.js';
 import { normalizeActionInputByFieldHints, readActionSecretInputAdmission, readActionSecretInputPaths, resolveEffectiveActionInputFields } from './actionInputHintsRuntime.js';
@@ -22,6 +25,19 @@ describe('resolveEffectiveActionInputFields', () => {
       paths: ['required', 'optional'], missingPaths: [],
     });
     expect(readActionSecretInputPaths(spec, {}, { includeInactive: true })).toEqual(['required', 'optional', 'hidden']);
+  });
+
+  it('admits a SQL statement with optional parameter redaction patterns', () => {
+    const metadata = databaseActionMetadata[DATABASE_STATEMENT_RUN_ACTION_ID_V1];
+    const statement = { mode: 'read', statement: { sql: 'SELECT 1', parameters: [] } };
+    expect(readActionSecretInputAdmission(metadata, statement).missingPaths).toEqual([]);
+    const parameterized = { mode: 'read', statement: {
+      sql: 'SELECT $1', parameters: [{ type: 'text', value: 'private' }],
+    } };
+    expect(readActionSecretInputAdmission(metadata, parameterized).missingPaths).toEqual([]);
+    const projection = projectTargetActionApprovalInput(parameterized, metadata.secretInputPaths);
+    expect(projection?.confidentialPaths).toEqual(['statement.parameters.0.value']);
+    expect(JSON.stringify(projection?.input)).not.toContain('private');
   });
 
   it('retains contributed Action partial inputs without a host-owned provider key shortlist', () => {

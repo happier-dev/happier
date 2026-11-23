@@ -14,7 +14,7 @@ import type { JsonValue } from '../json/strictJsonValue.js';
 import { InputPathSchema } from '../inputs/inputPredicates.js';
 import { resolvePluginLocalizedStringV2Text } from '../plugins/contributions/publicTypes.js';
 import { getActionSpec, type ActionSpec, type ApprovalPresentationContext } from './actionSpecs.js';
-import { resolveEffectiveActionInputFields } from './actionInputHintsRuntime.js';
+import { matchesConfidentialInputPath, resolveEffectiveActionInputFields } from './actionInputHintsRuntime.js';
 import { actionInputFieldAcceptsNull } from './actionInputSchemaPath.js';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
 import { VoiceConversationTargetSchema } from './voiceConversationActionFamily.js';
@@ -1432,24 +1432,6 @@ function describeApprovalNetworkValue(policy: Readonly<{ network: string; networ
   return policy.network === 'open' ? 'Any site'
     : policy.network === 'origins' ? `Only ${(policy.networkOrigins ?? []).join(', ')}`
       : 'No network access';
-}
-
-/** `[]` matches one element; `**` matches zero or more descendant segments. */
-function matchesConfidentialInputPath(secret: readonly string[], path: readonly string[]): boolean {
-  if (!secret.includes('**')) return secret.length === path.length
-    && secret.every((segment, index) => segment === '[]' || segment === path[index]);
-  let reachable = [true];
-  for (const segment of secret) reachable.push(segment === '**' && reachable[reachable.length - 1] === true);
-  for (const segment of path) {
-    const next = [false];
-    for (const [index, expected] of secret.entries()) {
-      next.push(expected === '**'
-        ? next[index] === true || reachable[index + 1] === true
-        : reachable[index] === true && (expected === '[]' || expected === segment));
-    }
-    reachable = next;
-  }
-  return reachable[secret.length] === true;
 }
 
 /**

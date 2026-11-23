@@ -18,6 +18,32 @@ import { resolveEffectiveInputFields } from '../inputs/inputFieldRuntime.js';
 import { readInputPath } from '../inputs/inputPredicates.js';
 import type { InputHintsDescriptor } from '../inputs/inputFields.js';
 
+const CONFIDENTIAL_ARRAY_ELEMENT = '[]';
+const CONFIDENTIAL_DESCENDANT = '**';
+
+/** `[]` matches one element; `**` matches zero or more descendant segments. */
+export function matchesConfidentialInputPath(secret: readonly string[], path: readonly string[]): boolean {
+  if (!secret.includes(CONFIDENTIAL_DESCENDANT)) return secret.length === path.length
+    && secret.every((segment, index) => segment === CONFIDENTIAL_ARRAY_ELEMENT || segment === path[index]);
+  let reachable = [true];
+  for (const segment of secret) reachable.push(segment === CONFIDENTIAL_DESCENDANT && reachable[reachable.length - 1] === true);
+  for (const segment of path) {
+    const next = [false];
+    for (const [index, expected] of secret.entries()) {
+      next.push(expected === CONFIDENTIAL_DESCENDANT
+        ? next[index] === true || reachable[index + 1] === true
+        : reachable[index] === true && (expected === CONFIDENTIAL_ARRAY_ELEMENT || expected === segment));
+    }
+    reachable = next;
+  }
+  return reachable[secret.length] === true;
+}
+
+/** Redaction patterns describe values that exist and cannot name a required field. */
+function isConfidentialInputPathPattern(path: string): boolean {
+  return path.split('.').some(segment => segment === CONFIDENTIAL_ARRAY_ELEMENT || segment === CONFIDENTIAL_DESCENDANT);
+}
+
 /** Required or supplied confidential operands; includeInactive retains every declaration for redaction. */
 export function readActionSecretInputPaths<TText>(spec: Readonly<{
   inputHints?: InputHintsDescriptor<TText> | null;
@@ -45,7 +71,7 @@ export function readActionSecretInputAdmission<TText>(spec: Readonly<{
   secretInputPaths?: readonly string[];
 }>, input: unknown): Readonly<{ paths: readonly string[]; missingPaths: readonly string[] }> {
   const paths = readActionSecretInputPaths(spec, input);
-  return { paths, missingPaths: paths.filter(path => readInputPath(input, path) === undefined) };
+  return { paths, missingPaths: paths.filter(path => !isConfidentialInputPathPattern(path) && readInputPath(input, path) === undefined) };
 }
 
 /** Missing confidential leaves may defer; every other schema error remains an admission failure. */

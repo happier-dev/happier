@@ -2645,21 +2645,14 @@ the reverse transport carries no automation admission token. Native success and
 failure responses retain the canonical optional `automationNotices` beside the
 ordinary result.
 
-Terminal target-Action receipts erase live-only input, narrowed human input and
-the original Action envelope after transition admission. They retain the subject
-fingerprints, requester binding and execution outcome. The Artifact writer sends
-the existing custody fact with that terminal body replacement; the storage owner
-uses retention zero for this write, atomically removing earlier body revisions.
-Ordinary replayable approval history keeps the configured retention. E2EE bodies
-remain opaque to the server; this non-content custody fact does not disclose SQL.
-
 In unreleased 0.3 source, an authored Action's explicit `surfaces` list is its
 exposure decision. `definePlugin` preserves that list; omitting it retains the
 CLI default. Declaring a UI surface does not add agent or plugin exposure.
 
 Contributed Actions can declare `secretInputPaths` using the existing input-path
 grammar, including `[]` for array elements and `**` for zero or more descendant
-segments. The current approval presenter
+segments. Patterns redact matching values when present. A pattern with no
+match does not require a confidential-input request. The approval presenter
 redacts those values while retaining other input, and the diagnostic owner
 enrolls the same confidential operands for failures, diagnostics and logs. A
 successful result returns to the requester that supplied those operands, so its
