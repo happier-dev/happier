@@ -186,12 +186,8 @@ export function createRootStackRouteOptions(newSessionPresentationMode: NewSessi
                 headerTitle: t('artifacts.title'),
                 headerBackTitle: back,
             },
-            artifactsId: {
-                // The page header carries the artifact's own title; the native header is the way back.
-                headerShown: true,
-                headerTitle: t('artifacts.title'),
-                headerBackTitle: back,
-            },
+            // The Artifact publishes its own title once known. The route only provides the way back.
+            artifactsId: visibleBlankBack,
             artifactsNew: {
                 // The action/kind chrome is distinct from the editable entity name; the route writes a Doc,
                 // so it reads as the Docs browser's own create action does.

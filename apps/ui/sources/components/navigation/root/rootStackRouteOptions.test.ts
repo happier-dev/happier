@@ -42,13 +42,18 @@ describe('root route identity ownership', () => {
     );
     it('retains kind chrome for entity identities and stack identity for pages without their own title', () => {
         const options = createRootStackRouteOptions('auto');
-        expect(options['artifacts/[id]']).toMatchObject({ headerShown: true, headerTitle: 'artifacts.title' });
         expect(options['artifacts/new']).toMatchObject({ headerShown: true, headerTitle: 'artifacts.browser.newDocument' });
         expect(options['artifacts/edit/[id]']).toMatchObject({ headerShown: true, headerTitle: 'artifacts.browser.editDocument' });
         expect(options['workflows/[id]/index']).toMatchObject({ headerShown: true, headerTitle: 'workflows.page.chromeTitle' });
         expect(options['boards/[boardId]']).toMatchObject({ headerShown: true, headerTitle: 'boards.title' });
         expect(options['session/recent']).toMatchObject({ headerShown: true, headerTitle: 'sessionHistory.title' });
         expect(options['workflows/index'].headerShown).toBe(false);
+    });
+    it('keeps Back available while a cold Artifact has no title to publish', () => {
+        const options = createRootStackRouteOptions('auto');
+        expect(resolveRootStackRouteOptions(options, workspaceRouteFiles['artifacts/[id]'])).toMatchObject({
+            headerShown: true, headerTitle: '', headerBackTitle: 'common.back',
+        });
     });
     it('lets the phone Home route show the Atmosphere wallpaper, with no fixed header Back over its cards', () => {
         // Home's Back is on its own head line (HomeHub), so it scrolls away with the head instead of floating over
