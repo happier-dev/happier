@@ -23,7 +23,7 @@ describe('Team setup author references', () => {
   let fixture: TeamSetupFFixture | undefined;
   afterEach(async () => { await fixture?.stop(); fixture = undefined; });
 
-  it('TS.D.authorReferences persists a task reference without granting prompt access and opens it as an editable task for the daemon workspace', async () => {
+  it('TS.D.authorReferences uses the administrator editor to persist a task reference without granting prompt access and opens it as an editable task for the daemon workspace', async () => {
     const dbProvider = process.env.HAPPIER_E2E_DB_PROVIDER === 'sqlite' ? 'sqlite' : 'postgres';
     const databaseUrl = process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL;
     if (dbProvider === 'postgres' && !databaseUrl) throw new Error('TS.D.authorReferences requires the disposable PostgreSQL harness URL');
@@ -57,7 +57,7 @@ describe('Team setup author references', () => {
     expect(prompt.ok).toBe(true);
     if (!prompt.ok || typeof prompt.result !== 'object' || !prompt.result || !('artifactId' in prompt.result)
       || typeof prompt.result.artifactId !== 'string') throw new Error('Prompt creation missing identity');
-    const ref = { kind: 'doc' as const, artifactId: prompt.result.artifactId };
+    const artifactId = prompt.result.artifactId;
     const created = await invoke(owner, 'projects.sources.create', { serverId: fixture.serverId, requestKey: randomUUID(), name: 'First project',
       owner: { kind: 'team', teamId: team.id } });
     expect(created.ok).toBe(true);
@@ -81,15 +81,38 @@ describe('Team setup author references', () => {
       { kind: 'projectSources', status: 'available', count: 1 },
       { kind: 'sessions', status: 'available', count: 0 },
     ]));
-    const update = { serverId: fixture.serverId, sourceId: row.source.id, expectedRevision: row.source.revision,
-      patch: { attachment: { kind: 'attach', attachment: { purpose: 'onboarding_task', ref } } } };
-    const attached = await invoke(owner, 'projects.sources.update', update);
-    // RED before D3: the existing mutation union refuses this purpose.
-    expect(attached.ok).toBe(true);
-    if (!attached.ok) throw new Error(`Task attachment refused: ${attached.errorCode}`);
+    const { createElement } = await import('react');
+    const { connectUiActionClient } = await import('@happier-tests/ui-action-client');
+    const { InjectedAuthProvider } = await import('../../../../apps/ui/sources/auth/context/AuthContext');
+    const { TeamNewMembersScreen } = await import('../../../../apps/ui/sources/components/settings/teams/newMembers/TeamNewMembersScreen');
+    const { ModalProvider } = await import('../../../../apps/ui/sources/modal');
+    const { renderScreen } = await import('../../../../apps/ui/sources/dev/testkit');
+    const authorUi = await connectUiActionClient({ serverUrl: fixture.server.baseUrl, credentials: owner.uiCredentials });
+    try {
+      await waitFor(() => authorUi.isAccountReady(), { timeoutMs: 60_000 });
+      const screen = await renderScreen(createElement(InjectedAuthProvider, { credentials: owner.uiCredentials,
+        children: createElement(ModalProvider, null, createElement(TeamNewMembersScreen, { serverId: authorUi.serverId, teamId: team.id })),
+      }));
+      try {
+        const choose = 'team-new-members-first-task-choose';
+        const option = `dropdown-option-${artifactId}`;
+        await waitFor(() => !!screen.findByTestId(choose), { context: 'administrator task editor', timeoutMs: 60_000 });
+        await screen.pressByTestIdAsync(choose);
+        await waitFor(() => !!screen.findByTestId(option), { context: 'administrator prompt picker', timeoutMs: 60_000 });
+        await screen.pressByTestIdAsync(option);
+        await waitFor(() => !!screen.findByTestId(`team-new-members-first-task:${row.source.id}`),
+          { context: 'administrator saved first task', timeoutMs: 60_000 });
+      } finally { await screen.unmount(); }
+    } finally { await authorUi.close(); }
+    const sourceInput = { serverId: fixture.serverId, sourceId: row.source.id };
+    const attached = await invoke(owner, 'projects.sources.read', sourceInput);
+    if (!attached.ok) throw new Error(`Authored Source unavailable: ${attached.errorCode}`);
     const saved = ProjectSourcesReadOutputV1Schema.parse(attached.result);
-    expect(saved).toMatchObject({ ok: true, source: { attachments: [{ purpose: 'onboarding_task', ref }] } });
-    if (!saved.ok) throw new Error(`Task attachment refused: ${saved.error}`);
+    expect(saved).toMatchObject({ ok: true, source: { attachments: [{ purpose: 'onboarding_task', ref: { kind: 'doc', artifactId } }] } });
+    if (!saved.ok) throw new Error(`Authored Source unavailable: ${saved.error}`);
+    const ref = saved.source.attachments?.find(attachment => attachment.purpose === 'onboarding_task')?.ref;
+    if (ref?.kind !== 'doc') throw new Error('Administrator editor did not persist a task reference');
+    const update = { ...sourceInput, patch: { attachment: { kind: 'attach', attachment: { purpose: 'onboarding_task', ref } } } };
     const unchanged = await invoke(owner, 'projects.sources.update', { ...update, expectedRevision: saved.source.revision });
     if (!unchanged.ok) throw new Error(`Task reference replay refused: ${unchanged.errorCode}`);
     expect(ProjectSourcesReadOutputV1Schema.parse(unchanged.result)).toMatchObject({ ok: true, source: { revision: saved.source.revision } });
@@ -126,7 +149,6 @@ describe('Team setup author references', () => {
     expect(suggested.unavailable).toEqual([]);
     expect(suggested.task).toMatchObject({ sourceId: row.source.id, title: memberTask.title, markdown: memberTask.markdown });
     if (!suggested.task) throw new Error('Readable suggested task was not selected');
-    const { connectUiActionClient } = await import('@happier-tests/ui-action-client');
     const { getActiveServerAccountScope } = await import('../../../../apps/ui/sources/sync/domains/scope/activeServerAccountScope');
     const { createFrontDoorActionExecute } = await import('../../../../apps/ui/sources/sync/ops/actions/frontDoorRuntimeActionExecutor');
     const { readNewSessionDraftProjectionFromRepository } = await import('../../../../apps/ui/sources/components/sessions/composer/newSessionDraftRepositoryAdapter');

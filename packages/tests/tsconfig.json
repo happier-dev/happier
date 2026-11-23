@@ -58,6 +58,7 @@
     "suites/core-e2e/teamSetup.A.slow.e2e.test.ts",
     "suites/core-e2e/teamSetup.B.slow.e2e.test.ts",
     "suites/core-e2e/teamSetup.D.slow.e2e.test.ts",
+    "suites/core-e2e/teamSetup.D.authorReferences.slow.e2e.test.ts",
     "suites/core-e2e/teamSetup.D.existingClones.slow.e2e.test.ts",
     "suites/core-e2e/teamSetup.D.homeDemand.slow.e2e.test.ts",
     "suites/core-e2e/teamSetup.E.slow.e2e.test.ts",
