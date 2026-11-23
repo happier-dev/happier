@@ -890,6 +890,22 @@ describe('Artifact composed view reads', () => {
         }
     });
 
+    it.each([{ status: 404, title: 'artifacts.notFound' }, { status: 403, title: 'artifacts.error' }] as const)('names the phone header by its state once a cold Artifact fails to open, never leaving it blank (G3b, HTTP $status)', async ({ status, title }) => {
+        await setup('document', undefined, false,
+            request => request.path === '/v1/artifacts/document'
+                ? Response.json({ error: status === 404 ? 'not_found' : 'forbidden' }, { status }) : undefined, true);
+        const { NavigationTitleChromeProvider } = await import('@/components/ui/layout/navigationTitleChrome');
+        const { t } = await import('@/text');
+        const chromeTitles: (string | null | undefined)[] = [];
+        const publisher = { setTitle: (value: string | null | undefined) => { chromeTitles.push(value); } };
+        const screen = await renderScreen(<NavigationTitleChromeProvider showsTitle publisher={publisher}><OpenView id="document" /></NavigationTitleChromeProvider>);
+        try {
+            await vi.waitFor(() => expect(chromeTitles.at(-1)).toBe(t(title)));
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it.each([{ status: 404, edit: false }, { status: 403, edit: false }, { status: 404, edit: true }, { status: 403, edit: true }])('settles an inaccessible cold Doc as unavailable after one exact read (HTTP $status, edit=$edit)', async ({ status, edit }) => {
         const { served } = await setup('document', undefined, false,
             request => request.path === '/v1/artifacts/document'

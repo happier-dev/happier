@@ -1283,6 +1283,9 @@ function resolvePublishedOrStaticInstanceTitle(
         const key = resolveSettingsRouteTitleKey(href.split(/[?#]/, 1)[0]);
         if (key) return t(key);
     }
+    // An Artifact route carries no kind: until its row names it (or the census settles it missing) it names nothing,
+    // never its parent "Artifacts" (G3b).
+    if (ref.kind === 'artifacts' && ref.params.id) return '';
     return destination?.title ?? t('common.unavailable');
 }
 

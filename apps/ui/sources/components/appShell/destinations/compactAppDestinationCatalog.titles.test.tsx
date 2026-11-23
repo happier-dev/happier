@@ -209,8 +209,10 @@ describe('Project destination instance titles', () => {
         }));
         const hook = await renderHook(() => useDestinationInstanceTitles(catalog, entries));
         const pending = entries.map(entry => readDestinationInstanceTitle(catalog, entry.ref));
-        expect([...hook.getCurrent().values()]).toEqual(pending);
-        expect(pending.every(title => typeof title === 'string' && title.length > 0)).toBe(true);
+        // A pending Project and Workflow keep a name; an Artifact route carries no kind, so it names nothing yet (G3b).
+        expect([pending[0], pending[2]].every(title => typeof title === 'string' && title.length > 0)).toBe(true);
+        expect(pending[1]).toBe('');
+        expect([...hook.getCurrent().values()]).toEqual([pending[0], pending[2]]);
         expect(pending[0]).not.toBe(t('projects.detail.notFoundTitle'));
         expect(pending[1]).not.toBe(t('artifacts.notFound'));
         await act(async () => {
@@ -221,6 +223,23 @@ describe('Project destination instance titles', () => {
         expect(entries.map(entry => readDestinationInstanceTitle(catalog, entry.ref))).toEqual(expected);
         expect([...hook.getCurrent().values()]).toEqual(expected);
         await hook.unmount();
+    });
+    it('names a loading Artifact nothing, never the parent "Artifacts", until its row lands with its own title (G3b)', async () => {
+        const entries = [{ key: 'review', ref: destination('/artifacts/loading-review') }];
+        const hook = await renderHook(() => useDestinationInstanceTitles(catalog, entries));
+        expect(readDestinationInstanceTitle(catalog, entries[0]!.ref)).toBe('');
+        expect(hook.getCurrent().has('review')).toBe(false);
+        const stored = { id: 'loading-review', isDecrypted: true, title: 'Code review', header: { kind: 'review.v1', v: 1 },
+            createdAt: 1, updatedAt: 1, headerVersion: 1, bodyVersion: 1, seq: 1 } as unknown as DecryptedArtifact;
+        const before = storage.getState().artifacts;
+        try {
+            await act(async () => { storage.setState((state) => ({ ...state, artifacts: { ...state.artifacts, [stored.id]: stored } })); });
+            expect(readDestinationInstanceTitle(catalog, entries[0]!.ref)).toBe('Code review');
+            expect(hook.getCurrent().get('review')).toBe('Code review');
+        } finally {
+            storage.setState((state) => ({ ...state, artifacts: before }));
+            await hook.unmount();
+        }
     });
     it('names a restored built-in Profile from the same declaration its detail uses without an Account row', () => {
         const builtin = getBuiltInProfile('azure-openai');
