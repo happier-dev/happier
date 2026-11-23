@@ -73,6 +73,50 @@ const workflowStartContext: AgentStartContextV1 = {
 };
 
 describe('createActionExecutor (review.start)', () => {
+  it.each(['Session title', 'Agent label'] as const)('persists an existing Session reviewer identity from its %s', async nameSource => {
+    const records = createInMemoryReviewRecordPortV1();
+    let reviewId = '';
+    const reads: { sessionId: string; serverId?: string | null }[] = [];
+    const catalogs: (string | undefined)[] = [];
+    const executor = createActionExecutor({
+      reviewRecords: () => records,
+      // These are the Session and catalog transport boundaries, not naming logic.
+      sessionStatusGet: async ({ sessionId, serverId }) => {
+        reads.push({ sessionId, serverId });
+        return { session: { id: sessionId, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
+          encryption: null, machineId: 'reviewer-machine', ...(nameSource === 'Session title' ? { title: 'Security double-check' } : {}) },
+          agentTarget: { kind: 'agent', identity: { pluginId: 'review.plugin', localId: 'reviewer' } } };
+      },
+      agentsBackendsList: async ({ machineId }) => { catalogs.push(machineId); return { items: [
+        { targetKey: 'other/reviewer', label: 'Wrong Agent', enabled: true,
+          identity: { pluginId: 'other.plugin', localId: 'reviewer' } },
+        { targetKey: 'review/reviewer', label: 'Custom reviewer', enabled: true,
+          identity: { pluginId: 'review.plugin', localId: 'reviewer' } },
+      ] }; },
+      workflowAction: async invocation => {
+        const request = WorkflowRunStartRequestV1Schema.parse(invocation.input);
+        reviewId = ReviewRoundBindingV1Schema.parse(request.inputs?.reviewRound).reviewId;
+        return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+      },
+    });
+    const sessionReviewer = { kind: 'session', session: { serverId: 'reviewer-home', sessionId: 'reviewer-session' } };
+    const result = await executor.execute('review.start', { sessionId: 'source', scope: 'repository', instructions: 'Review.',
+      reviewers: [sessionReviewer, { kind: 'engine', engineId: 'codex' }],
+      steps: [{ kind: 'review', instructions: 'Review.', reviewers: [sessionReviewer, { kind: 'engine', engineId: 'codex' }] },
+        { kind: 'review', instructions: 'Double-check.', reviewers: [sessionReviewer] }],
+    }, { surface: 'ui', serverId: 'home', defaultSessionId: 'source', defaultSessionMachineId: 'machine-1' });
+    expect(result).toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+    const name = nameSource === 'Session title' ? 'Security double-check' : 'Custom reviewer';
+    expect(reviewId).not.toBe('');
+    const round = (await records.read(reviewId))?.rounds[0];
+    expect(round?.reviewerDisplayNames).toMatchObject({ 'step-1-reviewer-1': name, 'step-2-reviewer-1': name });
+    expect(round?.reviewerOutcomes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reviewerId: 'step-1-reviewer-1', displayName: name }),
+      expect.objectContaining({ reviewerId: 'step-2-reviewer-1', displayName: name }),
+    ]));
+    expect(reads).toEqual([{ sessionId: 'reviewer-session', serverId: 'reviewer-home' }]);
+    expect(catalogs).toEqual(nameSource === 'Session title' ? [] : ['reviewer-machine']);
+  });
   it('retains host role custody for native review starts without a child-depth stamp', async () => {
     const context: AgentStartContextV1 = { ...workflowStartContext, caller: { kind: 'host' }, roles: {} };
     const executor = createActionExecutor({

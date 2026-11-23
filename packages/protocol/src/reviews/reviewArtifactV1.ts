@@ -213,8 +213,13 @@ export function createReviewRecordPortV1(transport: ReviewArtifactTransportV1) {
       const lastOrdinal = previous?.rounds.at(-1)?.ordinal ?? 0;
       if (previous && !input.newRound) return { reviewId: input.reviewId, roundOrdinal: lastOrdinal };
       const ordinal = lastOrdinal + 1;
+      // A selected retry omits other slots; their admitted names still belong to
+      // the retained roster when a later round includes them again.
+      const admittedDisplayNames: Record<string, string> = {};
+      for (const round of previous?.rounds ?? []) Object.assign(admittedDisplayNames, round.reviewerDisplayNames);
+      Object.assign(admittedDisplayNames, input.reviewerDisplayNames);
       const reviewerDisplayNames = Object.fromEntries(input.reviewerIds.flatMap(id => {
-        const name = input.reviewerDisplayNames?.[id];
+        const name = admittedDisplayNames[id];
         return name ? [[id, name]] : [];
       }));
       const comparisonId = input.comparisonCapture?.input.comparisonId ?? input.comparisonId;

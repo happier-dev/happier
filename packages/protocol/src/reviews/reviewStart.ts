@@ -131,12 +131,14 @@ export function reviewReviewerIdsForStartV1(input: Pick<ReviewStartInput, 'revie
 
 /** Bind a display identity to the intentional roster slot when it is admitted. */
 export function reviewReviewerDisplayNamesForStartV1(input: Pick<ReviewStartInput, 'reviewers' | 'steps'>,
-  readEngineLabel?: (reviewer: ReviewEngineReviewerSelectionV1, id: string) => string | undefined): Readonly<Record<string, string>> {
+  readEngineLabel?: (reviewer: ReviewEngineReviewerSelectionV1, id: string) => string | undefined,
+  readSessionLabel?: (reviewer: Extract<ReviewReviewerSelectionV1, { kind: 'session' }>) => string | undefined): Readonly<Record<string, string>> {
   return Object.fromEntries(reviewExecutableRosterForStartV1(input).flatMap(({ reviewer, id }) => {
     const name = reviewer.kind === 'engine'
       ? reviewer.teamCredentialModel?.modelId ?? reviewer.modelSelection?.modelId ?? reviewer.modelId
         ?? readEngineLabel?.(reviewer, id) ?? reviewer.engineId
       : reviewer.kind === 'model' ? reviewer.launch.modelSelection?.ref.modelId ?? reviewer.launch.agentTarget.identity.localId
+      : reviewer.kind === 'session' ? readSessionLabel?.(reviewer)
       : undefined;
     return name ? [[id, name]] : [];
   }));

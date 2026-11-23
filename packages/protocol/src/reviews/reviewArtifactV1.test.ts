@@ -25,6 +25,20 @@ function fixture() {
 }
 
 describe('durable Review rounds', () => {
+  it('retains admitted reviewer names across a selected retry without copying omitted reviewers', async () => {
+    const f = fixture();
+    const start = { reviewId: 'named-session-review', title: 'Review', subjectKind: 'repository' as const,
+      sourceKind: 'workflow' as const, reviewerIds: ['reviewer-1', 'reviewer-2'], startedAt: 1 };
+    await f.records.start({ ...start, reviewerDisplayNames: { 'reviewer-1': 'Security double-check', 'reviewer-2': 'Claude' } });
+    const retry = await f.records.start({ ...start, reviewerIds: ['reviewer-1'], startedAt: 2, newRound: true });
+    await f.records.settle({ ...retry, outcome: 'cancelled', finishedAt: 3, runs: [] });
+    const round = (await f.records.read(start.reviewId))?.rounds[1];
+    expect(round?.reviewerDisplayNames).toEqual({ 'reviewer-1': 'Security double-check' });
+    expect(round?.reviewerOutcomes).toEqual([{ reviewerId: 'reviewer-1', displayName: 'Security double-check', outcome: 'cancelled' }]);
+    await f.records.start({ ...start, startedAt: 4, newRound: true, reviewerDisplayNames: { 'reviewer-1': 'Renamed reviewer' } });
+    expect((await f.records.read(start.reviewId))?.rounds[2]?.reviewerDisplayNames)
+      .toEqual({ 'reviewer-1': 'Renamed reviewer', 'reviewer-2': 'Claude' });
+  });
   it('retains the pinned capture address for each round independently of execution history', async () => {
     const f = fixture();
     const comparisonCapture = { target: { kind: 'machine' as const, machineId: 'source-machine' }, input: {

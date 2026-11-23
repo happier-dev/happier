@@ -32,6 +32,9 @@ import { resolveReviewComparisonSourceV1 } from '../../../reviews/prepareReviewR
 import { dispatchReviewSettlementAction } from './settlement.js';
 import { invokeHostReviewedChildV1 } from '../deploymentRoleChild.js';
 import type { JsonObject } from '../../../json/strictJsonValue.js';
+import { SessionStatusResultSchema } from '../../../sessions/control/contract.js';
+import { AgentsBackendsListOutputSchema } from '../../agentBackendInventory.js';
+import { buildQualifiedPluginContributionKey } from '../../../plugins/contributionIdentity.js';
 
 export function reviewScopeForInput(input: unknown): ReviewEngineScope {
   const record = readRecord(input);
@@ -366,6 +369,42 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           // Retain admitted ordinary reviewer prompts so Workflow leaves do not reread the source.
           const records = deps.reviewRecords?.(ctx);
           if (!records) return { ok: false, errorCode: 'review_record_unavailable', error: 'review_record_unavailable' };
+          // Resolve display content once from each selected Session's own Home.
+          // Later rounds retain these names with the admitted roster in the Artifact.
+          const sessionKey = (session: Readonly<{ serverId: string; sessionId: string }>) => JSON.stringify([session.serverId, session.sessionId]);
+          const selectedSessions = new Map(reviewers.flatMap(reviewer => reviewer.kind === 'session'
+            ? [[sessionKey(reviewer.session), reviewer.session] as const] : []));
+          const catalogs = new Map<string, Promise<ReturnType<typeof AgentsBackendsListOutputSchema.parse>>>();
+          const sessionNames = new Map(await Promise.all([...selectedSessions].map(async ([key, session]) => {
+            const context = { ...ctx, serverId: session.serverId };
+            const response = await executeHostChild('session.status.get', { sessionId: session.sessionId, live: false }, context);
+            if (!response.ok) throw createActionExecuteFailureError(response);
+            const status = SessionStatusResultSchema.parse(response.result);
+            if (status.session.id !== session.sessionId) throw createActionExecuteFailureError({
+              ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' });
+            if (status.session.title) return [key, status.session.title] as const;
+            const target = status.agentTarget;
+            if (!target) return [key, undefined] as const;
+            const catalogKey = JSON.stringify([session.serverId, status.session.machineId]);
+            let catalog = catalogs.get(catalogKey);
+            if (!catalog) {
+              catalog = (async () => {
+                const listed = await executeHostChild('agents.backends.list', {
+                  ...(status.session.machineId ? { machineId: status.session.machineId } : {}),
+                }, context);
+                if (!listed.ok) throw createActionExecuteFailureError(listed);
+                return AgentsBackendsListOutputSchema.parse(listed.result);
+              })();
+              catalogs.set(catalogKey, catalog);
+            }
+            const identity = buildQualifiedPluginContributionKey(target.identity);
+            const item = (await catalog).items.find(item => {
+              const candidate = item.agentTarget?.identity ?? item.identity;
+              return candidate && buildQualifiedPluginContributionKey(candidate) === identity
+                && item.agentTarget?.definitionId === target.definitionId;
+            });
+            return [key, item?.label] as const;
+          })));
           const composedRunId = globalThis.crypto.randomUUID();
           const reviewRound = await records.start({ reviewId: globalThis.crypto.randomUUID(), title: 'Code review',
             subjectKind,
@@ -376,7 +415,8 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
             ...(comparisonCapture ? { comparisonCapture } : {}),
             reviewerIds: reviewReviewerIdsForStartV1(reviewInput),
-            reviewerDisplayNames: reviewReviewerDisplayNamesForStartV1(reviewInput),
+            reviewerDisplayNames: reviewReviewerDisplayNamesForStartV1(reviewInput, undefined,
+              reviewer => sessionNames.get(sessionKey(reviewer.session))),
             startedAt: Date.now(), signal: ctx.signal });
           const people = (reviewInput.steps ?? [{ reviewers: reviewInput.reviewers }]).flatMap(step =>
             step.reviewers.flatMap(reviewer => reviewer.kind === 'person'
