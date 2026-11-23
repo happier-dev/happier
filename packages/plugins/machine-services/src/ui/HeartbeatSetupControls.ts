@@ -78,7 +78,8 @@ export function CapabilityEndpointAddressControls(props: Readonly<{
         h(Text, { tone: 'secondary', value: t(`${K}.secrecy`, 'Anyone with this address can send pings. Keep it out of logs and messages.') }),
         address === null ? null : h(Text, { variant: 'code', selectable: true, value: address }),
         revoked ? null : h(Row, { wrap: true, gap: 'small' },
-            address === null ? h(Button, { title: t(`${K}.reveal`, 'Reveal address'), disabled: pending, onPress: () => run('reveal') })
+            // The sheet's one primary is its Save; managing the address is a secondary operation (PAGE-ACCEPT-176 R13-D9).
+            address === null ? h(Button, { title: t(`${K}.reveal`, 'Reveal address'), variant: 'secondary', disabled: pending, onPress: () => run('reveal') })
                 : h(Button, { title: t(`${K}.hide`, 'Hide address'), disabled: pending, variant: 'plain', onPress: () => setAddress(null) }),
             ...(address === null || quoted === null ? [] : [
                 h(Action.Copy, { key: 'url', title: t(`${K}.copyUrl`, 'Copy address'), value: address, disabled: pending }),
@@ -87,7 +88,7 @@ export function CapabilityEndpointAddressControls(props: Readonly<{
                     value: `curl -fsS ${quoted}`, disabled: pending })] : []),
             ]),
             ...(props.heartbeatManagement ? [
-                h(Button, { key: 'rotate', title: t(`${K}.rotate`, 'Rotate address'), disabled: pending, onPress: () => run('rotate') }),
+                h(Button, { key: 'rotate', title: t(`${K}.rotate`, 'Rotate address'), variant: 'secondary', disabled: pending, onPress: () => run('rotate') }),
                 h(Button, { key: 'revoke', title: t(`${K}.revoke`, 'Revoke address'), disabled: pending,
                     variant: 'destructive', onPress: () => run('revoke') }),
             ] : [])),

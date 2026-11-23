@@ -10,7 +10,7 @@ import { compilePluginJsonSchema, isValidPluginJsonSchemaValue, resolvePluginLoc
     type PluginJsonSchemaValidator } from '@happier-dev/plugin-sdk/manifest';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
-    Banner, Button, CodeBlock, Column, Columns, Field, ModalCardFooterActions, Row, Select, SelectionTiles, Stack, Text, TextField,
+    Banner, Button, CodeBlock, Column, Columns, CountedDisclosureItem, Field, ModalCardFooterActions, Row, Select, SelectionTiles, Stack, Text, TextField,
     defineUiSurface, projectPluginActionRejectionV1, usePluginHostApi, usePluginTranslation, type IconName,
 } from '@happier-dev/plugin-ui';
 import { CapabilityEndpointAddressControls, SavedHeartbeatControls } from './HeartbeatSetupControls.js';
@@ -439,22 +439,24 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
             schema: draft.contributedKind.configSchema, draft: draft.contributedDraft, onChange: next => set({ contributedDraft: next }) }),
         columns('cadence', 2, ...cadence),
     ] : monitorKind ? [
-        h(Text, { key: 'monitor-about', tone: 'secondary', value: t(`${K}.monitor.about`,
-            'Happier uses this monitor’s updates. After saving, reveal its address here and set the provider to send JSON with POST.') }),
+        // A saved check's address is already below; only a new one waits for Save (R13-D9).
+        h(Text, { key: 'monitor-about', tone: 'secondary', value: props.selectedCheckId !== undefined || selectedCheckId !== null
+            ? t(`${K}.monitor.aboutSaved`, 'Happier uses this monitor’s updates. Set the provider to send JSON with POST to the address below.')
+            : t(`${K}.monitor.about`, 'Happier uses this monitor’s updates. After saving, reveal its address here and set the provider to send JSON with POST.') }),
         ...(monitorKind === 'uptime-kuma' ? [text(t(`${K}.monitorId`, 'Monitor ID'), draft.monitorId ?? '', value => set({ monitorId: value }), {
             numeric: true, testID: 'health-setup-monitor-id' })] : [
             text(t(`${K}.endpointGroup`, 'Endpoint group'), draft.endpointGroup ?? '', value => set({ endpointGroup: value }), {
                 required: false, testID: 'health-setup-endpoint-group' }),
             text(t(`${K}.endpointName`, 'Endpoint name'), draft.endpointName ?? '', value => set({ endpointName: value }), {
                 testID: 'health-setup-endpoint-name' }),
-            // How to connect Gatus waits one press away, with its body as copyable code (PAGE-ACCEPT-176 R11-D2).
-            h(Button, { key: 'gatus-how', variant: 'plain', testID: 'health-setup-gatus-how',
-                title: gatusHowOpen ? t(`${K}.monitor.gatusHowHide`, 'Hide how to connect Gatus') : t(`${K}.monitor.gatusHow`, 'How to connect Gatus'),
-                onPress: () => setGatusHowOpen(open => !open) }),
-            gatusHowOpen ? h(Stack, { key: 'gatus-template', gap: 'small' },
-                h(Text, { tone: 'secondary', value: t(`${K}.monitor.gatusTemplateLead`,
-                    'In Gatus, add a custom alert that sends POST with Content-Type application/json and this body:') }),
-                h(CodeBlock, { code: GATUS_BODY, language: 'json', selectable: true })) : null,
+            // How to connect Gatus waits one press away, as the shared disclosure row with its caret, its body as
+            // copyable code (PAGE-ACCEPT-176 R11-D2, R13-D9).
+            h(CountedDisclosureItem, { key: 'gatus-how', testID: 'health-setup-gatus-how',
+                title: t(`${K}.monitor.gatusHow`, 'How to connect Gatus'), expanded: gatusHowOpen, onExpandedChange: setGatusHowOpen },
+                h(Stack, { gap: 'small' },
+                    h(Text, { tone: 'secondary', value: t(`${K}.monitor.gatusTemplateLead`,
+                        'In Gatus, add a custom alert that sends POST with Content-Type application/json and this body:') }),
+                    h(CodeBlock, { code: GATUS_BODY, language: 'json', selectable: true }))),
         ]),
         cadence[1]!,
     ] : draft.kind === 'tcp' ? [
@@ -565,13 +567,15 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
             const parsed = monitorDefinitions[kind].configSchema.safeParse(check.config);
             if (!parsed.success || !parsed.data.webhookEndpointId) return [];
             return [h(CapabilityEndpointAddressControls, { key: `${createHealthCheckSourceInstanceIdV1(props.subject)}:${check.checkId}:${parsed.data.webhookEndpointId}`,
-                webhookEndpointId: parsed.data.webhookEndpointId, signal: props.signal, title: `${monitorDefinitions[kind].title}: ${check.checkId}` })];
+                webhookEndpointId: parsed.data.webhookEndpointId, signal: props.signal,
+                // What the address is for, in words, never the raw "Gatus: gatus" (R13-D9).
+                title: t(`${K}.monitor.addressTitle.${kind}`, `Where ${monitorDefinitions[kind].title} sends its updates`) })];
         }),
         previewRefusal && (previewRefusal.status === 'error' || previewRefusal.status === 'outcomeUnknown')
             ? h(Stack, {}, h(Text, { value: t(`${K}.previewUnavailable`, 'Alert defaults could not be loaded. Your entries are kept here.') }),
                 h(Text, { value: previewRefusal.message }),
                 previewRefusal.requestId ? h(Text, { value: previewRefusal.requestId }) : null,
-                h(Button, { title: t(`${K}.previewRetry`, 'Retry alert defaults'),
+                h(Button, { title: t(`${K}.previewRetry`, 'Retry alert defaults'), variant: 'secondary',
                     onPress: () => setPreviewAttempt(value => value + 1) })) : null,
         h(SavedHealthAlertControls, { alerts, onChange: setAlerts, testContext: preparedSource, destinationSelectionContext }),
         h(SelectionTiles<'inbox' | 'auto_start'>, { accessibilityLabel: t(`${K}.investigation`, 'When a check needs attention'),

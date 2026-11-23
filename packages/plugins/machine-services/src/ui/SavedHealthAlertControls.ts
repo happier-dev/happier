@@ -78,7 +78,7 @@ export function SavedHealthAlertControls(props: Readonly<{
                     channels: alerts.channels.filter((_, position) => position !== index) }) }),
         )) ?? []),
         h(Button, { title: t('machineServices.healthSetup.alerts.addDestination', 'Add destination'),
-            variant: 'plain', disabled: selecting || !props.destinationSelectionContext, onPress: async () => {
+            variant: 'secondary', disabled: selecting || !props.destinationSelectionContext, onPress: async () => {
                 const target = props.destinationSelectionContext;
                 if (!target) return;
                 setSelecting(true);

@@ -852,5 +852,4 @@ it('keeps the Gatus connection body behind its disclosure', async () => {
   expect(document.body.textContent).not.toContain('add a custom alert that sends POST');
   await act(async () => { await page.press(await page.getByRole('button', { name: 'How to connect Gatus' })); });
   expect(document.body.textContent).toContain('add a custom alert that sends POST');
-  await expect(page.getByRole('button', { name: 'Hide how to connect Gatus' })).resolves.toBeDefined();
 });
