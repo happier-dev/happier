@@ -61,8 +61,9 @@ export function deploymentEnvironmentColumns(hereMachine: boolean, projection?: 
     ...(hereMachine ? [] : [{ key: 'runsOn' as const, title: t('projects.deployments.services.columnRunsOn'),
       description: t('projects.deployments.services.columnRunsOnDescription'), minWidth: 184, priority: 3, listColumn: true as const }]),
     ...pluginColumns,
+    // Keep State ahead of optional telemetry facts when the title has reached its minimum width.
     { key: 'state', title: t('projects.deployments.services.columnState'),
-      description: t('projects.deployments.services.columnStateDescription'), minWidth: 136, priority: 5, align: 'end', listColumn: true },
+      description: t('projects.deployments.services.columnStateDescription'), minWidth: 136, priority: 30, align: 'end', listColumn: true },
   ];
 }
 

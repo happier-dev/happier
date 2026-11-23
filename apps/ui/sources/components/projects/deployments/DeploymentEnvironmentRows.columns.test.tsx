@@ -3,6 +3,7 @@ import { projectPluginPortableUiDeclarationsV1 } from '@happier-dev/protocol/plu
 import { createServiceColumnSource } from '../../../../../../packages/plugin-sdk/fixtures/external-targeted-packages/list-extension-source';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import { normalizePluginInstalledUiDeclarations } from '@/sync/domains/plugins/ui/projection';
+import { resolveHappierCollectionTableColumns } from '@happier-dev/plugin-ui/presentation';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -25,4 +26,24 @@ it('Services admits public service columns under qualified field identity withou
   expect(deploymentEnvironmentColumns(false, normalizePluginInstalledUiDeclarations({})).map(column => column.key))
     .toEqual(['lastDeploy', 'runsOn', 'state']);
   expect(reads).toBe(0);
+});
+
+it('keeps State ahead of Requests when the Services columns narrow', () => {
+  const manifest = PluginManifestV2Schema.parse(createServiceColumnSource(() => {}).manifest);
+  const projection = normalizePluginInstalledUiDeclarations(projectPluginPortableUiDeclarationsV1(manifest), undefined, {
+    id: manifest.id, displayName: manifest.displayName, version: manifest.version, enabled: true,
+    source: { kind: 'bundled', locator: manifest.id },
+  });
+  const columns = [
+    { key: 'title', minWidth: 200, priority: 0, flex: true },
+    ...deploymentEnvironmentColumns(false, projection).map(column => ({
+      key: column.key, minWidth: column.minWidth ?? 0, priority: column.priority ?? 0,
+    })),
+  ];
+  const gap = 8;
+  const visible = (availableWidth: number) => resolveHappierCollectionTableColumns({
+    columns, availableWidth, gap,
+  }).map(column => column.key);
+  expect(visible(850)).toContain('com.acme.requests/requests');
+  expect(visible(350)).toEqual(['title', 'state']);
 });
