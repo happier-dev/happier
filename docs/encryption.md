@@ -3104,6 +3104,13 @@ Account mode: a plain Account provisions typed token-only material even when thi
 device retains historical keys. E2EE provisioning requires genuine material whose
 fingerprint matches authenticated currentness from that exact Home; missing or stale
 material refuses before sealing.
+
+In 0.3 development source, a signed-in app or CLI can approve a requester-displayed
+Home QR invite. The approver shows the joining device, Home, and selected Account
+before confirmation. A CLI approving for an E2EE Account needs its current content
+key. Both clients use the shared Home QR lifecycle to verify the requester proof
+before sealing and sending completion to the bound Home.
+
 The confirmed Forget operation remains an exact credential replacement.
 A retained template opens only after its explicit predecessor Session binding is
 resolved through that Session's authenticated envelope. Without the key it remains

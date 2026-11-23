@@ -38,6 +38,7 @@ ${chalk.bold('Usage:')}
   happier auth login --key <recovery-key> [--json]   Sign in with a recovery key on the selected Home
   happier auth request --json [--server <name-or-id> | --server-url <url> [--webapp-url <url>] [--persist|--no-persist]]                                    Create a claim-gated auth request (headless-friendly)
   happier auth approve --public-key <base64> --json [--request-json-file <path>] [--authorize-unattended-team-access] [--server <name-or-id> | --server-url <url> [--webapp-url <url>] [--persist|--no-persist]]              Approve an auth request using your local credentials
+  happier auth approve <device-code-link> [--confirm] [--json]              Review and approve an app device code on the selected Home
   happier auth wait --public-key <base64> --json [--server <name-or-id> | --server-url <url> [--webapp-url <url>] [--persist|--no-persist]]                Wait for approval and write credentials for this machine
   happier auth pair-remote --ssh <user@host> [--home <saved>|--home-url <url>|--home-descriptor-file <path|->] [--authorize-unattended-team-access] [--json]       Pair a remote machine to a Home over SSH
   happier auth logout [--all]     Log out (selected Home by default)

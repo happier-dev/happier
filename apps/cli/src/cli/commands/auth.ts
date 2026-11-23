@@ -94,6 +94,11 @@ export async function handleAuthCliCommand(context: CommandContext): Promise<voi
     const carrierFailure = error && typeof error === 'object' && 'carrierFailure' in error
       ? readGuestAuthCarrierFailure(diagnostic.code, error.carrierFailure) : undefined;
     const exitCode = phase === 'wait' && diagnostic.code === 'AUTH_WAIT_INVALID_ARGUMENT' ? 2 : 1;
+    if (phase === 'approve' && wantsJson(context.args)
+      && context.args.some((await import('./auth/approve')).isCliHomeQrApprovalLink)) {
+      await writeJsonStdout({ success: false, error: diagnostic });
+      process.exit(exitCode);
+    }
     if (phase === 'enroll-remote' && context.args.includes('--json-lines')) {
       const code = context.signal?.aborted ? 'AUTH_ENROLL_REMOTE_CANCELLED'
         : readGuestAuthErrorCode(diagnostic.code) ?? 'AUTH_ENROLL_REMOTE_FAILED';

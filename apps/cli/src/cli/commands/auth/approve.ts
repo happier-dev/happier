@@ -9,6 +9,9 @@ import { applyServerSelectionFromArgs } from '@/server/serverSelection';
 import { parseHomeTargetInput } from '@happier-dev/cli-common/homeTarget';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 import { resolveCliHomeTarget } from '@/server/homeTarget';
+import { inspectHomeQrPairLink } from '@happier-dev/cli-common/homeEnrollment';
+import { isInteractiveTerminal, promptInput } from '@/terminal/prompts/promptInput';
+import { promptConfirmYesNo } from '@/terminal/prompts/promptConfirmYesNo';
 
 function fail(message: string, exitCode: 1 | 2): never {
   console.error(message);
@@ -79,6 +82,43 @@ export async function handleAuthApprove(argsRaw: string[], signal?: AbortSignal)
   const args = homeTargetFromRequestJson ? argsRaw : await applyServerSelectionFromArgs(argsRaw);
 
   const json = args.includes('--json');
+  const inviteLinks = homeTargetFromRequestJson ? [] : args.filter(isCliHomeQrApprovalLink);
+  if (inviteLinks.length > 0) {
+    const { approveCliDirectHomeQr, CliHomeQrApprovalError } = await import('@/auth/directHomeQr/runCliDirectHomeQr');
+    const [link] = inviteLinks;
+    if (inviteLinks.length !== 1 || !link || args.some((arg) => arg !== link && arg !== '--confirm' && arg !== '--json')) {
+      throw new CliHomeQrApprovalError('HOME_QR_APPROVAL_INVALID_ARGUMENT', 'Pass one device code with optional --confirm and --json.');
+    }
+    const result = inspectHomeQrPairLink(link, (protocol) => protocol.startsWith('happier'));
+    if (result?.kind !== 'valid' || result.invite.direction !== 'requester_displays') {
+      throw new CliHomeQrApprovalError('HOME_QR_APPROVAL_INVALID_INVITE', 'Pass a fresh device code from the device you want to add.');
+    }
+    const confirmed = args.includes('--confirm');
+    if (!confirmed && !isInteractiveTerminal('stderr')) {
+      throw new CliHomeQrApprovalError('HOME_QR_APPROVAL_CONFIRMATION_REQUIRED', 'Use an interactive terminal or pass --confirm to approve the device code.');
+    }
+    await approveCliDirectHomeQr({
+      invite: result.invite,
+      signal,
+      confirm: async ({ deviceLabel, homeUrl, accountLabel, accountId }) => {
+        const show = (value: string) => JSON.stringify(value.replace(/[\p{Cc}\p{Cf}]/gu, ''));
+        const account = accountLabel === accountId ? show(accountId) : `${show(accountLabel)} (${show(accountId)})`;
+        const facts = `Device ${show(deviceLabel ?? 'Unknown device')}\nHome ${show(homeUrl)}\nAccount ${account}`;
+        if (confirmed) {
+          console.error(facts);
+          return true;
+        }
+        return await promptConfirmYesNo(`${facts}\nApprove this device?`, {
+          default: 'no',
+          signal,
+          promptInputFn: (message, options) => promptInput(message, { ...options, output: 'stderr' }),
+        });
+      },
+    });
+    if (json) await writeJsonStdout({ success: true });
+    else console.log('Device approved.');
+    return;
+  }
   if (!json) {
     fail('Missing required flag: --json', 2);
   }
@@ -171,4 +211,8 @@ export async function handleAuthApprove(argsRaw: string[], signal?: AbortSignal)
   }
 
   await writeJsonStdout({ success: true });
+}
+
+export function isCliHomeQrApprovalLink(value: string): boolean {
+  return /^happier[^:]*:/u.test(value);
 }

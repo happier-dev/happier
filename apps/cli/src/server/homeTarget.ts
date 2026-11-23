@@ -2,13 +2,12 @@ import {
   resolveHomeTarget,
   type HomeTargetInput,
   type ResolvedHomeTarget,
-  type SavedHomeTargetProfile,
 } from '@happier-dev/cli-common/homeTarget';
 
 import { configuration } from '@/configuration';
-import { getServerProfile } from '@/server/serverProfiles';
+import { getServerProfile, type ServerProfile } from '@/server/serverProfiles';
 
-async function readSavedProfile(profileRef: string): Promise<SavedHomeTargetProfile | null> {
+export async function readSavedCliHomeProfile(profileRef: string): Promise<ServerProfile | null> {
   try {
     return await getServerProfile(profileRef);
   } catch (error) {
@@ -20,11 +19,11 @@ async function readSavedProfile(profileRef: string): Promise<SavedHomeTargetProf
 }
 
 export async function resolveCliHomeTarget(input: HomeTargetInput): Promise<ResolvedHomeTarget> {
-  return await resolveHomeTarget({ input, readSavedProfile });
+  return await resolveHomeTarget({ input, readSavedProfile: readSavedCliHomeProfile });
 }
 
 export async function resolveCurrentCliHomeTarget(): Promise<ResolvedHomeTarget> {
-  const active = await readSavedProfile(configuration.activeServerId);
+  const active = await readSavedCliHomeProfile(configuration.activeServerId);
   if (active) {
     return await resolveCliHomeTarget({ kind: 'saved_profile', profileRef: active.id });
   }

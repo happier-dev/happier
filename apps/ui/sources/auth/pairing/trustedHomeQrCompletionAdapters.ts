@@ -1,6 +1,10 @@
-import { DirectHomeQrCompletionError, type DirectHomeQrCompletionAdapters } from '@happier-dev/cli-common/homeEnrollment';
+import {
+    AccountCompletionError,
+    DirectHomeQrCompletionError,
+    InvalidAccountCompletionTargetError,
+    type DirectHomeQrCompletionAdapters,
+} from '@happier-dev/cli-common/homeEnrollment';
 
-import { AccountCompletionError } from '@/auth/flows/accountCompletion';
 import { completeTrustedHomeQrPairingRequest, InvalidTrustedHomeQrRequestError } from '@/auth/pairing/completeTrustedHomeQrPairingRequest';
 import { pairingConsume, pairingStatus, type PairingCallTarget, type PairingStatus } from '@/sync/api/account/apiPairingAuth';
 import { isRuntimeActive } from '@/utils/runtime/isRuntimeActive';
@@ -60,7 +64,9 @@ export function createTrustedHomeQrCompletionAdapters(params: Readonly<{
                     signal,
                 });
             } catch (error) {
-                if (error instanceof InvalidTrustedHomeQrRequestError) throw new DirectHomeQrCompletionError('invalid');
+                if (error instanceof InvalidTrustedHomeQrRequestError || error instanceof InvalidAccountCompletionTargetError) {
+                    throw new DirectHomeQrCompletionError('invalid');
+                }
                 if (error instanceof AccountCompletionError && error.retryable) {
                     params.onRetrying?.();
                     throw new DirectHomeQrCompletionError('retryable');

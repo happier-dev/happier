@@ -1,8 +1,8 @@
 import {
     encodeHomeQrInviteV2Payload,
-    inspectHomeQrInviteV2Payload,
     type HomeQrInviteV2,
 } from '@happier-dev/protocol/crypto/qrProvisioningV2';
+import { inspectHomeQrPairLink } from '@happier-dev/cli-common/homeEnrollment';
 import { tryCreateQRMatrix } from '@/components/qr/qrMatrix';
 import { randomUUID } from '@/platform/randomUUID';
 import { isAcceptedHappierUrlProtocol, resolveAppUrlScheme } from '@/utils/url/appScheme';
@@ -126,17 +126,7 @@ export function parseHomeQrInviteDeepLink(rawLink: string, expected?: Readonly<{
 }
 
 export function inspectHomeQrInviteDeepLink(rawLink: string, expected?: Readonly<{ homeServerIdentityId: string; direction: HomeQrInviteV2['direction'] }>): Readonly<{ kind: 'valid'; invite: HomeQrInviteV2 }> | Readonly<{ kind: 'expired' }> | null {
-    let url: URL;
-    try {
-        url = new URL(rawLink);
-    } catch {
-        return null;
-    }
-    if (!isValidPairingLinkTarget(url)) return null;
-    if (url.hash) return null;
-    const entries = [...url.searchParams.entries()];
-    if (entries.length !== 2 || url.searchParams.get('v') !== '2' || !url.searchParams.has('payload')) return null;
-    const result = inspectHomeQrInviteV2Payload(url.searchParams.get('payload') ?? '', { nowMs: Date.now() });
+    const result = inspectHomeQrPairLink(rawLink, isAcceptedHappierUrlProtocol);
     if (!result) return null;
     const homeServerIdentityId = result.kind === 'valid' ? result.invite.home.homeServerIdentityId : result.homeServerIdentityId;
     const direction = result.kind === 'valid' ? result.invite.direction : result.direction;

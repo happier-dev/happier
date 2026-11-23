@@ -24,6 +24,7 @@ type PromptOptions = Readonly<{
   secret?: boolean;
   signal?: AbortSignal;
   animation?: PromptAnimation;
+  output?: 'stderr';
 }>;
 type TerminalOutput = NodeJS.WritableStream & { columns?: number; rows?: number };
 type ReadlineWithOutputInterceptor = Interface & {
@@ -95,10 +96,10 @@ function hasControllingTty(): boolean {
  * opened /dev/tty in exactly that case. Gating on stdin alone makes every
  * installer-invoked command run blind, `happier setup` included.
  */
-export function isInteractiveTerminal(): boolean {
+export function isInteractiveTerminal(output?: 'stderr'): boolean {
   return resolveInteractiveTerminal({
     stdinIsTty: Boolean(process.stdin.isTTY),
-    stdoutIsTty: Boolean(process.stdout.isTTY),
+    stdoutIsTty: Boolean((output === 'stderr' ? process.stderr : process.stdout).isTTY),
     platform: process.platform,
     hasControllingTty,
   });
@@ -262,13 +263,14 @@ async function promptViaDevTty(prompt: string, options: PromptOptions): Promise<
   let outputFd: number | null = null;
   let input: ReadStream | null = null;
   let output: WriteStream | null = null;
+  const selectedOutput = options.output === 'stderr' ? process.stderr : process.stdout;
   try {
     inputFd = openSync('/dev/tty', 'r+');
     input = new ReadStream(inputFd);
     inputFd = null;
-    // Borrow terminal stdout: fresh TTY output fails with EINVAL/kqueue on macOS Bun.
+    // Borrow the selected terminal stream: fresh TTY output fails with EINVAL/kqueue on macOS Bun.
     // This must not discard the independent input needed by installer redirects.
-    if (!process.stdout.isTTY) {
+    if (!selectedOutput.isTTY) {
       // File output avoids Bun's TTY constructor; terminal stderr supplies live geometry when available.
       outputFd = openSync('/dev/tty', 'r+');
       output = Object.defineProperties(createWriteStream('/dev/tty', { fd: outputFd, autoClose: true }), {
@@ -288,7 +290,7 @@ async function promptViaDevTty(prompt: string, options: PromptOptions): Promise<
   let rl: Interface | null = null;
 
   try {
-    const promptOutput = output ?? process.stdout;
+    const promptOutput = output ?? selectedOutput;
     rl = createInterface({ input, output: promptOutput, terminal: true });
     return await askQuestion({
       rl,
@@ -308,20 +310,21 @@ async function promptViaDevTty(prompt: string, options: PromptOptions): Promise<
 }
 
 async function promptViaProcessStdio(prompt: string, options: PromptOptions): Promise<string> {
+  const output = options.output === 'stderr' ? process.stderr : process.stdout;
   const rl = createInterface({
     input: process.stdin,
-    output: process.stdout,
+    output,
     ...(options.secret && process.stdin.isTTY ? { terminal: true } : {}),
   });
   try {
     return await askQuestion({
       rl,
       input: process.stdin,
-      output: process.stdout,
+      output,
       prompt,
       secret: options.secret === true,
       ...(options.signal ? { signal: options.signal } : {}),
-      ...(options.animation && process.stdin.isTTY && process.stdout.isTTY ? { animation: options.animation } : {}),
+      ...(options.animation && process.stdin.isTTY && output.isTTY ? { animation: options.animation } : {}),
     });
   } finally {
     rl.close();
@@ -332,7 +335,7 @@ export async function promptInput(
   prompt: string,
   options: PromptOptions = {},
 ): Promise<string> {
-  if (!isInteractiveTerminal()) {
+  if (!isInteractiveTerminal(options.output)) {
     return promptViaProcessStdio(prompt, options);
   }
 

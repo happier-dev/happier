@@ -27,8 +27,8 @@ export type DirectHomeQrCancellationResult =
   | Readonly<{ ok: false }>;
 
 export class DirectHomeQrCompletionError extends Error {
-  constructor(readonly classification: 'invalid' | 'retryable' | 'failed') {
-    super(`Direct Home QR completion ${classification}`);
+  constructor(readonly classification: 'invalid' | 'retryable' | 'failed', options?: ErrorOptions) {
+    super(`Direct Home QR completion ${classification}`, options);
     this.name = 'DirectHomeQrCompletionError';
   }
 }
@@ -394,6 +394,7 @@ export function runDirectHomeQrCompletion(input: Readonly<{
                 transientFailures += 1;
               } else if (error instanceof DirectHomeQrCompletionError && error.classification === 'invalid') {
                 await reject();
+                if (error.cause !== undefined) throw error.cause;
                 return { kind: 'invalid_request' };
               } else {
                 return { kind: 'failed', status: 500 };

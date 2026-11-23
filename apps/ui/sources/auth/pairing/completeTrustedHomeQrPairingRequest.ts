@@ -1,18 +1,17 @@
-import { completeAccountAuthRequest } from '@/auth/flows/accountCompletion';
+import { createAccountCompletionTarget } from '@/auth/flows/accountCompletion';
 import type { HomeQrEnrollmentTarget } from '@/auth/flows/qrStart';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { resolveTerminalPairingCurrentness } from '@/auth/terminal/approveTerminalPairing';
 import { resolveProvisioningMaterial } from '@/auth/terminal/resolveProvisioningMaterial';
-import { buildTerminalResponseV3, buildTerminalTokenOnlyResponseV3 } from '@/auth/terminal/terminalProvisioning';
+import { getRandomBytes } from '@/platform/cryptoRandom';
 import { runWithHomeCredentialRequestSignal } from '@/sync/runtime/orchestration/serverScopedRpc/serverAccountScopeRequestGuard';
-import {
-    deriveHomeQrBindingKeyV2,
-    type HomeQrInviteDirectionV2,
-} from '@happier-dev/protocol/crypto/qrProvisioningV2';
+import { completeHomeQrRequest } from '@happier-dev/cli-common/homeEnrollment';
+import type { HomeQrInviteDirectionV2 } from '@happier-dev/protocol/crypto/qrProvisioningV2';
 
 export type TrustedHomeQrCompletionContext = Readonly<{
     direction: HomeQrInviteDirectionV2;
     pairId: string;
+    homeServerIdentityId: string;
     target: HomeQrEnrollmentTarget;
     qrSecret: Uint8Array;
     issuedAtMs: number;
@@ -71,27 +70,12 @@ async function completeWithCapturedCredentials(input: Readonly<{
     if (input.signal.aborted) {
         throw Object.assign(new Error('cancelled'), { name: 'AbortError' });
     }
-    const common = {
-        terminalEphemeralPublicKey: requesterPublicKey,
-        pairingSecret: deriveHomeQrBindingKeyV2(context.qrSecret),
-        createdAtMs: context.issuedAtMs,
-        expiresAtMs: context.expiresAtMs,
-    };
-    const response = material.type === 'tokenOnly'
-        ? buildTerminalTokenOnlyResponseV3(common)
-        : buildTerminalResponseV3({ ...common, contentPrivateKey: material.key });
-    if (input.signal.aborted) {
-        throw Object.assign(new Error('cancelled'), { name: 'AbortError' });
-    }
-
-    return await completeAccountAuthRequest({
-        token: credentials.token,
-        target: context.target,
-        pairId: context.pairId,
-        publicKey: requesterPublicKey,
-        response,
-        homeServerIdentityId: context.target.descriptor.homeServerIdentityId,
-        responseKind: material.type,
+    return await completeHomeQrRequest({
+        target: createAccountCompletionTarget(context.target, credentials.token),
+        context,
+        requesterPublicKey,
+        material,
+        randomBytes: getRandomBytes,
         signal: input.signal,
     });
 }

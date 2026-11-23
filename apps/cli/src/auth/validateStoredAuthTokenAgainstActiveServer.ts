@@ -32,7 +32,7 @@ export type StoredTokenValidationReason =
 
 export type ActiveServerStoredTokenValidationResult = Readonly<
   /** `accountLabel`: a readable name for the validated account (username, else display name), never an email. */
-  | { state: 'valid'; httpStatus: number; accountLabel?: string | null }
+  | { state: 'valid'; httpStatus: number; accountId: string; accountLabel?: string | null }
   | { state: 'invalid'; httpStatus: number; reasonCode: StoredTokenValidationReason }
   | { state: 'unknown'; httpStatus: number | null; reasonCode: StoredTokenValidationReason }
 >;
@@ -111,7 +111,7 @@ export async function validateStoredAuthTokenAgainstServer(
     if (response.ok) {
       const accountId = (body as { id?: unknown } | null)?.id;
       if (typeof accountId === 'string' && accountId.trim().length > 0) {
-        return { state: 'valid', httpStatus: response.status, accountLabel: readAccountProfileLabel(body) };
+        return { state: 'valid', httpStatus: response.status, accountId, accountLabel: readAccountProfileLabel(body) };
       }
       return { state: 'unknown', httpStatus: response.status, reasonCode: 'invalid-profile-response' };
     }
