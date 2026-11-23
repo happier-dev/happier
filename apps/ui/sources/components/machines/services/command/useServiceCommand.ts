@@ -6,9 +6,16 @@ import {
 import { tokenizeShellWords } from '@happier-dev/protocol/tools/shellWords';
 import type { WorkflowMachineCommandOutputV1 } from '@happier-dev/protocol/workflows/commandOutputV1';
 
-import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import {
+  isActionOutcomeUnknownErrorCodeV1,
+  type ActionExecuteFailure,
+  type ActionExecuteResult,
+} from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { useScopedActionRun } from '@/components/machines/security/useScopedActionRun';
+import { randomUUID } from '@/platform/randomUUID';
+import { useIssuedMachineActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import {
   createFrontDoorActionExecute,
   type FrontDoorActionExecute,
@@ -26,6 +33,12 @@ export type ServiceCommandFinished = Readonly<{
   durationMs: number;
 }>;
 
+type IssuedServiceCommand = Readonly<{
+  requestId: string;
+  startedAt: number;
+  lifetime: ServerAccountScopeLifetime;
+}>;
+
 export type ServiceCommandState =
   | Readonly<{ kind: 'idle' }>
   /** `previous` keeps the last output on screen while the next run goes, so the sheet never empties under the person. */
@@ -33,13 +46,28 @@ export type ServiceCommandState =
       kind: 'running';
       approval: ActionApprovalContinuation | null;
       previous: ServiceCommandFinished | null;
+      requestId: string;
+      issued?: IssuedServiceCommand;
     }>
   | ServiceCommandFinished
   /** The command was dispatched but its exit never came back: it may have run, so it never reads as done. */
-  | Readonly<{ kind: 'unknown' }>
+  | Readonly<{ kind: 'unknown'; issued?: IssuedServiceCommand }>
   | Readonly<{ kind: 'failed'; code: string; failure?: ActionExecuteFailure }>;
 
 const defaultExecute = createFrontDoorActionExecute();
+const serviceExecAction = 'machines.services.exec';
+
+function projectServiceCommandOutcome(result: ActionExecuteResult, startedAt: number): Extract<ServiceCommandState, { kind: 'finished' | 'unknown' | 'failed' }> {
+  if (!result.ok) {
+    return isActionOutcomeUnknownErrorCodeV1(result.errorCode)
+      ? { kind: 'unknown' }
+      : { kind: 'failed', code: result.errorCode, failure: result };
+  }
+  const parsed = MachineServiceExecResultV1Schema.safeParse(result.result);
+  if (!parsed.success) return { kind: 'failed', code: 'action_invalid_output' };
+  if ('kind' in parsed.data) return { kind: 'unknown' };
+  return { kind: 'finished', output: parsed.data, durationMs: Date.now() - startedAt };
+}
 
 /**
  * "Run a command" (P30 §463, shared by the Machine service page and the Environment service row): one
@@ -58,6 +86,7 @@ export function useServiceCommand(
 ) {
   const execute = input.execute ?? defaultExecute;
   const {
+    lifetime,
     run: runScoped,
     abort,
     inFlight,
@@ -76,8 +105,21 @@ export function useServiceCommand(
       abort();
       setState({ kind: 'idle' });
     },
-    [serverId, machineId, targetKey, abort],
+    [serverId, machineId, targetKey, lifetime, abort],
   );
+
+  const issued = (state.kind === 'running' || state.kind === 'unknown') && state.issued?.lifetime === lifetime
+    ? state.issued : undefined;
+  const running = state.kind === 'running';
+  const onSettled = React.useCallback((result: ActionExecuteResult, requestId: string) => {
+    if (!issued) return;
+    if (running) abort();
+    const outcome = projectServiceCommandOutcome(result, issued.startedAt);
+    setState(current => (current.kind === 'running' || current.kind === 'unknown') && current.issued?.requestId === requestId
+      ? outcome : current);
+  }, [abort, issued, running]);
+  useIssuedMachineActionOperation({ requestId: issued?.requestId ?? null, machineId, actionId: serviceExecAction,
+    lifetime, onSettled });
 
   const run = React.useCallback(
     async (argv: readonly string[]) => {
@@ -89,44 +131,33 @@ export function useServiceCommand(
         target,
         mode: 'exec',
       };
+      const requestId = randomUUID();
       const startedAt = Date.now();
       const previous = stateRef.current.kind === 'finished' ? stateRef.current : null;
-      setState({ kind: 'running', approval: null, previous });
+      setState({ kind: 'running', requestId, approval: null, previous });
       const result = await runScoped(
-        'machines.services.exec',
+        serviceExecAction,
         actionInput,
         (signal, bound) =>
-          execute.confirmed('machines.services.exec', actionInput, {
+          execute.confirmed(serviceExecAction, actionInput, {
             surface: 'ui',
             serverId,
             expectedAccountId: bound.scope.accountId,
+            actionRequestId: requestId,
             signal,
+            onTransportIssued: () => {
+              if (signal.aborted || !bound.isCurrent()) return;
+              setState(current => current.kind === 'running' && current.requestId === requestId
+                ? { ...current, issued: { requestId, startedAt, lifetime: bound } } : current);
+            },
           }),
-        (approval) => setState({ kind: 'running', approval, previous }),
+        approval => setState(current => current.kind === 'running' && current.requestId === requestId
+          ? { ...current, approval } : current),
       );
       if (!result) return;
-      if (!result.ok) {
-        setState(
-          result.errorCode === 'action_outcome_unknown'
-            ? { kind: 'unknown' }
-            : { kind: 'failed', code: result.errorCode, failure: result },
-        );
-        return;
-      }
-      const parsed = MachineServiceExecResultV1Schema.safeParse(result.result);
-      if (!parsed.success) {
-        setState({ kind: 'failed', code: 'action_invalid_output' });
-        return;
-      }
-      if ('kind' in parsed.data) {
-        setState({ kind: 'unknown' });
-        return;
-      }
-      setState({
-        kind: 'finished',
-        output: parsed.data,
-        durationMs: Date.now() - startedAt,
-      });
+      const outcome = projectServiceCommandOutcome(result, startedAt);
+      setState(current => current.kind !== 'running' || current.requestId !== requestId ? current
+        : outcome.kind === 'unknown' && current.issued ? { ...outcome, issued: current.issued } : outcome);
       // `target` is read through its key: callers pass a fresh object for the same service each render.
       // eslint-disable-next-line react-hooks/exhaustive-deps
     },

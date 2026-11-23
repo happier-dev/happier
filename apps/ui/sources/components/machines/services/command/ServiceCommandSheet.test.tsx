@@ -10,6 +10,7 @@ import {
 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { ACTION_OPERATION_RPC_METHODS_V2, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 
 import type { LibsodiumKeyPair } from '@/encryption/libsodium.lib';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
@@ -24,6 +25,7 @@ import {
   createPlainMachineRowFixture,
 } from '@/dev/testkit/fixtures/machineFixtures';
 import { t } from '@/text';
+import { createDeferred } from '@/dev/testkit';
 
 // The log viewport's recycler depends on native layout; render its rows deterministically at that boundary.
 vi.mock('@legendapp/list/react-native', async () =>
@@ -33,6 +35,13 @@ vi.mock('@legendapp/list/react-native', async () =>
 // Machine-owned admission routing and the requester sealing stay real; the daemon's reply is the boundary answer.
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
+const operationRpc = vi.hoisted(() => ({
+  request: vi.fn<(request: { method: string; payload?: unknown }) => Promise<unknown>>(),
+}));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+  const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+  return createServerScopedMachineRpcBoundaryMock(operationRpc.request);
+});
 const { ServiceCommandSheet } = await import('./ServiceCommandSheet');
 
 const actionId = 'machines.services.exec';
@@ -51,6 +60,9 @@ type Received = Readonly<{
 }>;
 
 beforeEach(async () => {
+  operationRpc.request.mockReset();
+  operationRpc.request.mockImplementation(async request =>
+    request.method === ACTION_OPERATION_RPC_METHODS_V2.list ? { items: [], nextCursor: null } : { kind: 'not_found' });
   await sodium.ready;
   installationKey = sodium.crypto_sign_seed_keypair(
     new Uint8Array(32).fill(23),
@@ -128,7 +140,7 @@ function answerExec(
     },
   });
   homes.answer(serverId, actionPath, {
-    select: (body) => {
+    select: async (body) => {
       const request =
         ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
       const requester = request.executionAuthorization
@@ -154,7 +166,7 @@ function answerExec(
           v: 1,
           actionId,
           requestId: envelope.requestId,
-          execution: { ok: true, result: reply(envelope) },
+          execution: { ok: true, result: await reply(envelope) },
         },
       };
     },
@@ -219,6 +231,49 @@ it("hands the typed words and the person's press to the Machine once, then shows
     );
     expect(received).toHaveLength(2);
   } finally {
+    await screen.unmount();
+  }
+});
+
+it('shows the retained service command exit while the original reply is held', async () => {
+  const admitted = createDeferred<ActionOperationSnapshotV1>();
+  const releaseReply = createDeferred<void>();
+  operationRpc.request.mockImplementation(async request => {
+    if (request.method === ACTION_OPERATION_RPC_METHODS_V2.list && request.payload && typeof request.payload === 'object'
+      && 'requestIdentity' in request.payload) {
+      return { items: [await admitted.promise], nextCursor: null };
+    }
+    if (request.method === ACTION_OPERATION_RPC_METHODS_V2.get) {
+      return { kind: 'found', operation: await admitted.promise };
+    }
+    return { items: [], nextCursor: null };
+  });
+  const received = answerExec(async envelope => {
+    admitted.resolve({
+      version: 1, operationId: 'service-command-operation', requestId: envelope.requestId,
+      revision: 2, actionId, state: 'succeeded', cancellation: 'supported', settledAt: 3,
+      scope: { accountId: 'account', machineId: 'machine' }, title: 'Run a command', createdAt: 1, startedAt: 2,
+      result: { exitCode: 7, stdout: 'retained service output\n', stderr: 'command warning\n' },
+    });
+    await releaseReply.promise;
+    throw new TypeError('Service command response lost');
+  });
+  const screen = await render();
+  try {
+    screen.changeTextByTestId('service-command.input', 'status');
+    await vi.waitFor(() => expect(screen.findHostByTestId('service-command.run')!.props.accessibilityState?.disabled).toBe(false));
+    await screen.pressByTestIdAsync('service-command.run');
+    await vi.waitFor(() => expect(received).toHaveLength(1));
+    await vi.waitFor(() => {
+      expect(screen.getTextContent()).toContain('retained service output');
+      expect(screen.getTextContent()).toContain('command warning');
+      expect(screen.findHostByTestId('service-command.run')!.props.accessibilityState?.disabled).toBe(false);
+    });
+    releaseReply.resolve();
+    expect(screen.findHostByTestId('service-command.unknown')).toBeNull();
+    expect(received).toHaveLength(1);
+  } finally {
+    releaseReply.resolve();
     await screen.unmount();
   }
 });
