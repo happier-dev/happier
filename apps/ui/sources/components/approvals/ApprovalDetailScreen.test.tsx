@@ -937,6 +937,13 @@ function approvalItem(screen: Awaited<ReturnType<typeof renderScreen>>, testID: 
   return screen.findAllByType(Item).find(node => node.props.testID === testID);
 }
 
+/** A request's status: its header fact when nothing else is said about the request, else the Request section's row. */
+function approvalStatus(screen: Awaited<ReturnType<typeof renderScreen>>) {
+  const header = screen.tree.root.findAll(node => node.props?.testID === 'approvals.header' && node.props?.title !== undefined)[0];
+  const fact = (header?.props.meta as readonly { key: string; text: string }[] | undefined)?.find(item => item.key === 'status');
+  return fact?.text ?? approvalItem(screen, 'approvals.status')?.props.detail;
+}
+
 function decisionButton(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
   return screen.findAllByType(RoundButton).find(node => node.props.testID === testID);
 }
@@ -1600,7 +1607,7 @@ describe('ApprovalDetailScreen', () => {
     const outcomeOf = async (request: ApprovalRequestV2) => {
       currentArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
       const screen = await renderScreen(<ApprovalDetailScreen artifactId={currentArtifact.id} />);
-      return { status: approvalItem(screen, 'approvals.status')?.props.detail,
+      return { status: approvalStatus(screen),
         title: approvalItem(screen, 'approvals.execution-failure')?.props.title };
     };
 
@@ -1651,7 +1658,7 @@ describe('ApprovalDetailScreen', () => {
     const failure = approvalItem(screen, 'approvals.execution-failure');
 
     // Refused before any effect: a neutral "Not run", and the row says why, once.
-    expect(approvalItem(screen, 'approvals.status')?.props.detail).toBe('approvals.status.notRun');
+    expect(approvalStatus(screen)).toBe('approvals.status.notRun');
     expect(failure?.props.title).toBe('approvals.failureNotAuthorized');
     expect(failure?.props.subtitle).toBeUndefined();
   });
@@ -1668,7 +1675,7 @@ describe('ApprovalDetailScreen', () => {
     const screen = await renderScreen(<ApprovalDetailScreen artifactId={currentArtifact.id} />);
     const failure = approvalItem(screen, 'approvals.execution-failure');
 
-    expect(approvalItem(screen, 'approvals.status')?.props.detail).toBeTruthy();
+    expect(approvalStatus(screen)).toBeTruthy();
     expect(failure?.props.title).toBe('errors.scmOutcomeUnknown');
     expect(failure?.props.subtitle).toBeUndefined();
   });
@@ -1731,9 +1738,9 @@ describe('ApprovalDetailScreen', () => {
     expect(screen.findByTestId('approvals.cancel')).toBeNull();
     expect(screen.findByTestId('approvals.session-consent')).toBeNull();
     await screen.pressByTestIdAsync('approvals.reject');
-    await vi.waitFor(() => expect(approvalItem(screen, 'approvals.status')?.props.detail).toBe('approvals.status.rejected'));
+    await vi.waitFor(() => expect(approvalStatus(screen)).toBe('approvals.status.rejected'));
     expect(Modal.alert).not.toHaveBeenCalled();
-    expect(approvalItem(screen, 'approvals.status')?.props.detail).toBe('approvals.status.rejected');
+    expect(approvalStatus(screen)).toBe('approvals.status.rejected');
     expect(screen.findByTestId('approvals.automatic-checks:override')).toBeNull();
     expect(screen.findByTestId('approvals.automatic-checks:refused')).not.toBeNull();
     expect(screen.findByTestId('approvals.automatic-checks:reason').props.children).toBe('workflows.contentUnavailable');
@@ -1762,7 +1769,7 @@ describe('ApprovalDetailScreen', () => {
     daemonReply = { ok: true, result: { status: 'failed', execution } };
 
     await screen.pressByTestIdAsync('approvals.reject');
-    await vi.waitFor(() => expect(approvalItem(screen, 'approvals.status')?.props.detail).toBe('approvals.status.failed'));
+    await vi.waitFor(() => expect(approvalStatus(screen)).toBe('approvals.status.failed'));
     const { Modal } = await import('@/modal');
     expect(Modal.alert).not.toHaveBeenCalled();
     expect(screen.findByTestId('approvals.automatic-checks:consent')).toBeNull();
@@ -1838,7 +1845,7 @@ describe('ApprovalDetailScreen', () => {
     const screen = await renderScreen(<ApprovalDetailScreen artifactId={artifact.id} />);
     await screen.pressByTestIdAsync('approvals.approve');
 
-    await vi.waitFor(() => expect(approvalItem(screen, 'approvals.status')?.props.detail).toBe('approvals.status.executed'));
+    await vi.waitFor(() => expect(approvalStatus(screen)).toBe('approvals.status.executed'));
     expect(Modal.alert).not.toHaveBeenCalled();
     expect(screen.findByTestId('approvals.home-unavailable')).toBeNull();
     expect(homes.requestsFor('/v1/actions/approval.request.decide')).toHaveLength(1);
@@ -1859,7 +1866,7 @@ describe('ApprovalDetailScreen', () => {
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
     const screen = await renderScreen(<ApprovalDetailScreen artifactId={artifact.id} />);
     await screen.pressByTestIdAsync('approvals.approve');
-    await vi.waitFor(() => expect(approvalItem(screen, 'approvals.status')?.props.detail).toBe('approvals.status.executed'));
+    await vi.waitFor(() => expect(approvalStatus(screen)).toBe('approvals.status.executed'));
     if (deliveryStatus === 'rejected') {
       expect(approvalItem(screen, 'approvals.result-delivery')?.props.detail).toBe('session.askRecord.notSent');
       const { presentActionFailureOutcome } = await import('@/components/tools/shell/approvals/approvalFailureOutcome');
@@ -1900,7 +1907,7 @@ describe('ApprovalDetailScreen', () => {
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
     const screen = await renderScreen(<ApprovalDetailScreen artifactId={artifact.id} />);
     await screen.pressByTestIdAsync('approvals.approve');
-    await vi.waitFor(() => expect(approvalItem(screen, 'approvals.status')?.props.detail).toBe('approvals.status.executed'));
+    await vi.waitFor(() => expect(approvalStatus(screen)).toBe('approvals.status.executed'));
     // Two facts from two owners: the Action executed; its result's delivery is what the receipt says.
     expect(approvalItem(screen, 'approvals.result-delivery')?.props.detail).toBe(detail);
     expect(approvalItem(screen, 'approvals.result-delivery')?.props.subtitle).toBe(subtitle);
@@ -2146,6 +2153,20 @@ describe('ApprovalDetailScreen', () => {
     expect(screen.findByTestId('approvals.approve')?.props.disabled).toBe(false);
     await screen.pressByTestIdAsync('approvals.approve');
     expect(decodedArtifactWrite().body).toMatchObject({ status: 'approved', input });
+  });
+
+  // DESIGN-ACCEPT-7 NF-24: Declined replaces Pending in the header's place; the page does not grow a Request section.
+  it('keeps a settled request\'s status in the header where Pending was', async () => {
+    const artifact = await createApiTargetActionApprovalArtifact();
+    const request = TargetActionApprovalRequestV1Schema.parse(JSON.parse(artifact.body));
+    const settled = TargetActionApprovalRequestV1Schema.parse({ ...request, status: 'rejected',
+      updatedAtMs: 3, decision: { kind: 'reject', decidedAtMs: 2 } });
+    currentArtifact = { ...artifact, header: buildTargetActionApprovalArtifactHeaderV1(settled), body: JSON.stringify(settled) };
+    const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId={artifact.id} />);
+    await vi.waitFor(() => expect(approvalStatus(screen)).toBe('approvals.status.rejected'));
+    expect(approvalItem(screen, 'approvals.status')).toBeUndefined();
+    expect(readRenderedText(screen)).not.toContain('detailPages.approval.requestTitle');
   });
 
   it('says a waiting request\'s status in the header, with no Request section holding only that one fact', async () => {
@@ -4263,7 +4284,7 @@ describe('ApprovalDetailScreen', () => {
     expect(Modal.alert).not.toHaveBeenCalled();
     expect(daemonDecisions()).toEqual([expect.objectContaining({ params: expect.objectContaining({ artifactId: 'artifact-1', decision: 'reject' }) })]);
     expect(JSON.parse(homes.artifacts(account.serverId).readPlainBody('artifact-1')!).status).toBe('open');
-    expect(approvalItem(screen, 'approvals.status')?.props.detail).toBe(
+    expect(approvalStatus(screen)).toBe(
       'approvals.status.rejected',
     );
     expect(screen.findByTestId('approvals.actions')).toBeNull();

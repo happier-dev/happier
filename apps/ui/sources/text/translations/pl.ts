@@ -2611,7 +2611,7 @@ export const pl: TranslationStructure = {
         webhookEndpointSecretLost: 'Ten punkt końcowy już istnieje, a jego sekret został wyświetlony tylko raz. Wymień poświadczenie w ustawieniach webhooka, aby uzyskać nowy sekret.',
         webhookEndpointAwaitingConfirmation: 'Happier nie otrzymał jeszcze zweryfikowanego zdarzenia z tego webhooka, więc odbiór nie jest potwierdzony. Zapisz webhook u dostawcy i sprawdź ponownie. Wyzwalacz można zapisać już teraz, ale uruchomi się dopiero po nadejściu podpisanego zdarzenia.',
         webhookEndpointRecheck: 'Sprawdź webhook ponownie',
-        eventFilter: 'FILTR ZDARZEŃ (OPCJONALNIE)',
+        eventFilter: 'Filtr zdarzeń (opcjonalnie)',
         eventFilterPlaceholder: '{"v":1,"all":[…]}',
         eventFilterInvalid: 'Wprowadź prawidłowy filtr zdarzeń.',
         maximumObservationAge: 'MAKSYMALNY WIEK OBSERWACJI (MS, OPCJONALNIE)',

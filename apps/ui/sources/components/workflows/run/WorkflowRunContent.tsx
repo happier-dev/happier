@@ -1729,8 +1729,9 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     // that action instead of ending on what cannot be done.
     const noChoicesNext: WorkflowInvocationDetailProps['noChoicesNext'] =
         props.run.availability.cancel && props.onCancel !== undefined ? 'stop'
-            // The same replay the card offers as its button, so the card never says "run it again" without one.
-            : onRunAgain !== undefined ? 'run_again'
+            // The same replay the card offers as its button, so the card never says "run it again" without one; while the
+            // header shows Run workflow again the card says only why (DESIGN-ACCEPT-7 NF-10).
+            : onRunAgain !== undefined ? runAgainFolded ? 'run_again' : null
                 : props.sourceAction ? 'open_workflow' : null;
     const detailProps = React.useMemo((): WorkflowSelectedDetailInput | null => (
         props.selectedInvocationId === null ? null : {
@@ -1760,8 +1761,9 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 finalOutputInvocationId: props.finalOutputInvocationId, selectedInvocationId: props.selectedInvocationId,
                 selectedStartsReview: selectedDetail.startsReview,
                 selectedResult: props.selectedInvocationProgress?.result }) ? { resultShownAbove: true } : {}),
-            // The Run's own replay, offered on the failed step that has no recovery choice of its own.
-            ...(onRunAgain === undefined ? {} : { onRunAgain }),
+            // The Run's own replay, offered on the failed step that has no recovery choice of its own, and only while the
+            // header does not already show it: the page offers Run workflow again once (DESIGN-ACCEPT-7 NF-10).
+            ...(onRunAgain === undefined || !runAgainFolded ? {} : { onRunAgain }),
             ...(props.onOpenMachineRemedy === undefined ? {} : { onOpenMachineRemedy: props.onOpenMachineRemedy }),
             testIDPrefix,
             ...(props.selectedContentUnavailable === undefined
@@ -1808,6 +1810,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         headerPrimaryAction,
         noChoicesNext,
         onRunAgain,
+        runAgainFolded,
         props.onOpenMachineRemedy,
         selectedDetail.setupOutcome,
         selectedDetail.machineSetupStep,

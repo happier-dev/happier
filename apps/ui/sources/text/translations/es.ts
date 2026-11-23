@@ -2774,7 +2774,7 @@ export const es: TranslationStructure = {
         webhookEndpointSecretLost: 'Este punto de entrega ya existe y su secreto se mostró una vez. Rota la credencial desde los ajustes del webhook para obtener uno nuevo.',
         webhookEndpointAwaitingConfirmation: 'Happier aún no ha recibido una entrega verificada de este webhook, así que esta vía de entrega todavía no funciona. Guarda el webhook en el proveedor y vuelve a comprobarlo. Puedes guardar el activador de todos modos, pero no se ejecutará hasta que llegue una entrega firmada.',
         webhookEndpointRecheck: 'Volver a comprobar el webhook',
-        eventFilter: 'FILTRO DE EVENTOS (OPCIONAL)',
+        eventFilter: 'Filtro de eventos (opcional)',
         eventFilterPlaceholder: '{"v":1,"all":[…]}',
         eventFilterInvalid: 'Introduce un filtro de eventos válido.',
         maximumObservationAge: 'ANTIGÜEDAD MÁXIMA DE OBSERVACIÓN (MS, OPCIONAL)',

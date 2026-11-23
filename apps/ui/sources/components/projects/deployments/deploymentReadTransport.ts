@@ -580,12 +580,12 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
     } satisfies DeploymentReadTransportV1;
     return { ...transport,
         readEnvironmentNames: (scope, query, options) => scoped(scope, options, async account => {
-            const metadata = query.environmentId === undefined
-                ? await readEnvironmentPageMetadata(scope, query, options)
-                : await readEnvironmentMetadata(scope, query.environmentId, options);
+            // A saved identity is named from the list the person can read: an Environment they only view (a Team member's)
+            // refuses its detail read but still lists with its name.
+            const metadata = await readEnvironmentPageMetadata(scope, query.environmentId === undefined ? query
+                : { environmentIds: [query.environmentId] }, options);
             if (!metadata.ok) return metadata;
-            const page = 'items' in metadata.value ? metadata.value
-                : { items: [metadata.value.environment], nextCursor: null, coverage: undefined };
+            const page = metadata.value;
             const headers = await readArtifactsByRow(page.items.map(row => row.contentArtifactId),
                 ids => account.readArtifactHeaders(ids, { signal: options.signal }));
             const sourceNames = new Map('projectSources' in page ? page.projectSources?.map(source => [source.id, source.name]) : undefined);

@@ -2488,7 +2488,7 @@ export const de: TranslationStructure = {
                 webhookEndpointSecretLost: 'Dieser Endpunkt existiert bereits und sein Secret wurde einmalig angezeigt. Rotiere die Zugangsdaten in den Webhook-Einstellungen, um ein neues zu erhalten.',
                 webhookEndpointAwaitingConfirmation: 'Happier hat von diesem Webhook noch keine verifizierte Zustellung erhalten, er ist also noch kein funktionierender Zustellweg. Speichere den Webhook beim Anbieter und prüfe dann erneut. Der Trigger lässt sich in jedem Fall speichern, läuft aber erst, wenn eine signierte Zustellung eintrifft.',
                 webhookEndpointRecheck: 'Webhook erneut prüfen',
-                eventFilter: 'EREIGNISFILTER (OPTIONAL)',
+                eventFilter: 'Ereignisfilter (optional)',
                 eventFilterPlaceholder: '{"v":1,"all":[…]}',
                 eventFilterInvalid: 'Gib einen gültigen Ereignisfilter ein.',
                 maximumObservationAge: 'MAXIMALES BEOBACHTUNGSALTER (MS, OPTIONAL)',

@@ -2606,7 +2606,7 @@ export const fr: TranslationStructure = {
         webhookEndpointSecretLost: 'Ce point de réception existe déjà et son secret a été affiché une seule fois. Renouvelle les identifiants dans les réglages du webhook pour en obtenir un nouveau.',
         webhookEndpointAwaitingConfirmation: 'Happier n’a pas encore reçu d’événement vérifié de ce webhook. Ce canal de réception n’est donc pas encore opérationnel. Enregistre le webhook chez le fournisseur, puis vérifie à nouveau. Tu peux enregistrer le déclencheur maintenant, mais il ne s’exécutera qu’après la réception d’un événement signé.',
         webhookEndpointRecheck: 'Vérifier à nouveau le webhook',
-        eventFilter: 'FILTRE D’ÉVÉNEMENTS (OPTIONNEL)',
+        eventFilter: 'Filtre d’événements (facultatif)',
         eventFilterPlaceholder: '{"v":1,"all":[…]}',
         eventFilterInvalid: 'Saisis un filtre d’événements valide.',
         maximumObservationAge: 'ÂGE MAXIMAL DE L’OBSERVATION (MS, OPTIONNEL)',

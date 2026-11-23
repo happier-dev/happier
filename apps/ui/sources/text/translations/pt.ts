@@ -2810,7 +2810,7 @@ export const pt: TranslationStructure = {
         webhookEndpointSecretLost: 'Este endpoint já existe e seu segredo foi exibido uma vez. Renove a credencial nas configurações do webhook para obter um novo.',
         webhookEndpointAwaitingConfirmation: 'O Happier ainda não recebeu uma entrega verificada deste webhook, por isso este caminho de entrega ainda não funciona. Salve o webhook no provedor e verifique novamente. Você pode salvar o acionador de qualquer forma, mas ele só executará quando chegar uma entrega assinada.',
         webhookEndpointRecheck: 'Verificar webhook novamente',
-        eventFilter: 'FILTRO DE EVENTOS (OPCIONAL)',
+        eventFilter: 'Filtro de eventos (opcional)',
         eventFilterPlaceholder: '{"v":1,"all":[…]}',
         eventFilterInvalid: 'Insira um filtro de eventos válido.',
         maximumObservationAge: 'IDADE MÁXIMA DA OBSERVAÇÃO (MS, OPCIONAL)',

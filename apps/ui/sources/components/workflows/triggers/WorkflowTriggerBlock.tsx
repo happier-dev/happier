@@ -128,14 +128,12 @@ export function TrackRow(
   props: Readonly<{
     label: string;
     trackKey: string;
-    /** What the row's choice means, beneath the whole row. */
-    note?: React.ReactNode;
     children: React.ReactNode;
   }>,
 ) {
   return (
     <View style={workflowEditorStyles.actionFieldRow}>
-      <WorkflowFieldPair label={props.label} trackKey={props.trackKey} {...(props.note === undefined ? {} : { note: props.note })}>
+      <WorkflowFieldPair label={props.label} trackKey={props.trackKey}>
         {props.children}
       </WorkflowFieldPair>
     </View>
@@ -460,12 +458,6 @@ function ActionTrackRows(
         <TrackRow
           label={formatActionOperand(operand).label}
           trackKey={`${props.testID}-subject`}
-          {...(props.viewOnlySubject && when.subject !== undefined ? { note: (
-            <Text testID={`${props.testID}-subject-reach`} style={workflowEditorStyles.actionFieldNote}>
-              {subjectName === null ? t('workflows.triggers.card.viewOnlyReachUnnamed')
-                : t('workflows.triggers.card.viewOnlyReach', { subject: subjectName })}
-            </Text>
-          ) } : {})}
         >
           <View style={styles.selectBox}>
             <ActionSubjectSelect
@@ -482,6 +474,13 @@ function ActionTrackRows(
               }}
             />
           </View>
+          {/* Under its control, as the policy rows' consequences are (DESIGN-ACCEPT-7). */}
+          {props.viewOnlySubject && when.subject !== undefined ? (
+            <Text testID={`${props.testID}-subject-reach`} style={styles.note}>
+              {subjectName === null ? t('workflows.triggers.card.viewOnlyReachUnnamed')
+                : t('workflows.triggers.card.viewOnlyReach', { subject: subjectName })}
+            </Text>
+          ) : null}
         </TrackRow>
       )}
       <ActionTriggerPolicyRows testID={props.testID} when={when} onChange={props.onChange} />

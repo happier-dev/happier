@@ -3498,12 +3498,14 @@ describe('WorkflowRunContent', () => {
     expect(await render({ run: createWorkflowRunSummaryFixture({ state: 'running' }), onCancel: vi.fn() }))
       .toBe('workflows.recovery.noChoices workflows.recovery.nextStop');
     expect(lastScreen!.findByTestId('workflow-run-recovery-run-again')).toBeNull();
-    // Ended: Run again is the way on, as the card's own primary right under the failure; the line says only why.
+    // Ended: Run workflow again is the way on, offered once on the page, in the header; the card says only why
+    // (DESIGN-ACCEPT-7 NF-10).
     const onRunAgain = vi.fn();
     expect(await render({ run: createWorkflowRunSummaryFixture({ state: 'failed', availability: { cancel: false } as never }),
       onRunAgain }))
       .toBe('workflows.recovery.noChoices');
-    await lastScreen!.pressByTestIdAsync('workflow-run-recovery-run-again');
+    expect(lastScreen!.findByTestId('workflow-run-recovery-run-again')).toBeNull();
+    await lastScreen!.pressByTestIdAsync('workflow-run-run-again');
     expect(onRunAgain).toHaveBeenCalledOnce();
     // While the Run's outcome is still being read the card offers no Run again, so it doesn't say to run it again either.
     expect(await render({ run: createWorkflowRunSummaryFixture({ state: 'failed', availability: { cancel: false } as never }),

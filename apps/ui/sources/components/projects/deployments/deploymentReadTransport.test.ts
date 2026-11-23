@@ -1048,6 +1048,13 @@ describe('deployment scoped read transport', () => {
             expect(collection.getSnapshot().value?.items[0]).toHaveProperty('backupConfigured', true);
             expect(history.getSnapshot().value?.items[0]?.title).toBe('aaaaaaa');
         } finally { collection.release(); history.release(); controller.retire(); }
+        // A saved trigger's Environment is named from the list the person can read, even when its detail is refused
+        // to them (a view-only Team member; DESIGN-ACCEPT-7 reach note).
+        homes.answer(serverId, `${root}/${environmentHeader.id}`, { body: { ok: false, error: 'deployment_content_unavailable' } });
+        expect(await transport.readEnvironmentNames(scope, { environmentId: environmentHeader.id }, options)).toMatchObject({
+            ok: true, value: { items: [{ id: environmentHeader.id, name: detail.content.name }] } });
+        homes.answer(serverId, `${root}/${environmentHeader.id}`, { body: { ok: true, environment: environmentHeader,
+            targetLinks, controller: controllerAvailability } });
         const beforeDetail = homes.requests.filter(request => request.path === '/v1/artifacts/read').length;
         expect(await transport.readEnvironment(scope, environmentHeader.id, options)).toEqual({ ok: true, value: {
             environment: environmentHeader, content: detail.content, targetLinks: targetLinks.map(targetLink => ({ targetLink })),

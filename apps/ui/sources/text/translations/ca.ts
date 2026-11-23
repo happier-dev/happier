@@ -2605,7 +2605,7 @@ export const ca: TranslationStructure = {
                 webhookEndpointSecretLost: 'Aquest punt final ja existeix i el secret es va mostrar un sol cop. Renova la credencial des de la configuració del webhook per obtenir-ne un de nou.',
                 webhookEndpointAwaitingConfirmation: 'Happier encara no ha rebut cap lliurament verificat d’aquest webhook, així que encara no és una via de lliurament operativa. Desa el webhook al proveïdor i torna’l a comprovar. Pots desar l’activador igualment, però no s’executarà fins que arribi un lliurament signat.',
                 webhookEndpointRecheck: 'Torna a comprovar el webhook',
-                eventFilter: 'FILTRE D’ESDEVENIMENTS (OPCIONAL)',
+                eventFilter: 'Filtre d’esdeveniments (opcional)',
                 eventFilterPlaceholder: '{"v":1,"all":[…]}',
                 eventFilterInvalid: 'Introdueix un filtre d’esdeveniments vàlid.',
                 maximumObservationAge: 'ANTIGUITAT MÀXIMA DE L’OBSERVACIÓ (MS, OPCIONAL)',

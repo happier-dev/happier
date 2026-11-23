@@ -24,7 +24,9 @@ export function WorkflowRunFailureAgentActions(props: Readonly<{
      */
     actions?: React.ReactNode;
 }>) {
-    const investigation = useInvestigateFailure(props.subject, { agentActions: 'withDefault' });
+    // A Run's own Investigate ("Investigate this Run") stands for the Account's task default on this page, so the page
+    // offers Investigate once (DESIGN-ACCEPT-7 NF-10); with no Run action of its own, the default launches.
+    const investigation = useInvestigateFailure(props.subject, { agentActions: 'subjectOnly' });
     const compact = useDeviceType() === 'phone';
     const fallback: readonly InvestigationAgentActionButtonModel[] = [{
         label: t('inbox.work.healthNotice.investigate'),
@@ -33,7 +35,7 @@ export function WorkflowRunFailureAgentActions(props: Readonly<{
     }];
     const investigate = (
         <InvestigationAgentActionButtons
-            actions={investigation.actions ?? fallback}
+            actions={investigation.actions?.length ? investigation.actions : fallback}
             pending={investigation.pending}
             compact={compact}
             {...(props.emphasis === undefined ? {} : { emphasis: props.emphasis })}

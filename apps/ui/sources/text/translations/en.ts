@@ -2759,7 +2759,7 @@ const enAutomations = {
       webhookEndpointAwaitingConfirmation:
         'Happier has not received a verified delivery from this webhook yet, so it is not a working delivery path. Save the webhook in the provider, then recheck. The trigger can be saved either way, but it will not run until a signed delivery arrives.',
       webhookEndpointRecheck: 'Recheck webhook',
-      eventFilter: 'EVENT FILTER (OPTIONAL)',
+      eventFilter: 'Event filter (optional)',
       eventFilterPlaceholder: '{"v":1,"all":[…]}',
       eventFilterInvalid: 'Enter a valid Event filter.',
       maximumObservationAge: 'MAXIMUM OBSERVATION AGE (MS, OPTIONAL)',

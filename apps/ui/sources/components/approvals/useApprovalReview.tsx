@@ -36,7 +36,8 @@ import { readApprovalOperationCredentialUses } from './approvalRequesterThreadSt
 import { describeApprovalAgent, isHappierGuardApproval, readApprovalRequesterSurface, resolveApprovalHomeName } from './approvalRequesterLabels';
 import { ApprovalSessionConsentRow, useApprovalSessionConsentChoice } from './ApprovalSessionConsentChoice';
 import { readSessionApprovalConsentActionIdV1 } from '@happier-dev/protocol/actions/sessionApprovalConsentPolicyV1';
-import { ApprovalAcceptedOperationStatusRow, BrowserOpenOperationStatusRow } from './BrowserOpenOperationStatus';
+import { ApprovalAcceptedOperationStatusRow, BrowserOpenOperationStatusRow, readApprovalAcceptedOperationId } from './BrowserOpenOperationStatus';
+import { readBrowserOpenAcceptance } from '@/sync/domains/browser/firstUse/browserFirstUse';
 import { ActionApprovalFieldsCard, ApprovalTechnicalDetails } from './ActionApprovalFieldsCard';
 import { ApprovalReviewFacts } from './ApprovalReviewFacts';
 import { readDeploymentReviewApproval, useDeploymentReviewDecision } from './DeploymentReviewApprovalFacts';
@@ -635,8 +636,13 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   const open = parsed.request.status === 'open' && !answeredWhileOpen;
   const requestNotice = Boolean(deliveryFailure || executionFailure || (cannotRun && parsed.request.status === 'open') || approvalRouteUnavailable);
   const previewShown = parsed.kind === 'built_in' && Boolean(previewSummary) && !deploymentDecision && !computerAction;
-  // A waiting request with nothing else to say reads its status as one header fact, not a section of one row.
-  const statusInHeader = open && !requestNotice && !showActionRow && !previewShown && !statusFollowsFacts;
+  // A request with nothing else to say reads its status as one header fact, not a section of one row, while it waits and
+  // after it settles, so Executed or Declined replaces Pending in place (DESIGN-ACCEPT-7 NF-24). A settled request whose
+  // delivery or accepted operation has its own row keeps the section.
+  const settledRows = Boolean(deliveryReceipt) || (parsed.kind === 'built_in'
+    && (readBrowserOpenAcceptance(parsed.request) !== null || readApprovalAcceptedOperationId(parsed.request) !== null));
+  const statusInHeader = (open || parsed.request.status !== 'open') && !requestNotice && !showActionRow && !previewShown
+    && !statusFollowsFacts && !settledRows;
   if (statusInHeader) headerFacts.unshift({ key: 'status', text: statusLabel, testID: 'approvals.status' });
   const requestGroup = (
     <ItemGroup
