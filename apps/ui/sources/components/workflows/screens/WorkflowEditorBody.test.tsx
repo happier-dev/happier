@@ -4015,9 +4015,7 @@ describe('workflow editor prompt pictures', () => {
         await screen.unmount();
     });
 
-    it('opens Step options from a picture without mounting a composer, and follows the saved composer placement', async () => {
-        const { getWorkflowStepOptionsChipPlacement } = await import('@/components/workflows/workflowComposerControlPlacements');
-        const placementId = getWorkflowStepOptionsChipPlacement().id;
+    it('opens Step options from a picture without mounting a composer', async () => {
         const pinned = await renderTwoStepEditor();
         await selectPromptRow(pinned.screen, 'analyze');
         expect(pinned.screen.findHostByTestId('workflow-editor-step-analyze-customize')).not.toBeNull();
@@ -4030,18 +4028,6 @@ describe('workflow editor prompt pictures', () => {
             .findAll(node => node.props.testID === 'agent-input-document-preview-prompt-library').at(0)!;
         expect(library.props).toMatchObject({ accessibilityRole: 'button', accessible: true, focusable: true });
         await pinned.screen.unmount();
-
-        getStorage().getState().applyLocalSettings({ navigationSurfacePlacementsV1: { composer: {
-            orderedIds: [], placements: { [placementId]: 'overflow' },
-        } } });
-        const overflow = await renderTwoStepEditor();
-        await selectPromptRow(overflow.screen, 'analyze');
-        // The author moved Step options to the overflow: neither the picture nor the live row draws it.
-        expect(overflow.screen.findHostByTestId('workflow-editor-step-analyze-customize')).toBeNull();
-        await activatePromptPreview(overflow.screen, 'workflow-editor-step-analyze-prompt');
-        expect(liveComposerCount(overflow.screen)).toBe(1);
-        expect(overflow.screen.findHostByTestId('workflow-editor-step-analyze-customize')).toBeNull();
-        await overflow.screen.unmount();
     });
 });
 

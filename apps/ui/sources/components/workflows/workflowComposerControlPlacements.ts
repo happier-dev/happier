@@ -13,15 +13,6 @@ export function getWorkflowStartFolderChipPlacement(): AgentInputControlPlacemen
     return { id: 'path:workflow-start-folder', title: t('newSession.wizardSection.folder'), icon: 'folder', defaultPlacement: 'pinned' };
 }
 
-/** Insert: a visible entry to a prompt's '@' value list (owner 2026-11-15). */
-export function getWorkflowInsertChipPlacement(): AgentInputControlPlacement {
-    return { id: 'shortcuts:workflow-insert', title: t('workflows.editor.insert'), icon: 'at', defaultPlacement: 'pinned' };
-}
-
-export function getWorkflowStepOptionsChipPlacement(): AgentInputControlPlacement {
-    return { id: 'shortcuts:workflow-step-options', title: t('workflows.page.inspector.stepOptions'), icon: 'sliders-horizontal', defaultPlacement: 'pinned' };
-}
-
 export function getWorkflowStartVisibilityChipPlacement(): AgentInputControlPlacement {
     return { id: 'sessionAccess:workflow-start-visibility', title: t('workflows.start.visibility.title'), icon: 'users', defaultPlacement: 'overflow' };
 }
