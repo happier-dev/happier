@@ -8471,9 +8471,12 @@ Action approval policy still applies before creating a hidden conversation.
 For 0.3 development builds, Voice can pass an explicitly requested model as
 `spokenModelName` to `spawnSession`. The receiver uses the selected Agent and
 Machine to run the same catalog matcher as `resolveActionOptions`. One match
-becomes the exact model selection in the launch recipe. An ambiguous or missing
-match returns choices for clarification before Session creation. When Voice
-omits the model, the ordinary launch defaults apply.
+becomes the exact model selection in the launch recipe. If the result offers
+candidate labels, Voice reads them in full and submits the label the person
+chooses. A candidate marked `needsModelPicker` requires the person to choose
+the exact credential in the app. When the result has no labels, Voice asks for
+an exact model name. When Voice omits the model, the ordinary launch defaults
+apply.
 
 In current 0.3 development, an explicit same-input retry of `session.spawn_new`
 after a typed retryable creation error starts a new operation receipt while
