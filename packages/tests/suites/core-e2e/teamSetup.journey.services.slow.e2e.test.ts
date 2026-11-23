@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { createServer } from 'node:net';
 import { chmod, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, expect, it } from 'vitest';
+import { DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1, DATABASE_CAPTURE_RESOURCE_REF_V1,
+  DatabaseCaptureConfigureResultV1Schema, databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { parseLocalServiceDeclarationPreviewLandingUrlV1 } from '@happier-dev/protocol/local/services/preview/v1';
@@ -11,7 +14,7 @@ import { computeWorkspaceSyncPolicyDigest, WorkspaceSyncRelationshipCreateResult
   WorkspaceSyncRelationshipsListActionOutputV1Schema } from '@happier-dev/protocol';
 import { createProjectServiceDeclarationTargetIdV1, type LocalServiceManagedServiceActionTargetV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import { DaemonLocalServiceLauncherStartResponseV1Schema, DaemonLocalServiceLauncherSnapshotResponseV1Schema,
-  LocalServiceStartApprovalReviewV1Schema, isLocalServiceStateRunningV1 } from '@happier-dev/protocol/local/services/launcher/v1';
+  LocalServiceLauncherSnapshotV1Schema, LocalServiceStartApprovalReviewV1Schema, isLocalServiceStateRunningV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import { ProjectServicePlacementGetResultV1Schema, ProjectServicePlacementMutationResultV1Schema } from '@happier-dev/protocol/workspaces/projectServicePlacementV1';
 import { ProjectWorkerCopyInspectResultV1Schema } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import { ProjectServiceRelocateResultV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
@@ -19,6 +22,8 @@ import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/action
 import { startProjectDaemonFixture, type ProjectDaemonFixture } from '../../src/testkit/daemon/projectDaemon';
 import { execGit, initGitRepo } from '../../src/testkit/uiE2e/gitRepoFixtures';
 import { waitFor } from '../../src/testkit/timing';
+import { applyTrustedLocalPluginFixture } from '../../src/testkit/externalSessionLiveLifecycleFixture';
+import { repoRootDir } from '../../src/testkit/paths';
 
 let fixture: ProjectDaemonFixture | undefined;
 let account: Awaited<ReturnType<ProjectDaemonFixture['createAccount']>>;
@@ -30,6 +35,15 @@ async function action(id: ActionId, input: unknown): Promise<unknown> {
   expect(result, `${id} must succeed as the signed-in person`).toMatchObject({ ok: true });
   if (!result.ok) throw new Error(`${id}: ${result.errorCode}`);
   return result.result;
+}
+
+async function bindLoopback(port: number): Promise<() => Promise<void>> {
+  const socket = createServer();
+  await new Promise<void>((resolve, reject) => {
+    socket.once('error', reject);
+    socket.listen(port, '127.0.0.1', resolve);
+  });
+  return () => new Promise<void>((resolve, reject) => socket.close(error => error ? reject(error) : resolve()));
 }
 
 afterAll(async () => {
@@ -63,7 +77,29 @@ it.skipIf(process.platform === 'win32')('TS.J.services: copied worker Python Sta
   await writeFile(sourcePython, interpreter('SOURCE'), { mode: 0o755 });
   await symlink(sourcePython, join(root, '.venv/bin/python'));
   await writeFile(join(root, '.gitignore'), '.venv/\nlocked/\n');
-  const script = (marker: string) => `import http.server, os\nclass Handler(http.server.BaseHTTPRequestHandler):\n def do_GET(self):\n  self.send_response(200); self.send_header('X-Process-Port', os.environ['PORT']); self.send_header('X-Worktree-Port', os.environ['HAPPIER_WORKTREE_PORT']); self.send_header('X-Worktree-Url', os.environ['HAPPIER_WORKTREE_URL']); self.end_headers(); self.wfile.write(b'${marker}')\nhttp.server.HTTPServer(('127.0.0.1', int(os.environ['PORT'])), Handler).serve_forever()\n`;
+  const script = (marker: string) => `import http.server, os, urllib.parse, urllib.request
+class Handler(http.server.BaseHTTPRequestHandler):
+ def do_GET(self):
+  db = urllib.parse.urlsplit(os.getenv('DATABASE_URL', ''))
+  collector = os.getenv('OTEL_EXPORTER_OTLP_ENDPOINT', '')
+  capture = None
+  if collector:
+   trace = urllib.request.Request(collector + '/v1/traces', data=b'{}', headers={'Content-Type': 'application/json'})
+   with urllib.request.urlopen(trace, timeout=5) as response:
+    capture = response.status
+  self.send_response(200)
+  self.send_header('X-Process-Port', os.environ['PORT'])
+  self.send_header('X-Worktree-Port', os.environ['HAPPIER_WORKTREE_PORT'])
+  self.send_header('X-Worktree-Url', os.environ['HAPPIER_WORKTREE_URL'])
+  if db.hostname:
+   self.send_header('X-Database-Port', str(db.port or 5432))
+  if capture is not None:
+   self.send_header('X-Collector-Port', str(urllib.parse.urlsplit(collector).port))
+   self.send_header('X-Collector-Status', str(capture))
+  self.end_headers()
+  self.wfile.write(b'${marker}')
+http.server.HTTPServer(('127.0.0.1', int(os.environ['PORT'])), Handler).serve_forever()
+`;
   await writeFile(join(root, 'server.py'), script('first-worker'));
   await writeFile(join(root, '.happier/project.json'), JSON.stringify({ version: 1,
     worktreePorts: { enabled: true, slots: 1 }, services: { web: { execution: 'portable',
@@ -88,6 +124,8 @@ it.skipIf(process.platform === 'win32')('TS.J.services: copied worker Python Sta
   const workerPython = join(worker.workspaceDir, 'machine-python');
   await writeFile(workerPython, interpreter('WORKER'), { mode: 0o755 });
   await symlink(workerPython, join(targetRoot, '.venv/bin/python'));
+  const upstream = new URL(databaseUrl);
+  await writeFile(join(targetRoot, '.env'), `DATABASE_URL=${upstream.href}\n`);
   // bfec9da58e0: only SOURCE owns executed-file review. Reading this worker-only
   // fallback again fails, although the first command is valid and never uses it.
   const locked = join(targetRoot, 'locked');
@@ -117,7 +155,8 @@ it.skipIf(process.platform === 'win32')('TS.J.services: copied worker Python Sta
     return LocalServiceStartApprovalReviewV1Schema.parse(snapshot.startReview);
   };
   const firstReview = await review();
-  const start = async (expectedEffectDigest: string, marker: string) => {
+  const start = async (expectedEffectDigest: string, marker: string,
+    verifyCapture?: (response: Response, listeners: readonly number[]) => void | Promise<void>) => {
     const started = DaemonLocalServiceLauncherStartResponseV1Schema.parse(await action('localServices.launcher.start', { ...request, expectedEffectDigest }));
     if (started.currentTarget) running.set(started.currentTarget.managedServiceId, started.currentTarget);
     expect(started, 'Portable copied Service must start with its Machine-local interpreter').toMatchObject({ status: 'succeeded', machineId: worker.target.machineId });
@@ -133,14 +172,70 @@ it.skipIf(process.platform === 'win32')('TS.J.services: copied worker Python Sta
       serverId: fixture!.serverId, machineId: worker.target.machineId, targetId: target.id,
     });
     expect(target.portSource).toBe('assigned');
-    expect(started.snapshot.worktreePorts).toMatchObject({ rootPath: targetRoot,
+    const workspaceSnapshot = LocalServiceLauncherSnapshotV1Schema.parse(await action('localServices.launcher.snapshot', {
+      machineId: worker.target.machineId, scope: 'workspace', workspaceRoot: targetRoot,
+    }));
+    expect(workspaceSnapshot.worktreePorts).toMatchObject({ rootPath: targetRoot,
       result: { kind: 'ready', assignment: { ports: [Number(new URL(url).port)] } } });
+    const ports = workspaceSnapshot.worktreePorts?.result;
+    if (ports?.kind !== 'ready') throw new Error('Worker checkout omitted its port assignment');
+    await verifyCapture?.(response, Object.values(ports.assignment.listenerPorts));
     expect(await response.text()).toBe(marker);
     await action('localServices.actions.stopManaged', { requestId: randomUUID(), target: started.currentTarget, action: 'stop_managed' });
     running.delete(started.currentTarget.managedServiceId);
     await waitFor(async () => { try { await fetch(url); return false; } catch { return true; } }, { context: 'stopped worker Service endpoint retired' });
   };
-  await start(firstReview.reviewedEffectDigest, 'first-worker');
+  const upstreamPort = Number(upstream.port || 5432);
+  await start(firstReview.reviewedEffectDigest, 'first-worker', (response, listeners) => {
+    expect(listeners).toEqual([]);
+    expect(response.headers.get('X-Database-Port')).toBe(String(upstreamPort));
+    expect(response.headers.get('X-Collector-Port')).toBeNull();
+  });
+
+  const projectId = opened.facts?.projectKey;
+  if (!projectId) throw new Error('Source checkout omitted its Project key');
+  const pluginId = DATABASE_CAPTURE_RESOURCE_REF_V1.pluginId;
+  const captureProject = { serverId: fixture.serverId, machineId: worker.target.machineId, projectId };
+  await applyTrustedLocalPluginFixture({ daemonPort: worker.daemon.state.httpPort, controlToken: worker.daemon.state.controlToken,
+    pluginRoot: join(repoRootDir(), 'packages/plugins/telemetry'), pluginId, interactionId: randomUUID() });
+  const configureCapture = async (enabled: boolean) => {
+    const configured = await account.execute('action.invoke',
+      { action: { pluginId, localId: databaseActionLocalIdV1(DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1) },
+        input: { project: captureProject, enabled } },
+      { externalActionTarget: { kind: 'machine', machineId: worker.target.machineId },
+        presentUserConfirmation: { actionId: 'action.invoke' } });
+    if (!configured.ok) throw new Error(`Worker capture configuration refused (${configured.errorCode})`);
+    expect(DatabaseCaptureConfigureResultV1Schema.parse(configured.result)).toMatchObject({ ok: true, enabled });
+  };
+  await configureCapture(true);
+
+  let proxyPort = 0, collectorPort = 0;
+  const captureReview = await review();
+  await start(captureReview.reviewedEffectDigest, 'first-worker', (response, listeners) => {
+    proxyPort = Number(response.headers.get('X-Database-Port'));
+    collectorPort = Number(response.headers.get('X-Collector-Port'));
+    expect(proxyPort).toBeGreaterThan(0);
+    expect(proxyPort).not.toBe(upstreamPort);
+    expect(collectorPort).toBeGreaterThan(0);
+    expect(collectorPort).not.toBe(proxyPort);
+    expect(listeners).toEqual(expect.arrayContaining([proxyPort, collectorPort]));
+    expect(listeners).toHaveLength(2);
+    expect(response.headers.get('X-Collector-Status')).toBe('200');
+  });
+  // Retain the assignment while forcing the second bind to fail. The native app still runs
+  // with its original input, and the first listener must already be gone while the app is live.
+  const closeCollector = await bindLoopback(collectorPort);
+  try {
+    const occupiedReview = await review();
+    await start(occupiedReview.reviewedEffectDigest, 'first-worker', async (response, listeners) => {
+      expect(listeners).toHaveLength(2);
+      expect(response.headers.get('X-Database-Port')).toBe(String(upstreamPort));
+      expect(response.headers.get('X-Collector-Port')).toBeNull();
+      const closeProxy = await bindLoopback(proxyPort);
+      await closeProxy();
+    });
+  } finally { await closeCollector(); }
+  await configureCapture(false);
   await writeFile(join(root, 'server.py'), script('edited-worker'));
   const editedReview = await review();
   expect(editedReview.reviewedEffectDigest, 'Editing a copied script must re-prompt review').not.toBe(firstReview.reviewedEffectDigest);
