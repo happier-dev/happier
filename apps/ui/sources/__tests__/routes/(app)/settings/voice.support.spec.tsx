@@ -424,7 +424,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         expect(advanced.findByTestId('settings.voice.provider.off')).toBeNull();
     });
 
-    it('shows the shared execution-machine selector on exactly the intent that requires it', async () => {
+    it('shows the shared execution-machine selector when the selected pipeline requires it', async () => {
         voiceState.providerId = 'happier.voice.openai/realtime-openai';
         voiceState.dictation = {
             ...voiceState.dictation,
@@ -444,7 +444,12 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         standardCleanup();
 
         const conversations = await renderVoiceSettings("conversations");
-        expect(conversations.findByTestId('settings.voice.executionMachine.chip')).toBeNull();
+        expect(conversations.findByTestId('settings.voice.executionMachine.chip')).toBeTruthy();
+        standardCleanup();
+
+        voiceState.providerId = 'off';
+        const disabledConversations = await renderVoiceSettings("conversations");
+        expect(disabledConversations.findByTestId('settings.voice.executionMachine.chip')).toBeNull();
         standardCleanup();
 
         voiceState.providerId = 'local_direct';
@@ -453,30 +458,23 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
     });
 
     it('keeps the selected provider disclosure in Privacy & data and the policy entry last', async () => {
-        // This used to also render the Conversations screen and assert the disclosure
-        // row was absent there. That assertion could not fail: with the suppression
-        // flag forced on, the screen still never renders the selected provider's
-        // declarative settings group in this harness, so it stayed green either way.
-        // Privacy & data owning the copy is the contract worth asserting, and the
-        // provider panels no longer contain a second renderer to guard against.
         const privacy = await renderVoiceSettings("privacy");
-        const disclosureId = 'settings.voice.provider.disclosure.happier.voice.elevenlabs%2Frealtime-elevenlabs';
-        const disclosureDetails = privacy.findAll((node) => typeof node.props.onExpandedChange === 'function'
-            && node.findAll((child) => child.props.testID === `${disclosureId}.details`).length > 0)[0];
-        expect(disclosureDetails).toBeTruthy();
-        await act(async () => disclosureDetails!.props.onExpandedChange(true));
-        const disclosure = findItemByTestId(privacy, `${disclosureId}.full`);
+        const disclosureId = 'settings.voice.privacy.path';
+        const details = findItemByTestId(privacy, `${disclosureId}.details`);
         const policy = findItemByTestId(privacy, 'settings.voice.privacyPolicy');
-        expect(disclosure).toBeTruthy();
+        expect(details).toBeTruthy();
         expect(policy).toBeTruthy();
-        expect(String(disclosure?.props.subtitle)).toContain(
-            'Audio and conversation content are sent from this device to ElevenLabs',
-        );
+        expect(privacy.findByTestId(`${disclosureId}.full`)).toBeNull();
+
+        await act(async () => { await privacy.pressByTestId(`${disclosureId}.details`); });
+        const disclosure = privacy.findByTestId(`${disclosureId}.full`);
+        expect(disclosure?.findAll((node) => typeof node.props.subtitle === 'string'
+            && node.props.subtitle.includes('Audio and conversation content are sent from this device to ElevenLabs'))).not.toHaveLength(0);
 
         const itemRows = privacy.findAll((node) => typeof node.props.title === 'string'
             && typeof node.props.testID === 'string');
         expect(itemRows[itemRows.length - 1]?.props.testID).toBe('settings.voice.privacyPolicy');
-        expect(itemRows.indexOf(disclosure!)).toBeLessThan(itemRows.indexOf(policy!));
+        expect(itemRows.indexOf(details!)).toBeLessThan(itemRows.indexOf(policy!));
     });
 
     it('persists the other local conversation mode with a single tap', async () => {
