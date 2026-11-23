@@ -183,6 +183,7 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
       resources.register(() => lease.dispose());
       const opened = await openConnectedAccountProviderTransport({
         endpoint, purpose, materialization: use.materialization, bindingLease: lease,
+        ...(scope.kind === 'session' ? { parentSessionId: scope.sessionId } : {}),
         requestAuth: connectedAccountRequestAuth, signal,
         isCurrent: async currentSignal => !currentSignal?.aborted && await catalog.isCurrent(),
         resolveAddresses: input.resolveProviderAddresses, transport: input.providerConnectionHttpTransport,

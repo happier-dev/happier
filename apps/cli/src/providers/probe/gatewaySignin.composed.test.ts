@@ -231,6 +231,7 @@ it.each(gatewaySigninScenarios)('launches the selected signed-in Gateway model f
       resolveSelection.mockClear();
       lookupRequestAuth.mockClear();
       resolveCurrentBinding.mockClear();
+      materializeAccount.mockClear();
       const directAccountRuntime = {
         purposeBindings,
         connectedAccountRequestAuth: requestAuth,
@@ -372,6 +373,7 @@ it.each(gatewaySigninScenarios)('launches the selected signed-in Gateway model f
       };
       await turn('first Claude turn');
       expect(lookupRequestAuth).toHaveBeenCalledTimes(1);
+      expect(lookupRequestAuth.mock.calls[0]?.[0].subject.parentSessionId).toBe('gateway-claude-session');
       expect(materializeAccount).toHaveBeenCalledTimes(1);
       const subsequentTurns = ['second Claude turn', 'third Claude turn'];
       for (const text of subsequentTurns) await turn(text);

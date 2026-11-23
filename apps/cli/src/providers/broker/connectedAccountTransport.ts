@@ -16,6 +16,7 @@ export async function openConnectedAccountProviderTransport(input: Readonly<{
   purpose: QualifiedConnectedAccountPurposeV1;
   materialization: QualifiedConnectedAccountRequestAuthUseV1['materialization'];
   bindingLease: ConnectedAccountPurposeBindingLease;
+  parentSessionId?: string;
   requestAuth: Pick<ConnectedAccountRequestAuthService, 'lookupRequestAuth' | 'refreshAfterAuthFailure'>;
   signal: AbortSignal;
   isCurrent(signal?: AbortSignal): Promise<boolean>;
@@ -44,6 +45,7 @@ export async function openConnectedAccountProviderTransport(input: Readonly<{
         const subject = scopeConnectedAccountPurposeBindingLease({
           lease: bindingLease, subjectId: bindingLease.subjectId,
           uses: [{ purpose, materialization }], registerRedaction: redaction.add,
+          ...(input.parentSessionId ? { parentSessionId: input.parentSessionId } : {}),
         });
         const material = await input.requestAuth.lookupRequestAuth({ subject, purpose, signal });
         const [primary, ...additionalCredentials] = Object.entries(material.headers).map(([name, value]) =>
