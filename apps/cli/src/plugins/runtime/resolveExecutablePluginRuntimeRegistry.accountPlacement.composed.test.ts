@@ -7,7 +7,7 @@ import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/act
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
-import { createCommittedContributedActionDefinitionLister, createCommittedInputTypeDeps } from './invocation/actions/createCommittedContributedActionDeps';
+import { createCommittedContributedActionDefinitionLister, createCommittedContributedActionInvoker, createCommittedInputTypeDeps } from './invocation/actions/createCommittedContributedActionDeps';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { executeContributedAction } from './invocation/actions/executeContributedAction';
@@ -19,7 +19,10 @@ import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { executeAppliedDaemonPluginActionWithController } from '@/plugins/daemon/controlRoutes';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
-import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { rebindRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { manifest } from '@/session/actions/accountSessionMachineSource.testkit';
 import * as persistence from '@/persistence';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
@@ -72,7 +75,7 @@ it.each([false, true])('retains local Account custody through Machine Actions an
                 sessionTarget: { field: 'sessionIds.*', cardinality: 'many' },
                 inputSchema: defineProtocolObject({ sessionIds: defineProtocolArray(defineProtocolString()) }, { policy: 'closed' }),
                 run: input => input.sessionIds },
-            watch: { title: 'Watch', surfaces: ['cli'], dangerLevel: 'safe',
+            watch: { title: 'Watch', surfaces: ['cli', 'ui'], dangerLevel: 'safe',
                 inputSchema: defineProtocolObject({ source: defineProtocolString() }, { policy: 'closed' }),
                 inputHints: { fields: [{ path: 'source', title: 'Source', widget: 'select', inputType: { pluginId: parentId, localId: 'source' } }] },
                 run: async () => null },
@@ -83,11 +86,11 @@ it.each([false, true])('retains local Account custody through Machine Actions an
                 api.actions.register('start', (input, context) => context.services.actions.execute({ pluginId: 'acme.machine-placement-parent', localId: 'link' }, input));
                 api.actions.register('link', (input, context) => context.services.actions.execute({ pluginId: 'acme.account-session-source', localId: 'account-only' }, input));
                 api.actions.register('read-set', input => input.sessionIds);
-                api.actions.register('watch', () => null);
+                api.actions.register('watch', (_input, context) => context.services.actions.execute({ pluginId: 'acme.account-session-source', localId: 'account-scope' }, {}));
                 api.resources.registerDynamicResource('sources', {
                     async read({ readAction, signal }) {
                         const result = await readAction({ pluginId: 'acme.account-session-source', localId: 'account-scope' }, {}, { signal });
-                        return JSON.stringify(result.ok ? { options: [] } : result);
+                        return JSON.stringify(result.ok ? { options: [{ value: 'selected-source', label: 'Selected source' }] } : result);
                     },
                     observe() { return { dispose() {} }; },
                 });
@@ -99,6 +102,9 @@ it.each([false, true])('retains local Account custody through Machine Actions an
             listContributedActionDefinitions: createCommittedContributedActionDefinitionLister({
                 tryAcquireRuntimeRegistryLease: () => controller.tryAcquireRuntimeRegistry(),
             }),
+            invokeContributedAction: createCommittedContributedActionInvoker({
+                acquireRuntimeRegistryLease: () => controller.acquireRuntimeRegistry(),
+            }),
             ...createCommittedInputTypeDeps({ acquireRuntimeRegistryLease: () => controller.acquireRuntimeRegistry() }),
         });
         const actionId = formatQualifiedPluginActionId({ pluginId: parentId, localId: 'watch' });
@@ -108,7 +114,7 @@ it.each([false, true])('retains local Account custody through Machine Actions an
         try {
             const options = await runWithServerHttpBaseUrl(origin, () => executor.execute('action.options.resolve',
                 { actionId, fieldPath: 'source', draftInput: {} }, { surface: 'cli', signal: AbortSignal.timeout(10_000) }));
-            expect(options, JSON.stringify(options)).toMatchObject({ ok: true, result: { options: [] } });
+            expect(options, JSON.stringify(options)).toMatchObject({ ok: true, result: { options: [{ value: 'selected-source' }] } });
         } finally {
             fixtureShutdown.resolve();
             await initialization;
@@ -119,6 +125,42 @@ it.each([false, true])('retains local Account custody through Machine Actions an
             surface: 'cli', defaultSessionId: 'spawned-on-machine',
         }, runtime!.controller));
         expect(result, JSON.stringify(requests)).toEqual({ matched: true, result: { ok: true, result: { value: 'account-only' } } });
+        const watchAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'watch-root', binding: {
+            serverIdentityId: 'placement-home', accountId, custodianAccountId: accountId,
+            authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+            machineId: 'session-machine', installationId: 'installation', actionId: 'action.invoke', requestId: 'watch-submit',
+            requestEnvelopeDigest: 'A'.repeat(43), target: { kind: 'machine', machineId: 'session-machine' },
+        } });
+        // Supply the host-local custody produced at signed Watch admission.
+        const isCurrent = async () => true;
+        const projected = await projectRequesterAccountActionAuthorization({ authorization: watchAuthorization,
+            serverIdentityId: 'placement-home', bootstrap: { credentials, serverHttpBaseUrl: origin, isCurrent,
+                attribution: { serverId: 'placement-home', accountId, machineId: 'session-machine', installationId: 'installation' } },
+        });
+        const snapshot = getActiveAccountSettingsSnapshot();
+        if (!projected || !snapshot) throw new Error('Expected admitted Watch Account custody');
+        const requesterAuthorization = rebindRequesterAccountActionContext(projected, projected, {
+            authorization: projected, credentials, serverHttpBaseUrl: origin, isCurrent,
+            savedSecretOperationContext: createInvocationSavedSecretOperationContextV1({ credentials, snapshot, serverHttpBaseUrl: origin, isCurrent }),
+            accountSettingsContext: { ...snapshot, whenRefreshed: null },
+            accountEncryptionCurrentness: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }),
+            resolveEncryption: async () => null, refreshAccountSettings: isCurrent,
+            subscribeEnvironmentAccess: () => () => undefined, retain: () => async () => undefined, dispose: async () => undefined,
+        });
+        const expectedContributorOccurrenceId = registry.readPluginOccurrenceId(parentId);
+        if (!expectedContributorOccurrenceId) throw new Error('Expected mounted Watch occurrence');
+        const watch = await runWithServerHttpBaseUrl(origin, () => executor.execute('action.invoke', {
+            action: { pluginId: parentId, localId: 'watch' }, expectedContributorOccurrenceId,
+            input: { source: 'selected-source' },
+        }, {
+            surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+            serverId: 'placement-home', serverIdentityId: 'placement-home',
+            actionRequestId: watchAuthorization.binding.requestId,
+            externalActionTarget: watchAuthorization.binding.target,
+            externalActionExecutionAuthorization: requesterAuthorization,
+            signExternalActionApprovalInput: () => { throw new Error('A safe Watch setup should settle without signing an approval'); },
+        }));
+        expect(watch).toEqual({ ok: true, result: { scope: { serverId: 'placement-home', accountId } } });
         // A received request with missing private custody must not borrow the
         // Machine owner's Account, even though the same local runtime is ready.
         const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'remote-root', binding: {

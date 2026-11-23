@@ -3344,7 +3344,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
         const definition = readResolvedActionContribution(runtimeRegistry.contributes, request.action)?.definition;
         const accountTarget = typeof definition?.execution === 'object' && definition.execution !== null
             && 'target' in definition.execution && definition.execution.target === 'account';
-        const requester = request.requesterAccount;
+        // Ordinary SDK calls carry admitted requester custody in their Action context.
+        const requester = request.requesterAccount ?? (accountTarget ? readRequesterAccountActionContext(
+            request.approvalContext?.externalActionExecutionAuthorization ?? request.approvalContext?.callerInputAuthorization,
+        )?.savedSecretOperationContext : undefined);
         // Only this runtime's own Account may borrow its credentials: local
         // ingress, or a current custodian Machine admission. A guest admission,
         // another Account's attributed work (e.g. its automation), or received
