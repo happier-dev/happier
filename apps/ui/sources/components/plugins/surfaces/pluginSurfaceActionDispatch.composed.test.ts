@@ -9005,15 +9005,8 @@ describe('plugin-surface action branch selection', () => {
             handler: clientHandler,
             accountPlacement: true,
             accountLifetime,
-            ...(proof === 'admitted-unavailable' ? { accountAvailability: {
-                when: { fact: 'session.exists' as const, operator: 'equals' as const, value: true },
-            } } : {}),
-            ...(proof === 'admitted-denied' ? { authorization: { scopedGrants: [{
-                id: 'selected-account', required: true, status: 'missing' as const, requiredScope: {},
-            }] } } : {}),
-            ...(proof === 'admitted-surface' ? { surfaces: ['voice' as const] } : {}),
         });
-        const action = activation.action;
+        let action = activation.action;
         const requestCurrentIntent = vi.fn(async () => ({
             status: 'rejected' as const,
             code: 'plugin_action_current_intent_rejected',
@@ -9031,13 +9024,16 @@ describe('plugin-surface action branch selection', () => {
                 ...(context ? { hostAction: { context, execute: createActionExecutor({}).execute } } : {}),
             });
             const assertOutcome = async (context?: ActionExecutorContext) => {
-                if (proof === 'admitted-unavailable' || proof === 'admitted-denied' || proof === 'admitted-surface') {
-                    await expect(dispatch(context)).resolves.toMatchObject({ ok: false });
-                    expect(requestCurrentIntent).not.toHaveBeenCalled();
-                    expect(handler).not.toHaveBeenCalled();
-                    return;
-                }
-                if (proof === 'admitted-agent') {
+                // The port has already bound this Action and input. A later
+                // policy publication takes effect at the next admission.
+                if (proof === 'admitted-unavailable') action = { ...action, accountAvailability: {
+                    when: { fact: 'session.exists', operator: 'equals', value: true },
+                } };
+                if (proof === 'admitted-denied') action = { ...action, authorization: { ...action.authorization!,
+                    scopedGrants: [{ id: 'selected-account', required: true, status: 'missing', requiredScope: {} }],
+                } };
+                if (proof === 'admitted-surface') action = { ...action, surfaces: ['voice'] };
+                if (proof.startsWith('admitted-')) {
                     await expect(dispatch(context)).resolves.toEqual({ ok: true, result: { committed: true } });
                     expect(requestCurrentIntent).not.toHaveBeenCalled();
                     expect(handler).toHaveBeenCalledOnce();
@@ -9050,6 +9046,7 @@ describe('plugin-surface action branch selection', () => {
                     ok: false,
                     code: 'denied',
                     reason: 'plugin_action_current_intent_rejected',
+                    actionHandlerInvocation: 'notStarted',
                 });
                 expect(requestCurrentIntent).toHaveBeenCalledTimes(1);
                 expect(handler).not.toHaveBeenCalled();
