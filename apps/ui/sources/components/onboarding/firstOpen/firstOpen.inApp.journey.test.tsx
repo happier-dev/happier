@@ -212,7 +212,7 @@ it.each([
     }
 });
 
-it('holds the scene over a phone Welcome until the Welcome planet has painted under it', async () => {
+it.each(['paint', 'Escape', 'hide'] as const)('releases the first-open paint hold on %s after the build settles', async (finish) => {
     const segments = ['(app)', 'index'];
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('CSS', { escape: (id: string) => id });
@@ -307,6 +307,23 @@ it('holds the scene over a phone Welcome until the Welcome planet has painted un
         expect(scene()).toBeTruthy();
         expect(handOffs()).toBe(handOffsBefore);
 
+        if (finish === 'Escape') {
+            const escape = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+            await act(async () => { document.dispatchEvent(escape); });
+            expect(escape.defaultPrevented).toBe(true);
+            expect(scene()).toBeNull();
+            return;
+        }
+        if (finish === 'hide') {
+            const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+            try {
+                await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+                expect(scene()).toBeNull();
+            } finally {
+                hidden.mockRestore();
+            }
+            return;
+        }
         await act(async () => { releaseWelcomeFonts?.(); });
         await vi.waitFor(async () => {
             await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });

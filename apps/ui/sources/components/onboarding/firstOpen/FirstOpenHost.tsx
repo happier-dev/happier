@@ -44,32 +44,32 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
     const playing = typeof phase === 'object';
     const wasPresenting = useRef(false);
     const presenting = playing || (replica !== null && !replicaClosed);
-    const settle = useCallback(() => setPhase('settled'), []);
+    const settle = useCallback(() => {
+        activePlay.current = false;
+        setPhase('settled');
+    }, []);
     // The scene holds its last frame until the Welcome's own planet has painted under it (the desktop swap's rule).
     const welcomePainted = useRef(false);
-    const handOffWhenPainted = useRef(false);
+    const buildSettled = useRef(false);
     const welcomePaint = useMemo(() => ({
         onPainted: () => {
             welcomePainted.current = true;
-            if (!handOffWhenPainted.current) return;
-            handOffWhenPainted.current = false;
-            settle();
+            if (activePlay.current && buildSettled.current) settle();
         },
         planet: scene ? { create: scene.createOpeningPlanet, durationS: scene.openingSceneSeconds } : undefined,
     }), [scene, settle]);
     const fadeToRest = useCallback(() => {
+        activePlay.current = false;
         opacity.setValue(0.65);
         setPhase('still');
     }, [opacity]);
     const skip = useCallback((options?: Readonly<{ focusDestination: boolean }>) => {
         if (!activePlay.current || !scene) return;
-        activePlay.current = false;
         fadeToRest();
         scene.skipFirstOpenDestination(options);
     }, [fadeToRest, scene]);
     const interrupt = useCallback(() => {
         if (!activePlay.current || !scene) return;
-        activePlay.current = false;
         settle();
         scene.skipFirstOpenDestination();
     }, [scene, settle]);
@@ -132,10 +132,9 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
             setPhase({ epoch });
             void scene.buildFirstOpenDestination(epoch, { interactive: true }).then(outcome => {
                 if (!activePlay.current) return;
-                activePlay.current = false;
                 if (outcome !== 'settled') fadeToRest();
                 else if (welcomePainted.current) settle();
-                else handOffWhenPainted.current = true;
+                else buildSettled.current = true;
             }, () => skip());
             return;
         }
