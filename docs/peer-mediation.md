@@ -141,7 +141,7 @@ Transport selection defaults to automatic. The 0.3 client-local Standard-only se
 or `HAPPIER_HOME_CARRIER_POLICY=standard_only` in the CLI/daemon process environment, prevents
 new Home and finite Machine Iroh acquisitions; descriptor-declared HTTPS remains usable, as do
 independently eligible current Standard Machine RPC routes. The mandatory `machine/1` prepared
-finite-transfer path remains Iroh-only on native hosts. Browser finite Machine transfers instead
+finite-transfer path remains Iroh-only on native desktop hosts. Browser finite Machine transfers instead
 use the current Home RPC baseline in this mode; they do not probe an older daemon or switch to
 `legacy_machine_rpc`. An Iroh-only Home or Machine with no Standard route
 is likewise unavailable. The setting does not change the Home server's published descriptor and
@@ -361,6 +361,10 @@ predicate when Home control requests use an independently reachable Standard rou
 Under IR-105 (2026-10-13), a browser with current declared finite-transfer support
 and the enabled transfer feature selects the Home's server-mediated encrypted
 RPC phases when Iroh is unusable (including absent endpoint or relay hints).
+In 0.3 development, iOS and Android clients select those existing Home RPC phases
+from their platform identity before any direct Machine carrier acquisition, including
+recording previews. Phones have no direct Machine carrier; native desktop clients
+retain their Iroh carrier selection.
 `machineCarrierHttpLease.ts#resolveMachineCarrierRoute` captures that decision
 before preparation for every finite Machine family. It first demands the target
 through Sync's Machine inventory owner, which opens a cold or pending row before

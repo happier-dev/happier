@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 import { IrohEndpointDescriptorV1Schema, type IrohEndpointDescriptorV1 } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
 import { readMachineIrohEndpointAuthorityV1, supportsMachineOperationProtocolCapabilityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
@@ -7,6 +9,7 @@ import type { BrowserIrohHostDecision } from '@/sync/runtime/browserIroh/hostEli
 
 export type MachineCarrierHostEligibility =
     | Readonly<{ kind: 'browser'; lifecycleAvailable?: boolean }>
+    | Readonly<{ kind: 'mobile' }>
     | Readonly<{ kind: 'native'; lifecycleAvailable: boolean }>;
 
 export type MachineCarrierPreselection =
@@ -21,11 +24,12 @@ export type MachineCarrierPreselection =
 /** Some byte families already promise the encrypted Home route on every host. */
 export type MachineCarrierRequirements = Readonly<{ homeRpcFallback?: 'required' }>;
 
-/** Browser identity survives an unavailable Iroh lifecycle so Home RPC remains eligible. */
+/** Mobile has no direct Machine carrier; browser identity survives an unavailable Iroh lifecycle. */
 export function resolveMachineCarrierHostEligibility(input: Readonly<{
     browserIroh: BrowserIrohHostDecision;
     nativeLifecycleAvailable: boolean;
 }>): MachineCarrierHostEligibility {
+    if (Platform.OS === 'ios' || Platform.OS === 'android') return { kind: 'mobile' };
     if (input.browserIroh.eligible) return { kind: 'browser', lifecycleAvailable: true };
     if (input.browserIroh.reason === 'shared_worker_unsupported') return { kind: 'browser', lifecycleAvailable: false };
     return { kind: 'native', lifecycleAvailable: input.nativeLifecycleAvailable };
@@ -106,6 +110,6 @@ export function resolveMachineCarrierPreselection(input: Readonly<{
         }
     }
 
-    return input.host.kind === 'browser' || input.homeRpcFallback === 'required'
+    return input.host.kind === 'mobile' || input.host.kind === 'browser' || input.homeRpcFallback === 'required'
         ? { kind: 'server_rpc' } : { kind: 'unavailable' };
 }

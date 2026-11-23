@@ -1,4 +1,6 @@
 import 'fake-indexeddb/auto';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { Platform } from 'react-native';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -288,6 +290,29 @@ describe('createSessionFilePreviewSource', () => {
         expect(revokeObjectURL).toHaveBeenCalledWith('blob:recording-preview-1');
     });
 
+    it.each(['ios', 'android'])('reads a recording preview through Home without a direct Machine attempt on %s', async platform => {
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: platform });
+        vi.stubGlobal('__TAURI_INTERNALS__', undefined);
+        const bytes = new Uint8Array(await readFile(join(process.cwd(), 'sources/dev/testkit/fixtures/media/recording-rgb-3s.mp4')));
+        harness = await createWorkspaceFileDownloadHarness({ name: 'recording.mp4', bytes });
+        const source = await createSessionFilePreviewSource({
+            scope: harness.scope, filePath: '.happier/media/recording.mp4',
+            mimeType: 'video/mp4', maxBytes: null,
+        });
+        expect(source).toMatchObject({ ok: true, source: {
+            kind: 'cache-file', mimeType: 'video/mp4', byteLength: bytes.byteLength,
+        } });
+        if (!source.ok || source.source.kind !== 'cache-file') throw new Error('Expected a native video preview source');
+        expect(harness.nativeTunnelStarts).toHaveLength(0);
+        expect(harness.requests.filter(request => new URL(request.url).pathname.startsWith('/machine-transfers/direct/'))).toHaveLength(0);
+        expect(harness.rpcRequests.filter(request => request.method === RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT)).toHaveLength(1);
+        expect(source.source.uri).toMatch(/^file:\/\/\/cache\//);
+        expect(nativeFiles.current!.files.get(source.source.uri)).toEqual([...bytes]);
+        expect(nativeFiles.current!.close).toHaveBeenCalledWith(source.source.uri);
+        await source.source.delete();
+        expect(nativeFiles.current!.files.size).toBe(0);
+    });
+
     it.each([false, true])('writes native previews through the shared cache sink with opt-in retained bytes (%s)', async (retainBytes) => {
         Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
         harness = await createWorkspaceFileDownloadHarness({ name: 'image.png', bytes: new Uint8Array([1, 2, 3]) });
@@ -370,7 +395,7 @@ describe('createSessionFilePreviewSource', () => {
         expect(result).toMatchObject({ ok: true, source: { kind: 'cache-file', mimeType: 'video/mp4', byteLength: 3 } });
         if (!result.ok || result.source.kind !== 'cache-file') throw new Error('Expected video cache source');
         expect(nativeFiles.current!.files.get(result.source.uri)).toEqual([1, 2, 3]);
-        expect(harness.requests.some(request => request.url.endsWith('/chunks/0'))).toBe(true);
+        expect(harness.rpcRequests.some(request => request.method === RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_CHUNK)).toBe(true);
         await result.source.delete();
         expect(nativeFiles.current!.files.size).toBe(0);
     });
