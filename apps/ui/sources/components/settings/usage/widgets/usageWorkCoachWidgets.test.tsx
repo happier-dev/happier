@@ -1376,10 +1376,10 @@ describe('Work and Coach widget bodies', () => {
     ] } satisfies UsageQueryResultSlice;
     const outcomes = await renderScreen(<UsageOutcomesWidget {...props} slice={unread} id="usage_outcomes" testID="outcomes" />);
     expect(outcomes.getTextContent()).toContain('2493');
-    expect(outcomes.findByType(OutcomeFunnel).props.steps.find(step => step.id === 'merged')?.value).toBeNull();
+    expect(outcomes.findByType(OutcomeFunnel).props.steps.find((step: React.ComponentProps<typeof OutcomeFunnel>['steps'][number]) => step.id === 'merged')?.value).toBeNull();
     const measured = { ...unread, workSummary: projectUsageWorkSummary(witnessedWork.outcomes, true, witnessedWork) };
     await outcomes.update(<UsageOutcomesWidget {...props} slice={measured} id="usage_outcomes" testID="outcomes" />);
-    expect(outcomes.findByType(OutcomeFunnel).props.steps.find(step => step.id === 'merged')?.value).toBe(state === 'merged' ? 1 : 0);
+    expect(outcomes.findByType(OutcomeFunnel).props.steps.find((step: React.ComponentProps<typeof OutcomeFunnel>['steps'][number]) => step.id === 'merged')?.value).toBe(state === 'merged' ? 1 : 0);
     const efficiency = await renderScreen(<UsageEfficiencyWidget {...props} slice={unread} id="usage_efficiency" testID="efficiency" />);
     const perMerge = () => efficiency.findAllByType(HappierDataMetric).find(metric => metric.props.testID === 'efficiency.perMergedPr')?.props;
     expect(perMerge()).toMatchObject({ value: '—', caption: t('usage.board.page.notMeasuredYet') });

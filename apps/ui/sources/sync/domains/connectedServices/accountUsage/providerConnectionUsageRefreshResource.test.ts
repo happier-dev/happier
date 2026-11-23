@@ -61,7 +61,7 @@ describe('Provider connection usage data resource', () => {
         });
         const now = Date.now();
         const spend = { meterId: 'spend', label: 'Spend', used: 1, limit: null,
-            unit: 'usd', utilizationPct: null, resetsAt: null, status: 'ok', confidence: 'exact' } as const;
+            unit: 'usd', utilizationPct: null, resetsAt: null, status: 'ok', confidence: 'exact', details: {} } as const;
         const observation = { ...snapshot, observedAtMs: now, fetchedAtMs: now, meters: [spend] };
         rpc.setResponse(method, { status: 'success', sources: [{ sourceId: 'credits', status: 'ok', snapshot: observation }] });
         const first = await resource.refresh();

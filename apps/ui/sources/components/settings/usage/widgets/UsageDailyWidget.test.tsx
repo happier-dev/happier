@@ -243,7 +243,7 @@ describe('Daily period chart', () => {
       bundledUsageModelPriceCatalog).results[0]!;
     const screen = await renderScreen(<UsageDailyWidget {...props} query={query} slice={slice} />);
     const chart = screen.findByType(StackedSeriesChart);
-    expect(chart.props.series.map(series => series.points[1]?.y)).toEqual([0, null]);
+    expect(chart.props.series.map((series: React.ComponentProps<typeof StackedSeriesChart>['series'][number]) => series.points[1]?.y)).toEqual([0, null]);
     const hatches = Array.from({ length: 4 }, (_, index) => Boolean(screen.findHostByTestId(`daily.chart-gap-${start + index * day}`)));
     expect(hatches).toEqual([false, true, false, true]);
     expect(screen.findHostByTestId('daily.chart-bar-3-0')).toBeTruthy();

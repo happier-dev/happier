@@ -410,7 +410,7 @@ it.each(['approve', 'reject', 'disabled', 'stale', 'machine-rpc-failed', 'lost-m
         expect(artifacts.list()).toEqual([]);
         expect(rpc).not.toHaveBeenCalled();
         expect(applied).toBe(false);
-        await act(async () => { answerConsent!(decision !== 'reject'); await request; });
+        await act(async () => { answerConsent!(true); await request; });
         await waitForHomeGovernance(() => expect(hook.getCurrent().pending).toBe(false));
         await request;
         if (decision === 'approve') {

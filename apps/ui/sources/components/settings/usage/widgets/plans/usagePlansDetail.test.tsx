@@ -471,7 +471,7 @@ it('reads the compact Plan fit value once before its account caption', async () 
   const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
   const props = bodyProps([read]);
   const slice = { ...props.slice, planInsights: {
-    recordedWeek: { status: 'available', recordedActiveDays: 1, recordedEvents: 1, coverage: 'complete' },
+    recordedWeek: { status: 'available', recordedActiveDays: 1, recordedEvents: 1, coverage: 'complete_recorded_history' },
     accounts: [{ source: read.source, weather: [], pricePerReset: [], modelHeadroom: [],
       value: { status: 'available', kind: 'api_equivalent', amountUsd: 55.3, currency: 'USD', period: {},
         coverage: 'complete', pricedContributionCount: 1, unpricedContributionCount: 0, unknownAccountContributionCount: 0,
@@ -2131,7 +2131,7 @@ it('promises later detail only for history gaps', async () => {
   const render = async (reason: string) => {
     const props = bodyProps([read]);
     const source = { ref: { accountId: 'work', service: { pluginId: 'p', localId: 'l' } } };
-    const slice = { ...props.slice, planInsights: { recordedWeek: { status: 'available', recordedActiveDays: 1, recordedEvents: 1, coverage: 'complete' },
+    const slice = { ...props.slice, planInsights: { recordedWeek: { status: 'available', recordedActiveDays: 1, recordedEvents: 1, coverage: 'complete_recorded_history' },
       accounts: [{ source, value: { status: 'insufficient_basis', reason: 'account_usage_unpriced' }, weather: [], modelHeadroom: [],
         pricePerReset: [{ meterId: 'weekly', label: 'Weekly', status: 'insufficient_basis', reason }] }] } } as unknown as typeof props.slice;
     return renderScreen(wrap(<UsagePlanFitWidget {...props} slice={slice} id="usage_plan_fit" testID="fit" />));

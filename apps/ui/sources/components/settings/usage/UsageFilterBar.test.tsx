@@ -246,7 +246,7 @@ describe('UsageFilterBar', () => {
       const chip = screen.findAllByType(SelectionListFilterChip)
         .find(node => node.props.filter.id === (width === 390 ? 'scope' : 'projects'))!;
       const popover = chip.findByType(Popover);
-      return popover.props.children({ maxHeight: 600 });
+      return popover.props.children({ maxHeight: 600, maxWidth: width, placement: 'bottom', requestClose: () => {} });
     };
     // Invoke the existing popover content in place so no portal or focus behavior is mocked.
     const picker = await renderScreen(<>{renderPicker()}</>);
