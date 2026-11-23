@@ -197,17 +197,21 @@ export function UsageScoreBody(props: UsageChartStyleBodyProps) {
   const calendar = useCalendar(props);
   const model = React.useMemo(() => calendar ? projectUsageScoreModel(calendar, props.presentation?.day) : null, [calendar, props.presentation?.day]);
   const agents = React.useMemo(() => (model?.rows ?? []).flatMap((row) => row.agentId === null ? [] : [host.agent(row.agentId)]), [model, host.agent]);
-  useWidgetFrameBodyCaption(model ? t('usage.board.charts.scoreSubtitle', { week: usageChartDateLabels(props.query).short(model.weekStart) }) : usagePeriodPhrase(props.query));
+  const dates = usageChartDateLabels(props.query);
+  const period = model && props.presentation?.day
+    ? (model.weekStart === model.endDate ? dates.short(model.weekStart) : `${dates.short(model.weekStart)} – ${dates.short(model.endDate)}`)
+    : usagePeriodPhrase(props.query);
+  useWidgetFrameBodyCaption(period);
   if (!model || (calendar && isMeasureUnrecorded(calendar.coverage, 'busy'))) return <UsageChartPending slice={props.slice} onRetry={props.model.refresh} testID={props.testID}
     title={calendar && isMeasureUnrecorded(calendar.coverage, 'busy') ? t('usage.board.charts.metricNotRecordedTitle', { metric: usageChartMetricName('busy') }) : t('usage.board.charts.needsDataTitle')}
     reason={calendar && isMeasureUnrecorded(calendar.coverage, 'busy') ? t('usage.board.charts.metricNotRecordedHint') : t('usage.board.charts.needsCalendarReason')} />;
-  const dates = usageChartDateLabels(props.query);
   const start = Date.parse(`${model.weekStart}T12:00:00Z`);
   const dayDate = (index: number) => new Date(start + index * 86_400_000).toISOString().slice(0, 10);
+  const weekdays = model.byWeekday ? usageChartWeekdays() : null;
   return <View style={{ gap: 12 }} testID={`${props.testID}.score`}>
     <UsageScore theme={host.theme} paint={host.paint} agents={agents} model={model} testID={`${props.testID}.scoreChart`}
-      label={t('usage.board.charts.scoreA11y', { week: dates.short(model.weekStart) })}
-      labels={{ day: (index) => dates.weekday(dayDate(index)), clock: usageChartClock,
+      label={`${t('usage.widgets.usage_score')} · ${period}`}
+      labels={{ day: (index) => weekdays?.[index] ?? dates.weekday(dayDate(index)), clock: usageChartClock,
         key: { light: t('usage.board.charts.scoreLight'), medium: t('usage.board.charts.scoreMedium'), strong: t('usage.board.charts.scoreStrong'),
           presence: t('usage.board.charts.scorePresence'), presenceNote: t('usage.board.charts.scorePresenceNote') },
         unknownAgent: usageAgentTitle(''), other: t('usage.modelMix.other'),

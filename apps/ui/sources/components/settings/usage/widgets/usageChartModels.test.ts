@@ -517,9 +517,28 @@ describe('Usage chart models', () => {
     const owner = slice.howYouWork!.agentCalendar!;
     expect(projectUsageDayModel(slice, owner.days[0]!)!.peak.atHour).toBe(11);
     const score = projectUsageScoreModel(owner, undefined)!;
-    expect(score.weekStart).toBe('2026-09-07');
-    expect(score.rows[0]!.hours[0]![11]).toBeNull();
-    expect(score.rows[0]!.hours[1]![11]).toBe(60);
+    expect(score.weekStart).toBe('2026-09-08');
+    expect(score.rows[0]!.hours[0]![10]).toBeNull();
+    expect(score.rows[0]!.hours[0]![11]).toBe(60);
+  });
+
+  it('keeps work from both calendar weeks in a rolling seven-day Score', () => {
+    const hour = 3_600_000;
+    const query = normalizeUsageQuery({
+      period: { startMs: START + 3 * DAY, endMs: START + 10 * DAY },
+      includeActivity: true,
+    });
+    const slice = resolveUsagePageAggregation({
+      queries: [query],
+      howYouWork: [{ query, detail: { status: 'partial', facts: [3, 9].map(day => ({
+        workId: `work-${day}`, evidenceId: `work-${day}`, agentId: 'codex',
+        machineId: null, kind: 'busy' as const, startMs: START + day * DAY,
+        endMs: START + day * DAY + hour,
+      })) } }],
+    }, bundledUsageModelPriceCatalog).results[0]!;
+    const score = projectUsageScoreModel(slice.howYouWork!.agentCalendar!, undefined)!;
+    expect(score.weekStart).toBe('2026-09-10');
+    expect(score.rows[0]?.hours.map(day => day[0])).toEqual([60, null, null, null, null, null, 60]);
   });
 
   it('keeps witnessed work with unknown Agent attribution instead of inventing an identity or dropping the lane', () => {

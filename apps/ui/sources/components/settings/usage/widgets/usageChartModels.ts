@@ -232,30 +232,47 @@ export function projectUsageDayModel(slice: UsageQueryResultSlice, bucket: Calen
   };
 }
 
-/** The week shown: the one containing `day`, else the period's busiest week by witnessed busy time. */
-export function projectUsageScoreModel(calendar: UsageAgentCalendar, day: string | undefined): UsageScoreModel | null {
-  const selectedDayMs = day ? calendar.days.find(bucket => bucket.date === day)?.startMs : undefined;
-  const week = day ? calendar.weeks.find((bucket) => selectedDayMs !== undefined && bucket.startMs <= selectedDayMs && bucket.endMs > selectedDayMs)
-    : calendar.weeks.reduce<UsageAgentCalendar['weeks'][number] | null>((best, bucket) => (bucket.totals.busyMs ?? 0) > (best?.totals.busyMs ?? 0) ? bucket : best, null);
-  if (!week) return null;
-  const weekStartMs = resolveUsageBucketBounds('week', week.startMs, calendar.timeZoneOffsetMinutes).bucketStartMs;
+/** A short period keeps its dates. Longer periods group all supplied time by weekday and hour. */
+export function projectUsageScoreModel(calendar: UsageAgentCalendar, day: string | undefined): (UsageScoreModel & {
+  dayCount: number; byWeekday: boolean; endDate: string;
+}) | null {
+  const offset = calendar.timeZoneOffsetMinutes;
+  const selected = day === undefined ? null : calendar.days.find(bucket => bucket.date === day);
+  if (selected === undefined) return null;
+  const selectedWeek = selected ? resolveUsageBucketBounds('week', selected.startMs, offset) : null;
+  const startMs = Math.max(calendar.period.startMs, selectedWeek?.bucketStartMs ?? calendar.period.startMs);
+  const endMs = Math.min(calendar.period.endMs, selectedWeek?.bucketEndMs ?? calendar.period.endMs);
+  if (endMs <= startMs) return null;
+  const firstDayMs = resolveUsageBucketBounds('day', startMs, offset).bucketStartMs;
+  const dateCount = Math.ceil((endMs - firstDayMs) / DAY_MS);
+  const byWeekday = dateCount > 7;
+  const dayCount = byWeekday ? 7 : dateCount;
   const rows = new Map<string | null, (number | null)[][]>();
-  for (const bucket of calendar.hours) {
-    if (bucket.hour === null || bucket.startMs < week.startMs || bucket.startMs >= week.endMs) continue;
-    const dayIndex = Math.floor((bucket.startMs - weekStartMs) / DAY_MS);
-    for (const entry of bucket.agents) {
+  const put = (dayIndex: number, hour: number, agents: UsageAgentCalendar['hours'][number]['agents']) => {
+    for (const entry of agents) {
       if (!entry.metrics.busyMs) continue;
-      const hours = rows.get(entry.agentId) ?? Array.from({ length: 7 }, (_, dayIndex) => Array.from({ length: 24 }, (_, hour) => {
-        const instant = weekStartMs + dayIndex * DAY_MS + hour * HOUR_MS;
-        return calendar.coverage.busy === 'complete_for_supplied_facts' && instant >= calendar.period.startMs && instant + HOUR_MS <= calendar.period.endMs ? 0 : null;
+      const hours = rows.get(entry.agentId) ?? Array.from({ length: dayCount }, (_, index) => Array.from({ length: 24 }, (_, clockHour) => {
+        const instant = firstDayMs + index * DAY_MS + clockHour * HOUR_MS;
+        return calendar.coverage.busy === 'complete_for_supplied_facts'
+          && (byWeekday || instant >= startMs && instant + HOUR_MS <= endMs) ? 0 : null;
       }));
-      hours[dayIndex]![bucket.hour] = entry.metrics.busyMs / 60_000;
+      hours[dayIndex]![hour] = entry.metrics.busyMs / 60_000;
       rows.set(entry.agentId, hours);
+    }
+  };
+  if (byWeekday) {
+    for (const bucket of calendar.weekdayHourBuckets) put((bucket.weekday + 6) % 7, bucket.hour, bucket.agents);
+  } else {
+    for (const bucket of calendar.hours) {
+      if (bucket.hour === null || bucket.startMs < startMs || bucket.startMs >= endMs) continue;
+      put(Math.floor((bucket.startMs - firstDayMs) / DAY_MS), bucket.hour, bucket.agents);
     }
   }
   if (rows.size === 0) return null;
   const total = (hours: (number | null)[][]) => hours.flat().reduce<number>((sum, value) => sum + (value ?? 0), 0);
-  return { weekStart: resolveUsageCalendarInstant(weekStartMs, calendar.timeZoneOffsetMinutes).date, encoding: 'minutes',
+  const firstColumnMs = byWeekday ? resolveUsageBucketBounds('week', firstDayMs, offset).bucketStartMs : firstDayMs;
+  return { weekStart: resolveUsageCalendarInstant(firstColumnMs, offset).date, dayCount, byWeekday,
+    endDate: resolveUsageCalendarInstant(endMs - 1, offset).date, encoding: 'minutes',
     rows: [...rows.entries()].sort((a, b) => total(b[1]) - total(a[1])).map(([agentId, hours]) => ({ agentId, hours })) };
 }
 
