@@ -5,7 +5,7 @@ import { t } from '@/text';
  */
 
 import { apiSocket } from '../api/session/apiSocket';
-import { buildSessionStopHoldV1, writeSessionExplicitStopV1ToMetadata, type SessionStopIntent } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
+import { buildSessionStopHoldV1, resolveSessionAutoResumeAdmissionV1, writeSessionExplicitStopV1ToMetadata, type SessionStopIntent } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { Platform } from 'react-native';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { publishDisplayTitleToMetadata } from '@/sync/state/displayTitlePublish';
@@ -25,6 +25,7 @@ import { nowServerMs } from '../runtime/time';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { emitSessionMetadataUpdateWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/emitSessionMetadataUpdateWithServerScope';
+import { selectHomeQualifiedSession } from '@/sync/domains/session/selectHomeQualifiedSession';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { sessionRpcWithPreferredSessionScope } from '@/sync/runtime/orchestration/serverScopedRpc/sessionRpcWithPreferredSessionScope';
 import {
@@ -1282,6 +1283,20 @@ export async function sessionRespondToUserAction(
     options?: Readonly<{ serverId?: string; signal?: AbortSignal; scope?: ServerAccountScope;
         networkMode?: 'background-task'; onIssued?: () => void }>,
 ): Promise<unknown> {
+    const serverId = options?.serverId ?? (options?.scope ? undefined : resolvePreferredServerIdForSessionId(sessionId));
+    if (!options?.scope) {
+        const activeServerId = getActiveServerSnapshot().serverId;
+        const session = selectHomeQualifiedSession(storage.getState(), sessionId, serverId ?? activeServerId, activeServerId);
+        const admission = resolveSessionAutoResumeAdmissionV1({
+            metadata: session?.metadata,
+            archivedAt: session?.archivedAt,
+            authorityAvailable: session !== null,
+            machineAvailable: true,
+        });
+        if (admission === 'archived') {
+            throw createRpcCallError({ error: 'session_archived', errorCode: 'session_archived' });
+        }
+    }
     const request = {
         sessionId,
         method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
@@ -1294,7 +1309,7 @@ export async function sessionRespondToUserAction(
             ...request, scope: options.scope, networkMode: options.networkMode,
         })
         : await sessionRpcWithPreferredSessionScope<unknown, SessionUserActionAnswerRpcParamsV1>({
-            ...request, ...(options?.serverId !== undefined ? { serverId: options.serverId } : {}),
+            ...request, ...(serverId !== undefined ? { serverId } : {}),
         });
     assertSessionInteractionResponseApplied(result);
     return result;

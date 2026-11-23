@@ -719,6 +719,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
     const sourceInteraction = source.useInteraction();
     const actions = source.actions;
     const agentState = source.useAgentState();
+    const archivedAt = source.useArchivedAt?.();
     const ownerMetadata = source.useMetadata();
     const currentFacts = React.useRef({ agentState, ownerMetadata });
     currentFacts.current = { agentState, ownerMetadata };
@@ -803,8 +804,11 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
     const hasActiveAskUserQuestionRequest = executionRun !== undefined
         ? executionRun.respond !== undefined && toolCallId !== null && !executionRun.pendingRequestIds.has(toolCallId)
         : isPendingAskUserQuestionRequest(activeMatchingRequest);
+    const withdrawnByArchive = executionRun === undefined && archivedAt != null && isRunning
+        && hasActiveAskUserQuestionRequest;
     const canInteract =
         isRunning &&
+        !withdrawnByArchive &&
         !submissionOutcome &&
         !isSubmitting &&
         !answerUnconfirmed &&
@@ -1120,13 +1124,16 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
     }, [sessionId, toolCallId, actions, executionRun, canInteract, source, answerRequestKey]);
 
     // The asker withdrew it: the reason replaces the form; nothing is left to answer.
-    if (!submissionOutcome && tool.permission?.status === 'canceled') {
+    if (!submissionOutcome && (tool.permission?.status === 'canceled' || withdrawnByArchive)) {
+        const reason = tool.permission?.status === 'canceled'
+            ? tool.permission.reason
+            : t('workflows.events.sessionArchived');
         return (
             <ToolSectionView>
                 <View testID="ask-user-question.withdrawn" style={styles.submittedContainer}>
                     <View style={styles.stateHeader}>
                         <Text style={styles.stateTitle}>{t('tools.askUserQuestion.withdrawn')}</Text>
-                        {tool.permission.reason ? <Text style={styles.stateByline} numberOfLines={1}>{` · ${tool.permission.reason}`}</Text> : null}
+                        {reason ? <Text style={styles.stateByline} numberOfLines={1}>{` · ${reason}`}</Text> : null}
                     </View>
                     {questions.map((q, qIndex) => (
                         <ToolFindText key={`${q.answerKey}:${qIndex}`} messageId={messageId} blockId={`tool-question-${qIndex}-prompt`} text={q.question} style={styles.withdrawnQuestion} />

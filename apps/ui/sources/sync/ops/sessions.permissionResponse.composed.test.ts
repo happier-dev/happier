@@ -137,6 +137,18 @@ describe('permission response admission through real Home and Account owners', (
         expect(storage.getState().sessions[session.id]?.thinking).toBe(false);
     });
 
+    it('refuses an archived Session question before issuing the answer RPC', async () => {
+        const { network, storage, home, session } = await arrangePermission();
+        storage.getState().applySessions([createSessionFixture({ ...session, active: false, archivedAt: 10,
+            agentState: { requests: { request: { tool: 'AskUserQuestion', arguments: {} } } },
+        })]);
+        network.setRpcResponder(async () => undefined);
+        const { sessionAllowWithAnswers } = await import('./sessions');
+        await expect(sessionAllowWithAnswers(session.id, 'request', { question: ['answer'] }, { serverId: home.id }))
+            .rejects.toMatchObject({ rpcErrorCode: 'session_archived' });
+        expect(network.requests.filter(request => request.method === RPC_METHODS.SESSION_USER_ACTION_ANSWER)).toHaveLength(0);
+    });
+
     it('recovers an accepted deny after its pending request was removed', async () => {
         const { network, storage, home, session, sessionRespondToPermission } = await arrangePermission();
         const entered = createDeferred<void>();

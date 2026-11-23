@@ -197,6 +197,39 @@ describe('AskUserQuestionView legacy request-kind fallback', () => {
         expect(answerUserAction).not.toHaveBeenCalled();
     });
 
+    it.each(['open', 'archived', 'withdrawn'] as const)('renders the question in its %s state', async (state) => {
+        const tool = makeToolCall({
+            name: 'AskUserQuestion', state: 'running',
+            input: { questions: [{ id: 'answer', question: 'Describe it', selection: 'text', required: true }] },
+            permission: state === 'withdrawn'
+                ? { id: 'question-1', status: 'canceled', reason: 'Session archived' }
+                : { id: 'question-1', status: 'pending' },
+        });
+        const source = {
+            ...createTestSessionTranscriptSource({
+                interaction: { canSendMessages: true, canApprovePermissions: true },
+                agentState: { requests: state === 'withdrawn' ? {} : {
+                    'question-1': { tool: 'AskUserQuestion', arguments: {}, createdAt: 1 },
+                } },
+                actions: { answerUserAction: async () => {}, respondToPermission: async () => {}, abort: async () => {}, submitMessage: async () => {} },
+            }),
+            useArchivedAt: () => state === 'archived' ? 10 : null,
+        };
+        const screen = await renderWithSessionTranscriptSource(<AppPaneProvider>
+            <AskUserQuestionView {...makeToolViewProps(tool, { sessionId: 's1' })} />
+        </AppPaneProvider>, source);
+        if (state === 'open') {
+            expect(screen.findHostByTestId('ask-user-question.freeform:0')).toBeTruthy();
+            return;
+        }
+        const withdrawn = screen.findHostByTestId('ask-user-question.withdrawn');
+        expect(withdrawn).toBeTruthy();
+        expect(withdrawn?.findAll(node => node.children.includes(' · Session archived')).length).toBeGreaterThan(0);
+        expect(screen.findHostByTestId('ask-user-question.freeform:0')).toBeNull();
+        expect(screen.findHostByTestId('ask-user-question.submit')).toBeNull();
+        expect(screen.findHostByTestId('ask-user-question.dismiss')).toBeNull();
+    });
+
     it('allows submitting when the matching legacy request omits kind', async () => {
         sessionAllowWithAnswers.mockReset();
         sessionAllowWithAnswers.mockResolvedValueOnce(undefined);

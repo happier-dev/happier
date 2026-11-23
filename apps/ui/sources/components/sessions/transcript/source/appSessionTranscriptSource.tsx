@@ -230,6 +230,7 @@ function createAppSessionTranscriptReads(sessionId: string, serverId: string | n
         },
         useMetadata: () => useSessionField((session) => session ? readSessionOwnerMetadataView(session) : null),
         useAgentState: () => useSessionField((session) => session?.agentState ?? null),
+        useArchivedAt: () => useSessionField((session) => session?.archivedAt ?? null),
         useSessionTurns: () => useSessionField((session) => session?.sessionTurns?.turns ?? null),
         useWorkspacePath: () => useSessionWorkspacePath(sessionId, serverId),
         useForkSupportSource: () => useSessionForkSupportSource(sessionId, serverId),
