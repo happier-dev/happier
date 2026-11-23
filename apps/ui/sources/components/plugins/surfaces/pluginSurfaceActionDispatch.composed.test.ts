@@ -6408,7 +6408,7 @@ describe('native image references delivered by Actions', () => {
             const actionRequest = executeActionRequest({ action, input: { sessionId: 'session-1', includeRaw: true } });
             try {
                 expect(await api.handleRequest(readRequest)).toEqual(image);
-                expect(await api.handleRequest(actionRequest)).toMatchObject({ code: 'unavailable' });
+                expect(await api.handleRequest(actionRequest)).toMatchObject({ code: 'media_unavailable', diagnostics: ['media_unavailable'] });
                 expect(await api.handleRequest(readRequest)).toEqual(image);
                 succeeds = true;
                 expect(await api.handleRequest(actionRequest)).toEqual(result);
@@ -6696,7 +6696,7 @@ describe('plugin-surface action branch selection', () => {
             const result = await api.handleRequest(executeActionRequest({ action: { pluginId: activation.action.pluginId, localId: activation.action.id },
                 input: { sessionId: 'parent-session' }, sessionAddress: { serverId: accountLifetime.scope.serverId, sessionId: 'parent-session' } }));
             if (childKind === 'unrelated') {
-                expect(result).toMatchObject({ code: 'unavailable', diagnostics: ['session_address_unsupported'] });
+                expect(result).toMatchObject({ code: 'session_address_unsupported', diagnostics: ['session_address_unsupported'] });
                 expect(sent).toEqual([]);
             } else {
                 expect(result).toMatchObject(childKind === 'host' ? { status: 'accepted', localId: 'child-input' } : {
@@ -8842,6 +8842,7 @@ describe('plugin-surface action branch selection', () => {
                 ok: false,
                 code: 'unavailable',
                 reason: 'plugin_action_surface_unavailable',
+                actionHandlerInvocation: 'notStarted',
             });
             expect(handler).not.toHaveBeenCalled();
         } finally {
@@ -8931,6 +8932,8 @@ describe('plugin-surface action branch selection', () => {
                 ok: false,
                 code: 'stale_surface',
                 reason: 'plugin_action_generation_retired',
+                message: 'Plugin action occurrenceId retired before dispatch',
+                actionHandlerInvocation: 'notStarted',
             });
             expect(handler).not.toHaveBeenCalled();
         } finally {
@@ -9004,11 +9007,9 @@ describe('plugin-surface action branch selection', () => {
             if (readOnly) {
                 await expect(pending).resolves.toEqual({
                     ok: false,
-                    code: 'timeout',
-                    reason: 'plugin_ui_action_outcome_unknown',
-                    layer: 'transport',
-                    phase: 'settlement',
-                    retryable: true,
+                    code: 'unavailable',
+                    reason: 'plugin_action_aborted',
+                    message: 'Plugin action invocation was aborted',
                 });
                 finishHandler({ committed: true });
             } else {
@@ -9666,7 +9667,7 @@ describe('plugin-surface action branch selection', () => {
             },
         })).resolves.toEqual({
             ok: false,
-            code: 'unavailable',
+            code: 'plugin_action_unavailable',
             reason: 'plugin_action_unavailable',
         });
     });
@@ -9966,7 +9967,7 @@ describe('plugin-surface action branch selection', () => {
             },
         })).resolves.toEqual({
             ok: false,
-            code: 'unavailable',
+            code: 'plugin_action_unavailable',
             reason: 'plugin_action_unavailable',
         });
     });
@@ -11332,7 +11333,7 @@ describe('composed public SDK client to canonical plugin-surface dispatcher', ()
             },
         })).resolves.toEqual({
             ok: false,
-            code: 'unavailable',
+            code: 'channels_connection_required',
             reason: 'channels_connection_required',
             retryable: false,
             remediation: { kind: 'openSettings', path: '/settings/channels' },
