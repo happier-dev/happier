@@ -182,7 +182,7 @@ describe('createClaudePermissionEngine', () => {
         });
     });
 
-    it('maps host denial to Claude interrupting permission denial', async () => {
+    it('maps host denial to a refusal the model can answer', async () => {
         const { ctx } = createContextFixture('denied');
         const engine = createClaudePermissionEngine(ctx);
 
@@ -191,7 +191,6 @@ describe('createClaudePermissionEngine', () => {
         })).resolves.toEqual({
             behavior: 'deny',
             message: 'Denied by policy',
-            interrupt: true,
         });
     });
 

@@ -4316,6 +4316,12 @@ inputs without producing a reusable remote grant. Later interactive approvals
 remain source-bound; causal, workspace-role and Happier Action ceilings still
 apply. A listed builtin writer does not bypass a read-only ceiling.
 
+In 0.3 development source, Claude's SDK permission adapter returns a tool denial
+with a message for mode and policy refusals and for the approval card's Deny
+choice. Claude can use that result to answer in the same turn. The card's Stop
+choice requests an interrupt. This mapping applies to Claude's direct and
+gateway-backed SDK Sessions.
+
 Codex's [permission mapper](../packages/plugins/codex/src/agent/runtime/terminal/permissionPolicy.ts)
 resolves the admitted intent before the app-server
 [serializer](../packages/plugins/codex/src/agent/runtime/appServer/permissionProfile.ts)

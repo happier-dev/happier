@@ -96,7 +96,6 @@ describe('createClaudeNativePermissionEngine', () => {
     }, { signal, toolUseId: 'toolu-approval' })).resolves.toEqual({
       behavior: 'deny',
       message: 'Permission denied',
-      interrupt: true,
     });
     expect(requestApproval).toHaveBeenCalledWith({
       kind: 'approval',

@@ -104,7 +104,11 @@ export function resolveClaudePermissionResult(
         return { behavior: 'allow', updatedInput: resolveAllowedToolInput(toolName, normalizeToolInput(input), result),
             ...(updatedPermissions ? { updatedPermissions } : {}) };
     }
-    return { behavior: 'deny', message: result.nativeChoice?.feedback || result.rationale || 'Permission denied', interrupt: true };
+    return {
+        behavior: 'deny',
+        message: result.nativeChoice?.feedback || result.rationale || 'Permission denied',
+        ...(result.decision === 'abort' ? { interrupt: true } : {}),
+    };
 }
 
 /** Native acceptance completes the saved Plan intent without guessing its next permission policy. */

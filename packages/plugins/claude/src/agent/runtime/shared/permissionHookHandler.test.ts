@@ -76,7 +76,7 @@ describe('Claude permission hook delivery', () => {
     // The host boundary can reject an otherwise well-formed Claude native tool.
     f.before.mockResolvedValueOnce({ status: 'rejected', code: 'policy_denied', message: 'Denied by host' });
     await expect(f.handler(question)).resolves.toMatchObject({ hookSpecificOutput: {
-      decision: { behavior: 'deny', message: 'Denied by host', interrupt: true },
+      decision: { behavior: 'deny', message: 'Denied by host' },
     } });
     expect(f.nativePrompts).toEqual([]);
     expect(f.requestDecision).not.toHaveBeenCalled();
@@ -185,7 +185,6 @@ describe('createClaudePermissionHookHandler Agent tool interception', () => {
     expect(response.hookSpecificOutput?.decision).toEqual({
       behavior: 'deny',
       message: 'Denied by plugin policy',
-      interrupt: true,
     });
   });
 });

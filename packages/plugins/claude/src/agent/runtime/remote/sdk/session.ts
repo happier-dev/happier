@@ -1784,7 +1784,7 @@ export function createClaudeAgentSdkTurnOperations(
             return deniedToolInterception('Tool interception failed.');
         }
         if (interception.status === 'rejected') {
-            return deniedToolInterception(interception.message ?? 'Tool execution was rejected.');
+            return { behavior: 'deny', message: interception.message ?? 'Tool execution was rejected.' };
         }
         if (interception.status === 'failed') {
             return deniedToolInterception('Tool interception failed.');

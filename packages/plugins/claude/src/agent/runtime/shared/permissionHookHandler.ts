@@ -140,7 +140,7 @@ export function createClaudePermissionHookHandler(
     if (interception.status === 'rejected') {
       return buildPermissionResponse(
         data,
-        deniedToolInterception(interception.message ?? 'Tool execution was rejected.'),
+        { behavior: 'deny', message: interception.message ?? 'Tool execution was rejected.' },
       );
     }
     if (interception.status === 'failed') {

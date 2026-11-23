@@ -1906,7 +1906,7 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
         request: { subtype: 'can_use_tool', tool_name: 'mcp__first__team__mutate', input: {} } });
       await vi.waitFor(() => expect(exec.written).toContainEqual({ type: 'control_response',
         response: { subtype: 'success', request_id: 'run-mcp', response: {
-          behavior: 'deny', message: 'Permission denied', interrupt: true,
+          behavior: 'deny', message: 'Permission denied',
         } } }));
       expect(requestApproval).toHaveBeenCalledWith(expect.objectContaining({
         subject: { kind: 'tool', name: 'mcp__first__team__mutate', input: {}, toolCallId: 'run-mcp' },
