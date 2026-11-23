@@ -1,4 +1,4 @@
-import { ingestPluginManifestV2, resolvePluginManifestSetReferencesV2, type PluginUnavailableSourceDiagnostic } from '@happier-dev/protocol/plugins/manifest/ingest';
+import { admitDecodedPluginManifestV2, resolvePluginManifestSetReferencesV2, type PluginUnavailableSourceDiagnostic } from '@happier-dev/protocol/plugins/manifest/ingest';
 import { normalizeParsedPluginManifestV2 } from '@/plugins/manifest/normalize';
 import { projectPluginManifestCompatibilityDiagnostic } from '@/plugins/manifest/diagnostics';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
@@ -58,7 +58,10 @@ export function admitPluginContributionGraph(params: Readonly<{
     const referenceManifests = remaining.map(plugin => plugin.manifest);
     remaining = remaining.flatMap(plugin => {
       if (!failedIds.has(plugin.pluginId)) return [plugin];
-      const ingestion = ingestPluginManifestV2(plugin.manifest, { mode: 'load', referenceManifests, unavailablePlugins: [...unavailablePlugins.values()] });
+      // The loader already admitted the declaration. Set-level withdrawal needs
+      // the manifest semantics again, while JSON decoding belongs to ingress.
+      const ingestion = admitDecodedPluginManifestV2(plugin.manifest, { mode: 'load', referenceManifests,
+        unavailablePlugins: [...unavailablePlugins.values()] });
       const diagnostics = ingestion.ok
         ? (ingestion.diagnostics ?? []).map(projectPluginManifestCompatibilityDiagnostic)
         : ingestion.diagnostics.map(diagnostic => ({

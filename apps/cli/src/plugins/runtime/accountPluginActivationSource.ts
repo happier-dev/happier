@@ -19,10 +19,7 @@ import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { StoredCredentials } from '@/persistence';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
-import { normalizeParsedPluginManifestV2 } from '@/plugins/manifest/normalize';
 import { GENERATED_PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH } from '@/plugins/install/ui/generatedArtifacts';
-import { createMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { PluginStorePaths } from '@/plugins/store/paths';
 import type { PluginActivationSource } from './activationSources';
@@ -35,6 +32,7 @@ import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/regi
 import { resolveBundledPluginEnablement, withAccountPluginProjectScopes } from '@/plugins/projection/registry/builtIn/enablement';
 import { resolveUnavailableAgentPluginsByBackendId } from '@/plugins/projection/registry/builtIn/snapshot';
 import { PluginDiagnosticError } from './moduleFailure';
+import { projectAccountContributionRegistry } from './accountContributionProjection';
 
 type AccountBundledSelection = Parameters<typeof resolvePluginAccountExecutionSelectionV1>[0]['bundled'];
 type AccountReadBinding = Readonly<{ credentials: StoredCredentials; serverUrl: string; signal?: AbortSignal }>;
@@ -242,6 +240,7 @@ export async function resolveAccountPluginActivationSources(input: AccountPlugin
     const bundledDeclarations = (input.contributes.pluginDeclarations ?? []).filter(plugin => plugin.sourceSpec.kind === 'bundled');
     const bundledPluginIds = bundledDeclarations.map(plugin => plugin.pluginId).sort();
     const reads = await readCurrentAccountPluginIntentCensus({ ...input, pluginIds: bundledPluginIds });
+    const accountScopeKey = runWithServerHttpBaseUrl(input.serverUrl, () => resolveAccountSettingsScopeKey(input.credentials));
     const enablement = resolveBundledPluginEnablement({ pluginIds: [...reads.keys()],
         accountEnabledById: new Map([...reads].map(([pluginId, read]) => [pluginId, read.intent?.enabled ?? true])),
         machineEnabledById: input.machineEnabledById,
@@ -282,8 +281,7 @@ export async function resolveAccountPluginActivationSources(input: AccountPlugin
                 failureCause: projectActionFailureCauseV1(error, 'plugin.account_execution.revalidate') });
         }
     };
-    const external: LoadedPlugin[] = [];
-    const bundled: LoadedPlugin[] = [];
+    const declarations: { declaration: LoadedPlugin; custodyId: string }[] = [];
     for (const [pluginId, read] of reads) {
         const hostDeclaration = bundledDeclarations.find(plugin => plugin.pluginId === pluginId);
         const hostAccountTarget = hostDeclaration && derivePluginAccountExecutionArtifactSlots(
@@ -321,7 +319,7 @@ export async function resolveAccountPluginActivationSources(input: AccountPlugin
         const selection = accountSelection;
         selected.set(pluginId, { selection, read, ...(bundledSelection ? { bundled: bundledSelection } : {}) });
         if (selection.kind !== 'available') continue;
-        const manifest = normalizeParsedPluginManifestV2(selection.manifest);
+        const manifest = selection.manifest;
         const root = selection.release ? join(input.paths.cacheDir, 'account-artifacts', selection.release.archiveDigestSha256.slice(7), pluginId)
             : hostSource?.sourceAuthority?.kind === 'bundled_first_party' ? hostSource.sourceAuthority.resolvedRoot : null;
         if (!root) continue;
@@ -335,7 +333,7 @@ export async function resolveAccountPluginActivationSources(input: AccountPlugin
             sourceSpec: { kind: 'archive', locator: `account-release:${pluginId}@${manifest.version}`, resolvedPath: root,
                 resolvedVersion: manifest.version, trustPolicy: 'prompt', installPolicy: 'copy' },
             generatedUiArtifactsManifest: { version: 2, entries: [...graphs.values()] } } : { ...hostDeclaration!, manifest };
-        (selection.release ? external : bundled).push(declaration);
+        declarations.push({ declaration, custodyId: selection.custodyId });
         const sourceAuthority = bindPluginRuntimeSourceAuthority({ custody: selection.sourceCustody, resolvedRoot: root });
         sourcesByPluginId.set(pluginId, { kind: 'bundled', moduleId: selection.custodyId, sourceAuthority,
             load: async () => { throw new Error('Account execution requires its declared artifact'); },
@@ -352,7 +350,6 @@ export async function resolveAccountPluginActivationSources(input: AccountPlugin
                 if (release && (!slot || !link)) throw accountArtifactUnavailable();
                 const artifactRoot = resolve(root, GENERATED_PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH);
                 const entryPath = resolve(release ? root : artifactRoot, graph.entry);
-                const accountScopeKey = runWithServerHttpBaseUrl(input.serverUrl, () => resolveAccountSettingsScopeKey(input.credentials));
                 const cacheKey = JSON.stringify([accountScopeKey, selection.custodyId]);
                 // This call's census decided use above. The custody identity pins the
                 // content, so a module already held in process needs no bytes again.
@@ -395,9 +392,7 @@ export async function resolveAccountPluginActivationSources(input: AccountPlugin
                 return { module, normalizedModulePath: entryPath, loadMode: 'immutable-js' };
             } });
     }
-    const contributes = createMergedContributionRegistry(projectLoadedPluginContributes({ provenance: 'external',
-        loadResult: { loadedPlugins: external, diagnosticsByPluginId: {} } }), projectLoadedPluginContributes({ provenance: 'first_party',
-        loadResult: { loadedPlugins: bundled, diagnosticsByPluginId: {} } }));
+    const contributes = projectAccountContributionRegistry({ host: input.contributes, accountScopeKey, selected: declarations });
     const activationTargets = collectActivationTargets(contributes, 'account');
     // Scope is contextual identity, not placement. Only explicitly portable
     // producers belong to this Account-selected execution projection.

@@ -1,5 +1,5 @@
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
-import { loadInstalledPlugins } from '../../discovery/load/installed';
+import { loadInstalledPlugins, type LoadedPlugin } from '../../discovery/load/installed';
 import type { PluginCompatibilityDiagnostic } from '../../validation/diagnostics/types';
 import type { PluginContributionRegistry } from './normalize/registry';
 import { loadCurrentBundledPluginLocatorResult } from './builtIn/locators';
@@ -246,12 +246,14 @@ function appendDiagnostic(
 export function projectLoadedPluginRegistry(
     params: Omit<ResolvePluginContributesParams, 'happyHomeDir'> & Readonly<{
         loadResult: Awaited<ReturnType<typeof loadInstalledPlugins>>;
-        provenance: ResolvedContributionProvenance;
+        provenance: ResolvedContributionProvenance | ((plugin: Pick<LoadedPlugin, 'sourceSpec'>) => ResolvedContributionProvenance);
         pluginRegistry: PluginContributionRegistry;
         admittedGraph?: AdmittedPluginContributionGraph;
     }>,
 ): ResolvedContributionInputs {
     const pluginRegistry = params.pluginRegistry;
+    const provenance = params.provenance;
+    const readProvenance = typeof provenance === 'function' ? provenance : () => provenance;
     const loadResult = { ...params.loadResult, loadedPlugins: pluginRegistry.admittedGraph.loadedPlugins };
     const diagnosticsByPluginId: Record<string, PluginCompatibilityDiagnostic[]> = {};
     const knownAgentIds = new Set(params.existingAgentIds ?? []);
@@ -320,7 +322,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.uiViewsV2) {
       uiViewV2Candidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             pluginVersion: contribution.pluginVersion,
@@ -331,7 +333,7 @@ export function projectLoadedPluginRegistry(
     }
     for (const contribution of pluginRegistry.openableContentViewers) {
         openableContentViewerCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             pluginVersion: contribution.pluginVersion,
@@ -342,7 +344,7 @@ export function projectLoadedPluginRegistry(
     }
     for (const contribution of pluginRegistry.uiSettingsGroupsV2) {
         uiSettingsGroupV2Candidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             pluginVersion: contribution.pluginVersion,
@@ -353,7 +355,7 @@ export function projectLoadedPluginRegistry(
     }
     for (const contribution of pluginRegistry.uiSettingsPagesV2) {
         uiSettingsPageV2Candidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             pluginVersion: contribution.pluginVersion,
@@ -364,14 +366,14 @@ export function projectLoadedPluginRegistry(
     }
     for (const contribution of pluginRegistry.uiListExtensionsV1) {
         uiListExtensionV1Candidates.push({
-            provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+            provenance: readProvenance(contribution), source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion,
             identity: contribution.identity!, manifestPath: contribution.manifestPath, definition: contribution.definition,
         });
     }
     for (const contribution of pluginRegistry.uiRenderersV2) {
         uiRendererV2Candidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             pluginVersion: contribution.pluginVersion,
@@ -386,7 +388,7 @@ export function projectLoadedPluginRegistry(
     }
     for (const contribution of pluginRegistry.uiTranslationsV2) {
         uiTranslationV2Candidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             localeIdentity: contribution.localeIdentity,
@@ -396,7 +398,7 @@ export function projectLoadedPluginRegistry(
     }
     for (const contribution of pluginRegistry.composerReferences) {
         composerReferenceCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             pluginVersion: contribution.pluginVersion,
@@ -407,7 +409,7 @@ export function projectLoadedPluginRegistry(
     }
     for (const contribution of pluginRegistry.searchProviders) {
         searchProviderCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             pluginVersion: contribution.pluginVersion,
@@ -418,7 +420,7 @@ export function projectLoadedPluginRegistry(
     }
     for (const contribution of pluginRegistry.composerAttachments) {
         composerAttachmentCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             pluginVersion: contribution.pluginVersion,
@@ -429,7 +431,7 @@ export function projectLoadedPluginRegistry(
     }
     for (const contribution of pluginRegistry.composerControls) {
         composerControlCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             pluginVersion: contribution.pluginVersion,
@@ -440,7 +442,7 @@ export function projectLoadedPluginRegistry(
     }
     for (const contribution of pluginRegistry.composerRegions) {
         composerRegionCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             pluginVersion: contribution.pluginVersion,
@@ -451,7 +453,7 @@ export function projectLoadedPluginRegistry(
     }
     for (const contribution of pluginRegistry.providers) {
         providerCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             identity: contribution.identity!,
@@ -464,7 +466,7 @@ export function projectLoadedPluginRegistry(
     }
     for (const contribution of pluginRegistry.pluginContributionPoints) {
         pluginContributionPointCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             pluginVersion: contribution.pluginVersion,
@@ -475,7 +477,7 @@ export function projectLoadedPluginRegistry(
     }
     for (const contribution of pluginRegistry.targetedPluginContributions) {
         targetedPluginContributionCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             pluginVersion: contribution.pluginVersion,
@@ -503,7 +505,7 @@ export function projectLoadedPluginRegistry(
             continue;
         }
         activationTargets.push({
-            provenance: params.provenance,
+            provenance: readProvenance(plugin),
             source: { kind: plugin.sourceSpec.kind },
             pluginId: plugin.pluginId,
             manifestPath: plugin.manifestPath,
@@ -523,7 +525,7 @@ export function projectLoadedPluginRegistry(
         const agentId = resolveContributedAgentRoutingId({
             pluginId: contribution.pluginId,
             localId,
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
         });
         if (knownAgentIds.has(agentId)) {
             appendDiagnostic(diagnosticsByPluginId, contribution.pluginId, {
@@ -543,7 +545,7 @@ export function projectLoadedPluginRegistry(
         }
         agentCandidates.push(projectManifestAgentContribution({
             definition: contribution.definition,
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             // The Agent's declared CLI system-tool binding names a tool from the
@@ -560,7 +562,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.actions) {
         actionCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             pluginVersion: contribution.pluginVersion,
@@ -583,7 +585,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.resources) {
         resourceCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             pluginVersion: contribution.pluginVersion,
@@ -599,7 +601,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.sessionHeaderActions) {
         sessionHeaderActionCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -612,7 +614,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.transcriptActivities) {
         transcriptActivityCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             pluginVersion: contribution.pluginVersion,
@@ -624,7 +626,7 @@ export function projectLoadedPluginRegistry(
     }
     for (const contribution of pluginRegistry.sessionInfoSections) {
         sessionInfoSectionCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             pluginVersion: contribution.pluginVersion,
@@ -637,7 +639,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.browserTargets) {
         browserTargetCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -650,7 +652,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.browserActions) {
         browserActionCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -663,7 +665,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.settings) {
         settingsCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -676,7 +678,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.promptAssets) {
         promptAssetCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             identity: contribution.identity!,
@@ -690,7 +692,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.notifications) {
         notificationCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             pluginVersion: contribution.pluginVersion,
@@ -704,7 +706,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.notificationChannels) {
         notificationChannelCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -717,7 +719,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.events) {
         eventCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -730,7 +732,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.executionRunProfiles) {
         executionRunProfileCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -743,7 +745,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.mcpServers) {
         mcpServerCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -756,7 +758,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.mcpDiscoverySources) {
         mcpDiscoverySourceCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -770,7 +772,7 @@ export function projectLoadedPluginRegistry(
     for (const contribution of pluginRegistry.scmHostingProviders) {
         scmHostingProviderCandidates.push({
             id: contribution.definition.id,
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -784,7 +786,7 @@ export function projectLoadedPluginRegistry(
     for (const contribution of pluginRegistry.scmBackends) {
         scmBackendCandidates.push({
             id: contribution.definition.id,
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             identity: contribution.identity,
             pluginId: contribution.pluginId,
@@ -798,7 +800,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.connectedAccountDescriptors) {
         connectedAccountDescriptorCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             pluginVersion: contribution.pluginVersion,
@@ -814,7 +816,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.managedDependencies) {
         managedDependencyCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -827,7 +829,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.systemTools) {
         systemToolCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -840,7 +842,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.requestInterceptors) {
         requestInterceptorCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -853,7 +855,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.roles) {
         roleCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             displayName: contribution.displayName,
@@ -866,7 +868,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.workflows) {
         workflowCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             pluginVersion: contribution.pluginVersion,
@@ -877,81 +879,81 @@ export function projectLoadedPluginRegistry(
     }
 
     for (const contribution of pluginRegistry.botTemplates) {
-        botTemplateCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+        botTemplateCandidates.push({ provenance: readProvenance(contribution), source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             manifestPath: contribution.manifestPath, definition: contribution.definition });
     }
     for (const contribution of pluginRegistry.inputTypes) {
-        inputTypeCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+        inputTypeCandidates.push({ provenance: readProvenance(contribution), source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             manifestPath: contribution.manifestPath, definition: contribution.definition });
     }
     for (const contribution of pluginRegistry.machineRecipes) {
-        machineRecipeCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+        machineRecipeCandidates.push({ provenance: readProvenance(contribution), source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             manifestPath: contribution.manifestPath, definition: contribution.definition });
     }
     for (const contribution of pluginRegistry.machineSetupPresets) {
-        machineSetupPresetCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+        machineSetupPresetCandidates.push({ provenance: readProvenance(contribution), source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             manifestPath: contribution.manifestPath, definition: contribution.definition });
     }
     for (const contribution of pluginRegistry.deploymentTargets) {
-        deploymentTargetCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+        deploymentTargetCandidates.push({ provenance: readProvenance(contribution), source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             manifestPath: contribution.manifestPath, definition: contribution.definition });
     }
     for (const contribution of pluginRegistry.subjectKinds) {
-        subjectKindCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+        subjectKindCandidates.push({ provenance: readProvenance(contribution), source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             manifestPath: contribution.manifestPath, definition: contribution.definition });
     }
     for (const contribution of pluginRegistry.healthCheckKinds) {
-        healthCheckKindCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+        healthCheckKindCandidates.push({ provenance: readProvenance(contribution), source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             manifestPath: contribution.manifestPath, definition: contribution.definition });
     }
     for (const contribution of pluginRegistry.storeKinds) {
-        storeKindCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+        storeKindCandidates.push({ provenance: readProvenance(contribution), source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             manifestPath: contribution.manifestPath, definition: contribution.definition });
     }
     for (const contribution of pluginRegistry.backupDestinations) {
-        backupDestinationCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+        backupDestinationCandidates.push({ provenance: readProvenance(contribution), source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             manifestPath: contribution.manifestPath, definition: contribution.definition });
     }
     for (const contribution of pluginRegistry.machineRoles) {
-        machineRoleCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+        machineRoleCandidates.push({ provenance: readProvenance(contribution), source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             manifestPath: contribution.manifestPath, definition: contribution.definition });
     }
     for (const contribution of pluginRegistry.registrySources) {
-        registrySourceCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+        registrySourceCandidates.push({ provenance: readProvenance(contribution), source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             pluginRootPath: contribution.pluginRootPath, manifestPath: contribution.manifestPath, definition: contribution.definition });
     }
     for (const contribution of pluginRegistry.languageServers) {
-        languageServerCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+        languageServerCandidates.push({ provenance: readProvenance(contribution), source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             manifestPath: contribution.manifestPath, definition: contribution.definition });
     }
     for (const contribution of pluginRegistry.skills) {
         const pluginName = params.loadResult.loadedPlugins.find(plugin => plugin.manifest.id === contribution.pluginId)?.manifest.displayName;
-        skillCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+        skillCandidates.push({ provenance: readProvenance(contribution), source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             pluginRootPath: contribution.pluginRootPath, manifestPath: contribution.manifestPath,
             ...(typeof pluginName === 'string' ? { pluginName } : {}), definition: contribution.definition });
     }
     for (const contribution of pluginRegistry.atmospherePictures) {
-        atmospherePictureCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+        atmospherePictureCandidates.push({ provenance: readProvenance(contribution), source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             manifestPath: contribution.manifestPath, definition: contribution.definition });
     }
     const pluginNames = new Map(params.loadResult.loadedPlugins.map(plugin => [plugin.pluginId,
         resolvePluginLocalizedStringV2Text(plugin.manifest.displayName)]));
     for (const contribution of pluginRegistry.themes) {
-        themeCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+        themeCandidates.push({ provenance: readProvenance(contribution), source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             pluginName: pluginNames.get(contribution.pluginId),
             manifestPath: contribution.manifestPath, definition: contribution.definition });
@@ -959,7 +961,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.accessProviders) {
         accessProviderCandidates.push({
-            provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+            provenance: readProvenance(contribution), source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion,
             identity: contribution.identity!, manifestPath: contribution.manifestPath,
             definition: contribution.definition,
@@ -968,7 +970,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.machineProvisioners) {
         machineProvisionerCandidates.push({
-            provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+            provenance: readProvenance(contribution), source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion,
             identity: contribution.identity!, manifestPath: contribution.manifestPath,
             definition: contribution.definition,
@@ -976,19 +978,19 @@ export function projectLoadedPluginRegistry(
     }
 
     for (const contribution of pluginRegistry.workItems) {
-        workItemCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+        workItemCandidates.push({ provenance: readProvenance(contribution), source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             manifestPath: contribution.manifestPath, pluginRootPath: contribution.pluginRootPath, definition: contribution.definition,
             ...(contribution.generatedUiArtifactsManifest ? { generatedUiArtifactsManifest: contribution.generatedUiArtifactsManifest } : {}) });
     }
     for (const contribution of pluginRegistry.dragSources) {
-        dragSourceCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+        dragSourceCandidates.push({ provenance: readProvenance(contribution), source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             manifestPath: contribution.manifestPath, pluginRootPath: contribution.pluginRootPath, definition: contribution.definition,
             ...(contribution.generatedUiArtifactsManifest ? { generatedUiArtifactsManifest: contribution.generatedUiArtifactsManifest } : {}) });
     }
     for (const contribution of pluginRegistry.dropTargets) {
-        dropTargetCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+        dropTargetCandidates.push({ provenance: readProvenance(contribution), source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             manifestPath: contribution.manifestPath, pluginRootPath: contribution.pluginRootPath, definition: contribution.definition,
             ...(contribution.generatedUiArtifactsManifest ? { generatedUiArtifactsManifest: contribution.generatedUiArtifactsManifest } : {}) });
@@ -996,7 +998,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.voiceModelPacks) {
         voiceModelPackCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             identity: contribution.identity!,
@@ -1010,7 +1012,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.voiceProviders) {
         voiceProviderCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             identity: contribution.identity!,
@@ -1026,7 +1028,7 @@ export function projectLoadedPluginRegistry(
 
     for (const contribution of pluginRegistry.accountCollections) {
         accountCollectionCandidates.push({
-            provenance: params.provenance,
+            provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             pluginVersion: contribution.pluginVersion,

@@ -3478,9 +3478,11 @@ already-admitted facts prepare that snapshot without another schema admission.
 First-publication conflicts compare the prepared facts structurally; no
 per-object admission cache or cached signing string determines agreement.
 
-An Account Action's request census admits its selected release; a handler that
-started without an approval wait does not read Home custody again. An answered
-approval is the one later boundary: the host re-reads the Account selection and
+An Account Action's request census admits its selected release. The host reuses
+the contribution projection while the Account's selected declaration generation
+is unchanged. Reference recovery works from manifests already decoded at
+ingress. The request census settles Home custody for a handler that starts
+immediately. An answered approval re-reads the Account selection and
 credential before the handler starts.
 
 A successful Collection writer claim is retained for its declaration and live
