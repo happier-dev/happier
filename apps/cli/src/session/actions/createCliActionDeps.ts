@@ -585,7 +585,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     let response: unknown;
     if (params.invokeContributedAction) {
       const result = await params.invokeContributedAction({ action, input, context, ...(caller?.signal ? { signal: caller.signal } : {}) });
-      if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode, details: result.details });
+      if (!result.ok) throw createActionExecuteFailureError(result);
       response = result.result;
     } else {
       if ((caller?.actionCaller && caller.actionCaller.kind !== 'host') || caller?.surface === 'agent' || caller?.surface === 'mcp') {
@@ -597,7 +597,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     }
     caller?.signal?.throwIfAborted();
     if (isActionExecuteFailure(response)) {
-      throw Object.assign(new Error(response.errorCode), { code: response.errorCode, details: response.details });
+      throw createActionExecuteFailureError(response);
     }
     const parsed = SessionPullRequestBindingResultV1Schema.safeParse(response);
     if (!parsed.success) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable', details: createActionRefusalDetailsV1('target_unavailable', 'channels_result_invalid') });

@@ -25591,6 +25591,32 @@ export type WorkflowsActionResultById = {
         };
         triggerId?: (string) | undefined;
         triggerRevision?: number | undefined;
+        postWriteFailure?: undefined | {
+            ok: false;
+            errorCode: string;
+            error: string;
+            requestId?: string | undefined;
+            effectAttempted?: boolean | undefined;
+            details?: unknown;
+            setupRetry?: undefined | {
+                runId: string;
+                invocationId: string;
+            };
+            failureCause?: ActionFailureCauseV1 | undefined;
+            goalControlFailure?: undefined | {
+                phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
+            };
+            automationNotices?: ({
+                code: 'action_automation_skipped';
+                reason: string;
+                automationId: string;
+                triggerId: string;
+                workflowId: string;
+            } | {
+                code: 'action_automations_not_checked';
+                reason: string;
+            })[] | undefined;
+        };
         triggerDefinition?: undefined | {
             triggerId: string;
             definition: WorkflowsActionDefinition3;
@@ -27523,6 +27549,32 @@ export type WorkflowsActionResultById = {
         };
         triggerId?: (string) | undefined;
         triggerRevision?: number | undefined;
+        postWriteFailure?: undefined | {
+            ok: false;
+            errorCode: string;
+            error: string;
+            requestId?: string | undefined;
+            effectAttempted?: boolean | undefined;
+            details?: unknown;
+            setupRetry?: undefined | {
+                runId: string;
+                invocationId: string;
+            };
+            failureCause?: ActionFailureCauseV1 | undefined;
+            goalControlFailure?: undefined | {
+                phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
+            };
+            automationNotices?: ({
+                code: 'action_automation_skipped';
+                reason: string;
+                automationId: string;
+                triggerId: string;
+                workflowId: string;
+            } | {
+                code: 'action_automations_not_checked';
+                reason: string;
+            })[] | undefined;
+        };
         triggerDefinition?: undefined | {
             triggerId: string;
             definition: WorkflowsActionDefinition3;
@@ -29459,6 +29511,32 @@ export type WorkflowsActionResultById = {
         };
         triggerId?: (string) | undefined;
         triggerRevision?: number | undefined;
+        postWriteFailure?: undefined | {
+            ok: false;
+            errorCode: string;
+            error: string;
+            requestId?: string | undefined;
+            effectAttempted?: boolean | undefined;
+            details?: unknown;
+            setupRetry?: undefined | {
+                runId: string;
+                invocationId: string;
+            };
+            failureCause?: ActionFailureCauseV1 | undefined;
+            goalControlFailure?: undefined | {
+                phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
+            };
+            automationNotices?: ({
+                code: 'action_automation_skipped';
+                reason: string;
+                automationId: string;
+                triggerId: string;
+                workflowId: string;
+            } | {
+                code: 'action_automations_not_checked';
+                reason: string;
+            })[] | undefined;
+        };
         triggerDefinition?: undefined | {
             triggerId: string;
             definition: WorkflowsActionDefinition3;

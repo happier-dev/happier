@@ -1,6 +1,7 @@
 import * as zMini from '../../zodRuntimePolicy.js';
 import { ManagedGithubRepositoryIdV1Schema, ManagedGithubRepositoryHookSaveResultV1Schema } from '../../automations/automationEventSetupResultV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { ActionExecuteFailureSchema } from '../../actions/actionExecutionResult.js';
 import { ActionRefusalDiagnosticV1Schema } from '../../actions/actionRefusalDiagnostic.js';
 import { DeploymentBackupRunInputV1Schema } from '../../deployments/deploymentBackupActionsV1.js';
 import { WorkflowDefinitionSavedByV1Schema } from '../workflowDefinitionV1.js';
@@ -387,6 +388,8 @@ export const WorkflowTriggerWriteResultV1Schema = lazyZodSchema(() => z.strictOb
   triggerId: zMini.optional(AutomationTriggerIdSchema),
   triggerRevision: z.optional(Revision),
   managedGithubRepositoryHook: z.optional(ManagedGithubRepositoryHookSaveResultV1Schema),
+  // The Automation mutation committed even when a follow-up could not settle.
+  postWriteFailure: z.optional(ActionExecuteFailureSchema),
   triggerDefinition: z.optional(WorkflowTriggerEventDefinitionV1Schema),
 }));
 export const WorkflowTriggerRemoveResultV1Schema = lazyZodSchema(() => z.union([

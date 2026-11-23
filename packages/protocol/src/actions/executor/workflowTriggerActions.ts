@@ -74,6 +74,8 @@ import { ManagedPowerInputV1Schema, ManagedDeleteInputV1Schema } from '../../mac
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
 import type { ManagedMachineV1 } from '../../machines/managed/managedMachineV1.js';
 import { areServerProfileIdentifiersEquivalent } from '../../features/payload/capabilities/serverIdentityCapabilities.js';
+import { parseActionExecuteFailure } from '../actionExecutionResult.js';
+import { normalizeWorkflowActionThrownError } from './workflowAccountActions.js';
 import type { WorkflowActionFailureV1 } from '../../workflows/workflowProgressV1.js';
 import type { WorkflowApprovedOperationV1 } from '../../actions/approvedOperationV1.js';
 import { z } from '../../zodRuntimePolicy.js';
@@ -313,6 +315,14 @@ function refuseInput(code: NonNullable<NonNullable<Extract<WorkflowActionFailure
 }
 function unresolvedWriteReceipt(cause: unknown): never {
   throw Object.assign(new Error('workflow_outcome_unresolved', { cause }), { code: 'workflow_outcome_unresolved' });
+}
+function withPostWriteFailure(receipt: WorkflowTriggerWriteResult, cause: unknown, phase: string): WorkflowTriggerWriteResult {
+  const { automationNotices, ...failure } = parseActionExecuteFailure(cause)
+    ?? normalizeWorkflowActionThrownError(cause, undefined, false, phase);
+  return {
+    ...receipt,
+    postWriteFailure: { ...failure, ...(automationNotices && { automationNotices: [...automationNotices] }) },
+  };
 }
 /** Shared host-routing predicate for trigger operations that consume Agent-start authority. */
 export function isWorkflowTriggerAgentCallerV1(caller?: Caller) {
@@ -718,6 +728,17 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       return [{ triggerId: trigger.id, dueAt, lastRunAt: null }];
     });
   };
+  const triggerSetReceipt = (row: AutomationDefinitionDetail, missedSchedules?: WorkflowTriggerSetV1['missedSchedules']) => {
+    // The storage label every executable set is created with is not a name anyone chose: readers name
+    // such a Workflow by what it runs. A 0.2 Automation or a named observation keeps its own name.
+    const name = workflowTriggerDisplayNameV1({ name: row.name });
+    return { automationId: row.id, ...(name === undefined ? {} : { name }), updatedAt: row.updatedAt,
+      ...(row.scheduleOccurrences === undefined ? {} : {
+        missedSchedules: missedSchedules ?? readMissedSchedules(row, Date.now()),
+      }),
+      revision: row.templateVersion, enabled: row.enabled, scopeSessionId: row.scopeSessionId ?? null,
+      ...(row.templateCiphertext !== undefined && !row.observationOnly ? { legacy: { editable: false as const, reason: 'created_in_0_2' as const } } : {}) };
+  };
   const projectedDefinition = async (row: AutomationDefinitionDetail, reviewed?: Readonly<{ target: TriggerTargetV1; context: WorkflowTriggerContextV1;
     project?: WorkflowProjectTargetV1 }>, prepared?: PreparedTriggerProjection, options?: Readonly<{
       sourceUnavailable?: boolean;
@@ -755,15 +776,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         triggers.push({ ...trigger, ...(subject ? { subject } : {}) });
       } else triggers.push(trigger);
     }
-    // The storage label every executable set is created with is not a name anyone chose: readers name
-    // such a Workflow by what it runs. A 0.2 Automation or a named observation keeps its own name.
-    const name = workflowTriggerDisplayNameV1({ name: row.name });
-    const base = { automationId: row.id, ...(name === undefined ? {} : { name }), updatedAt: row.updatedAt,
-      ...(row.scheduleOccurrences === undefined ? {} : {
-        missedSchedules: options?.missedSchedules ?? readMissedSchedules(row, Date.now()),
-      }),
-      revision: row.templateVersion, enabled: row.enabled, triggers, scopeSessionId: row.scopeSessionId ?? null,
-      ...(row.templateCiphertext !== undefined && !row.observationOnly ? { legacy: { editable: false as const, reason: 'created_in_0_2' as const } } : {}) };
+    const base = { ...triggerSetReceipt(row, options?.missedSchedules), triggers };
     if (row.observationOnly) return { set: { ...base, observationOnly: row.observationOnly, health: 'available' } };
     if (prepared) {
       const context = prepared.fields.context;
@@ -857,13 +870,20 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
   const writeResult = async (row: AutomationDefinitionDetail, triggerId?: ReturnType<typeof AutomationTriggerIdSchema.parse>, includeEventDefinition = false, prepared?: PreparedTriggerProjection): Promise<WorkflowTriggerWriteResult> => {
     const trigger = triggerId ? row.triggers.find((item) => item.id === triggerId) : undefined;
     const managedGithubRepositoryHook = row.managedGithubRepositoryHooks?.find(item => item.triggerId === triggerId)?.result;
+    const receipt = { ...(managedGithubRepositoryHook ? { managedGithubRepositoryHook } : {}),
+      ...(triggerId ? { triggerId } : {}), ...(trigger ? { triggerRevision: trigger.revision } : {}) };
+    let set: WorkflowTriggerSetV1;
     try {
-      return { ...(managedGithubRepositoryHook ? { managedGithubRepositoryHook } : {}), set: await projection(row, undefined, prepared), ...(triggerId ? { triggerId } : {}), ...(trigger ? { triggerRevision: trigger.revision } : {}),
-        ...(includeEventDefinition && triggerId ? { triggerDefinition: await eventDefinition(row, triggerId) } : {}) };
+      set = await projection(row, undefined, prepared);
     } catch (cause) {
-      // The Automation write already returned. A failed private projection is
-      // no evidence that the committed trigger disappeared or was rolled back.
-      return unresolvedWriteReceipt(cause);
+      return withPostWriteFailure({ ...receipt, set: { ...triggerSetReceipt(row), health: 'source_unavailable', triggers: [] } },
+        cause, 'workflow.trigger.projection');
+    }
+    if (!includeEventDefinition || !triggerId) return { ...receipt, set };
+    try {
+      return { ...receipt, set, triggerDefinition: await eventDefinition(row, triggerId) };
+    } catch (cause) {
+      return withPostWriteFailure({ ...receipt, set }, cause, 'workflow.trigger.eventDefinition');
     }
   };
   const reconcile = async (row: AutomationDefinitionDetail, context: WorkflowTriggerContextV1, target: TriggerTargetV1,
@@ -1586,7 +1606,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
   };
   const attachPullRequest = async (sessionId: string, result: Awaited<ReturnType<typeof writeResult>>, caller?: Caller) => {
     const trigger = result.set.triggers.find((item) => item.id === result.triggerId);
-    if (!trigger || (trigger.kind !== 'prComment' && trigger.kind !== 'ciFailed')) return;
+    if (!result.set.enabled || !trigger?.enabled || (trigger.kind !== 'prComment' && trigger.kind !== 'ciFailed')) return;
     if (!deps.pullRequests || !('pullRequest' in trigger)) refuse('target_unavailable');
     await deps.pullRequests.attach({ sessionId, automationId: result.set.automationId,
       triggerId: trigger.id, triggerRevision: trigger.revision, triggerKind: trigger.kind, pullRequest: trigger.pullRequest }, caller);
@@ -1678,11 +1698,15 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
           ? input.patch.project ?? project(row, current.context) : authorized.project } }, caller,
         { sessionId: row.scopeSessionId, onComplete: input.patch.onComplete, project: authorized.project, authority: authorized.authority });
       try {
-        await attachPullRequest(row.scopeSessionId, result, caller);
-        if (input.patch.trigger && input.patch.trigger.kind !== 'prComment' && input.patch.trigger.kind !== 'ciFailed'
-          && row.triggers.some(item => item.id === input.triggerId && (item.kind === 'prComment' || item.kind === 'ciFailed'))
-          && input.triggerId !== undefined) await deps.pullRequests?.removeTrigger({ sessionId: row.scopeSessionId, triggerId: input.triggerId }, caller);
-      } catch (cause) { return unresolvedWriteReceipt(cause); }
+        if (input.triggerId !== undefined && row.triggers.some(item => item.id === input.triggerId
+          && (item.kind === 'prComment' || item.kind === 'ciFailed'))
+          && (input.patch.enabled === false || (input.patch.trigger && input.patch.trigger.kind !== 'prComment'
+            && input.patch.trigger.kind !== 'ciFailed'))) {
+          await deps.pullRequests?.removeTrigger({ sessionId: row.scopeSessionId, triggerId: input.triggerId }, caller);
+        } else {
+          await attachPullRequest(row.scopeSessionId, result, caller);
+        }
+      } catch (cause) { return withPostWriteFailure(result, cause, 'workflow.trigger.prBinding'); }
       return result;
     },
     remove: async (raw: WorkflowTriggerRemoveRequestV1, caller?: Caller) => {
@@ -1694,7 +1718,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         try {
           if (row.scopeSessionId && row.triggers.some(item => item.id === input.triggerId && (item.kind === 'prComment' || item.kind === 'ciFailed')))
             await deps.pullRequests?.removeTrigger({ sessionId: row.scopeSessionId, triggerId: input.triggerId }, caller);
-        } catch (cause) { return unresolvedWriteReceipt(cause); }
+        } catch (cause) { return withPostWriteFailure(result, cause, 'workflow.trigger.prBinding'); }
         return result;
       }
       const admission = caller?.workflowTriggerMutationAdmission;
@@ -1743,7 +1767,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         { sessionId, onComplete, project: authorized.project, authority: authorized.authority });
       try {
         await attachPullRequest(sessionId, result, caller);
-      } catch (cause) { return unresolvedWriteReceipt(cause); }
+      } catch (cause) { return withPostWriteFailure(result, cause, 'workflow.trigger.prBinding'); }
       return result;
     },
     sessionRemove: async (raw: SessionTriggerRemoveRequestV1, caller?: Caller) => {
@@ -1758,7 +1782,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         if (row.triggers.some((item) => item.id === input.triggerId && (item.kind === 'prComment' || item.kind === 'ciFailed'))) {
           await deps.pullRequests?.removeTrigger({ sessionId: input.sessionId, triggerId: input.triggerId }, caller);
         }
-      } catch (cause) { return unresolvedWriteReceipt(cause); }
+      } catch (cause) { return withPostWriteFailure(result, cause, 'workflow.trigger.prBinding'); }
       return result;
     },
   };

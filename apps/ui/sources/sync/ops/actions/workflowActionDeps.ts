@@ -38,7 +38,7 @@ import { WORKFLOW_RUN_INVOCATIONS_RETRY_ACTION_ID_V1, WORKFLOW_RUN_RESUME_ACTION
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 
 import { WorkflowActionFailureV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
-import { ActionExecuteFailureSchema, isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, createActionExecuteFailureError, isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
 import { resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
@@ -214,8 +214,7 @@ export function createUiWorkflowAction(params: Readonly<{
             ...(caller.signal ? { signal: caller.signal } : {}),
         });
         const failure = ActionExecuteFailureSchema.safeParse(result);
-        if (failure.success) throw Object.assign(new Error(failure.data.error),
-            { code: failure.data.errorCode, ...(failure.data.details === undefined ? {} : { details: failure.data.details }) });
+        if (failure.success) throw createActionExecuteFailureError(failure.data);
         const parsed = SessionPullRequestBindingResultV1Schema.safeParse(result);
         if (!parsed.success) targetUnavailable();
         return parsed.data;

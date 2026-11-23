@@ -2279,20 +2279,6 @@ describe('workflow trigger Automation composition', () => {
     expect([...f.rows.values()][0]?.triggers).toHaveLength(operation === 'existing' ? 2 : 1);
     expect(f.definitionReads()).toBe(sourceReadsAtCommit);
   });
-  it('keeps a committed Session trigger uncertain when Channel attachment fails', async () => {
-    const f = fixture();
-    const triggers = createWorkflowTriggerActions({ ...f.deps,
-      resolveSession: async () => ({ project, nativeGoalOwner: false }),
-      pullRequests: { listLinks: async () => [], removeTrigger: async () => {},
-        attach: async () => { throw Object.assign(new Error('Channel unavailable'), { code: 'target_unavailable' }); } },
-    });
-    const result = await f.executor(triggers).execute('workflow.trigger.add', {
-      lifetimeSession: { sessionId: 'session-one' }, target: { kind: 'inline', definition },
-      trigger: { kind: 'prComment', enabled: true, pullRequest: { repository: 'org/repo', number: 42 } },
-    }, { ...{ surface: 'ui', authority: 'present_user' }, actionsSettings: triggerAdmissionWaiver });
-    expect(result).toMatchObject({ ok: false, errorCode: 'workflow_outcome_unresolved' });
-    expect(f.rows.size).toBe(1);
-  });
   it('acknowledges approved removal from the committed row without replaying it when later source reads fail', async () => {
     const f = fixture();
     const added = await f.actions.add({ project, trigger, workflow });
@@ -2658,6 +2644,58 @@ describe('workflow trigger Automation composition', () => {
     const afterRemoval = await actions.list({ lifetimeSession: { sessionId: 'session-one' } });
     expect(afterRemoval.sets.flatMap((set) => set.triggers)).toEqual([]);
     expect(afterRemoval.pullRequestLinks).toEqual([{ provider: 'github', ...selected, url: 'https://github.com/happier-dev/happier/pull/42' }]);
+  });
+
+  it.each(['binding', 'projection'] as const)('returns each committed PR revision when %s fails', async phase => {
+    const { deps, rows, executor } = fixture();
+    const pullRequest = { repository: 'happier-dev/happier', number: 42 };
+    const errorCode = phase === 'binding' ? 'target_unavailable' : 'content_unavailable';
+    const details = { code: errorCode };
+    const refusal = Object.assign(new Error(errorCode), { ok: false as const, code: errorCode, errorCode, error: errorCode, details });
+    let writes = 0;
+    const bindingOperations: string[] = [];
+    const actions = createWorkflowTriggerActions({ ...deps,
+      resolveSession: async () => ({ project, nativeGoalOwner: false }),
+      automations: { ...deps.automations,
+        create: async (...args) => { writes++; return deps.automations.create(...args); },
+        reconcile: async (...args) => { writes++; return deps.automations.reconcile(...args); },
+      },
+      openPullRequestTrigger: async (...args) => {
+        if (phase === 'projection') throw refusal;
+        return deps.openPullRequestTrigger!(...args);
+      },
+      pullRequests: { listLinks: async () => [],
+        attach: async ({ triggerRevision }) => { bindingOperations.push(`attach:${triggerRevision}`); throw refusal; },
+        removeTrigger: async () => { bindingOperations.push('remove'); throw refusal; },
+      },
+    });
+    const context = { surface: 'ui' as const, authority: 'present_user' as const, actionsSettings: triggerAdmissionWaiver };
+    const inline = WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [{ kind: 'action', id: 'notice',
+      actionId: 'notifications.notify_me', input: { message: { kind: 'literal', value: 'PR changed' } } }] });
+    const execute = executor(actions).execute;
+    const added = await execute('workflow.trigger.add', { lifetimeSession: { sessionId: 'session-one' },
+      target: { kind: 'inline', definition: inline }, trigger: { kind: 'prComment', enabled: true, pullRequest } }, context);
+    const [row] = rows.values();
+    expect(writes, JSON.stringify(added)).toBe(1);
+    expect(row?.triggers[0]).toMatchObject({ revision: 0, enabled: true });
+    const { id: automationId, triggers: [selected] } = row!;
+    const triggerId = selected!.id;
+    const expectReceipt = (result: unknown, revision: number, triggerRevision: number) => {
+      expect(result).toMatchObject({ ok: true, result: {
+        set: { automationId, revision }, triggerId, triggerRevision,
+        postWriteFailure: { ok: false, errorCode, details },
+      } });
+    };
+    expectReceipt(added, 1, 0);
+    if (phase === 'projection') return;
+    for (const enabled of [false, true]) {
+      const expectedRevision = enabled ? 2 : 1;
+      const updated = await execute('workflow.trigger.update', { automationId, triggerId, expectedRevision, patch: { enabled } }, context);
+      expect(writes).toBe(expectedRevision + 1);
+      expect(rows.get(automationId)?.triggers[0]).toMatchObject({ revision: expectedRevision, enabled });
+      expectReceipt(updated, expectedRevision + 1, expectedRevision);
+    }
+    expect(bindingOperations).toEqual(['attach:0', 'remove', 'attach:2']);
   });
 
   it('requires a selected or single linked PR before writing a scoped PR trigger', async () => {

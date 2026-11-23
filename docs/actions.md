@@ -10774,6 +10774,13 @@ materialized `trigger_write` policy check; approval never supplies that authorit
 The host-stamped approved continuation executes under that original request rather
 than creating a second approval.
 
+In unreleased 0.3, a committed trigger write returns its saved set revision
+and the selected trigger revision when present. A failed follow-up appears in
+the optional `postWriteFailure` Action failure envelope on that receipt.
+A projection failure can leave the set's private details unavailable. A failed
+Channels binding change leaves the saved trigger revision available for recovery.
+Older strict 0.3 readers require matching source for this result field.
+
 Development FIN placement: `workflow.trigger.*` Actions own Account trigger data,
 including triggers attached to a Session. Every Account host composes the one
 Protocol trigger owner through `createAccountWorkflowTriggerActions` (CLI with its
