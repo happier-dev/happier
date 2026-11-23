@@ -325,7 +325,7 @@ describe('credentialed deployment archive byte transport', () => {
             const contentFailure = deploymentArtifactReadFailureV1('body');
             expect(await childCopy('content.tar', async () => refuseDeploymentArtifactRead(contentFailure))).toMatchObject({
                 ok: false, errorCode: 'deployment_content_unavailable', failureCause: contentFailure.failureCause,
-                details: projectDeploymentFailureRecoveryV1({}) });
+                details: projectDeploymentFailureRecoveryV1({}, contentFailure.error) });
             const stoppedChild = new AbortController();
             stoppedChild.abort();
             expect(await childCopy('stopped.tar', async () => {}, stoppedChild.signal))
