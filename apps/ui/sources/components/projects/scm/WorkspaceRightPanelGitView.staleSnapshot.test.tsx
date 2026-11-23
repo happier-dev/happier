@@ -6,7 +6,8 @@ import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { EMPTY_SCM_CAPABILITIES } from '@/scm/core/snapshotMappers';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { ScmLogListResponseSchema } from '@happier-dev/protocol/scm';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
@@ -201,6 +202,27 @@ describe('WorkspaceRightPanelGitView (stale snapshot)', () => {
             expect(screen.findHostByTestId('workspace-rightpanel-git-stale')).toBeNull();
             expect(screen.findHostByTestId('project-rightpanel-git-surface:commit')).not.toBeNull();
         } finally { vi.useRealTimers(); }
+    });
+
+    it('keeps the cached managed checkout quiet when status RPC disappears before presence changes', async () => {
+        const machine = createMachineFixture({ id: 'm1', active: true, activeAt: Date.now() });
+        await publishMachineInventoryForTest({ serverId, accountId: 'account-a' }, [machine]);
+        const workspace = { v: 2, kind: 'managed', serverId, workspaceId: 'managed-checkout',
+            managedId: 'guest', controller: { machineId: machine.id, installationId: 'controller-installation' }, rootPath } as const;
+        const managedScope = { ...scope(), workspace };
+        storage.getState().updateWorkspaceScmSnapshot(managedScope, createSnapshot(true));
+        rpc.mockRejectedValue(new RpcError(RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE, RPC_ERROR_CODES.METHOD_NOT_AVAILABLE));
+        const { CheckoutReachabilityScope } = await import('@/components/workspaces/reachability/checkoutReachability');
+        const { WorkspaceRightPanelGitView } = await import('./WorkspaceRightPanelGitView');
+        const screen = await renderScreen(
+            <CheckoutReachabilityScope scope={managedScope}>
+                <WorkspaceRightPanelGitView {...managedScope} onOpenFile={() => {}} />
+            </CheckoutReachabilityScope>,
+        );
+
+        await vi.waitFor(() => expect(storage.getState().getWorkspaceScmSnapshotError(managedScope)).not.toBeNull());
+        expect(screen.findHostByTestId('workspace-rightpanel-git-stale-action')).toBeNull();
+        expect(screen.findHostByTestId('project-rightpanel-git-surface:commit')).not.toBeNull();
     });
 
     it('keeps the cached managed checkout without reading history from its offline controller', async () => {

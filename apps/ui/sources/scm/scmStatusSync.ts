@@ -7,7 +7,7 @@ import { storage } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { InvalidateSync } from '@/utils/sessions/sync';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
-import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { isRpcMethodNotFoundResult, RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { resolveManagedMachinePendingPowerIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { scmFallbackError } from '@/sync/ops/scm/scmRpcFailure';
 
@@ -294,9 +294,10 @@ export class ScmStatusSync {
     private projectWorkspaceFailure(scope: WorkspaceScopeBase, reason: ScmWorkspaceWatchUnavailable,
         actionErrorCode = reason.code): ProjectScmSnapshotError {
         const stopped = scope.workspace !== undefined && actionErrorCode === 'managed_power_required';
+        const controllerUnavailable = scope.workspace !== undefined && actionErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE;
         return {
             message: reason.message, at: Date.now(),
-            errorCode: stopped ? actionErrorCode : reason.code,
+            errorCode: stopped || controllerUnavailable ? actionErrorCode : reason.code,
             ...(stopped ? { nextAction: { kind: 'start_workspace' } } : {}),
         };
     }

@@ -67,9 +67,13 @@ describe("managed acquisition durable authority", () => {
             nativeResult: { kind: 'bound' as const, resource } } };
         const stored = storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', content, recipients: [] });
         const preset = opaque ? await db.managedMachinePreset.create({ data: { homeId, custodianAccountId: account.id, name: '', launch: stored } }) : null;
-        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
+        const managedId = crypto.randomUUID();
+        const row = await db.managedMachine.create({ data: { homeId, id: managedId, custodianAccountId: account.id,
             controllerMachineId: host.id, controllerInstallationId: controller.installationId,
-            admittedActionRequestId: `stopped-observation-${opaque}`, admittedInput: {}, ...(preset ? { presetId: preset.id, presetRevision: 1, launch: stored }
+            admittedActionRequestId: `stopped-observation-${opaque}`,
+            admittedInput: { submittedEffect: { homeId, managedId, requestId: 'earlier-start',
+                expectedIntentRevision: 3, controller, intent: 'start' } },
+            ...(preset ? { presetId: preset.id, presetRevision: 1, launch: stored }
                 : { launch, resource }), allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 3,
             observation: { observedAt: 10, availability: 'present', power: 'running', storage: 'retained' },
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
@@ -93,21 +97,29 @@ describe("managed acquisition durable authority", () => {
         expect((await submit(99, { ...correlation, expectedIntentRevision: 2 })).statusCode).toBe(403);
         expect((await submit(99, correlation, tweetnacl.sign.keyPair().secretKey)).statusCode).toBe(403);
         expect((await submit(9)).statusCode).toBe(200);
-        expect(await read()).toMatchObject({ observation: { power: 'running', observedAt: 10 } });
+        expect(await read()).toMatchObject({ observation: { power: 'running', observedAt: 10 },
+            admittedInput: { submittedEffect: { intent: 'start' } } });
         const reply = await submit(20, correlation, keys.secretKey, {
             ...correlation, requestId: 'read-label', expectedIntentRevision: 2,
             controller: { ...controller, installationId: crypto.randomUUID() }, observedAt: 20,
         });
         expect(reply.statusCode, reply.body).toBe(200);
-        expect(await read()).toMatchObject({ desired: 'start', intentRevision: 3, admittedInput: {},
+        const stopped = await read();
+        expect(stopped).toMatchObject({ desired: 'start', intentRevision: 3,
             observation: { observedAt: 20, availability: 'present', power: 'stopped', storage: 'retained' } });
+        expect(managedMachineProjection.projectManagedMachine(stopped).submittedNativeEffect).toBeUndefined();
         // Call-through cost probe: keep the real row projection and all signed-route checks.
         // A repeated observation needs the route's projection once, with no second full-row parse in publication.
+        await db.managedMachine.update({ where: { id: managedId }, data: {
+            intentRevision: 4, admittedInput: { submittedEffect: { homeId, managedId, controller,
+                expectedIntentRevision: 4, requestId: 'new-start', intent: 'start' } },
+        } });
         const projections = vi.spyOn(managedMachineProjection, 'projectManagedMachine');
         try {
-            expect((await submit(21)).statusCode).toBe(200);
-            expect(await read()).toMatchObject({ desired: 'start', intentRevision: 3,
-                observation: { observedAt: 20, power: 'stopped', storage: 'retained' } });
+            expect((await submit(21, { ...correlation, expectedIntentRevision: 4 })).statusCode).toBe(200);
+            expect(await read()).toMatchObject({ desired: 'start', intentRevision: 4,
+                observation: { observedAt: 20, power: 'stopped', storage: 'retained' },
+                admittedInput: { submittedEffect: { requestId: 'new-start', intent: 'start' } } });
             expect(projections).toHaveBeenCalledTimes(1);
         } finally { projections.mockRestore(); }
     });

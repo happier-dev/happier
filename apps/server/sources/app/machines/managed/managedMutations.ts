@@ -461,8 +461,13 @@ export async function reportManagedStoppedObservationInTx(tx: Tx, row: StoredMan
     // Observation was validated when written; publication consumes that field without re-projecting the row.
     const previous = row.observation as ManagedMachineV1['observation'] | null;
     if (previous?.power === 'stopped' || (previous && previous.observedAt >= report.observedAt)) return;
+    const admitted = previous?.power === 'running' ? readManagedAdmissionState(row.admittedInput) : null;
+    const { submittedEffect, ...retained } = admitted ?? {};
+    // A wake that already reached running cannot become pending again when a Project sees a later vendor Stop.
+    // A read of an already stopped workspace above leaves a newly submitted wake to its own operation.
     const current = await tx.managedMachine.update({ where: { id: row.id }, data: {
         observation: { ...previous, observedAt: report.observedAt, availability: 'present', power: 'stopped' },
+        ...(submittedEffect?.intent === 'start' || submittedEffect?.intent === 'resume' ? { admittedInput: retained } : {}),
     } });
     await invalidateManagedMachineInTx(tx, current);
 }
