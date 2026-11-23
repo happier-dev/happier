@@ -385,6 +385,11 @@ trigger writes with contributed Actions use the reviewed Machine when the
 approval retains an exact Machine target. That Machine opens its effective
 Action declarations during trigger admission.
 
+Opened Action triggers include the Home's saved `reachesOthers` decision when
+present. An older row may omit it. The strict 0.3 read projection accepts it as
+an optional display fact. Trigger writes and admission still use their
+existing authority contracts.
+
 The public Action result optionally carries `automationNotices` for unchecked
 automations and skipped triggers. These typed notices preserve the original
 Action outcome and contain code/reference facts rather than private failure

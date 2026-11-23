@@ -92,6 +92,36 @@ function manualReceipt(automationId: string): AutomationV3RunMutationResponse {
     replyHandoffState: 'none', replyHandoffAttempt: 0, replyHandoffDueAt: null, createdAt: 1, updatedAt: 1 } };
 }
 
+it.each([
+  { role: 'manager', reachesOthers: true },
+  { role: 'view-only', reachesOthers: false },
+  { role: 'older row', reachesOthers: undefined },
+])('preserves the $role reach decision on an opened Action trigger', async ({ reachesOthers }) => {
+  const f = fixture();
+  const host = createAccountWorkflowTriggerActions({
+    automations: { ...f.deps.automations, create: async input => {
+      const row = await f.deps.automations.create(input);
+      // The Home transport returns the already-admitted reach beside the private definition.
+      const saved = { ...row, triggers: row.triggers.map(trigger => AutomationTriggerDetailSchema.parse({
+        ...trigger, ...(reachesOthers === undefined ? {} : { reachesOthers }),
+      })) };
+      f.rows.set(saved.id, saved);
+      return saved;
+    } },
+    resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+    randomBytes: length => new Uint8Array(length).fill(3), resolveWorkflow: f.deps.resolveWorkflow,
+    newId: () => crypto.randomUUID(),
+  });
+  const subject = { kind: 'machine' as const, serverId: 'home-one', machineId: project.machineId };
+  const saved = await host.add({ target: { kind: 'inline', definition }, project,
+    trigger: { kind: 'action', enabled: true, phase: 'before', mode: 'notify', actionIds: ['scm.commit.create'], subject } });
+  const result = WorkflowTriggerListResultV1Schema.parse(await host.list({ automationId: saved.set.automationId }));
+  const opened = result.sets[0]?.triggers[0];
+  expect(opened).toMatchObject({ kind: 'action', id: saved.triggerId, subject });
+  if (reachesOthers === undefined) expect(opened).not.toHaveProperty('reachesOthers');
+  else expect(opened).toHaveProperty('reachesOthers', reachesOthers);
+});
+
 function fixture(savedDefinition = definition) {
   // These operations are the persistent/network Automation boundary; all Action semantics and validation run real.
   const rows = new Map<string, AutomationDefinitionDetail>();

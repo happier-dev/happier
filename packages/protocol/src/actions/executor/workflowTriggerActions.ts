@@ -740,7 +740,8 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         if (!deps.openActionTrigger) refuse('target_unavailable');
         const definition = await deps.openActionTrigger(row, trigger);
         triggers.push({ id: trigger.id, revision: trigger.revision, enabled: trigger.enabled,
-          createdAt: trigger.createdAt, updatedAt: trigger.updatedAt, ...definition });
+          createdAt: trigger.createdAt, updatedAt: trigger.updatedAt, ...definition,
+          ...(trigger.reachesOthers === undefined ? {} : { reachesOthers: trigger.reachesOthers }) });
       } else if (trigger.kind === 'prComment' || trigger.kind === 'ciFailed') {
         if (!deps.openPullRequestTrigger) refuse('target_unavailable');
         const definition = AutomationPullRequestTriggerSchema.parse(await deps.openPullRequestTrigger(row, trigger));

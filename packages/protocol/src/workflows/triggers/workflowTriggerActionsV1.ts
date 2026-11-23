@@ -303,7 +303,7 @@ const OpenedSessionLifecycleTriggerDetailSchema = lazyZodSchema(() => z.strictOb
 }));
 const OpenedActionTriggerDetailSchema = lazyZodSchema(() => z.extend(AutomationActionTriggerSchema,
   z.pick(AutomationActionTriggerProjectionSchema, {
-    id: true, revision: true, enabled: true, createdAt: true, updatedAt: true,
+    id: true, revision: true, enabled: true, createdAt: true, updatedAt: true, reachesOthers: true,
   }).shape));
 export const WorkflowTriggerSetV1Schema = lazyZodSchema(() => z.strictObject({
   /** Display facts from the already-admitted Account record, not another lookup. */
