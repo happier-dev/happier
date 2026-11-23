@@ -2,7 +2,6 @@ import { formatGovernanceApprovalSummary } from './definition.js';
 import { lazyActionSpecArray , type ActionSpecArrayConcat } from '../lazyActionSpecValue.js';
 import { MACHINE_PRESET_INPUT_FIELDS, MACHINE_POOL_INPUT_FIELDS } from './machineInputHints.js';
 import { declareDeploymentPreparationScopeV1 } from './deploymentPreparationScope.js';
-import { isMachineSetupPlanOrApplyActionIdV1, isMachineSetupCombinedActionIdV1, isMachineSetupOperationActionIdV1, MACHINE_SETUP_APPLY_ACTION_ID_V1, MACHINE_SETUP_REMOVE_ACTION_ID_V1, MACHINE_SETUP_UPDATES_APPLY_ACTION_ID_V1, MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1 } from '../../machines/managed/actionIdsV1.js';
 import { ActionOperationCompletionOutputV1Schema, type ActionCompletionDeclaration } from '../actionCompletion.js';
 import { MachineSetupApplyResultV1Schema } from '../../machines/setup/machineSetupOperationV1.js';
 import { ActionOperationAcceptedResultSchema } from '../actionExecutionResult.js';
@@ -23,7 +22,27 @@ import { readMachineProvisionerActionRolesV1 } from '../../plugins/contributions
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { MANAGED_MACHINE_INPUT_FIELDS } from './machineInputHints.js';
 import { managedAcquireApprovalPresentation } from './managedAcquireApproval.js';
-import { isManagedAccountPlacedActionIdV1, isManagedDirectConfirmationActionIdV1, isManagedEffectActionIdV1, isManagedResizeActionIdV1, MANAGED_EXEC_ACTION_ID_V1 } from '../../machines/managed/actionIdsV1.js';
+import {
+  isMachineSetupCombinedActionIdV1,
+  isMachineSetupOperationActionIdV1,
+  isMachineSetupPlanOrApplyActionIdV1,
+  isManagedAccountOrMachineControlActionIdV1,
+  isManagedAccountPlacedActionIdV1,
+  isManagedActionWithoutServerTransportV1,
+  isManagedDirectConfirmationActionIdV1,
+  isManagedEffectActionIdV1,
+  isManagedProvisionerPlacementActionIdV1,
+  MACHINE_SETUP_APPLY_ACTION_ID_V1,
+  MACHINE_SETUP_REMOVE_ACTION_ID_V1,
+  MACHINE_SETUP_UPDATES_APPLY_ACTION_ID_V1,
+  MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1,
+  MANAGED_ACQUIRE_ACTION_ID_V1,
+  MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1,
+  MANAGED_CANCEL_ACTION_ID_V1,
+  MANAGED_EXEC_ACTION_ID_V1,
+  MANAGED_INSPECT_ACTION_ID_V1,
+  MANAGED_POWER_SET_ACTION_ID_V1,
+} from '../../machines/managed/actionIdsV1.js';
 
 const titles: Record<ManagedMachineActionIdV1, string> = {
   'machines.provisioners.list': 'List machine provisioners',
@@ -101,7 +120,7 @@ function createManagedMachineActionSpecs() {
     id: actionId, approval: { result: 'required' }, originalExecution: { terminalRoot: 'allowed' },
     ...(isMachineSetupPlanOrApplyActionIdV1(actionId) || isMachineSetupCombinedActionIdV1(actionId) ? { deploymentPreparationScope: declareDeploymentPreparationScopeV1('setup') } : {}),
     ...(isMachineSetupCombinedActionIdV1(actionId) ? { requesterAccountContentDemandForInput: () => true } : {}),
-    ...(actionId === 'machines.managed.acquire' ? { hostReviewedChildren: (normalizedInput: unknown) => {
+    ...(actionId === MANAGED_ACQUIRE_ACTION_ID_V1 ? { hostReviewedChildren: (normalizedInput: unknown) => {
       const input = normalizedInput as ManagedAcquireInputV1;
       if (!('enrollmentIdentity' in input)) {
         // The preset declaration is private. Its custodian opens the exact
@@ -130,7 +149,7 @@ function createManagedMachineActionSpecs() {
       ? { approvalPolicy: { uiConfirmation: 'direct' as const } }
       : effect ? { approvalPolicy: { uiConfirmation: 'policy' as const } } : {}),
     title: titles[actionId],
-    ...(actionId === 'machines.managed.acquire' ? { approvalPresentation: managedAcquireApprovalPresentation } : {}),
+    ...(actionId === MANAGED_ACQUIRE_ACTION_ID_V1 ? { approvalPresentation: managedAcquireApprovalPresentation } : {}),
     ...(isMachineSetupOperationActionIdV1(actionId) ? { approvalScope: 'machine' as const } : {}),
     ...({
       'machines.managed.bootstrap.retry': { confirmVerb: { key: 'common.retry', fallback: 'Retry' } },
@@ -143,32 +162,30 @@ function createManagedMachineActionSpecs() {
       'machines.managed.delete': { confirmVerb: { key: 'common.delete', fallback: 'Delete' }, irreversible: true },
       'machines.managed.retire': { confirmVerb: { key: 'common.remove', fallback: 'Remove' } },
     } as Partial<Record<typeof actionId, Pick<PreNormalizedActionSpec, 'confirmVerb' | 'irreversible'>>>)[actionId],
-    description: actionId === 'machines.managed.acquire'
+    description: actionId === MANAGED_ACQUIRE_ACTION_ID_V1
       ? 'Create Account-owned compute and install Happier using the reviewed provider, price and lifetime on the selected Home. For a one-off selection, read descriptor.launchSchema on the selected entry from machines.provisioners.list and resolve its options with machines.provisioners.options. Supply schema-shaped launch.choices; an option display label is not a launch input. Retain the reviewed facts from that configuration.'
-      : actionId === 'machines.managed.bootstrap.retry'
+      : actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1
         ? 'Retry installation on the same managed resource using its current enrollment attempt.'
-        : actionId === 'machines.managed.cancel'
+        : actionId === MANAGED_CANCEL_ACTION_ID_V1
           ? 'Cancel the admitted creation request and retain the resulting resource cleanup disposition.'
-          : actionId === 'machines.setup.apply'
+          : actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1
             ? 'Apply the reviewed setup sources on the exact Machine through current approval and native admission; acceptance does not confirm a native effect.'
-          : actionId === 'machines.setup.remove'
+          : actionId === MACHINE_SETUP_REMOVE_ACTION_ID_V1
             ? 'Remove only reviewed, declared, native-owned setup or software effects on this Machine; apps, scripts, toolchains and user data are not removal operands.'
-          : actionId === 'machines.setup.updates.apply'
+          : actionId === MACHINE_SETUP_UPDATES_APPLY_ACTION_ID_V1
             ? 'Install the exact reviewed security or all OS package updates through native setup admission. Package updates may restart services; this operation never reboots the Machine.'
-          : actionId === 'machines.managed.power.set'
+          : actionId === MANAGED_POWER_SET_ACTION_ID_V1
             ? 'Apply the admitted power intent to the retained native resource; acceptance does not confirm a native effect.'
-          : actionId === 'machines.managed.inspect'
+          : actionId === MANAGED_INSPECT_ACTION_ID_V1
             ? 'Check the retained resource without starting or waking compute. Set includeGuestDiagnostics to read redacted daemon logs as its custodian; unavailable transport or guest identity is returned explicitly.'
           : effect ? `${titles[actionId]} on the retained resource through its admitted operation; acceptance does not confirm a native effect.`
             : `${titles[actionId]} on the exact Home without starting or waking compute.`,
     safety: effect ? 'danger' : 'safe',
     sideEffectClass: effect ? 'danger' : 'read',
     executionPlacement: account ? 'account' : 'machine',
-    ...(actionId === 'machines.managed.power.set' || isManagedResizeActionIdV1(actionId) || actionId === 'machines.managed.inspect'
-      || actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.delete'
+    ...(isManagedAccountOrMachineControlActionIdV1(actionId)
       ? { executionPlacements: ['account', 'machine'] as const } : {}),
-    ...(actionId === 'machines.provisioners.list' || actionId === 'machines.provisioners.check'
-      || actionId === 'machines.provisioners.options' || actionId === 'machines.managed.acquire' ? {
+    ...(isManagedProvisionerPlacementActionIdV1(actionId) ? {
       executionPlacements: ['account', 'machine'] as const,
       executionPlacementForInput: (input: unknown) => {
         if (!input || typeof input !== 'object') return 'account' as const;
@@ -187,19 +204,16 @@ function createManagedMachineActionSpecs() {
     outputSchema: ManagedMachineActionOutputSchemasV1[actionId],
     ...(isMachineSetupOperationActionIdV1(actionId)
       ? { completion: machineSetupCompletion(actionId) } : {}),
-    // This requester-private census is assembled by the Account's existing
-    // readers; it has no server endpoint that could read E2EE references.
-    ...(actionId === 'machines.managed.references.get' || actionId === 'machines.setup.plan'
-      || actionId === 'machines.setup.apply' || actionId === 'machines.setup.remove' || actionId === 'machines.setup.updates.apply' || actionId === MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1 ? {} : {
+    ...(isManagedActionWithoutServerTransportV1(actionId) ? {} : {
       serverTransport: { method: 'POST' as const, path: managedMachineActionEndpointPathV1(actionId) },
     }),
     ...(effect ? { operation: {
       version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'detail' },
     } as const } : {}),
-    ...(actionId === 'machines.managed.acquire' ? { operationReentry: (snapshot) => (
+    ...(actionId === MANAGED_ACQUIRE_ACTION_ID_V1 ? { operationReentry: (snapshot) => (
       snapshot.state === 'running' && snapshot.observation?.kind === 'outcome_uncertain' ? 'reinvoke'
         : snapshot.state === 'succeeded' || snapshot.state === 'failed' || snapshot.state === 'cancelled' ? 'replay' : 'refuse'
-    ) } : actionId === 'machines.managed.bootstrap.retry' ? { operationReentry: (snapshot) => (
+    ) } : actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 ? { operationReentry: (snapshot) => (
       snapshot.observation?.kind === 'outcome_uncertain' || snapshot.state === 'failed' || snapshot.state === 'cancelled' ? 'fresh'
         : snapshot.state === 'succeeded' ? 'replay' : 'refuse'
     ) } : {}),

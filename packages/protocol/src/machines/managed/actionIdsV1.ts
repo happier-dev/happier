@@ -111,6 +111,8 @@ export function isMachineSetupOperationActionIdV1(actionId: string): actionId is
 
 export const MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 = 'machines.managed.bootstrap.retry';
 export const MANAGED_ACQUIRE_ACTION_ID_V1 = 'machines.managed.acquire';
+export const MANAGED_CANCEL_ACTION_ID_V1 = 'machines.managed.cancel';
+export const MANAGED_INSPECT_ACTION_ID_V1 = 'machines.managed.inspect';
 export const MANAGED_EXEC_ACTION_ID_V1 = 'machines.managed.exec';
 export const MANAGED_MACHINE_ACTION_IDS_V1 = [
   'machines.provisioners.list', 'machines.provisioners.check', 'machines.provisioners.options',
@@ -223,6 +225,24 @@ export function isManagedAccountPlacedActionIdV1(actionId: string): boolean {
     || actionId === MANAGED_REFERENCES_GET_ACTION_ID_V1 || isManagedCreationMutationActionIdV1(actionId)
     || isManagedPowerOrDeleteActionIdV1(actionId) || isManagedResizeActionIdV1(actionId) || actionId === 'machines.managed.inspect'
     || actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 || actionId === MANAGED_RETIRE_ACTION_ID_V1;
+}
+
+/** Retained managed controls can execute on either the Account or the admitted Machine. */
+export function isManagedAccountOrMachineControlActionIdV1(actionId: string): boolean {
+  return isManagedControlAdmissionActionIdV1(actionId)
+    || actionId === MANAGED_INSPECT_ACTION_ID_V1 || actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1;
+}
+
+/** Provisioning discovery and acquisition route to a Machine when a controller is selected. */
+export function isManagedProvisionerPlacementActionIdV1(actionId: string): boolean {
+  return actionId === 'machines.provisioners.list' || actionId === 'machines.provisioners.check'
+    || actionId === 'machines.provisioners.options' || actionId === MANAGED_ACQUIRE_ACTION_ID_V1;
+}
+
+/** Private reference reads and native Setup use their owning readers, without a managed Home endpoint. */
+export function isManagedActionWithoutServerTransportV1(actionId: string): boolean {
+  return actionId === MANAGED_REFERENCES_GET_ACTION_ID_V1 || actionId === MACHINE_SETUP_PLAN_ACTION_ID_V1
+    || isMachineSetupOperationActionIdV1(actionId);
 }
 
 /** Managed Actions a person confirms directly in the UI; other effects follow the approval policy. */
