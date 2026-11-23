@@ -110,7 +110,8 @@ export async function setProjectSetupV1(deps: ProjectSetupSetOwnerDepsV1, input:
           if (expected && (expected.sourceId !== selection.sourceId || expected.digest !== selection.digest
             || expected.contentRevision.headerVersion !== selection.contentRevision.headerVersion
             || expected.contentRevision.bodyVersion !== selection.contentRevision.bodyVersion)) return fail('project_setup_effect_changed');
-          content.acceptedSharedSetup = publication;
+          const { publishedBy: _publishedBy, publishedAt: _publishedAt, ...acceptedPublication } = publication;
+          content.acceptedSharedSetup = acceptedPublication;
         } else if (input.intent.kind === 'detach') delete content.acceptedSharedSetup;
         else if (input.intent.setupOverrides === null) delete content.setupOverrides;
         else content.setupOverrides = input.intent.setupOverrides;

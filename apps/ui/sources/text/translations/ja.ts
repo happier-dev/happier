@@ -18771,6 +18771,8 @@ settingsSession: {
           afterDescription: ({ machine }: { machine: string }) => `${machine} で実行されるセットアップです。リポジトリの行は以前のままです。`,
           nothingRuns: "選ぶまでは何も実行されません。以前の承認は新しいコマンドには適用されません。",
           whatChanged: "変更内容",
+          sharedBy: ({ name, time }: { name: string; time: string }) => `${name} が共有 · ${time}`,
+          publishedAt: ({ time }: { time: string }) => `共有 · ${time}`,
           failed: "更新を適用できませんでした",
           keep: "現在のセットアップを維持",
           use: "更新されたセットアップを使う",

@@ -135,7 +135,9 @@ vi.mock('@/text', async () => {
   return createTextModuleMock({ translate: (key, params) =>
     // Memory summaries disclose the stored amount through the translation parameter.
     key === 'projects.scripts.editor.needsAbout' || key === 'projects.scripts.setup.lead' || key === 'projects.authoring.lastSession'
+      || key === 'projects.scripts.layers.shared'
       || key === 'projects.scripts.sharedUpdate.env'
+      || key === 'projects.scripts.sharedUpdate.sharedBy'
       ? parameterized.t(key, params) : key,
   });
 });
@@ -400,6 +402,7 @@ async function render(
     onOpenServices?: () => void;
     workspaceRefs?: readonly WorkspaceRefV1[];
     worker?: ExternalActionAccountHttpBoundary;
+    onCommit?: React.ProfilerOnRenderCallback;
   }> = {},
 ) {
   const workspaceRefs = host.workspaceRefs ?? [{ id: workspace.workspaceId, serverId: workspace.serverId,
@@ -607,8 +610,9 @@ async function render(
     ? <ProjectPageBackProvider value={host.registerPageBack}>{scripts}</ProjectPageBackProvider>
     : scripts;
   if (host.outputScopeId) terminalScopes.add(host.outputScopeId);
-  const body = host.outputScopeId && host.terminalHost !== false
+  const panes = host.outputScopeId && host.terminalHost !== false
     ? <AppPaneProvider>{pageBody}</AppPaneProvider> : pageBody;
+  const body = host.onCommit ? <React.Profiler id="scripts" onRender={host.onCommit}>{panes}</React.Profiler> : panes;
   const screen = await renderScreen(
     host.bottomPresentation ? (
       <AppPaneScopeLayoutProvider
@@ -2820,6 +2824,43 @@ describe('ProjectScriptsBody with thousands of found scripts', () => {
 });
 
 describe('Project setup layers on the Scripts page (plan A L6)', () => {
+  it('opens an import review only in the selected retained Scripts tab', async () => {
+    const { CurrentRouteLocationProvider } = await import('@/components/appShell/workspace/currentRouteLocation');
+    const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+    const { useServerCredentialAccountScopeBindings } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+    const { SharedSetupRouteContinuation } = await import('./SharedSetupRouteContinuation');
+    const { PROJECT_USE_SHARED_SETUP_PARAM } = await import('./sharedSetupRoute');
+    shared.inspection = { definition: presentDefinition(declared), detection };
+    const initial = await render('page', 'scripts');
+    await initial.unmount();
+
+    const next = { ...workspace, workspaceId: 'w2', rootPath: '/repo-second' };
+    const homes = [workspace.serverId];
+    const request = { [PROJECT_USE_SHARED_SETUP_PARAM]: 'selected-source' };
+    const decide = async () => null;
+    const navigation = { push: () => {}, replace: () => {}, back: () => {}, setParams: () => {} };
+    function RetainedScriptsTabs() {
+      const binding = useServerCredentialAccountScopeBindings(homes).get(workspace.serverId) ?? null;
+      const current = { pathname: `/projects/${next.workspaceId}/scripts`, params: request };
+      return <CurrentRouteLocationProvider value={current}>
+        {[workspace, next].map(checkout => {
+          const selected = checkout === next;
+          return <DestinationInstanceHost key={checkout.workspaceId} tabId={checkout.workspaceId}
+            ref={{ kind: 'project', params: { workspaceRefId: checkout.workspaceId, ...(selected ? request : {}) } }}
+            pathname={`/projects/${checkout.workspaceId}/scripts`} focused={selected} visible={selected} navigation={navigation}>
+            <SharedSetupRouteContinuation workspace={checkout} binding={binding} ready decide={decide} />
+          </DestinationInstanceHost>;
+        })}
+      </CurrentRouteLocationProvider>;
+    }
+    await renderScreen(<RetainedScriptsTabs />);
+    await vi.waitFor(() => expect(showModal).toHaveBeenCalled());
+    expect(showModal).toHaveBeenCalledTimes(1);
+    expect(showModal).toHaveBeenCalledWith(expect.objectContaining({
+      props: expect.objectContaining({ workspace: next, sourceId: 'selected-source' }),
+    }));
+  });
+
   it('renders only the changed visible setup selection among 1,000 Projects', async () => {
     const { useProjectSetupRow } = await import('./useProjectSetupRow');
     const { Text } = await import('@/components/ui/text/Text');
@@ -2915,6 +2956,24 @@ describe('Project setup layers on the Scripts page (plan A L6)', () => {
     },
   );
 
+  it('shows the admitted publication byline on first-use and update review', async () => {
+    const { ProjectSharedSetupUpdateView } = await import('./ProjectSharedSetupUpdateSheet');
+    const selection = { sourceId: 'src-acme-web', contentRevision: { headerVersion: 1, bodyVersion: 4 }, digest: hash };
+    const definition = { effectiveManifest: { version: 1 as const }, origins: [] };
+    const change = { kind: 'changed' as const, selection, before: definition, after: definition,
+      setupReadiness: { kind: 'notRequired' as const, reviewedEffectDigest: hash },
+      publishedBy: { accountId: 'publisher', displayName: 'Mara Lind' }, publishedAt: 1795431600000 };
+    const snapshot = { kind: 'ready' as const, pending: false, change,
+      request: { projectRef: { serverId: workspace.serverId, projectKey: 'w1' }, expectedRevision: 3, review: change } };
+    for (const pending of [true, false]) {
+      const screen = await renderScreen(<ProjectSharedSetupUpdateView snapshot={snapshot}
+        rows={[]} sourceName="Acme web" machineName="Devbox" pending={pending}
+        scope="thisTime" onScopeChange={() => {}} busy={null} failure={null} onRetry={() => {}}
+        onDecide={() => {}} onClose={() => {}} />);
+      expect(textOf(screen, 'project-shared-setup-update.byline')).toContain('Mara Lind');
+    }
+  });
+
   it('lists the scripts that run from every layer and names where each non-repository one comes from', async () => {
     const effectiveManifest = { version: 1, scripts: {
       test: { source: nativeRef('test') },
@@ -3006,6 +3065,45 @@ describe('Project setup layers on the Scripts page (plan A L6)', () => {
     });
     expect(requestedReviews()).toHaveLength(outcome === 'current' ? 1 : 0);
   });
+  it('leaves mounted Scripts unchanged for an unrelated Source or Account preference', async () => {
+    isolateManifestDrafts();
+    const { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } = await import('@happier-dev/protocol/projects/sources/projectSourceV1');
+    const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+    const sourceId = 'src-acme-web';
+    let name = 'Selected setup';
+    let revision = 1;
+    const reads: string[] = [];
+    shared.projectSources = (method, path) => {
+      reads.push(`${method} ${path.split('?')[0]}`);
+      return { ok: true, canManage: false, source: { id: sourceId, name, revision, audience: [], createdByAccountId: 'owner' } };
+    };
+    onTestFinished(() => { shared.projectSources = null; });
+    shared.inspection = { definition: presentDefinition(declared), detection, importCandidates: [],
+      effectiveDefinition: resolveProjectDefinitionV1({ repositoryManifest: { ...declared, version: 1 }, acceptedSharedSetup: {
+        sourceId, contentRevision: { headerVersion: 1, bodyVersion: 3 }, digest: hash, manifest: { version: 1 },
+      } }) };
+    const commits = vi.fn();
+    const screen = await render('page', 'scripts.header', { onCommit: commits });
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain(name));
+    expect(reads).toEqual([`GET /v1/projects/sources/${sourceId}`]);
+    commits.mockClear();
+    await act(async () => {
+      storage.getState().applySettingsLocal({ sessionListLayoutV1: 'recent_activity' });
+      publishHomeAccountChange(workspace.serverId, [PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+      await vi.waitFor(() => expect(reads).toHaveLength(2));
+    });
+    expect(commits).not.toHaveBeenCalled();
+    name = 'Updated selected setup';
+    revision += 1;
+    await act(async () => {
+      publishHomeAccountChange(workspace.serverId, [PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+      await vi.waitFor(() => expect(reads).toHaveLength(3));
+    });
+    expect(screen.getTextContent()).toContain(name);
+    expect(commits).toHaveBeenCalledOnce();
+    expect(reads).toEqual(Array.from({ length: 3 }, () => `GET /v1/projects/sources/${sourceId}`));
+  });
+
   it('offers a shared setup this checkout has not taken as a Setup row whose Review opens it for first use (lab L6 hint)', async () => {
     const { Modal } = await import('@/modal');
     const show = vi.spyOn(Modal, 'show').mockImplementation(() => 'shared-setup-pending');

@@ -1,18 +1,24 @@
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { callExactMachineRpc } from '../../../../apps/cli/src/session/transport/rpc/machineRpc';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFileSync } from 'node:child_process';
 import { access, mkdtemp, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFailed, onTestFinished } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import * as personActionClient from '@happier-tests/ui-action-client';
 import { ProjectManifestV1Schema, type ProjectManifestV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
-import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { buildProjectAccountRowPhysicalKeyV1, PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { PROJECT_TRUST_ROUTE_V1 } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
+import { EXTERNAL_ACTION_HTTP_BODY_HEADER_V1, EXTERNAL_ACTION_HTTP_READ_BODY_MARKER_V1 }
+  from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 
 import { startProjectDaemonFixture, type ProjectDaemonFixture } from '../../src/testkit/daemon/projectDaemon';
+import { createServerLightDatabaseClient } from '../../src/testkit/process/serverLightDatabase';
 import { redactHarnessLogText } from '../../src/testkit/process/harnessLogRedaction';
 import { addFriend, setUsername } from '../../src/testkit/socialFriends';
 import { MachineAccessMutationResultV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
@@ -38,10 +44,13 @@ import { createWorktreePortsOwner } from '../../../../apps/cli/src/workspaces/ex
 import { computeWorkspaceSyncPolicyDigest, WorkspaceSyncRelationshipCreateResultV1Schema,
   WorkspaceSyncRelationshipsListActionOutputV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { ProjectWorkerCopyInspectResultV1Schema } from '@happier-dev/protocol/actions/specs/projectWorkers';
+import { requireAccountSettingsEncryptionCredentials } from '../../../../apps/cli/src/settings/accountSettings/accountSettingsEncryptionMaterial';
 
 let fixture: ProjectDaemonFixture | undefined;
 let sharedSetupFixture: ProjectDaemonFixture | undefined;
 let sharedSetupHome: Awaited<ReturnType<typeof prepareSharedSetupHome>>;
+let statementCensusPath: string;
+const setupProbeHeader = 'x-happier-test-setup-census';
 afterEach(async () => {
   if (fixture !== sharedSetupFixture) await fixture?.stop();
   fixture = undefined;
@@ -94,7 +103,7 @@ async function prepareSharedSetupHome(home: ProjectDaemonFixture) {
 
 // Each case gets a fresh checkout and Source on the same real PostgreSQL
 // Home and daemon. Use the public Action writers to prepare their content.
-async function startSharedSetupProject(command: string) {
+async function startSharedSetupProject(command: string | ProjectManifestV1) {
   const { home, account, publisher, enrolled, teamId } = sharedSetupHome;
   fixture = home;
   const machine = { ...enrolled, workspaceDir: await mkdtemp(join(tmpdir(), 'team-setup-a-checkout-')) };
@@ -137,7 +146,7 @@ async function startSharedSetupProject(command: string) {
     return { published, source: await attach(initial.source.id, published, initial.source.revision, execute) };
   });
   return { account, publisher, machine, opened, projectRef, organizationRevision, source, published, publish,
-    attach: (publication: typeof published, revision: number) => attach(source.id, publication, revision) };
+    attach: (publication: typeof published, revision: number, execute?: PersonAction) => attach(source.id, publication, revision, execute) };
 }
 
 async function readSharedSetupOperation(
@@ -204,8 +213,15 @@ async function resolveSharedSetupLink(current: Awaited<ReturnType<typeof startSh
 
 describe('Team setup A: published Project setup', () => {
   beforeAll(async () => {
-    sharedSetupFixture = await startProjectDaemonFixture({ testDir: await mkdtemp(join(tmpdir(), 'team-setup-a-apply-')),
+    const testDir = await mkdtemp(join(tmpdir(), 'team-setup-a-apply-'));
+    statementCensusPath = join(testDir, 'project-setup-statement-census.jsonl');
+    sharedSetupFixture = await startProjectDaemonFixture({ testDir,
       dbProvider: 'postgres', daemonAuthentication: 'existing-terminal', personActionSurface: 'coreAction',
+      serverPreloadModules: [new URL('../../src/testkit/process/projectSetupStatementCensusPreload.mjs', import.meta.url).href],
+      serverEnv: { HAPPIER_E2E_PROJECT_SETUP_STATEMENT_CENSUS: JSON.stringify({ path: statementCensusPath,
+        sources: '/v1/projects/sources', rows: PROJECT_ACCOUNT_ROWS_ROUTE_V1, trust: PROJECT_TRUST_ROUTE_V1,
+        bodyHeader: EXTERNAL_ACTION_HTTP_BODY_HEADER_V1, readBodyMarker: EXTERNAL_ACTION_HTTP_READ_BODY_MARKER_V1,
+        authorizationHeader: EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, probeHeader: setupProbeHeader }) },
       daemonEnv: { HAPPIER_CLAUDE_PATH: fakeClaudeFixturePath(),
         HAPPIER_CLAUDE_CONFIG_DIR: await mkdtemp(join(tmpdir(), 'team-setup-a-agent-')) }, observeActionRequests: true });
   });
@@ -214,6 +230,195 @@ describe('Team setup A: published Project setup', () => {
     sharedSetupHome = await prepareSharedSetupHome(sharedSetupFixture);
   });
   afterAll(async () => { await sharedSetupFixture?.stop(); });
+
+  it('TS.A.setupShape holds selected review, publish and accept costs constant on PostgreSQL', async () => {
+    const { z } = await import('@happier-dev/protocol/zodRuntimePolicy');
+    const CensusRecord = z.object({ route: z.string(), status: z.number(), signed: z.boolean(), probe: z.optional(z.string()), statements: z.array(z.object({
+      operation: z.string(), relations: z.array(z.string()), rows: z.optional(z.number()),
+    })) });
+    const readCensus = async () => (await readFile(statementCensusPath, 'utf8')).trim().split('\n')
+      .map(line => CensusRecord.parse(JSON.parse(line)));
+    const actionProbe = new AsyncLocalStorage<string>();
+    const fetch = globalThis.fetch.bind(globalThis);
+    const fixtureOrigins = [sharedSetupHome.home.server.baseUrl, sharedSetupHome.home.actionServerApiUrl]
+      .map(url => new URL(url).origin);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      if (!fixtureOrigins.includes(new URL(input instanceof Request ? input.url : String(input)).origin)) return fetch(input, init);
+      const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+      headers.set(setupProbeHeader, actionProbe.getStore() ?? 'background');
+      return fetch(input, { ...init, headers });
+    });
+    onTestFinished(() => { fetchSpy.mockRestore(); });
+    const measure = async (stepCount: number) => {
+      const current = await startSharedSetupProject({ version: 1, workspace: { setup: Array.from({ length: stepCount },
+        (_, index) => ({ kind: 'command' as const, command: `printf %s ${index}` })) } });
+      const probe = async <T>(operation: () => Promise<T>) => {
+        const before = (await readCensus()).length;
+        const id = randomUUID();
+        const start = performance.now();
+        const result = await actionProbe.run(id, operation);
+        const milliseconds = Math.round(performance.now() - start);
+        const events = (await readCensus()).slice(before);
+        return { result, events, id, milliseconds };
+      };
+      const inspect = (execute: PersonAction) => execute('projects.inspect', { workspace: current.opened.workspace,
+        read: { kind: 'editor' }, reviewSharedSetup: { sourceId: current.source.id } });
+      const { first, firstReview, accepted, unchanged, exported } = await current.account.withPersonActionClient(async execute => {
+        const accept = (expectedRevision: number | 'absent') => execute('projects.setup.set', {
+          projectRef: current.projectRef, workspace: current.opened.workspace, expectedRevision,
+          intent: { kind: 'accept', sourceId: current.source.id },
+        });
+        const firstReview = await probe(() => inspect(execute));
+        expect(firstReview.result).toMatchObject({ ok: true, result: { sharedSetupChange: { kind: 'changed' } } });
+        const accepted = await probe(() => accept(current.organizationRevision));
+        if (!accepted.result.ok) throw new Error(accepted.result.errorCode);
+        const first = ProjectSetupSetOutputV1Schema.parse(accepted.result.result);
+        if (!first.ok) throw new Error(first.errorCode);
+        const unchanged = await probe(() => accept(first.revision));
+        expect(unchanged.result).toMatchObject({ ok: true, result: { ok: true, revision: first.revision } });
+        const exported = await probe(() => execute('projects.inspect', { workspace: current.opened.workspace, read: { kind: 'export' } }));
+        return { first, firstReview, accepted, unchanged, exported };
+      }, { surface: 'coreAction' });
+      if (!exported.result.ok) throw new Error(exported.result.errorCode);
+      const setupExport = ProjectDefinitionInspectOutputSchema.parse(exported.result.result).setupExport;
+      const exportedSteps = setupExport?.manifest.workspace?.setup;
+      expect(exportedSteps).toHaveLength(stepCount);
+      if (!setupExport || !exportedSteps) throw new Error('Selected export omitted the accepted setup');
+      const updatedSteps = [{ kind: 'command' as const, command: 'printf updated' }, ...exportedSteps.slice(1)];
+      // The harness restores one signed-in Account at a time. Publish as the other Account between reader sessions.
+      const publication = await current.publisher.withPersonActionClient(execute => probe(async () => {
+        const update = await current.publish({ ...setupExport.manifest,
+          workspace: { ...setupExport.manifest.workspace, setup: updatedSteps } }, execute);
+        return current.attach(update, current.source.revision, execute);
+      }));
+      expect(publication.result).toMatchObject({ revision: current.source.revision + 1,
+        attachments: [{ purpose: 'setup' }] });
+      const { changedReview, changed } = await current.account.withPersonActionClient(async execute => {
+        const changedReview = await probe(() => inspect(execute));
+        expect(changedReview.result).toMatchObject({ ok: true, result: { sharedSetupChange: { kind: 'changed',
+          after: { effectiveManifest: { workspace: { setup: updatedSteps } } },
+        } } });
+        const changed = await probe(() => execute('projects.setup.set', {
+          projectRef: current.projectRef, workspace: current.opened.workspace, expectedRevision: first.revision,
+          intent: { kind: 'accept', sourceId: current.source.id },
+        }));
+        return { changedReview, changed };
+      }, { surface: 'coreAction' });
+      if (!changed.result.ok) throw new Error(changed.result.errorCode);
+      const changedResult = ProjectSetupSetOutputV1Schema.parse(changed.result.result);
+      if (!changedResult.ok) throw new Error(changedResult.errorCode);
+
+      const phases = [
+        { phase: 'first review', ...firstReview, writes: 0, acceptedCopy: 0 },
+        { phase: 'first accept', ...accepted, writes: 1, acceptedCopy: 0 },
+        { phase: 'unchanged accept', ...unchanged, writes: 0, acceptedCopy: 1 },
+        { phase: 'export', ...exported, writes: 0, acceptedCopy: 1 },
+        { phase: 'publish', ...publication, writes: 0, acceptedCopy: 0 },
+        { phase: 'changed review', ...changedReview, writes: 0, acceptedCopy: 1 },
+        { phase: 'changed accept', ...changed, writes: 1, acceptedCopy: 1 },
+      ];
+      console.info('TS.A.setupShape route census', JSON.stringify({ stepCount, phases: phases.map(({ phase, events, milliseconds }) => ({
+        phase, milliseconds, routes: events.map(event => [event.route, event.status, event.signed, Boolean(event.probe), event.statements.length]),
+      })) }));
+      return phases;
+    };
+    const assertShape = (phases: Awaited<ReturnType<typeof measure>>) =>
+      phases.map(({ phase, events, id, writes, acceptedCopy }) => {
+        const review = phase.endsWith('review');
+        const inspect = review || phase === 'export';
+        const publish = phase === 'publish';
+        const proposed = phase !== 'export' && !publish ? 1 : 0;
+        // Native selected private rows use the requester's Account transport. The published Source,
+        // attachment and Trust use the signed inspection proof. The probe header separates UI requests
+        // issued by this Action from requests issued by the concurrent Account sync.
+        const inventoryRoutes = ['source-list', 'artifact-list', 'row-list', 'machine-list'];
+        const selected = events.filter(event => event.probe === id || (inspect && event.probe === undefined
+          && (event.signed || event.route === 'row' || inventoryRoutes.includes(event.route))));
+        const sourceIndex = selected.findIndex(event => event.route === 'source');
+        expect(selected.filter(event => event.route === 'source'), phase).toHaveLength(proposed);
+        expect(selected.filter(event => event.route === 'artifact-published'), phase).toHaveLength(publish ? 1 : proposed);
+        expect(selected.filter(event => event.route === 'artifact-accepted'), phase).toHaveLength(acceptedCopy);
+        expect(selected.filter(event => event.route === 'artifact-create'), phase).toHaveLength(publish ? 1 : writes);
+        expect(selected.filter(event => event.route === 'artifact-recipients'), phase).toHaveLength(inspect ? 0 : 1);
+        expect(selected.filter(event => event.route === 'artifact-key-write'), phase).toHaveLength(publish ? 1 : 0);
+        expect(selected.filter(event => event.route === 'source-write'), phase).toHaveLength(publish ? 1 : 0);
+        expect(selected.filter(event => event.route === 'row'), `${phase}: one Workspace and one organization`).toHaveLength(publish ? 0 : 2);
+        expect(selected.filter(event => event.route === 'row-mutate'), phase).toHaveLength(writes);
+        expect(selected.filter(event => inventoryRoutes.includes(event.route)), phase).toEqual([]);
+        const statements = selected.flatMap(event => event.statements);
+        for (const relation of ['ProjectSource', 'Artifact', 'UserKVStore']) {
+          const reads = statements.filter(statement => statement.operation === 'SELECT' && statement.relations.includes(relation));
+          if ((relation === 'ProjectSource' && (proposed || publish)) || (relation === 'Artifact' && (proposed || acceptedCopy))
+            || (relation === 'UserKVStore' && !publish)) {
+            expect(reads.some(statement => statement.rows === 1), `${phase}: selected ${relation} row`).toBe(true);
+          }
+          for (const read of reads) {
+            expect(read.rows, `${phase}: selected ${relation} cardinality`).toBeDefined();
+            expect(read.rows, `${phase}: selected ${relation} cardinality`).toBeLessThanOrEqual(1);
+          }
+        }
+        expect(statements.filter(statement => ['UPDATE', 'INSERT'].includes(statement.operation)
+          && statement.relations.includes('UserKVStore')), phase).toHaveLength(writes);
+        if (publish) {
+          expect(selected.findIndex(event => event.route === 'artifact-published'), phase)
+            .toBeLessThan(selected.findIndex(event => event.route === 'source-write'));
+          expect(statements.filter(statement => statement.operation === 'INSERT' && statement.relations.includes('Artifact')), phase).toHaveLength(1);
+          expect(statements.filter(statement => statement.operation === 'UPDATE' && statement.relations.includes('ProjectSource')), phase).toHaveLength(1);
+        }
+        if (review) {
+          expect(selected.slice(sourceIndex).filter(event => event.route === 'row'), `${phase}: reuse the admitted Workspace for review`).toEqual([]);
+          expect(selected.filter(event => event.route === 'trust'), phase).toHaveLength(1);
+        }
+        return { phase, statementCounts: Object.fromEntries([...new Set(selected.map(event => event.route))].sort().map(route =>
+          [route, selected.filter(event => event.route === route).reduce((count, event) => count + event.statements.length, 0)])) };
+      });
+    const smallPhases = await measure(1);
+    const databaseUrl = sharedSetupHome.home.server.databaseUrl;
+    if (!databaseUrl) throw new Error('Shape proof requires the disposable PostgreSQL fixture URL');
+    const db = await createServerLightDatabaseClient('postgres', databaseUrl);
+    const { account, enrolled, home } = sharedSetupHome;
+    const accountId = readAccountIdFromToken(account.credentials.token);
+    const { encryption } = requireAccountSettingsEncryptionCredentials(account.credentials);
+    const cipher = createProjectAccountRowCipherV1({ mode: 'e2ee',
+      material: encryption.type === 'legacy' ? { type: 'legacy', secret: encryption.secret }
+        : { type: 'dataKey', machineKey: encryption.machineKey }, randomBytes });
+    const size = { sources: 2_000, projects: 1_000, machines: 100 };
+    const inventory = `shape-${randomUUID()}`;
+    onTestFinished(async () => {
+      try {
+        await db.$transaction(async tx => {
+          for (const table of ['ProjectSource', 'UserKVStore', 'Machine']) {
+            await tx.$executeRawUnsafe(`DELETE FROM "${table}" WHERE id LIKE $1`, `${inventory}-%`);
+          }
+        });
+      } finally { await db.$disconnect(); }
+    });
+    const projectRows = Array.from({ length: size.projects }, (_, index) => {
+      const key = { kind: 'project-organization' as const, serverId: home.serverId, projectKey: `${inventory}-project-${index}` };
+      return { id: key.projectKey, key: buildProjectAccountRowPhysicalKeyV1(key),
+        envelope: JSON.stringify(cipher.seal({ key, value: { label: key.projectKey } })) };
+    });
+    await db.$transaction(async tx => {
+      expect(await tx.$executeRawUnsafe(`INSERT INTO "ProjectSource"
+        (id, "createdByAccountId", name, audience, attachments, "updatedAt")
+        SELECT $3 || '-source-' || n, $1, 'Shape Source ' || n, '[]', '[]', now()
+        FROM generate_series(1, $2::int) n`, accountId, size.sources, inventory)).toBe(size.sources);
+      expect(await tx.$executeRawUnsafe(`INSERT INTO "UserKVStore" (id, "accountId", key, value, version, "updatedAt")
+        SELECT id, $1, key, convert_to(envelope, 'UTF8'), 1, now()
+        FROM jsonb_to_recordset($2::jsonb) AS x(id text, key text, envelope text)`,
+      accountId, JSON.stringify(projectRows))).toBe(size.projects);
+      expect(await tx.$executeRawUnsafe(`INSERT INTO "Machine"
+        (id, "accountId", metadata, "metadataBytes", "dataEncryptionKey", active, "updatedAt")
+        SELECT $3 || '-machine-' || n, "accountId", metadata, "metadataBytes", "dataEncryptionKey", false, now()
+        FROM "Machine", generate_series(1, $2::int) n WHERE id = $1`, enrolled.target.machineId, size.machines, inventory)).toBe(size.machines);
+    });
+    const stepCount = 24;
+    const largePhases = await measure(stepCount);
+    const small = assertShape(smallPhases);
+    const large = assertShape(largePhases);
+    console.info('TS.A.setupShape PostgreSQL statements', JSON.stringify({ small, large, size, stepCount }));
+    expect(large).toEqual(small);
+  });
 
   it('TS.A.openApply saves accepted setup privately and requires consent before its native effect', async () => {
     const current = await startSharedSetupProject('printf accepted > shared-setup-effect');
@@ -1077,21 +1282,31 @@ describe('TS.A.remove runs trusted teardown before removal and preserves failure
     await waitFor(async () => !await hasPortAssignment(managedRoot));
   }));
 
-  it('removes a retained sync target through its daemon', async () => {
+  describe('retained Sync target', () => {
+    let target: SetupMachine;
+    let syncSource: string;
+    let syncTarget: string;
+    let syncMarker: string;
+    let syncPermit: string;
+    let linked: ReturnType<typeof WorkspaceSyncRelationshipCreateResultV1Schema.parse>;
+    let checkout: Extract<ReturnType<typeof OpenProjectResultV1Schema.parse>, { kind: 'opened' }>;
+
     // Create the native retained target through its real public producer. Both
     // daemons use this E2EE Account; no row, receipt or target authority is seeded.
-    const target = await removalFixture!.enrollDaemon({ ...account, name: 'retained-sync-target' });
-    console.info('[TS.A.remove sync] target Machine enrolled');
-    const syncSource = join(machine.workspaceDir, 'retained-sync-source');
-    const syncTarget = join(target.workspaceDir, 'retained-sync-copy');
-    const syncMarker = join(target.workspaceDir, 'retained-sync-cleanup-effects');
-    const syncPermit = join(target.workspaceDir, 'retained-sync-cleanup-permit');
-    await mkdir(join(syncSource, '.happier'), { recursive: true });
-    await writeFile(join(syncSource, '.happier/project.json'), JSON.stringify({ version: 1, workspace: {
-      teardown: [{ kind: 'command', command: 'test -f ../retained-sync-cleanup-permit && printf cleanup >> ../retained-sync-cleanup-effects' }],
-    } }));
-    await writeFile(syncPermit, 'allow');
-    await account.withPersonActionClient(async execute => {
+    beforeAll(async () => {
+      target = await removalFixture!.enrollDaemon({ ...account, name: 'retained-sync-target' });
+      syncSource = join(machine.workspaceDir, 'retained-sync-source');
+      syncTarget = join(target.workspaceDir, 'retained-sync-copy');
+      syncMarker = join(target.workspaceDir, 'retained-sync-cleanup-effects');
+      syncPermit = join(target.workspaceDir, 'retained-sync-cleanup-permit');
+      await mkdir(join(syncSource, '.happier'), { recursive: true });
+      await writeFile(join(syncSource, '.happier/project.json'), JSON.stringify({ version: 1, workspace: {
+        teardown: [{ kind: 'command', command: 'test -f ../retained-sync-cleanup-permit && printf cleanup >> ../retained-sync-cleanup-effects' }],
+      } }));
+      await writeFile(syncPermit, 'allow');
+    });
+
+    beforeAll(async () => account.withPersonActionClient(async execute => {
       const sourceOpenAction = await execute('projects.open', { ...machine.target,
         source: { kind: 'folder', path: syncSource }, materialization: { kind: 'attach' } });
       if (!sourceOpenAction.ok) throw new Error(sourceOpenAction.errorCode);
@@ -1104,40 +1319,43 @@ describe('TS.A.remove runs trusted teardown before removal and preserves failure
         purpose: 'worker_clean_copy', contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) },
       }, { presentUserConfirmation: { actionId: 'workspace.sync.relationship.create' } });
       if (!linkedAction.ok) throw new Error(linkedAction.errorCode);
-      const linked = WorkspaceSyncRelationshipCreateResultV1Schema.parse(linkedAction.result);
+      linked = WorkspaceSyncRelationshipCreateResultV1Schema.parse(linkedAction.result);
       expect(linked.created).toBe(true);
-      console.info('[TS.A.remove sync] native relationship created');
       expect(await readFile(join(syncTarget, '.happier/project.json'), 'utf8'))
         .toBe(await readFile(join(syncSource, '.happier/project.json'), 'utf8'));
       const targetOpenAction = await execute('projects.open', { ...target.target,
         source: { kind: 'folder', path: syncTarget }, materialization: { kind: 'attach' } });
       if (!targetOpenAction.ok) throw new Error(targetOpenAction.errorCode);
-      const targetOpen = OpenProjectResultV1Schema.parse(targetOpenAction.result);
-      if (targetOpen.kind !== 'opened') throw new Error(`Sync removal target open: ${targetOpen.kind}`);
-      expect(targetOpen.workspace.workspaceId).toBe(linked.targetWorkspaceRefId);
-      console.info('[TS.A.remove sync] target Project opened');
-      const syncPrepared = await execute('projects.prepare', { workspace: targetOpen.workspace, phase: 'teardown' });
+      const opened = OpenProjectResultV1Schema.parse(targetOpenAction.result);
+      if (opened.kind !== 'opened') throw new Error(`Sync removal target open: ${opened.kind}`);
+      expect(opened.workspace.workspaceId).toBe(linked.targetWorkspaceRefId);
+      checkout = opened;
+    }));
+
+    beforeAll(async () => account.withPersonActionClient(async execute => {
+      const syncPrepared = await execute('projects.prepare', { workspace: checkout.workspace, phase: 'teardown' });
       if (!syncPrepared.ok) throw new Error(syncPrepared.errorCode);
       const syncPreparation = ProjectCommandActionOutputV1Schema.parse(syncPrepared.result).operation;
       const targetContext = { account, machine: target };
       const syncReview = await readSharedSetupReview(targetContext, syncPreparation.operationId, execute);
-      console.info('[TS.A.remove sync] received target teardown review');
-      expect(await execute('projects.prepare', { workspace: targetOpen.workspace, phase: 'teardown',
+      expect(await execute('projects.prepare', { workspace: checkout.workspace, phase: 'teardown',
         heldOperationId: syncReview.operationId, expectedEffectDigest: syncReview.digest,
         consentScope: 'untilChanged' })).toMatchObject({ ok: true });
       expect(await readSharedSetupOperation(targetContext, syncReview.operationId, false, execute))
         .toMatchObject({ state: 'succeeded' });
 
       await unlink(syncMarker);
-      console.info('[TS.A.remove sync] confirmed target teardown');
-      const listedSync = await account.execute('workspace.sync.relationships.list', { controllerMachineId: linked.controllerMachineId });
+    }));
+
+    it('removes a retained sync target through its daemon', async () => account.withPersonActionClient(async execute => {
+      const listedSync = await execute('workspace.sync.relationships.list', { controllerMachineId: linked.controllerMachineId });
       if (!listedSync.ok) throw new Error(listedSync.errorCode);
       const relationship = WorkspaceSyncRelationshipsListActionOutputV1Schema.parse(listedSync.result).relationships
         .find(item => item.definition.relationshipId === linked.relationshipId)?.definition;
       if (!relationship) throw new Error('Native retained copy omitted its committed relationship');
       const copyInput = { workspace: { serverId: removalFixture!.serverId, refId: linked.sourceWorkspaceRefId },
         machineId: linked.controllerMachineId, expectedRelationship: relationship };
-      const inspectedCopy = await account.execute('projects.worker.copy.inspect', { ...copyInput, kind: 'preview',
+      const inspectedCopy = await execute('projects.worker.copy.inspect', { ...copyInput, kind: 'preview',
         targetMachineId: target.target.machineId, targetWorkspaceRefId: linked.targetWorkspaceRefId });
       if (!inspectedCopy.ok) throw new Error(inspectedCopy.errorCode);
       const preview = ProjectWorkerCopyInspectResultV1Schema.parse(inspectedCopy.result);
@@ -1146,17 +1364,18 @@ describe('TS.A.remove runs trusted teardown before removal and preserves failure
       expect(await targetPorts.assign({ rootPath: syncTarget, slots: 1 })).toMatchObject({ kind: 'ready' });
       const retireInput = { ...copyInput,
         removeTargetCopy: { workspaceRefId: linked.targetWorkspaceRefId, rootFingerprint: preview.preview.rootFingerprint } };
-      const retire = (actionRequestId: string) => account.executeReviewed('projects.worker.copy.retire', retireInput,
-        { actionRequestId, presentUserConfirmation: { actionId: 'projects.worker.copy.retire' } }, execute);
+      // The person keeps the same admitted client through the native preview and Retire.
+      const retire = () => execute('projects.worker.copy.retire', retireInput);
       const trustResponses = () => removalFixture!.takeRequestObservations()
         .filter(row => row.path.startsWith(`${PROJECT_TRUST_ROUTE_V1}/`))
         .map(({ method, path, statusCode }) => ({ method, path, statusCode }));
       const oneTrustRead = [{ method: 'POST', path: `${PROJECT_TRUST_ROUTE_V1}/read`, statusCode: 200 }];
       await unlink(syncPermit);
       trustResponses();
-      const failed = await retire(randomUUID());
+      console.info('[TS.A.remove sync] requesting retirement with unavailable teardown input');
+      const failed = await retire();
       const failedTrustReads = trustResponses();
-      const afterFailure = await account.execute('workspace.sync.relationships.list', { controllerMachineId: linked.controllerMachineId });
+      const afterFailure = await execute('workspace.sync.relationships.list', { controllerMachineId: linked.controllerMachineId });
       if (!afterFailure.ok) throw new Error(afterFailure.errorCode);
       const retained = WorkspaceSyncRelationshipsListActionOutputV1Schema.parse(afterFailure.result).relationships;
       expect(retained.map(item => item.definition.relationshipId)).toContain(linked.relationshipId);
@@ -1171,18 +1390,14 @@ describe('TS.A.remove runs trusted teardown before removal and preserves failure
       expect(assignmentsAfterFailure).toMatchObject({ assignments: { [syncTarget]: expect.anything() } });
 
       await writeFile(syncPermit, 'allow');
-      const retireRequestId = randomUUID();
+      const retirementStartedAt = Date.now();
       console.info('[TS.A.remove sync] requesting reviewed retirement');
-      const retirement = await retire(retireRequestId);
+      const retirement = await retire();
       const successfulTrustReads = trustResponses();
       console.info('[TS.A.remove sync] retirement returned', retirement.ok ? 'ok' : retirement.errorCode);
       if (!retirement.ok) {
-        const operations = await account.execute('action.operations.list', { serverId: removalFixture!.serverId,
-          machineId: linked.controllerMachineId, requestIdentity: { actionId: 'projects.worker.copy.retire', requestId: retireRequestId } });
-        const retained = operations.ok ? ActionOperationListV1ResponseSchema.parse(operations.result).items : [];
         throw new Error(`Sync retirement refused: ${JSON.stringify({
           code: retirement.errorCode, message: redactHarnessLogText(retirement.error), cause: retirement.failureCause,
-          operations: retained.map(operation => ({ state: operation.state, code: operation.error?.errorCode })),
         })}`);
       }
       expect(retirement.result).toMatchObject({ status: 'retired' });
@@ -1192,16 +1407,17 @@ describe('TS.A.remove runs trusted teardown before removal and preserves failure
       await expect(access(syncSource)).resolves.toBeUndefined();
       for (const [machineId, count] of [[linked.controllerMachineId, 1], [target.target.machineId, 0]] as const) {
         const operations = await account.execute('action.operations.list', { serverId: removalFixture!.serverId, machineId,
-          requestIdentity: { actionId: 'projects.worker.copy.retire', requestId: retireRequestId } });
+          createdAtFromMs: retirementStartedAt, states: ['succeeded'] });
         if (!operations.ok) throw new Error(operations.errorCode);
-        expect(ActionOperationListV1ResponseSchema.parse(operations.result).items).toHaveLength(count);
+        expect(ActionOperationListV1ResponseSchema.parse(operations.result).items
+          .filter(operation => operation.actionId === 'projects.worker.copy.retire')).toHaveLength(count);
       }
       await waitFor(async () => {
         const state: unknown = JSON.parse(await readFile(join(target.homeDir, 'worktree-ports.json'), 'utf8'));
         const assignments: unknown = state && typeof state === 'object' ? Reflect.get(state, 'assignments') : undefined;
         return Boolean(assignments && typeof assignments === 'object' && !Object.hasOwn(assignments, syncTarget));
       });
-    });
+    }, { confirmation: 'presented' }));
   });
 });
 

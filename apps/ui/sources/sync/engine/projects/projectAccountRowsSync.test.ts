@@ -117,6 +117,10 @@ describe('Project Account row sync owner', () => {
             setupContent: { artifactId: 'prepared-detail', headerVersion: 1, bodyVersion: 1 },
         } });
         expect(h.requests).toHaveLength(1);
+        expect(h.listReads()).toBe(0);
+        expect(h.exactReads).toEqual([
+            buildProjectAccountRowPhysicalKeyV1({ kind: 'project-organization', serverId: 'home', projectKey: 'anchor' }),
+        ]);
         if (result.status !== 'updated') throw new Error('Expected an acknowledged organization edit');
         expect(h.projection()?.organizations[0]?.value).toEqual(result.value);
     });
@@ -224,6 +228,7 @@ describe('Project Account row sync owner', () => {
         expect(organization).toMatchObject({ status: 'updated', value: { label: 'Project 0', hidden: true } });
         expect(h.opens() - before).toBe(2);
         expect(h.projection()?.organizations.find(row => row.key.projectKey === 'project-0')?.value.hidden).toBe(true);
+        const selectedId = buildProjectAccountRowPhysicalKeyV1({ kind: 'project-organization', serverId: 'home', projectKey: 'project-0' });
         const changedKey = { kind: 'project-organization' as const, serverId: 'home', projectKey: 'project-1' };
         const changedId = buildProjectAccountRowPhysicalKeyV1(changedKey);
         const missingId = buildProjectAccountRowPhysicalKeyV1({ ...changedKey, projectKey: 'absent' });
@@ -231,7 +236,7 @@ describe('Project Account row sync owner', () => {
         h.rows.set(changedId, { key: changedKey, revision: 1,
             content: h.cipher.seal({ key: changedKey, value: { label: 'Changed remotely' } }) });
         expect(await h.owner.refreshKeys([changedId, missingId])).toEqual(new Set([changedId, missingId]));
-        expect(h.exactReads).toEqual([changedId, missingId]);
+        expect(h.exactReads).toEqual([selectedId, changedId, missingId]);
         expect(h.listReads()).toBe(listsBeforeHint);
         expect(h.opens() - before).toBe(3);
         expect(h.projection()?.organizations.find(row => row.key.projectKey === 'project-1')?.value.label).toBe('Changed remotely');
@@ -374,13 +379,14 @@ describe('Project Account row sync owner', () => {
     });
     it('refuses a success receipt that does not acknowledge the admitted organization revision and content', async () => {
         const h = harness();
+        const admitted = await h.owner.refresh();
         const key = { kind: 'project-organization' as const, serverId: 'home', projectKey: 'anchor' };
         h.transport.mutate = async () => ({ status: 'updated', cursor: 1,
             rows: [{ key, revision: 0, content: { t: 'plain', v: { key, value: { hidden: false } } } }] });
         await expect(h.owner.mutateOrganizationAtRevision({ serverId: 'home', projectKey: 'anchor',
             expectedRevision: 'absent', mutate: value => ({ ...value, hidden: true }) }))
             .rejects.toMatchObject({ code: 'project_account_row_acknowledgement_invalid' });
-        expect(h.projection()?.organizations).toEqual([]);
+        expect(h.projection()).toBe(admitted);
     });
     it('retains fallback Project Hide through persisted Source enrichment and row reload without a duplicate Project', async () => {
         const h = harness();

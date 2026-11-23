@@ -3700,10 +3700,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     projectsSetupSet: async ({ input, context, executeCanonicalAction }) => {
       if (!accountContext || !canUsePrivateProjectAccountAction(accountContext, context)) return { ok: false, errorCode: 'project_account_access_denied' };
       const client = createUiProjectAccountRowsClient(accountContext);
-      const rows = await client.read(context.signal);
-      const { resolveWorkspaceRefV1, projectWorkspaceRefV1 } = await import('@happier-dev/protocol/workspaces/workspaceRefResolutionV1');
-      const resolved = resolveWorkspaceRefV1(rows.workspaceRefs, { ...input.workspace, id: input.workspace.workspaceId });
-      if (resolved.kind !== 'resolved' || projectWorkspaceRefV1(resolved.ref).projectKey !== input.projectRef.projectKey) {
+      const workspace = await client.readWorkspaceRef(input.workspace, context.signal);
+      const { projectWorkspaceRefV1 } = await import('@happier-dev/protocol/workspaces/workspaceRefResolutionV1');
+      if (!workspace || projectWorkspaceRefV1(workspace).projectKey !== input.projectRef.projectKey) {
         return { ok: false, errorCode: 'project_workspace_association_mismatch' };
       }
       return setProjectSetupV1({ execute: executeCanonicalAction, mutateOrganization: client.mutateOrganization }, input, context);

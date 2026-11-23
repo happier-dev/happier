@@ -69,6 +69,8 @@ export function createUiProjectAccountRowsClient(account: Account) {
   };
   return {
     read,
+    readWorkspaceRef: async (address: WorkspaceAddressV2, signal?: AbortSignal) =>
+      (await getOwner()).readWorkspaceRef(address, signal),
     readSessionDefaults: async (project: QualifiedProjectKeyV1, signal?: AbortSignal) =>
       (await getOwner()).readSessionDefaults(project, signal),
     mutateSessionDefaults: async (input: Readonly<{
@@ -83,8 +85,7 @@ export function createUiProjectAccountRowsClient(account: Account) {
     readProjectReference: async (project: QualifiedProjectKeyV1, signal?: AbortSignal, context?: Caller) => {
       if (!canUsePrivateProjectAccountAction(account, context) || !areServerProfileIdentifiersEquivalent(project.serverId, account.serverId))
         throw Object.assign(new Error('project_account_access_denied'), { code: 'project_account_access_denied' });
-      // A delete guard decides a write, so it takes a census like every mutation; the app owner
-      // still reuses its opened payloads for unchanged rows instead of re-opening them.
+      // The delete guard admits against the Account topology; unchanged rows reuse their opened payloads.
       return resolveProjectAccountReferenceV1(await (await getOwner()).refresh(signal), project, resolveServerProfileScopeIdForIdentifier);
     },
     updateWorkspace: async (input: Readonly<{ serverId: string; workspaceId: string; label?: string | null; pinned?: boolean; projectKey?: string; signal?: AbortSignal }>, context?: Caller) => {

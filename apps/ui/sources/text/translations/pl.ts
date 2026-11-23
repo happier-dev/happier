@@ -18683,6 +18683,8 @@ settingsSession: {
           afterDescription: ({ machine }: { machine: string }) => `Co zostanie uruchomione na ${machine}. Wiersze z repozytorium są jak wcześniej.`,
           nothingRuns: "Nic się nie uruchomi, dopóki nie wybierzesz. Wcześniejsza zgoda nie obejmuje nowych poleceń.",
           whatChanged: "Co się zmieniło",
+          sharedBy: ({ name, time }: { name: string; time: string }) => `Udostępnia ${name} · ${time}`,
+          publishedAt: ({ time }: { time: string }) => `Udostępniono · ${time}`,
           failed: "Nie udało się zastosować aktualizacji",
           keep: "Zachowaj obecną konfigurację",
           use: "Użyj zaktualizowanej konfiguracji",

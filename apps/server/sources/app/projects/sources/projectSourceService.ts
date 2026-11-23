@@ -24,6 +24,7 @@ import type { Tx } from '@/storage/inTx';
 import { prismaRuntime, getDbProviderFromEnv } from '@/storage/prisma';
 import { defaultRepeatKeyExpiresAt, fetchRepeatKey, lockPostgresRepeatKeyInTx, saveRepeatKey } from '@/storage/queue/repeatKey';
 import { readTransactionDatabaseTime } from '@/storage/transactionDatabaseTime';
+import { resolveAccountDisplayLabelV1 } from '@/app/account/profile/accountDisplayProfile';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { markAccountsChanged } from '@/app/changes/markAccountChanged';
 import { readArtifactHeaderForCallerInTx } from '@/app/artifacts/artifactAccessService';
@@ -400,7 +401,16 @@ async function applyAttachmentInTx(tx: Tx, actorAccountId: string, serverId: str
                 : [...attachments.filter(item => item.purpose !== 'onboarding_task'), intent.attachment] };
         }
         if (intent.attachment.purpose === 'setup') {
-            return { ok: true as const, attachments: [...attachments.filter(item => item.purpose !== 'setup'), intent.attachment] };
+            if (existing?.purpose === 'setup' && isDeepStrictEqual(existing.contentRevision, intent.attachment.contentRevision)) {
+                return { ok: true as const, attachments };
+            }
+            const [publisher, publishedAt] = await Promise.all([
+                tx.account.findUnique({ where: { id: actorAccountId }, select: { name: true, username: true } }),
+                readTransactionDatabaseTime(tx),
+            ]);
+            const publication = { ...intent.attachment, publishedAt: publishedAt.getTime(),
+                publishedBy: { accountId: actorAccountId, displayName: publisher ? resolveAccountDisplayLabelV1(publisher) : null } };
+            return { ok: true as const, attachments: [...attachments.filter(item => item.purpose !== 'setup'), publication] };
         }
         if (!existing) attachments.push(intent.attachment);
     } else if (intent.kind === 'detach') {

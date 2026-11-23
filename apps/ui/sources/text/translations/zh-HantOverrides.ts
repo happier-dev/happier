@@ -14413,6 +14413,8 @@ settingsSession: {
               afterDescription: ({ machine }: { machine: string }) => `將在 ${machine} 上執行的設定。來自儲存庫的行維持不變。`,
               nothingRuns: "在你選擇之前不會執行任何內容。你之前的核准不涵蓋新的指令。",
               whatChanged: "變更內容",
+              sharedBy: ({ name, time }: { name: string; time: string }) => `${name} 分享 · ${time}`,
+              publishedAt: ({ time }: { time: string }) => `已分享 · ${time}`,
               failed: "無法套用更新",
               keep: "保留目前設定",
               use: "使用更新後的設定",

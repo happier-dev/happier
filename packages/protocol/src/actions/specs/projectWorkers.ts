@@ -1,5 +1,5 @@
 import { lazyActionSpecArray , type ActionSpecArrayConcat } from '../lazyActionSpecValue.js';
-import { PROJECT_WORKER_ACTION_IDS_V1, isProjectWorkerCopyInspectActionIdV1 } from './projectWorkersActionIdsV1.js';
+import { PROJECT_WORKER_ACTION_IDS_V1, isProjectWorkerCopyInspectActionIdV1, isProjectWorkerCopyRetireActionIdV1 } from './projectWorkersActionIdsV1.js';
 export { PROJECT_WORKER_ACTION_IDS_V1 } from './projectWorkersActionIdsV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 
@@ -15,6 +15,7 @@ import type { ActionInputFieldHint } from '../actionInputHintsRuntime.js';
 import { ProjectWorkerNoAcceptanceFailureDetailsV1Schema } from '../projectWorkerRefusal.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
 import { projectZodProtocolSchema } from '../../plugins/actions/internalProtocolZodAdapter.js';
+import { readRecord } from '../../inputs/inputRecords.js';
 import { WorkspaceSyncCommittedCopyPreviewV1Schema, WorkspaceSyncCommittedCopyPreviewResultV1Schema } from '../../sessions/control/handoff/workspaceSyncCommittedCopyV1.js';
 import { PROJECT_SERVICE_PLACEMENT_ACTION_SPECS, ProjectServicePlacementActionInputSchemasV1, ProjectServicePlacementActionOutputSchemasV1 } from './projectServicePlacement.js';
 export type ProjectWorkerActionIdV1 = typeof PROJECT_WORKER_ACTION_IDS_V1[number];
@@ -192,6 +193,7 @@ export const PROJECT_WORKER_ACTION_SPECS: ActionSpecArrayConcat<readonly [
   ...(Object.keys(titles) as (keyof typeof titles)[]).map((id): PreNormalizedActionSpec => {
   const read = id.endsWith('.get') || id === 'projects.worker.status' || id === 'projects.worker.copy.inspect';
   const machine = id === 'projects.worker.status' || id === 'projects.worker.copy.inspect' || id === 'projects.worker.copy.retire';
+  const retire = isProjectWorkerCopyRetireActionIdV1(id);
   return {
     id, approval: read ? { result: 'required' } : { result: 'optional', flow: 'deferred' },
     approvalPolicy: { uiConfirmation: id === 'projects.worker.copy.retire' ? 'policy' : 'direct' }, title: titles[id], description: id === 'projects.worker.preferences.get'
@@ -209,10 +211,12 @@ export const PROJECT_WORKER_ACTION_SPECS: ActionSpecArrayConcat<readonly [
       progress: 'reported' as const, presentation: { onStart: 'current' as const } } } : {}),
     // Policy writes are Account-side key-holder operations; an offline guest is not their authority.
     executionPlacement: machine ? 'machine' : 'account', placements: [],
-    ...(id === 'projects.worker.copy.retire' || isProjectWorkerCopyInspectActionIdV1(id) ? {
+    ...(retire || isProjectWorkerCopyInspectActionIdV1(id) ? {
       originalExecution: { accountRoot: 'allowed',
         ...(isProjectWorkerCopyInspectActionIdV1(id) ? { requesterCredentials: 'none' as const } : {}),
-        ...(id === 'projects.worker.copy.retire' ? { daemonIngressSurfaces: ['cli'] } : {}) },
+        ...(retire ? { daemonIngressSurfaces: ['cli', 'ui'] } : {}) },
+      // Physical removal opens the selected checkout's private setup on the requester’s controller.
+      ...(retire ? { requesterAccountContentDemandForInput: (input: unknown) => readRecord(input).removeTargetCopy !== undefined } : {}),
     } : {}),
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true,
       rpc: machine },

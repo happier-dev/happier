@@ -13,6 +13,12 @@ export const PROJECT_SETUP_ARTIFACT_KIND_V1 = 'project_setup.v1' as const;
 export const PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 = encodeArtifactKindV1({ kind: 'other', kindHint: PROJECT_SETUP_ARTIFACT_KIND_V1 });
 const id = z.string().check(z.minLength(1));
 export const ProjectSetupContentRevisionV1Schema = ArtifactRevisionV1Schema;
+/** Home-authored display facts for the attachment's exact setup content revision. */
+export const ProjectSetupPublicationAttributionV1Schema = lazyZodSchema(() => z.strictObject({
+  publishedBy: z.optional(z.strictObject({ accountId: id, displayName: z.nullable(z.string()) })),
+  publishedAt: z.optional(z.number().check(z.int(), z.nonnegative())),
+}));
+export type ProjectSetupPublicationAttributionV1 = z.infer<typeof ProjectSetupPublicationAttributionV1Schema>;
 export const ProjectSetupSelectionV1Schema = lazyZodSchema(() => z.strictObject({
   sourceId: id, contentRevision: ProjectSetupContentRevisionV1Schema, digest: z.string().check(z.regex(/^[a-f0-9]{64}$/u)),
 }));

@@ -69,16 +69,23 @@ describe('Project definition Actions through the UI executor', () => {
 
     it('opens the Account setup decision through the native UI port and keeps its checkout association', async () => {
         const { createPlainProjectAccountRowListFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
-        const { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } = await import('@happier-dev/protocol/projects/projectAccountRowsV1');
+        const { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowReadRequestV1Schema, buildProjectAccountRowPhysicalKeyV1 }
+            = await import('@happier-dev/protocol/projects/projectAccountRowsV1');
         const home = 'srv_project_home';
         const address = { ...workspace, serverId: home };
         const key = { kind: 'project-organization' as const, serverId: home, projectKey: workspace.workspaceId };
-        harness.answer(workspace.serverId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, {
-            body: createPlainProjectAccountRowListFixture({
-                workspaceRefs: [{ id: workspace.workspaceId, serverId: home, machineId: workspace.machineId,
-                    rootPath: workspace.rootPath, createdAtMs: 1 }],
-                organizations: [{ key, revision: 0, value: {} }],
-            }),
+        const persisted = createPlainProjectAccountRowListFixture({
+            workspaceRefs: [{ id: workspace.workspaceId, serverId: home, machineId: workspace.machineId,
+                rootPath: workspace.rootPath, createdAtMs: 1 }],
+            organizations: [{ key, revision: 0, value: {} }],
+        });
+        harness.answer(workspace.serverId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, { body: persisted });
+        harness.answer(workspace.serverId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`, {
+            select: (body) => {
+                const { key } = ProjectAccountRowReadRequestV1Schema.parse(body);
+                const row = persisted.rows.find(row => buildProjectAccountRowPhysicalKeyV1(row.key) === buildProjectAccountRowPhysicalKeyV1(key));
+                return { body: row ? { status: 'present', row } : { status: 'absent' } };
+            },
         });
         harness.answer(workspace.serverId, '/v2/account/settings', { body: { version: 1, content: { t: 'plain', v: {
             actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'projects.setup.set': ['ui'] } },
@@ -93,6 +100,12 @@ describe('Project definition Actions through the UI executor', () => {
         expect(await execute('projects.setup.set', { ...input,
             projectRef: { ...input.projectRef, projectKey: 'another-project' } }, context))
             .toMatchObject({ ok: true, result: { ok: false, errorCode: 'project_workspace_association_mismatch' } });
+        expect(harness.requestsFor(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`)).toEqual([]);
+        expect(harness.requestsFor(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`).map(request => request.input)).toMatchObject([
+            { key: { kind: 'workspace-ref', serverId: home, id: workspace.workspaceId } },
+            { key },
+            { key: { kind: 'workspace-ref', serverId: home, id: workspace.workspaceId } },
+        ]);
         expect(rpc.machine).not.toHaveBeenCalled();
     });
 

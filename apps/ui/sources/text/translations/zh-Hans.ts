@@ -18477,6 +18477,8 @@ settingsSession: {
           afterDescription: ({ machine }: { machine: string }) => `将在 ${machine} 上运行的设置。来自仓库的行保持不变。`,
           nothingRuns: "在你选择之前不会运行任何内容。你之前的批准不涵盖新的命令。",
           whatChanged: "变更内容",
+          sharedBy: ({ name, time }: { name: string; time: string }) => `${name} 分享 · ${time}`,
+          publishedAt: ({ time }: { time: string }) => `已分享 · ${time}`,
           failed: "无法应用更新",
           keep: "保留当前设置",
           use: "使用更新后的设置",

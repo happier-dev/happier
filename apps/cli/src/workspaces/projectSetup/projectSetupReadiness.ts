@@ -4,7 +4,7 @@ import type { RpcHandlerContext } from '@/api/rpc/types';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { projectRuntimeAccountRowsInput, type ProjectRuntimeAccountAccess } from '@/workspaces/projectAccountRows';
 import { readProjectRuntimeAdmissionRefusal, type ProjectFiniteActionRuntime } from './projectFiniteAction';
-import { resolveProjectSetupAcceptedWorkspace } from './projectSetupAcceptedWorkspace';
+import { resolveProjectSetupAcceptedWorkspace, type ProjectSetupAcceptedAssociation } from './projectSetupAcceptedWorkspace';
 import { inspectProjectSetup, type ProjectSetupInspection } from './projectSetupPreparation';
 import { resolveProjectRequesterSecretInputs } from './projectSetupRequesterInputs';
 import { readProjectEffectiveDefinition, type PendingProjectSharedSetupInput } from './projectEffectiveDefinition';
@@ -24,6 +24,7 @@ import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import { resolveHostRequesterAgentPlacementForHost } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import type { ProjectManifestV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 
 /** The requester Account and native invocation supply the accepted checkout's filesystem facts. */
 export async function withProjectMemberWorkspaceSource<T>(input: Readonly<{
@@ -115,8 +116,10 @@ export async function readProjectEffectiveDefinitionFromRuntime(input: Readonly<
                 ? definition.snapshot.document.manifest : null,
                 acceptedSetup: definition.acceptedSetup, publication, comparison });
             if (change.kind === 'changed') {
-                const after = await inspectProjectSetupFromRuntime({ ...input,
-                    acceptedSetup: { ...definition.acceptedSetup, acceptedSharedSetup: publication }, reviewSetupConsent: true });
+                const after = await inspectSelectedProjectSetup({ ...input, reviewSetupConsent: true }, {
+                    association, manifest: change.after.effectiveManifest,
+                    acceptedSetup: { ...definition.acceptedSetup, acceptedSharedSetup: publication },
+                });
                 sharedSetupChange = { ...change, setupReadiness: after.setupReadiness,
                     ...(after.setupReview ? { setupReview: after.setupReview } : {}) };
             } else sharedSetupChange = change;
@@ -131,11 +134,18 @@ export async function readProjectEffectiveDefinitionFromRuntime(input: Readonly<
     return { ...definition, association, ...(sharedSetupChange ? { sharedSetupChange } : {}) };
 }
 
-/** Passive review uses the same captured requester, current target, and native owner as execution. */
-export async function inspectProjectSetupFromRuntime(input: Readonly<{
+type ProjectSetupRuntimeInspection = Readonly<{
     runtime: ProjectFiniteActionRuntime; ingress: RpcHandlerContext; workspace: ProjectDefinitionWorkspace; context: ActionExecutorContext;
     reviewSetupConsent?: true;
-    acceptedSetup?: ProjectSetupReadV1;
+}>;
+
+/** Passive review uses the same captured requester, current target, and native owner as execution. */
+export function inspectProjectSetupFromRuntime(input: ProjectSetupRuntimeInspection): Promise<ProjectSetupInspection> {
+    return inspectSelectedProjectSetup(input);
+}
+
+async function inspectSelectedProjectSetup(input: ProjectSetupRuntimeInspection, selected?: Readonly<{
+    association: ProjectSetupAcceptedAssociation; manifest: ProjectManifestV1 | null; acceptedSetup: ProjectSetupReadV1;
 }>): Promise<ProjectSetupInspection> {
     const { runtime: authorityRuntime, ingress } = input;
     const runtime = { ...authorityRuntime, serverId: input.workspace.serverId };
@@ -151,24 +161,28 @@ export async function inspectProjectSetupFromRuntime(input: Readonly<{
     let releaseRequester: (() => Promise<void>) | undefined;
     const unknown = (code: string): ProjectSetupInspection => ({ setupReadiness: { kind: 'unknown', code } });
     try {
-        if (!await isServerProfileHomeIdentity(authorityRuntime.serverId, input.workspace.serverId) || input.workspace.machineId !== runtime.machineId
-            || ingress.machineAdmission && ingress.machineAdmission.machineId !== runtime.machineId) return unknown('target_mismatch');
-        const refused = await phase('requester', () => readProjectRuntimeAdmissionRefusal(authorityRuntime, { ...ingress, signal }));
-        if (refused) return unknown(refused.errorCode);
+        if (!selected) {
+            if (!await isServerProfileHomeIdentity(authorityRuntime.serverId, input.workspace.serverId) || input.workspace.machineId !== runtime.machineId
+                || ingress.machineAdmission && ingress.machineAdmission.machineId !== runtime.machineId) return unknown('target_mismatch');
+            const refused = await phase('requester', () => readProjectRuntimeAdmissionRefusal(authorityRuntime, { ...ingress, signal }));
+            if (refused) return unknown(refused.errorCode);
+        }
         releaseRequester = readRequesterAccountActionContext(runtime.accountAuthorization)?.retain();
-        const association = await phase('workspace', () => resolveProjectSetupAcceptedWorkspace({ address: input.workspace,
+        const association = selected?.association ?? await phase('workspace', () => resolveProjectSetupAcceptedWorkspace({ address: input.workspace,
             ...projectRuntimeAccountRowsInput(runtime), serverId: runtime.serverId,
             serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal }));
-        const definition = await phase('manifest', () => readProjectEffectiveDefinition({ root: association.workspace.rootPath,
-            account: projectRuntimeAccountRowsInput(runtime), project: association.project,
-            serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal, acceptedSetup: input.acceptedSetup }));
-        const manifest = definition.effectiveDefinition.effectiveManifest;
+        const { manifest, acceptedSetup } = selected ?? await phase('manifest', async () => {
+            const definition = await readProjectEffectiveDefinition({ root: association.workspace.rootPath,
+                account: projectRuntimeAccountRowsInput(runtime), project: association.project,
+                serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal });
+            return { manifest: definition.effectiveDefinition.effectiveManifest, acceptedSetup: definition.acceptedSetup };
+        });
         const { environmentBindings, secretEnvironment } = await phase('requester_environment', () => resolveProjectRequesterSecretInputs(runtime, {
             project: association.project, requirements: manifest?.environmentVariables ?? [],
         }, signal));
         signal.throwIfAborted();
         const inspection = await phase('review', () => inspectProjectSetup({ workspace: association.workspace, projectAssociation: association,
-            acceptedSetup: definition.acceptedSetup,
+            acceptedSetup,
             requesterIdentity: runtime.requesterIdentity,
             requester: { ...projectRuntimeAccountRowsInput(runtime), serverHttpBaseUrl: runtime.serverHttpBaseUrl },
             purpose: 'setup', approvalContext: input.context,

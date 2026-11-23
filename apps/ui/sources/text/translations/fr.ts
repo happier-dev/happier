@@ -18732,6 +18732,8 @@ settingsSession: {
           afterDescription: ({ machine }: { machine: string }) => `Ce qui s’exécutera sur ${machine}. Les lignes du dépôt restent les mêmes.`,
           nothingRuns: "Rien ne s’exécute avant ton choix. Ton approbation précédente ne couvre pas les nouvelles commandes.",
           whatChanged: "Ce qui a changé",
+          sharedBy: ({ name, time }: { name: string; time: string }) => `Partagée par ${name} · ${time}`,
+          publishedAt: ({ time }: { time: string }) => `Partagée · ${time}`,
           failed: "Impossible d’appliquer la mise à jour",
           keep: "Garder la configuration actuelle",
           use: "Utiliser la configuration mise à jour",

@@ -41,7 +41,7 @@ export function createProjectAccountRowsSync(options: Readonly<{
     readLegacyLabel?(key: string): string | undefined;
     retireLegacyLabel?(key: string, label: string): Promise<void>;
 }>) {
-    let opened: readonly OpenedRow[] = [];
+    let opened = new Map<string, OpenedRow>();
     // Last disclosed snapshot once a census admitted the topology; exact change hints keep it current.
     let held: ProjectAccountRowsSnapshot | null = null;
     let censused = false;
@@ -56,7 +56,7 @@ export function createProjectAccountRowsSync(options: Readonly<{
     let refreshInFlight: Promise<ProjectAccountRowsSnapshot> | null = null;
     let readRecency = options.readRecency;
     function assertCurrent() { if (!options.isCurrent()) throw failure('project_account_scope_retired'); }
-    function project(rows: readonly OpenedRow[]): ProjectAccountRowsSnapshot {
+    function project(rows: Iterable<OpenedRow>): ProjectAccountRowsSnapshot {
         const workspaceRefs: WorkspaceRefV1[] = [];
         const relationships: ProjectAccountRowsSnapshot['relationships'][number][] = [];
         const organizations: ProjectAccountRowsSnapshot['organizations'][number][] = [];
@@ -86,9 +86,14 @@ export function createProjectAccountRowsSync(options: Readonly<{
         const snapshot = parseProjectAccountSnapshotV1({ workspaceRefs, relationships });
         return { ...snapshot, scope: options.scope, status: 'ready', coverage: 'complete', organizations, pinnedEnvironmentIds, revisionsByPhysicalKey, authoringSessionsByPhysicalKey };
     }
+    function openContent(key: ProjectAccountRowKeyV1, content: ProjectAccountRowV1['content'], prior?: OpenedRow) {
+        if (content === null) return null;
+        if (prior && areAccountSettingsJsonValuesEqual(prior.row.content, content)) return prior.payload;
+        return options.cipher.open(key, content);
+    }
     function observe(rows: readonly ProjectAccountRowV1[], source: 'census' | 'projection' = 'projection', materialization?: ProjectAccountRowsMaterialization): ProjectAccountRowsSnapshot {
         assertCurrent();
-        const merged = new Map(opened.map(item => [buildProjectAccountRowPhysicalKeyV1(item.row.key), item]));
+        const merged = new Map(opened);
         for (const key of materialization?.absentPhysicalKeys ?? []) merged.delete(key);
         const seen = new Set<string>();
         for (const row of rows) {
@@ -97,18 +102,15 @@ export function createProjectAccountRowsSync(options: Readonly<{
             seen.add(key);
             const prior = merged.get(key);
             if (!prior || row.revision >= prior.row.revision) {
-                const payload = row.content === null ? null
-                    : prior && areAccountSettingsJsonValuesEqual(prior.row.content, row.content)
-                        ? prior.payload : options.cipher.open(row.key, row.content);
+                const payload = openContent(row.key, row.content, prior);
                 // Legacy-shaped structural acknowledgements omit this server-owned leaf.
                 // The relation changes only through its record operation, or checkout deletion.
                 const authoringSession = row.content !== null ? row.authoringSession ?? prior?.row.authoringSession : undefined;
                 merged.set(key, { row: authoringSession ? { ...row, authoringSession } : row, payload });
             }
         }
-        const next = [...merged.values()];
-        const snapshot = project(next); // Validate the complete admitted topology before disclosing any row.
-        assertCurrent(); opened = next; disclose(snapshot, source, materialization);
+        const snapshot = project(merged.values()); // Validate the complete admitted topology before disclosing any row.
+        assertCurrent(); opened = merged; disclose(snapshot, source, materialization);
         if (source === 'census') notifyMaterialization();
         else {
             for (const key of seen) notifyMaterialization(undefined, key);
@@ -230,9 +232,10 @@ export function createProjectAccountRowsSync(options: Readonly<{
         }
         return completed;
     }
-    function rowFor(key: ProjectAccountRowKeyV1) { const id = buildProjectAccountRowPhysicalKeyV1(key); return opened.find(item => buildProjectAccountRowPhysicalKeyV1(item.row.key) === id); }
-    function mutation(payload: ProjectAccountRowPayloadV1 | null, key: ProjectAccountRowKeyV1) {
-        return { key, expectedRevision: rowFor(key)?.row.revision ?? 'absent' as const,
+    function rowFor(key: ProjectAccountRowKeyV1) { return opened.get(buildProjectAccountRowPhysicalKeyV1(key)); }
+    function mutation(payload: ProjectAccountRowPayloadV1 | null, key: ProjectAccountRowKeyV1,
+        expectedRevision: number | 'absent' = rowFor(key)?.row.revision ?? 'absent') {
+        return { key, expectedRevision,
             content: payload === null ? null : options.cipher.seal(ProjectAccountRowPayloadV1Schema.parse(payload)) };
     }
     function assertAcknowledgement(request: ProjectAccountRowMutationRequestV1, result: Extract<ProjectAccountRowMutationResponseV1, { status: 'updated' }>) {
@@ -252,19 +255,29 @@ export function createProjectAccountRowsSync(options: Readonly<{
         observe(result.rows);
         return 'updated';
     }
-    /** Selected defaults remain exact reads, outside the Account's opened census and projection. */
-    async function readSessionDefaults(project: Readonly<{ serverId: string; projectKey: string }>, signal?: AbortSignal) {
-        if (!areServerProfileIdentifiersEquivalent(project.serverId, options.scope.serverId)) throw failure('project_account_scope_mismatch');
+    /** Action demand reads open only the selected private row. Hints maintain the inventory projection. */
+    async function readSelectedRow(key: Extract<ProjectAccountRowKeyV1, { serverId: string }>, signal?: AbortSignal) {
+        if (!areServerProfileIdentifiersEquivalent(key.serverId, options.scope.serverId)) throw failure('project_account_scope_mismatch');
         assertCurrent(); signal?.throwIfAborted();
-        const key = { kind: 'project-session-defaults' as const, ...project };
         const result = await options.transport.read(key, { signal });
         assertCurrent(); signal?.throwIfAborted();
         if (result.status === 'absent') return null;
-        if (result.status === 'deleted') return { revision: result.revision, defaults: null };
+        if (result.status === 'deleted') return { revision: result.revision, payload: null };
         if (result.status !== 'present') throw failure(`project_account_rows_${result.status}`);
-        if (result.row.content === null) return { revision: result.row.revision, defaults: null };
-        const payload = options.cipher.open(key, result.row.content);
-        return { revision: result.row.revision, defaults: ProjectSessionDefaultsV1Schema.parse(payload.value) };
+        return { revision: result.row.revision,
+            payload: openContent(key, result.row.content, rowFor(key)) };
+    }
+    async function readWorkspaceRef(address: WorkspaceAddressV2, signal?: AbortSignal): Promise<WorkspaceRefV1 | null> {
+        const row = await readSelectedRow({ kind: 'workspace-ref', serverId: address.serverId, id: address.workspaceId }, signal);
+        const payload = row?.payload;
+        if (payload?.key.kind !== 'workspace-ref' || !('id' in payload.value)) return null;
+        const resolved = resolveWorkspaceRefByAddress([payload.value], address);
+        return resolved.kind === 'resolved' ? resolved.ref : null;
+    }
+    async function readSessionDefaults(project: Readonly<{ serverId: string; projectKey: string }>, signal?: AbortSignal) {
+        const row = await readSelectedRow({ kind: 'project-session-defaults', ...project }, signal);
+        if (!row) return null;
+        return { revision: row.revision, defaults: row.payload ? ProjectSessionDefaultsV1Schema.parse(row.payload.value) : null };
     }
     /** The caller's selected revision owns CAS; no census or pre-write read re-decides that intent. */
     async function mutateSessionDefaults(input: Readonly<{
@@ -288,20 +301,18 @@ export function createProjectAccountRowsSync(options: Readonly<{
         serverId: string; projectKey: string; expectedRevision?: number | 'absent'; signal?: AbortSignal;
         mutate(value: ProjectAccountOrganizationV1): ProjectAccountOrganizationV1 | Promise<ProjectAccountOrganizationV1>;
     }>) {
-        if (input.serverId !== options.scope.serverId) throw failure('project_account_scope_mismatch');
-        await refresh(input.signal);
         const key = { kind: 'project-organization' as const, serverId: input.serverId, projectKey: input.projectKey };
-        const previous = rowFor(key);
-        const observed = previous?.row.revision ?? 'absent';
+        const previous = await readSelectedRow(key, input.signal);
+        const observed = previous?.revision ?? 'absent';
         if (input.expectedRevision !== undefined && observed !== input.expectedRevision) return { status: 'conflict' as const, revision: observed === 'absent' ? -1 : observed };
         const payload = previous?.payload;
         const before = payload && isOrganizationPayload(payload) ? payload.value : {};
         const value = ProjectAccountOrganizationV1Schema.parse(await input.mutate(before));
         assertCurrent(); input.signal?.throwIfAborted();
         if (previous?.payload && areAccountSettingsJsonValuesEqual(before, value)) {
-            return { status: 'updated' as const, revision: previous.row.revision, value: before };
+            return { status: 'updated' as const, revision: previous.revision, value: before };
         }
-        const request = { mutations: [mutation({ key, value }, key)], expectedRefs: [], topologyChange: false } satisfies ProjectAccountRowMutationRequestV1;
+        const request = { mutations: [mutation({ key, value }, key, observed)], expectedRefs: [], topologyChange: false } satisfies ProjectAccountRowMutationRequestV1;
         const result = await options.transport.mutate(request, { signal: input.signal });
         if (result.status === 'conflict') return { status: 'conflict' as const, revision: result.revision };
         if (result.status !== 'updated') throw failure(`project_account_rows_${result.status}`);
@@ -453,16 +464,16 @@ export function createProjectAccountRowsSync(options: Readonly<{
                 // The ref mutation already carries its CAS. The unchanged graph CAS
                 // fences concurrent links without contending on unrelated labels.
             } else if (existing && structural && areAccountSettingsJsonValuesEqual(ProjectAccountWorkspaceRefV1Schema.parse((({ lastOpenedAtMs: _recency, ...value }) => value)(existing)), structural)) {
-                if (rememberedOpen !== undefined) { await options.writeRecency?.(existing, rememberedOpen); disclose(project(opened), 'projection'); }
+                if (rememberedOpen !== undefined) { await options.writeRecency?.(existing, rememberedOpen); disclose(project(opened.values()), 'projection'); }
                 return { ok: true, workspaceRefId: existing.id };
             }
             if (await commit(request, signal) === 'conflict') continue; // Re-read rows and re-admit this intent at the same semantic owner.
-            if (rememberedOpen !== undefined) { await options.writeRecency?.(ref, rememberedOpen); disclose(project(opened), 'projection'); }
+            if (rememberedOpen !== undefined) { await options.writeRecency?.(ref, rememberedOpen); disclose(project(opened.values()), 'projection'); }
             if (intent.kind === 'migrate_label') { await options.retireLegacyLabel?.(intent.legacyKey, intent.label); return { ok: true, workspaceRefId: ref.id, migrated: true }; }
             return intent.kind === 'upsert' ? { ok: true, workspaceRefId: ref.id } : { ok: true };
         }
     }
-    return { read, refresh, refreshKeys, readSessionDefaults, mutateSessionDefaults, waitForWorkspaceRef, mutateRef, mutateWorkspaceMetadata,
+    return { read, refresh, refreshKeys, readWorkspaceRef, readSessionDefaults, mutateSessionDefaults, waitForWorkspaceRef, mutateRef, mutateWorkspaceMetadata,
         recordWorkspaceSource: (address: WorkspaceAddressV2, source: NonNullable<WorkspaceRefV1['source']>, signal?: AbortSignal) =>
             recordWorkspaceFacts(address, { source }, signal),
         recordWorkspaceRepositoryIdentity: (address: WorkspaceAddressV1, repositoryIdentity: NonNullable<WorkspaceRefV1['repositoryIdentity']>, signal?: AbortSignal) =>
@@ -474,6 +485,6 @@ export function createProjectAccountRowsSync(options: Readonly<{
         refreshRecency: (reader?: typeof options.readRecency) => {
             assertCurrent();
             if (reader) readRecency = reader;
-            disclose(project(opened), 'projection');
+            disclose(project(opened.values()), 'projection');
         } };
 }

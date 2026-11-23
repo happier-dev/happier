@@ -5,12 +5,11 @@ import { readRequesterAccountActionContext, requesterAccountEncryptionMode } fro
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readProjectAccountRows, type ProjectAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
-import { readPublishedProjectSetupV1 } from '@happier-dev/protocol/projects/projectSetupChangeV1';
-import type { ProjectAcceptedSharedSetupV1 } from '@happier-dev/protocol/projects/projectSetupV1';
+import { readPublishedProjectSetupV1, type PublishedProjectSetupV1 } from '@happier-dev/protocol/projects/projectSetupChangeV1';
 
 export type PublishedProjectSetupRead = Readonly<{
     source: Readonly<{ id: string; name: string }>;
-    publication: ProjectAcceptedSharedSetupV1;
+    publication: PublishedProjectSetupV1;
 }>;
 
 /** Reads one Source setup publication through the existing Source and Artifact owners. */

@@ -18964,6 +18964,8 @@ settingsSession: {
           afterDescription: ({ machine }: { machine: string }) => `O que vai correr em ${machine}. As linhas do repositório ficam como antes.`,
           nothingRuns: "Nada corre até escolheres. A tua aprovação anterior não cobre os novos comandos.",
           whatChanged: "O que mudou",
+          sharedBy: ({ name, time }: { name: string; time: string }) => `Partilhada por ${name} · ${time}`,
+          publishedAt: ({ time }: { time: string }) => `Partilhada · ${time}`,
           failed: "Não foi possível aplicar a atualização",
           keep: "Manter a configuração atual",
           use: "Usar a configuração atualizada",

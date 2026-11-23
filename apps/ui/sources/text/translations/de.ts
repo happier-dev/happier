@@ -18968,6 +18968,8 @@ settingsSession: {
               afterDescription: ({ machine }: { machine: string }) => `Was auf ${machine} laufen wird. Zeilen aus dem Repository bleiben wie bisher.`,
               nothingRuns: "Nichts läuft, bevor du entscheidest. Deine frühere Freigabe gilt nicht für die neuen Befehle.",
               whatChanged: "Was sich geändert hat",
+              sharedBy: ({ name, time }: { name: string; time: string }) => `Geteilt von ${name} · ${time}`,
+              publishedAt: ({ time }: { time: string }) => `Geteilt · ${time}`,
               failed: "Das Update konnte nicht übernommen werden",
               keep: "Aktuelles Setup behalten",
               use: "Aktualisiertes Setup verwenden",

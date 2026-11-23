@@ -5143,6 +5143,9 @@ inspection access. A missing retained custody match is refused.
 Preview after a WORKER daemon restart is refused because this custody is
 process-local; use terminate to clean up that copy. A fresh admitted copy can
 be previewed normally. No persisted inspection authorization is reconstructed.
+The UI sends a reviewed retirement to the SOURCE through the same signed Account
+Action as CLI. The controller uses that requester's authority for the selected
+teardown Trust read.
 No caller path, row presence or
 preview result grants deletion authority; removal remains the separately approved
 `projects.worker.copy.retire` Action. Loaded app/headless validation remains an

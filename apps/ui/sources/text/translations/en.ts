@@ -22268,6 +22268,8 @@ const enProjects = {
       afterDescription: ({ machine }: { machine: string }) => `What setup will run on ${machine}. Lines from the repository are as before.`,
       nothingRuns: "Nothing runs until you choose. Your earlier approval doesn’t cover the new commands.",
       whatChanged: "What changed",
+      sharedBy: ({ name, time }: { name: string; time: string }) => `Shared by ${name} · ${time}`,
+      publishedAt: ({ time }: { time: string }) => `Shared · ${time}`,
       failed: "Couldn’t apply the update",
       keep: "Keep current setup",
       use: "Use updated setup",

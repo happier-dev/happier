@@ -53,7 +53,7 @@ import type { ProjectEffectiveDefinitionV1 } from '@happier-dev/protocol/workspa
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Modal } from '@/modal';
-import { useProjectSource } from '@/components/projects/sources/useProjectSources';
+import { useProjectSourceName } from '@/components/projects/sources/useProjectSources';
 import { readProjectEffectiveDefinition } from './projectEffectiveDefinition';
 import { readProjectSetupLayers } from './projectSetupLayers';
 import { openProjectSharedSetupUpdate } from './ProjectSharedSetupUpdateSheet';
@@ -546,8 +546,7 @@ function DeclaredScripts(
   // Installed versions are inspection facts; without them the configuration file names the source.
   const versions = describeProjectToolVersions(props.inspection.tools).join(' · ');
   const sharedSourceId = props.layersDefinition?.sharedBasis?.sourceId ?? null;
-  const sharedSource = useProjectSource(props.page ? props.binding ?? null : null, sharedSourceId);
-  const sharedName = sharedSource.source?.source.name ?? null;
+  const sharedName = useProjectSourceName(props.page ? props.binding ?? null : null, sharedSourceId);
   const layers = React.useMemo(() => readProjectSetupLayers(props.layersDefinition ?? null, sharedName),
     [props.layersDefinition, sharedName]);
   const hasProjectFile = props.inspection.definition.document !== null;
@@ -1604,8 +1603,7 @@ function PhoneSetupReviewPage(
 ) {
   const effective = readProjectEffectiveDefinition(props.inspection);
   const definition = effective.kind === 'available' ? effective.value : null;
-  const source = useProjectSource(props.binding, definition?.sharedBasis?.sourceId ?? null);
-  const sharedName = source.source?.source.name ?? null;
+  const sharedName = useProjectSourceName(props.binding, definition?.sharedBasis?.sourceId ?? null);
   const layers = React.useMemo(() => readProjectSetupLayers(definition, sharedName), [definition, sharedName]);
   const document = props.inspection.definition.document;
   const manifest = definition?.effectiveManifest ?? (document?.status === 'valid' ? document.manifest : null);

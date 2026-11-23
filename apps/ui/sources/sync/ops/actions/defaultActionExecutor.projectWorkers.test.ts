@@ -6,7 +6,6 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ProjectWorkerActionInputSchemasV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
-import { installOwnMachineApprovalReplayBoundary } from '@/dev/testkit/harness/approvalInbox';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
@@ -300,26 +299,41 @@ describe('worker Actions through the captured UI Home', () => {
     const example = ProjectWorkerActionInputSchemasV1['projects.worker.copy.retire'].parse(
       JSON.parse(getActionSpec('projects.worker.copy.retire').examples!.voice!.argsExample!),
     );
-    rpc.machine.mockResolvedValueOnce({ ok: false, error: failure.errorCode, ...failure });
-    await expect(executeProjectWorkerActionV1('projects.worker.copy.retire', { ...example, workspace: { ...example.workspace, serverId } }))
-      .rejects.toMatchObject(failure);
+    const request = { ...example, workspace: { ...example.workspace, serverId: 'srv_worker_actions' },
+      removeTargetCopy: { workspaceRefId: example.expectedRelationship.betaWorkspaceRefId, rootFingerprint: 'a'.repeat(64) } };
+    const receiver = vi.fn().mockReturnValue(failure);
+    await answerExternalActionAccountForHome(homes, serverId, {
+      actionId: 'projects.worker.copy.retire', machineId: example.machineId, tokenEpoch: 0,
+      requesterInvocation: 'credentials', execute: receiver, failure: () => ({ error: failure.errorCode, ...failure }),
+    });
+    await expect(executeProjectWorkerActionV1('projects.worker.copy.retire', request)).rejects.toMatchObject(failure);
+    expect(receiver).toHaveBeenCalledExactlyOnceWith(request, expect.objectContaining({ requesterAccountContext: expect.any(Object) }));
   });
 
-  it('executes the person’s confirmed retirement once without creating a self-approval', async () => {
+  it.each([false, true])('carries confirmed retirement with signed requester custody (remove copy: %s)', async removeCopy => {
     await homes.requireUiApproval(serverId, 'projects.worker.copy.retire');
     const example = ProjectWorkerActionInputSchemasV1['projects.worker.copy.retire'].parse(
       JSON.parse(getActionSpec('projects.worker.copy.retire').examples!.voice!.argsExample!),
     );
-    const request = { ...example, workspace: { ...example.workspace, serverId } };
-    await installOwnMachineApprovalReplayBoundary({ harness: homes, serverId, accountId: 'owner', machineId: request.machineId });
-    expect(rpc.machine).not.toHaveBeenCalled();
-    rpc.machine.mockResolvedValueOnce({ status: 'retired' });
+    const request = { ...example, workspace: { ...example.workspace, serverId: 'srv_worker_actions' },
+      ...(removeCopy ? { removeTargetCopy: {
+        workspaceRefId: example.expectedRelationship.betaWorkspaceRefId, rootFingerprint: 'a'.repeat(64),
+      } } : {}) };
+    const receiver = vi.fn().mockReturnValue({ status: 'retired' });
+    await answerExternalActionAccountForHome(homes, serverId, {
+      actionId: 'projects.worker.copy.retire', machineId: request.machineId, tokenEpoch: 0, execute: receiver,
+    });
+    const actionRequestId = 'reviewed-retained-copy';
     expect(await createDefaultActionExecutor().executeConfirmed('projects.worker.copy.retire', request, {
-      serverId, expectedAccountId: 'owner', surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      serverId, expectedAccountId: 'owner', surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, actionRequestId,
     })).toMatchObject({ ok: true, result: { status: 'retired' } });
+    expect(receiver).toHaveBeenCalledExactlyOnceWith(request, expect.objectContaining({
+      authorization: expect.objectContaining({ binding: expect.objectContaining({
+        accountId: 'owner', machineId: request.machineId, requestId: actionRequestId,
+      }) }),
+    }));
+    expect(rpc.machine).not.toHaveBeenCalled();
     expect(homes.artifacts(serverId).list()).toHaveLength(0);
-    expect(rpc.machine).toHaveBeenCalledTimes(1);
-    expect(rpc.machine.mock.calls[0]?.[0]).toMatchObject({ payload: request });
   });
 
   it('reads copy-missing status through the Account Action on an exact shared Worker', async () => {
@@ -377,14 +391,18 @@ describe('worker Actions through the captured UI Home', () => {
     const example = ProjectWorkerActionInputSchemasV1['projects.worker.copy.retire'].parse(
       JSON.parse(getActionSpec('projects.worker.copy.retire').examples!.voice!.argsExample!),
     );
-    const request = { ...example, workspace: { ...example.workspace, serverId } };
-    rpc.machine.mockImplementationOnce(async () => {
+    const request = { ...example, workspace: { ...example.workspace, serverId: 'srv_worker_actions' } };
+    const receiver = vi.fn(async () => {
       await homes.switchAccount(serverId, 'replacement');
       return { status: 'retired' };
+    });
+    await answerExternalActionAccountForHome(homes, serverId, {
+      actionId: 'projects.worker.copy.retire', machineId: request.machineId, tokenEpoch: 0, requesterInvocation: 'optional', execute: receiver,
     });
     await expect(executeProjectWorkerActionV1('projects.worker.copy.retire', request, { expectedAccountId: 'owner' }))
       .resolves.toEqual({ status: 'retired' });
     expect(homes.findByServerUrl('https://worker-actions.test')?.accountId).toBe('replacement');
-    expect(rpc.machine).toHaveBeenCalledTimes(1);
+    expect(receiver).toHaveBeenCalledTimes(1);
+    expect(rpc.machine).not.toHaveBeenCalled();
   });
 });

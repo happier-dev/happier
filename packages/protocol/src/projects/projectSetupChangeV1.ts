@@ -5,8 +5,9 @@ import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import type { ProjectManifestV1, ProjectCommandSourceV1 } from '../workspaces/projectSetup/projectManifestV1.js';
 import { ProjectSetupReviewV1Schema, ProjectSetupReadinessV1Schema } from '../actions/projectSetupConsentFailure.js';
 import { ActionFailureCauseV1Schema, createActionExecuteFailureError } from '../actions/actionExecutionResult.js';
-import { ProjectSetupContentRevisionV1Schema, ProjectSetupSelectionV1Schema, ProjectSharedSetupV1Schema, PROJECT_SETUP_ARTIFACT_KIND_V1,
-  projectSetupSelectionV1, projectSharedSetupDigestV1, type ProjectAcceptedSharedSetupV1, type ProjectSetupArtifactV1, type ProjectSetupReadV1 } from './projectSetupV1.js';
+import { ProjectSetupContentRevisionV1Schema, ProjectSetupPublicationAttributionV1Schema, ProjectSetupSelectionV1Schema, ProjectSharedSetupV1Schema,
+  PROJECT_SETUP_ARTIFACT_KIND_V1, projectSetupSelectionV1, projectSharedSetupDigestV1, type ProjectAcceptedSharedSetupV1,
+  type ProjectSetupArtifactV1, type ProjectSetupPublicationAttributionV1, type ProjectSetupReadV1 } from './projectSetupV1.js';
 import type { ProjectSourceV1, ProjectSourcesReadInputV1, ProjectSourcesReadOutputV1 } from './sources/projectSourceV1.js';
 import { ProjectSourceAudienceTeamV1Schema } from './sources/projectSourceIdentityV1.js';
 import { EnvVarRequirementSchema } from '../profiles/environmentVariables.js';
@@ -14,8 +15,10 @@ import { EnvVarRequirementSchema } from '../profiles/environmentVariables.js';
 /** A demanded publication-change review; launch continues to use accepted content. */
 export const ProjectSharedSetupChangeV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('current'), selection: ProjectSetupSelectionV1Schema,
+    ...ProjectSetupPublicationAttributionV1Schema.shape,
     sourceAudienceTeams: z.optional(z.array(ProjectSourceAudienceTeamV1Schema)) }),
   z.strictObject({ kind: z.literal('changed'), selection: ProjectSetupSelectionV1Schema,
+    ...ProjectSetupPublicationAttributionV1Schema.shape,
     sourceAudienceTeams: z.optional(z.array(ProjectSourceAudienceTeamV1Schema)),
     before: ProjectEffectiveDefinitionV1Schema, after: ProjectEffectiveDefinitionV1Schema,
     setupReadiness: ProjectSetupReadinessV1Schema,
@@ -46,10 +49,17 @@ async function readPublishedSetupManifestV1(input: PublishedSetupReadV1) {
   try { document = JSON.parse(artifact.body) as unknown; } catch { return refusePublication(); }
   const publication = ProjectSharedSetupV1Schema.safeParse(document);
   if (!publication.success) return refusePublication();
-  return { sourceId: input.source.id, contentRevision: artifact.revision, manifest: publication.data.manifest };
+  return { sourceId: input.source.id, contentRevision: artifact.revision, manifest: publication.data.manifest,
+    ...publicationAttribution(attachment) };
 }
 
-export async function readPublishedProjectSetupV1(input: PublishedSetupReadV1): Promise<ProjectAcceptedSharedSetupV1> {
+function publicationAttribution({ publishedBy, publishedAt }: ProjectSetupPublicationAttributionV1): ProjectSetupPublicationAttributionV1 {
+  return publishedBy && publishedAt !== undefined ? { publishedBy, publishedAt } : {};
+}
+
+export type PublishedProjectSetupV1 = ProjectAcceptedSharedSetupV1 & ProjectSetupPublicationAttributionV1;
+
+export async function readPublishedProjectSetupV1(input: PublishedSetupReadV1): Promise<PublishedProjectSetupV1> {
   const publication = await readPublishedSetupManifestV1(input);
   if (!publication) return refusePublication();
   return { ...publication, digest: projectSharedSetupDigestV1(publication.manifest),
@@ -89,15 +99,16 @@ export async function readSourceSetupRequirementsV1(
 
 export type ProjectSharedSetupComparisonV1 = Pick<
   Exclude<ProjectSharedSetupChangeV1, { kind: 'upstreamUnavailable' }>,
-  'kind' | 'selection' | 'sourceAudienceTeams'
+  'kind' | 'selection' | 'sourceAudienceTeams' | 'publishedBy' | 'publishedAt'
 >;
 
 /** One publication-currentness decision for pending inspection and explicit review. */
 export function compareProjectSharedSetupV1(input: Readonly<{
-  acceptedSetup: Extract<ProjectSetupReadV1, { kind: 'ready' }>; publication: ProjectAcceptedSharedSetupV1;
+  acceptedSetup: Extract<ProjectSetupReadV1, { kind: 'ready' }>; publication: PublishedProjectSetupV1;
 }>): ProjectSharedSetupComparisonV1 {
   const selection = projectSetupSelectionV1(input.publication);
-  const presentation = input.publication.sourceAudienceTeams ? { sourceAudienceTeams: input.publication.sourceAudienceTeams } : {};
+  const presentation = { ...publicationAttribution(input.publication),
+    ...(input.publication.sourceAudienceTeams ? { sourceAudienceTeams: input.publication.sourceAudienceTeams } : {}) };
   const accepted = input.acceptedSetup.acceptedSharedSetup;
   if (accepted && accepted.sourceId === selection.sourceId && accepted.digest === selection.digest
     && accepted.contentRevision.headerVersion === selection.contentRevision.headerVersion
@@ -108,7 +119,7 @@ export function compareProjectSharedSetupV1(input: Readonly<{
 /** The existing preparation owner decides lifecycle consent after this comparison. */
 export function reviewProjectSharedSetupChangeV1(input: Readonly<{
   repositoryManifest: ProjectManifestV1 | null; acceptedSetup: Extract<ProjectSetupReadV1, { kind: 'ready' }>;
-  publication: ProjectAcceptedSharedSetupV1; comparison?: ProjectSharedSetupComparisonV1;
+  publication: PublishedProjectSetupV1; comparison?: ProjectSharedSetupComparisonV1;
 }>): Extract<ProjectSharedSetupChangeV1, { kind: 'current' }>
   | Omit<Extract<ProjectSharedSetupChangeV1, { kind: 'changed' }>, 'setupReadiness'> {
   const comparison = input.comparison ?? compareProjectSharedSetupV1(input);

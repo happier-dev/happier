@@ -2813,6 +2813,9 @@ The shared Source catalog is a disclosed, server-readable metadata exception for
 both plain and E2EE Accounts. `ProjectSource` stores the name, credential-free SCM
 repository selection, optional default revision and contained folder, current
 audience references, creator, revision, and purpose-tagged Artifact references.
+Each newly published setup attachment carries its publishing Account and time
+alongside the attached content revision. The Source reader admits those fields
+with the rest of the attachment metadata.
 It does not store repository bytes, setup commands, Git credentials, Artifact
 keys, or Machine encryption material. Source metadata is not converted into a
 private Account-row envelope when the Account changes encryption mode.

@@ -18811,6 +18811,8 @@ settingsSession: {
           afterDescription: ({ machine }: { machine: string }) => `Что будет запускаться на ${machine}. Строки из репозитория остаются прежними.`,
           nothingRuns: "Ничего не запустится, пока вы не решите. Прежнее одобрение не распространяется на новые команды.",
           whatChanged: "Что изменилось",
+          sharedBy: ({ name, time }: { name: string; time: string }) => `Поделился(-ась) ${name} · ${time}`,
+          publishedAt: ({ time }: { time: string }) => `Опубликовано · ${time}`,
           failed: "Не удалось применить обновление",
           keep: "Оставить текущую настройку",
           use: "Использовать обновлённую настройку",

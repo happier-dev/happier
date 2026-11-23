@@ -3,6 +3,7 @@ import * as changeOwner from './projectSetupChangeV1.js';
 import { ProjectSetupSelectionV1Schema, ProjectSetupContentV1Schema, readAcceptedProjectSetupV1, projectSharedSetupDigestV1 } from './projectSetupV1.js';
 import { resolveProjectDefinitionV1 } from '../workspaces/projectSetup/projectDefinitionCompositionV1.js';
 import { ProjectManifestV1Schema, type ProjectManifestV1 } from '../workspaces/projectSetup/projectManifestV1.js';
+import { ProjectSourceAttachmentIntentV1Schema } from './sources/projectSourceV1.js';
 
 const command = (command: string) => ({ kind: 'command' as const, command });
 const definition = (manifest: ProjectManifestV1 | null) => resolveProjectDefinitionV1({
@@ -83,6 +84,35 @@ describe('shared setup change presentation', () => {
     expect(renamed.digest).toBe(control.digest);
     expect(changeOwner.reviewProjectSharedSetupChangeV1({ repositoryManifest: null, acceptedSetup: accepted,
       publication: renamed })).toMatchObject({ kind: 'current', sourceAudienceTeams: renamedSource.audienceTeams });
+  });
+
+  it('projects the admitted attachment revision byline through setup review', async () => {
+    const manifest: ProjectManifestV1 = { version: 1 };
+    const artifact = { artifactId: 'setup', header: { kind: 'project_setup.v1' },
+      body: JSON.stringify({ kind: 'project_setup.v1', manifest }), revision: { headerVersion: 1, bodyVersion: 2 } };
+    const attribution = { publishedBy: { accountId: 'publisher', displayName: 'Mara Lind' }, publishedAt: 1795431600000 };
+    const attachment = { purpose: 'setup' as const, ref: { kind: 'doc' as const, artifactId: artifact.artifactId },
+      contentRevision: artifact.revision };
+    const source = { id: 'source', revision: 3, name: 'Source', createdByAccountId: 'creator', audience: [] };
+    const legacy = await changeOwner.readPublishedProjectSetupV1({
+      source: { ...source, attachments: [attachment] }, readArtifact: async () => artifact,
+    });
+    expect(legacy).not.toHaveProperty('publishedBy');
+    const published = await changeOwner.readPublishedProjectSetupV1({
+      source: { ...source, attachments: [{ ...attachment, ...attribution }] }, readArtifact: async () => artifact,
+    });
+    const review = changeOwner.reviewProjectSharedSetupChangeV1({ repositoryManifest: null,
+      acceptedSetup: { kind: 'ready', acceptedSharedSetup: legacy }, publication: published });
+    expect(changeOwner.ProjectSharedSetupChangeV1Schema.parse(review)).toMatchObject({ kind: 'current', ...attribution });
+    const firstUse = changeOwner.reviewProjectSharedSetupChangeV1({ repositoryManifest: null,
+      acceptedSetup: { kind: 'ready' }, publication: published });
+    expect(changeOwner.ProjectSharedSetupChangeV1Schema.parse({ ...firstUse,
+      setupReadiness: { kind: 'notRequired', reviewedEffectDigest: published.digest },
+    })).toMatchObject({ kind: 'changed', ...attribution });
+    expect(published.digest).toBe(legacy.digest);
+    expect(ProjectSourceAttachmentIntentV1Schema.safeParse({
+      kind: 'attach', attachment: { ...attachment, ...attribution },
+    }).success).toBe(false);
   });
 
   it('projects ordered lifecycle edits and typed login, source, requirement and port declarations', () => {

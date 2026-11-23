@@ -10367,6 +10367,14 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+In unreleased 0.3, the Source setup attachment and the admitted setup review
+can carry `publishedBy` and `publishedAt` for the selected revision. The Home
+sets both fields on a new attachment revision. The existing Source read
+admits their audience. Earlier rows without attribution still read without a
+byline. Load matching Home, Protocol, CLI and app sources for this closed read
+shape. The authoring input and accepted checkout setup detail keep their
+existing shapes.
+
 In unreleased 0.3, Plugin Settings watches accept a field selection in the
 SDK and the runner-to-daemon watch request. The host applies that selection
 to live and durable Account changes. Runner and daemon should use matching

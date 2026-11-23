@@ -26,6 +26,7 @@ import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/u
 import { useNavigateToProjectOpen } from '@/components/projects/activation/projectOpenPresentation';
 import { seedAndOpenProjectDraft } from '@/components/projects/activation/projectOpenDraftSeed';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { formatMoment } from '@/utils/datetime/formatMoment';
 
 import {
   listProjectSetupEffect,
@@ -62,8 +63,7 @@ export type ProjectSharedSetupUpdateInput = Readonly<{
 
 /**
  * The sheet's title band: "Setup changed" once the review shows changes (lab L6 updateSheet). Before
- * that the sheet does not know yet, so it names what it checks. The subtitle keeps a slot for who
- * changed it and when, which the accepted-revision owner does not expose yet (owed to TS-IMPL-A).
+ * that the sheet does not know yet, so it names what it checks.
  */
 function sharedSetupUpdateChrome(sourceName: string | null, changed: boolean, pending = false): CustomModalChromeCardConfig {
   const name = sourceName ?? t('projects.scripts.layers.sharedUnnamed');
@@ -218,6 +218,10 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
   const { snapshot, scope, busy, failure, rows } = props;
   const change = snapshot?.kind === 'ready' ? snapshot.change : null;
   const request = snapshot?.kind === 'ready' ? snapshot.request : null;
+  const publication = change && change.kind !== 'upstreamUnavailable' ? change : null;
+  const author = publication?.publishedBy?.displayName;
+  const publishedAt = publication?.publishedAt;
+  const publicationTime = publishedAt === undefined ? null : formatMoment(publishedAt, Date.now());
   const needsPreparation = change?.kind === 'changed'
     && change.setupReadiness.kind !== 'current' && change.setupReadiness.kind !== 'notRequired';
   const name = props.sourceName ?? t('projects.scripts.layers.sharedUnnamed');
@@ -313,6 +317,11 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
   const decidable = request !== null;
   return (
     <View style={styles.body}>
+      {publicationTime ? <Text variant="meta" testID="project-shared-setup-update.byline"
+        style={styles.byline}>
+        {author ? t('projects.scripts.sharedUpdate.sharedBy', { name: author, time: publicationTime })
+          : t('projects.scripts.sharedUpdate.publishedAt', { time: publicationTime })}
+      </Text> : null}
       {/* The lab draws the sheet's sections with page anatomy (as Share setup): description above, hairline rows. */}
       <ListPresentationProvider value="page">
         {props.targetCheckout ? (
@@ -473,6 +482,7 @@ const EMPTY_MANIFEST = { version: 1 } as const;
 
 const styles = StyleSheet.create((theme) => ({
   body: { gap: theme.space.s16, paddingBottom: theme.space.s8 },
+  byline: { color: theme.colors.text.secondary, paddingHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx },
   // The footer stands on the sections' text edge, as Share setup's does.
   footer: {
     flexDirection: 'row',

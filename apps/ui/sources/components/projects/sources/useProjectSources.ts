@@ -111,6 +111,11 @@ function presentedProjectSource(state: SourceReadState, sourceId: string | null)
         && state.current?.id === sourceId ? state.current : null;
 }
 
+export function useProjectSourceName(lifetime: ServerAccountScopeLifetime | null, sourceId: string | null) {
+    const sourceIds = React.useMemo(() => sourceId ? [sourceId] : [], [sourceId]);
+    return useProjectSourceNames(lifetime, sourceIds, sourceId !== null)[0] ?? null;
+}
+
 /** Names for the Sources already referenced by loaded rows; shares their exact readers, never lists the inventory. */
 export function useProjectSourceNames(lifetime: ServerAccountScopeLifetime | null, sourceIds: readonly string[], enabled: boolean) {
     const execute = useProjectSourceActionExecute();

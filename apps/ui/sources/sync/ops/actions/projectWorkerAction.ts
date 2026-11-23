@@ -2,7 +2,7 @@ import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } 
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { ProjectWorkerActionInputSchemasV1, ProjectWorkerActionOutputSchemasV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
-import { PROJECT_WORKER_STATUS_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectWorkersActionIdsV1';
+import { PROJECT_WORKER_COPY_RETIRE_ACTION_ID_V1, PROJECT_WORKER_STATUS_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectWorkersActionIdsV1';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { createWorkspaceExecutionConfigClientV1 } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigClientV1';
@@ -25,7 +25,7 @@ export function createUiProjectWorkerActionV1(account: LazyActionAccountContext)
     const executeAccountAction = createUiAccountAction({ account });
     return async ({ actionId, input, signal, context }) => {
         account.assertCurrent();
-        if (actionId === PROJECT_WORKER_STATUS_ACTION_ID_V1 || actionId === 'projects.worker.copy.inspect' || actionId === 'projects.worker.copy.retire') {
+        if (actionId === PROJECT_WORKER_STATUS_ACTION_ID_V1 || actionId === 'projects.worker.copy.inspect' || actionId === PROJECT_WORKER_COPY_RETIRE_ACTION_ID_V1) {
             const request = ProjectWorkerActionInputSchemasV1[actionId].parse(input);
             const machineId = 'destination' in request ? request.destination.machineId : request.machineId;
             if (!areServerProfileIdentifiersEquivalent(request.workspace.serverId, account.serverId)) {
@@ -36,8 +36,8 @@ export function createUiProjectWorkerActionV1(account: LazyActionAccountContext)
                 return { ok: false, errorCode: 'target_not_local', error: 'target_not_local' };
             }
             let raw: unknown;
-            if (actionId === PROJECT_WORKER_STATUS_ACTION_ID_V1) {
-                // Home admits the Account's shared Worker read and the daemon opens its requester custody.
+            if (actionId !== 'projects.worker.copy.inspect') {
+                // These Actions consume the Account's signed authority on the addressed daemon.
                 raw = await executeAccountAction({ actionId, input: request, signal, context: {
                     ...context, externalActionTarget: context.externalActionTarget ?? { kind: 'machine', machineId },
                 } });
@@ -62,7 +62,7 @@ export function createUiProjectWorkerActionV1(account: LazyActionAccountContext)
                     || output.data.candidate.machineId !== machineId))
                 || ('targetMachineId' in request && 'preview' in output.data && output.data.ok
                     && (output.data.preview.targetMachineId !== request.targetMachineId || output.data.preview.workspaceRefId !== request.targetWorkspaceRefId))) {
-                const errorCode = actionId === 'projects.worker.copy.retire' ? 'outcome_unknown' : 'invalid_action_output';
+                const errorCode = actionId === PROJECT_WORKER_COPY_RETIRE_ACTION_ID_V1 ? 'outcome_unknown' : 'invalid_action_output';
                 return { ok: false, errorCode, error: errorCode };
             }
             return output.data;

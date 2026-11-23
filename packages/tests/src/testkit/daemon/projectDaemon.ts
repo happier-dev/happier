@@ -284,7 +284,7 @@ export async function startProjectDaemonFixture(params: Readonly<{
           },
           async withPersonActionClient<T>(run: (execute: ExecuteProjectPersonAction) => Promise<T>,
             options: Readonly<{ presentation?: Readonly<{ action: PluginContributionIdentityV1; machineId: string }>;
-              surface?: 'coreAction' }> = {}): Promise<T> {
+              surface?: 'coreAction'; confirmation?: 'presented' }> = {}): Promise<T> {
             const { connectUiPersonActionClient, connectUiSignedInActionClient } = await (personActions ?? loadPersonActions());
             const signIn = { ...personActionConnection, accountSecret: auth.accountSigningSeed };
             const { presentation } = options;
@@ -301,7 +301,8 @@ export async function startProjectDaemonFixture(params: Readonly<{
                 await waitFor(personUi.isPresentedMachineActionReady,
                   { context: `presented Machine Action ${presentation.action.pluginId}/${presentation.action.localId}` });
               }
-              return await run((actionId, input, context = {}) => ui.executeConfirmed(actionId, input, {
+              const execute = options.confirmation === 'presented' ? ui.executePresented : ui.executeConfirmed;
+              return await run((actionId, input, context = {}) => execute(actionId, input, {
                 ...context, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
                 serverId: ui.serverId, serverIdentityId: serverId,
                 actionRequestId: context.actionRequestId ?? randomUUID(),

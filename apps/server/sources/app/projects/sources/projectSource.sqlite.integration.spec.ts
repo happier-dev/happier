@@ -471,6 +471,7 @@ describe('Source catalog real SQLite owner', () => {
     });
     it('setup attachment admits the author draft and refuses a borrowed readable Artifact', async () => {
         const [publisher, reader] = await Promise.all([account(), account()]);
+        await db.account.update({ where: { id: publisher.id }, data: { name: 'Mara Lind' } });
         await makeShareEligibleForTest(publisher.id, reader.id);
         const row = await source(reader.id);
         const artifact = await db.artifact.create({ data: { id: crypto.randomUUID(), accountId: publisher.id,
@@ -499,6 +500,15 @@ describe('Source catalog real SQLite owner', () => {
         const attached = await attach(publisher.id, ownSource.id, preparedSource.source.revision);
         expect(attached).toMatchObject({ ok: true, source: { attachments: [attachment] } });
         if (!attached.ok) throw new Error(attached.error);
+        const publishedAttachment = {
+            ...attachment,
+            publishedBy: { accountId: publisher.id, displayName: 'Mara Lind' },
+            publishedAt: expect.any(Number),
+        };
+        expect(attached.source.attachments).toMatchObject([publishedAttachment]);
+        expect(await attach(publisher.id, ownSource.id, attached.source.revision)).toMatchObject({
+            ok: true, source: { revision: attached.source.revision, attachments: attached.source.attachments },
+        });
         await db.artifactGrant.deleteMany({ where: { artifactId: artifact.id } });
         const shared = await inTx(tx => updateProjectSourceInTx(tx, publisher.id, { serverId, sourceId: ownSource.id,
             expectedRevision: attached.source.revision,
@@ -515,10 +525,10 @@ describe('Source catalog real SQLite owner', () => {
         try {
             expect(await inTx(tx => listProjectSourcesInTx(tx, reader.id, { serverId })))
                 .toMatchObject({ ok: true, sources: expect.arrayContaining([
-                    expect.objectContaining({ id: ownSource.id, attachments: [attachment] }),
+                    expect.objectContaining({ id: ownSource.id, attachments: [expect.objectContaining(publishedAttachment)] }),
                 ]) });
             expect(await inTx(tx => readProjectSourceInTx(tx, reader.id, { serverId, sourceId: ownSource.id })))
-                .toMatchObject({ ok: true, source: { attachments: [attachment] } });
+                .toMatchObject({ ok: true, source: { attachments: [publishedAttachment] } });
             expect(await inTx(tx => readArtifactHeaderForCallerInTx(tx, selected)))
                 .toMatchObject({ ok: true, artifact: { access: 'view' } });
             expect(bodyReads).toEqual([]);

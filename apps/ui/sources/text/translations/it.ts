@@ -18860,6 +18860,8 @@ settingsSession: {
           afterDescription: ({ machine }: { machine: string }) => `Cosa verrà eseguito su ${machine}. Le righe del repository restano come prima.`,
           nothingRuns: "Non viene eseguito nulla finché non scegli. La tua approvazione precedente non copre i nuovi comandi.",
           whatChanged: "Cosa è cambiato",
+          sharedBy: ({ name, time }: { name: string; time: string }) => `Condivisa da ${name} · ${time}`,
+          publishedAt: ({ time }: { time: string }) => `Condivisa · ${time}`,
           failed: "Impossibile applicare l’aggiornamento",
           keep: "Mantieni la configurazione attuale",
           use: "Usa la configurazione aggiornata",
