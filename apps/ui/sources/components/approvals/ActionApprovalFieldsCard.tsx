@@ -42,6 +42,10 @@ import { externalSharingLabel, historyLabel, sessionCreationLabel, teamAdmission
 import { teamRoleLabel } from '@/components/settings/teams/teamLabels';
 import { HOME_IDENTITY_NETWORK_MODE_LABEL_KEYS, homeAdmissionModeLabel, homeGovernancePolicyFieldLabel, homeRoleLabel, homeStoragePolicyLabel, teamCreationPolicyLabel } from '@/components/settings/home/governance/homeGovernanceLabels';
 import { homeServerSettingTitle } from '@/components/settings/home/governance/homeServerSettingLabels';
+import { homeSettingTitle } from '@/components/settings/home/governance/homeServerSettingsRows';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { getHomeSettingsSnapshot, subscribeHomeSettingsSnapshots } from '@/sync/store/home/governance/homeSettingsSnapshots';
+import type { HomeSettingEntryV1 } from '@happier-dev/protocol/home/governance';
 import { MachineGuardCeilingApprovalFields } from './MachineGuardCeilingApprovalFields';
 import { DiscussionReplyApprovalFields } from './DiscussionReplyApprovalFields';
 import { isDiscussionReplyActionIdV1 } from '@happier-dev/protocol/discussions';
@@ -133,13 +137,33 @@ export const ActionApprovalFieldsCard = React.memo(function ActionApprovalFields
             {presentation => <ApprovalFieldsReading {...reading} presentation={presentation} />}
         </MachineGuardCeilingApprovalFields>
     );
+    if ((props.request?.status === undefined || props.request.status === 'open')
+        && (props.anatomy === 'page' || detailsOpen) && props.serverId
+        && props.presentation.rows.some(row => row.kind === 'value' && row.entries?.some(entry => entry.homeSetting))) {
+        return <HomeSettingsApprovalFields {...reading} />;
+    }
     return <ApprovalFieldsReading {...reading} />;
 });
 
-const ApprovalFieldsReading = React.memo(function ApprovalFieldsReading(props: React.ComponentProps<typeof ActionApprovalFieldsCard> & Readonly<{
+type ApprovalFieldsReadingProps = React.ComponentProps<typeof ActionApprovalFieldsCard> & Readonly<{
     detailsOpen: boolean;
     setDetailsOpen: React.Dispatch<React.SetStateAction<boolean>>;
-}>) {
+    homeSettingsRegistry?: ReadonlyMap<string, HomeSettingEntryV1>;
+}>;
+
+function HomeSettingsApprovalFields(props: ApprovalFieldsReadingProps) {
+    const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
+    // A fresh settings read can require approval. This card only consumes the
+    // registry the viewing Account already loaded through Home Settings.
+    const subscribe = React.useCallback((listener: () => void) =>
+        binding ? subscribeHomeSettingsSnapshots(binding, listener) : () => {}, [binding]);
+    const read = React.useCallback(() => binding ? getHomeSettingsSnapshot(binding)?.settings?.entries ?? null : null, [binding]);
+    const entries = React.useSyncExternalStore(subscribe, read, read);
+    const registry = React.useMemo(() => entries ? new Map(entries.map(entry => [entry.key, entry])) : undefined, [entries]);
+    return <ApprovalFieldsReading {...props} homeSettingsRegistry={registry} />;
+}
+
+const ApprovalFieldsReading = React.memo(function ApprovalFieldsReading(props: ApprovalFieldsReadingProps) {
     const { detailsOpen, setDetailsOpen } = props;
     const look = useApprovalFieldsLook();
     // A kind with its own human presentation reads through it; its raw structure stays in Technical details.
@@ -161,7 +185,9 @@ const ApprovalFieldsReading = React.memo(function ApprovalFieldsReading(props: R
     const exactRead = props.exactSessionReads === true;
     const actionId = props.request?.actionId;
     const language = usePreferredLanguage();
-    const fieldRows = React.useMemo(() => rows.map(row => toSharedFieldRow(row, serverId, exactRead, actionId)), [actionId, exactRead, language, rows, serverId]);
+    const { homeSettingsRegistry } = props;
+    const fieldRows = React.useMemo(() => rows.map(row => toSharedFieldRow(row, serverId, exactRead, actionId, homeSettingsRegistry)),
+        [actionId, exactRead, homeSettingsRegistry, language, rows, serverId]);
     const cardRows = React.useMemo(() => fieldRows.map((row, index) => foldApprovalFieldExtras(row, rows[index]!)), [fieldRows, rows]);
     // A phone reads each label over its value; anything wider sets the labels in one column beside the values.
     const { width, height } = useWindowDimensions();
@@ -275,7 +301,8 @@ export function readableApprovalReferenceText(reference: ApprovalReference | und
 }
 
 /** The protocol's row in the shared fields' words: literal values formatted and localized here, references left to `Resolve`. */
-function toSharedFieldRow(row: ApprovalFieldRow, serverId: string | null, exactRead: boolean, actionId?: string): HappierApprovalFieldRow<ApprovalValueSource> {
+function toSharedFieldRow(row: ApprovalFieldRow, serverId: string | null, exactRead: boolean, actionId?: string,
+    homeSettingsRegistry?: ReadonlyMap<string, HomeSettingEntryV1>): HappierApprovalFieldRow<ApprovalValueSource> {
     if (row.kind === 'unrepresentable') {
         return { kind: 'notice', key: row.path, label: row.title, title: t('approvals.unsafeDetailsTitle'),
             body: t('approvals.unsafeDetailsBody'), testID: 'approvals.unrepresentable-details' };
@@ -288,14 +315,17 @@ function toSharedFieldRow(row: ApprovalFieldRow, serverId: string | null, exactR
         || isSessionAccessActionId(actionId) || actionId === SESSION_SPAWN_NEW_ACTION_ID_V1);
     if (row.entries) {
         // Structured entries read their references without the page's exact read, as Protocol lays them out.
-        return { kind: 'entries', key: row.path, label: row.title, entries: readableApprovalEntries(row.entries).map((entry): HappierApprovalFieldEntry<ApprovalValueSource> => ({
-            label: entry.homeSetting ? homeServerSettingTitle(entry.homeSetting.key) : entry.label,
-            depth: entry.depth,
-            value: entry.homeSetting?.cleared ? t('homeSettings.row.notSet')
-                : entry.value === null ? null : entry.valueFormat === 'timestamp' ? formatApprovalTimestamp(entry.value)
-                : governance && isGovernancePrincipal(entry.reference) ? t('common.unavailable') : entry.value,
-            ...(entry.reference ? { source: { reference: entry.reference, serverId, exactRead: false } } : {}),
-        })) };
+        return { kind: 'entries', key: row.path, label: row.title, entries: readableApprovalEntries(row.entries).map((entry): HappierApprovalFieldEntry<ApprovalValueSource> => {
+            const declaration = entry.homeSetting && homeSettingsRegistry?.get(entry.homeSetting.key);
+            return {
+                label: declaration ? homeSettingTitle(declaration) : entry.homeSetting ? homeServerSettingTitle(entry.homeSetting.key) : entry.label,
+                depth: entry.depth,
+                value: entry.homeSetting?.cleared ? t('homeSettings.row.notSet')
+                    : entry.value === null ? null : entry.valueFormat === 'timestamp' ? formatApprovalTimestamp(entry.value)
+                    : governance && isGovernancePrincipal(entry.reference) ? t('common.unavailable') : entry.value,
+                ...(entry.reference ? { source: { reference: entry.reference, serverId, exactRead: false } } : {}),
+            };
+        }) };
     }
     const label = row.path === 'primaryTeamId' ? t('session.access.context') : readHomePolicyLabel(row, actionId) ?? row.title;
     const value = row.valueFormat === 'clear' ? t('approvals.clearsField', { field: label })
