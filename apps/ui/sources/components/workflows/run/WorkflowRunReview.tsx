@@ -72,6 +72,9 @@ export function WorkflowRunReview(
     openedFromHeader?: boolean;
     style?: StyleProp<ViewStyle>;
     testID?: string;
+    /** A transcript fold retains its ordinary Run entry when this Run produced no Review. */
+    fallback?: React.ReactNode;
+    footerAction?: React.ReactNode;
   }>,
 ): React.ReactElement | null {
   const router = useRouter();
@@ -143,7 +146,7 @@ export function WorkflowRunReview(
       })),
     [roots],
   );
-  if (!reviewId) return null;
+  if (!reviewId) return <>{props.fallback}</>;
   const open = () =>
     router.push(
       artifactResourceRoute(
@@ -171,6 +174,7 @@ export function WorkflowRunReview(
             : null
         }
         {...(props.openedFromHeader ? {} : { onOpenReview: open })}
+        footerAction={props.footerAction}
       />
     </View>
   );

@@ -16,6 +16,8 @@ import { storage } from '@/sync/domains/state/storage';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { t } from '@/text';
 import { WorkflowRunReview, useWorkflowRunResultReview } from './WorkflowRunReview';
+import { WorkflowRunFold } from '@/components/sessions/transcript/turns/WorkflowRunFold';
+import { createTestSessionTranscriptSource, renderWithSessionTranscriptSource } from '@/dev/testkit/sessionTranscriptSource';
 
 const effects = vi.hoisted(() => ({ push: vi.fn() }));
 // Navigation and authenticated HTTP are the boundaries; the Review list, comments, history and summary owners stay real.
@@ -233,5 +235,41 @@ it('finds a Review by its workflowRunId when a contributed PR action produced it
   const screen = await renderScreen(<Result />);
   try {
     await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(reviewId));
+  } finally { await screen.unmount(); }
+});
+
+it('opens a zero-turn habit fold as its linked Review summary, retaining the way into its Run', async () => {
+  const navigate = vi.fn();
+  const source = { ...createTestSessionTranscriptSource({ serverId, navigate }), kind: 'app' as const };
+  const screen = await renderWithSessionTranscriptSource(
+    <WorkflowRunFold turnId="habit-turn" run={{ runId: 'hunt-run', turnCount: 0 }} serverId={serverId}>
+      {null}
+    </WorkflowRunFold>, source,
+  );
+  try {
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Session token written to the daemon log'));
+    await screen.pressByTestIdAsync('review-summary:open');
+    expect(effects.push).toHaveBeenCalledWith(expect.stringContaining(reviewId));
+    await screen.pressByTestIdAsync('workflow-run-review:open-run');
+    expect(navigate).toHaveBeenCalledWith(expect.stringContaining('hunt-run'));
+    await screen.update(<WorkflowRunFold turnId="habit-turn" run={{ runId: 'another-round-run', turnCount: 0 }} serverId={serverId}>
+      {null}
+    </WorkflowRunFold>);
+    await waitForHomeGovernance(() => expect(listRequests).toContainEqual(expect.objectContaining({ workflowRunId: 'another-round-run' })));
+    expect(screen.findHostByTestId('review-summary:open')).toBeNull();
+    expect(screen.getTextContent()).toContain(t('workflows.run.open'));
+  } finally { await screen.unmount(); }
+});
+
+it('keeps a read-only transcript fold from looking up a private Review through the active Account', async () => {
+  const screen = await renderWithSessionTranscriptSource(
+    <WorkflowRunFold turnId="public-turn" run={{ runId: 'hunt-run', turnCount: 0 }} serverId={serverId}>
+      {null}
+    </WorkflowRunFold>, createTestSessionTranscriptSource({ serverId, navigate: effects.push }),
+  );
+  try {
+    expect(screen.getTextContent()).toContain(t('workflows.run.open'));
+    expect(screen.findHostByTestId('review-summary:open')).toBeNull();
+    expect(listRequests).toEqual([]);
   } finally { await screen.unmount(); }
 });

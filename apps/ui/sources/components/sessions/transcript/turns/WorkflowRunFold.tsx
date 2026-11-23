@@ -12,6 +12,7 @@ import {
 
 import { describeWorkKind } from '@/components/sessions/work/workerKindGlyphs';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { renderWorkUpdateCardSurface, useWorkTheme, WORK_HOST } from '@/components/work/map/WorkMapView';
@@ -20,7 +21,8 @@ import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflo
 import { WorkflowFlowView } from '@/components/workflows/flow/WorkflowFlowView';
 import { WorkflowBuiltinMark } from '@/components/workflows/presentation/WorkflowBuiltinMark';
 import { useWorkflowInlineRunControls } from '@/components/workflows/run/useWorkflowInlineRunControls';
-import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { WorkflowRunReview } from '@/components/workflows/run/WorkflowRunReview';
+import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
@@ -62,7 +64,7 @@ type RunRow = ReturnType<typeof useWorkflowRun>;
 function useTriggerRunRow(
   runId: string,
   serverId: string | null | undefined,
-): RunRow {
+): Readonly<{ row: RunRow; scope: ServerAccountScope | null }> {
   const source = useSessionTranscriptSource();
   const activeScope = useActiveServerAccountScope();
   const workflowsAvailable = useWorkflowsAvailability().available;
@@ -97,7 +99,7 @@ function useTriggerRunRow(
       controller.abort();
     };
   }, [detailCurrent, readable, runId, summaryTerminal]);
-  return readable ? row : null;
+  return { row: readable ? row : null, scope: readable ? activeScope : null };
 }
 
 /** Keep going's second opinion settles a Notify me node only when it disagreed (08 §3.1). */
@@ -128,7 +130,7 @@ export const WorkflowRunFold = React.memo(function WorkflowRunFold(
   const [expanded, setExpanded] = React.useState(false);
   const notifyLayoutMutation = useTranscriptRowLayoutMutation();
   const maxWidthStyle = useLayoutMaxWidthStyle();
-  const row = useTriggerRunRow(props.run.runId, props.serverId);
+  const { row, scope } = useTriggerRunRow(props.run.runId, props.serverId);
   const changeExpanded = React.useCallback(
     (next: boolean) => {
       notifyLayoutMutation({
@@ -195,16 +197,15 @@ export const WorkflowRunFold = React.memo(function WorkflowRunFold(
         </View>
       );
     }
-    // A run that wrote no turn here has nothing to expand: the row only names its outcome and opens the run.
+    // A zero-turn Run's linked Review is the existing Session summary; other Runs keep their ordinary fold.
     if (props.run.turnCount === 0) {
       return (
         <View style={styles.container}>
-          <WorkflowRunFoldHeader
-            runId={props.run.runId}
-            disclosure={null}
-            presentation={presentation}
-            onOpen={open}
-          />
+          <WorkflowRunReview runId={props.run.runId} scope={scope} enabled={scope !== null}
+            fallback={<WorkflowRunFoldHeader runId={props.run.runId} disclosure={null}
+              presentation={presentation} onOpen={open} />}
+            footerAction={open ? <TextLinkButton testID="workflow-run-review:open-run" size="meta"
+              label={t('workflows.run.open')} onPress={open} /> : null} />
         </View>
       );
     }
