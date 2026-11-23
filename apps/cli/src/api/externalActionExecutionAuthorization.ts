@@ -1868,8 +1868,9 @@ function resolveContributedActionRequesterHttpHeaders(input: Readonly<{
   const binding = input.authorization.binding;
   if (binding.actionId !== ACTION_INVOKE_ACTION_ID_V1 || input.effectActionId === binding.actionId
     || !('authentication' in binding) || binding.telemetryCollectorCodec) return null;
-  // The outer Action proof is not a credential for arbitrary child HTTP purposes.
-  const requester = readRequesterAccountActionContext(input.authorization);
+  // The outer proof cannot authorize this HTTP purpose. Both the Session
+  // issuer and installed ingress already carry the requester's Account transport.
+  const requester = readRequesterAccountActionTransportContext(input.authorization);
   if (!requester || binding.accountId !== readAccountIdFromToken(requester.credentials.token)
     || (binding.authentication.kind !== 'account' && binding.authentication.kind !== 'terminal')) {
     return refuseExternalActionHeaders('requester_account_custody_mismatch', binding.requestId);

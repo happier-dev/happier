@@ -4,10 +4,43 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { projectRequesterAccountActionAuthorization } from './requesterAccountActionProjection';
-import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
+import { projectExternalActionRequesterHttpAuthorization, resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 
 afterEach(() => vi.restoreAllMocks());
+it('carries the exact Session requester to Home for a Machine observation setup read', async () => {
+  const accountId = 'fresh-owner';
+  const token = `fixture.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+  const serverIdentityId = 'stable-home';
+  const target = { kind: 'machine' as const, machineId: 'machine' };
+  const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-proved-observation', binding: {
+    accountId, custodianAccountId: accountId, authentication: { kind: 'account', tokenEpoch: 0 },
+    serverIdentityId, machineId: target.machineId, installationId: 'installation', accountEncryptionMode: 'plain',
+    actionId: ACTION_INVOKE_ACTION_ID_V1, requestId: 'setup-read', requestEnvelopeDigest: 'a'.repeat(43), target,
+    sessionActionSource: { machineId: target.machineId, installationId: 'installation' },
+    sessionActionOrigin: { v: 1, caller: { kind: 'session', sessionId: 'fresh-session', starterDepth: 0, turnDepth: 0 },
+      sourceTurnId: 'turn', callerPermissionMode: null, requestId: 'setup-read' },
+  } });
+  vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', version: 0, settingsVersion: 0,
+    signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } });
+  const projected = await projectRequesterAccountActionAuthorization({ authorization: root, serverIdentityId, bootstrap: {
+    credentials: { token, encryption: null }, serverHttpBaseUrl: 'https://fresh-owner.test',
+    attribution: { serverId: 'home', accountId, machineId: target.machineId, installationId: 'installation' },
+    getBoundSessionId: () => 'fresh-session', isCurrent: async () => true,
+  } });
+  if (!projected) throw new Error('fresh_owner_projection_required');
+  const readHome = (authorization: typeof root) => resolveExternalActionServerRequestHeaders({
+    context: { surface: 'agent', authority: 'account_automation',
+      externalActionTarget: target, externalActionExecutionAuthorization: authorization },
+    effectActionId: 'machines.presence.read', method: 'GET', path: '/v1/machines/machine/presence',
+    daemonToken: 'fixture-daemon', serverIdentityId, installationId: 'installation', privateKey: nacl.sign.keyPair().secretKey,
+  });
+  expect(readHome(projected)).toMatchObject({ ok: true, headers: { Authorization: `Bearer ${token}`,
+    'x-happier-authority-ceiling': 'account_automation' } });
+  expect(readHome(root)).toMatchObject({ ok: false, reason: 'requester_account_custody_mismatch' });
+});
+
 const roots = [
   'deployments.deploy', 'registries.updates.check', 'machines.terminal.open', 'machines.terminal.restart',
   'projects.service.relocate', 'discussion.second_opinion.start', 'session.sections.archive',
