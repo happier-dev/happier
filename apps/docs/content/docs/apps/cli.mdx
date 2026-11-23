@@ -943,7 +943,7 @@ When running without an interactive terminal, review the device and Account befo
 explicitly passing `--confirm`. Add `--json` for machine-readable output. Keep the
 short-lived pairing link private.
 
-### Terminal pairing protocol primitives (advanced tooling)
+### Pairing protocol primitives (advanced tooling)
 
 `auth request`, `auth approve`, and `auth wait` remain JSON protocol primitives for operator tooling and released compatibility. They are not the routine onboarding recipe: use `happier setup` for this computer and `happier auth pair-remote --ssh user@host` for a remote machine. If you build custom transport around the primitives, treat the complete request envelope as a short-lived secret and keep every step bound to the same selected Home.
 
