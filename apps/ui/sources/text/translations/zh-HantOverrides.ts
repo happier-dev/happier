@@ -9857,7 +9857,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
                   ? "此服務尚未準備好開啟。"
                   : '此服務尚未準備好開啟，請查看「服務」。',
-                browserViewUnavailable: "瀏覽器無法在這裡開啟，請稍後再試。",
+                browserViewUnavailable: "這裡沒有可顯示它的瀏覽器。請先開啟瀏覽器，然後重試。",
                 startFailedTitle: "服務未能啟動",
                 startFailed: "服務在就緒前已停止。",
                 namedStartFailed: ({ service }: { service: string }): string => `${service}在就緒前已停止。`,

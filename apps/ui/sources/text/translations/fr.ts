@@ -11923,7 +11923,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
                 previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
                   ? "Ce service n’est pas prêt à être ouvert."
                   : 'Ce service n’est pas prêt à être ouvert ; consulte Services.',
-                browserViewUnavailable: "Le navigateur n’a pas pu s’ouvrir ici. Réessaie dans un instant.",
+                browserViewUnavailable: "Aucun navigateur n’est ouvert ici pour l’afficher. Ouvre le navigateur, puis réessaie.",
                 startFailedTitle: "Le service n’a pas pu démarrer",
                 startFailed: "Le service s’est arrêté avant d’être prêt.",
                 namedStartFailed: ({ service }: { service: string }): string => `${service} s’est arrêté avant d’être prêt.`,

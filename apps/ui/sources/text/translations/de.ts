@@ -11956,7 +11956,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
                 previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
                   ? "Dieser Dienst ist noch nicht zum Öffnen bereit."
                   : 'Dieser Dienst ist noch nicht zum Öffnen bereit; sieh unter Dienste nach.',
-                browserViewUnavailable: "Der Browser konnte sich hier nicht öffnen. Versuche es gleich noch einmal.",
+                browserViewUnavailable: "Hier ist kein Browser geöffnet, in dem es angezeigt werden kann. Öffne den Browser und versuche es dann erneut.",
                 startFailedTitle: "Dienst konnte nicht starten",
                 startFailed: "Der Dienst wurde beendet, bevor er bereit war.",
                 namedStartFailed: ({ service }: { service: string }): string => `${service} wurde beendet, bevor der Dienst bereit war.`,

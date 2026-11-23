@@ -44,10 +44,14 @@ export function readApprovalResultReceipt(
   const action = resolveActionTitle(typeof payload?.actionId === 'string' ? payload.actionId : '', null);
   const parsedStatus = ApprovalRequestV2StatusSchema.safeParse(payload?.status);
   const status = parsedStatus.success ? parsedStatus.data : null;
+  const execution = ApprovalExecutionV2Schema.safeParse(payload?.execution);
+  // An approved Action whose run failed never reads as a success. Its cause is said once, on the card.
+  if ((status === 'approved' || status === 'executed') && execution.success && !execution.data.ok) {
+    return { artifactId, status, text: [formatApprovalStatusLabel('failed'), action].join(' · ') };
+  }
   if (status === 'approved' || status === 'executed') {
     return { artifactId, status, text: t('message.approvalResult', { action }) };
   }
-  const execution = ApprovalExecutionV2Schema.safeParse(payload?.execution);
   const refusal = execution.success && !execution.data.ok
     ? readActionFailurePresentationV1(execution.data.errorCode, execution.data.details) : null;
   return { artifactId, status, text: [status && formatApprovalStatusLabel(status), action, refusal?.message]

@@ -12382,7 +12382,7 @@ localTailscale: {
                 previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
                   ? "このサービスはまだ開けません。"
                   : 'このサービスはまだ開けません。「サービス」を確認してください。',
-                browserViewUnavailable: "ここではブラウザーを開けませんでした。しばらくしてからもう一度お試しください。",
+                browserViewUnavailable: "ここには表示先のブラウザーが開いていません。ブラウザーを開いてから、もう一度お試しください。",
                 startFailedTitle: "サービスを起動できませんでした",
                 startFailed: "サービスは準備が整う前に停止しました。",
                 namedStartFailed: ({ service }: { service: string }): string => `${service}は準備が整う前に停止しました。`,

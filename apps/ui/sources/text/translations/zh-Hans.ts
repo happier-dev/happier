@@ -11720,7 +11720,7 @@ export const zhHans: TranslationStructure = {
                 previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
                   ? "此服务尚未准备好打开。"
                   : '此服务尚未准备好打开，请查看“服务”。',
-                browserViewUnavailable: "浏览器无法在这里打开，请稍后再试。",
+                browserViewUnavailable: "这里没有可显示它的浏览器。请先打开浏览器，然后重试。",
                 startFailedTitle: "服务未能启动",
                 startFailed: "服务在就绪前已停止。",
                 namedStartFailed: ({ service }: { service: string }): string => `${service}在就绪前已停止。`,

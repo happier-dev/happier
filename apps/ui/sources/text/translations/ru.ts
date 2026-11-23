@@ -11937,7 +11937,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
                 previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
                   ? "Этот сервис ещё не готов к открытию."
                   : 'Этот сервис ещё не готов к открытию; проверьте раздел «Сервисы».',
-                browserViewUnavailable: "Не удалось открыть браузер здесь. Попробуйте ещё раз через минуту.",
+                browserViewUnavailable: "Здесь не открыт браузер, в котором это можно показать. Откройте браузер и попробуйте ещё раз.",
                 startFailedTitle: "Не удалось запустить сервис",
                 startFailed: "Сервис остановился до завершения запуска.",
                 namedStartFailed: ({ service }: { service: string }): string => `${service} остановился до завершения запуска.`,

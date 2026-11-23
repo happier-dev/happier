@@ -13844,7 +13844,7 @@ const enLocalServices = {
       previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}): string => servicesActionOffered
         ? "This service isn’t ready to open."
         : 'This service isn’t ready to open; check Services.',
-      browserViewUnavailable: "The Browser couldn’t open here. Try again in a moment.",
+      browserViewUnavailable: "There’s no Browser open here to show it in. Open the Browser, then try again.",
       startFailedTitle: "Service couldn’t start",
       startFailed: "The service stopped before it was ready.",
       namedStartFailed: ({ service }: { service: string }): string => `${service} stopped before it was ready.`,

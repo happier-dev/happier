@@ -12085,7 +12085,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
                 previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
                   ? "Este servicio aún no está listo para abrirse."
                   : 'Este servicio aún no está listo para abrirse; revisa Servicios.',
-                browserViewUnavailable: "El navegador no pudo abrirse aquí. Inténtalo de nuevo en un momento.",
+                browserViewUnavailable: "Aquí no hay ningún navegador abierto donde mostrarlo. Abre el navegador y vuelve a intentarlo.",
                 startFailedTitle: "El servicio no pudo iniciarse",
                 startFailed: "El servicio se detuvo antes de estar listo.",
                 namedStartFailed: ({ service }: { service: string }): string => `${service} se detuvo antes de estar listo.`,

@@ -778,7 +778,8 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
     if (followEditor.enabled && sessionServerId) {
       push('session', {
         id: SESSION_FOLLOW_IN_ANOTHER_SESSION_ACTION_ID,
-        icon: <Icon name="share-network" size={16} color={iconColor} />,
+        // The glyph the following Session's transcript shows for these inputs, distinct from Share.
+        icon: <Icon name="arrow-elbow-down-right" size={16} color={iconColor} />,
         title: t('session.follow.sources.add'),
         subtitle: t('session.follow.sources.includeNextTurn'),
       });

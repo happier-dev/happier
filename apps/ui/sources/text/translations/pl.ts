@@ -11914,7 +11914,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
                 previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
                   ? "Ta usługa nie jest jeszcze gotowa do otwarcia."
                   : 'Ta usługa nie jest jeszcze gotowa do otwarcia; sprawdź Usługi.',
-                browserViewUnavailable: "Nie udało się tu otworzyć przeglądarki. Spróbuj ponownie za chwilę.",
+                browserViewUnavailable: "Nie ma tu otwartej przeglądarki, w której można to pokazać. Otwórz przeglądarkę i spróbuj ponownie.",
                 startFailedTitle: "Nie udało się uruchomić usługi",
                 startFailed: "Usługa zatrzymała się, zanim była gotowa.",
                 namedStartFailed: ({ service }: { service: string }): string => `${service} zatrzymał się przed osiągnięciem gotowości.`,

@@ -11266,7 +11266,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
                 previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
                   ? "Aquest servei encara no es pot obrir."
                   : 'Aquest servei encara no es pot obrir; consulta Serveis.',
-                browserViewUnavailable: "El navegador no s’ha pogut obrir aquí. Torna-ho a provar d’aquí a un moment.",
+                browserViewUnavailable: "Aquí no hi ha cap navegador obert per mostrar-ho. Obre el navegador i torna-ho a provar.",
                 startFailedTitle: "El servei no s’ha pogut iniciar",
                 startFailed: "El servei s’ha aturat abans d’estar a punt.",
                 namedStartFailed: ({ service }: { service: string }): string => `${service} s’ha aturat abans d’estar a punt.`,

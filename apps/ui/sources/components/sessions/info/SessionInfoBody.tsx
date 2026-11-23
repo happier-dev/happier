@@ -668,8 +668,6 @@ function SessionInfoContent({
       sessionStatus.isConnected,
     ],
   );
-  const canStopSession =
-    sessionActionTarget.isActive && sessionActionTarget.canStop;
   const canArchiveSession = sessionActionTarget.canArchive;
   const archivePending = useSessionArchivePending(collaborationTarget);
   const visibleSessionActionIds = React.useMemo(() => {
@@ -1178,8 +1176,9 @@ function SessionInfoContent({
               : null
           : null;
 
+  // The shared action availability decides Stop, as it does for the header and list menus.
   const showStop =
-    sessionStatus.isConnected && canStopSession && stopInfoItemProps;
+    visibleSessionActionIds.has(SESSION_ACTION_STOP_ID) && stopInfoItemProps;
   const showArchive =
     !isArchivedSession && canArchiveSession && archiveInfoItemProps;
   const showUnarchive =

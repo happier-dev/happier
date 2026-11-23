@@ -12202,7 +12202,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
                 previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
                   ? "Este serviço ainda não está pronto para abrir."
                   : 'Este serviço ainda não está pronto para abrir; confira Serviços.',
-                browserViewUnavailable: "O navegador não conseguiu abrir aqui. Tente de novo em instantes.",
+                browserViewUnavailable: "Não há navegador aberto aqui para mostrar isto. Abra o navegador e tente de novo.",
                 startFailedTitle: "O serviço não conseguiu iniciar",
                 startFailed: "O serviço parou antes de estar pronto.",
                 namedStartFailed: ({ service }: { service: string }): string => `${service} parou antes de estar pronto.`,

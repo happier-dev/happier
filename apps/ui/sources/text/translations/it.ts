@@ -12306,7 +12306,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
                 previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
                   ? "Questo servizio non è ancora pronto per essere aperto."
                   : 'Questo servizio non è ancora pronto per essere aperto; controlla Servizi.',
-                browserViewUnavailable: "Il browser non si è potuto aprire qui. Riprova tra un momento.",
+                browserViewUnavailable: "Qui non c’è un browser aperto in cui mostrarlo. Apri il browser, poi riprova.",
                 startFailedTitle: "Il servizio non è riuscito ad avviarsi",
                 startFailed: "Il servizio si è arrestato prima di essere pronto.",
                 namedStartFailed: ({ service }: { service: string }): string => `${service} si è arrestato prima di essere pronto.`,

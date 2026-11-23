@@ -291,7 +291,9 @@ export function EntityFlatReorderList(props: Readonly<{
             {children}
             <FlatFeedback context={context} testID={props.testID} />
         </View>
-        {typeof props.children === 'function' ? null : organizeControl}
+        {/* Under a vertical list the toggle is one quiet operation at the trailing edge, never a full-width band. */}
+        {typeof props.children === 'function' ? null : axis === 'vertical' && organizeControl
+            ? <View style={ORGANIZE_CONTROL_TRAILING_STYLE}>{organizeControl}</View> : organizeControl}
     </FlatContext.Provider>;
 }
 
@@ -524,6 +526,7 @@ function MountedFlatRow(props: React.ComponentProps<typeof EntityFlatReorderRow>
 }
 
 const FILL_LIST_STYLE = { flex: 1, minHeight: 0 } as const;
+const ORGANIZE_CONTROL_TRAILING_STYLE = { alignSelf: 'flex-end' } as const;
 // A horizontal list takes its row's width, not its content's: a bar inside that fits by measurement (the Project
 // page tabs) then measures the room it really has and folds what doesn't fit behind More (QA-PROJECTS D9).
 const HORIZONTAL_LIST_STYLE = { flexShrink: 1, minWidth: 0, justifyContent: 'center' } as const;

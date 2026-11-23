@@ -2619,6 +2619,22 @@ describe('/session/[id]/info', () => {
         });
     });
 
+    it('offers Stop for a running Session whenever the shared action availability does, as the header and list do', async () => {
+        sessionIsConnected = false;
+        mockSession = {
+            id: 'session-1',
+            active: true,
+            accessLevel: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 1,
+            metadata: {},
+        };
+
+        const screen = await renderInfoScreen();
+        expect(screen.findByTestId('sessionInfo.stopSession')).toBeTruthy();
+    });
+
     it('stops and retries archiving in place when an inactive session is still active server-side', async () => {
         mockServerId = 'server-b';
         archiveStatuses = [409, 200];
