@@ -9,7 +9,11 @@ import { CORE_MACHINE_ROLE_IDS_V1 } from '@happier-dev/protocol/machines/roles/m
 import './persistTerminalEnrollmentCredential';
 
 const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_API_TOKEN']);
-const token = (n: string) => `header.${Buffer.from(JSON.stringify({ sub: 'owner', n })).toString('base64url')}.signature`;
+const token = (n: string) => {
+  const provenance = { v: 1, kind: 'terminal', authority: 'account_automation' };
+  const payload = Buffer.from(JSON.stringify({ sub: 'owner', n, tokenEpoch: 0, provenance })).toString('base64url');
+  return `e30.${payload}.sig`;
+};
 afterEach(() => { env.restore(); vi.restoreAllMocks(); vi.resetModules(); });
 
 describe('managed enrollment historical custody', () => {
@@ -80,7 +84,11 @@ describe('managed enrollment historical custody', () => {
       if (!fixture || !fixture.accountPublicKey) throw new Error('Missing captured predecessor data-key fixture');
       const encryption = { type: 'dataKey' as const, machineKey: new Uint8Array(Buffer.from(fixture.accountSecret, 'base64')),
         publicKey: new Uint8Array(Buffer.from(fixture.accountPublicKey, 'base64')) };
-      await persistence.writeStoredCredentialsForServerId(configuration.activeServerId, { token: token('old'), encryption });
+      const serverId = configuration.activeServerId;
+      const oldToken = token('old');
+      await persistence.writeStoredCredentialsForServerId(serverId, { token: oldToken, encryption });
+      // The person already confirmed the conversion. A keyless enrollment alone cannot reclassify an active pin.
+      await expect(persistence.writeAccountE2eeCustodyForServerId(serverId, oldToken, 'historical')).resolves.toBe(true);
       const originalCredentialBytes = await readFile(configuration.privateKeyFile, 'utf8');
       await persistence.updateSettings(settings => ({ ...settings,
         machineIdByServerId: { [configuration.activeServerId]: fixture.machine.id },
@@ -135,7 +143,9 @@ describe('managed enrollment historical custody', () => {
       else await expect(completion).resolves.toMatchObject({ machineId: fixture.machine.id, encryptionType: 'tokenOnly' });
       expect(writes).toEqual(['transition', 'register']);
       if (denied) expect(await readFile(configuration.privateKeyFile, 'utf8')).toBe(originalCredentialBytes);
-      expect(await persistence.readStoredCredentialsForServerId(configuration.activeServerId)).toMatchObject({ token: token(denied ? 'old' : 'new'), encryption });
+      const stored = await persistence.readStoredCredentialCustodyForServerId(serverId);
+      expect(stored).toMatchObject({ token: token(denied ? 'old' : 'new'), encryption });
+      expect(stored && persistence.readAccountE2eeCustody(stored)).toBe('historical');
     });
   });
 });

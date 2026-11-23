@@ -37,7 +37,9 @@ describe('same-Account historical credential refresh', () => {
       const next = token('alice', 'new');
       if (explicit) await persistence.writeCredentialsTokenOnlyForServerId(configuration.activeServerId, { token: next });
       else await persistence.writeCredentialsTokenOnly({ token: next });
-      expect(await persistence.readStoredCredentialCustodyForServerId(configuration.activeServerId)).toMatchObject({ token: next, encryption: { type: 'legacy', secret } });
+      const stored = await persistence.readStoredCredentialCustodyForServerId(configuration.activeServerId);
+      expect(stored).toMatchObject({ token: next, encryption: { type: 'legacy', secret } });
+      expect(stored && persistence.readAccountE2eeCustody(stored)).toBe('active');
       await persistence.writeStoredCredentialsForServerId(configuration.activeServerId, { token: next, encryption: null });
       expect(await persistence.readStoredCredentialCustodyForServerId(configuration.activeServerId)).toMatchObject({ encryption: null });
     });
