@@ -98,7 +98,8 @@ export const MultiPaneHostWithBottom = React.memo((props: MultiPaneHostWithBotto
                 style={{ flex: 1, minHeight: 0, minWidth: 0, position: 'relative' }}
                 {...bottomModalBoundary.underlayProps}
             >
-                <PluginSurfaceFocusEligibilityProvider active={!isBottomOverlayPresented}>
+                {/* The sheet owns input; the retained panes above it still present live content. */}
+                <PluginSurfaceFocusEligibilityProvider active={!isBottomOverlayPresented} presentationActive>
                     <SessionCockpitBottomChromeHeightContext.Provider value={aboveBottomChromeHeight}>
                         <MultiPaneHost {...multiPaneProps} />
                     </SessionCockpitBottomChromeHeightContext.Provider>

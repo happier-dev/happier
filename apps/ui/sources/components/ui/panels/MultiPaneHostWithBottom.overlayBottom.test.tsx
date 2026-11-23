@@ -8,7 +8,7 @@ import { act } from 'react-test-renderer';
 import { MultiPaneHostWithBottom } from './MultiPaneHostWithBottom';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
-import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useLayoutPresentationActive, usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 
 const reducedMotionPreference = vi.hoisted(() => ({ value: false }));
@@ -227,13 +227,14 @@ describe('MultiPaneHostWithBottom (overlayBottom)', () => {
         }
     });
 
-    it('lets the presented overlay retain focus eligibility while its retained underlay loses it', async () => {
+    it('keeps the visible underlay presented while the bottom overlay takes focus', async () => {
         const screen = await renderScreen(renderOverlayBottom(
             <FocusEligibilityProbe testID="multi-pane-bottom-main-focus" />,
             <FocusEligibilityProbe testID="multi-pane-bottom-overlay-focus" />,
         ));
 
         expect(screen.findByTestId('multi-pane-bottom-main-focus')?.props.eligible).toBe(false);
+        expect(screen.findByTestId('multi-pane-bottom-main-focus')?.props.presented).toBe(true);
         expect(screen.findByTestId('multi-pane-bottom-overlay-focus')?.props.eligible).toBe(true);
     });
 
@@ -321,6 +322,7 @@ function FocusEligibilityProbe(props: Readonly<{ testID: string }>): React.React
     return React.createElement('FocusEligibilityProbe', {
         testID: props.testID,
         eligible: usePluginSurfaceFocusEligibility(),
+        presented: useLayoutPresentationActive(),
     });
 }
 
