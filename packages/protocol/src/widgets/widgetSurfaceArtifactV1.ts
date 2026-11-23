@@ -521,6 +521,8 @@ export type WidgetAreaReadV1 =
       access: ArtifactCallerAccessV1;
       revision: WorkBoardArtifactRevisionV1;
       isShared: boolean;
+      /** Someone besides the owner can change this surface (fails closed when the read does not say). */
+      othersCanWrite: boolean;
       preset?: WidgetAreaPresetStateV1;
     }>;
 const WidgetSurfaceArtifactHeaderV1Schema = lazyZodSchema(() =>
@@ -756,6 +758,7 @@ export function createWidgetSurfaceArtifactPortV1(
             isShared:
               row.shared === true ||
               (row.access !== undefined && row.access !== 'owner'),
+            othersCanWrite: row.access !== 'owner' || row.othersCanWrite !== false,
           }
         : { kind: 'missing', surface, layout, ...state };
     },
@@ -1385,6 +1388,7 @@ export function createWidgetAreaActionPortV1(
           canEdit: state.kind === 'missing' || state.access !== 'view',
           revision: state.kind === 'present' ? state.revision : null,
           isShared: state.kind === 'present' && state.isShared,
+          othersCanWrite: state.kind === 'present' && state.othersCanWrite,
           items: state.layout.items,
           instances: flattenWidgetLayoutWidgetsV1(state.layout.items).map(
             ({ kind: _kind, ...entry }) => {

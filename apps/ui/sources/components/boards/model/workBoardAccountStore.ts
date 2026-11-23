@@ -22,8 +22,8 @@ export function createWorkBoardAccountStore(transport: WorkBoardArtifactTranspor
     let boards = DEFAULT_WORK_BOARDS_V1;
     let summaries: readonly WorkBoardArtifactSummaryV1[] = retained?.summaries ?? [];
     const revisions = new Map<string, WorkBoardArtifactRevisionV1>();
-    /** Whether someone besides the owner can see or write each Board, from the read that delivered its body. */
-    const sharedBoards = new Map<string, boolean>();
+    /** Whether someone besides the owner can change each Board, from the read that delivered its body. */
+    const writableBoards = new Map<string, boolean>();
     const demand = new Map<string, number>();
     let writes = 0;
     let readState: WorkBoardReadState = shouldContinue() ? { status: 'loading', hasSnapshot: false }
@@ -53,18 +53,18 @@ export function createWorkBoardAccountStore(transport: WorkBoardArtifactTranspor
         notify();
     };
     const acceptBoard = (id: string, board: WorkBoardV1 | null, revision?: WorkBoardArtifactRevisionV1,
-        access?: Readonly<{ isShared: boolean }>) => {
+        access?: Readonly<{ othersCanWrite: boolean }>) => {
         const current = revisions.get(id);
         if (revision && current && (revision.bodyVersion < current.bodyVersion || revision.headerVersion < current.headerVersion)) return;
-        const sharedChanged = access !== undefined ? sharedBoards.get(id) !== access.isShared : !board && sharedBoards.has(id);
-        if (access) sharedBoards.set(id, access.isShared);
-        else if (!board) sharedBoards.delete(id);
+        const writersChanged = access !== undefined ? writableBoards.get(id) !== access.othersCanWrite : !board && writableBoards.has(id);
+        if (access) writableBoards.set(id, access.othersCanWrite);
+        else if (!board) writableBoards.delete(id);
         if (board && revision && current && revision.bodyVersion === current.bodyVersion && revision.headerVersion === current.headerVersion
-            && boards.boards.some(item => item.id === id)) { if (sharedChanged) notify(); return; }
+            && boards.boards.some(item => item.id === id)) { if (writersChanged) notify(); return; }
         if (revision) revisions.set(id, revision);
         else if (!board) revisions.delete(id);
         const old = boards.boards.find(item => item.id === id);
-        if (sameStrictJsonValue(board, old ?? null)) { if (sharedChanged) notify(); return; }
+        if (sameStrictJsonValue(board, old ?? null)) { if (writersChanged) notify(); return; }
         const nextBoards = board
             ? old ? boards.boards.map(item => item.id === id ? board : item) : [...boards.boards, board]
             : boards.boards.filter(item => item.id !== id);
@@ -138,8 +138,8 @@ export function createWorkBoardAccountStore(transport: WorkBoardArtifactTranspor
         readBoardAccess: port.readBoardAccess,
         getBoard,
         getDisplayedBoard,
-        /** Unknown until a read of this Board settles; the HTML host treats unknown as shared. */
-        isBoardShared: (id: string): boolean | undefined => sharedBoards.get(id),
+        /** Unknown until a read of this Board settles; the HTML host treats unknown as writable by others. */
+        isBoardWritableByOthers: (id: string): boolean | undefined => writableBoards.get(id),
         getBoards: () => boards,
         getSummaries: () => summaries,
         getReadState: () => readState,

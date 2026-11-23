@@ -262,9 +262,9 @@ export function useAcknowledgedWorkBoard(boardId: string): WorkBoardV1 | null {
     return React.useSyncExternalStore(store.subscribe, snapshot, snapshot);
 }
 
-/** Whether someone besides the owner can see or write this Board, from the read that delivered its body. */
-export function useWorkBoardShared(boardId: string): boolean | undefined {
+/** Whether someone besides the owner can change this Board, from the read that delivered its body. */
+export function useWorkBoardOthersCanWrite(boardId: string): boolean | undefined {
     const store = useBoardStore('inactive');
-    const snapshot = React.useCallback(() => store.isBoardShared(boardId), [store, boardId]);
+    const snapshot = React.useCallback(() => store.isBoardWritableByOthers(boardId), [store, boardId]);
     return React.useSyncExternalStore(store.subscribe, snapshot, snapshot);
 }

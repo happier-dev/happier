@@ -43,6 +43,8 @@ export type WorkBoardArtifactV1 = Readonly<{
     access?: ArtifactCallerAccessV1;
     /** Actual grant census from the admitted Artifact transport, including owner reads. */
     shared?: boolean;
+    /** From the same census: someone besides the owner can change it. Missing counts as true. */
+    othersCanWrite?: boolean;
 }>;
 export type WorkBoardArtifactSummaryV1 = Readonly<{
     id: string; name: string; pinnedInSessions: boolean;
@@ -113,13 +115,14 @@ export type WorkBoardArtifactPortV1 = Readonly<{
     read(signal?: AbortSignal): Promise<WorkBoardsV1>;
     list(signal?: AbortSignal): Promise<readonly WorkBoardArtifactSummaryV1[]>;
     readBoard(boardId: string, signal?: AbortSignal): Promise<WorkBoardV1 | null>;
-    readBoardAccess(boardId: string, signal?: AbortSignal): Promise<Readonly<{ board: WorkBoardV1; canEdit: boolean; isShared: boolean; ownerAccountId?: string }> | null>;
+    readBoardAccess(boardId: string, signal?: AbortSignal): Promise<Readonly<{ board: WorkBoardV1; canEdit: boolean; isShared: boolean; othersCanWrite: boolean; ownerAccountId?: string }> | null>;
     apply(intent: WorkBoardIntentV1, signal?: AbortSignal, context?: ActionExecutorContext): Promise<WorkBoardsV1>;
 }>;
 
 function boardAccess(artifact: WorkBoardArtifactV1) {
     const canEdit = artifact.access === 'owner' || artifact.access === 'edit' || artifact.access === 'admin';
-    return { canEdit, isShared: artifact.shared === true || artifact.access === 'view' || artifact.access === 'edit' || artifact.access === 'admin' };
+    return { canEdit, isShared: artifact.shared === true || artifact.access === 'view' || artifact.access === 'edit' || artifact.access === 'admin',
+        othersCanWrite: artifact.access !== 'owner' || artifact.othersCanWrite !== false };
 }
 
 /** The only persisted Board edit path: one Artifact, pure semantic replay on its current CAS winner. */
@@ -127,7 +130,7 @@ export function createWorkBoardArtifactPortV1(transport: WorkBoardArtifactTransp
     shouldContinue?: () => boolean;
     /** `access` is the read's own grant fact, delivered with the body it describes. */
     onBoard?: (boardId: string, board: WorkBoardV1 | null, revision?: WorkBoardArtifactRevisionV1,
-        access?: Readonly<{ canEdit: boolean; isShared: boolean }>) => void;
+        access?: Readonly<{ canEdit: boolean; isShared: boolean; othersCanWrite: boolean }>) => void;
 }> = {}): WorkBoardArtifactPortV1 {
     const check = (signal?: AbortSignal) => {
         signal?.throwIfAborted();

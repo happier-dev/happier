@@ -729,19 +729,22 @@ authored HTML that someone other than the viewer wrote or can change: HTML in a
 Session the viewer does not own; HTML widgets on a surface whose Account is not
 the viewer, or on the Board or companion of a Session the viewer does not own,
 whatever the widget's target; and, for every viewer including the owner, HTML
-widgets on a shared widget surface (Project dashboard, Work Board, plugin-page
-or core-page area) or from a saved widget definition that is shared. "Shared"
-is the server's existing Artifact sharing fact: anyone besides the owner holds a
-grant, or the read is a recipient's. The surface's own layout read carries it;
-a saved definition reads it once per revision through the same sharing reader.
-An edit grant changes the content the owner later runs, so the owner's own HTML
-there is classified the same way; static HTML still renders. A saved HTML
-definition mounts once that fact is known. The id keeps its existing spelling.
+widgets on a widget surface (Project dashboard, Work Board, plugin-page or
+core-page area) or from a saved widget definition that other people can edit.
+"Other people can edit" is one server-decided fact from the existing Artifact
+sharing reader (`readArtifactAudienceFactsV1`), from the same grant roster that
+says the Artifact is shared: an edit or admin grant, or a recipient's own read.
+View-only grants and a public link cannot change the HTML, so on those shares
+the owner's own HTML keeps the owner's ordinary policy. A read that cannot say
+who can write counts as writable by others. The surface's own layout read
+carries the fact (`othersCanWrite` beside `isShared`); a saved definition reads
+it once per revision through the same reader and mounts once it is known.
+Static HTML still renders. The id keeps its existing spelling.
 It is not a transport surface: the mounting host supplies the class once, from
 the Session access projection or the surface it read, never from HTML input.
 The shared Actions policy defaults this audience to Off, returning
 `action_disabled` without creating an approval. Own-Session HTML and HTML on
-the viewer's own unshared surfaces keep their ordinary policy. A Session's own
+the viewer's own surfaces that nobody else can edit keep their ordinary policy. A Session's own
 Board items are not reclassified by Session sharing: an edit recipient of a
 Session can already prompt its owner's agent, which acts with the owner's
 authority. The existing per-target Settings control and

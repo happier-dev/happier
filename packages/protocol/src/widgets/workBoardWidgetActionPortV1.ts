@@ -45,7 +45,7 @@ export function createWorkBoardWidgetActionPortV1(port: Pick<WorkBoardArtifactPo
     async read(surface, _context, signal) {
       try {
         const admitted = await read(surface, signal);
-        return { surface, canEdit: admitted.canEdit, isShared: admitted.isShared, instances: ordered(admitted.board, surface).map(item => ({
+        return { surface, canEdit: admitted.canEdit, isShared: admitted.isShared, othersCanWrite: admitted.othersCanWrite, instances: ordered(admitted.board, surface).map(item => ({
           instance: item.instance, size: item.size,
           ...(item.frameStyle ? { frameStyle: item.frameStyle } : {}),
         })) };

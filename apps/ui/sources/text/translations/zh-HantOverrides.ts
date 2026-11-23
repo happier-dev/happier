@@ -10917,7 +10917,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             },
             foreign_session_html: {
                 title: '他人可變更的 HTML',
-                subtitle: '允許他人撰寫或可變更的 HTML（在其工作階段中、在與你共享的頁面上，或在你共享的看板、儀表板和小工具上）使用此動作。預設關閉。',
+                subtitle: '允許他人撰寫或可變更的 HTML（在其工作階段中、在與你共享的頁面上，或在他人可編輯的你的看板、儀表板和小工具上）使用此動作。預設關閉。',
             },
             foreign_session_html_resources: {
                 subtitle: '允許他人撰寫或可變更的 HTML 讀取資源並接收即時更新。預設關閉；不支援核准提示。',

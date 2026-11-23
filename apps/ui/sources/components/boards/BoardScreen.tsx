@@ -52,7 +52,7 @@ import { useBoardLiveCards } from './model/useBoardContent';
 import { useBoardWidgetArrivals } from './model/useBoardWidgetArrivals';
 import { readBoardCardDetailFocus, resolveBoardCardOpenTarget, type BoardCardAction } from './model/boardCardOpenTarget';
 import { resolveBoardSaveFailure } from './model/boardSaveFailure';
-import { useDispatchWorkBoardIntent, useWorkBoard, useWorkBoardReadState, useWorkBoardSaveQueue, useWorkBoardSaveState, useWorkBoardShared, useWorkBoardSummaries } from './model/useWorkBoards';
+import { useDispatchWorkBoardIntent, useWorkBoard, useWorkBoardReadState, useWorkBoardSaveQueue, useWorkBoardSaveState, useWorkBoardOthersCanWrite, useWorkBoardSummaries } from './model/useWorkBoards';
 import { BoardReadState, useBoardIndexSaidByColumn, useBoardReadRetryCommand } from './BoardReadState';
 import { BoardUndeterminedLine } from './BoardUndeterminedLine';
 import { BoardsInboxBoundary } from './BoardsInboxBoundary';
@@ -309,7 +309,7 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
     const boardOwnerAccountId = storage(state => state.artifacts[board.id]?.ownerAccountId);
     const admittedViewer = binding?.scope;
     // Unknown until the Board's read settles; widgets arrive with that read, so unknown counts as shared.
-    const boardShared = useWorkBoardShared(board.id) !== false;
+    const boardOthersCanWrite = useWorkBoardOthersCanWrite(board.id) !== false;
     const widgetSurface = React.useMemo(() => admittedViewer && boardOwnerAccountId
         ? workBoardWidgetSurface({ serverId: admittedViewer.serverId, accountId: boardOwnerAccountId }, board.id)
         : null, [admittedViewer, board.id, boardOwnerAccountId]);
@@ -351,7 +351,7 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
             placement={widget.placement}
             scope={widgetSurface}
             admittedViewer={admittedViewer}
-            surfaceShared={boardShared}
+            othersCanWrite={boardOthersCanWrite}
             descriptor={widgetDescriptors[widgets.indexOf(widget.placement)] ?? null}
             size={widget.size!}
             index={widgets.indexOf(widget.placement)}
@@ -362,7 +362,7 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
             fresh={arrivals.arrived.has(widget.placement.instance.id)}
             testID={`board-widget:${widget.placement.instance.id}`}
         />
-    ), [admittedViewer, arrivals.arrived, board.id, boardShared, dispatchIntent, routeFocused, widgetDescriptors, widgetSurface, widgets]);
+    ), [admittedViewer, arrivals.arrived, board.id, boardOthersCanWrite, dispatchIntent, routeFocused, widgetDescriptors, widgetSurface, widgets]);
 
     const onRemoveItem = React.useCallback((ref: BoardItemRefV1) => {
         dispatch({

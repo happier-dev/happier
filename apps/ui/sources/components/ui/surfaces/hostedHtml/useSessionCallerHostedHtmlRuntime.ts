@@ -20,10 +20,10 @@ import { createSessionCallerHostedHtmlRequestController } from './sessionCallerH
 import { isHostedInlineDocumentFrameAvailable } from './hostedInlineDocumentFrameCapability';
 
 /**
- * Who owns the document this HTML comes from, as its mounting host admitted it. `shared` says someone besides
- * that owner can see or write it, so its HTML may be another person's even when the viewer is the owner.
+ * Who owns the document this HTML comes from, as its mounting host admitted it. `othersCanWrite` says someone besides
+ * that owner can change it, so its HTML may be another person's even when the viewer is the owner.
  */
-export type CallerHostedHtmlContentOwner = Readonly<{ shared?: boolean }> & (
+export type CallerHostedHtmlContentOwner = Readonly<{ othersCanWrite?: boolean }> & (
     | Readonly<{ kind: 'account'; accountId: string }>
     | Readonly<{ kind: 'session'; sessionId: string }>);
 
@@ -53,9 +53,9 @@ export function useSessionCallerHostedHtmlRuntime(
     const contentSessionId = contentOwner?.kind === 'session' ? contentOwner.sessionId : null;
     const contentSessionOwned = storage(state => contentSessionId !== null
         && selectSessionViewShellSessionForRouteState(state, contentSessionId, serverId)?.access?.role === 'owner');
-    // Someone else owns or can write the containing surface: a shared surface or definition, another Account's
-    // surface, or a Session the viewer does not own. Missing ownership fails closed, as it does for the target Session.
-    const contentForeign = contentOwner?.shared === true
+    // Someone else owns or can write the containing surface: a surface or definition others can edit, another
+    // Account's surface, or a Session the viewer does not own. Missing ownership fails closed, as it does for the target Session.
+    const contentForeign = contentOwner?.othersCanWrite === true
         || (contentOwner?.kind === 'account' ? contentOwner.accountId !== binding?.accountId
             : contentOwner?.kind === 'session' && !contentSessionOwned);
     const contentForeignRef = React.useRef(contentForeign);

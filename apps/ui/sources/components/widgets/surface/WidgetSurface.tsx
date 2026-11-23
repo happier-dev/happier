@@ -18,7 +18,7 @@ import { useConfiguredWidgetTarget } from '@/sync/domains/widgets/useConfiguredW
 import type { WidgetInputRepairOutcome } from '@/sync/domains/widgets/widgetBinding';
 import { useWidgetDefinition, type MountedWidgetDefinitionV1 } from '@/sync/domains/widgets/useWidgetDefinition';
 import { useWidgetInstanceDescriptor } from './useWidgetInstanceDescriptor';
-import { useWidgetDefinitionShared } from './useWidgetDefinitionShared';
+import { useWidgetDefinitionOthersCanWrite } from './useWidgetDefinitionOthersCanWrite';
 import { storage, useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { HostedHtmlSurfaceAdapter } from '@/components/ui/surfaces/hostedHtml/HostedHtmlSurfaceAdapter';
@@ -37,8 +37,8 @@ export type WidgetSurfaceProps = Readonly<{
     scope: WidgetSurfaceRefV1;
     /** Captured only by the layout host after its actual Artifact read admits this viewer. */
     admittedViewer?: ServerAccountScope;
-    /** From the layout host's own read: someone besides the owner can see or write this surface. */
-    surfaceShared?: boolean;
+    /** From the layout host's own read: someone besides the owner can change this surface. */
+    othersCanWrite?: boolean;
     /** Exact containing document admission, supplied by its canonical layout host. */
     isCurrent?: () => boolean;
     /** Factual pending document observation, independent from effect admission. */
@@ -92,7 +92,7 @@ function InstalledInstanceBody(props: WidgetSurfaceProps & Readonly<{ descriptor
     />;
 }
 
-function AuthoredReadyBody(props: WidgetSurfaceProps & Readonly<{ descriptor: WidgetCandidate; definitionShared: boolean | undefined }>): React.ReactElement {
+function AuthoredReadyBody(props: WidgetSurfaceProps & Readonly<{ descriptor: WidgetCandidate; definitionOthersCanWrite: boolean | undefined }>): React.ReactElement {
     const resolution = useConfiguredWidgetTarget(props);
     useReportBindingDemand(resolution.status);
     const latest = React.useRef(resolution);
@@ -131,7 +131,7 @@ function useReportBindingDemand(status: ConfiguredWidgetTargetResolution['status
 
 /** An authored copy borrows only its destination viewer's current authority. */
 function AuthoredHtmlBody(props: WidgetSurfaceProps & Readonly<{
-    definitionShared: boolean | undefined;
+    definitionOthersCanWrite: boolean | undefined;
     definition: WidgetDefinitionV1;
     body: Extract<WidgetDefinitionV1['body'], { kind: 'html' }>;
     resolution: Extract<ConfiguredWidgetTargetResolution, { status: 'ready' }>;
@@ -139,13 +139,13 @@ function AuthoredHtmlBody(props: WidgetSurfaceProps & Readonly<{
 }>): React.ReactElement {
     const sessionId = props.resolution.target.kind === 'session' ? props.resolution.target.sessionId : undefined;
     // A Session's Board and companion hold that Session's content; every other surface is its Account's.
-    // A shared surface or saved definition can hold another person's HTML even for its owner.
+    // A surface or saved definition another person can edit can hold their HTML even for its owner.
     const owner = props.scope.owner;
     const savedDefinition = props.instance.definition.kind === 'artifact';
-    const shared = props.surfaceShared === true || savedDefinition && props.definitionShared !== false;
+    const othersCanWrite = props.othersCanWrite === true || savedDefinition && props.definitionOthersCanWrite !== false;
     const runtime = useSessionCallerHostedHtmlRuntime(props.scope.serverId, sessionId, props.resolution.runtime, props.isCurrent,
-        owner.kind === 'sessionBoard' || owner.kind === 'companion' ? { kind: 'session', sessionId: owner.sessionId, shared }
-            : { kind: 'account', accountId: props.scope.accountId, shared });
+        owner.kind === 'sessionBoard' || owner.kind === 'companion' ? { kind: 'session', sessionId: owner.sessionId, othersCanWrite }
+            : { kind: 'account', accountId: props.scope.accountId, othersCanWrite });
     const checkout = props.resolution.target.kind === 'workspace' ? props.resolution.target.checkout : null;
     const projectContext = useProjectContext({ serverId: props.scope.serverId, projectRef: checkout, activeCheckout: checkout });
     const sessionTarget = usePluginSessionSurfaceTarget({ serverId: props.scope.serverId, sessionId, authority: props.resolution.runtime.accountLifetime });
@@ -156,8 +156,8 @@ function AuthoredHtmlBody(props: WidgetSurfaceProps & Readonly<{
     }, [props.body.requestedCapabilities, network]);
     if (!runtime || !props.isCurrent() || (checkout && !projectContext.target)) return <UnavailableInstalledWidget
         unresolved={{ state: 'unavailable', reasonCode: 'widget_scope_unavailable' }} testID={props.testID} />;
-    // A saved definition mounts once its sharing fact is known, so its first request is classified.
-    if (savedDefinition && props.definitionShared === undefined) return <UnavailableInstalledWidget
+    // A saved definition mounts once its writers fact is known, so its first request is classified.
+    if (savedDefinition && props.definitionOthersCanWrite === undefined) return <UnavailableInstalledWidget
         unresolved={{ state: 'loading', reasonCode: 'widget_scope_unavailable' }} testID={props.testID} />;
     return <HostedHtmlSurfaceAdapter sessionId={sessionId} title={props.definition.name} recordRevision={props.recordRevision}
         approvalSubject={`widget:${props.definition.id}:${props.instance.id}`} source={props.body.source}
@@ -172,7 +172,7 @@ function AuthoredHtmlBody(props: WidgetSurfaceProps & Readonly<{
 
 function AuthoredInstanceBody(props: WidgetSurfaceProps): React.ReactElement {
     const opened = useWidgetDefinition(props.scope, props.instance.definition, props.enabled !== false, props.admittedViewer);
-    const definitionShared = useWidgetDefinitionShared(props.instance.definition, opened.definition);
+    const definitionOthersCanWrite = useWidgetDefinitionOthersCanWrite(props.instance.definition, opened.definition);
     React.useEffect(() => {
         props.onDefinitionRead?.(opened.state);
     }, [props.onDefinitionRead, opened.state]);
@@ -187,7 +187,7 @@ function AuthoredInstanceBody(props: WidgetSurfaceProps): React.ReactElement {
         {definition.body.kind === 'installed' ? <PluginSurfaceProjectionDemand pluginId={definition.body.surface.pluginId}
             accountScope={props.appRuntime.accountLifetime?.scope ?? null}
             enabled={props.enabled !== false && props.isCurrent?.() !== false} /> : null}
-        <AuthoredReadyBody {...props} descriptor={descriptor} definitionShared={definitionShared} />
+        <AuthoredReadyBody {...props} descriptor={descriptor} definitionOthersCanWrite={definitionOthersCanWrite} />
     </>;
 }
 

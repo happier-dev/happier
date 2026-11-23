@@ -53,17 +53,50 @@ export async function readArtifactSharedAudienceV1(params: Readonly<{
   params.signal?.throwIfAborted();
   if (params.current.access === 'view' || params.current.access === 'edit' || params.current.access === 'admin'
     || params.current.publicAudience === 'retained') return true;
-  const audience = await params.readGrants();
-  params.signal?.throwIfAborted();
-  if (audience.artifactId !== params.current.artifactId
-    || params.current.ownerAccountId !== undefined && audience.ownerAccountId !== params.current.ownerAccountId) {
-    throw Object.assign(new Error('artifact_content_unavailable'), { code: 'content_unavailable' });
-  }
+  const audience = await readAdmittedArtifactRoster(params);
   if (audience.access !== 'owner' || audience.grants.length > 0) return true;
   if (params.current.publicAudience === 'none') return false;
   // Missing predecessor or unavailable exposure facts cannot prove privacy,
   // including kinds that no longer permit creating new public publications.
-  throw Object.assign(new Error('artifact_content_unavailable'), { code: 'content_unavailable' });
+  throw artifactContentUnavailable();
+}
+
+/**
+ * The same admitted roster also says whether anyone besides the owner can change the Artifact: an edit or admin
+ * grant, or a recipient's own read. View-only grants and a public link cannot write. Unprovable facts still throw.
+ */
+export async function readArtifactAudienceFactsV1(params: Readonly<{
+  current: ArtifactSharingResourceV1;
+  readGrants: () => Promise<ArtifactAccessGrantsListResponseV1>;
+  signal?: AbortSignal;
+}>): Promise<Readonly<{ shared: boolean; othersCanWrite: boolean }>> {
+  params.signal?.throwIfAborted();
+  if (params.current.access === 'view' || params.current.access === 'edit' || params.current.access === 'admin') {
+    return { shared: true, othersCanWrite: true };
+  }
+  const audience = await readAdmittedArtifactRoster(params);
+  const othersCanWrite = audience.access !== 'owner' || audience.grants.some(grant => grant.accessLevel !== 'view');
+  if (othersCanWrite || audience.grants.length > 0 || params.current.publicAudience === 'retained') return { shared: true, othersCanWrite };
+  if (params.current.publicAudience === 'none') return { shared: false, othersCanWrite: false };
+  throw artifactContentUnavailable();
+}
+
+function artifactContentUnavailable(): Error {
+  return Object.assign(new Error('artifact_content_unavailable'), { code: 'content_unavailable' });
+}
+
+async function readAdmittedArtifactRoster(params: Readonly<{
+  current: ArtifactSharingResourceV1;
+  readGrants: () => Promise<ArtifactAccessGrantsListResponseV1>;
+  signal?: AbortSignal;
+}>): Promise<ArtifactAccessGrantsListResponseV1> {
+  const audience = await params.readGrants();
+  params.signal?.throwIfAborted();
+  if (audience.artifactId !== params.current.artifactId
+    || params.current.ownerAccountId !== undefined && audience.ownerAccountId !== params.current.ownerAccountId) {
+    throw artifactContentUnavailable();
+  }
+  return audience;
 }
 
 /**

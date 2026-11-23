@@ -6,7 +6,7 @@ import type { HomeHubArtifactTransportV1 } from '@happier-dev/protocol/home';
 export function createWorkBoardArtifactBoundary(initial: WorkBoardsV1) {
     const rows = new Map<string, WorkBoardArtifactV1>(initial.boards.map(board => [board.id, {
         artifactId: board.id, header: buildWorkBoardArtifactHeaderV1(board), body: JSON.stringify(board),
-        revision: { headerVersion: 1, bodyVersion: 1 }, access: 'owner', shared: false,
+        revision: { headerVersion: 1, bodyVersion: 1 }, access: 'owner', shared: false, othersCanWrite: false,
     }]));
     let gate = Promise.resolve();
     let offline = false;
@@ -18,7 +18,7 @@ export function createWorkBoardArtifactBoundary(initial: WorkBoardsV1) {
             artifactId: row.artifactId, header: row.header, headerVersion: row.revision.headerVersion,
         })) }; },
         create: async input => { await available(); if (!rows.has(input.artifactId)) rows.set(input.artifactId,
-            { ...input, revision: { headerVersion: 1, bodyVersion: 1 }, access: 'owner', shared: false }); },
+            { ...input, revision: { headerVersion: 1, bodyVersion: 1 }, access: 'owner', shared: false, othersCanWrite: false }); },
         update: async input => {
             await available(); const row = rows.get(input.artifactId);
             if (!row) return { ok: false, errorCode: 'not_found', error: 'not_found' };

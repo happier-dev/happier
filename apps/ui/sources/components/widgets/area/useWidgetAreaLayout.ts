@@ -48,6 +48,8 @@ export type WidgetAreaLayoutState<C> =
     | Readonly<{ status: 'unavailable'; reasonCode: string; /** The host's own words when it gave any beyond the code. */ reason?: string }>
     | Readonly<{
         status: 'ready'; surface: WidgetSurfaceRefV1; items: WidgetAreaLayoutV1['items']; placements: WidgetPlacementV1[]; canEdit: boolean; isShared: boolean;
+        /** Someone besides the owner can change this surface; a read that does not say counts as true. */
+        othersCanWrite: boolean;
         admittedViewer: ServerAccountScope | null;
         documentState: 'missing' | 'present';
         dashboard?: WidgetSurfaceReadV1['dashboard'];
@@ -106,7 +108,7 @@ function reconcile<C>(previous: WidgetAreaLayoutState<C>, next: WidgetAreaLayout
         return kept && sameStrictJsonValue(kept, item) ? kept : item;
     });
     const sameItems = items.length === previous.items.length && items.every((item, index) => item === previous.items[index]);
-    if (samePlacements && previous.isCurrent === next.isCurrent && previous.canEdit === next.canEdit && previous.isShared === next.isShared && sameStrictJsonValue(previous.admittedViewer, next.admittedViewer)
+    if (samePlacements && previous.isCurrent === next.isCurrent && previous.canEdit === next.canEdit && previous.isShared === next.isShared && previous.othersCanWrite === next.othersCanWrite && sameStrictJsonValue(previous.admittedViewer, next.admittedViewer)
         && sameItems && previous.documentState === next.documentState && sameStrictJsonValue(previous.dashboard ?? null, next.dashboard ?? null)
         && sameStrictJsonValue(previous.preset ?? null, next.preset ?? null)
         && sameStrictJsonValue(previous.readFailure ?? null, next.readFailure ?? null)
@@ -199,7 +201,7 @@ export function useWidgetAreaLayout<C extends WidgetSurfaceContext>(port: Widget
                 : refused !== null ? { status: 'unavailable', reasonCode: refused, ...(refusedReason ? { reason: refusedReason } : {}) }
                 : parsed?.success && area?.success ? { status: 'ready', surface: area.data.surface, items: area.data.items,
                     placements: parsed.data.instances, canEdit: parsed.data.canEdit,
-                    isShared: parsed.data.isShared === true, admittedViewer, context, isCurrent, isReadPending: readPendingFor(area.data.surface), documentState: parsed.data.state ?? 'present',
+                    isShared: parsed.data.isShared === true, othersCanWrite: parsed.data.othersCanWrite !== false, admittedViewer, context, isCurrent, isReadPending: readPendingFor(area.data.surface), documentState: parsed.data.state ?? 'present',
                     ...(parsed.data.dashboard ? { dashboard: parsed.data.dashboard } : {}), ...(parsed.data.preset ? { preset: parsed.data.preset } : {}) }
                 : { status: 'unavailable', reasonCode: 'invalid_widget_area_result' };
         } catch (error) {

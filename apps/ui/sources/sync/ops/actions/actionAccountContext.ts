@@ -13,7 +13,7 @@ import { ArtifactAccessRecipientCensusResponseV1Schema, type ArtifactAccessGrant
 import { completeArtifactAccessMutationPreparationV1 } from '@happier-dev/protocol/artifacts/artifactRecipientKeyPreparationV1';
 import { readArtifactPublicLinksV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
 import { createArtifactPublicLinkRequest } from '@/sync/api/artifacts/artifactPublicLinkRequest';
-import { artifactKindRequiresSharedAudienceV1, readArtifactSharedAudienceV1, workflowDefinitionArtifactSharingAdapterV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { artifactKindRequiresSharedAudienceV1, readArtifactAudienceFactsV1, workflowDefinitionArtifactSharingAdapterV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { loadAiLaunchProfileArtifacts, readAiLaunchProfileCollection } from '@happier-dev/protocol/profiles/read';
 import type { ArtifactAccessActionTransportV1 } from '@happier-dev/protocol/actions/executor/artifactAccessActions';
 import type { ArtifactActionInputV1, StorageInventoryInputV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
@@ -667,10 +667,11 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
                 // This promise lives only for this document projection, not beyond its lifetime.
                 let grantsRead: Promise<ArtifactAccessGrantsListResponseV1> | undefined;
                 const readGrants = () => grantsRead ??= accessApi.list({ artifactId }, options?.signal);
+                // One roster read answers both: someone else can see it, and someone else can change it.
                 const sharing = artifactKindRequiresSharedAudienceV1(header.kind)
-                    ? { shared: await readArtifactSharedAudienceV1({ current: { artifactId, header, ...access,
+                    ? await readArtifactAudienceFactsV1({ current: { artifactId, header, ...access,
                         publicAudience: artifact.publicAudience }, signal: options?.signal,
-                        readGrants }) } : {};
+                        readGrants }) : {};
                 // Optional presentation never weakens the authoritative shared-input check above.
                 const audience = options?.includeGrants ? await readGrants().catch(() => null) : null;
                 assertCurrent();

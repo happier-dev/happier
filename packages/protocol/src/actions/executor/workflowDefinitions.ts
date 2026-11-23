@@ -58,6 +58,7 @@ export type WorkflowDefinitionArtifactOperations = Readonly<{
     ownerAccountId: string; access: ArtifactCallerAccessV1;
     sharedTeamIds?: readonly string[];
     shared?: boolean;
+    othersCanWrite?: boolean;
     provenance?: ArtifactRevisionProvenanceV1;
     updatedAt?: number;
   }> | null>;

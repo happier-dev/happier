@@ -150,6 +150,8 @@ export const WidgetSurfaceReadV1Schema = lazyZodSchema(() => z.strictObject({
   items: z.optional(WidgetLayoutItemsV1Schema),
   preset: z.optional(WidgetAreaPresetStateV1Schema),
   state: z.optional(z.enum(['missing', 'present'])), isShared: z.optional(z.boolean()),
+  /** Someone besides the owner can change this surface; readers count a missing value as true. */
+  othersCanWrite: z.optional(z.boolean()),
   revision: z.optional(z.nullable(ArtifactRevisionV1Schema)),
   /** Admitted selected-document facts, independent of Source membership and acting viewer. */
   dashboard: z.optional(z.strictObject({ name: z.string().check(z.trim(), z.minLength(1)), ownerAccountId: z.string().check(z.minLength(1)), access: ArtifactCallerAccessV1Schema })),

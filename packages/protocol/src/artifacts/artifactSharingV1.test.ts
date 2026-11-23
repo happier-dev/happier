@@ -20,6 +20,7 @@ import {
   getArtifactKindPolicyV1,
   artifactKindRequiresTextBodyV1,
   readArtifactSharedAudienceV1,
+  readArtifactAudienceFactsV1,
   readArtifactPublicNetworkPolicyV1,
 } from './artifactSharingV1.js';
 
@@ -164,6 +165,25 @@ describe('Document sharing kind owner', () => {
       .rejects.toMatchObject({ code: 'content_unavailable' });
     await expect(readArtifactSharedAudienceV1({ current, readGrants: async () => { throw Object.assign(new Error('unavailable'), { code: 'artifact_access_unavailable' }); } }))
       .rejects.toMatchObject({ code: 'artifact_access_unavailable' });
+  });
+  it('says whether someone besides the owner can write, from the same roster that says it is shared', async () => {
+    const current = { artifactId: 'board', ownerAccountId: 'owner', access: 'owner' as const,
+      publicAudience: 'none' as 'retained' | 'none' | 'unknown', header: { kind: 'work-board.v1' } };
+    const grant = (accessLevel: 'view' | 'edit' | 'admin') => ({ principal: { kind: 'team' as const, teamId: 'studio' }, accessLevel,
+      createdByAccountId: 'owner', createdAt: 1, display: { name: 'Studio' } });
+    const facts = (grants: readonly ReturnType<typeof grant>[], overrides: Partial<typeof current> = {}) => readArtifactAudienceFactsV1({
+      current: { ...current, ...overrides }, readGrants: async () => ({ artifactId: 'board', ownerAccountId: 'owner', access: 'owner', grants }) });
+    // Private, view-only and public-link shares: only the owner can change it.
+    expect(await facts([])).toEqual({ shared: false, othersCanWrite: false });
+    expect(await facts([grant('view')])).toEqual({ shared: true, othersCanWrite: false });
+    expect(await facts([], { publicAudience: 'retained' })).toEqual({ shared: true, othersCanWrite: false });
+    // Any edit or admin grant lets someone else write it.
+    expect(await facts([grant('view'), grant('edit')])).toEqual({ shared: true, othersCanWrite: true });
+    expect(await facts([grant('admin')], { publicAudience: 'retained' })).toEqual({ shared: true, othersCanWrite: true });
+    // A recipient's read is someone else's surface; an unprovable or unreadable roster fails closed.
+    expect(await facts([], { access: 'view' } as Partial<typeof current>)).toEqual({ shared: true, othersCanWrite: true });
+    await expect(facts([], { publicAudience: 'unknown' })).rejects.toMatchObject({ code: 'content_unavailable' });
+    await expect(readArtifactAudienceFactsV1({ current, readGrants: async () => { throw new Error('unavailable'); } })).rejects.toThrow('unavailable');
   });
   it('admits memory documents through the document kind owner and refuses malformed facts', () => {
     const resource = { artifactId: 'memory', header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' },

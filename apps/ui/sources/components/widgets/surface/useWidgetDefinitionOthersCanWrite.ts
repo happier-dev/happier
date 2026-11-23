@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { readArtifactSharedAudienceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { readArtifactAudienceFactsV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import type {
   WidgetDefinitionRefV1,
   WidgetDefinitionV1,
@@ -15,11 +15,11 @@ import {
 const inFlight = new Map<string, Promise<boolean>>();
 
 /**
- * Whether someone besides its owner can see or write a saved HTML definition, from the canonical Artifact sharing
- * reader. A grant changes no revision, but an editor's write does, so each revision is read once. Undefined until
- * that read settles; a read that cannot prove privacy counts as shared.
+ * Whether someone besides its owner can change a saved HTML definition, from the canonical Artifact sharing reader.
+ * A grant changes no revision, but an editor's write does, so each revision is read once. Undefined until that read
+ * settles; a read that cannot prove who can write counts as writable by others.
  */
-export function useWidgetDefinitionShared(
+export function useWidgetDefinitionOthersCanWrite(
   reference: WidgetDefinitionRefV1,
   definition: WidgetDefinitionV1 | null,
 ): boolean | undefined {
@@ -45,7 +45,7 @@ export function useWidgetDefinitionShared(
   row.current = artifact;
   const [settled, setSettled] = React.useState<Readonly<{
     key: string;
-    shared: boolean;
+    othersCanWrite: boolean;
   }> | null>(null);
   React.useEffect(() => {
     const current = row.current;
@@ -53,7 +53,7 @@ export function useWidgetDefinitionShared(
     let live = true;
     let read = inFlight.get(key);
     if (!read) {
-      read = readArtifactSharedAudienceV1({
+      read = readArtifactAudienceFactsV1({
         current: {
           artifactId,
           header: current.rawHeader ?? {},
@@ -67,18 +67,21 @@ export function useWidgetDefinitionShared(
           return outcome.value;
         },
       })
-        .catch(() => true)
+        .then(
+          (facts) => facts.othersCanWrite,
+          () => true,
+        )
         .finally(() => {
           inFlight.delete(key);
         });
       inFlight.set(key, read);
     }
-    void read.then((shared) => {
-      if (live) setSettled({ key, shared });
+    void read.then((othersCanWrite) => {
+      if (live) setSettled({ key, othersCanWrite });
     });
     return () => {
       live = false;
     };
   }, [artifactId, client, key]);
-  return settled?.key === key ? settled.shared : undefined;
+  return settled?.key === key ? settled.othersCanWrite : undefined;
 }

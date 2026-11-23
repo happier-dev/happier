@@ -13385,7 +13385,7 @@ deleteWarning: "Le credenziali e i dati dei siti salvati nel profilo vengono eli
             },
             foreign_session_html: {
                 title: 'HTML modificabile da altri',
-                subtitle: 'Consenti all’HTML che un’altra persona ha scritto o può modificare — nelle sue sessioni, nelle superfici condivise con te o nelle tue bacheche, dashboard e widget condivisi — di usare questa azione. Disattivato per impostazione predefinita.',
+                subtitle: 'Consenti all’HTML che un’altra persona ha scritto o può modificare — nelle sue sessioni, nelle superfici condivise con te o nelle tue bacheche, dashboard e widget che altri possono modificare — di usare questa azione. Disattivato per impostazione predefinita.',
             },
             foreign_session_html_resources: {
                 subtitle: 'Consenti letture e aggiornamenti in tempo reale delle risorse da HTML che un’altra persona ha scritto o può modificare. Disattivato per impostazione predefinita; le richieste di approvazione non sono disponibili.',

@@ -13109,7 +13109,7 @@ deleteWarning: "Gespeicherte Anmeldungen und Website-Daten dieses Profils werden
             },
             foreign_session_html: {
                 title: 'HTML, das andere ändern können',
-                subtitle: 'Erlaube HTML, das eine andere Person geschrieben hat oder ändern kann – in ihren Sessions, auf mit dir geteilten Flächen oder auf deinen eigenen geteilten Boards, Dashboards und Widgets –, diese Aktion zu nutzen. Standardmäßig aus.',
+                subtitle: 'Erlaube HTML, das eine andere Person geschrieben hat oder ändern kann – in ihren Sessions, auf mit dir geteilten Flächen oder auf deinen eigenen Boards, Dashboards und Widgets, die andere bearbeiten können –, diese Aktion zu nutzen. Standardmäßig aus.',
             },
             foreign_session_html_resources: {
                 subtitle: 'Erlaube Ressourcen-Lesezugriffe und Live-Updates durch HTML, das eine andere Person geschrieben hat oder ändern kann. Standardmäßig aus; Genehmigungsdialoge sind nicht verfügbar.',

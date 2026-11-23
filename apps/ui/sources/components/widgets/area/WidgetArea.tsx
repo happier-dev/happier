@@ -372,7 +372,7 @@ function WidgetAreaWithLayout(props: WidgetAreaProps & Readonly<{ port: WidgetAr
                 />
             ) : ready ? (
                 <WidgetAreaPlacements {...props} context={ready.context} surface={ready.surface} placements={ready.placements} items={ready.items} canEdit={ready.canEdit}
-                    isShared={ready.isShared} admittedViewer={ready.admittedViewer}
+                    isShared={ready.isShared} othersCanWrite={ready.othersCanWrite} admittedViewer={ready.admittedViewer}
                     isCurrent={ready.isCurrent}
                     isReadPending={ready.isReadPending}
                     current={current} organizing={organizing && canOrganize} admitWidgetMovement={movement.admit} write={write}
@@ -465,6 +465,8 @@ type PlacementsProps = WidgetAreaProps & Readonly<{
     movementSourceItem?: WidgetLayoutItemV1 | undefined;
     canEdit: boolean;
     isShared: boolean;
+    /** From the same read: someone besides the owner can change this surface. */
+    othersCanWrite: boolean;
     admittedViewer: Extract<WidgetAreaLayout<WidgetSurfaceContext>['state'], { status: 'ready' }>['admittedViewer'];
     isCurrent: () => boolean;
     isReadPending: () => boolean;
@@ -961,7 +963,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
             <WidgetSurface
                 scope={surface}
                 admittedViewer={props.admittedViewer ?? undefined}
-                surfaceShared={props.isShared}
+                othersCanWrite={props.othersCanWrite}
                 isCurrent={props.isCurrent}
                 isReadPending={props.isReadPending}
                 instance={instance}
@@ -986,7 +988,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
             </View>
             </PluginSurfaceFocusEligibilityProvider>
         ) : <View testID={`${testID}.deferred`} style={{ minHeight: lastBodyHeight.read() }} />,
-    }), [active, collapsed, focusEligible, currentUiEligible, lastBodyHeight, candidate, definition.about, edit.onRepairInputs, groupNamesFollowed, instance, onBodyLayout, providedContext, context.projectContext, groupContext, runtime, surface, testID, size, props.admittedViewer, props.isShared, props.isCurrent, props.isReadPending]);
+    }), [active, collapsed, focusEligible, currentUiEligible, lastBodyHeight, candidate, definition.about, edit.onRepairInputs, groupNamesFollowed, instance, onBodyLayout, providedContext, context.projectContext, groupContext, runtime, surface, testID, size, props.admittedViewer, props.othersCanWrite, props.isCurrent, props.isReadPending]);
 
     if (switchedOff) return null;
     return (

@@ -13281,7 +13281,7 @@ deleteWarning: "Isso exclui os logins e dados de sites salvos no perfil e fecha 
             },
             foreign_session_html: {
                 title: 'HTML que outras pessoas podem alterar',
-                subtitle: 'Permita que o HTML que outra pessoa escreveu ou pode alterar — nas sessões dela, em superfícies compartilhadas com você ou nos seus próprios quadros, painéis e widgets compartilhados — use esta ação. Desativado por padrão.',
+                subtitle: 'Permita que o HTML que outra pessoa escreveu ou pode alterar — nas sessões dela, em superfícies compartilhadas com você ou nos seus próprios quadros, painéis e widgets que outras pessoas podem editar — use esta ação. Desativado por padrão.',
             },
             foreign_session_html_resources: {
                 subtitle: 'Permita leituras de recursos e atualizações ao vivo por HTML que outra pessoa escreveu ou pode alterar. Desativado por padrão; pedidos de aprovação não estão disponíveis.',

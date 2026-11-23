@@ -15058,7 +15058,7 @@ const enSettingsActions = {
     },
     foreign_session_html: {
       title: 'HTML others can change',
-      subtitle: 'Allow HTML that someone else wrote or can change — in their Sessions, on surfaces shared with you, or on your own shared Boards, dashboards and widgets — to use this Action. Off by default.',
+      subtitle: 'Allow HTML that someone else wrote or can change — in their Sessions, on surfaces shared with you, or on your own Boards, dashboards and widgets that other people can edit — to use this Action. Off by default.',
     },
     foreign_session_html_resources: {
       subtitle: 'Allow Resource reads and live updates from HTML that someone else wrote or can change. Off by default; approval prompts aren’t available.',
