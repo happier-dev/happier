@@ -8,7 +8,7 @@ import { isTerminalAutomationRunStateV3 } from '../../automations/automationRunS
 import { WorkflowApprovedOperationStepV1Schema } from '../approvedOperationV1.js';
 export { DeploymentShaApprovalInputV1Schema, WorkflowApprovedOperationStepV1Schema,
   matchesApprovedOperationStepV1 } from '../approvedOperationV1.js';
-export { normalizeStoredWorkflowTriggerConsent, projectWorkflowTriggerConsentSteps } from './workflowTriggerConsent.js';
+export { projectWorkflowTriggerConsentSteps } from './workflowTriggerConsent.js';
 export { resolveInitialDeploymentApprovalV1 } from '../../deployments/deploymentApprovalScopeV1.js';
 export { prepareApiTokenDeploymentAuthoring, type ApiTokenDeploymentAuthoringHost } from './apiTokenDeploymentAuthoring.js';
 import { deriveWorkflowReplacementId } from '../../workflows/workflowInvocationIdentityV1.js';

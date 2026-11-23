@@ -7,8 +7,6 @@ import { resolveWorkflowRunStartInputsV1 } from '../../workflows/workflowStartPr
 import type { WorkflowMaterializedLeafV1, WorkflowResolvedInputsV1, WorkflowRunExecutionTargetV1 } from '../../workflows/workflowDefinitionV1.js';
 import { formatWorkflowDefinitionRefV1, parseWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionRefV1.js';
 import { WorkflowApprovedOperationStepV1Schema } from '../approvedOperationV1.js';
-import { AutomationStoredWorkflowDefinitionV2Schema, type AutomationStoredWorkflowDefinitionV2ReadSchema } from '../../automations/automationWorkflowRecipeV2.js';
-import type { z } from '../../zodRuntimePolicy.js';
 import { readDeploymentBackupOccurrenceV1 } from '../../workflows/builtins/backupExamples.js';
 import { walkWorkflowBlocks } from '../../workflows/workflowDefinitionEditV1.js';
 import { DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
@@ -187,37 +185,4 @@ ReadonlyArray<Readonly<{ ref: Readonly<{ sourceKey: string; blockId: string }>; 
     return [{ ref, step: WorkflowApprovedOperationStepV1Schema.parse({ actionId: leaf.actionId,
       input: fixed, binding: { kind: 'deployment_sha' } }) }];
   });
-}
-
-/** Translate the actually emitted current-dev proof, without renewing consent or reading an Environment. */
-export async function normalizeStoredWorkflowTriggerConsent(input: Readonly<{
-  automationId: string;
-  context: z.infer<typeof AutomationStoredWorkflowDefinitionV2ReadSchema>;
-  project: WorkflowProjectTargetV1;
-}>): Promise<Readonly<{ context: WorkflowTriggerContextV1 }>> {
-  const context = AutomationStoredWorkflowDefinitionV2Schema.parse({ ...input.context,
-    ...(input.context.deploymentTriggers ? { deploymentTriggers: input.context.deploymentTriggers.map(({ approval: _approval, ...routing }) => routing) } : {}) });
-  for (const trigger of input.context.deploymentTriggers ?? []) {
-    const legacy = trigger.approval;
-    if (!legacy || context.actionApprovals?.some(row => row.triggerId === trigger.triggerId)) continue;
-    if (legacy.savedBy.kind !== 'person' || legacy.savedBy.accountId !== legacy.operation.approvedBy.accountId
-      || legacy.savedFor.automationId !== input.automationId || legacy.savedFor.triggerId !== trigger.triggerId
-      || legacy.operation.steps.length !== 0
-      || !['workflow.trigger.add', 'workflow.trigger.update'].includes(legacy.operation.parent.actionId)) continue;
-    if (legacy.operation.parent.actionId === 'workflow.trigger.update'
-      && (legacy.operation.parent.input.automationId !== input.automationId
-        || legacy.operation.parent.input.triggerId !== trigger.triggerId)) continue;
-    const { steps } = await readWorkflowTriggerActionConsent({ definition: legacy.program.definition,
-      context, project: input.project, triggerId: trigger.triggerId,
-      resolveWorkflow: async ref => {
-        const child = legacy.program.children[ref];
-        if (!child) throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
-        return child;
-      } });
-    // The predecessor writer admitted exactly one repository deployment.
-    if (steps.length !== 1 || steps[0]?.actionId !== 'deployments.deploy' || steps[0].binding?.kind !== 'deployment_sha') continue;
-    context.actionApprovals = [...(context.actionApprovals ?? []), { triggerId: trigger.triggerId,
-      operation: { ...legacy.operation, steps } }];
-  }
-  return { context };
 }

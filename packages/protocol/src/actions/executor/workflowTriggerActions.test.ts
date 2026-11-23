@@ -1715,7 +1715,7 @@ describe('person-saved deployment trigger consent', () => {
     expect(reads).toHaveLength(2);
   });
 
-  it.each(['omitted-default', 'nested-update'] as const)('preserves the current-dev %s saved proof across rewrite and withdraws it through the ordinary non-SHA input update', async legacyShape => {
+  it.each(['omitted-default', 'nested-update'] as const)('refuses the intermediate 0.3 %s saved proof', async legacyShape => {
     const base = deploymentWorkflowDefinition();
     const source = WorkflowDefinitionV1Schema.parse({ ...base,
       inputs: [...base.inputs, { name: 'link', valueType: 'string', required: true }],
@@ -1752,21 +1752,6 @@ describe('person-saved deployment trigger consent', () => {
         program: { definition: source, children: {} } } }],
     } } };
     const read = () => actions.readSavedConsent({ automationId: row.id, triggerId, ownerAccountId: 'owner', operation: legacy }, caller);
-    expect(await read()).toMatchObject({ parent: legacy.parent, approvedBy: { accountId: 'owner' }, steps: [{
-      actionId: 'deployments.deploy', input: { serverId: 'home', environmentId: 'staging', targetLinkId: 'runtime', whenBusy: 'supersede' },
-      binding: { kind: 'deployment_sha' },
-    }] });
-    const { enabled: _enabledAtEnrollment, ...retainedEvent } = deploymentEventTrigger;
-    const rewritten = await actions.update({ automationId: row.id, triggerId, expectedRevision: row.templateVersion,
-      patch: { trigger: retainedEvent } }, caller);
-    expect(rewritten.set.context?.deploymentTriggers?.[0]).not.toHaveProperty('approval');
-    // An already-accepted Run still carries the original empty-step proof.
-    // Rewriting the retained row must not renew or withdraw that same consent.
-    expect(await read()).toMatchObject({ parent: legacy.parent, approvedBy: { accountId: 'owner' } });
-    const changed = await actions.update({ automationId: row.id, triggerId, expectedRevision: rewritten.set.revision,
-      patch: { inputs: { link: 'unreviewed-target' } } }, caller);
-    expect(changed.set.context).not.toHaveProperty('actionApprovals');
-    expect(changed.set.context?.deploymentTriggers?.[0]).not.toHaveProperty('approval');
     expect(await read()).toBeNull();
   });
 
@@ -1936,27 +1921,6 @@ describe('person-saved deployment trigger consent', () => {
     failSave = false;
     expect(await reloaded.readSavedConsent({ automationId: saved.set.automationId, triggerId: saved.triggerId,
       ownerAccountId: 'owner', operation: approval.operation }, caller)).toEqual(approval.operation);
-    const persisted = f.rows.get(saved.set.automationId);
-    if (!persisted || persisted.executionRecipe?.v !== 2 || !context) throw new Error('Persisted Workflow proof required');
-    const { actionApproval: _choice, ...legacySave } = approval.operation.parent.input;
-    const legacyOperation = { ...approval.operation, parent: { ...approval.operation.parent,
-      input: { ...legacySave, deployApproval: 'automatic' } }, steps: [] };
-    const { actionApprovals: _modern, ...legacyContext } = context;
-    const storedLegacyContext = { ...legacyContext, deploymentTriggers: [{ triggerId: saved.triggerId, approval: {
-      savedFor: { automationId: saved.set.automationId, triggerId: saved.triggerId }, savedBy: { kind: 'person', accountId: 'owner' },
-      operation: legacyOperation, basis: { protection: 'nonProduction', variables: { LOG_LEVEL: 'old-value' } },
-      program: { definition: request.target.definition, children: {} },
-    } }] };
-    persisted.executionRecipe = { ...persisted.executionRecipe, workflow: isAvailableE2eeAutomationAccountEncryptionV1(encryption)
-      ? { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'automation_template_payload',
-        material: encryption.material.material, payload: storedLegacyContext, randomBytes: params.randomBytes }) }
-      : { t: 'plain', v: storedLegacyContext } };
-    const legacyReader = createAccountWorkflowTriggerActions(params);
-    expect(await legacyReader.readSavedConsent({ automationId: saved.set.automationId, triggerId: saved.triggerId,
-      ownerAccountId: 'owner', operation: legacyOperation }, caller)).toEqual({ ...approval.operation, parent: legacyOperation.parent });
-    const projected = (await legacyReader.list({ scope: 'account_inline' }, caller)).sets[0]?.context;
-    expect(projected?.deploymentTriggers?.[0]).not.toHaveProperty('approval');
-    expect(projected?.actionApprovals?.[0]?.operation.steps).toEqual(approval.operation.steps);
     const ask = await reloaded.update({ automationId: saved.set.automationId, triggerId: saved.triggerId,
       expectedRevision: saved.set.revision, patch: { actionApproval: 'ask' } }, caller);
     expect(ask.set.context).not.toHaveProperty('actionApprovals');

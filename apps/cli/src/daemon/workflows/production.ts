@@ -30,7 +30,6 @@ import { ReviewStartTerminalValueV1Schema } from '@happier-dev/protocol/actions/
 import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { sameAutomationAccountContentIdentityV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import type { WorkflowRunEncryptionV1, WorkflowRunRecipientCensusResponseV1, WorkflowCheckpointEnvelopeV1, WorkflowProgressEnvelopeV1, WorkflowRunInvocationIndexV1, WorkflowRunSummaryV1, WorkflowRunStepProgressV1, TriggerTargetV1, WorkflowDefinitionV1, MaterializeWorkflowAcceptedSnapshotV1Input } from '@happier-dev/protocol';
-import { normalizeStoredWorkflowTriggerConsent } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { ReviewRoundBindingV1Schema, type ReviewRunReferenceV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { ReviewPreparedRoundV1Schema } from '@happier-dev/protocol/reviews/reviewRoundActionsV1';
@@ -1572,13 +1571,6 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
           ? { directory: '~' } : undefined
       );
       if (!claimWorkspace) return refuse('definition_payload', 'source_unavailable');
-      if (storedDefinition.data.deploymentTriggers?.some(trigger => trigger.approval)) {
-        if (!storedWorkspace) return refuse('definition_payload', 'source_unavailable');
-        try {
-          storedDefinition.data = (await normalizeStoredWorkflowTriggerConsent({ automationId: claim.automationId,
-            context: storedDefinition.data, project: { machineId: params.machineId, ...storedWorkspace } })).context;
-        } catch (error) { return refuseSourceRead('definition_payload', error); }
-      }
       const evidenceContent = claim.automationEvidenceEnvelope == null ? null
         : openAutomationStoredContent({ serialized: claim.automationEvidenceEnvelope,
           kind: 'automation_trigger_evidence', encryption: accountEncryption });

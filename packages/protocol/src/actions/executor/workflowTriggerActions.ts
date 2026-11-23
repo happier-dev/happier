@@ -78,7 +78,7 @@ import type { WorkflowActionFailureV1 } from '../../workflows/workflowProgressV1
 import type { WorkflowApprovedOperationV1 } from '../../actions/approvedOperationV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue, StrictJsonValueSchema } from '../../json/strictJsonValue.js';
-import { readWorkflowTriggerActionConsent, readWorkflowTriggerActorConsentSteps, normalizeStoredWorkflowTriggerConsent } from './workflowTriggerConsent.js';
+import { readWorkflowTriggerActionConsent, readWorkflowTriggerActorConsentSteps } from './workflowTriggerConsent.js';
 import type { WorkflowApprovedOperationNativeAccountV1 } from './workflowRunActions.js';
 import type { WorkflowDefinitionSavedByV1 } from '../../workflows/workflowDefinitionV1.js';
 import { resolveInitialDeploymentApprovalV1 } from '../../deployments/deploymentApprovalScopeV1.js';
@@ -461,10 +461,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     const context = AutomationStoredWorkflowDefinitionV2ReadSchema.safeParse(await deps.openContext(row));
     const target = readTriggerTargetV1(row, context.success ? context.data : null);
     if (!context.success || target.kind !== 'available') refuse('source_unavailable');
-    const normalized = context.data.deploymentTriggers?.some(trigger => trigger.approval)
-      ? await normalizeStoredWorkflowTriggerConsent({ automationId: row.id, context: context.data,
-        project: project(row, context.data) }) : { context: context.data };
-    return { ...normalized, target: target.target, storedContext: context.data };
+    return { context: context.data, target: target.target, storedContext: context.data };
   };
   const project = (row: AutomationDefinitionDetail, context: WorkflowTriggerContextV1) => {
     if (row.assignments.length !== 1 || !context.workspace) refuse('source_unavailable');
@@ -1026,14 +1023,8 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       const approval = value.context.actionApprovals?.find(item => item.triggerId === input.triggerId);
       const operation = approval?.operation;
       if (!operation || operation.approvedBy.accountId !== input.ownerAccountId) return null;
-      // The predecessor accepted Run carries empty steps even after its selected
-      // private consent is rewritten. Preserve only that same original proof;
-      // exact authored and concrete effect matching remains with the Run reader.
-      const selected = operation.steps[0];
-      const incoming = input.operation.steps.length === 0 && operation.steps.length === 1
-        && selected?.actionId === 'deployments.deploy' && selected.binding?.kind === 'deployment_sha'
-        ? { ...input.operation, steps: operation.steps } : input.operation;
-      return sameStrictJsonValue(operation, incoming) ? operation : null;
+      // Exact authored and concrete effect matching remains with the Run reader.
+      return sameStrictJsonValue(operation, input.operation) ? operation : null;
     },
     runNow: async (raw: WorkflowTriggerRunNowRequestV1, caller?: Caller): Promise<AutomationV3RunMutationResponse> => {
       const input = WorkflowTriggerRunNowRequestV1Schema.parse(raw);

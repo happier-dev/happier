@@ -72,7 +72,6 @@ import {
   type WorkflowTriggerAutomationOperations,
   type WorkflowTriggerActions,
 } from './workflowTriggerActions.js';
-import { normalizeStoredWorkflowTriggerConsent } from './workflowTriggerConsent.js';
 import type { WorkflowAccountRunActionDeps } from './workflowRunActions.js';
 import { isConfirmedActionWriteRefusal, readActionFailureEnvelope } from './actionFailureEnvelope.js';
 import { DeploymentEnvironmentGetResultV1Schema } from '../../deployments/deploymentActionsV1.js';
@@ -215,13 +214,7 @@ export async function backfillAutomationManagedTargetsV1(params: WorkflowCodecPa
         if (row.executionRecipe?.v !== 2) { unresolved++; continue; }
         const openedEncryption = await params.resolveEncryption();
         assertCurrent();
-        let context = AutomationStoredWorkflowDefinitionV2ReadSchema.parse(openWorkflowEnvelope(row.executionRecipe.workflow, openedEncryption));
-        if (context.deploymentTriggers?.some(trigger => trigger.approval)) {
-          if (!context.workspace) unavailable();
-          if (row.assignments.length !== 1) unavailable('source_unavailable');
-          context = (await normalizeStoredWorkflowTriggerConsent({ automationId: row.id, context,
-            project: { machineId: row.assignments[0]!.machineId, ...context.workspace } })).context;
-        }
+        const context = AutomationStoredWorkflowDefinitionV2ReadSchema.parse(openWorkflowEnvelope(row.executionRecipe.workflow, openedEncryption));
         if (readTriggerTargetV1(row, context).kind !== 'available') unavailable('source_unavailable');
         const sameAuthority = (current: AvailableAutomationAccountEncryptionV1) => {
           assertCurrent();

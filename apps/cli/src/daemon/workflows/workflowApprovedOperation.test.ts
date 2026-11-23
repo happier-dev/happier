@@ -662,7 +662,7 @@ describe('Workflow approved operation private custody', () => {
     expect(await read('dispatch')).toBeNull();
   });
 
-  it.each(['canonical', 'legacy'] as const)('binds %s selected trigger consent to prepared effects and checks the actual post-hook semantic input', async storedShape => {
+  it('binds selected trigger consent to prepared effects and checks the actual post-hook semantic input', async () => {
     const h = await fixture(false);
     const triggerId = 'selected-deployment';
     const automationId = 'deployment-automation';
@@ -721,21 +721,7 @@ describe('Workflow approved operation private custody', () => {
       actionRequestId: 'real-trigger-save' });
     const savedOperation = saved.set.context?.actionApprovals?.[0]?.operation;
     if (!savedOperation || !row || !saved.set.context) throw new Error('Real Save must produce exact consent');
-    let operation = savedOperation;
-    if (storedShape === 'legacy') {
-      // Provenance: the current-dev workflowDeploymentConsent writer before O4
-      // emitted this exact private person/save/program shape with empty steps.
-      const { actionApproval: _choice, ...legacySave } = savedOperation.parent.input;
-      operation = { ...savedOperation, parent: { ...savedOperation.parent,
-        input: { ...legacySave, deployApproval: 'automatic' } }, steps: [] };
-      const { actionApprovals: _current, ...legacyContext } = saved.set.context;
-      if (row.executionRecipe?.v !== 2) throw new Error('Expected Workflow recipe');
-      row = { ...row, executionRecipe: { ...row.executionRecipe, workflow: { t: 'plain', v: PluginJsonValueV2Schema.parse({
-        ...legacyContext, deploymentTriggers: [{ triggerId, approval: { savedFor: { automationId, triggerId },
-          savedBy: { kind: 'person', accountId }, operation, basis: { variables: { LOG_LEVEL: 'before-change' }, protection: 'nonProduction' },
-          program: { definition: deployDefinition, children: {} } } }],
-      }) } } };
-    }
+    const operation = savedOperation;
     const accepted = WorkflowAcceptedSnapshotV1Schema.parse({ ...h.approved, approvedOperation: operation,
       definition: deployDefinition, authoredDefinition: deployDefinition,
       inputs: { sha: semanticInput.sha, requestKey: semanticInput.requestKey },

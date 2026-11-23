@@ -16,11 +16,8 @@ import { AutomationActionTriggerSchema } from './automationActionTriggerV1.js';
 import { preservedBoundedNfcString } from '../strings/preservedBoundedNfcString.js';
 import { SessionPlacementSelectionV1Schema } from '../sessions/creation/sessionPlacementSelectionV1.js';
 import { AutomationTriggerIdSchema } from './automationTriggerIdentity.js';
-import { AutomationIdV1Schema } from './automationIdV1.js';
 import { WorkflowApprovedOperationV1Schema } from '../actions/approvedOperationV1.js';
 import { ApprovalProfileIdV1Schema } from '../actions/approvalProfiles.js';
-import { ArtifactSavedByV1Schema } from '../artifacts/artifactBinaryV1.js';
-import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import {
   addAutomationStoredEnvelopeUtf8LimitIssue,
   AutomationStoredContentEnvelopeV1Schema,
@@ -77,20 +74,6 @@ export const AutomationDeploymentTriggerV1Schema = lazyZodSchema(() => z.strictO
   ...AutomationDeploymentTriggerFilterV1Schema.shape,
 }));
 export type AutomationDeploymentTriggerV1 = z.infer<typeof AutomationDeploymentTriggerV1Schema>;
-
-// Current-dev predecessor: workflowDeploymentConsent wrote empty steps and a
-// saved program. The trigger consent owner converts that proof on stored reads;
-// remove this reader after those retained rows/accepted Runs have been rewritten.
-const LegacyAutomationDeploymentTriggerV1Schema = lazyZodSchema(() => z.strictObject({
-  ...AutomationDeploymentTriggerV1Schema.shape,
-  approval: z.optional(z.strictObject({
-    savedFor: z.strictObject({ automationId: asProtocolZod(AutomationIdV1Schema), triggerId: AutomationTriggerIdSchema }),
-    savedBy: ArtifactSavedByV1Schema, operation: WorkflowApprovedOperationV1Schema,
-    // Ignored predecessor payload: never traverse it or carry it into domain consent.
-    basis: z.unknown(),
-    program: z.strictObject({ definition: WorkflowDefinitionV1Schema, children: z.record(z.string(), WorkflowDefinitionV1Schema) }),
-  })),
-}));
 
 /** Private authority-bearing projection: an unknown restriction must never be erased on a stored read. */
 export const WorkflowTriggerActorConsentV1Schema = lazyZodSchema(() => z.strictObject({
@@ -149,10 +132,7 @@ export const AutomationStoredWorkflowDefinitionV2Schema = lazyZodSchema(() => z.
 }));
 export type AutomationStoredWorkflowDefinitionV2 = z.infer<typeof AutomationStoredWorkflowDefinitionV2Schema>;
 export type WorkflowTriggerContextV1 = AutomationStoredWorkflowDefinitionV2;
-export const AutomationStoredWorkflowDefinitionV2ReadSchema = createStoredReadSchema(lazyZodSchema(() => z.strictObject({
-  ...AutomationStoredWorkflowDefinitionV2Schema.shape,
-  deploymentTriggers: z.optional(z.array(LegacyAutomationDeploymentTriggerV1Schema)),
-})));
+export const AutomationStoredWorkflowDefinitionV2ReadSchema = createStoredReadSchema(AutomationStoredWorkflowDefinitionV2Schema);
 
 export type AutomationStoredWorkflowDefinitionV2OpenResult =
   | Readonly<{ kind: 'available'; definition: AutomationStoredWorkflowDefinitionV2 }>
