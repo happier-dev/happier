@@ -710,42 +710,11 @@ async function upsertQualifiedSourceInTx(
     params: Readonly<{
         accountId: string;
         providerAccountUsageRecordId: string;
-        source: QualifiedConnectedServiceUsageSourceV4;
-        allowLegacyUnfencedCredential?: boolean;
+        binding: Awaited<ReturnType<typeof resolveQualifiedUsageBinding>>;
         beforeWrite?: () => Promise<void>;
     }>,
 ) {
-    const binding = await resolveQualifiedUsageBinding(tx, params);
-    const record = await tx.providerAccountUsageRecord.findUnique({
-        where: {
-            accountId_recordId: {
-                accountId: params.accountId,
-                recordId: params.providerAccountUsageRecordId,
-            },
-        },
-        select: {
-            providerId: true,
-            accountSubjectId: true,
-            subjectKind: true,
-            quotaScope: true,
-            quotaScopeId: true,
-        },
-    });
-    if (!record) {
-        throw new ConnectedServiceUsageSourceOwnershipError(
-            "Provider usage record does not belong to account",
-        );
-    }
-    assertQualifiedUsageOwnership({
-        ref: binding.source.ref,
-        providerAccountId: binding.providerAccountId,
-        providerOrganizationId: binding.providerOrganizationId,
-        recordProviderId: record.providerId,
-        recordAccountSubjectId: record.accountSubjectId,
-        recordSubjectKind: record.subjectKind,
-        recordQuotaScope: record.quotaScope,
-        recordQuotaScopeId: record.quotaScopeId,
-    });
+    const { binding } = params;
     const sourceKey = buildQualifiedUsageSourceKey(binding.source);
     const source = binding.source;
     const existing =
@@ -851,6 +820,11 @@ async function upsertQualifiedSourceInTx(
     return existing !== null && linkChanged;
 }
 
+type QualifiedProviderAccountUsageWriteResult = Readonly<{
+    record: StoredProviderAccountUsageRecord | null;
+    sourceOutcome: ProviderAccountUsageSourceLinkOutcome;
+}>;
+
 type QualifiedProviderAccountUsageWriteParams =
     ProviderAccountUsageWritePolicyParams & Readonly<{
         source: QualifiedConnectedServiceUsageSourceV4;
@@ -864,10 +838,7 @@ type QualifiedProviderAccountUsageWriteInTxParams =
 async function writeQualifiedProviderAccountUsageRecordInTx(
     tx: Tx,
     params: QualifiedProviderAccountUsageWriteInTxParams,
-): Promise<Readonly<{
-    record: StoredProviderAccountUsageRecord;
-    sourceOutcome: ProviderAccountUsageSourceLinkOutcome;
-}>> {
+): Promise<QualifiedProviderAccountUsageWriteResult> {
     const {
         source,
         allowLegacyUnfencedCredential,
@@ -875,56 +846,56 @@ async function writeQualifiedProviderAccountUsageRecordInTx(
     } = params;
     // Source resolution owns revision/currentness admission. Run it before the
     // PAU write so an unfenced credential cannot create usage history.
-    const binding = await resolveQualifiedUsageBinding(tx, {
-        accountId: params.accountId,
-        source,
-        allowLegacyUnfencedCredential,
-    });
+    const bindingParams = { accountId: params.accountId, source, allowLegacyUnfencedCredential };
+    let binding = await resolveQualifiedUsageBinding(tx, bindingParams);
     const refusalKey = {
         accountId: params.accountId,
         qualifiedIdentityDigest: binding.credential.qualifiedIdentityDigest,
         credentialId: binding.credential.id,
     };
-    await writeProviderAccountUsageRecordWithPolicy({
-        ...write,
-        client: tx,
-    });
-    let sourceOutcome: ProviderAccountUsageSourceLinkOutcome;
-    let sourceChanged = false;
     try {
-        const sourceReplaced = await upsertQualifiedSourceInTx(tx, {
-            accountId: params.accountId,
-            providerAccountUsageRecordId: params.recordId,
-            source,
-            allowLegacyUnfencedCredential,
-            beforeWrite: params.beforeWrite,
+        await writeProviderAccountUsageRecordWithPolicy({
+            ...write,
+            client: tx,
+            admitSource: async () => {
+                binding = await resolveQualifiedUsageBinding(tx, bindingParams);
+                const key = write.recordKey;
+                assertQualifiedUsageOwnership({
+                    ref: binding.source.ref,
+                    providerAccountId: binding.providerAccountId,
+                    providerOrganizationId: binding.providerOrganizationId,
+                    recordProviderId: key.providerId,
+                    recordAccountSubjectId: key.accountSubjectId,
+                    recordSubjectKind: key.subjectKind,
+                    recordQuotaScope: key.quotaScope,
+                    recordQuotaScopeId: key.quotaScopeId ?? null,
+                });
+            },
         });
-        const refusalCleared = await clearQualifiedUsageOwnershipRefusal(tx, refusalKey);
-        sourceChanged = sourceReplaced || refusalCleared;
-        sourceOutcome = { status: "linked" };
     } catch (error) {
-        if (
-            error instanceof ConnectedServiceUsageSourceBindingError
-            && error.kind === "unavailable"
-        ) {
-            sourceOutcome = {
-                status: "skipped",
-                reason: "binding_unavailable",
-            };
-        } else if (
-            error instanceof ConnectedServiceUsageSourceOwnershipError
-            && error.kind === "unproven"
-        ) {
-            sourceChanged = await rememberQualifiedUsageOwnershipRefusal(tx, refusalKey);
-            sourceOutcome = {
-                status: "skipped",
-                reason: "ownership_unproven",
-            };
-        } else {
+        if (error instanceof ConnectedServiceUsageSourceBindingError && error.kind === "unavailable") {
+            return { record: null, sourceOutcome: { status: "skipped", reason: "binding_unavailable" } };
+        }
+        if (!(error instanceof ConnectedServiceUsageSourceOwnershipError) || error.kind !== "unproven") {
             throw error;
         }
+        await params.beforeWrite?.();
+        if (await rememberQualifiedUsageOwnershipRefusal(tx, refusalKey)) {
+            await markAccountChanged(tx, {
+                accountId: params.accountId,
+                ...buildConnectedServicesAccountChangeV1(source.ref.service),
+            });
+        }
+        return { record: null, sourceOutcome: { status: "skipped", reason: "ownership_unproven" } };
     }
-    if (sourceChanged) {
+    const sourceReplaced = await upsertQualifiedSourceInTx(tx, {
+        accountId: params.accountId,
+        providerAccountUsageRecordId: params.recordId,
+        binding,
+        beforeWrite: params.beforeWrite,
+    });
+    const refusalCleared = await clearQualifiedUsageOwnershipRefusal(tx, refusalKey);
+    if (sourceReplaced || refusalCleared) {
         await markAccountChanged(tx, {
             accountId: params.accountId,
             ...buildConnectedServicesAccountChangeV1(source.ref.service),
@@ -939,15 +910,12 @@ async function writeQualifiedProviderAccountUsageRecordInTx(
             "Provider usage record disappeared during qualified write",
         );
     }
-    return { record, sourceOutcome };
+    return { record, sourceOutcome: { status: "linked" } };
 }
 
 export async function writeQualifiedProviderAccountUsageRecordFromLegacyBoundary(
     params: QualifiedProviderAccountUsageWriteParams,
-): Promise<Readonly<{
-    record: StoredProviderAccountUsageRecord;
-    sourceOutcome: ProviderAccountUsageSourceLinkOutcome;
-}>> {
+): Promise<QualifiedProviderAccountUsageWriteResult> {
     const serviceId =
         resolveLegacyServiceIdForQualifiedConnectedAccountService(
             params.source.ref.service,
@@ -978,10 +946,7 @@ export async function writeQualifiedProviderAccountUsageRecord(
         expectedCredentialRevision: string;
         expectedConfigurationRevision: string | null;
     }>,
-): Promise<Readonly<{
-    record: StoredProviderAccountUsageRecord;
-    sourceOutcome: ProviderAccountUsageSourceLinkOutcome;
-}>> {
+): Promise<QualifiedProviderAccountUsageWriteResult> {
     return await inTx(async (tx) => {
         const binding = await resolveQualifiedCredential(tx, {
             accountId: params.accountId,

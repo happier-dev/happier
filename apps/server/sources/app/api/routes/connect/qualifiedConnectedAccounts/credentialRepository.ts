@@ -28,6 +28,7 @@ import {
     encodeAccountContentForAtRestStorage,
 } from "../accountContentAtRestStorage";
 import { recordConnectedServiceAccountProfileChange } from "../connectedServicesAccountProfileChange";
+import { clearQualifiedUsageOwnershipRefusal } from "./usageOwnershipRefusal";
 import {
     createConnectedServiceCredentialRevision,
 } from "../credentials/credentialRevision";
@@ -1122,6 +1123,11 @@ async function mutateQualifiedConnectedServiceCredentialWithPreparedInTx(
         || (previousIdentity?.organizationId ?? null) !== (nextIdentity?.organizationId ?? null)) {
         await tx.connectedServiceUsageSource.deleteMany({
             where: { accountId: params.accountId, credentialId: current.id },
+        });
+        await clearQualifiedUsageOwnershipRefusal(tx, {
+            accountId: params.accountId,
+            qualifiedIdentityDigest: identity.qualifiedIdentityDigest,
+            credentialId: current.id,
         });
     }
     await recheckAdmission();

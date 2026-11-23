@@ -7,6 +7,9 @@ import { seedSqliteUsageHistory } from '@/testkit/seedSqliteUsageHistory';
 import { withAuthenticatedTestApp } from '../../../testkit/sqliteFastify';
 import { registerQualifiedConnectedAccountCredentialRoutesV4 } from './registerQualifiedConnectedAccountCredentialRoutesV4';
 import { createUsageSnapshot } from '../providerAccountUsageTestkit';
+import { pruneProviderAccountUsageSummaryDetail } from '../providerAccountUsage/daySummaryStorage';
+import { buildProviderAccountUsageDaySummaryV1, PROVIDER_ACCOUNT_USAGE_DAY_MS,
+    sealProviderAccountUsageDaySummaryV1 } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
 import { getProviderAccountUsageQuota, type ProviderAccountUsageQuotaReadOptions } from '../../../../../../../ui/sources/sync/api/account/apiProviderAccountUsage';
 import { serveAccountHomes } from '../../../../../../../ui/sources/dev/testkit/harness/actionHomesHttpHarness';
 import { storage } from '../../../../../../../ui/sources/sync/domains/state/storage';
@@ -377,7 +380,40 @@ describe('B page projection through producer, qualified HTTP/SQLite, Usage Resou
             await append(); await otherRead();
             afterExact = async () => { await append(-2); await otherRead(); };
             await read();
-            expect(projectionDocuments.get(base.recordId)!.exact!.projection.observationCount).toBe(accepted);
+            const admitted = projectionDocuments.get(base.recordId)!.exact!;
+            expect(admitted.projection.observationCount).toBe(accepted);
+
+            // Both readers admit a day with a valid summary, then retention
+            // removes one observation and updates the shared day evidence.
+            const entries = admitted.admitted!.opened.history.entries;
+            const removed = entries[0]!;
+            const dayStartAtMs = Math.floor(removed.observedAtMs / PROVIDER_ACCOUNT_USAGE_DAY_MS) * PROVIDER_ACCOUNT_USAGE_DAY_MS;
+            const endAtMs = dayStartAtMs + PROVIDER_ACCOUNT_USAGE_DAY_MS;
+            const dayEntries = entries.filter(entry => entry.observedAtMs < endAtMs);
+            const frontier = dayEntries.at(-1)!;
+            const summary = buildProviderAccountUsageDaySummaryV1({ recordId: base.recordId, dayStartAtMs,
+                snapshots: dayEntries.map(entry => entry.snapshot) });
+            const summaryWrite = await app.inject({ method: 'PUT', url: '/v4/connect/qualified/provider-account-usage/day-summaries',
+                headers, payload: { recordId: base.recordId, dayStartAtMs, payload: {
+                    v: 1, coverage: { observationCount: dayEntries.length, frontier: { id: frontier.id, observedAtMs: frontier.observedAtMs } },
+                    content: accountMode === 'plain' ? { t: 'plain', v: summary }
+                        : sealProviderAccountUsageDaySummaryV1({ summary, material, randomBytes: length => new Uint8Array(length).fill(7) }),
+                } } });
+            expect(summaryWrite.statusCode, summaryWrite.body).toBe(200);
+            await read();
+            await otherRead();
+            expect(await db.$transaction(tx => pruneProviderAccountUsageSummaryDetail({
+                accountId: account.id, recordId: base.recordId, dayStartAtMs,
+                cutoff: new Date(removed.observedAtMs + 1), limit: 1, dryRun: false,
+            }, tx))).toMatchObject({ deleted: 1 });
+            accepted--;
+            expect((await otherRead()).pageFacts?.historyStatus).toBe('complete');
+            traffic.length = 0;
+            expect((await read()).pageFacts?.historyStatus).toBe('complete');
+            expect(traffic).toEqual([{ kind: 'projection', status: 200 }]);
+            const corrected = projectionDocuments.get(base.recordId)!.exact!;
+            expect(corrected.projection.observationCount).toBe(accepted);
+            expect(corrected.admitted!.opened.history.entries.map(entry => entry.id)).not.toContain(removed.id);
         });
     });
 

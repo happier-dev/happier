@@ -380,7 +380,10 @@ describe("qualified Connected Account usage stored identity", () => {
             } });
             expect((await readQuota(account.id, controlRef)).statusCode).toBe(200);
             const beforeRefusal = await readChange();
-            await publish(ref, credential.credentialRevision, false, initialObservedAt + 1_000);
+            const refusedRecordId = await publish(ref, credential.credentialRevision, false, initialObservedAt + 1_000);
+            const refusedRecordKey = { accountId: account.id, recordId: refusedRecordId };
+            expect.soft(await db.providerAccountUsageRecord.count({ where: refusedRecordKey })).toBe(0);
+            expect.soft(await db.providerAccountUsageHistory.count({ where: refusedRecordKey })).toBe(0);
             for (const response of [await readQuota(), await readSource(), await app.inject({ method: 'POST',
                 url: '/v4/connect/qualified/quotas/refresh', headers: { 'x-test-user-id': account.id }, payload: { ref } })]) {
                 expect(response.statusCode, response.body).toBe(409);
@@ -487,6 +490,16 @@ describe("qualified Connected Account usage stored identity", () => {
         await writeQualifiedProviderAccountUsageRecord({ ...write, source: { ref, bindingKind: 'group_member', groupId: groupRef.groupId,
             groupGeneration: member.group.generation } });
         expect(await db.connectedServiceUsageSource.count({ where: { accountId: account.id } })).toBe(3);
+        const refusedKey = createProviderAccountUsageRecordKey({
+            accountSubjectId: buildQualifiedConnectedAccountLocalSubjectId(ref), subjectKind: 'unknown',
+        });
+        const refused = createUsageSnapshot({ fetchedAt: snapshot.fetchedAtMs, recordKey: refusedKey });
+        await expect(writeQualifiedProviderAccountUsageRecord({
+            ...write, source: { ref, bindingKind: 'account' },
+            recordKey: refusedKey, recordId: refused.recordId, snapshot: refused,
+        })).resolves.toMatchObject({ sourceOutcome: { status: 'skipped', reason: 'ownership_unproven' } });
+        const refusalWhere = { accountId: account.id, reason: 'ownership_unproven' };
+        expect(await db.qualifiedConnectedAccountUsageRefusal.count({ where: refusalWhere })).toBe(1);
         const sameContext = await mutateQualifiedConnectedServiceCredential({ accountId: account.id, ref,
             expectedCredentialRevision: created.credentialRevision, expectedConfigurationRevision: null, authenticationModeId: 'api-key',
             content: { t: 'plain', v: { token: 'rotated-org-a-token' } },
@@ -494,6 +507,7 @@ describe("qualified Connected Account usage stored identity", () => {
         });
         if (sameContext.status !== 'written') throw new Error('Expected same context refresh');
         expect(await db.connectedServiceUsageSource.count({ where: { accountId: account.id } })).toBe(3);
+        expect(await db.qualifiedConnectedAccountUsageRefusal.count({ where: refusalWhere })).toBe(1);
         const changed = await mutateQualifiedConnectedServiceCredential({ accountId: account.id, ref,
             expectedCredentialRevision: sameContext.credentialRevision, expectedConfigurationRevision: null, authenticationModeId: 'api-key',
             content: { t: 'plain', v: { token: 'new-context-token' } },
@@ -501,6 +515,7 @@ describe("qualified Connected Account usage stored identity", () => {
         });
         expect(changed.status).toBe('written');
         expect(await db.connectedServiceUsageSource.count({ where: { accountId: account.id } })).toBe(1);
+        expect(await db.qualifiedConnectedAccountUsageRefusal.count({ where: refusalWhere })).toBe(0);
         expect(await readQualifiedConnectedAccountUsageRecord({ accountId: account.id, ref })).toBeNull();
         expect(await readQualifiedConnectedAccountUsageRecord({ accountId: account.id, ref: otherRef }))
             .toMatchObject({ recordId: snapshot.recordId, snapshot: { recordKey: { quotaScopeId: 'org-a' } } });

@@ -49,6 +49,8 @@ export type ProviderAccountUsageWritePolicyParams = Readonly<{
         sealed: SealedConnectedServiceQuotaSnapshotV1;
     }>;
     client?: ProviderAccountUsagePolicyClient;
+    /** Source admission runs once after Account admission and before any usage mutation. */
+    admitSource?: () => Promise<void>;
     /** Source owner fences its revision only when this transaction mutates usage. */
     beforeWrite?: () => Promise<void>;
 }>;
@@ -177,6 +179,7 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
     ) {
         throw new ProviderAccountUsagePayloadInvariantError("Provider account usage payload mode does not match account storage mode");
     }
+    await params.admitSource?.();
     const incomingFingerprint = normalizeFingerprint(params.materialFingerprint);
     const incomingLegacyQuotaProjection =
         buildIncomingLegacyQuotaProjection(params);
