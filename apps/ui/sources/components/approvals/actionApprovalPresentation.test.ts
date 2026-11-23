@@ -92,16 +92,15 @@ describe('the shared Action approval presentation owner', () => {
             .not.toContain('Grace');
     });
 
-    it('retains the admitted Team account source in immediate and saved spawn presentations', () => {
+    it('keeps a saved Start sentence separate from its shared credential notice', () => {
         const actionArgs = { executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'managed' },
             agentTarget: { kind: 'agent', identity: { pluginId: 'example.agent', localId: 'agent' } } };
         const preview = { teamCredentialSources: [{ teamId: 'team-build', resourceId: 'resource-work',
             teamName: 'Build Team', accountName: 'Work account' }] };
         const shown = presentActionApproval({ actionId: 'session.spawn_new', kind: 'confirmation', actionArgs, preview });
-        expect(shown.summary).toContain('Build Team');
-        expect(shown.summary).toContain('Work account');
-        expect(readApprovalPreviewSummary({ ...preview, summary: shown.summary }, { actionId: 'session.spawn_new', actionArgs }))
-            .toBe(shown.summary);
+        expect(shown.summary ?? '').not.toContain('Work account');
+        expect(readApprovalPreviewSummary({ ...preview, summary: 'Review this Start.\n\nUses Build Team’s shared Work account.' },
+            { actionId: 'session.spawn_new', actionArgs })).toBe('Review this Start.');
     });
     it('names Voice key binding and removal by their credential operation without changing retained approval semantics', () => {
         const basis = { kind: 'voice_saved_secret', credentialSlotId: 'api-key',

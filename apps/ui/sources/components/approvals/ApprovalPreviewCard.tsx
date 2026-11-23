@@ -13,6 +13,7 @@ import { useApprovalReferenceReading } from './approvalReferenceReading';
 import { MACHINE_ADMIN_ACCESS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/adminAccessActionIdsV1';
 import { MachineAdminAccessSetInputV1Schema } from '@happier-dev/protocol/actions/specs/machine/adminAccess';
 import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { readTeamCredentialApprovalSources } from '@happier-dev/protocol/actions/actionExecutor';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
@@ -27,6 +28,7 @@ export const ApprovalPreviewCard = React.memo(function ApprovalPreviewCard(props
     return <>
         <MachineAdminAccessPreview request={props.request} serverId={props.serverId ?? null} />
         <ApprovalPreviewSummary {...props} />
+        {props.request?.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && <SpawnTeamCredentialSources preview={props.preview} />}
         <MachineSetupRecipePreview request={props.request} serverId={props.serverId ?? null} />
     </>;
 });
@@ -49,10 +51,19 @@ export const ApprovalPreviewFacts = React.memo(function ApprovalPreviewFacts(pro
         {props.request?.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
             && readRecord(props.preview).teamCredentialDefaults === 'unavailable_without_requester_team'
             ? <SpawnTeamCredentialDefaultsNotice /> : null}
+        {props.request?.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && <SpawnTeamCredentialSources preview={props.preview} />}
         <MachineAdminAccessPreview request={props.request} serverId={props.serverId ?? null} />
         <MachineSetupRecipePreview request={props.request} serverId={props.serverId ?? null} />
     </>;
 });
+
+function SpawnTeamCredentialSources(props: Readonly<{ preview: unknown }>) {
+    usePreferredLanguage();
+    return readTeamCredentialApprovalSources(props.preview).map(source => (
+        <AttentionBanner key={source.resourceId} tone="neutral"
+            title={t('actionConfirmations.spawnTeamCredentialSource', { team: source.teamName, account: source.accountName })} />
+    ));
+}
 
 function SpawnTeamCredentialDefaultsNotice() {
     usePreferredLanguage();

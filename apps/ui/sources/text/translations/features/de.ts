@@ -2711,6 +2711,7 @@ const actionConfirmationTranslations = { de: {
         sessionTarget: ({ sessionId }) => `Ziel-Session: ${sessionId}`,
         oneShotConsequence: 'Die Freigabe gilt nur für diese Anfrage. Sie erteilt keine zukünftigen Action- oder nativen Berechtigungen.',
         spawnWithoutTeamCredentialDefaults: 'Die Sitzung startet ohne die Standardanmeldedaten deines Teams.',
+        spawnTeamCredentialSource: ({ team, account }) => `Verwendet das geteilte Konto ${account} von ${team}.`,
         homeUnavailable: 'Diese Freigabe gehört zu einem Home, das auf diesem Gerät nicht verfügbar ist. Verbinde dieses Home erneut, um zu entscheiden.',
         turnedOffTitle: ({ action }) => `Die Aktion „${action}“ ist ausgeschaltet`,
         turnedOffMessage: 'Schalte sie unter Einstellungen → Aktionen wieder ein, um sie hier zu nutzen.',

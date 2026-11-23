@@ -2,9 +2,11 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { TEAM_POLICY_SET_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
 import { readContributedActionReviewV1 } from '@happier-dev/protocol/actions/contributedActionReviewV1';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
-import { ActionIdSchema, REGISTRY_SOURCE_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ActionIdSchema, REGISTRY_SOURCE_DELETE_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { PROVIDER_CONNECTION_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/providers/providerActionIdsV1';
 import { buildApprovalPreviewSummary, readTeamCredentialApprovalSources } from '@happier-dev/protocol/actions/actionExecutor';
+import { appendTeamCredentialSourceSummary } from '@happier-dev/protocol/actions/specs/teamCredentialApproval';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { describeApprovalActionFields, readTeamMemberApprovalPresentation, type ApprovalActionReference } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { resolveActionConfirmVerb, resolveActionSummary, resolveActionTitle, resolveBotDraftActionTitle } from '@/text/actionTitles';
 import { t } from '@/text';
@@ -225,17 +227,25 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
     const botDraftTitle = draft?.isBot ? resolveBotDraftActionTitle(spec.id) : null;
     const titleSource = botDraftTitle ?? (roleIdentity || !english ? resolveActionTitle(spec.id, spec) : spec.title);
     const widgetPresentation = readWidgetApprovalPresentationV1(input.preview);
+    const teamCredentialSources = readTeamCredentialApprovalSources(input.preview);
+    const spawnCredentialSuffix = spec.id === SESSION_SPAWN_NEW_ACTION_ID_V1
+        ? appendTeamCredentialSourceSummary('', teamCredentialSources) : '';
     let canonicalCopySummary: string | null = null;
     const summarySource = buildApprovalPreviewSummary(spec, input.actionArgs, {
         ...(input.formatPath ? { formatPath: input.formatPath } : {}), ...(widgetPresentation ? { widgetPresentation } : {}),
-        teamCredentialSources: readTeamCredentialApprovalSources(input.preview),
+        teamCredentialSources: spawnCredentialSuffix ? [] : teamCredentialSources,
         ...(teamMember ? { teamMemberPresentation: teamMember } : {}),
         formatSessionVisualCopySummary: summary => {
             canonicalCopySummary = summary.source;
             return t('actionPresentation.sessionVisualCopySummary', summary);
         },
     });
-    const authoredSummary = input.authoredSummary?.trim();
+    const savedStartSummary = spawnCredentialSuffix ? readRecord(input.preview).summary : undefined;
+    const carriedSummary = input.authoredSummary?.trim()
+        || (typeof savedStartSummary === 'string' ? savedStartSummary.trim() : undefined);
+    // Older signed Start previews carry these same typed facts in their sentence.
+    const authoredSummary = spawnCredentialSuffix && carriedSummary?.endsWith(spawnCredentialSuffix)
+        ? carriedSummary.slice(0, -spawnCredentialSuffix.length) : carriedSummary;
     // An Action's declared description tells an agent how to call it; it is never the person's review copy,
     // even when a receiver carries it as its summary. The person reads `approvalPresentation.summary` and facts.
     const agentInstructions = authoredSummary === spec.description?.trim() || authoredSummary === spec.inputHints?.description?.trim();

@@ -2602,6 +2602,7 @@ const actionConfirmationTranslations = { 'zh-Hant': {
         sessionTarget: ({ sessionId }) => `目標工作階段：${sessionId}`,
         oneShotConsequence: '核准只適用於這項要求，不會授予未來的 Action 權限或原生權限。',
         spawnWithoutTeamCredentialDefaults: '工作階段啟動時不使用團隊的預設憑證。',
+        spawnTeamCredentialSource: ({ team, account }) => `使用 ${team} 的共用帳戶 ${account}。`,
         homeUnavailable: '此核准屬於本裝置上無法使用的 Home。請重新連接該 Home 後再作決定。',
         turnedOffTitle: ({ action }) => `「${action}」已關閉`,
         turnedOffMessage: '在「設定 → 操作」中重新開啟，即可在這裡使用。',

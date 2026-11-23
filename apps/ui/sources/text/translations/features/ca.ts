@@ -2698,6 +2698,7 @@ const actionConfirmationTranslations = { ca: {
         sessionTarget: ({ sessionId }) => `Sessió de destinació: ${sessionId}`,
         oneShotConsequence: 'L’aprovació només s’aplica a aquesta sol·licitud. No concedeix permisos futurs d’Action ni permisos natius.',
         spawnWithoutTeamCredentialDefaults: 'La sessió s’inicia sense les credencials predeterminades del teu equip.',
+        spawnTeamCredentialSource: ({ team, account }) => `Utilitza el compte compartit ${account} de ${team}.`,
         homeUnavailable: 'Aquesta aprovació pertany a un Home que no està disponible en aquest dispositiu. Torna a connectar aquest Home per decidir.',
         turnedOffTitle: ({ action }) => `L’acció «${action}» està desactivada`,
         turnedOffMessage: 'Torna-la a activar a Configuració → Accions per fer-la servir aquí.',

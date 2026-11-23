@@ -2710,6 +2710,7 @@ const actionConfirmationTranslations = { pl: {
         sessionTarget: ({ sessionId }) => `Sesja docelowa: ${sessionId}`,
         oneShotConsequence: 'Zatwierdzenie dotyczy tylko tego żądania. Nie przyznaje przyszłych uprawnień Action ani uprawnień natywnych.',
         spawnWithoutTeamCredentialDefaults: 'Sesja rozpocznie się bez domyślnych danych uwierzytelniających Twojego zespołu.',
+        spawnTeamCredentialSource: ({ team, account }) => `Używa udostępnionego konta ${account} zespołu ${team}.`,
         homeUnavailable: 'To zatwierdzenie należy do Home niedostępnego na tym urządzeniu. Połącz ten Home ponownie, aby podjąć decyzję.',
         turnedOffTitle: ({ action }) => `Akcja „${action}” jest wyłączona`,
         turnedOffMessage: 'Włącz ją ponownie w Ustawienia → Akcje, aby użyć jej tutaj.',
