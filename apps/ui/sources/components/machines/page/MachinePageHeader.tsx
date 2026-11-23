@@ -74,6 +74,7 @@ import { machineDeploymentRoleSummary } from '@/components/machines/services/mac
 import { useMachineDeploymentRoles } from '@/components/machines/services/useMachineServiceEnvironments';
 import { deploymentEnvironmentRoute } from '@/components/projects/deployments/deploymentNavigation';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useSessionListRelativeNowMs } from '@/hooks/session/sessionListRuntimeClock';
 import { useMachinePagePresenceTarget, type MachinePageTarget } from './useMachinePageTarget';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 
@@ -282,6 +283,10 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
     // A created machine says its power word once, first in its facts (lab m-detail "Asleep · disk kept"), not as a
     // sentence under its name.
     const managedPowerWord = props.managedIdentity?.presence && runtimePresence?.showStatus ? runtimePresence.label || null : null;
+    // The offline line carries a relative age ("Offline · 2 min ago"); the sentence leaf re-reads it on the shared minute clock.
+    const managedPresence = props.managedIdentity?.presence;
+    const readOfflineLine = React.useCallback((nowMs: number) => machine
+        ? describeMachineRuntimePresence(machine, nowMs, managedPresence, machineAccountScope).label : '', [machine, managedPresence, machineAccountScope]);
     const meta = React.useMemo(() => machine ? composeMachinePageHeaderFacts({
         machine,
         online: target.online && !runtimePresence?.showStatus,
@@ -345,7 +350,7 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
             description={machine && !managedPowerWord && (published || runtimePresence?.showStatus) ? (
                 <MachineWorkingCountsProvider>
                     <MachineSentence serverId={target.serverId} machineId={machine.id} attention={published?.attention ?? null}
-                        online={target.online && !runtimePresence?.showStatus} offlineLine={runtimePresence?.label ?? ''}
+                        online={target.online && !runtimePresence?.showStatus} readOfflineLine={readOfflineLine}
                         fallback={fallbackDescription} />
                 </MachineWorkingCountsProvider>
             ) : fallbackDescription}
@@ -450,12 +455,16 @@ const MachineSentence = React.memo(function MachineSentence(props: Readonly<{
     machineId: string;
     attention: NonNullable<ReturnType<typeof readMachinePublishedResources>>['attention'] | null;
     online: boolean | null;
-    offlineLine: string;
+    readOfflineLine: (nowMs: number) => string;
     fallback: string;
 }>) {
     const { theme } = useUnistyles();
     const working = useMachineWorkingCount({ serverId: props.serverId, machineId: props.machineId });
-    const sentence = describeMachineSentence({ attention: props.attention, working, nowMs: Date.now(), online: props.online === true, offlineLine: props.offlineLine });
+    // Relative ages advance on the one shared minute clock, rendering only this sentence; it stops while the page is hidden.
+    const nowMs = useSessionListRelativeNowMs(useLayoutPresentationActive());
+    const online = props.online === true;
+    const sentence = describeMachineSentence({ attention: props.attention, working, nowMs, online,
+        offlineLine: online ? undefined : props.readOfflineLine(nowMs) });
     if (!sentence) return <Text style={[styles.sentence, { color: theme.colors.text.secondary }]}>{props.fallback}</Text>;
     const leadColor = sentence.tone === 'calm' ? theme.colors.text.primary
         : resolveMachineAttentionWordColor(theme.colors);
