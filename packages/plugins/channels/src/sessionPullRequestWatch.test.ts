@@ -5,7 +5,7 @@ import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/plugin-sdk/collections';
 import { NormalizedPluginAccountCollectionContractV1Schema, preparePluginAccountCollectionContractV1 } from '../../../protocol/src/plugins/data/collectionsV1.js';
 import { SessionMessageSendResultV1ProtocolSchema } from '@happier-dev/plugin-sdk/sessions';
-import { SessionPullRequestWatchListResultV1Schema } from '@happier-dev/channels-protocol/v1';
+import { SESSION_PULL_REQUEST_WATCH_SETTINGS, SessionPullRequestWatchListResultV1Schema } from '@happier-dev/channels-protocol/v1';
 import { CHANNELS_PLUGIN } from './manifest.js';
 import { GITHUB_PLUGIN } from '../../scm-github/src/manifest.js';
 import { GITHUB_CHANNEL_PULL_REQUESTS } from '../../scm-github/src/githubChannelContribution.js';
@@ -94,7 +94,7 @@ describe('portable Account PR Watch Action', () => {
             storage: { account: { collection: () => state } } as unknown as PluginServices['storage'],
             actions: { execute } as unknown as PluginServices['actions'],
             settings: { forScope: () => ({ snapshot: async () => ({ scope: { kind: 'account' as const }, revision: '1', values: {} }),
-                get: async () => null, describe: () => [], watch: () => ({ dispose() {} }),
+                get: async <T extends JsonValue>() => 3 as T, describe: () => [], watch: () => ({ dispose() {} }),
                 set: async () => { throw new Error('Read only'); }, reset: async () => { throw new Error('Read only'); } }) },
         };
         const kit = await createPluginTestkit({ manifest: CHANNELS_PLUGIN.manifest,
@@ -327,11 +327,18 @@ describe('portable Account PR Watch Action', () => {
             providerConnectionKey: 'example:connection-1', providerConfig: {}, integrationPrincipal: { id: 'bot' },
             routingIdentityKey: 'r'.repeat(43), authorityEpoch: 1,
         } }), { expectedRevision: 'absent' });
+        const snapshot = vi.fn(async () => ({ scope: { kind: 'account' as const }, revision: 'settings-1',
+            values: { [SESSION_PULL_REQUEST_WATCH_SETTINGS.fixAttemptLimit]: limit } }));
+        const requestedSettingIds: string[] = [];
+        const get = async <T extends JsonValue>(id: string) => {
+            requestedSettingIds.push(id);
+            expect(id).toBe(SESSION_PULL_REQUEST_WATCH_SETTINGS.fixAttemptLimit);
+            return limit as T;
+        };
         const services = {
             storage: { account: { collection: () => state } } as unknown as PluginServices['storage'],
             actions: { execute: vi.fn(async () => ({ coverage: 'complete', addresses: [{ sessionId: 'session-a', serverId: 'srv_example' }], error: null })) } as unknown as PluginServices['actions'],
-            settings: { forScope: () => ({ snapshot: async () => ({ scope: { kind: 'account' as const }, revision: 'settings-1',
-                values: { 'pr-watch-fix-attempt-limit': limit } }), get: async () => null, describe: () => [], watch: () => ({ dispose() {} }),
+            settings: { forScope: () => ({ snapshot, get, describe: () => [], watch: () => ({ dispose() {} }),
                 set: async () => { throw new Error('Read only'); }, reset: async () => { throw new Error('Read only'); } }) },
         };
         const kit = await createPluginTestkit({ manifest: CHANNELS_PLUGIN.manifest,
@@ -340,6 +347,8 @@ describe('portable Account PR Watch Action', () => {
         try {
         const request = { kind: 'retryFix', sessionId: 'session-a', bindingId: 'pr-1', expectedRevision: 1 } as const;
         const outcomes = await Promise.allSettled([invoke(request), invoke(request)]);
+        expect(snapshot).not.toHaveBeenCalled();
+        expect(requestedSettingIds).toEqual(Array(2).fill(SESSION_PULL_REQUEST_WATCH_SETTINGS.fixAttemptLimit));
         const row = await state.get('pr-1');
         if (!row) throw new Error('Missing retained binding');
         const { binding } = readConversationBindingUpdateRow({ row, bindingId: 'pr-1' });
@@ -429,7 +438,7 @@ describe('portable Account PR Watch Action', () => {
                 pullRequestWatch: { policy: { ...policy, stopWhenMerged } } } } };
             const metadata = assembleSessionPullRequestWatchMetadata({ sessionId: 'session-a', provider: GITHUB_CHANNEL_PULL_REQUESTS,
                 rows: [{ rowId: value.id, revision: 1, value: retained }],
-                defaults: { defaultMode: 'notify', fixAttemptLimit: 3, archiveAfterMerge: false },
+                fixAttemptLimit: 3,
                 connectionReasons: new Map([['connection-1', 'credentials']]),
             });
             expect(metadata.bindings[0]?.watch.reason).toBe('credentials');
@@ -472,7 +481,7 @@ describe('portable Account PR Watch Action', () => {
                     return state;
                 } } } as unknown as PluginServices['storage'],
                 settings: { forScope: () => ({ snapshot: async () => ({ scope: { kind: 'account' as const }, revision: '1', values: {} }),
-                    get: async () => null, describe: () => [], watch: () => ({ dispose() {} }),
+                    get: async <T extends JsonValue>() => 3 as T, describe: () => [], watch: () => ({ dispose() {} }),
                     set: async () => { throw new Error('Read only'); }, reset: async () => { throw new Error('Read only'); } }) },
                 actions: { execute } as unknown as PluginServices['actions'],
             },

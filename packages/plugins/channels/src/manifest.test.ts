@@ -27,6 +27,7 @@ import {
   SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1,
   SessionPullRequestBindingInputV1Schema,
   SessionPullRequestBindingResultV1Schema,
+  SESSION_PULL_REQUEST_WATCH_SETTINGS,
 } from '@happier-dev/channels-protocol/v1';
 
 import {
@@ -43,6 +44,7 @@ import {
   CHANNEL_STATE_RECORD_KIND,
 } from './collections.js';
 import { CONVERSATION_DELIVERY_CUSTODY_STATES } from './deliveryCustody.js';
+import { SESSION_PULL_REQUEST_WATCH_SETTINGS_DECLARATION } from './sessionPullRequestWatchPolicy.js';
 
 /**
  * `PluginManifest` types every contribution entry as `{ id, [key: string]: unknown }`,
@@ -85,6 +87,18 @@ import {
   createCurrentConversationPendingOldTransportStopFixture,
   type ConversationConnectionFixtureAuthority,
 } from './testkit/currentConnectionFixture.js';
+
+it('admits exactly the safe Fix attempt values in the Account watch preference', () => {
+  const field = SESSION_PULL_REQUEST_WATCH_SETTINGS_DECLARATION.fields
+    .find(({ id }) => id === SESSION_PULL_REQUEST_WATCH_SETTINGS.fixAttemptLimit);
+  if (!field) throw new Error('Expected the declared Fix attempt limit');
+  const admitted = parsePluginManifest(PLUGIN_MANIFEST);
+  if (!admitted.ok) throw new Error(admitted.diagnostics.map(diagnostic => diagnostic.message).join('; '));
+  const validate = compilePluginJsonSchema(field.schema);
+  expect(isValidPluginJsonSchemaValue(validate, Number.MAX_SAFE_INTEGER)).toBe(true);
+  expect(isValidPluginJsonSchemaValue(validate, null)).toBe(true);
+  expect(isValidPluginJsonSchemaValue(validate, Number.MAX_SAFE_INTEGER + 1)).toBe(false);
+});
 
 function firstNonJsonPath(value: unknown, path = '$'): string | null {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return null;

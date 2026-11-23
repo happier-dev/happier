@@ -11,8 +11,7 @@ import { readConversationBindingUpdateRow, readConversationConnectionUpdateRow,
     updateConversationBindingPolicyInAccountCollection, type ChannelStateRow } from './accountLocalBindingPolicy.js';
 import { readSessionPullRequestBindingRows } from './sessionPullRequestBindings.js';
 import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
-import { SESSION_PULL_REQUEST_WATCH_SETTINGS, continueSessionPullRequestFixProgress, isSessionPullRequestFixSequenceExhausted, readSessionPullRequestWatchPolicy,
-    resolveSessionPullRequestWatchDefaults, type SessionPullRequestWatchDefaults } from './sessionPullRequestWatchPolicy.js';
+import { SESSION_PULL_REQUEST_WATCH_SETTINGS, continueSessionPullRequestFixProgress, isSessionPullRequestFixSequenceExhausted, readSessionPullRequestWatchPolicy } from './sessionPullRequestWatchPolicy.js';
 import { readSessionPullRequestLatestUpdateForBinding, type SessionPullRequestLatestUpdateV1 } from './sessionPullRequestLatestUpdate.js';
 import { observeConversationSessionCollections } from './sessionCollectionObservation.js';
 import type { PluginAccountStorageConsumerContext } from '@happier-dev/plugin-sdk/storage';
@@ -30,9 +29,9 @@ export type SessionPullRequestWatchContext = PluginAccountStorageConsumerContext
     signal: AbortSignal; invokedAtMs: number;
 }>;
 
-export async function readSessionPullRequestWatchDefaults(context: SessionPullRequestWatchContext): Promise<SessionPullRequestWatchDefaults> {
-    const snapshot = await context.services.settings.forScope({ kind: 'account' }).snapshot({ signal: context.signal });
-    return resolveSessionPullRequestWatchDefaults(snapshot.values);
+export function readSessionPullRequestFixAttemptLimit(context: SessionPullRequestWatchContext): Promise<number | null> {
+    return context.services.settings.forScope({ kind: 'account' })
+        .get<number>(SESSION_PULL_REQUEST_WATCH_SETTINGS.fixAttemptLimit, { signal: context.signal });
 }
 
 async function resolveSessionAddress(sessionId: string, context: SessionPullRequestWatchContext): Promise<ActionSessionAddressV1 | null> {
@@ -48,7 +47,7 @@ function bindingSession(binding: ConversationBindingV1): string | undefined {
 }
 /** One assembler for exact Session reads, the paged Inbox index and the shared Resource. */
 export function assembleSessionPullRequestWatchMetadata(input: Readonly<{
-    sessionId: string; rows: readonly ChannelStateRow[]; defaults: SessionPullRequestWatchDefaults; provider: SessionPullRequestProvider;
+    sessionId: string; rows: readonly ChannelStateRow[]; fixAttemptLimit: number | null; provider: SessionPullRequestProvider;
     watchingMachines?: ReadonlyMap<string, { serverId: string; machineId: string; label: string }>;
     latestUpdates?: ReadonlyMap<string, SessionPullRequestLatestUpdateV1 | null>;
     connectionReasons?: ReadonlyMap<string, 'credentials' | 'paused'>;
@@ -63,10 +62,10 @@ export function assembleSessionPullRequestWatchMetadata(input: Readonly<{
         const progress = binding.target.kind === 'session' ? binding.target.pullRequestWatch?.progress : undefined;
         const terminal = link.state === 'merged' || link.state === 'closed';
         const reason = terminal ? 'terminal' as const : policy.mode !== 'off' && !binding.enabled ? 'paused' as const
-            : input.connectionReasons?.get(binding.connectionId) ?? ((policy.mode === 'address' || policy.mode === 'autoFix') && isSessionPullRequestFixSequenceExhausted(progress, input.defaults.fixAttemptLimit)
+            : input.connectionReasons?.get(binding.connectionId) ?? ((policy.mode === 'address' || policy.mode === 'autoFix') && isSessionPullRequestFixSequenceExhausted(progress, input.fixAttemptLimit)
                 ? 'exhausted' as const : null);
         bindings.push({ bindingId: binding.id, revision: row.revision, link,
-            watch: { policy, reason, fixAttemptLimit: input.defaults.fixAttemptLimit,
+            watch: { policy, reason, fixAttemptLimit: input.fixAttemptLimit,
                 roundsStarted: progress?.roundsStarted ?? 0, watchingMachine: input.watchingMachines?.get(binding.connectionId) ?? null, ...(progress ? { progress } : {}) },
             latestUpdate: input.latestUpdates?.get(binding.id) ?? null });
     }
@@ -74,11 +73,11 @@ export function assembleSessionPullRequestWatchMetadata(input: Readonly<{
 }
 
 async function readResolvedSessionMetadata(sessionId: string, context: SessionPullRequestWatchContext,
-    defaults?: SessionPullRequestWatchDefaults) {
+    fixAttemptLimit?: number | null) {
     const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
-    const [rows, currentDefaults] = await Promise.all([
+    const [rows, currentLimit] = await Promise.all([
         readSessionPullRequestBindingRows({ collection, sessionId, signal: context.signal }).then(rows => rows.map(value => value.row)),
-        defaults ?? readSessionPullRequestWatchDefaults(context),
+        fixAttemptLimit === undefined ? readSessionPullRequestFixAttemptLimit(context) : fixAttemptLimit,
     ]);
     if (rows.length === 0) return { kind: 'ready' as const, sessionId, bindings: [] };
     const { contribution } = await readSessionPullRequestProvider({ targetedContributions: context.services.targetedContributions, signal: context.signal });
@@ -98,16 +97,16 @@ async function readResolvedSessionMetadata(sessionId: string, context: SessionPu
         watchingMachines.set(connectionId, { serverId: connection.transportOrigin.serverIdentityId,
             machineId: connection.transportOrigin.machineId, label: connection.transportOrigin.machineId });
     }));
-    const metadata = assembleSessionPullRequestWatchMetadata({ sessionId, rows, defaults: currentDefaults, provider, watchingMachines, connectionReasons });
+    const metadata = assembleSessionPullRequestWatchMetadata({ sessionId, rows, fixAttemptLimit: currentLimit, provider, watchingMachines, connectionReasons });
     const latestUpdates = new Map(await Promise.all(metadata.bindings.map(async binding => [binding.bindingId,
         await readSessionPullRequestLatestUpdateForBinding({ sessionId, bindingId: binding.bindingId }, context),
     ] as const)));
-    return assembleSessionPullRequestWatchMetadata({ sessionId, rows, defaults: currentDefaults, provider, watchingMachines, latestUpdates, connectionReasons });
+    return assembleSessionPullRequestWatchMetadata({ sessionId, rows, fixAttemptLimit: currentLimit, provider, watchingMachines, latestUpdates, connectionReasons });
 }
 export async function readSessionPullRequestWatchForSession(sessionId: string, context: SessionPullRequestWatchContext,
-    defaults?: SessionPullRequestWatchDefaults): Promise<SessionPullRequestWatchReadResultV1> {
+    fixAttemptLimit?: number | null): Promise<SessionPullRequestWatchReadResultV1> {
     if (!await resolveSessionAddress(sessionId, context)) return { kind: 'unavailable', sessionId, reason: 'sessionUnavailable' };
-    return readResolvedSessionMetadata(sessionId, context, defaults);
+    return readResolvedSessionMetadata(sessionId, context, fixAttemptLimit);
 }
 
 export async function manageSessionPullRequestWatchForInvocation(input: JsonValue, context: SessionPullRequestWatchContext): Promise<SessionPullRequestWatchResultV1> {
@@ -121,7 +120,7 @@ export async function manageSessionPullRequestWatchForInvocation(input: JsonValu
             const id = bindingSession(binding);
             return id && binding.deletionState === 'none' ? [id] : [];
         }));
-        const defaults = await readSessionPullRequestWatchDefaults(context);
+        const fixAttemptLimit = await readSessionPullRequestFixAttemptLimit(context);
         const pageIds = new Set(page.rows.map(row => row.rowId));
         const sessions = await Promise.all([...ids].map(async sessionId => {
             const first = await collection.query({ index: CHANNEL_STATE_INDEX_ID.byPullRequestSessionBindingV1,
@@ -131,7 +130,7 @@ export async function manageSessionPullRequestWatchForInvocation(input: JsonValu
             if (!first.rows[0] || !pageIds.has(first.rows[0].rowId)) return undefined;
             const address = await resolveSessionAddress(sessionId, context);
             if (!address) return null;
-            const metadata = await readResolvedSessionMetadata(sessionId, context, defaults);
+            const metadata = await readResolvedSessionMetadata(sessionId, context, fixAttemptLimit);
             return metadata.bindings.length > 0 ? { session: address, bindings: metadata.bindings } : undefined;
         }));
         if (sessions.some(session => session === null)) return { kind: 'unavailable', reason: 'sessionUnavailable' };
@@ -153,7 +152,7 @@ export async function manageSessionPullRequestWatchForInvocation(input: JsonValu
         if (terminal || !binding.enabled || (policy.mode !== 'address' && policy.mode !== 'autoFix')) {
             throw new PluginError({ code: 'channels_pr_watch_not_fixing', message: 'Only an active fixing watch can continue.' });
         }
-        const { fixAttemptLimit } = await readSessionPullRequestWatchDefaults(context);
+        const fixAttemptLimit = await readSessionPullRequestFixAttemptLimit(context);
         const previous = binding.target.pullRequestWatch?.progress ?? { roundsStarted: 0, continuationRounds: 0 };
         const progress = continueSessionPullRequestFixProgress(previous, { fixAttemptLimit });
         if (progress === previous) throw new PluginError({ code: 'channels_pr_watch_not_exhausted', message: 'The current fixing allowance is not exhausted.' });

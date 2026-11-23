@@ -159,8 +159,8 @@ import {
 } from './management.js';
 import { readCurrentProviderContributionForPersistedSelection, readCurrentConversationProviderDisplayName } from './providerContributions.js';
 import { readSessionPullRequestWatchPolicy, resolveSessionPullRequestWatchAdmission,
-  buildSessionPullRequestWatchInstructions, type SessionPullRequestWatchDefaults } from './sessionPullRequestWatchPolicy.js';
-import { readSessionPullRequestWatchDefaults } from './sessionPullRequestWatch.js';
+  buildSessionPullRequestWatchInstructions } from './sessionPullRequestWatchPolicy.js';
+import { readSessionPullRequestFixAttemptLimit } from './sessionPullRequestWatch.js';
 import { admitSessionPullRequestFixRound, reconcileSessionPullRequestFixProgress,
   recordSessionPullRequestFixInput, releaseSessionPullRequestFixPreparation } from './sessionPullRequestWatchProgress.js';
 import {
@@ -189,7 +189,7 @@ type IngressExecutionSource = Readonly<{ pullRequestProvider?: SessionPullReques
     authorityEpoch: number;
     /** Only the classified-cycle owner may defer capture until membership is frozen. */
     capturePullRequestBatch?: true;
-    pullRequestWatchDefaults?: SessionPullRequestWatchDefaults;
+    pullRequestFixAttemptLimit?: number | null;
     /** Routing context already acquired by this finite poll; dispatch reads current policy. */
     connection?: Readonly<{ row: StateRow; value: ChannelConnectionRecord }>;
     bindingRows?: readonly Readonly<{ row: StateRow; value: ChannelBindingRecord }>[];
@@ -4051,8 +4051,8 @@ async function dispatchIngressObligationAttempt(input: Readonly<{
     if (prUpdate !== undefined) {
       if (prProvider === undefined) throw pluginError('channels_provider_contribution_unavailable', 'The selected provider has no PR support.', true);
     }
-    const defaults = input.source.kind === 'checkpointedPoll' ? input.source.pullRequestWatchDefaults : undefined;
-    const fixAttemptLimit = (defaults ?? await readSessionPullRequestWatchDefaults(input.context)).fixAttemptLimit;
+    const batchLimit = input.source.kind === 'checkpointedPoll' ? input.source.pullRequestFixAttemptLimit : undefined;
+    const fixAttemptLimit = batchLimit === undefined ? await readSessionPullRequestFixAttemptLimit(input.context) : batchLimit;
     let admission = resolveSessionPullRequestWatchAdmission({ binding: currentBinding.value.payload, fixAttemptLimit });
     const statusOnly = prUpdate?.events.every(event => event.kind === 'merged' || event.kind === 'closed'
       || (event.kind === 'push' && event.writer !== 'other') || (event.kind === 'check' && event.state !== 'failed')) ?? false;
@@ -6285,11 +6285,11 @@ async function routeCheckpointedPollBatch(input: Readonly<{
   }
   const { leaders } = await freezeClassifiedPullRequestBatches({ context: input.context, source: input.source,
     members: pullRequestMembers, routingIdentityKey: input.routingIdentityKey });
-  const defaults = leaders.some(member => member.obligation.value.payload.target?.kind === 'session')
-    ? await readSessionPullRequestWatchDefaults(input.context) : undefined;
+  const fixAttemptLimit = leaders.some(member => member.obligation.value.payload.target?.kind === 'session')
+    ? await readSessionPullRequestFixAttemptLimit(input.context) : undefined;
   for (const member of leaders) {
     const dispatched = await dispatchIngressObligation({ context: input.context,
-      source: { ...input.source, ...(defaults === undefined ? {} : { pullRequestWatchDefaults: defaults }) },
+      source: { ...input.source, ...(fixAttemptLimit === undefined ? {} : { pullRequestFixAttemptLimit: fixAttemptLimit }) },
       entryPoint: 'pullRequestBatch',
       routingIdentityKey: input.routingIdentityKey,
       connectionId: input.connectionId, bindingId: member.obligation.value['binding-id'],
@@ -6411,7 +6411,7 @@ export async function runConversationCheckpointedPollForInvocation(input: Readon
     const fixingBindings = pollBindingRows.filter(binding => binding.value.payload.target.kind === 'session'
       && ['address', 'autoFix'].includes(readSessionPullRequestWatchPolicy(binding.value.payload).mode));
     if (fixingBindings.length > 0) {
-      const { fixAttemptLimit } = await readSessionPullRequestWatchDefaults(context);
+      const fixAttemptLimit = await readSessionPullRequestFixAttemptLimit(context);
       await Promise.all(fixingBindings.map(binding => resumeExhaustedPullRequestInputs({ binding,
         connectionAuthorityEpoch: connection.value.payload.authorityEpoch, fixAttemptLimit }, context)));
     }

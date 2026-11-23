@@ -1222,7 +1222,10 @@ function createIngressHarness(options: IngressHarnessOptions = {}) {
   // The fixture supplies only genuine host boundaries: Account collection and Session admission.
   const services = {
     ...noticeServices,
-    settings: { forScope: () => ({ snapshot: async () => ({ values: options.settingsValues ?? {} }) }) },
+    settings: { forScope: () => ({ get: async (id: string) => {
+      const value = options.settingsValues?.[id];
+      return value === undefined ? 3 : value;
+    } }) },
     events: {
       host: { subscribe: () => ({ dispose() {} }) },
       plugin: {

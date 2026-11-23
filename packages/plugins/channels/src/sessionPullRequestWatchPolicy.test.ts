@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ConversationBindingV1 } from '@happier-dev/channels-protocol/v1';
 import { resolveSessionPullRequestWatchAdmission, advanceSessionPullRequestFixProgress,
-    continueSessionPullRequestFixProgress, resolveSessionPullRequestWatchDefaults,
+    continueSessionPullRequestFixProgress,
     buildSessionPullRequestWatchInstructions } from './sessionPullRequestWatchPolicy.js';
 
 const binding: ConversationBindingV1 = {
@@ -71,14 +71,5 @@ describe('canonical PR watch admission', () => {
         expect(advanceSessionPullRequestFixProgress(progress, { kind: 'unknownPush' })).toBe(progress);
         expect(advanceSessionPullRequestFixProgress(progress, { kind: 'otherWriterPush' }).roundsStarted).toBe(0);
         expect(advanceSessionPullRequestFixProgress(progress, { kind: 'outstandingWorkResolved' }).roundsStarted).toBe(0);
-    });
-    it('preserves explicit Never stop and rejects malformed configured authority', () => {
-        expect(resolveSessionPullRequestWatchDefaults({})).toEqual({ defaultMode: 'notify', fixAttemptLimit: 3, archiveAfterMerge: false });
-        for (const legacy of [true, false, 'ignored']) {
-            expect(resolveSessionPullRequestWatchDefaults({ 'pr-watch-stop-when-merged': legacy }))
-                .toEqual(resolveSessionPullRequestWatchDefaults({}));
-        }
-        expect(resolveSessionPullRequestWatchDefaults({ 'pr-watch-fix-attempt-limit': null }).fixAttemptLimit).toBeNull();
-        expect(() => resolveSessionPullRequestWatchDefaults({ 'pr-watch-default-mode': 'autofix' })).toThrow();
     });
 });

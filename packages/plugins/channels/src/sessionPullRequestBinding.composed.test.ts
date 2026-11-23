@@ -139,7 +139,7 @@ describe('registered Session PR URL attach', () => {
       // selection remains the production Watch policy owner.
       settings: { forScope: () => ({
         snapshot: async () => ({ scope: { kind: 'account' as const }, revision: '1', values: {} }),
-        get: async () => null,
+        get: async <T extends JsonValue>() => 3 as T,
         describe: () => [],
         watch: () => ({ dispose() {} }),
         set: async () => { throw new Error('Watch must not mutate Settings'); },

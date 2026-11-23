@@ -1,11 +1,13 @@
 import type { ConversationBindingV1, SessionPullRequestFixProgressV1, SessionPullRequestFixSubjectV1,
     SessionPullRequestWatchPolicyV1 } from '@happier-dev/channels-protocol/v1';
-import { SESSION_PULL_REQUEST_WATCH_SETTINGS, SessionPullRequestWatchModeV1Schema, SessionPullRequestFixAttemptLimitV1Schema } from '@happier-dev/channels-protocol/v1';
+import { SESSION_PULL_REQUEST_WATCH_SETTINGS,
+    SessionPullRequestFixAttemptLimitV1JsonSchema } from '@happier-dev/channels-protocol/v1';
 import type { SessionPullRequestUpdateV1 } from '@happier-dev/channels-protocol/v1';
-import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginSettingsContribution } from '@happier-dev/plugin-sdk/settings';
 
 export { SESSION_PULL_REQUEST_WATCH_SETTINGS } from '@happier-dev/channels-protocol/v1';
+const { $schema: _dialect, ...fixAttemptLimitSchema } = SessionPullRequestFixAttemptLimitV1JsonSchema;
+
 export const SESSION_PULL_REQUEST_WATCH_SETTINGS_DECLARATION: Omit<PluginSettingsContribution, 'id'> = {
     title: { key: 'plugins.channels.prWatch.settings.title', fallback: 'Pull requests' },
     description: { key: 'plugins.channels.prWatch.settings.description',
@@ -32,7 +34,7 @@ export const SESSION_PULL_REQUEST_WATCH_SETTINGS_DECLARATION: Omit<PluginSetting
             title: { key: 'plugins.channels.prWatch.settings.fixAttempts', fallback: 'Fix attempts' },
             description: { key: 'plugins.channels.prWatch.settings.fixAttemptsDescription',
                 fallback: 'After this many fixing rounds on one pull request, the agent stops fixing it and asks you. Leave it empty to never stop.' },
-            schema: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
+            schema: fixAttemptLimitSchema,
             presentation: { control: 'number' }, default: 3 },
         { id: SESSION_PULL_REQUEST_WATCH_SETTINGS.archiveAfterMerge,
             title: { key: 'plugins.channels.prWatch.settings.archiveAfterMerge', fallback: 'Also archive the session' },
@@ -42,27 +44,9 @@ export const SESSION_PULL_REQUEST_WATCH_SETTINGS_DECLARATION: Omit<PluginSetting
     ],
 };
 
-export type SessionPullRequestWatchDefaults = Readonly<{
-    defaultMode: SessionPullRequestWatchPolicyV1['mode']; fixAttemptLimit: number | null;
-    archiveAfterMerge: boolean;
-}>;
 export const SESSION_PULL_REQUEST_OFF_POLICY: SessionPullRequestWatchPolicyV1 = Object.freeze({
     mode: 'off', archiveAfterMerge: false,
 });
-export function resolveSessionPullRequestWatchDefaults(values: Readonly<Record<string, JsonValue>>): SessionPullRequestWatchDefaults {
-    const boolean = (key: string, baseline: boolean) => {
-        const value = values[key];
-        if (value === undefined) return baseline;
-        if (typeof value !== 'boolean') throw new Error(`Invalid PR watch setting ${key}`);
-        return value;
-    };
-    return {
-        defaultMode: SessionPullRequestWatchModeV1Schema.parse(values[SESSION_PULL_REQUEST_WATCH_SETTINGS.defaultMode] ?? 'notify'),
-        fixAttemptLimit: SessionPullRequestFixAttemptLimitV1Schema.parse(Object.hasOwn(values, SESSION_PULL_REQUEST_WATCH_SETTINGS.fixAttemptLimit)
-            ? values[SESSION_PULL_REQUEST_WATCH_SETTINGS.fixAttemptLimit] : 3),
-        archiveAfterMerge: boolean(SESSION_PULL_REQUEST_WATCH_SETTINGS.archiveAfterMerge, false),
-    };
-}
 export function readSessionPullRequestWatchPolicy(binding: ConversationBindingV1): SessionPullRequestWatchPolicyV1 {
     return binding.target.kind === 'session' ? binding.target.pullRequestWatch?.policy ?? SESSION_PULL_REQUEST_OFF_POLICY : SESSION_PULL_REQUEST_OFF_POLICY;
 }

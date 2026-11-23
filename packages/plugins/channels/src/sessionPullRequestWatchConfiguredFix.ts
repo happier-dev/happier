@@ -11,7 +11,7 @@ import { readCurrentProviderContributionForPersistedSelection } from './provider
 import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
 import { readSessionPullRequestWatchPolicy } from './sessionPullRequestWatchPolicy.js';
 import { admitSessionPullRequestFixRound, reconcileSessionPullRequestFixProgress } from './sessionPullRequestWatchProgress.js';
-import { readSessionPullRequestWatchDefaults, type SessionPullRequestWatchContext } from './sessionPullRequestWatch.js';
+import { readSessionPullRequestFixAttemptLimit, type SessionPullRequestWatchContext } from './sessionPullRequestWatch.js';
 import { readCurrentSessionPullRequestWatchHead } from './sessionPullRequestWatchRound.js';
 
 function refuse(code: string): never {
@@ -55,7 +55,7 @@ export async function deliverSessionPullRequestConfiguredFix(input: SessionPullR
         return refuse('channels_pr_watch_not_fixing');
     }
     if (!original && current.row.revision !== input.expectedRevision) return refuse('channels_pr_watch_conflict');
-    const { fixAttemptLimit } = await readSessionPullRequestWatchDefaults(context);
+    const fixAttemptLimit = await readSessionPullRequestFixAttemptLimit(context);
     const ready = await admitSessionPullRequestFixRound({ bindingId: input.bindingId, obligationId,
         update: input, fixAttemptLimit, reserve: false }, context);
     if (ready !== 'ready') return { kind: 'configuredFixHeld', reason: ready };
