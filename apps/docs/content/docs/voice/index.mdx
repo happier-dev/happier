@@ -57,8 +57,9 @@ bound to that Voice conversation. Switching the visible session does not change
 that destination. In 0.3 development, **Voice agent can approve requests** delegates
 approval and denial to the Voice agent by default in Local Voice and realtime modes
 that expose host approval tools. Turning it off during a call requires a tap for
-the next request. A generic tool call or a saved approval waiver does not grant
-that delegation to other automated callers. A timeout stops observing
+any pending request whose decision Voice has yet to issue. Voice directs you to
+the request card without asking for a spoken decision. A generic tool call or
+a saved approval waiver does not grant that delegation to other automated callers. A timeout stops observing
 accepted work without stopping it, and a returned answer requests no acknowledgment.
 
 While a coding Session waits for a permission decision, Voice can still answer
@@ -272,7 +273,9 @@ clears the highlight.
 
 In 0.3 development, if the microphone is blocked, the Voice presence shows **Microphone blocked** with
 **Allow** until you allow it or dismiss the attempt; if no microphone is found, it says
-so and offers **Retry**.
+so and offers **Retry**. If a brief relay disconnect interrupts machine-backed
+microphone capture, Voice can reopen it on the same call. When Voice shows
+**Repeat what Voice missed.**, repeat anything you said during the interruption.
 Microphone permission still needs a tap. Ending Voice leaves unanswered coding
 permission requests pending.
 

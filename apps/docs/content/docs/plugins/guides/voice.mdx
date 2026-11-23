@@ -314,8 +314,11 @@ Local Voice and realtime modes exposing host decision tools: the Voice agent can
 approve or deny any pending request on the person's behalf
 through the existing host decision owner. Prompt guidance tells it to read the
 request, ask, and follow the answer. Decisions are attributed to the Voice agent
-acting for the person. With the setting off, decisions require a tap in the request
-UI; a provider must preserve the host's refusal. Other automated callers keep
+acting for the person. Follow the current request result's `voiceApprovalGuidance`.
+With `tap_required`, direct the person to the request UI. Only `spoken_decision`
+allows an invitation to decide aloud. When guidance is absent, read the exact
+request and direct the person to tap if it is pending and guidance is still
+unavailable. Other automated callers keep
 their existing authority floors. Plugins cannot create confirmation tokens or
 decide outside that owner. End retirements do not settle pending permissions.
 Tool effects still enter the host's canonical Action barrier with captured attempt
