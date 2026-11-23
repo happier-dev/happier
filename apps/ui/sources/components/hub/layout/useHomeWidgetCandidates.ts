@@ -7,6 +7,8 @@ import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
 
+const NO_CANDIDATES: readonly WidgetCandidate[] = Object.freeze([]);
+
 function sameCandidates(left: readonly WidgetCandidate[], right: readonly WidgetCandidate[]): boolean {
     return left.length === right.length && left.every((candidate, index) => {
         const other = right[index]!;
@@ -34,14 +36,15 @@ function sameCandidates(left: readonly WidgetCandidate[], right: readonly Widget
  * data never passes through here: each mounted widget subscribes to its placement, so a data change
  * stays inside that widget.
  */
-export function useHomeWidgetCandidates(localize?: PluginLocalizedTextResolver, policyContext?: PluginUiPolicyEvaluationContext): readonly WidgetCandidate[] {
+export function useHomeWidgetCandidates(localize?: PluginLocalizedTextResolver, policyContext?: PluginUiPolicyEvaluationContext, enabled = true): readonly WidgetCandidate[] {
     const projection = useAppShellPluginUiProjectionModel();
     const moments = useAtmosphereMoments();
     const previous = React.useRef<readonly WidgetCandidate[] | null>(null);
     return React.useMemo(() => {
+        if (!enabled) return NO_CANDIDATES;
         const next = selectWidgetCandidates(projection, policyContext, moments, localize);
         if (previous.current && sameCandidates(previous.current, next)) return previous.current;
         previous.current = next;
         return next;
-    }, [projection, moments, localize, policyContext]);
+    }, [projection, moments, localize, policyContext, enabled]);
 }

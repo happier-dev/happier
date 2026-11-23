@@ -2391,6 +2391,7 @@ export const es: TranslationStructure = {
     currentEnvironmentRevision: "Revisión actual del entorno",
     remedy: "Recuperación",
   },
+    clearsField: ({ field }: { field: string }) => `Borra ${field}`,
     confidentialSupplied: "Proporcionado y mantenido oculto",
     linkRemoved: "Este vínculo ya no existe",
     unsafeDetailsTitle: "Estos detalles no se pueden mostrar de forma segura",

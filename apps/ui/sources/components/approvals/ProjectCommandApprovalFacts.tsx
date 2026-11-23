@@ -12,22 +12,22 @@ import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRe
 import type { ProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
-import { HappierApprovalFields, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import {
-  useMachinePoolListForServer,
   useServerScopedMachine,
 } from '@/sync/store/hooks';
 import { t } from '@/text';
-import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { listReviewedSetupCommands } from '@/components/projects/projectSetup/projectSetupEffectPresentation';
 import { formatProjectInvocation } from '@/components/projects/projectSetup/projectScriptPresentation';
 import { ProjectSetupReviewFacts } from '@/components/projects/projectSetup/ProjectSetupReview';
-import { useApprovalFieldsLook } from './ActionApprovalFieldsCard';
+import { ActionApprovalFieldsCard, readableApprovalReferenceText, type ApprovalFieldsPresentation } from './ActionApprovalFieldsCard';
+import { useApprovalReferenceReading } from './approvalReferenceReading';
+import type { ApprovalActionReference } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 
 export type ProjectCommandApprovalPresentation =
   | Readonly<{
@@ -245,16 +245,19 @@ export function useProjectCommandApprovalTitle(presentation: ProjectCommandAppro
 export function useProjectCommandApprovalTitle(
   presentation: ProjectCommandApprovalPresentation | null,
 ): string | null {
-  const source = useServerScopedMachine(presentation?.serverId ?? null, presentation?.sourceMachineId ?? '');
-  const runsOnId = presentation?.destination.kind === 'machine' ? presentation.destination.machineId : '';
-  const runsOn = useServerScopedMachine(presentation?.serverId ?? null, runsOnId);
-  const fromId = presentation?.kind === 'service' ? presentation.moveFromMachineId ?? '' : '';
-  const from = useServerScopedMachine(presentation?.serverId ?? null, fromId);
+  const sourceReference: ApprovalActionReference | undefined = presentation
+    ? { kind: 'machine', id: presentation.sourceMachineId, serverId: presentation.serverId } : undefined;
+  const targetReference: ApprovalActionReference | undefined = presentation?.destination.kind === 'machine'
+    ? { kind: 'machine', id: presentation.destination.machineId, serverId: presentation.serverId } : sourceReference;
+  const fromReference: ApprovalActionReference | undefined = presentation?.kind === 'service' && presentation.moveFromMachineId
+    ? { kind: 'machine', id: presentation.moveFromMachineId, serverId: presentation.serverId } : sourceReference;
+  const source = useApprovalReferenceReading(sourceReference, '', presentation?.serverId ?? null);
+  const target = useApprovalReferenceReading(targetReference, '', presentation?.serverId ?? null);
+  const from = useApprovalReferenceReading(fromReference, '', presentation?.serverId ?? null);
   if (!presentation) return null;
-  const sourceName = source ? getMachineSentenceName(source) : presentation.sourceMachineId;
-  return describeProjectCommandApprovalTitle(presentation, sourceName,
-    runsOnId ? (runsOn ? getMachineSentenceName(runsOn) : runsOnId) : sourceName,
-    from ? getMachineSentenceName(from) : fromId || sourceName);
+  return describeProjectCommandApprovalTitle(presentation,
+    readableApprovalReferenceText(sourceReference, source), readableApprovalReferenceText(targetReference, target),
+    readableApprovalReferenceText(fromReference, from));
 }
 
 /** The two decisions a Project approval asks, in the words of the Scripts page (setup), the Services page (Start) or the command card. */
@@ -277,74 +280,52 @@ export const ProjectCommandApprovalFacts = React.memo(
     props: Readonly<{
       presentation: ProjectCommandApprovalPresentation;
       testID: string;
+      anatomy?: React.ComponentProps<typeof ActionApprovalFieldsCard>['anatomy'];
     }>,
   ) {
     const { theme } = useUnistyles();
-    const fieldsLook = useApprovalFieldsLook();
     const { presentation } = props;
     const destination = presentation.destination;
-    const source = useServerScopedMachine(
-      presentation.serverId,
-      presentation.sourceMachineId,
-    );
-    const target = useServerScopedMachine(
-      presentation.serverId,
-      destination.kind === 'machine' ? destination.machineId : '',
-    );
-    const pools = useMachinePoolListForServer(presentation.serverId);
-    const sourceName =
-      source ? getMachineSentenceName(source) : presentation.sourceMachineId;
-    const pool =
-      destination.kind === 'pool'
-        ? (pools?.find((candidate) => candidate.pool.id === destination.poolId)?.pool ??
-          null)
-        : null;
-    const where =
-      destination.kind === 'primary'
-        ? sourceName
-        : destination.kind === 'machine'
-          ? (target ? getMachineSentenceName(target) : destination.machineId)
-          : t('projects.scripts.adhocWherePool', {
-              pool: pool?.name ?? destination.poolId,
-            });
-    const runsOn =
-      destination.kind === 'primary'
-        ? source
-        : destination.kind === 'machine'
-          ? target
-          : null;
-    const runsAs =
-      runsOn?.isShared && runsOn.metadata?.username
-        ? t('projects.scripts.adhocAsUser', {
-            user: runsOn.metadata.username,
-            machine: where,
-          })
-        : destination.kind === 'pool'
-          ? t('projects.scripts.adhocAsYouAnywhere')
-          : t('projects.scripts.adhocAsYou', { machine: where });
-    const rows: ReadonlyArray<readonly [string, string, string]> = [
-      ['where', t('projects.scripts.adhocWhere'), where],
-      ...(presentation.kind === 'service' && !presentation.workspace
-        ? []
-        : [['checkout', t('common.path'), presentation.workspace!.rootPath] as const]),
-      // A Service that starts where its checkout is runs from the Path above; only a copy elsewhere is news.
-      ...(presentation.kind === 'service' && destination.kind === 'primary'
-        ? []
-        : [[
-            'files',
-            t('projects.scripts.adhocFiles'),
-            destination.kind === 'primary'
-              ? t('projects.scripts.adhocFilesHere')
-              : t('projects.scripts.adhocFilesCopy', { machine: sourceName }),
-          ] as const]),
-      ['as', t('projects.scripts.adhocAs'), runsAs],
+    const sourceReference: ApprovalActionReference = { kind: 'machine', id: presentation.sourceMachineId,
+      serverId: presentation.serverId };
+    const destinationReference: ApprovalActionReference = destination.kind === 'pool'
+      ? { kind: 'machinePool', id: destination.poolId }
+      : { kind: 'machine', id: destination.kind === 'machine' ? destination.machineId : presentation.sourceMachineId,
+          serverId: presentation.serverId };
+    // The setup preview consumes the same reader as the fields; it never looks up a name itself.
+    const sourceReading = useApprovalReferenceReading(presentation.kind === 'setup' ? sourceReference : undefined, '', presentation.serverId);
+    const targetReading = useApprovalReferenceReading(presentation.kind === 'service' && presentation.setupReview
+      ? destinationReference : undefined, '', presentation.serverId);
+    const sourceName = readableApprovalReferenceText(sourceReference, sourceReading);
+    const where = readableApprovalReferenceText(destinationReference, targetReading);
+    // OS-user metadata is a reviewed execution fact, not a second naming path.
+    const runsOn = useServerScopedMachine(presentation.serverId, destination.kind === 'pool' ? '' : destinationReference.id);
+    const rows: ApprovalFieldsPresentation['rows'] = [
+      ...(presentation.kind === 'script' ? [{ kind: 'value' as const, path: 'command',
+        title: t('common.command'), value: presentation.name, valueFormat: 'code' as const }] : []),
+      { kind: 'value', path: 'where', title: t('projects.scripts.adhocWhere'), value: destinationReference.id,
+        reference: destinationReference, ...(destination.kind === 'pool'
+          ? { referenceText: (pool: string) => t('projects.scripts.adhocWherePool', { pool }) } : {}) },
+      ...(presentation.kind === 'service' && !presentation.workspace ? []
+        : [{ kind: 'value' as const, path: 'checkout', title: t('common.path'), value: presentation.workspace!.rootPath }]),
+      ...(presentation.kind === 'service' && destination.kind === 'primary' ? []
+        : [{ kind: 'value' as const, path: 'files', title: t('projects.scripts.adhocFiles'),
+          value: destination.kind === 'primary' ? t('projects.scripts.adhocFilesHere') : presentation.sourceMachineId,
+          ...(destination.kind === 'primary' ? {} : { reference: sourceReference,
+            referenceText: (machine: string) => t('projects.scripts.adhocFilesCopy', { machine }) }) }]),
+      { kind: 'value', path: 'as', title: t('projects.scripts.adhocAs'),
+        value: destination.kind === 'pool' ? t('projects.scripts.adhocAsYouAnywhere') : destinationReference.id,
+        ...(destination.kind === 'pool' ? {} : { reference: destinationReference,
+          referenceText: (machine: string) => runsOn?.isShared && runsOn.metadata?.username
+            ? t('projects.scripts.adhocAsUser', { user: runsOn.metadata.username, machine })
+            : t('projects.scripts.adhocAsYou', { machine }) }) },
     ];
     return (
       <View style={styles.root} testID={props.testID}>
-        {presentation.kind !== 'setup' && (presentation.kind !== 'service' || presentation.command) ? (
+        {presentation.kind !== 'setup' && presentation.kind !== 'script' && (presentation.kind !== 'service' || presentation.command) ? (
           <View testID={`${props.testID}.command`}>
             <CodeBlockView
-              code={presentation.kind === 'script' ? presentation.name : `$ ${presentation.command}`}
+              code={`$ ${presentation.command}`}
               showHeaderRow={false}
               wrap
             />
@@ -382,12 +363,8 @@ export const ProjectCommandApprovalFacts = React.memo(
           <ProjectSetupReviewFacts testID={`${props.testID}.review`} reviewedEffect={presentation.setupReview.reviewedEffect}
             machineName={where} sharedRunAs={null} />
         ) : null}
-        <HappierApprovalFields
-          {...fieldsLook}
-          density="page"
-          testID={`${props.testID}.rows`}
-          rows={rows.map(([key, label, value]) => ({ kind: 'value' as const, key, label, value }))}
-        />
+        <ActionApprovalFieldsCard presentation={{ rows, unrepresentable: null }} anatomy={props.anatomy}
+          serverId={presentation.serverId} testID={props.testID} />
         {presentation.kind === 'exec' ? (
           <View
             style={[

@@ -2204,6 +2204,7 @@ export const it: TranslationStructure = {
     currentEnvironmentRevision: "Revisione attuale dell’ambiente",
     remedy: "Ripristino",
   },
+    clearsField: ({ field }: { field: string }) => `Cancella ${field}`,
     confidentialSupplied: "Fornito e mantenuto nascosto",
     linkRemoved: "Questo collegamento non esiste più",
     unsafeDetailsTitle: "Questi dettagli non possono essere mostrati in sicurezza",

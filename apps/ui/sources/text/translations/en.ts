@@ -1793,6 +1793,7 @@ const enApprovals = {
     currentEnvironmentRevision: "Current environment revision",
     remedy: "Recovery",
   },
+  clearsField: ({ field }: { field: string }) => `Clears ${field}`,
   confidentialSupplied: 'Supplied and kept hidden',
   linkRemoved: 'This link no longer exists',
   unsafeDetailsTitle: 'These details cannot be shown safely',

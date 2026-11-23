@@ -66,6 +66,10 @@ function createHomeHubLayoutActionSpecs() {
     bindings: { mcpToolName: 'home_hub_layout_update', voiceClientToolName: 'customizeHomeLayout', rpcMethod: 'home.hub.layout.update' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
     inputSchema: HomeHubLayoutUpdateInputSchema, outputSchema: HomeHubLayoutResultSchema,
+    approvalPresentation: {
+      referenceForField: (path, value) => path === 'intent.instanceId' && typeof value === 'string'
+        ? { kind: 'homeLayoutItem', id: value } : undefined,
+    },
     inputHints: { fields: [{ path: 'intent', title: 'Customization intent', widget: 'json', required: true,
       description: 'Use move, move_to (sectionId, position: anchorId and before/after placement), reorder, visibility, frameStyle (card/plain/null), setup_visibility (stepId, hidden), restore_setup, reset, widget_add (instance, optional size, position and destination groupId), widget_remove (instanceId), widget_rename (instanceId, optional displayName), widget_inputs (instanceId, bindings) or widget_size (instanceId, declared size). Shared item intents include group_create, group_add, group_ungroup, group_set, group_inputs, remove, rename, size, width, frame, inputs, inputs_reset and move (instanceId, toIndex, optional groupId; null moves out). move_to preserves concurrent additions. Read the current layout first; reorder lists all sections returned by that read.' }] },
     examples: { voice: { argsExample: '{"intent":{"kind":"visibility","sectionId":"machines","hidden":false}}' } },

@@ -128,9 +128,9 @@ export function ApprovalReviewFacts(props: ApprovalReviewFactsInput & Readonly<{
     {props.handoffTarget ?? (handoff.success ? <PreparedHandoffTargetFacts approval={handoff.data} actionArgs={actionArgs} serverId={serverId} /> : null)}
     {props.resourceProposal ? props.resourceProposal : resource ? <ItemGroup title={readResourceProposalTitle(resource)} clipContent>
       <ResourceProposalOperandFacts model={resource} testID={`${testID}.resource-proposal`} />
-    </ItemGroup> : command ? <ItemGroup title={t('approvals.details')}><SectionContentRow>
-      <ProjectCommandApprovalFacts presentation={command} testID={`${testID}.project-command`} />
-    </SectionContentRow></ItemGroup> : edit ? <ItemGroup title={t('approvals.details')}><SectionContentRow>
+    </ItemGroup> : command ?
+      <ProjectCommandApprovalFacts presentation={command} anatomy="page" testID={`${testID}.project-command`} />
+    : edit ? <ItemGroup title={t('approvals.details')}><SectionContentRow>
       <ArtifactEditProposalReview proposal={edit} testID={`${testID}.doc-edit-proposal`} />
     </SectionContentRow></ItemGroup> : generic ? props.fields === undefined && fields
       ? <ActionApprovalFieldsCard presentation={fields} request={request} anatomy="page" serverId={serverId} />

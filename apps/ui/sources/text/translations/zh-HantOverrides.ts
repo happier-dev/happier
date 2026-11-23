@@ -1715,6 +1715,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
       currentEnvironmentRevision: '目前環境修訂版本',
       remedy: '復原方式',
     },
+    clearsField: ({ field }: { field: string }) => `清除${field}`,
     confidentialSupplied: '已提供，內容保持隱藏',
     linkRemoved: '此連結已不存在',
     unsafeDetailsTitle: '這些詳細資料無法安全顯示',

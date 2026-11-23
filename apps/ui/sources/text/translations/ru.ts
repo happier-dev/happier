@@ -2219,6 +2219,7 @@ export const ru: TranslationStructure = {
     currentEnvironmentRevision: "Текущая ревизия окружения",
     remedy: "Восстановление",
   },
+    clearsField: ({ field }: { field: string }) => `Очищает ${field}`,
     confidentialSupplied: "Указано и скрыто",
     linkRemoved: "Эта связь больше не существует",
     unsafeDetailsTitle: "Эти сведения нельзя показать безопасно",

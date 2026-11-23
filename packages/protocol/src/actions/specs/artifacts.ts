@@ -5,6 +5,7 @@ import { readRecord } from '../../inputs/inputRecords.js';
 import { ARTIFACT_ACCESS_ACTION_IDS_V1, ArtifactAccessActionInputSchemasV1, ArtifactAccessActionOutputSchemasV1 } from '../../artifacts/artifactAccessV1.js';
 import { ARTIFACT_ACTION_IDS_V1, STORAGE_INVENTORY_READ_ACTION_ID_V1 } from '../../artifacts/artifactActionIdsV1.js';
 import { ArtifactActionInputSchemasV1, ArtifactActionOutputSchemasV1, type ArtifactActionIdV1 } from '../../artifacts/artifactActionsV1.js';
+import { ARTIFACT_LIST_SORTS_V1, type ArtifactListSortV1 } from '../../artifacts/artifactListPageV1.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 
 
@@ -74,6 +75,10 @@ export const ARTIFACT_ACTION_COPY = {
   'artifact.public_link.audit': ['Read document public link activity', 'See when a document\'s public link was opened.'],
   'artifact.public_link.join': ['Open signed-in document link', 'Join a signed-in document link with Can copy access.'],
 } as const satisfies Record<ArtifactActionIdV1, readonly [title: string, summary: string]>;
+
+const ARTIFACT_SORT_LABELS = {
+  updated_desc: 'Recently updated', created_desc: 'Recently created', title_asc: 'Title', size_desc: 'Largest first',
+} satisfies Record<ArtifactListSortV1, string>;
 
 export function isAnsweringClientArtifactExport(input: unknown): boolean {
   return Object.hasOwn(readRecord(input), 'portable') || readRecord(input).destination === 'client';
@@ -149,7 +154,10 @@ export const ARTIFACT_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly
       { path: 'path', title: 'Workspace path', widget: 'text', description: 'Workspace-relative destination for the existing Session workspace export.' },
       { path: 'overwrite', title: 'Overwrite', widget: 'boolean', description: 'Allow replacing an existing workspace file.' },
       { path: 'portable', title: 'Portable document', widget: 'json', description: 'Role or Launch-profile document to save on the answering client.' },
-    ] : [] },
+    ] : id === 'artifact.list' ? [{ path: 'sort', title: 'Sort', widget: 'select',
+      options: ARTIFACT_LIST_SORTS_V1.map(value => ({ value, label: ARTIFACT_SORT_LABELS[value],
+        labelKey: `artifacts.browser.sort.${value}` })),
+    }] : [] },
     cli: { acceptsServerId: true, commands: [{ path: id.split('.').map((segment) => segment.replaceAll('_', '-')), visibility: 'canonical' }] },
   };
 }));

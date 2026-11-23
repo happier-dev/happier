@@ -2218,6 +2218,7 @@ export const pl: TranslationStructure = {
     currentEnvironmentRevision: "Bieżąca wersja środowiska",
     remedy: "Odzyskiwanie",
   },
+    clearsField: ({ field }: { field: string }) => `Czyści ${field}`,
     confidentialSupplied: "Podano i ukryto",
     linkRemoved: "To łącze już nie istnieje",
     unsafeDetailsTitle: "Tych szczegółów nie można bezpiecznie wyświetlić",

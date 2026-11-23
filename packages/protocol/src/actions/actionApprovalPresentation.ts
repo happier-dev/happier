@@ -185,7 +185,7 @@ export type ApprovalActionFieldRow =
   | Readonly<{
     kind: 'value'; path: string; title: string; value: string; reference?: ApprovalActionReference;
     /** A boolean choice reads through the client's localized yes/no labels. */
-    valueFormat?: 'boolean' | 'unavailable' | 'confidential' | 'timestamp' | 'code';
+    valueFormat?: 'boolean' | 'unavailable' | 'confidential' | 'timestamp' | 'code' | 'clear';
     /** Declared choices carry their localization keys; clients never infer labels from enum values. */
     selectedOptions?: readonly Pick<ActionInputOption, 'label' | 'labelKey'>[];
     /** A readable reading of a structured (JSON) value; `value` stays the exact literal. */
@@ -207,6 +207,8 @@ export type ApprovalActionReference =
   | Readonly<{ kind: 'account'; id: string }>
   /** A Discussion, read by the title its viewer can read. */
   | Readonly<{ kind: 'discussion'; id: string }>
+  /** A saved Home layout item, read through the presenting Account's existing layout projection. */
+  | Readonly<{ kind: 'homeLayoutItem'; id: string }>
   | Readonly<{ kind: 'team'; id: string }>
   | Readonly<{ kind: 'group'; id: string; teamId: string }>
   | Readonly<{ kind: 'teamMembership'; id: string; teamId: string }>
@@ -1094,6 +1096,10 @@ export function describeApprovalActionFields(input: Readonly<{
       } else if (projection.answers.length > 0) {
         rows.push({ kind: 'structuredAnswers', path: field.path, title: field.title, answers: projection.answers });
       }
+      continue;
+    }
+    if (values.length === 1 && values[0] === null && review?.clearInputPaths?.includes(field.path)) {
+      rows.push({ kind: 'value', path: field.path, title: field.title, value: 'null', valueFormat: 'clear' });
       continue;
     }
     const literal = formatApprovalFieldValues(values, { preserveStructuredValues: field.widget === 'json' });

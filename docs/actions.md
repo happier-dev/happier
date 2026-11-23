@@ -1406,6 +1406,15 @@ annotations supplement those facts instead of replacing them with Action API hin
 Human consequence copy belongs to the Action's `approvalPresentation.summary`.
 Without a domain summary, the review uses the Action title; agent input instructions
 are never the person's confirmation text.
+In unreleased 0.3 source, approval field presentation consumes declared reference
+names and option labels through the shared Protocol projector and UI card. An
+unreadable reference shows Unavailable; its exact identity stays in the existing
+Technical details disclosure. Domains declare explicit null clears in the private,
+in-process `approvalPresentation.clearInputPaths`; an omitted operand has no clear
+row, and a nullable schema alone does not declare a clear. The ordinary field row
+translates “Clears <field>”. These declarations do not change stored approvals or
+the serialized Action catalog. `technicalInputPaths` retains transport and revision
+operands under Technical details.
 In unreleased 0.3 source, a member's Source clone with an unprepared destination
 returns `workspace_private_checkout_review_required` and the native owner's
 `destinationReview`. Open carries the prepared private path through this same

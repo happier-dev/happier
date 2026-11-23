@@ -2372,6 +2372,7 @@ export const ja: TranslationStructure = {
     currentEnvironmentRevision: "現在の環境リビジョン",
     remedy: "復旧方法",
   },
+    clearsField: ({ field }: { field: string }) => `${field}をクリア`,
     confidentialSupplied: "指定済み（非表示）",
     linkRemoved: "このリンクはもう存在しません",
     unsafeDetailsTitle: "この内容は安全に表示できません",

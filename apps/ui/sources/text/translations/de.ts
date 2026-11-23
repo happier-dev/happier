@@ -1999,6 +1999,7 @@ export const de: TranslationStructure = {
     currentEnvironmentRevision: "Aktuelle Umgebungsrevision",
     remedy: "Wiederherstellung",
   },
+        clearsField: ({ field }: { field: string }) => `Leert ${field}`,
         confidentialSupplied: 'Angegeben und verborgen gehalten',
         linkRemoved: 'Diese Verbindung existiert nicht mehr',
         unsafeDetailsTitle: 'Diese Details können nicht sicher angezeigt werden',

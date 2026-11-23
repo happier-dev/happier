@@ -2225,6 +2225,7 @@ export const ca: TranslationStructure = {
     currentEnvironmentRevision: "Revisió actual de l’entorn",
     remedy: "Recuperació",
   },
+        clearsField: ({ field }: { field: string }) => `Esborra ${field}`,
         confidentialSupplied: 'Proporcionat i mantingut ocult',
         linkRemoved: 'Aquest enllaç ja no existeix',
         unsafeDetailsTitle: 'Aquests detalls no es poden mostrar amb seguretat',

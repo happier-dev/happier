@@ -2,7 +2,11 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { Href } from 'expo-router';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { buildApprovalPreviewSummary } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { createInboxApprovalArtifactFixture } from '@/dev/testkit/fixtures/inboxFixtures';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { AgentInputPermissionRequests } from '@/components/sessions/agentInput/components/AgentInputPermissionRequests';
@@ -10,7 +14,9 @@ import { SessionTranscriptSourceProvider } from '@/components/sessions/transcrip
 import { createReadOnlySessionTranscriptSource } from '@/components/sessions/transcript/source/readOnlySessionTranscriptSource';
 import type { SessionTranscriptSource } from '@/components/sessions/transcript/source/types';
 import type { OpenApprovalAttentionArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
-import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { createMachineFixture, createMachineMetadataFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { useActiveServerAccountScope, storage } from '@/sync/domains/state/storage';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 
@@ -19,8 +25,11 @@ const NO_PERMISSIONS = Object.freeze([]);
 const NO_LOCATIONS = new Map<string, null>();
 const noop = () => {};
 
-export const APPROVAL_CARD_SCENES = ['open', 'facts', 'failed', 'earlierFailures'] as const;
+export const APPROVAL_CARD_SCENES = ['open', 'facts', 'failed', 'earlierFailures', 'names', 'choices', 'clear', 'technical', 'translated', 'projectCommand'] as const;
 export type ApprovalCardScene = (typeof APPROVAL_CARD_SCENES)[number];
+
+const SCRIPT_MACHINE = createMachineFixture({ id: '67cffe92-bd4e-4b28-8512-706b1cc4ab77',
+  metadata: createMachineMetadataFixture({ displayName: 'Studio runner' }) });
 
 const PAGE = 'https://en.wikipedia.org/wiki/Price_point';
 
@@ -45,6 +54,32 @@ function sceneApproval(scene: Exclude<ApprovalCardScene, 'earlierFailures'>, sco
     requestedSurface: 'agent' as const,
     createdBy: { surface: 'agent' as const, sessionId: SESSION_ID },
   };
+  if (scene === 'projectCommand') {
+    const actionArgs = { workspace: { serverId: scope.serverId, workspaceId: 'dev-script-checkout',
+      machineId: SCRIPT_MACHINE.id, rootPath: '/workspace/project' },
+      selection: { kind: 'named', name: 'build release' }, choice: { kind: 'primary' } };
+    return { ...base, actionId: 'projects.script.run', actionArgs, status: 'open',
+      summary: buildApprovalPreviewSummary(getActionSpec('projects.script.run'), actionArgs),
+      executionOriginV1: origin('projects.script.run') } as ApprovalRequest;
+  }
+  const fieldScenes = {
+    names: { actionId: 'artifact.delete', actionArgs: {
+      artifactId: 'pricing-page-copy-notes', expectedRevision: { headerVersion: 1, bodyVersion: 1 },
+    } },
+    choices: { actionId: 'artifact.list', actionArgs: { sort: 'updated_desc' } },
+    clear: { actionId: 'artifact.folder.set', actionArgs: {
+      artifactId: 'pricing-page-copy-notes', folderId: null, expectedRevision: 1,
+    } },
+    technical: { actionId: 'browser.view.open', actionArgs: {
+      commandId: 'open-pricing', browserSessionId: 'pricing', viewId: 'pricing-view', kind: 'openView',
+      platform: 'web', focus: true, target: { targetId: 'pricing-page', kind: 'externalUrl', url: PAGE },
+    } },
+    translated: { actionId: 'artifact.public_link.create', actionArgs: { artifactId: 'pricing-page-copy-notes' } },
+  } as const;
+  if (scene in fieldScenes) {
+    const fields = fieldScenes[scene as keyof typeof fieldScenes];
+    return { ...base, ...fields, summary: buildApprovalPreviewSummary(getActionSpec(fields.actionId), fields.actionArgs), status: 'open', executionOriginV1: origin(fields.actionId) } as ApprovalRequest;
+  }
   const open = {
     ...base,
     executionOriginV1: origin('browser.workspace.open'),
@@ -90,9 +125,11 @@ function sceneApproval(scene: Exclude<ApprovalCardScene, 'earlierFailures'>, sco
 /** The tray's requests: one per scene, or for `earlierFailures` two settled failures above a waiting request. */
 function sceneRequests(scene: ApprovalCardScene, scope: ServerAccountScope): readonly OpenApprovalAttentionArtifactForSession[] {
   const entry = (id: string, approval: ApprovalRequest): OpenApprovalAttentionArtifactForSession => ({
-    artifact: { id: `dev-approval-card-${id}`, header: { title: null, serverId: scope.serverId } },
+    artifact: { ...createInboxApprovalArtifactFixture({ id: `dev-approval-card-${id}`,
+      serverId: scope.serverId, actionId: approval.actionId, title: approval.summary }),
+      header: buildApprovalRequestArtifactHeaderV1(approval), body: JSON.stringify(approval) },
     approval,
-  } as OpenApprovalAttentionArtifactForSession);
+  });
   if (scene !== 'earlierFailures') return [entry(scene, sceneApproval(scene, scope))];
   const notRun = {
     ...sceneApproval('facts', scope),
@@ -138,6 +175,11 @@ export function ApprovalCardSpecimen(
 ) {
   const scope = useActiveServerAccountScope();
   const source = useSpecimenTranscriptSource();
+  React.useEffect(() => {
+    if (props.scene !== 'projectCommand' || !scope) return;
+    const machines = Object.values(storage.getState().machines);
+    void publishMachineInventoryForTest(scope, [...machines.filter(machine => machine.id !== SCRIPT_MACHINE.id), SCRIPT_MACHINE]);
+  }, [props.scene, scope]);
   const requests = React.useMemo<
     readonly OpenApprovalAttentionArtifactForSession[]
   >(

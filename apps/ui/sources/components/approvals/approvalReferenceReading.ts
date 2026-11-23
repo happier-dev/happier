@@ -48,6 +48,9 @@ import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { readApprovalPrincipalName, useApprovalPrincipalName } from './approvalPrincipalReading';
 import { useDiscussionTitleReadings } from '@/components/discussions/useDiscussionTitles';
 import { readDiscussionTitle } from '@/sync/ops/discussions/useDiscussionRepositorySnapshot';
+import { useHomeHubLayoutReading } from '@/components/hub/layout/useHomeHubLayout';
+import { homeChildTitle, homeHubSectionTitle } from '@/components/hub/homeHubSections';
+import { describeWidgetGroupAmong } from '@/components/widgets/group/widgetGroupMenu';
 type ApprovalReference = ApprovalActionReference;
 
 export type ApprovalReferenceReading = Readonly<{ text: string; named: boolean; resolving?: boolean; subject?: 'managedMachine';
@@ -216,7 +219,15 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
         }
     });
     const discussion = useApprovalDiscussionTitle(reference, approvalServerId);
-    return resolveApprovalReferenceReading(reference, literal, approvalServerId, { serverId, sessionReading, viewer, ownHome, artifact, machine, machineInventory, connectedAccount, savedSecret,
+    const homeLayout = useHomeHubLayoutReading(reference?.kind === 'homeLayoutItem' && ownHome);
+    const homeSection = reference?.kind === 'homeLayoutItem' && ownHome
+        ? homeLayout.sections.flatMap(section => section.kind === 'group' ? [section, ...section.children] : [section])
+            .find(section => section.id === reference.id) : undefined;
+    const homeLayoutItemName = homeSection ? homeSection.kind === 'group'
+        ? describeWidgetGroupAmong(homeLayout.items, homeSection.group, homeChildTitle(homeLayout.sections))
+        : homeHubSectionTitle(homeSection) : null;
+    return resolveApprovalReferenceReading(reference, literal, approvalServerId, { homeLayoutItemName,
+        homeLayoutItemResolving: reference?.kind === 'homeLayoutItem' && ownHome && homeLayout.status === 'loading', serverId, sessionReading, viewer, ownHome, artifact, machine, machineInventory, connectedAccount, savedSecret,
         managedMachine, managedEnrolledMachine, managedMachineLoading, sessionMachine, mcp, registries, project, projectCensusComplete, agents,
         providerConnection, providerManualModel, providerCatalogLoading, declarations, localizePluginText,
         syncLink, workspace, discussionTitle: discussion.title, discussionTitleResolving: discussion.resolving,
@@ -273,6 +284,8 @@ export function useManagedMachineName(serverId: string | null, managedId: string
 const CONNECTED_ACCOUNT_KEY = 'connectedAccount';
 
 type ApprovalReferenceSources = {
+    homeLayoutItemName?: string | null;
+    homeLayoutItemResolving?: boolean;
     serverId: string | null;
     principalName?: string | null;
     principalResolving?: boolean;
@@ -312,6 +325,11 @@ type ApprovalReferenceSources = {
 
 function resolveApprovalReferenceReading(reference: ApprovalReference | undefined, literal: string, approvalServerId: string | null, sources: ApprovalReferenceSources): ApprovalReferenceReading {
     const { serverId, sessionReading, viewer, ownHome, artifact, machine, sessionMachine, mcp, registries, agents, declarations } = sources;
+    if (reference?.kind === 'homeLayoutItem') {
+        const name = sources.homeLayoutItemName;
+        return { text: name ?? t(sources.homeLayoutItemResolving ? 'common.loading' : 'common.unavailable'),
+            named: Boolean(name), ...(sources.homeLayoutItemResolving ? { resolving: true } : {}) };
+    }
     if (reference?.kind === 'managedMachine') {
         const title = readManagedMachineName(sources);
         // The generic word stands in for a machine that could not be read; it is not a name, so a title never

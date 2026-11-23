@@ -2203,6 +2203,7 @@ export const zhHans: TranslationStructure = {
     currentEnvironmentRevision: "当前环境修订版本",
     remedy: "恢复方法",
   },
+    clearsField: ({ field }: { field: string }) => `清除${field}`,
     confidentialSupplied: "已提供，内容保持隐藏",
     linkRemoved: "此链接已不存在",
     unsafeDetailsTitle: "这些详情无法安全显示",

@@ -314,6 +314,8 @@ export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
      * `field.member` marks that direct member of a structured value.
      */
     technicalInputPaths: z.optional(z.readonly(z.array(z.string().check(z.minLength(1))))),
+    /** A supplied null on these paths explicitly clears the field; omitted values do not. In-process review metadata only. */
+    clearInputPaths: z.optional(z.readonly(z.array(z.string().check(z.minLength(1))))),
     /** Input paths whose literal people compare character by character (a host key fingerprint): clients set it in the code face. */
     codeInputPaths: z.optional(z.readonly(z.array(z.string().check(z.minLength(1))))),
     /** Private approval review can disclose operands that must stay out of shared Action observations. */

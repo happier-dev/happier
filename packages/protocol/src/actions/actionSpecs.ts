@@ -1125,6 +1125,10 @@ function normalizeActionPublicExposure(spec: PreNormalizedActionSpec): Normalize
     requiredAuthority,
     executionPlacement,
     ...(clientRouted ? {
+      // The selector routes delivery; it never names the thing the person is approving.
+      approvalPresentation: { ...spec.approvalPresentation,
+        technicalInputPaths: [...new Set([...(spec.approvalPresentation?.technicalInputPaths ?? []), 'clientId'])],
+      },
       inputSchema: withClientActionInput(spec.inputSchema),
       clientActionDomainInputSchema: spec.inputSchema,
       ...(spec.surfaceBindings ? { surfaceBindings: { ...spec.surfaceBindings,

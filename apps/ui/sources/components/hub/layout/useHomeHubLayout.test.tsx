@@ -19,7 +19,7 @@ const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
 const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
 const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
-const { useHomeHubLayout } = await import('./useHomeHubLayout');
+const { useHomeHubLayout, useHomeHubLayoutReading } = await import('./useHomeHubLayout');
 const { useHomeHubArtifactLayout } = await import('./useHomeHubArtifactLayout');
 const { readPresentationNotice, retirePresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
@@ -131,4 +131,20 @@ describe('Home layout write feedback without Sections', () => {
         expect(artifact.layout()).toEqual(getHomeHubDefaultLayoutV1());
         expect(readPresentationNotice()).toBeNull();
     });
+});
+
+// Approval rows without a Home-layout reference must not acquire the Account layout.
+it('leaves the Home layout read dormant for an unrelated approval reference', async () => {
+    const artifact = createHomeHubArtifactHttpBoundary('account-a');
+    let layoutReads = 0;
+    connection = await restoreServerAccountForTest({ serverUrl: 'https://disabled-layout-reading.test', accountId: 'account-a',
+        request: async (url, init) => {
+            if (new URL(String(url)).pathname === `/v1/artifacts/${artifact.artifactId}`) layoutReads++;
+            return artifact.request(url, init);
+        } });
+    const initialReads = layoutReads;
+    const hook = await renderHook(() => useHomeHubLayoutReading(false), { wrapper: AccountShell });
+    expect(hook.getCurrent().sections).toEqual([]);
+    expect(layoutReads - initialReads).toBe(0);
+    await hook.unmount();
 });

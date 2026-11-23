@@ -249,7 +249,17 @@ function row<const Id extends ProjectActionIdV1>(id: Id) {
       } },
     } : {}),
     originalExecution: { accountRoot: 'allowed' }, title: PROJECT_ACTION_COPY[id][0],
-    approvalPresentation: { summary: (input: unknown) => {
+    approvalPresentation: {
+      ...(id === 'projects.script.run' ? { referenceForField: (path: string, value: unknown, input: unknown) => {
+        if (typeof value !== 'string') return undefined;
+        const script = PROJECT_ACTION_INPUT_SCHEMAS_V1['projects.script.run'].safeParse(input);
+        if (!script.success) return undefined;
+        if (path === 'workspace.machineId' || path === 'choice.destination.machineId') {
+          return { kind: 'machine' as const, id: value, serverId: script.data.workspace.serverId };
+        }
+        return path === 'choice.destination.poolId' ? { kind: 'machinePool' as const, id: value } : undefined;
+      } } : {}),
+      summary: (input: unknown) => {
       if (id === 'projects.script.run') {
         const script = PROJECT_ACTION_INPUT_SCHEMAS_V1['projects.script.run'].safeParse(input);
         if (script.success) {

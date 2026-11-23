@@ -50,10 +50,10 @@ export type HomeHubLayout = Readonly<{
     setGroupInputs: (instanceId: string, bindings: WidgetInputBindingsV1) => Promise<void>;
     moveItem: (instanceId: string, toIndex: number, groupId?: string | null) => Promise<void>;
 }>;
-/** Projection only: acknowledged Account Artifact layout plus stable, unpersisted defaults. */
-export function useHomeHubLayout(): HomeHubLayout {
-    const state = useHomeHubArtifactLayout();
-    const widgets = useHomeWidgetCandidates();
+/** One read-only projection for Home and references to its saved items. */
+function useHomeHubLayoutProjection(enabled = true) {
+    const state = useHomeHubArtifactLayout(enabled);
+    const widgets = useHomeWidgetCandidates(undefined, undefined, enabled);
     const layout = state.layout;
     const scope = useActiveServerAccountScope();
     const instances = React.useMemo(() => flattenWidgetLayoutWidgetsV1(layout.items).map(item => item.instance), [layout.items]);
@@ -65,6 +65,22 @@ export function useHomeHubLayout(): HomeHubLayout {
         return next;
     }, [widgets, descriptors]);
     const resolved = React.useMemo(() => resolveHomeHubLayout(layout, HOME_HUB_BUILTIN_DEFINITIONS, layoutWidgets), [layout, layoutWidgets]);
+    return { state, layout, scope, layoutWidgets, resolved };
+}
+
+const NO_SECTIONS: readonly HomeHubSection<WidgetCandidate>[] = Object.freeze([]);
+const NO_ITEMS: readonly WidgetLayoutItemV1[] = Object.freeze([]);
+
+/** Uses Home's existing Account store; a disabled consumer acquires no layout read. */
+export function useHomeHubLayoutReading(enabled = true) {
+    const { state, layout, resolved } = useHomeHubLayoutProjection(enabled);
+    return { sections: state.hasSnapshot ? resolved.sections : NO_SECTIONS,
+        items: state.hasSnapshot ? layout.items : NO_ITEMS, status: state.status };
+}
+
+/** Projection only: acknowledged Account Artifact layout plus stable, unpersisted defaults. */
+export function useHomeHubLayout(): HomeHubLayout {
+    const { state, layout, scope, layoutWidgets, resolved } = useHomeHubLayoutProjection();
     const write = state.dispatch;
     const noticeKey = scope ? `home-layout-write:${serverAccountScopeKeySuffix(scope)}` : null;
     React.useEffect(() => {

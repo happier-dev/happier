@@ -26,15 +26,15 @@ const stores = new WeakMap<ActiveServerAccountScopeLifetime, WeakMap<AuthCredent
 const refuse = async (): Promise<never> => { throw new Error('Home Account unavailable'); };
 const unavailable = createHomeHubAccountStore({ accountId: 'unavailable', transport: { read: refuse, create: refuse, update: refuse }, isCurrent: () => false, execute: refuse });
 
-function useHomeHubAccountStore() {
+function useHomeHubAccountStore(enabled = true) {
     const credentials = useOptionalAuth()?.credentials ?? null;
     const lifetime = useActiveServerAccountScopeLifetime();
     const scope = lifetime?.scope ?? null;
-    const server = useActiveServerSnapshot(credentials !== null);
+    const server = useActiveServerSnapshot(enabled && credentials !== null);
     let store: Store | typeof unavailable = unavailable;
     let accountId: string | null = null;
     try { if (credentials) accountId = parseToken(credentials.token); } catch { /* Authentication has not established an Account. */ }
-    if (credentials && scope && lifetime && accountId === scope.accountId && scope.serverId === server.serverId && server.serverUrl) {
+    if (enabled && credentials && scope && lifetime && accountId === scope.accountId && scope.serverId === server.serverId && server.serverUrl) {
         let byCredentials = stores.get(lifetime);
         if (!byCredentials) { byCredentials = new WeakMap(); stores.set(lifetime, byCredentials); }
         let mounted = byCredentials.get(credentials);
@@ -115,8 +115,8 @@ function useHomeHubAccountStore() {
 }
 
 /** Home content and setup dismissals ignore write-only presentation changes. */
-export function useHomeHubArtifactLayout() {
-    const store = useHomeHubAccountStore();
+export function useHomeHubArtifactLayout(enabled = true) {
+    const store = useHomeHubAccountStore(enabled);
     const select = useShallow((state: ReturnType<typeof store.getSnapshot>) => ({
         layout: state.layout, status: state.status, hasSnapshot: state.hasSnapshot,
         errorCode: state.errorCode, failedIntent: state.failedIntent,

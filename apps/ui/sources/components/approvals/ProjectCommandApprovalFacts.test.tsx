@@ -1,18 +1,12 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { installSessionSubagentCommonModuleMocks } from '@/components/sessions/agents/sessionSubagentTestHelpers';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { ProjectPrepareInputV1Schema } from '@happier-dev/protocol/actions/projectActionFamily';
 import { ProjectSetupReviewV1Schema } from '@happier-dev/protocol/actions/projectSetupConsentFailure';
-import { MachinePoolViewV1Schema } from '@happier-dev/protocol/machines/pools';
+import { createMachineFixture, createMachineMetadataFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { LocalServiceStartApprovalReviewV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
-
-/** The value beside a facts row's key (the shared approval fields draw label then value). */
-type FactNode = { props: { children?: unknown } };
-function factValue(host: { findAll: (predicate: (node: FactNode) => boolean) => FactNode[] } | null | undefined): unknown {
-    return host?.findAll((node) => typeof node.props.children === 'string').at(-1)?.props.children;
-}
-
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 installSessionSubagentCommonModuleMocks({
@@ -22,6 +16,8 @@ installSessionSubagentCommonModuleMocks({
     ),
   text: () => vi.importActual<typeof import('@/text')>('@/text'),
 });
+const harness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(harness);
 const {
   ProjectCommandApprovalFacts,
   describeProjectCommandApprovalDecisions,
@@ -30,12 +26,16 @@ const {
   readProjectServiceEffectApproval,
 } = await import('./ProjectCommandApprovalFacts');
 const { getStorage } = await import('@/sync/domains/state/storage');
-const originalMachinePools = getStorage().getState().machinePoolListByServerId;
-
-afterEach(() => {
+beforeEach(async () => {
   standardCleanup();
-  getStorage().setState({ machinePoolListByServerId: originalMachinePools });
+  await harness.reset();
+  workspace.serverId = await harness.addHome({ name: 'Command Home', serverUrl: 'https://project-facts.test', accountId: 'reviewer' });
+  getStorage().getState().applyMachines([
+    createMachineFixture({ id: 'devbox', metadata: createMachineMetadataFixture({ displayName: 'Studio checkout' }) }),
+    createMachineFixture({ id: 'hz-build-1', metadata: createMachineMetadataFixture({ displayName: 'Build runner' }) }),
+  ], true, { sourceServerId: workspace.serverId });
 });
+afterEach(async () => { standardCleanup(); await harness.reset(); });
 
 const workspace = {
   serverId: 'home',
@@ -63,7 +63,7 @@ describe('Project command approval facts', () => {
     if (!presentation) throw new Error('Missing parent Restart effect review');
     expect(describeProjectCommandApprovalTitle(presentation, 'devbox')).toBe('Restart web?');
     expect(describeProjectCommandApprovalDecisions(presentation)).toEqual({ approve: 'Restart', reject: 'Not now' });
-    const screen = await renderScreen(<ProjectCommandApprovalFacts presentation={presentation} testID="facts" />);
+    const screen = await renderScreen(<ProjectCommandApprovalFacts anatomy="page" presentation={presentation} testID="facts" />);
     expect(screen.getTextContent()).toContain('serve replacement web');
     expect(readProjectCommandApproval({ ...approval, preview: { ...approval.preview,
       hostReviewedChildren: { children: [{ action: 'localServices.launcher.start', role: 'service.restart.start',
@@ -82,7 +82,7 @@ describe('Project command approval facts', () => {
     expect(presentation).toMatchObject({ kind: 'service', setupReview, destination: { kind: 'machine', machineId: 'worker' } });
     if (!presentation) throw new Error('Missing Move review');
     expect(describeProjectCommandApprovalDecisions(presentation).approve).toBe('Move service');
-    const screen = await renderScreen(<ProjectCommandApprovalFacts presentation={presentation} testID="facts" />);
+    const screen = await renderScreen(<ProjectCommandApprovalFacts anatomy="page" presentation={presentation} testID="facts" />);
     expect(screen.getTextContent()).toContain('install on destination');
     await screen.unmount();
   });
@@ -103,10 +103,10 @@ describe('Project command approval facts', () => {
     expect(presentation).toMatchObject({ name: 'web' });
     expect(describeProjectCommandApprovalTitle(presentation, 'devbox', 'worker box')).toBe('Start web on worker box?');
     expect(describeProjectCommandApprovalDecisions(presentation)).toEqual({ approve: 'Start', reject: 'Not now' });
-    const screen = await renderScreen(<ProjectCommandApprovalFacts presentation={presentation} testID="facts" />);
+    const screen = await renderScreen(<ProjectCommandApprovalFacts anatomy="page" presentation={presentation} testID="facts" />);
     expect(screen.getTextContent()).toContain('serve web');
     expect(screen.getTextContent()).toContain('install dependencies');
-    expect(factValue(screen.findHostByTestId('facts.rows.row:checkout'))).toBe(target.rootPath);
+    expect(screen.getTextContent()).toContain(target.rootPath);
     expect(screen.findByTestId('facts.rows.row:files')).not.toBeNull();
     expect(readProjectCommandApproval({ actionId: 'localServices.launcher.start', actionArgs: { ...request, machineId: 'other' },
       preview: { serviceStartReview: review } })).toBeNull();
@@ -126,7 +126,7 @@ describe('Project command approval facts', () => {
     const presentation = readProjectCommandApproval({ actionId: 'localServices.launcher.start', actionArgs: request,
       preview: { serviceStartReview: review } });
     if (!presentation) throw new Error('Missing Service review');
-    const here = await renderScreen(<ProjectCommandApprovalFacts presentation={presentation} testID="facts" />);
+    const here = await renderScreen(<ProjectCommandApprovalFacts anatomy="page" presentation={presentation} testID="facts" />);
     expect(here.findByTestId('facts.rows.row:checkout')).not.toBeNull();
     expect(here.findByTestId('facts.rows.row:files')).toBeNull();
     await here.unmount();
@@ -145,28 +145,27 @@ describe('Project command approval facts', () => {
     for (const selected of [workspace, other]) {
       const presentation = read(selected);
       if (!presentation) throw new Error('Expected a valid Project approval');
-      const screen = await renderScreen(<ProjectCommandApprovalFacts presentation={presentation} testID="facts" />);
-      expect(factValue(screen.findHostByTestId('facts.rows.row:checkout'))).toBe(selected.rootPath);
+      const screen = await renderScreen(<ProjectCommandApprovalFacts anatomy="page" presentation={presentation} testID="facts" />);
+      expect(screen.getTextContent()).toContain(selected.rootPath);
       await screen.unmount();
     }
   });
 
   it('names the requested pool from its current Home-scoped definition', async () => {
     const poolId = '11111111-1111-4111-8111-111111111111';
-    const pool = MachinePoolViewV1Schema.parse({
-      pool: { id: poolId, name: 'Build workers', description: null, revision: 1,
-        createdAt: 1, updatedAt: 1, members: [] },
+    harness.answer(workspace.serverId, 'POST /v1/machines/pools/get', { body: {
+      pool: { id: poolId, name: { kind: 'available', label: { content: { t: 'plain', v: 'Build workers' }, recipientEnvelope: null } },
+        description: null, revision: 1, createdAt: 1, updatedAt: 1, members: [] },
       availability: { state: 'known', connectedCount: 0, enabledCount: 0 },
-    });
-    getStorage().setState({ machinePoolListByServerId: { home: [pool] } });
+    } });
     const presentation = readProjectCommandApproval({
       actionId: 'projects.compute.exec',
       actionArgs: { workspace, executable: 'tool', argv: [], cwd: workspace.rootPath,
         choice: { kind: 'workers', destination: { kind: 'pool', poolId, selection: 'automatic' } } },
     });
     if (!presentation) throw new Error('Expected the pool request to parse');
-    const screen = await renderScreen(<ProjectCommandApprovalFacts presentation={presentation} testID="facts" />);
-    expect(screen.getTextContent()).toContain('Build workers');
+    const screen = await renderScreen(<ProjectCommandApprovalFacts anatomy="page" presentation={presentation} testID="facts" />);
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain('Build workers'));
     expect(screen.getTextContent()).not.toContain(poolId);
   });
 
@@ -182,9 +181,9 @@ describe('Project command approval facts', () => {
     expect(readProjectServiceEffectApproval({ serverId: 'home', sourceMachineId: 'devbox',
       reviewedEffect: { command: { executable, args: argv } },
     })).toMatchObject({ kind: 'service', command: expected });
-    const screen = await renderScreen(<ProjectCommandApprovalFacts presentation={presentation!} testID="facts" />);
+    const screen = await renderScreen(<ProjectCommandApprovalFacts anatomy="page" presentation={presentation!} testID="facts" />);
     expect(screen.getTextContent()).toContain(`$ ${expected}`);
-    expect(factValue(screen.findHostByTestId('facts.rows.row:checkout'))).toBe(workspace.rootPath);
+    expect(screen.getTextContent()).toContain(workspace.rootPath);
     await screen.unmount();
   });
 
@@ -207,7 +206,7 @@ describe('Project command approval facts', () => {
       'Run this command on a worker?',
     );
     const screen = await renderScreen(
-      <ProjectCommandApprovalFacts
+      <ProjectCommandApprovalFacts anatomy="page"
         presentation={presentation!}
         testID="facts"
       />,
@@ -215,9 +214,9 @@ describe('Project command approval facts', () => {
     expect(screen.getTextContent()).toContain(
       '$ yarn vitest run sync.test.ts --repeat 20',
     );
-    expect(screen.getTextContent()).toContain('hz-build-1');
+    expect(screen.getTextContent()).toContain('Build runner');
     expect(screen.getTextContent()).toContain(
-      'A fresh copy of devbox’s checkout. Nothing copies back.',
+      'A fresh copy of Studio checkout’s checkout. Nothing copies back.',
     );
     expect(screen.getTextContent()).toContain(
       'Allowed by Workers › Allow explicit ad-hoc commands',
@@ -289,7 +288,7 @@ describe('Project command approval facts', () => {
       preview: { setupReview } })!;
 
     const remembered = read('untilChanged');
-    const withDisclosure = await renderScreen(<ProjectCommandApprovalFacts presentation={remembered} testID="facts" />);
+    const withDisclosure = await renderScreen(<ProjectCommandApprovalFacts anatomy="page" presentation={remembered} testID="facts" />);
     expect(withDisclosure.findByTestId('facts.rememberedConsent')).not.toBeNull();
     // The same reviewed steps and Where/Files/As stay beside the disclosure; there is no second card.
     expect(withDisclosure.getTextContent()).toContain('mise install');
@@ -302,7 +301,7 @@ describe('Project command approval facts', () => {
     expect(describeProjectCommandApprovalTitle(read('thisTime'), 'devbox')).toBe('Run setup on devbox?');
 
     for (const ordinary of [read('thisTime'), read()]) {
-      const screen = await renderScreen(<ProjectCommandApprovalFacts presentation={ordinary} testID="facts" />);
+      const screen = await renderScreen(<ProjectCommandApprovalFacts anatomy="page" presentation={ordinary} testID="facts" />);
       expect(screen.findByTestId('facts.rememberedConsent')).toBeNull();
       await screen.unmount();
       expect(describeProjectCommandApprovalDecisions(ordinary)).toEqual({ approve: 'Run setup', reject: 'Not now' });
@@ -317,7 +316,7 @@ describe('Project command approval facts', () => {
     } });
     const actionArgs = ProjectPrepareInputV1Schema.parse({ workspace, phase: 'setup' });
     const reviewed = readProjectCommandApproval({ actionId: 'projects.prepare', actionArgs, preview: { setupReview } });
-    const withSteps = await renderScreen(<ProjectCommandApprovalFacts presentation={reviewed!} testID="facts" />);
+    const withSteps = await renderScreen(<ProjectCommandApprovalFacts anatomy="page" presentation={reviewed!} testID="facts" />);
     expect(withSteps.getTextContent()).toContain('mise install');
     expect(withSteps.getTextContent()).toContain('yarn install --immutable');
     expect(withSteps.getTextContent()).toContain('This checkout, as it is now.');
@@ -325,7 +324,7 @@ describe('Project command approval facts', () => {
     await withSteps.unmount();
 
     const unread = readProjectCommandApproval({ actionId: 'projects.prepare', actionArgs });
-    const withoutSteps = await renderScreen(<ProjectCommandApprovalFacts presentation={unread!} testID="facts" />);
+    const withoutSteps = await renderScreen(<ProjectCommandApprovalFacts anatomy="page" presentation={unread!} testID="facts" />);
     expect(withoutSteps.findByTestId('facts.stepsUnavailable')).not.toBeNull();
     expect(withoutSteps.getTextContent()).not.toContain('mise install');
     expect(withoutSteps.getTextContent()).toContain('This checkout, as it is now.');

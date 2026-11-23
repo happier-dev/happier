@@ -69,7 +69,9 @@ const EXACT_READ = { exactRead: true } as const;
  * What a domain review adds to one of its facts on the approval page (lab d3 review): the names it lists, each
  * drawn as a chip, and a quieter line under the value that finishes the thought. A card folds both into its value.
  */
-export type ApprovalFieldExtras = Readonly<{ names?: readonly string[]; note?: string }>;
+export type ApprovalFieldExtras = Readonly<{ names?: readonly string[]; note?: string;
+    /** A carried consequence sentence around the name resolved by the shared reader; UI only. */
+    referenceText?: (name: string) => string }>;
 type ApprovalFieldRow = ApprovalActionFieldsPresentation['rows'][number] & ApprovalFieldExtras;
 /** A request's arguments as the protocol reads them, or a domain review's facts with their extras. */
 export type ApprovalFieldsPresentation = Readonly<{
@@ -80,7 +82,8 @@ type ApprovalValueRow = Extract<ApprovalFieldRow, { kind: 'value' }>;
 type ApprovalReference = NonNullable<ApprovalValueRow['reference']>;
 type ApprovalStructuredEntries = NonNullable<ApprovalValueRow['entries']>;
 /** What core reads to name a value: the reference, the approval's Home, and whether the page settles it by one exact read. */
-type ApprovalValueSource = Readonly<{ reference: ApprovalReference; serverId: string | null; exactRead: boolean }>;
+type ApprovalValueSource = Readonly<{ reference: ApprovalReference; serverId: string | null; exactRead: boolean;
+    referenceText?: (name: string) => string }>;
 
 /**
  * Core's binding of the shared approval fields (`HappierApprovalFields`, plugin-ui): the arguments an approval
@@ -260,8 +263,16 @@ const renderApprovalFieldText: HappierApprovalFieldsTextRender = (input) => <Tex
 const ApprovalReferenceResolve: HappierApprovalFieldResolve<ApprovalValueSource> = (props) => {
     const reading = useApprovalReferenceReading(props.source.reference, props.value, props.source.serverId,
         props.source.exactRead ? EXACT_READ : undefined);
-    return <>{props.children({ label: reading.label ?? nameApprovalReferenceLabel(props.label, props.source.reference, reading.named), value: reading.text })}</>;
+    return <>{props.children({ label: reading.label ?? nameApprovalReferenceLabel(props.label, props.source.reference, reading.named), value: readableApprovalReferenceText(props.source.reference, reading, props.source.referenceText) })}</>;
 };
+
+/** The existing reader owns naming; an unresolved identity stays in Technical details. */
+export function readableApprovalReferenceText(reference: ApprovalReference | undefined, reading: ApprovalReferenceReading,
+    format?: (name: string) => string): string {
+    const name = reference && !reading.named
+        ? t(reading.resolving ? 'common.loading' : 'common.unavailable') : reading.text;
+    return format ? format(name) : name;
+}
 
 /** The protocol's row in the shared fields' words: literal values formatted and localized here, references left to `Resolve`. */
 function toSharedFieldRow(row: ApprovalFieldRow, serverId: string | null, exactRead: boolean, actionId?: string): HappierApprovalFieldRow<ApprovalValueSource> {
@@ -286,10 +297,11 @@ function toSharedFieldRow(row: ApprovalFieldRow, serverId: string | null, exactR
         })) };
     }
     const label = row.path === 'primaryTeamId' ? t('session.access.context') : readHomePolicyLabel(row, actionId) ?? row.title;
-    const value = governance && isGovernancePrincipal(row.reference)
+    const value = row.valueFormat === 'clear' ? t('approvals.clearsField', { field: label })
+        : governance && isGovernancePrincipal(row.reference)
         ? t('common.unavailable') : readGovernanceChoice(row, actionId) ?? literalApprovalValue(row);
     return { kind: 'value', key: row.path, label, value,
-        ...(row.reference ? { source: { reference: row.reference, serverId, exactRead } } : {}) };
+        ...(row.reference ? { source: { reference: row.reference, serverId, exactRead, referenceText: row.referenceText } } : {}) };
 }
 
 function isGovernancePrincipal(reference: ApprovalReference | undefined): boolean {
@@ -399,7 +411,7 @@ function ApprovalValueItem(props: Readonly<{
     const label = nameApprovalReferenceLabel(row.label, source?.reference, reading.named);
     const title = (
         <FieldLayout label={label} columns={columns}>
-            <FieldValue value={reading.text} names={extras.names} note={extras.note}
+            <FieldValue value={readableApprovalReferenceText(source?.reference, reading, source?.referenceText)} names={extras.names} note={extras.note}
                 code={extras.kind === 'value' && extras.valueFormat === 'code'} />
         </FieldLayout>
     );

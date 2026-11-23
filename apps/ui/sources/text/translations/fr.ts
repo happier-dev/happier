@@ -2218,6 +2218,7 @@ export const fr: TranslationStructure = {
     currentEnvironmentRevision: "Révision actuelle de l’environnement",
     remedy: "Récupération",
   },
+    clearsField: ({ field }: { field: string }) => `Efface ${field}`,
     confidentialSupplied: "Fournie et gardée masquée",
     linkRemoved: "Ce lien n’existe plus",
     unsafeDetailsTitle: "Ces détails ne peuvent pas être affichés en toute sécurité",
