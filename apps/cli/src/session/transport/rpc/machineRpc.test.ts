@@ -1,5 +1,6 @@
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { createActionAutomationHttpPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import { API_TOKEN_FULL_GRANT_V1, getActionSpec, ProjectWorkerActionInputSchemasV1,
@@ -274,6 +275,7 @@ describe('callMachineRpc', () => {
       let stored: ApprovalRequest | null = null;
       const executor = createActionExecutor({
         ...createUnavailableActionTransportDeps(),
+        actionAutomations: createActionAutomationHttpPortV1({ accountId: 'owner', request: async () => ({ v: 1, rows: [] }) }),
         approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(JSON.parse(JSON.stringify(request))); return { artifactId: 'cleanup-approval' }; },
         approvalsGet: async () => stored,
         approvalsUpdate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(JSON.parse(JSON.stringify(request))); return { ok: true }; },
@@ -796,6 +798,7 @@ describe('callMachineRpc', () => {
       throw new Error(`Unexpected Discussion HTTP request ${request.method} ${request.url}`);
     });
     axiosGet.mockImplementation(async (url) => {
+      if (String(url).endsWith('/v2/account/settings')) return { status: 200, data: { version: 0, content: null } };
       if (String(url).endsWith('/v1/machines')) return { status: 200, data: [{ id: 'machine-session',
         kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
         access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } }] };

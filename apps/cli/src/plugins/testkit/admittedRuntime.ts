@@ -124,7 +124,11 @@ export async function createAdmittedPluginRuntimeFixture(params: Readonly<{
             const registry = await resolveExecutablePluginRuntimeRegistry({
                 ...params.runtimeOptions,
                 ...(params.runtimeOptions?.contributes === undefined && params.runtimeOptions?.pluginIds !== undefined ? {
-                    contributes: await resolveMergedContributionRegistry({ happyHomeDir, pluginIds: params.runtimeOptions.pluginIds }),
+                    contributes: await resolveMergedContributionRegistry({
+                        happyHomeDir,
+                        pluginIds: params.runtimeOptions.pluginIds,
+                        accountStorageDependencies: params.runtimeOptions.accountStorageDependencies,
+                    }),
                 } : {}),
                 happyHomeDir,
                 generation: controller.getState().generation + 1,
