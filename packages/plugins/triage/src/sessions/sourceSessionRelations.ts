@@ -339,7 +339,6 @@ export function createTriageSourceSessionRelations(
                         }
                         for (const ref of refs) unavailableRefs.set(JSON.stringify(entryReferenceComponents(ref)), ref);
                         for (const link of result.links) {
-                            if (sessionIds !== undefined && !sessionIds.has(link.sessionId)) continue;
                             addLink({
                                 entryRef: { source: lane.source, ...link.localRef },
                                 sessionId: link.sessionId, sourceInstanceId: lane.sourceInstanceId,
@@ -384,7 +383,6 @@ export function createTriageSourceSessionRelations(
                         for (const link of page.links) {
                             if (input.entryRef !== undefined && !sameTriageEntryReference(input.entryRef, link.entryRef)) continue;
                             if (input.sessionId !== undefined && link.sessionId !== input.sessionId) continue;
-                            if (sessionIds !== undefined && !sessionIds.has(link.sessionId)) continue;
                             // Unknown retained identities are not proof of absence,
                             // even beside healthy configured sources. Keep them
                             // undisclosed without weakening a selected owner's scope.

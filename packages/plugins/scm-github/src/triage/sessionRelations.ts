@@ -148,9 +148,7 @@ async function readSessionLinks(input: unknown, signal: AbortSignal, execute: Re
     });
     type Link = Extract<TriageSourceSessionLinksSliceV1, { kind: 'complete' }>['links'][number];
     const links = new Map<string, Link>();
-    const requested = ids === undefined ? undefined : new Set<string>(ids);
     for (const relation of relations?.links ?? []) {
-      if (requested && !requested.has(relation.sessionId)) continue;
       const request = prepared.request;
       if ('pullRequest' in request && (relation.repositoryId !== request.pullRequest.repositoryId
         || relation.pullRequest.number !== request.pullRequest.number)) return unavailable;

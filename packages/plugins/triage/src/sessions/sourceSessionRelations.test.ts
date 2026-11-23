@@ -5,7 +5,7 @@ import type { PluginAccountActionHandler } from '@happier-dev/plugin-sdk/actions
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
 
 import { activate } from '../accountRuntime.js';
-import { CORPUS_SESSION_LINKS_COLLECTION_ID, CORPUS_SOURCE_INSTANCES_COLLECTION_ID, CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
+import { CORPUS_SESSION_LINKS_COLLECTION_ID, CORPUS_SESSION_LINKS_INDEX_ID, CORPUS_SOURCE_INSTANCES_COLLECTION_ID, CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
 import { testkitEntryRef } from '../corpus/testkit/observations.test-support.js';
@@ -15,6 +15,32 @@ import { linkEntryToSession } from './entrySessionLinks.js';
 import { testkitConfiguredInstance, testkitReadOnlySourceSnapshot, TESTKIT_LINK_DISPLAY } from './testkit/entrySessionTestkit.test-support.js';
 
 describe('native PR Session relations', () => {
+    it('reads only the requested Sessions from the corpus index', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        const entryRef = testkitEntryRef();
+        const configured = testkitConfiguredInstance();
+        control.sourceInstances.seed(toCorpusStoredValue({ instanceTag: 'a'.repeat(43),
+            lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configuredAtMs: 1,
+            sourceQualifiedId: `${entryRef.source.pluginId}/${entryRef.source.localId}`, configured }));
+        for (const sessionId of ['selected', 'outside']) {
+            expect(await linkEntryToSession({ collections, entryRef, sessionId, display: TESTKIT_LINK_DISPLAY, nowMs: 1234 }))
+                .toMatchObject({ status: 'linked' });
+        }
+        const query = vi.spyOn(collections.sessionLinks, 'query');
+        const relations = createTriageSourceSessionRelations({ signal: new AbortController().signal,
+            services: { actions: {}, targetedContributions: { observeForSelf: () => ({
+                readCurrent: async () => testkitReadOnlySourceSnapshot(), dispose() {},
+            }) } },
+        } as unknown as Parameters<typeof createTriageSourceSessionRelations>[0], collections);
+
+        const result = await relations.readSessions(['selected', 'empty']);
+
+        expect(query).toHaveBeenCalledOnce();
+        expect(query.mock.calls[0]?.[0]).toMatchObject({ index: CORPUS_SESSION_LINKS_INDEX_ID.bySession,
+            prefixes: [['selected'], ['empty']] });
+        expect(result.links.map(link => link.sessionId)).toEqual(['selected']);
+    });
+
     it('retains the indexed corpus read refusal in each existing relation lane', async () => {
         const { collections, control } = createTestkitCorpusCollections();
         const entryRef = testkitEntryRef();

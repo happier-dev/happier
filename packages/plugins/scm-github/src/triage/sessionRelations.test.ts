@@ -207,6 +207,14 @@ describe('GitHub PR source relationship adapter', () => {
       expect(await journey.invokeBinding('session-pull-request-binding-v1', {
         kind: 'readRelations', credentialRef: GITHUB_TEST_ACCOUNT, sessionId: input.sessionId,
       })).toEqual(result);
+      expect(await journey.source.invokeAction(GITHUB_TRIAGE_ACTION_IDS_V1.linkSession,
+        { ...input, sessionId: 'outside', linked: true }, { surface: 'plugin' })).toEqual({ status: 'linked' });
+      expect(await journey.source.invokeAction(GITHUB_TRIAGE_ACTION_IDS_V1.readSessionLinks, {
+        v: 1, instance: journey.instance, sessionIds: ['session-1', 'empty'],
+      }, { surface: 'plugin' })).toEqual({ kind: 'sessionSet', slices: [
+        { sessionId: 'session-1', result: { kind: 'complete', links: [expect.objectContaining({ sessionId: 'session-1', localRef: journey.localRef })] } },
+        { sessionId: 'empty', result: { kind: 'complete', links: [] } },
+      ] });
     } finally { await journey.dispose(); }
   });
 
