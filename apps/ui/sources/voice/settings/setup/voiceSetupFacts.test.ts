@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Message } from '@happier-dev/session-core/messages';
 import type { VoiceRoleReadiness } from '@/voice/registry/readiness';
-import { deriveVoiceSetupFacts } from './voiceSetupFacts';
+import { deriveVoiceSetupFacts, readVoiceSetupTryTurn } from './voiceSetupFacts';
 import { VoiceAgentTurnV1Schema } from '@happier-dev/protocol/messages/structured/voiceAgentTurnV1';
 
 const ready: VoiceRoleReadiness = {
@@ -69,5 +69,27 @@ describe('Voice setup facts', () => {
             .toMatchObject({ firstTurnComplete: true, complete: false });
         expect(deriveVoiceSetupFacts({ ...input, messages: [user, { ...reply, meta: undefined }] }).firstTurnComplete).toBe(false);
         expect(deriveVoiceSetupFacts({ ...input, messages: [user, { ...reply, meta: { happier: { kind: 'voice_note.v1', payload: { v: 1 } } } }] }).firstTurnComplete).toBe(false);
+    });
+});
+
+describe('Voice setup try turn', () => {
+    // The input owner's recorded shape for a direct-Session spoken turn (live QA 2026-11-23, Account F).
+    const spokenMeta = { happierProvenanceV1: { v: 1, kind: 'voice' } };
+    const typedMeta = { sentFrom: 'web' };
+
+    it('shows the words said in this call as soon as they are queued, then the newest answer after them', () => {
+        const queued = { text: 'WHAT ARE MY SESSIONS DOING', createdAt: 100, rawRecord: { meta: spokenMeta } };
+        expect(readVoiceSetupTryTurn({ messages: [], pending: [queued], since: 50 })).toEqual({ said: queued.text, reply: null });
+
+        const said: Message = { ...user, id: 'said', createdAt: 100, text: queued.text, meta: spokenMeta } as Message;
+        const first: Message = { ...reply, id: 'first', createdAt: 110, text: 'Pulling the rundown now.', meta: undefined } as Message;
+        const answer: Message = { ...reply, id: 'answer', createdAt: 130, text: 'You have one live session.', meta: undefined } as Message;
+        expect(readVoiceSetupTryTurn({ messages: [answer, said, first], pending: [], since: 50 })).toEqual({ said: queued.text, reply: answer.text });
+    });
+
+    it('never lights the phrase from typed input or from an earlier call', () => {
+        const typed: Message = { ...user, id: 'typed', createdAt: 100, text: 'what are my sessions doing', meta: typedMeta } as Message;
+        const earlier: Message = { ...user, id: 'earlier', createdAt: 10, meta: spokenMeta } as Message;
+        expect(readVoiceSetupTryTurn({ messages: [typed, earlier], pending: [], since: 50 })).toEqual({ said: null, reply: null });
     });
 });

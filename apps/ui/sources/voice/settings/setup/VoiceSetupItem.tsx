@@ -1,7 +1,6 @@
 import * as React from 'react';
-import { AppState, Platform, View } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { VoiceConversationActionOutputSchemas, VoiceSetupMicrophonePermissionActionResultSchema } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
-import { StyleSheet } from 'react-native-unistyles';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
@@ -13,16 +12,18 @@ import {
     type VoiceAttemptControlProjection,
     type VoiceAttemptIdleTarget,
 } from '@/components/voice/attempt/useVoiceAttemptControl';
-import { VoiceCompactTranscript } from '@/components/voice/presence/VoiceCompactTranscript';
 import { VoiceMarkArt } from '@/components/voice/presence/VoiceMark';
-import { VoiceStatusLine } from '@/components/voice/presence/VoiceStatusLine';
 import { VoiceTransport } from '@/components/voice/presence/VoiceTransport';
 import { registerVoiceSetupPresentation } from '@/components/voice/presence/voiceCompanionSectionReveal';
+import { useVoiceSurfaceConversationState } from '@/components/voice/surface/useVoiceSurfaceConversationState';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
 import { useIsTablet } from '@/utils/platform/responsive';
-import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, useSetting } from '@/sync/domains/state/storage';
+import { useSessionPendingMessages } from '@/sync/store/hooks';
+import { stripMarkdown } from '@/utils/sessions/messageUtils';
+import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
 import {
@@ -38,11 +39,19 @@ import { useVoiceSettingsMutable } from '@/voice/settings/useVoiceSettingsMutabl
 import { resolveVoiceSettingsRecoveryTarget } from '@/voice/settings/voiceSettingsRouteFocus';
 import { recoverVoiceSettingsReadiness } from '@/voice/settings/voiceSettingsRecovery';
 import { useVoiceProviderDeclarationDemand } from '@/voice/registry/useVoiceProviderDeclarationDemand';
+import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
+import { useVoiceProviderRegistryRevision } from '@/voice/registry/useVoiceProviderRegistryRevision';
+import { useVoiceSessionSnapshot } from '@/voice/session/voiceSession';
+import { resolveVoicePresentedProviderId } from '@/voice/settings/resolveVoiceProviderId';
 
-import { useVoiceSetupItem, VOICE_SETUP_STEP_ID } from './useVoiceSetupItem';
+import { useVoiceSetupConversationMessages, useVoiceSetupItem, VOICE_SETUP_STEP_ID } from './useVoiceSetupItem';
 import { VoiceSetupPanel, type VoiceSetupPanelActions, type VoiceSetupPanelModel } from './VoiceSetupPanel';
-import type { VoiceSetupFacts } from './voiceSetupFacts';
+import { readVoiceSetupTryTurn, type VoiceSetupFacts } from './voiceSetupFacts';
 import { isVoiceSetupFailed, readVoiceSetupNextStep } from './voiceSetupPresentation';
+import { resolveVoiceSetupHeardPhrase } from './voiceSetupHeardPhrase';
+import { VoiceSetupTryPhrase } from './VoiceSetupTryPhrase';
+
+const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
 
 /**
  * "Set up voice" as a Get set up block (lab `voice-moments` SA–SV): one item, two hosts — Home's Get
@@ -239,18 +248,66 @@ function nextLabel(next: VoiceSetupFacts['steps'][number]['id'] | null): string 
     }
 }
 
-/** The first try, live: the shared status line, the last heard line and the transport (End stays one press away). */
+/**
+ * The first try, live (lab T1/SC): the suggested phrase lit by what the recognizer really heard, the
+ * microphone line with the call's status and transport (End stays one press away), and the reply.
+ * Heard words and the reply come from the conversation's own transcript owner, the same projection
+ * the Voice section reads; nothing here recognizes or stores speech.
+ */
 const VoiceSetupTryReadout = React.memo(function VoiceSetupTryReadout(props: Readonly<{ voice: VoiceAttemptControlProjection }>) {
+    const voiceSettings = useSetting('voice');
+    const canonicalVoice = React.useMemo(() => voiceSettingsParse(voiceSettings), [voiceSettings]);
+    const snapshot = useVoiceSessionSnapshot();
+    useVoiceProviderRegistryRevision(voiceProviderRegistry);
+    const providerId = resolveVoicePresentedProviderId(snapshot, canonicalVoice, voiceProviderRegistry) ?? 'off';
+    // The try is the person's own first conversation, shown in place: it reads the transcript while
+    // it runs whether or not the separate activity feed is on.
+    const { transcriptEntries } = useVoiceSurfaceConversationState({
+        providerId,
+        activeControlSessionId: props.voice.sessionId,
+        surfaceSessionId: null,
+        transcriptEnabled: props.voice.live,
+        voiceSettings,
+    });
+    // A provider that streams its transcript lights words as they are recognized; a direct Session
+    // has no separate Voice conversation, so its turn shows once the recognized words are queued in
+    // the target Session.
+    const conversation = props.voice.conversationSessionAddress ?? props.voice.targetSessionAddress ?? null;
+    const { messages } = useVoiceSetupConversationMessages(conversation);
+    const { messages: pending } = useSessionPendingMessages(conversation?.sessionId ?? '');
+    const turn = React.useMemo(() => {
+        const live = readTranscriptTurn(transcriptEntries);
+        const written = readVoiceSetupTryTurn({ messages, pending, since: props.voice.elapsedStartedAt });
+        const reply = live.reply ?? written.reply;
+        // The reply is a glimpse: the chat beside it renders the full Markdown.
+        return { said: live.said ?? written.said, reply: reply ? stripMarkdown(reply) : null };
+    }, [messages, pending, props.voice.elapsedStartedAt, transcriptEntries]);
+    const phrase = t('voiceMoments.setupTryPhrase');
+    const heard = React.useMemo(() => resolveVoiceSetupHeardPhrase(phrase, turn.said), [phrase, turn.said]);
     return (
-        <View style={styles.readout}>
-            <View style={styles.readoutRow}>
-                <VoiceStatusLine voice={props.voice} size="island" />
-                <VoiceTransport voice={props.voice} size="island" />
-            </View>
-            <VoiceCompactTranscript voice={props.voice} />
-        </View>
+        <VoiceSetupTryPhrase
+            testID="voice-setup.try"
+            heard={heard}
+            microphone={{
+                label: props.voice.micStateLabel,
+                state: props.voice.statusWord,
+                trailing: <VoiceTransport voice={props.voice} size="island" />,
+            }}
+            reply={turn.reply}
+        />
     );
 });
+
+/** The latest thing said and the reply that followed it, from the conversation's live transcript. */
+function readTranscriptTurn(entries: readonly Readonly<{ kind: string; text: string }>[]): Readonly<{ said: string | null; reply: string | null }> {
+    let reply: string | null = null;
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+        const entry = entries[index]!;
+        if (entry.kind === 'assistant' && reply === null) reply = entry.text;
+        if (entry.kind === 'user') return { said: entry.text, reply };
+    }
+    return { said: null, reply: null };
+}
 
 /**
  * The microphone permission as the platform reports it, without prompting: read once when the block
@@ -284,16 +341,3 @@ function useObservedMicrophonePermission(executeValue: ReturnType<typeof useMoun
     }, [executeValue]);
     return { permission, allow };
 }
-
-const styles = StyleSheet.create(() => ({
-    readout: {
-        alignSelf: 'stretch',
-        gap: 4,
-    },
-    readoutRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 12,
-    },
-}));

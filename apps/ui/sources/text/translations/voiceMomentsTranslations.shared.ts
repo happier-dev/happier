@@ -17,8 +17,7 @@ export type VoiceMomentsTranslation = Readonly<{
     setupServiceDetail: string;
     setupChange: string;
     setupReadinessTitle: (params: Readonly<{ service: string }>) => string;
-    setupReadinessDone: (params: Readonly<{ service: string }>) => string;
-    setupReadinessGeneric: string;
+    setupReadinessDone: string;
     setupReadinessTitleGeneric: string;
     setupReadinessUnknown: string;
     setupReadinessCheck: string;
@@ -33,7 +32,8 @@ export type VoiceMomentsTranslation = Readonly<{
     setupMicrophoneCheckAgain: string;
     setupOpenSystemSettings: string;
     setupTryTitle: string;
-    setupTryDetail: string;
+    setupTryLead: string;
+    setupTryPhrase: string;
     setupTryAction: string;
     setupTryDone: string;
     setupTryNeedsService: string;
@@ -89,8 +89,7 @@ export const voiceMomentsTranslationsEnglish = { en: {
         setupServiceDetail: 'What hears you and speaks back. You can change it later.',
         setupChange: 'Change',
         setupReadinessTitle: ({ service }) => `Finish setting up ${service}`,
-        setupReadinessDone: ({ service }) => `${service} is ready`,
-        setupReadinessGeneric: 'The service',
+        setupReadinessDone: 'Everything it needs is set up',
         setupReadinessTitleGeneric: 'Get the service ready',
         setupReadinessUnknown: 'Open its settings to check what it still needs.',
         setupReadinessCheck: 'Check setup',
@@ -105,7 +104,8 @@ export const voiceMomentsTranslationsEnglish = { en: {
         setupMicrophoneCheckAgain: 'Check again',
         setupOpenSystemSettings: 'Open settings',
         setupTryTitle: 'Try it',
-        setupTryDetail: 'Ask “What are my sessions doing?” Your words land in the conversation like any message.',
+        setupTryLead: 'Say it out loud',
+        setupTryPhrase: 'What are my sessions doing?',
         setupTryAction: 'Try it',
         setupTryDone: 'Tried it',
         setupTryNeedsService: 'Available once the service is ready.',

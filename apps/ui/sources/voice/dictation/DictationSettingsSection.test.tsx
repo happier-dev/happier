@@ -380,6 +380,26 @@ describe('DictationSettingsSection', () => {
     expect(readLocalConversationVoiceSettings(setVoice.mock.calls[0]![0])).toEqual(readLocalConversationVoiceSettings(dictationVoice));
   });
 
+  it('presents an unset Dictation language as Automatic, never as nothing chosen', async () => {
+    const { DictationSettingsSection } = await import('./DictationSettingsSection');
+    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    for (const language of [null, '']) {
+      let tree!: ReturnType<typeof create>;
+      await act(async () => {
+        tree = create(<DictationSettingsSection
+          voice={{ ...voiceSettingsDefaults, dictation: { ...voiceSettingsDefaults.dictation, language } }}
+          setVoice={vi.fn()}
+          executionMachineId={null}
+          localAvailability={localAvailability}
+        />);
+        registerStandardCleanupTarget(tree);
+      });
+      const languageMenu = tree.root.findAllByType(DropdownMenu).find((node) =>
+        Array.isArray(node.props.items) && node.props.items.some((item: { id: string }) => item.id === 'automatic'));
+      expect(languageMenu?.props.selectedId).toBe('automatic');
+    }
+  });
+
   it('renders only the explicitly selected provider details and checks readiness passively', async () => {
     const { DictationSettingsSection } = await import('./DictationSettingsSection');
     const voice = {

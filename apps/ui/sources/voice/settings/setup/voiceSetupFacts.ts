@@ -1,6 +1,7 @@
 import type { Message } from '@happier-dev/session-core/messages';
 import { readConversationTurnOriginV1FromMessageMeta } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
 import { readVoiceAgentTurnPayloadFromMeta } from '@happier-dev/protocol/messages/structured/voiceAgentTurnLocalId';
+import { readSessionMessageProvenance } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { MicrophonePermissionState } from '@/utils/platform/microphonePermissions';
 import type { VoiceRoleReadiness } from '@/voice/registry/readiness';
 import { readCanonicalVoiceTranscriptAttemptKey } from '@/voice/transcript/canonicalProjector';
@@ -41,6 +42,47 @@ export function deriveVoiceSetupFacts(input: VoiceSetupInput) {
         readiness: input.readiness, canTry: infrastructureReady, firstTurnComplete, complete,
         // Which microphone fact blocks the step: a denial and a missing device recover differently.
         microphonePermission: input.microphonePermission };
+}
+
+/** Input the person said aloud: the input owner's Voice provenance, or a realtime Voice turn. */
+function isSpokenInput(meta: unknown): boolean {
+    if (readSessionMessageProvenance(meta, 'stored')?.kind === 'voice') return true;
+    const origin = readConversationTurnOriginV1FromMessageMeta(meta);
+    return origin?.channel === 'realtime_conversation' && origin.modality === 'voice';
+}
+
+/**
+ * The try's latest turn as the conversation holds it: the last thing said aloud (queued or written)
+ * and the newest answer written after it (a direct Session answers through its own agent). Only rows
+ * from this call count, so words said in an earlier call never light the phrase.
+ */
+export function readVoiceSetupTryTurn(input: Readonly<{
+    messages: readonly Message[];
+    pending: readonly Readonly<{ text: string; createdAt: number; rawRecord?: unknown }>[];
+    since: number | null;
+}>): Readonly<{ said: string | null; reply: string | null }> {
+    type Row = Readonly<{ at: number; said?: string; reply?: string }>;
+    const rows: Row[] = [];
+    for (const message of input.messages) {
+        if (message.kind === 'user-text' && message.text.trim() && isSpokenInput(message.meta)) rows.push({ at: message.createdAt, said: message.text });
+        else if (message.kind === 'agent-text' && !message.isThinking && message.text.trim()) rows.push({ at: message.createdAt, reply: message.text });
+    }
+    for (const queued of input.pending) {
+        const meta = queued.rawRecord && typeof queued.rawRecord === 'object' ? (queued.rawRecord as { meta?: unknown }).meta : undefined;
+        if (queued.text.trim() && isSpokenInput(meta)) rows.push({ at: queued.createdAt, said: queued.text });
+    }
+    let said: string | null = null;
+    let reply: string | null = null;
+    for (const row of rows.sort((left, right) => left.at - right.at)) {
+        if (input.since !== null && row.at < input.since) continue;
+        if (row.said !== undefined) {
+            said = row.said;
+            reply = null;
+        } else if (said !== null) {
+            reply = row.reply ?? reply;
+        }
+    }
+    return { said, reply };
 }
 
 export function hasRetainedVoiceInputAndReply(messages: readonly Message[]): boolean {

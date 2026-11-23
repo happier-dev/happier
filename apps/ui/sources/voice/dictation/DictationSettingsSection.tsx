@@ -368,6 +368,8 @@ export function DictationSettingsSection(props: Parameters<typeof useVoiceDictat
               selected={selected}
               disabled={!option.selectable}
               pressableRef={selected ? providerControlRef : undefined}
+              // An engine that is ready says so in the meta column (lab D); the chosen one carries the check.
+              detail={!selected && engineTone === 'ready' ? t('settingsVoice.pages.pipeline.ready') : undefined}
               rightElement={selected ? <Icon name="check-circle" size={22} color={theme.colors.text.primary} /> : null}
               showChevron={false}
               onPress={() => selectEngine(option.id)}
@@ -390,8 +392,9 @@ export function DictationSettingsSection(props: Parameters<typeof useVoiceDictat
             variant="selectable"
             search={true}
             searchPlaceholder={t('settingsVoice.preferredLanguage')}
-            // An empty id reads as "nothing chosen"; automatic is a real choice with its own id.
-            selectedId={dictation.language ?? AUTOMATIC_LANGUAGE_ID}
+            // An empty id reads as "nothing chosen"; automatic is a real choice with its own id,
+            // and an unset language (null or empty) is automatic.
+            selectedId={dictation.language || AUTOMATIC_LANGUAGE_ID}
             showCategoryTitles={false}
             matchTriggerWidth={true}
             connectToTrigger={true}

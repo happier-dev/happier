@@ -18,6 +18,8 @@ import { VoiceServiceGallery, type VoiceServiceTile } from '@/voice/settings/pan
 
 import type { VoiceSetupFacts } from './voiceSetupFacts';
 import { isVoiceSetupFailed, readVoiceSetupLight } from './voiceSetupPresentation';
+import { resolveVoiceSetupHeardPhrase } from './voiceSetupHeardPhrase';
+import { VoiceSetupTryPhrase } from './VoiceSetupTryPhrase';
 
 /** Below this width the planet sits above the steps (lab SBp) instead of beside them (SB). */
 const SIDE_BY_SIDE_MIN_WIDTH_PX = 600;
@@ -130,6 +132,8 @@ export const VoiceSetupPanel = React.memo(function VoiceSetupPanel(props: Readon
                     </Text>
                     {complete ? (
                         <>
+                            {/* The first reply finishes setup while the conversation is still on: it stays in view. */}
+                            {model.tryLive && props.renderTry ? <View style={styles.doneTry}>{props.renderTry}</View> : null}
                             <View style={styles.gestures}>
                                 <GestureHint keyLabel={t('voiceMoments.setupGestureTap')} meaning={t('voiceMoments.setupGestureStartEnd')} />
                                 {model.shortcutLabel ? (
@@ -195,7 +199,6 @@ function buildStep(
     context: StepContext,
 ): SetupStep {
     const testID = `voice-setup.step.${step.id}`;
-    const service = model.serviceTitle ?? t('voiceMoments.setupReadinessGeneric');
     switch (step.id) {
         case 'service': {
             const choosing = stepMarker(step.state) === 'current' || context.changingService;
@@ -249,7 +252,7 @@ function buildStep(
             };
         }
         case 'readiness': {
-            if (step.state === 'done') return { key: step.id, testID, state: 'done', title: t('voiceMoments.setupReadinessDone', { service }) };
+            if (step.state === 'done') return { key: step.id, testID, state: 'done', title: t('voiceMoments.setupReadinessDone') };
             const current = stepMarker(step.state) === 'current';
             const reason = model.readiness?.reason ?? (current ? t('voiceMoments.setupReadinessUnknown') : undefined);
             const action = model.readiness?.action ?? t('voiceMoments.setupReadinessCheck');
@@ -324,10 +327,15 @@ function buildStep(
                 testID,
                 state: stepMarker(step.state),
                 title: t('voiceMoments.setupTryTitle'),
-                detail: current ? (model.startRefusal?.reason ?? t('voiceMoments.setupTryDetail')) : undefined,
+                // The phrase card says what to do; the detail line speaks only when Start is refused.
+                detail: current ? model.startRefusal?.reason : undefined,
                 body: current ? (
                     model.tryLive && context.renderTry ? context.renderTry : (
                         <>
+                            <VoiceSetupTryPhrase
+                                testID={`${testID}.phrase`}
+                                heard={resolveVoiceSetupHeardPhrase(t('voiceMoments.setupTryPhrase'), null)}
+                            />
                             <RoundButton
                                 testID={`${testID}.try`}
                                 size="small"
@@ -448,6 +456,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
     },
     steps: {
+        marginTop: theme.space.s16,
+    },
+    doneTry: {
         marginTop: theme.space.s16,
     },
     gallery: {

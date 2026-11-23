@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { Text } from '@/components/ui/text/Text';
 import { renderScreen, type RenderScreenResult } from '@/dev/testkit';
 import { t } from '@/text';
 
@@ -128,5 +129,23 @@ describe('VoiceSetupPanel', () => {
         expect(screen.findByTestId('setup.caption')).toBeNull();
         screen.pressByTestId('setup.done');
         expect(handlers.onDone).toHaveBeenCalledTimes(1);
+    });
+
+    it('offers the phrase to say before Try, with nothing lit until it is really heard', async () => {
+        screen = await renderScreen(<VoiceSetupPanel testID="setup" model={model({ done: [true, true, true, false] })} actions={actions()} />);
+
+        expect(screen.findByTestId('voice-setup.step.first_turn.phrase')).not.toBeNull();
+        expect(screen.getTextContent()).toContain(t('voiceMoments.setupTryPhrase'));
+        expect(screen.findByTestId('voice-setup.step.first_turn.phrase.heard')).toBeNull();
+    });
+
+    it('keeps the live try in view when its first reply completes setup', async () => {
+        const live = { ...model({ done: [true, true, true, true] }), tryLive: true };
+        screen = await renderScreen(
+            <VoiceSetupPanel testID="setup" model={live} actions={actions()} renderTry={<Text>live try</Text>} />,
+        );
+
+        expect(screen.getTextContent()).toContain('live try');
+        expect(screen.findByTestId('setup.done')).not.toBeNull();
     });
 });

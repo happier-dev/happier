@@ -214,10 +214,11 @@ function PipelineStepTile(props: Readonly<{ step: VoicePipelineStep }>) {
             style={[styles.tile, toneStyle, step.selected ? styles.tileSelected : null]}
         >
             <Text style={styles.role} numberOfLines={1}>{step.roleLabel}</Text>
-            {/* A tile is one line per fact; what does not fit ellipsizes and the row form shows it whole. */}
+            {/* The engine's name may take a second line (a three-word name fits no third of a page column);
+                other facts are one line each, and the row form shows them whole. */}
             <View style={styles.engine}>
                 <View style={styles.mark}>{step.mark}</View>
-                <Text style={styles.engineName} numberOfLines={1}>{step.name}</Text>
+                <Text style={styles.engineName} numberOfLines={2}>{step.name}</Text>
             </View>
             <View style={styles.where}>
                 <View style={styles.whereGlyph}>
