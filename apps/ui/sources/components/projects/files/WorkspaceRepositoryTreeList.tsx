@@ -7,6 +7,7 @@ import type { useUnistyles } from 'react-native-unistyles';
 
 import { FilesystemBrowser } from '@/components/ui/filesystemBrowser/FilesystemBrowser';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
+import { buildRepositoryFileDragItem } from '@/components/appShell/workspace/workspaceEntitySource';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
 import { FilesystemBrowserRow, type FilesystemBrowserRowActionsControl } from '@/components/ui/filesystemBrowser/FilesystemBrowserRow';
@@ -617,12 +618,11 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
             <WorkspaceDestinationRow existingMenu={Boolean(rowActions)} href={node.type === 'file' ? rowState.fileHref?.(node.path) ?? null : null}
                 dragSource={rowState.accountScope?.serverId === rowState.workspaceScope.serverId}
                 entityTitle={node.type === 'directory' ? `${node.name}/` : node.name}
-                entityItem={(node.type === 'file' || node.type === 'directory') && rowState.accountScope?.serverId === rowState.workspaceScope.serverId ? {
-                    kind: 'repository-file', scope: rowState.accountScope,
-                    entryKind: node.type,
-                    machineId: rowState.workspaceScope.machineId,
-                    path: resolveMachineAbsolutePath({ rootPath: rowState.workspaceScope.rootPath, requestPath: node.path }),
-                } : null}
+                entityItem={(node.type === 'file' || node.type === 'directory') && rowState.accountScope?.serverId === rowState.workspaceScope.serverId
+                    ? buildRepositoryFileDragItem({
+                        scope: rowState.accountScope, workspace: rowState.workspaceScope, entryKind: node.type,
+                        path: resolveMachineAbsolutePath({ rootPath: rowState.workspaceScope.rootPath, requestPath: node.path }),
+                    }) : null}
                 // Every row mounts again as it scrolls in: the emphasis rides the destination's own host.
                 style={proposalEmphasis === 'in'
                     ? { backgroundColor: rowState.theme.colors.state.active.background }

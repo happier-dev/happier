@@ -34,7 +34,8 @@ import { useWorkspaceRefs, useWorkspaceReviewCommentsDrafts } from '@/sync/domai
 import type { LocalServiceLauncherState } from '@/sync/domains/local/services/launch';
 import type { PluginBrowserProjectionModel } from '@/sync/domains/plugins/browser/targets';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
-import { resolveWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
+import { resolveWorkspaceRefByAddress, resolveWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { useWorkspaceDetailsMachineName } from './useWorkspaceDetailsMachineName';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { buildWorkspaceCacheKey, tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
@@ -177,15 +178,11 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         pane.openDetailsTab(createBrowserLaunchpadDetailsTab(), { intent: 'pinned' });
     }, [pane.openDetailsTab]);
     const workspaceSyncSelectedRefId = React.useCallback((summary: Parameters<typeof createWorkspaceSyncRelationshipDetailsTab>[0]) => {
-        const selectedKey = tryBuildWorkspaceCacheKey({
-            serverId: props.workspaceRef.serverId,
-            machineId: props.workspaceRef.machineId,
-            rootPath: effectiveRootPath,
-        });
-        return [summary.alpha, summary.beta].find((endpoint) =>
-            endpoint.workspaceRef && tryBuildWorkspaceCacheKey(endpoint.workspaceRef) === selectedKey,
-        )?.workspaceRefId ?? props.workspaceRef.id;
-    }, [effectiveRootPath, props.workspaceRef.id, props.workspaceRef.machineId, props.workspaceRef.serverId]);
+        const selected = selectedWorkspaceRef ?? props.workspaceRef;
+        const endpoints = [summary.alpha, summary.beta].flatMap(({ workspaceRef }) => workspaceRef ? [workspaceRef] : []);
+        const resolved = resolveWorkspaceRefByAddress(endpoints, workspaceAddressFromRefV2(selected));
+        return resolved.kind === 'resolved' ? resolved.ref.id : selected.id;
+    }, [props.workspaceRef, selectedWorkspaceRef]);
     const openWorkspaceSyncConflicts = React.useCallback((summary: Parameters<typeof createWorkspaceSyncConflictDetailsTab>[0]) => {
         pane.openDetailsTab(createWorkspaceSyncConflictDetailsTab(summary, workspaceSyncSelectedRefId(summary)), { intent: 'pinned' });
     }, [pane.openDetailsTab, workspaceSyncSelectedRefId]);

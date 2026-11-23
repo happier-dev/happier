@@ -4,7 +4,7 @@ import { t } from '@/text';
 import { useActiveServerAccountScope, useWorkspaceRefs, usePinnedWorkspaceRefIds, useProjectOrganizations, useProjectAccountRows, useIsDataReady, useActiveMachineFacts, useIsActiveMachineListSettled } from '@/sync/domains/state/storage';
 import { isProjectAccountRowsCensusComplete } from '@/sync/store/domains/projectAccountRows';
 import type { WorkspaceRefUnconfirmed } from './detail/useWorkspaceRefById';
-import { projectWorkspaceRefV1, workspaceAddressFromRefV1, type QualifiedProjectKeyV1, type WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces';
+import { isManagedWorkspaceRefV2, projectWorkspaceRefV1, workspaceAddressFromRefV2, type QualifiedProjectKeyV1, type WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
 import { Modal } from '@/modal';
@@ -28,7 +28,7 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useProjectsSourcesComposition } from './useProjectsSourcesComposition';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
-import { buildProjectsTreeHiddenItems, buildProjectsTreeProjects, type ProjectsTreeProject } from './projectsTreeRows';
+import { buildProjectsTreeHiddenItems, buildProjectsTreeProjects, type ProjectsTreeMachineFacts, type ProjectsTreeProject } from './projectsTreeRows';
 import { useProjectsTreeEnvironments } from './useProjectsTreeEnvironments';
 import { storage } from '@/sync/domains/state/storage';
 import { listSessionFolders } from '@/utils/sessions/recentPaths';
@@ -42,7 +42,10 @@ import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachabilit
 import { resolveWorkspaceRefByAddress } from '@/sync/domains/workspaces/workspaceRefs';
 import { ActionApprovalRequestCreatedResultSchema, createActionExecuteFailureError, type ActionApprovalRequestCreatedResult,
     type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { PluginUiNewSessionSeedV1 } from '@happier-dev/protocol/plugins/ui';
+import { workspaceScopeFromProject } from '@/sync/domains/workspaces/workspaceScope';
+import { buildProjectNewSessionOrigin, buildProjectNewSessionSeed } from './detail/projectRouteState';
+import { readManagedLaunchName } from '@/components/approvals/approvalReferenceReading';
+import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
 
 type ProjectHideUndo = Readonly<{ isCurrent(): boolean; undo(): Promise<boolean> }>;
 
@@ -51,8 +54,6 @@ type ProjectHideUndo = Readonly<{ isCurrent(): boolean; undo(): Promise<boolean>
  * subtitle and attention, and every action on a project — shared by the Projects page and the
  * Projects column, so the two can never disagree about what a project is or what it does.
  */
-type TreeMachineFacts = Readonly<{ name: string | null; homeDir: string | null; online: boolean | null }>;
-
 /** A Session folder no checkout covers yet: its Add opens it through Project Open on its Machine. */
 const SESSION_FOLDER_KEY_PREFIX = 'session-folder:';
 
@@ -128,17 +129,13 @@ export function useProjectsListModel() {
     // One naming owner for every Machine the tree shows: listed Machines with the same name get the
     // suffix the pickers use, and a checkout on a Machine this Home no longer lists says so. A Machine whose name is still
     // loading has none yet (never "Loading…", owner 11-15): its rows leave it out until the name arrives.
-    const machineNames = React.useMemo(() => resolveSettledMachineDisplayNames([
-        ...machineDisplays,
-        ...(machineListSettled ? [...new Set(treeRefs.map(ref => ref.machineId))].filter(id => !machinesById.has(id))
-            .map(id => ({ id, absence: 'unlisted' as const })) : []),
-    ]), [machineDisplays, machineListSettled, machinesById, treeRefs]);
+    const machineNames = React.useMemo(() => resolveSettledMachineDisplayNames(machineDisplays), [machineDisplays]);
     // The Machine facts the tree shows (name, home directory, online), retained while equal: a daemon,
     // key or resource publication replaces Machine records without changing any of them.
-    const previousTreeMachines = React.useRef<Readonly<Record<string, TreeMachineFacts>> | undefined>(undefined);
+    const previousTreeMachines = React.useRef<Readonly<Record<string, ProjectsTreeMachineFacts>> | undefined>(undefined);
     const treeMachines = React.useMemo(() => {
         const presenceById = new Map(allMachines.map((machine, index) => [machine.id, machinePresence[index]] as const));
-        const next: Record<string, TreeMachineFacts> = {};
+        const next: Record<string, ProjectsTreeMachineFacts> = {};
         for (const machineId of new Set([...machinesById.keys(), ...machineNames.keys()])) {
             const reachability = accountScope ? presenceById.get(machineId)?.reachability ?? 'unknown' : 'unknown';
             next[machineId] = { name: machineNames.get(machineId) ?? null, homeDir: machinesById.get(machineId)?.metadata?.homeDir ?? null,
@@ -146,19 +143,24 @@ export function useProjectsListModel() {
         }
         return previousTreeMachines.current = retainDeep(previousTreeMachines.current, next);
     }, [accountScope, allMachines, machineNames, machinePresence, machinesById]);
+    const readTreeMachine = React.useCallback((machineId: string) => treeMachines[machineId]
+        ?? { name: null, homeDir: null, online: null, unlisted: machineListSettled }, [machineListSettled, treeMachines]);
+    const managedServerIds = treeRefs.some(isManagedWorkspaceRefV2) && activeServer.serverId ? [activeServer.serverId] : [];
+    const { machinesByServerId } = useManagedMachineInventory(managedServerIds);
+    const managedNames = React.useMemo(() => new Map(machinesByServerId[activeServer.serverId]?.map(row =>
+        [row.id, readManagedLaunchName(row)] as const)), [activeServer.serverId, machinesByServerId]);
+    const readManagedName = React.useCallback((serverId: string, managedId: string) =>
+        areServerProfileIdentifiersEquivalent(serverId, activeServer.serverId) ? managedNames.get(managedId) ?? null : null,
+    [activeServer.serverId, managedNames]);
     const previousTreeProjects = React.useRef<{ visible: ProjectsTreeProject[]; hidden: ProjectsTreeProject[] }>({ visible: [], hidden: [] });
     const treeProjection = React.useMemo(() => {
         const project = (projectGroups: typeof groups.projectGroups, previousProjects: ProjectsTreeProject[]) => buildProjectsTreeProjects({
             previousProjects,
             groups: projectGroups, projectName: resolveWorkspaceRefDisplayName,
-            machine: machineId => {
-                const facts = treeMachines[machineId];
-                return { name: facts ? facts.name : machineListSettled ? t('machine.unlistedMachine') : null, homeDir: facts?.homeDir ?? null, online: facts?.online ?? null };
-            },
+            machine: readTreeMachine, managedName: readManagedName,
             sources: composition.sources, teamName: composition.teamName,
         });
-        // Rows are named after their Machines: until the Machine inventory has loaded, any Machine would read as
-        // "unlisted" and every path as absolute, so the tree waits (the column shows its quiet rows) instead of guessing.
+        // Wait for the Machine inventory before rendering checkout paths and Machine names.
         if (!machinesReady) {
             previousTreeProjects.current = { visible: [], hidden: [] };
             return { treeProjects: [], hiddenTreeProjects: [], hiddenItems: [] };
@@ -167,17 +169,22 @@ export function useProjectsListModel() {
         const treeProjects = project(groups.projectGroups, previousTreeProjects.current.visible);
         previousTreeProjects.current = { visible: treeProjects, hidden: hiddenTreeProjects };
         return { treeProjects, hiddenTreeProjects, hiddenItems: buildProjectsTreeHiddenItems(hiddenTreeProjects) };
-    }, [composition.sources, composition.teamName, groups.hiddenProjectGroups, groups.projectGroups, machineListSettled, machinesReady, treeMachines]);
+    }, [composition.sources, composition.teamName, groups.hiddenProjectGroups, groups.projectGroups, machinesReady, readTreeMachine, readManagedName]);
     const newSessionHere = React.useCallback(async (ref: WorkspaceRefV1): Promise<ActionExecuteResult> => {
         const lifetime = captureActiveServerAccountScopeLifetime();
         const retired = { ok: false as const, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
         if (!lifetime?.isCurrent() || !areServerProfileIdentifiersEquivalent(lifetime.scope.serverId, ref.serverId)) return retired;
-        const target = resolveWorkspaceRefByAddress(treeRefs, workspaceAddressFromRefV1(ref));
-        if (target.kind !== 'resolved') return { ok: false, errorCode: 'workspace_ref_unavailable', error: 'workspace_ref_unavailable' };
+        const target = resolveWorkspaceRefByAddress(treeRefs, workspaceAddressFromRefV2(ref));
+        const unavailable = { ok: false as const, errorCode: 'workspace_ref_unavailable', error: 'workspace_ref_unavailable' };
+        if (target.kind !== 'resolved') return unavailable;
+        const scope = workspaceScopeFromProject(target.ref, target.ref.rootPath);
+        const origin = scope.workspace ? buildProjectNewSessionOrigin({
+            scope: lifetime.scope, workspace: scope.workspace, page: 'overview', routeParams: {},
+        }) : undefined;
+        if (origin === null) return unavailable;
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
         if (!lifetime.isCurrent()) return retired;
-        const seed = { placement: { kind: 'exactTarget', serverId: ref.serverId,
-            machineId: target.ref.machineId, directory: target.ref.rootPath } } satisfies PluginUiNewSessionSeedV1;
+        const seed = buildProjectNewSessionSeed(scope, origin);
         const result = await createFrontDoorActionExecute(createDefaultActionExecutor())('session.authoring.open', {
             seed,
         }, { surface: 'ui', authority: 'present_user', serverId: lifetime.scope.serverId,
@@ -189,22 +196,22 @@ export function useProjectsListModel() {
         return result;
     }, [treeRefs]);
     const saveAsSource = React.useCallback((ref: WorkspaceRefV1, draft?: Parameters<typeof composition.saveAsSource>[1]) => {
-        const resolved = resolveWorkspaceRefByAddress(treeRefs, workspaceAddressFromRefV1(ref));
+        const resolved = resolveWorkspaceRefByAddress(treeRefs, workspaceAddressFromRefV2(ref));
         return resolved.kind === 'resolved' ? composition.saveAsSource(resolved.ref, draft) : Promise.resolve(resolved);
     }, [composition.saveAsSource, treeRefs]);
 
     const openWorkspace = React.useCallback((ref: WorkspaceRefV1) => openProject(ref.id, {
-        workspaceAddress: workspaceAddressFromRefV1(ref),
+        workspaceAddress: workspaceAddressFromRefV2(ref),
     }), [openProject]);
     /**
      * A tree leaf (visible or hidden) opens its exact accepted checkout, resolved by full address; an Environment row
      * opens that Environment on the checkout's Project Deployments page.
      */
-    const openTreeRef = React.useCallback((refId: string, address?: WorkspaceAddressV1, environmentId?: string, database?: string) => {
+    const openTreeRef = React.useCallback((refId: string, address?: WorkspaceAddressV2, environmentId?: string, database?: string) => {
         if (!address || address.workspaceId !== refId) return;
         const resolution = resolveWorkspaceRefByAddress(treeRefs, address);
         if (resolution.kind !== 'resolved') return;
-        if (environmentId) void openProject(resolution.ref.id, { workspaceAddress: workspaceAddressFromRefV1(resolution.ref), environmentId,
+        if (environmentId) void openProject(resolution.ref.id, { workspaceAddress: workspaceAddressFromRefV2(resolution.ref), environmentId,
             ...(database ? { database } : {}) });
         else openWorkspace(resolution.ref);
     }, [openProject, openWorkspace, treeRefs]);
@@ -424,11 +431,8 @@ export function useProjectsListModel() {
      * its Machine, which adds it. Built when the menu opens, never while it is closed; an empty read draws no entry.
      */
     const readFromSessions = React.useCallback(() => {
-        const machine = (machineId: string) => {
-            const facts = treeMachines[machineId];
-            return { name: facts ? facts.name : machineListSettled ? t('machine.unlistedMachine') : null, homeDir: facts?.homeDir ?? null, online: facts?.online ?? null };
-        };
-        const accepted = buildProjectsTreeProjects({ groups: groups.unlistedProjectGroups, projectName: resolveWorkspaceRefDisplayName, machine });
+        const accepted = buildProjectsTreeProjects({ groups: groups.unlistedProjectGroups, projectName: resolveWorkspaceRefDisplayName,
+            machine: readTreeMachine, managedName: readManagedName });
         const refs = Array.isArray(workspaceRefsV1) ? workspaceRefsV1 : [];
         const serverId = activeServer.serverId;
         // The Session list census of this Home: the rows the sessions list itself draws.
@@ -437,13 +441,14 @@ export function useProjectsListModel() {
             && isWorkspacePathWithinRootV1(folder.path, ref.rootPath)));
         return [...accepted, ...folders.map((folder): ProjectsTreeProject => {
             const name = resolveWorkspacePathBasenameV1(folder.path) ?? folder.path;
-            const where = machine(folder.machineId);
+            const where = readTreeMachine(folder.machineId);
             const key = `${SESSION_FOLDER_KEY_PREFIX}${folder.machineId}:${folder.path}`;
-            return { key, name, checkouts: [{ refId: key, machineId: folder.machineId, machineName: where.name, label: name,
+            return { key, name, checkouts: [{ refId: key, machineId: folder.machineId,
+                machineName: where.unlisted ? t('machine.unlistedMachine') : where.name, label: name,
                 path: formatPathRelativeToHome(folder.path, where.homeDir ?? undefined), attention: null,
                 ...(where.online === false ? { offline: true } : {}) }] };
         })];
-    }, [activeServer.serverId, groups.unlistedProjectGroups, machineListSettled, treeMachines, workspaceRefsV1]);
+    }, [activeServer.serverId, groups.unlistedProjectGroups, readManagedName, readTreeMachine, workspaceRefsV1]);
     const addFromSessions = React.useCallback((key: string) => {
         if (!key.startsWith(SESSION_FOLDER_KEY_PREFIX)) { showHiddenProject(key); return; }
         const rest = key.slice(SESSION_FOLDER_KEY_PREFIX.length);
@@ -460,7 +465,7 @@ export function useProjectsListModel() {
     const { treeProjects } = treeProjection;
     const readGroupTargets = React.useCallback((exceptKey: string) => treeProjects.filter(project => project.key !== exceptKey).map(project => {
         const only = project.checkouts.length === 1 ? project.checkouts[0] : null;
-        return { key: project.key, title: project.name, ...(only ? { subtitle: `${only.machineName} · ${only.path}` } : {}) };
+        return { key: project.key, title: project.name, ...(only ? { subtitle: [only.machineName, only.path].filter(Boolean).join(' · ') } : {}) };
     }), [treeProjects]);
 
     const hasAnyProjects = groups.projectGroups.length > 0 || groups.hiddenProjectGroups.length > 0;

@@ -10584,7 +10584,7 @@ class Sync {
 
     /** An already-demanded SCM observation may enrich an existing accepted ref once. */
     public recordObservedWorkspaceRepositoryIdentity = async (
-        address: import('@happier-dev/protocol/workspaces/workspaceRefV1').WorkspaceAddressV1,
+        address: import('@happier-dev/protocol/workspaces/workspaceRefV1').WorkspaceAddressV2,
         identity: NonNullable<import('@happier-dev/protocol/workspaces/workspaceRefV1').WorkspaceRefV1['repositoryIdentity']>,
         expectedScope: AccountSettingsScope,
     ) => {

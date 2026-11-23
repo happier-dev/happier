@@ -1,6 +1,8 @@
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { t } from '@/text';
-import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { WorkspaceAddressV2, ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { readSourceTeamId } from './sources/projectSourceGroups';
 import { teamSetupPath } from '@/components/settings/teams/teamsRoutes';
@@ -10,6 +12,7 @@ import { readProjectSourceLink } from '@/sync/domains/workspaces/projectSourceLi
 import type { DeploymentEnvironmentState, DeploymentPlatformIdentity } from './deployments/rows/DeploymentEnvironmentRow';
 import { buildDeploymentEnvironmentHref, buildDeploymentProjectHref } from './deployments/deploymentNavigation';
 import { isSameDeploymentName } from './deployments/DeploymentEnvironmentCollection';
+import { checkoutPlaceKey, describeManagedCheckoutPlace } from './shell/projectCheckoutPlace';
 
 /**
  * The Projects tree's rows (plan 10 §2/§8, lab p-projects TREE/RULES): one Project's accepted
@@ -18,12 +21,12 @@ import { isSameDeploymentName } from './deployments/DeploymentEnvironmentCollect
  * only decides how they are drawn.
  *
  * - One checkout: one row, never a disclosure ("MacBook Pro · main").
- * - One machine, many checkouts: the machine folds into the Project row; checkouts sit under it.
- * - Many machines, one checkout each: the checkouts sit directly under the Project.
- * - Otherwise: Project → machine → checkout.
+ * - One place, many checkouts: the place folds into the Project row; checkouts sit under it.
+ * - Many places, one checkout each: the checkouts sit directly under the Project.
+ * - Otherwise: Project → place → checkout.
  *
  * Leaves open an exact checkout (its ref id). A Project row is the Project: its press opens the Project on
- * its most recently opened checkout, and only its chevron discloses (owner 11-08). A machine row only discloses.
+ * its most recently opened checkout, and only its chevron discloses (owner 11-08). A place row only discloses.
  * Every checkout leaf reads like a one-checkout Project row: its label, then where it lives ("NLDW3 · ~/code/x";
  * under a machine row, the path alone).
  */
@@ -40,9 +43,9 @@ export type ProjectsTreeCheckoutFacts = Readonly<{
 export type ProjectsTreeCheckout = Readonly<{
     /** The exact checkout this leaf opens (a WorkspaceRef id). */
     refId: string;
-    workspaceAddress?: WorkspaceAddressV1;
-    machineId: string;
-    /** `null` while the Machine's name is still loading: lines leave it out, never a placeholder (owner 11-15). */
+    workspaceAddress?: WorkspaceAddressV2;
+    machineId: string | null;
+    /** A Machine name or a managed workspace name with its controller hint. Null while the place name resolves. */
     machineName: string | null;
     /** Branch, or the checkout's folder name when its branch is not known. */
     label: string;
@@ -121,7 +124,7 @@ export type ProjectsTreeRow = Readonly<{
     source?: ProjectSurfaceTargetV1['source'];
     teamSetupHref?: string;
     level: number;
-    kind: 'project' | 'machine' | 'checkout' | 'environment' | 'service' | 'database';
+    kind: 'project' | 'machine' | 'workspace' | 'checkout' | 'environment' | 'service' | 'database';
     title: string;
     /** Quiet text on the title's line: the Team, the folded machine's name, or a machine leaf's label. */
     titleQualifier?: string | null;
@@ -130,12 +133,12 @@ export type ProjectsTreeRow = Readonly<{
     /** The machine whose glyph a machine row (or a machine leaf) carries. */
     machineId?: string | null;
     /** Machine leaves draw the machine's glyph; checkout leaves under a machine draw a branch. */
-    glyph: 'project' | 'machine' | 'branch' | 'environment' | 'service' | 'database';
+    glyph: 'project' | 'machine' | 'workspace' | 'branch' | 'environment' | 'service' | 'database';
     expandable: boolean;
     expanded: boolean;
     /** The exact checkout this row stands for (a leaf, or a one-checkout Project): its menu acts on it. */
     refId?: string | null;
-    workspaceAddress?: WorkspaceAddressV1;
+    workspaceAddress?: WorkspaceAddressV2;
     /** A Project row with several checkouts: the checkout its press opens. Read through `projectsTreeRowOpenTarget`. */
     opens?: ProjectsTreeOpenTarget | null;
     /** A collapsed parent's checkout count. */
@@ -160,7 +163,7 @@ export type ProjectsTreeRow = Readonly<{
     child?: ProjectsTreeChildTarget;
 }>;
 
-export type ProjectsTreeOpenTarget = Readonly<{ refId: string; workspaceAddress?: WorkspaceAddressV1 }>;
+export type ProjectsTreeOpenTarget = Readonly<{ refId: string; workspaceAddress?: WorkspaceAddressV2 }>;
 
 /** What a press (or Enter) on a row opens; `null` for a row that only discloses (a machine). */
 export function projectsTreeRowOpenTarget(row: Pick<ProjectsTreeRow, 'refId' | 'workspaceAddress' | 'opens'>): ProjectsTreeOpenTarget | null {
@@ -169,10 +172,11 @@ export function projectsTreeRowOpenTarget(row: Pick<ProjectsTreeRow, 'refId' | '
 }
 
 /** A row's mark, the same in the column and on the phone: a Project's folder, a Machine, a checkout's branch, an Environment. */
-export function projectsTreeGlyphIcon(glyph: ProjectsTreeRow['glyph']): 'folder' | 'desktop' | 'git-branch' | 'hard-drives' | 'cube' | 'stack' {
+export function projectsTreeGlyphIcon(glyph: ProjectsTreeRow['glyph']): 'folder' | 'desktop' | 'terminal' | 'git-branch' | 'hard-drives' | 'cube' | 'stack' {
     switch (glyph) {
         case 'project': return 'folder';
         case 'machine': return 'desktop';
+        case 'workspace': return 'terminal';
         case 'branch': return 'git-branch';
         case 'environment': return 'hard-drives';
         // The marks Machine → Services and Services → Databases already give these.
@@ -344,17 +348,24 @@ function mostUrgent(checkouts: readonly Readonly<{ attention: ProjectsTreeAttent
 }
 
 /** Full-address keys prevent a tree leaf from choosing a different checkout with the same id. */
-export function projectsTreeCheckoutKey(checkout: Readonly<{ refId: string; workspaceAddress?: WorkspaceAddressV1 }>): string {
+export function projectsTreeCheckoutKey(checkout: Readonly<{ refId: string; workspaceAddress?: WorkspaceAddressV2 }>): string {
     const address = checkout.workspaceAddress;
-    return address ? JSON.stringify([address.serverId, address.machineId, address.rootPath, address.workspaceId]) : checkout.refId;
+    return address ? 'kind' in address && address.kind === 'managed' ? JSON.stringify(address)
+        : JSON.stringify([address.serverId, address.machineId, address.rootPath, address.workspaceId]) : checkout.refId;
 }
 
-function groupByMachine(checkouts: readonly ProjectsTreeCheckout[]): ProjectsTreeCheckout[][] {
+export function projectsTreeCheckoutPlaceKey(checkout: ProjectsTreeCheckout): string {
+    if (checkout.machineId !== null) return checkout.machineId;
+    return checkout.workspaceAddress ? checkoutPlaceKey(checkout.workspaceAddress) : checkout.refId;
+}
+
+function groupByPlace(checkouts: readonly ProjectsTreeCheckout[]): ProjectsTreeCheckout[][] {
     const groups = new Map<string, ProjectsTreeCheckout[]>();
     for (const checkout of checkouts) {
-        const group = groups.get(checkout.machineId);
+        const key = projectsTreeCheckoutPlaceKey(checkout);
+        const group = groups.get(key);
         if (group) group.push(checkout);
-        else groups.set(checkout.machineId, [checkout]);
+        else groups.set(key, [checkout]);
     }
     return [...groups.values()];
 }
@@ -412,7 +423,7 @@ export function buildProjectsTreeRows(input: Readonly<{
         }
         const environments = project.environments ?? [];
         const holdsOpen = checkouts.some((checkout) => checkout.refId === input.openRefId) || onEnvironment;
-        const machines = groupByMachine(checkouts);
+        const places = groupByPlace(checkouts);
 
         if (checkouts.length === 1) {
             // One checkout is the Project row itself; its Environments, if any, are what it discloses. On one of
@@ -447,7 +458,7 @@ export function buildProjectsTreeRows(input: Readonly<{
         }
 
         const projectOpen = isOpen(project.key, holdsOpen);
-        const singleMachine = machines.length === 1;
+        const singlePlace = places.length === 1;
         rows.push({
             key: project.key,
             level: 0,
@@ -455,9 +466,9 @@ export function buildProjectsTreeRows(input: Readonly<{
             source: project.source,
             teamSetupHref: project.teamSetupHref,
             title: project.name,
-            // One machine: it folds into the Project row ("happier-plugins devbox").
-            titleQualifier: singleMachine
-                ? [project.teamLabel, machines[0]![0]!.machineName].filter(Boolean).join(' · ')
+            // One place folds into the Project row ("happier-plugins devbox").
+            titleQualifier: singlePlace
+                ? [project.teamLabel, places[0]![0]!.machineName].filter(Boolean).join(' · ')
                 : project.teamLabel ?? null,
             subtitle: null,
             machineId: null,
@@ -474,43 +485,43 @@ export function buildProjectsTreeRows(input: Readonly<{
         });
         if (!projectOpen) continue;
 
-        if (singleMachine) {
+        if (singlePlace) {
             for (const checkout of checkouts) rows.push(leaf(checkout, 1, `${project.key}/${projectsTreeCheckoutKey(checkout)}`, false));
             rows.push(...environmentRows(project, environmentContext));
             continue;
         }
-        if (machines.every((group) => group.length === 1)) {
-            // Many machines, one checkout each: no machine level; each checkout names its machine.
-            for (const [checkout] of machines) rows.push(leaf(checkout!, 1, `${project.key}/${projectsTreeCheckoutKey(checkout!)}`, false));
+        if (places.every((group) => group.length === 1)) {
+            for (const [checkout] of places) rows.push(leaf(checkout!, 1, `${project.key}/${projectsTreeCheckoutKey(checkout!)}`, false));
             rows.push(...environmentRows(project, environmentContext));
             continue;
         }
-        for (const group of machines) {
-            const machine = group[0]!;
-            const machineKey = `${project.key}/${machine.machineId}`;
+        for (const group of places) {
+            const place = group[0]!;
+            const placeKey = `${project.key}/${projectsTreeCheckoutPlaceKey(place)}`;
             if (group.length === 1) {
-                rows.push(leaf(machine, 1, `${machineKey}/${projectsTreeCheckoutKey(machine)}`, false));
+                rows.push(leaf(place, 1, `${placeKey}/${projectsTreeCheckoutKey(place)}`, false));
                 continue;
             }
-            const machineOpen = isOpen(machineKey, group.some((checkout) => checkout.refId === input.openRefId));
+            const placeOpen = isOpen(placeKey, group.some((checkout) => checkout.refId === input.openRefId));
+            const kind = place.machineId === null ? 'workspace' : 'machine';
             rows.push({
-                key: machineKey,
+                key: placeKey,
                 level: 1,
-                kind: 'machine',
-                title: machine.machineName ?? t('common.machine'),
+                kind,
+                title: place.machineName ?? (kind === 'workspace' ? t('projects.checkouts.onServers') : t('common.machine')),
                 subtitle: null,
-                machineId: machine.machineId,
-                glyph: 'machine',
+                machineId: place.machineId,
+                glyph: kind,
                 expandable: true,
-                expanded: machineOpen,
+                expanded: placeOpen,
                 refId: null,
-                count: machineOpen ? null : group.length,
-                attention: machineOpen ? null : mostUrgent(group),
+                count: placeOpen ? null : group.length,
+                attention: placeOpen ? null : mostUrgent(group),
                 offline: group.every((checkout) => checkout.offline === true),
                 selected: false,
             });
-            if (!machineOpen) continue;
-            for (const checkout of group) rows.push(leaf(checkout, 2, `${machineKey}/${projectsTreeCheckoutKey(checkout)}`, true));
+            if (!placeOpen) continue;
+            for (const checkout of group) rows.push(leaf(checkout, 2, `${placeKey}/${projectsTreeCheckoutKey(checkout)}`, true));
         }
         rows.push(...environmentRows(project, environmentContext));
     }
@@ -523,7 +534,7 @@ export function buildProjectsTreeRows(input: Readonly<{
  * checkout lives, and opening that exact checkout. The column and the phone list both draw these.
  */
 export function buildProjectsTreeHiddenItems(projects: readonly ProjectsTreeProject[]): ReadonlyArray<Readonly<{
-    key: string; title: string; subtitle: string; refId: string; workspaceAddress?: WorkspaceAddressV1;
+    key: string; title: string; subtitle: string; refId: string; workspaceAddress?: WorkspaceAddressV2;
 }>> {
     return projects.flatMap((project) => {
         const first = project.checkouts[0];
@@ -534,7 +545,7 @@ export function buildProjectsTreeHiddenItems(projects: readonly ProjectsTreeProj
 }
 
 /** `online` is null while presence is unknown (a Machine this Home does not list): never guessed. */
-export type ProjectsTreeMachineFacts = Readonly<{ name: string | null; homeDir: string | null; online: boolean | null }>;
+export type ProjectsTreeMachineFacts = Readonly<{ name: string | null; homeDir: string | null; online: boolean | null; unlisted?: boolean }>;
 
 /** A row's facts on one line; a fact not known yet (a Machine name still loading) drops out whole. */
 function joinFacts(...parts: readonly (string | null | undefined)[]): string {
@@ -620,13 +631,14 @@ function mostRecentlyOpenedIndex(refs: ReadonlyArray<Readonly<{ lastOpenedAtMs?:
  * named after its checkout the person sees first; each checkout keeps its exact ref.
  */
 export function buildProjectsTreeProjects<TRef extends Readonly<{
-    id: string; serverId?: string; machineId: string; rootPath: string;
+    id: string; rootPath: string;
     label?: string | null; source?: Readonly<{ sourceId: string }>; lastOpenedAtMs?: number | null;
-}>>(input: Readonly<{
+}> & (Readonly<{ serverId?: string; machineId: string; kind?: never }>
+    | Pick<ManagedWorkspaceRefV2, 'v' | 'kind' | 'serverId' | 'managedId' | 'controller'>)>(input: Readonly<{
     groups: ReadonlyArray<Readonly<{ projectKey: Readonly<{ projectKey: string }>; items: readonly TRef[] }>>;
     projectName: (ref: TRef) => string;
-    /** Every referenced Machine has a name from the machine-name owner, even one this Home no longer lists. */
     machine: (machineId: string) => ProjectsTreeMachineFacts;
+    managedName?: (serverId: string, managedId: string) => string | null;
     /** Only current authorized catalog rows from the same Home/Account as these accepted refs. */
     sources?: readonly ProjectSourceV1[];
     teamName?: (teamId: string) => string | null;
@@ -650,17 +662,25 @@ export function buildProjectsTreeProjects<TRef extends Readonly<{
         }) ? { serverId: first.serverId, source } : undefined;
         const factsByRef = group.items.map(ref => input.checkoutFacts?.(ref) ?? null);
         const checkouts = group.items.map((ref): ProjectsTreeCheckout => {
-            const machine = input.machine(ref.machineId);
+            const address = ref.serverId ? workspaceAddressFromRefV2({ ...ref, serverId: ref.serverId }) : undefined;
+            const managed = address && 'kind' in address && address.kind === 'managed' ? address : null;
+            const machineId = resolveWorkspaceSyncExecutionMachineIdV1(ref);
+            const machine = input.machine(machineId);
+            const place = managed ? describeManagedCheckoutPlace({
+                controllerMachineId: managed.controller.machineId,
+                machineNameParts: () => machine.name ? { name: machine.name, hint: null } : null,
+                managedName: input.managedName?.(managed.serverId, managed.managedId) ?? null,
+            }).machineNameParts : null;
             return {
                 refId: ref.id,
-                ...(ref.serverId ? { workspaceAddress: { serverId: ref.serverId, workspaceId: ref.id,
-                    machineId: ref.machineId, rootPath: ref.rootPath } } : {}),
-                machineId: ref.machineId,
-                machineName: machine.name,
+                ...(address ? { workspaceAddress: address } : {}),
+                machineId: managed ? null : machineId,
+                machineName: place ? joinFacts(place.name, place.hint) || null
+                    : machine.unlisted ? t('machine.unlistedMachine') : machine.name,
                 label: folderName(ref.rootPath),
                 branch: null,
                 isWorktree: null,
-                path: formatPathRelativeToHome(ref.rootPath, machine.homeDir ?? undefined),
+                path: formatPathRelativeToHome(ref.rootPath, managed ? undefined : machine.homeDir ?? undefined),
                 attention: null,
                 offline: machine.online === null ? undefined : !machine.online,
             };
@@ -710,17 +730,18 @@ export function buildProjectsPhoneTreeRows(input: Readonly<{
             rows.push(...deploymentProjectRows(project, open, environmentContext));
             continue;
         }
-        const machines = groupByMachine(checkouts);
+        const places = groupByPlace(checkouts);
         const environments = project.environments ?? [];
         const holdsOpen = checkouts.some((checkout) => checkout.refId === input.openRefId) || holdsEnvironment(project, input.openEnvironmentId);
         const single = checkouts.length === 1 ? checkouts[0]! : null;
-        const offlineMachines = machines.filter((group) => group.every((checkout) => checkout.offline === true)).length;
+        const offlinePlaces = places.filter((group) => group.every((checkout) => checkout.offline === true)).length;
         const subtitle = single
             ? joinFacts(single.machineName, checkoutWhere(single))
-            : machines.length === 1
-                ? joinFacts(machines[0]![0]!.machineName, input.describe.checkoutCount(checkouts.length))
-                : [input.describe.machineCount(machines.length), offlineMachines > 0 ? input.describe.offlineCount(offlineMachines) : null]
-                    .filter((part): part is string => part !== null).join(' · ');
+            : places.length === 1
+                ? joinFacts(places[0]![0]!.machineName, input.describe.checkoutCount(checkouts.length))
+                : joinFacts(checkouts.some(checkout => checkout.machineId === null)
+                    ? input.describe.checkoutCount(checkouts.length) : input.describe.machineCount(places.length),
+                    offlinePlaces > 0 ? input.describe.offlineCount(offlinePlaces) : null);
         const expandable = !single || environments.length > 0;
         const expanded = expandable && (input.collapsedKeys?.has(project.key) === true
             ? false

@@ -31,6 +31,7 @@ import {
     applyProjectsTreeCheckoutFacts,
     buildProjectsTreeRows,
     projectsTreeCheckoutKey,
+    projectsTreeCheckoutPlaceKey,
     projectsTreeGlyphIcon,
     projectsTreeRowChild,
     projectsTreeRowEnvironment,
@@ -468,7 +469,7 @@ const ProjectsTreeLiveSection = React.memo(function ProjectsTreeLiveSection(prop
     const sameDisclosure = (rowKey: string) => previous.live.expandedKeys.has(rowKey) === next.live.expandedKeys.has(rowKey)
         && (previous.live.collapsedKeys?.has(rowKey) === true) === (next.live.collapsedKeys?.has(rowKey) === true);
     // An Environment's disclosure and what it runs belong to its Project alone.
-    return sameDisclosure(key) && project.checkouts.every(checkout => sameDisclosure(`${key}/${checkout.machineId}`))
+    return sameDisclosure(key) && project.checkouts.every(checkout => sameDisclosure(`${key}/${projectsTreeCheckoutPlaceKey(checkout)}`))
         && (project.environments ?? []).every(environment => sameDisclosure(`${key}/environment/${environment.environmentId}`)
             && previous.live.environmentChildren?.get(environment.environmentId) === next.live.environmentChildren?.get(environment.environmentId));
 });

@@ -277,6 +277,8 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
             }
             let finishOpen: ((opened: WorkspaceNavigationEntry) => void) | undefined = undefined;
             const admittedSingleton = singletonActions(state, target);
+            // A default Project open retains the current page. An addressed open selects its requested resource.
+            const addressedProject = target.kind === 'project' && !isProjectDefaultOpen(target);
             const presentationPreview = mode === 'preview' && options.reuseExisting !== false
                 && (isSessionTerminal(target) || (target.kind === 'session' && target.params.mobileSurface === 'tabs'));
             // An ordinary open focuses a known destination, including when its
@@ -306,7 +308,9 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
                         tab: { id: input.createId(), target, pinned: false, preview: false } });
                 if (!action) return false;
                 input.dispatch(action);
-                if (existing && admittedSingleton) input.dispatch({ type: 'setTarget', tabId: existing.tabId, target });
+                if (existing && (admittedSingleton || (addressedProject && !sameDestinationRef(state.tabs[existing.tabId].target, target)))) {
+                    input.dispatch({ type: 'setTarget', tabId: existing.tabId, target });
+                }
             } else if (reusable && !admittedSingleton) {
                 const retained = state.tabs[reusable.tabId].target;
                 // Reuse retains pane state, but an explicitly selected Session
@@ -317,12 +321,8 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
                     && Object.keys(target.params).some(key => key !== 'id' && key !== 'serverId' && key !== 'accountId')) {
                     const adopted = adoptSessionTarget(retained, target);
                     if (!sameDestinationRef(retained, adopted)) input.dispatch({ type: 'setTarget', tabId: reusable.tabId, target: adopted });
-                } else if (target.kind === 'project') {
-                    // Opening the Project at its default page brings its tab forward as it was left;
-                    // an addressed resource (a file, a commit, another page's state) retargets it.
-                    if (!isProjectDefaultOpen(target) && !sameDestinationRef(retained, target)) {
-                        input.dispatch({ type: 'setTarget', tabId: reusable.tabId, target });
-                    }
+                } else if (addressedProject && !sameDestinationRef(retained, target)) {
+                    input.dispatch({ type: 'setTarget', tabId: reusable.tabId, target });
                 } else if (target.kind === 'session') {
                     const params = { ...retained.params,
                         ...(target.params.serverId ? { serverId: retained.params.serverId ?? target.params.serverId } : {}),

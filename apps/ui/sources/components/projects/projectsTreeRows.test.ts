@@ -42,6 +42,36 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
         expect(reordered[149]).toBe(before[0]);
     });
 
+    it('shows separate guest places via their controller in both Projects trees', () => {
+        const controller = { machineId: 'devbox', installationId: 'controller' };
+        const refs = [
+            { id: 'local', serverId: 'home', machineId: 'devbox', rootPath: '/repo' },
+            { v: 2, kind: 'managed', id: 'coder', serverId: 'home', managedId: 'coder-server', controller, rootPath: '/repo' },
+            { v: 2, kind: 'managed', id: 'ssh', serverId: 'home', managedId: 'ssh-server', controller, rootPath: '/repo' },
+        ] as const;
+        const projects = buildProjectsTreeProjects({
+            groups: [{ projectKey: { projectKey: 'shared' }, items: refs }],
+            projectName: () => 'Shared repo',
+            machine: () => ({ name: 'Devbox', homeDir: null, online: true }),
+            managedName: (_serverId: string, managedId: string) => managedId === 'coder-server' ? 'Coder workspace' : 'SSH server',
+        });
+        const input = { projects, openRefId: null, expandedKeys: new Set(['shared']) };
+        const desktop = buildProjectsTreeRows(input);
+        const phone = buildProjectsPhoneTreeRows({ ...input, describe: {
+            checkoutCount: count => `${count} checkouts`, machineCount: count => `${count} machines`, offlineCount: String,
+        } });
+        expect(desktop[0]?.titleQualifier).toBeNull();
+        expect(phone[0]?.subtitle).toBe('3 checkouts');
+        const via = t('projects.checkouts.via', { machine: 'Devbox' });
+        for (const rows of [desktop, phone]) {
+            expect(rows.slice(1).map(row => [row.refId, row.subtitle])).toEqual([
+                ['local', 'Devbox · /repo'],
+                ['coder', `Coder workspace · ${via} · /repo`],
+                ['ssh', `SSH server · ${via} · /repo`],
+            ]);
+        }
+    });
+
     it('joins authorized Source and exact-checkout facts without changing checkout order or addresses', () => {
         const refs = [
             { id: 'same-id', serverId: 'home-a', machineId: 'devbox', rootPath: '/work/first', source: { sourceId: 'source-a', revision: 1 } },

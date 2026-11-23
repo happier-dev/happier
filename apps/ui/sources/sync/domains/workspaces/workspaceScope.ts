@@ -18,10 +18,13 @@ export type WorkspaceScopeBase = Readonly<{
 export type WorkspaceCacheKey = string;
 
 export function workspaceScopeFromProject(ref: WorkspaceRefV1, activeRootPath: string): WorkspaceScopeBase {
-    const address = workspaceAddressFromRefV2(ref);
-    if ('kind' in address) return { serverId: ref.serverId, machineId: address.controller.machineId,
+    return workspaceScopeFromAddress(workspaceAddressFromRefV2(ref), activeRootPath);
+}
+
+export function workspaceScopeFromAddress(address: WorkspaceAddressV2, activeRootPath = address.rootPath): WorkspaceScopeBase {
+    if ('kind' in address) return { serverId: address.serverId, machineId: address.controller.machineId,
         rootPath: address.rootPath, workspace: address };
-    return { serverId: ref.serverId, machineId: address.machineId, rootPath: activeRootPath };
+    return { serverId: address.serverId, machineId: address.machineId, rootPath: activeRootPath };
 }
 
 function normalizeId(raw: unknown): string {

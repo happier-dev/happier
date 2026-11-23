@@ -11,6 +11,8 @@ import { readExternalFileDragPointer, subscribeExternalFileDragPointer } from '@
 import { readMountedComposerPresentationSnapshot, readMountedComposerAttachmentComposition } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { readComposerSessionSuggestionItems } from '@/sync/domains/input/suggestionSession';
+import { storage } from '@/sync/domains/state/storage';
+import { readProjectWorkspaceRefs } from '@/sync/store/domains/projectAccountRows';
 import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
 import type { FileSuggestionScope } from '@/sync/domains/input/suggestionFile';
 import type { ComposerReferenceSearchHost } from '@/components/autocomplete/composerSuggestionKinds';
@@ -20,6 +22,7 @@ import { resolveComposerEntityDrop } from './composerEntityDrop';
 import { describeComposerEntityDropReason } from './composerEntityDropReason';
 import { useOptionalWorkspaceNavigation, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { resolveDestinationRefFromHref } from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import { buildRepositoryFileDragItem } from '@/components/appShell/workspace/workspaceEntitySource';
 import { parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
@@ -139,6 +142,7 @@ export function ComposerEntityDropTarget(props: Readonly<{
                     serverId: props.scope.serverId, currentSessionId: sessionId, candidateSessionId: item.address.sessionId,
                 }, readSessionRecordingVisibility()) : [],
                 workspace: props.fileScope ?? (sessionId ? resolveWorkspaceTargetForSession({ serverId: props.scope.serverId, sessionId }) : null),
+                readWorkspaceRefs: () => readProjectWorkspaceRefs(storage.getState()),
                 referenceHost: props.referenceHost,
                 platform,
                 dragSources,
@@ -152,8 +156,8 @@ export function ComposerEntityDropTarget(props: Readonly<{
                     const file = parseSessionPaneUrlState(destination.params)?.details;
                     if (file?.kind !== 'file' || !destination.params.id) return null;
                     const workspace = resolveWorkspaceTargetForSession({ serverId: props.scope.serverId, sessionId: destination.params.id });
-                    return workspace ? { kind: 'repository-file', scope: props.scope, machineId: workspace.machineId,
-                        path: resolveMachineAbsolutePath({ rootPath: workspace.rootPath, requestPath: file.path }) } : null;
+                    return workspace ? buildRepositoryFileDragItem({ scope: props.scope, workspace,
+                        path: resolveMachineAbsolutePath({ rootPath: workspace.rootPath, requestPath: file.path }) }) : null;
                 },
                 // Lab ST2: say what releasing does to the message: it travels with it, nothing sends yet.
                 preview: { glyph: 'add', verb: t('entityDragDrop.composer.mentionHere'), target: t('entityDragDrop.composer.target'), consequence: t('entityDragDrop.composer.consequence') },

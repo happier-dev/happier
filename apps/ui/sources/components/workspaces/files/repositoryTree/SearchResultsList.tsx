@@ -4,6 +4,7 @@ import { Platform, View, type ScrollViewProps } from 'react-native';
 import { Text } from '@/components/ui/text/Text';
 import { Item } from '@/components/ui/lists/Item';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
+import { buildRepositoryFileDragItem } from '@/components/appShell/workspace/workspaceEntitySource';
 import { FileIcon } from '@/components/ui/media/FileIcon';
 import { Typography } from '@/constants/Typography';
 import type { FileItem } from '@/sync/domains/input/suggestionFile';
@@ -157,9 +158,9 @@ export const SearchResultsList = React.memo(({
         <WorkspaceDestinationRow href={file.fileType === 'file' ? fileHref?.(file.fullPath) ?? null : null}
             entityTitle={file.fileType === 'folder' ? `${file.fileName}/` : file.fileName}
             entityItem={workspaceScope && accountScope?.serverId === workspaceScope.serverId
-                ? { kind: 'repository-file', scope: accountScope, machineId: workspaceScope.machineId,
+                ? buildRepositoryFileDragItem({ scope: accountScope, workspace: workspaceScope,
                     entryKind: file.fileType === 'folder' ? 'directory' : 'file',
-                    path: resolveMachineAbsolutePath({ rootPath: workspaceScope.rootPath, requestPath: file.fullPath }) } : null}>
+                    path: resolveMachineAbsolutePath({ rootPath: workspaceScope.rootPath, requestPath: file.fullPath }) }) : null}>
         {actions => (
         <Item
             onLongPress={actions.openMenu}

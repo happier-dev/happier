@@ -1,5 +1,20 @@
 import type { EntityDragItemV1, EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { resolveDestinationRefFromHref, type CompactAppDestination } from '../destinations/compactAppDestinationCatalog';
+
+export function buildRepositoryFileDragItem(input: Readonly<{
+    scope: EntityDragScopeV1;
+    workspace: WorkspaceScopeBase;
+    path: string;
+    entryKind?: 'file' | 'directory';
+}>): Extract<EntityDragItemV1, { kind: 'repository-file' }> {
+    const { scope, workspace, path, entryKind } = input;
+    return {
+        kind: 'repository-file', scope, machineId: workspace.machineId, path,
+        ...(entryKind ? { entryKind } : {}),
+        ...(workspace.workspace ? { workspaceId: workspace.workspace.workspaceId } : {}),
+    };
+}
 
 /** A destination's registered route owns its carried identity; the host supplies Account scope. */
 export function resolveWorkspaceDestinationEntityItem(input: Readonly<{

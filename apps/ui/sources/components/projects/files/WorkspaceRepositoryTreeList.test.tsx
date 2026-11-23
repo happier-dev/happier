@@ -5,6 +5,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { WorkspaceRepositoryTreeList } from './WorkspaceRepositoryTreeList';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
+import { storage } from '@/sync/domains/state/storage';
+import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
+import { workspaceScopeFromProject } from '@/sync/domains/workspaces/workspaceScope';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -148,6 +151,25 @@ describe('WorkspaceRepositoryTreeList', () => {
             { path: 'README.md', name: 'README.md', type: 'file', depth: 0 },
         ];
         latestFilesystemBrowserProps.current = null;
+    });
+
+    it('keeps checkout identity on a managed directory drag without a file href', async () => {
+        const account = { serverId: 'home-test', accountId: 'account-test' };
+        const prior = storage.getState().profileScope;
+        storage.setState({ profileScope: account });
+        try {
+            const guest = { v: 2, kind: 'managed', id: 'guest-checkout', serverId: account.serverId, managedId: 'guest',
+                controller: { machineId: 'm1', installationId: 'install-a' }, rootPath: '/repo', createdAtMs: 1 } as const;
+            const screen = await renderScreen(<WorkspaceRepositoryTreeList theme={theme}
+                scope={workspaceScopeFromProject(guest, guest.rootPath)}
+                expandedPaths={[]} onExpandedPathsChange={() => {}} onOpenFile={() => {}} />);
+            const directory = screen.tree.root.findAllByType(WorkspaceDestinationRow)
+                .map(row => row.props.entityItem)
+                .find(item => item?.kind === 'repository-file' && item.entryKind === 'directory');
+            expect(directory).toMatchObject({ scope: account, workspaceId: guest.id, path: '/repo/src' });
+        } finally {
+            storage.setState({ profileScope: prior });
+        }
     });
 
     it('names a failed folder load and preserves its retry and diagnostic cause', async () => {

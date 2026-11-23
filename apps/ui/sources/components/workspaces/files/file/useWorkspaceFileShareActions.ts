@@ -13,6 +13,7 @@ import { isAbsoluteLocalPath, normalizeLocalPathForComparison } from '@/utils/pa
 import { buildWorkspaceFileLink } from '@/utils/url/sessionFileDeepLink';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useEntityComposerMention } from '@/components/ui/treeDragDrop/useEntityComposerMention';
+import { buildRepositoryFileDragItem } from '@/components/appShell/workspace/workspaceEntitySource';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { buildFileShareClipboardRequest, resolveFileShareActionScope, type FileShareClipboardIntent } from './fileShareClipboard';
 import { desktopHostKind, desktopHostPlatform, invokeDesktopHost } from '@/utils/platform/desktopHost';
@@ -110,10 +111,10 @@ export function useWorkspaceFileShareActions(input: WorkspaceFileShareActionsInp
     const source = input.workspaceScope;
     const mentionInComposer = actionScope && source ? () => reportFileShareFailure(async () => {
         if (!execution.isCurrent()) return;
-        await mention({ kind: 'repository-file', scope: { serverId: source.serverId, accountId: actionScope.accountId }, machineId: source.machineId,
+        await mention(buildRepositoryFileDragItem({ scope: { serverId: source.serverId, accountId: actionScope.accountId }, workspace: source,
             entryKind: input.entryKind ?? 'file',
             path: resolveMachineAbsolutePath({ rootPath: expandedRoot ?? source.rootPath, requestPath: input.path, pathKind: 'workspace_entry' }),
-        }, input.path);
+        }), input.path);
     }) : undefined;
     return {
         mentionInComposer, download, openInDefaultApp, originalFile, saveAsArtifact: input.onSaveAsArtifact,

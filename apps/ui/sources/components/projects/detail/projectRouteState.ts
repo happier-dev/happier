@@ -4,7 +4,8 @@ import { serializeScmReviewTarget } from '@/utils/url/scmReviewTargetUrl';
 import type { PaneDetailsStateView } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 import { buildActiveDetailsRouteParams, parseSessionPaneUrlState, serializeSessionPaneUrlState,
     SESSION_PANE_URL_PARAM_KEYS, type SessionPaneUrlDetailsTarget } from '@/components/sessions/panes/url/sessionPaneUrlState';
-import { PluginUiNewSessionSeedOriginV1Schema, StoredPluginUiNewSessionSeedOriginV1Schema, type PluginUiNewSessionSeedOriginV1 } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiNewSessionSeedOriginV1Schema, StoredPluginUiNewSessionSeedOriginV1Schema, type PluginUiNewSessionSeedOriginV1, type PluginUiNewSessionSeedV1 } from '@happier-dev/protocol/plugins/ui';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -413,6 +414,13 @@ export function buildProjectNewSessionOrigin(input: Readonly<{
         ...(companion ? { companion } : {}),
     });
     return parsed.success ? parsed.data : null;
+}
+
+export function buildProjectNewSessionSeed(
+    { serverId, machineId, rootPath }: WorkspaceScopeBase,
+    origin?: PluginUiNewSessionSeedOriginV1,
+): PluginUiNewSessionSeedV1 {
+    return { placement: { kind: 'exactTarget', serverId, machineId, directory: rootPath }, ...(origin ? { origin } : {}) };
 }
 
 /** Original provenance is qualified independently of the Session's editable launch target. */

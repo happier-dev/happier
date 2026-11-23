@@ -1,5 +1,6 @@
+import type { SessionPlacementSelectionV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 import type { FileSuggestionScope } from '@/sync/domains/input/suggestionFile';
-import { normalizeWorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import { normalizeWorkspaceScopeBase, workspaceScopeFromAddress } from '@/sync/domains/workspaces/workspaceScope';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 
 function normalizeText(value: unknown): string {
@@ -35,7 +36,11 @@ export function resolveNewSessionFileSuggestionScope(params: Readonly<{
     selectedMachineId?: string | null;
     selectedMachineHomeDir?: string | null;
     selectedPath?: string | null;
+    sessionPlacement?: SessionPlacementSelectionV1;
 }>): FileSuggestionScope | null {
+    if (params.sessionPlacement?.kind === 'in_place') {
+        return normalizeWorkspaceScopeBase(workspaceScopeFromAddress(params.sessionPlacement.workspace));
+    }
     const serverId = normalizeText(params.targetServerId);
     const machineId = normalizeText(params.selectedMachineId);
     const selectedPath = normalizeText(params.selectedPath);

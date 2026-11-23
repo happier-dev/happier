@@ -531,6 +531,24 @@ describe('Projects model Action admission', () => {
         await hook.unmount();
     });
 
+    it('opens a managed row in place through the shared row creation action instead of starting on its controller', async () => {
+        const ref = ProjectAccountWorkspaceRefV1Schema.parse({ v: 2, kind: 'managed', id: 'guest-checkout',
+            serverId, projectKey: 'anchor', managedId: 'guest', controller: { machineId: 'machine', installationId: 'install' },
+            rootPath: '/repo', createdAtMs: 1 });
+        const key = { kind: 'workspace-ref' as const, serverId, id: ref.id };
+        rows.push({ key, revision: 0, content: { t: 'plain', v: { key, value: ref } } });
+        const prior = rows[0]?.content;
+        if (prior?.t !== 'plain') throw new Error('Expected the same-path controller checkout');
+        applyProjectAccountRowsFixture(storage, { workspaceRefs: [ProjectAccountWorkspaceRefV1Schema.parse(prior.v.value), ref] });
+        const hook = await renderHook(() => useProjectRowCreationActions(useProjectsListModel()));
+        await act(async () => { await hook.getCurrent().newSession(ref); });
+        expect(routerPush).toHaveBeenCalledWith({ pathname: '/new', params: expect.objectContaining({ draftId: expect.any(String) }) });
+        const draftId = String(routerPush.mock.calls[0]?.[0]?.params?.draftId);
+        expect(readNewSessionDraftProjectionFromRepository({ scope: { serverId, accountId: 'account-a' }, draftId })?.draft)
+            .toMatchObject({ sessionPlacement: { kind: 'in_place', workspace: { kind: 'managed', workspaceId: ref.id, managedId: 'guest' } } });
+        await hook.unmount();
+    });
+
     it('renames, clears the label and pins the existing anchor through the admitted metadata Action', async () => {
         const hook = await renderHook(() => useProjectsListModel());
         const ref = hook.getCurrent().groups.projectGroups[0]!.items[0]!;

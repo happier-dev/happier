@@ -476,7 +476,7 @@ export function createProjectAccountRowsSync(options: Readonly<{
     return { read, refresh, refreshKeys, readWorkspaceRef, readSessionDefaults, mutateSessionDefaults, waitForWorkspaceRef, mutateRef, mutateWorkspaceMetadata,
         recordWorkspaceSource: (address: WorkspaceAddressV2, source: NonNullable<WorkspaceRefV1['source']>, signal?: AbortSignal) =>
             recordWorkspaceFacts(address, { source }, signal),
-        recordWorkspaceRepositoryIdentity: (address: WorkspaceAddressV1, repositoryIdentity: NonNullable<WorkspaceRefV1['repositoryIdentity']>, signal?: AbortSignal) =>
+        recordWorkspaceRepositoryIdentity: (address: WorkspaceAddressV2, repositoryIdentity: NonNullable<WorkspaceRefV1['repositoryIdentity']>, signal?: AbortSignal) =>
             recordWorkspaceFacts(address, { repositoryIdentity }, signal),
         recordWorkspaceRepositoryObservation: (address: WorkspaceAddressV1, repositoryObservation: ProjectRepositoryObservationV1, signal?: AbortSignal) =>
             recordWorkspaceFacts(address, { repositoryObservation }, signal),

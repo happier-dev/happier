@@ -2286,9 +2286,18 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const newSessionRouteIsFocused = useNewSessionHostFocused();
     const newSessionComposerPresentedRef = React.useRef(false);
     newSessionComposerPresentedRef.current = newSessionRouteIsFocused && newSessionLayoutPresented;
+    const projectFilesPlacement = useNewSessionProjectFilesPlacement({
+        draftKey: approvalProfileDraftKey,
+        selectedPath,
+        executionTarget,
+        managedMachineSelection,
+        hydratedPlacement: hydratedTempAuthoringDraft?.sessionPlacement ?? hydratedPersistedContentAuthoringDraft?.sessionPlacement,
+        projectFilesSource,
+    });
+    const { sessionPlacement } = projectFilesPlacement;
     const newSessionComposerFileScope = React.useMemo(() => resolveNewSessionFileSuggestionScope({
-        targetServerId, selectedMachineId, selectedMachineHomeDir, selectedPath,
-    }), [selectedMachineHomeDir, selectedMachineId, selectedPath, targetServerId]);
+        targetServerId, selectedMachineId, selectedMachineHomeDir, selectedPath, sessionPlacement,
+    }), [selectedMachineHomeDir, selectedMachineId, selectedPath, sessionPlacement, targetServerId]);
     const clearBackendTargetRouteParamsAfterExplicitSelection = React.useCallback(() => {
         const paramsToClear = {
             agentType: undefined,
@@ -3040,14 +3049,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const changeIsolationOverride = React.useCallback((value: 'directly' | undefined) => {
         setIsolationEdit({ key: approvalProfileDraftKey, value });
     }, [approvalProfileDraftKey]);
-    const projectFilesPlacement = useNewSessionProjectFilesPlacement({
-        draftKey: approvalProfileDraftKey,
-        selectedPath,
-        executionTarget,
-        managedMachineSelection,
-        hydratedPlacement: hydratedTempAuthoringDraft?.sessionPlacement ?? hydratedPersistedContentAuthoringDraft?.sessionPlacement,
-        projectFilesSource,
-    });
     const draftInitialSessionFacts = React.useMemo(
         () => withNewBotDraftFaceSeed(hydratedInitialSessionFacts, draftId),
         [hydratedInitialSessionFacts, draftId],

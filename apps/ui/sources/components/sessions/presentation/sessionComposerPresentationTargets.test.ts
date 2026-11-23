@@ -957,6 +957,32 @@ describe('composer presentation targets', () => {
         expect(resolveComposerEntityDrop({ ...item, path: '/repo/src/../escape.ts' }, context).status).toBe('refused');
     });
 
+    it('refuses a guest file in the same-path controller draft and inserts it in its own managed draft', async () => {
+        const scope = { serverId: 'home-a', accountId: 'account-a' };
+        const guest = { v: 2, kind: 'managed', id: 'guest-checkout', serverId: scope.serverId, managedId: 'guest',
+            controller: { machineId: 'machine-a', installationId: 'install-a' }, rootPath: '/repo', createdAtMs: 1 } as const;
+        const { workspaceScopeFromProject } = await import('@/sync/domains/workspaces/workspaceScope');
+        const { resolveNewSessionFileSuggestionScope } = await import('@/components/sessions/new/modules/resolveNewSessionFileSuggestionScope');
+        const workspace = workspaceScopeFromProject(guest, guest.rootPath).workspace!;
+        const controllerDraft = createSnapshot({ text: 'Controller draft', ref: { kind: 'newSession', instanceId: 'controller-draft' } });
+        const guestDraft = createSnapshot({ text: 'Guest draft', ref: { kind: 'newSession', instanceId: 'guest-draft' },
+            selection: { start: 11, end: 11 } });
+        const context = { scope, sessions: [], readWorkspaceRefs: () => [guest],
+            preview: { verb: 'Mention', target: 'Composer' }, reason: (code: string) => code };
+        const selection = { targetServerId: scope.serverId, selectedMachineId: 'machine-a', selectedPath: '/repo' };
+        const item = { kind: 'repository-file', scope, machineId: 'machine-a', workspaceId: guest.id, path: '/repo/src/file.ts' } as const;
+        const inPlace = { ...selection, sessionPlacement: { kind: 'in_place' as const, workspace } };
+        const controller = resolveNewSessionFileSuggestionScope(selection);
+        const managed = resolveNewSessionFileSuggestionScope(inPlace);
+
+        expect(resolveComposerEntityDrop(item, { ...context, ref: guestDraft.ref, snapshot: guestDraft, workspace: managed })).toMatchObject({ status: 'allowed', effect: { input: {
+            transaction: { operations: [{ kind: 'text.insert' }, { kind: 'reference.insert', reference: { ref: 'file:src/file.ts' } }] },
+        } } });
+        expect.soft(resolveComposerEntityDrop(item, { ...context, ref: controllerDraft.ref, snapshot: controllerDraft, workspace: controller }))
+            .toMatchObject({ status: 'refused', reason: { code: 'workspaceMismatch' } });
+        expect.soft(managed?.workspace).toEqual(workspace);
+    });
+
     it('mentions repository folders and workflow identities while refusing the excluded families', () => {
         const scope = { serverId: 'home-a', accountId: 'account-a' };
         const snapshot = createSnapshot({ text: 'Read this', selection: { start: 5, end: 5 } });

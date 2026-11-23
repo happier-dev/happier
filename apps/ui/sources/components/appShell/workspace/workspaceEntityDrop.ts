@@ -31,7 +31,8 @@ function resolveWorkspaceEntityFile(item: EntityDragItemV1, input: Readonly<{
     scope: EntityDragScopeV1;
     workspaceRefs: readonly WorkspaceRefV1[];
 }>): WorkspaceFileOpenInput | null {
-    if (item.kind !== 'repository-file' || !item.workspaceId || !entityDragScopesEqualV1(item.scope, input.scope)) return null;
+    if (item.kind !== 'repository-file' || item.entryKind === 'directory' || !item.workspaceId
+        || !entityDragScopesEqualV1(item.scope, input.scope)) return null;
     const resolution = resolveWorkspaceRefById(input.workspaceRefs, item.workspaceId, item.scope.serverId);
     if (resolution.kind !== 'resolved') return null;
     const ref = resolution.ref;
@@ -126,10 +127,14 @@ export function resolveWorkspaceEntityDrop(input: Readonly<{
         const { href, file } = destination;
         const existing = workspace.findOpenHref?.(href);
         if (existing) {
-            if (target.placement === 'center') return { status: 'allowed', effect: { actionId: 'workspace.tabs.activate', input: { tabId: existing.tabId } } };
-            return resolveWorkspaceEntityDrop({ ...input, item: { kind: 'workspace-tab', scope, tabId: existing.tabId } });
-        }
-        if (target.placement !== 'center') {
+            if (target.placement === 'center') {
+                if (!file) return { status: 'allowed', effect: { actionId: 'workspace.tabs.activate', input: { tabId: existing.tabId } } };
+            } else {
+                const move = resolveWorkspaceEntityDrop({ ...input, item: { kind: 'workspace-tab', scope, tabId: existing.tabId } });
+                if (!file || move.status !== 'allowed') return move;
+            }
+            // A retained checkout still has to open the dropped file.
+        } else if (target.placement !== 'center') {
             const destination = resolveDestinationRefFromHref(input.catalog, href);
             if (input.availableSizePx === undefined || input.minimumExistingSizePx === undefined
                 || !destination || !createWorkspaceDestinationSplit(workspace.state, {

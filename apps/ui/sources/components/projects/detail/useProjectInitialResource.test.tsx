@@ -12,12 +12,15 @@ import { useProjectRouteActions } from './useProjectRouteActions';
 import { createWorkspaceFileDetailsTab } from '@/components/appShell/panes/details/fileDetailsTab';
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
+import { workspaceScopeFromProject } from '@/sync/domains/workspaces/workspaceScope';
 import { createWorkspaceActionAdapter } from '@/components/appShell/workspace/workspaceActions';
 import { createWorkspaceNavigationAdapter } from '@/components/appShell/workspace/workspaceNavigationAdapter';
 import { createWorkspaceState, reduceWorkspaceState } from '@/components/appShell/workspace/workspaceState';
 import { resolveCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import { resolveWorkspaceEntityDrop } from '@/components/appShell/workspace/workspaceEntityDrop';
+import { buildRepositoryFileDragItem, resolveWorkspaceDestinationEntityItem } from '@/components/appShell/workspace/workspaceEntitySource';
 import { resolveHref } from 'expo-router/build/link/href';
-import { readFileTargetAnchorResource, type FileTargetAnchor } from '@/utils/url/sessionFileDeepLink';
+import { buildWorkspaceFileLink, readFileTargetAnchorResource, type FileTargetAnchor } from '@/utils/url/sessionFileDeepLink';
 
 installAppPaneScopeHostCommonModuleMocks();
 const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
@@ -97,6 +100,62 @@ function ReopenHarness() {
 }
 
 describe('project initial resource admission', () => {
+    it('opens the dropped guest file in the moved Project pane beside a Session', async () => {
+        const scope = { serverId: 'home-a', accountId: 'account-a' };
+        const guest = { v: 2, kind: 'managed', id: 'guest-checkout', serverId: scope.serverId, managedId: 'guest',
+            controller: { machineId: 'machine-a', installationId: 'controller' }, rootPath: '/repo', createdAtMs: 1 } as const;
+        const workspaceRefs = [acceptedRef, guest];
+        const file = 'GUEST-ONLY-RWS-QA-9f3a7c.txt';
+        const href = buildWorkspaceFileLink({ path: file,
+            target: { kind: 'project', workspaceRefId: guest.id, serverId: guest.serverId, rootPath: guest.rootPath } });
+        const catalog = resolveCompactAppDestinations({ pages: [],
+            builtins: { externalSessions: false, inbox: true, workflows: false, friends: false } });
+        let state = createWorkspaceState({ id: 'session', pinned: false, preview: false,
+            target: { kind: 'session', params: { id: 'readiness-probe', ...scope } } });
+        let sequence = 0;
+        const createId = () => `drop:${++sequence}`;
+        const dispatch: Parameters<typeof createWorkspaceNavigationAdapter>[0]['dispatch'] = action => { state = reduceWorkspaceState(state, action); };
+        const navigation = createWorkspaceNavigationAdapter({ getState: () => state, getCatalog: () => catalog, dispatch,
+            createId, transport: { commit: () => {} }, onChange: () => {} });
+        const measurement = { availableSizePx: 1200, minimumExistingSizePx: 300 };
+        expect(navigation.openHref('/projects/guest-checkout/code?serverId=home-a', {
+            mode: 'splitRight', availableSizePx: measurement.availableSizePx, minimumFirstSizePx: measurement.minimumExistingSizePx,
+        })).toBe(true);
+        const source = navigation.findOpenHref(href)!;
+        // The source group keeps another tab, like the retained workspace in QA.
+        expect(navigation.openHref('/inbox', { mode: 'newTab', groupId: source.groupId })).toBe(true);
+        const item = resolveWorkspaceDestinationEntityItem({ scope, catalog, href, entityItem: buildRepositoryFileDragItem({
+            scope, workspace: workspaceScopeFromProject(guest, guest.rootPath), path: file, entryKind: 'file',
+        }) });
+        if (!item) throw new Error('Expected the guest tree drag item');
+        const decision = resolveWorkspaceEntityDrop({ scope, catalog, workspaceRefs, item, ...measurement,
+            target: { leafId: 'group:1', placement: 'up' },
+            workspace: { ...navigation, active: true, state, catalog,
+                back: () => navigation.step(-1), forward: () => navigation.step(1),
+                navigationForTab: () => ({ push: () => {}, replace: () => {}, back: () => {} }), registerBackStep: () => () => {} },
+        });
+        if (decision.status !== 'allowed'
+            || (decision.effect.actionId !== 'workspace.tabs.open' && decision.effect.actionId !== 'workspace.split')) {
+            throw new Error('Expected a split effect');
+        }
+        const execute = createWorkspaceActionAdapter({ getState: () => state, navigation, createId,
+            readCanvas: () => ({ readSplitMeasurement: () => measurement, resizeSplit: () => false }) });
+        expect(await execute(decision.effect.actionId, decision.effect.input)).toEqual({ ok: true });
+        expect(state.tabs.session.target.kind).toBe('session');
+        expect(state.groups[source.groupId].tabIds).not.toContain(source.tabId);
+        const tab = state.tabs[state.groups[state.focusedGroupId].activeTabId];
+        expect(tab.id).toBe(source.tabId);
+        const resolution = resolveWorkspaceRefById(workspaceRefs, tab.target.params.workspaceRefId, tab.target.params.serverId);
+        expect(resolution).toMatchObject({ kind: 'resolved', ref: guest });
+        const screen = await renderScreen(<AppPaneProvider><DestinationInstanceHost tabId={tab.id}
+            ref={tab.target} pathname="/projects/guest-checkout/code" focused visible
+            navigation={{ push: () => {}, replace: () => {}, back: () => {}, setParams: () => {} }}>
+            <Body workspaceRef={resolution.kind === 'resolved' ? resolution.ref : null} />
+        </DestinationInstanceHost></AppPaneProvider>);
+        expect(screen.root.findByType(ProjectResourceProbe).props.tabs.map((entry: { resource: unknown }) => entry.resource))
+            .toMatchObject([{ kind: 'file', path: file }]);
+    });
+
     it('restores the qualified plugin selection without replaying private launch input, and rejects malformed route targets', async () => {
         const companion = { kind: 'plugin', destination: { pluginId: 'acme.preview', localId: 'project-review' }, instanceKey: 'review-a' };
         const renderDestination = (workspaceRef: WorkspaceRefV1 | null, target: unknown = companion) => <AppPaneProvider><DestinationInstanceHost

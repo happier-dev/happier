@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { t } from '@/text';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 
 import { checkoutPlaceKey, describeManagedCheckoutPlace, describeSiblingCheckoutPlace } from './projectCheckoutPlace';
 
@@ -32,9 +33,10 @@ describe('sibling checkouts in the chip menu, by place (HUNT line 18)', () => {
 
   it('tells two attached workspaces on one controller apart, and either from a checkout on that controller', () => {
     // Flat Machine ids made both workspaces "the same machine" and hid them from each other.
-    expect(checkoutPlaceKey(managed('a', 'api-dev'))).not.toBe(checkoutPlaceKey(managed('b', 'gpu-box')));
-    expect(checkoutPlaceKey(managed('a', 'api-dev'))).not.toBe(checkoutPlaceKey(onMachine('c', 'm-nl3')));
-    expect(checkoutPlaceKey(managed('a', 'api-dev'))).toBe(checkoutPlaceKey(managed('d', 'api-dev')));
+    const place = (ref: WorkspaceRefV1) => checkoutPlaceKey(workspaceAddressFromRefV2(ref));
+    expect(place(managed('a', 'api-dev'))).not.toBe(place(managed('b', 'gpu-box')));
+    expect(place(managed('a', 'api-dev'))).not.toBe(place(onMachine('c', 'm-nl3')));
+    expect(place(managed('a', 'api-dev'))).toBe(place(managed('d', 'api-dev')));
   });
 
   it('presents an attached workspace by its own name via its controller, never as a Machine', () => {

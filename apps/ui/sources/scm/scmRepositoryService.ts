@@ -40,11 +40,11 @@ import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { sync } from '@/sync/sync';
 import { log } from '@/log';
 import { readScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
-import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { resolveWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
 import { readCurrentProjectAccountRows } from '@/sync/domains/workspaces/projectAccountRows';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
-import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import { workspaceScopeFromAddress, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { isSessionPathWithinRepoRoot } from '@/scm/sync/paths';
 
 const DEFAULT_MAX_REPO_ENRICHMENT_CACHE_ENTRIES = 32;
@@ -82,7 +82,7 @@ async function retainObservedWorkspaceRepositoryIdentity(input: Readonly<{
     if (!identity) return;
     try {
         if (!lifetime.isCurrent()) return;
-        await sync.recordObservedWorkspaceRepositoryIdentity(workspaceAddressFromRefV1(resolved.ref), identity, lifetime.scope);
+        await sync.recordObservedWorkspaceRepositoryIdentity(workspaceAddressFromRefV2(resolved.ref), identity, lifetime.scope);
     } catch {
         // The observed snapshot remains usable. A later ordinary SCM demand may
         // retry this optional projection; no navigation write or background retry.
@@ -713,8 +713,9 @@ export class ScmRepositoryService {
                 fetchedAt,
                 emptyRootPath: request.resolvedPath,
             });
-            if (lifetime && !input.workspace) await retainObservedWorkspaceRepositoryIdentity({ lifetime, snapshot,
-                scope: { serverId: serverId || lifetime.scope.serverId, machineId: request.machineId, rootPath: request.resolvedPath } });
+            if (lifetime) await retainObservedWorkspaceRepositoryIdentity({ lifetime, snapshot,
+                scope: input.workspace ? workspaceScopeFromAddress(input.workspace)
+                    : { serverId: serverId || lifetime.scope.serverId, machineId: request.machineId, rootPath: request.resolvedPath } });
             return snapshot;
         }, {
             entriesPage: input.entriesPage,

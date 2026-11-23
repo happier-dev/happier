@@ -1,5 +1,6 @@
 import type { IconName } from '@/components/ui/icons/Icon';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
+import type { WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { t } from '@/text';
 
@@ -26,11 +27,10 @@ export function describeManagedCheckoutPlace(input: Readonly<{
  * The place a checkout lives, from its exact address: a Machine, or an attached workspace (its managed resource).
  * A managed checkout names no Machine of its own, so comparing flat Machine ids would hide its siblings.
  */
-export function checkoutPlaceKey(ref: WorkspaceRefV1): string {
-  const address = workspaceAddressFromRefV2(ref);
+export function checkoutPlaceKey(address: WorkspaceAddressV2): string {
   return 'kind' in address && address.kind === 'managed'
-    ? JSON.stringify(['managed', address.managedId])
-    : JSON.stringify(['machine', address.machineId]);
+    ? JSON.stringify([address.serverId, 'managed', address.managedId])
+    : JSON.stringify([address.serverId, 'machine', address.machineId]);
 }
 
 /**

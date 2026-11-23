@@ -122,11 +122,11 @@ export function useProjectShellCheckout(
   const worktrees = snapshot?.repo.worktrees;
   const { onSelectRootPath } = props;
   // Other checkouts of this Project at another place (a Machine or an attached workspace), from their exact addresses.
-  const placeKey = checkoutPlaceKey(props.workspaceRef);
+  const placeKey = checkoutPlaceKey(workspaceAddressFromRefV2(props.workspaceRef));
   const siblings = React.useMemo(() => (Array.isArray(refs) ? refs : []).filter((ref) =>
     ref.id !== props.workspaceRef.id &&
     areServerProfileIdentifiersEquivalent(ref.serverId, props.workspaceRef.serverId) &&
-    checkoutPlaceKey(ref) !== placeKey &&
+    checkoutPlaceKey(workspaceAddressFromRefV2(ref)) !== placeKey &&
     sameWorkspaceProject(ref, props.workspaceRef)), [placeKey, props.workspaceRef, refs]);
   // An attached sibling is named by its managed resource; read only while one exists.
   const siblingInventory = useManagedMachineInventory(siblings.some(isManagedWorkspaceRefV2) ? [props.workspaceRef.serverId] : []);

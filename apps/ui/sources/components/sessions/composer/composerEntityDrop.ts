@@ -7,9 +7,12 @@ import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef
 import type { EntityDragItemV1, EntityDragScopeV1, EntityDropAdmissionV1, EntityDropPreviewV1 } from '@happier-dev/protocol/plugins/ui';
 import { entityDragScopesEqualV1 } from '@happier-dev/protocol/plugins/ui';
 import { composerRefsV1Equal } from '@happier-dev/protocol/plugins/ui/composerRef';
+import { isManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { listCurrentComposerReferences, type ComposerReferenceSearchHost } from '@/components/autocomplete/composerSuggestionKinds';
 import type { ComposerSessionSuggestionItem } from '@/sync/domains/input/suggestionSession';
 import type { FileSuggestionScope } from '@/sync/domains/input/suggestionFile';
+import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
+import { resolveWorkspaceRefByAddress, resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
 import { buildComposerFileReferenceSelection, buildComposerSessionReferenceSelection, buildComposerWorkflowReferenceSelection, buildComposerWidgetReferenceSelection, buildContributedComposerReferenceSelection } from '@/sync/domains/input/composerReferenceSelection';
 import { widgetEntitySourceRef } from '@/components/ui/treeDragDrop/widgetLayoutEntityDrop';
 import { isAbsoluteLocalPath, normalizeLocalPathForComparison, resolvePathRelativeToRoot } from '@/utils/path/resolvePathRelativeToRoot';
@@ -25,6 +28,7 @@ export type ComposerEntityDropContext = Readonly<{
     snapshot: ComposerSnapshotV1 | null;
     sessions: readonly ComposerSessionSuggestionItem[];
     workspace: FileSuggestionScope | null;
+    readWorkspaceRefs?: () => readonly WorkspaceRefV1[];
     referenceHost?: ComposerReferenceSearchHost | null;
     attachmentComposition?: ComposerPresentationAttachmentComposition | null;
     platform?: PluginContributionClientPlatform;
@@ -111,8 +115,14 @@ export function resolveComposerEntityDrop(item: EntityDragItemV1, context: Compo
     } else if (item.kind === 'repository-file') {
         const workspace = context.workspace;
         if (!workspace || workspace.serverId !== item.scope.serverId || workspace.machineId !== item.machineId) return refuse('workspaceMismatch');
-        // File references are relative to the composing workspace. Qualified source rows
-        // supply absolute paths, so another repository on the same machine cannot alias.
+        // A controller and its guests can share absolute paths. Resolve the carried
+        // checkout before deriving a reference relative to the composing workspace.
+        if (item.workspaceId) {
+            const source = resolveWorkspaceRefById(context.readWorkspaceRefs?.() ?? [], item.workspaceId, item.scope.serverId);
+            if (source.kind !== 'resolved' || (workspace.workspace
+                ? resolveWorkspaceRefByAddress([source.ref], workspace.workspace).kind !== 'resolved'
+                : isManagedWorkspaceRefV2(source.ref))) return refuse('workspaceMismatch');
+        } else if (workspace.workspace) return refuse('workspaceMismatch');
         const path = normalizeLocalPathForComparison(item.path);
         if (!path || !isAbsoluteLocalPath(path) || path.split('/').some(part => part === '..')) return refuse('workspaceMismatch');
         const relative = resolvePathRelativeToRoot({ path: item.path, root: workspace.rootPath });
