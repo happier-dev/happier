@@ -80,8 +80,14 @@ export async function restoreSourceSelectionRollback({ stackBaseDir }) {
     const current = await readJsonIfExists(path);
     // A controller can have stale local selections for a component placed on a dev target.
     if (JSON.stringify(current) === JSON.stringify(selection)) continue;
-    if (selection && !existsSync(selection.entrypoint ?? selection.uiDir ?? '')) {
-      throw unavailable(`the incumbent ${component} revision was released`);
+    if (selection) {
+      // Web selections store an entrypoint relative to the export directory.
+      const entrypoint = component === 'ui'
+        ? selection.uiDir && join(selection.uiDir, selection.entrypoint ?? 'index.html')
+        : selection.entrypoint;
+      if (!entrypoint || !existsSync(entrypoint)) {
+        throw unavailable(`the incumbent ${component} revision was released`);
+      }
     }
     changes.push({ component, path, selection });
   }

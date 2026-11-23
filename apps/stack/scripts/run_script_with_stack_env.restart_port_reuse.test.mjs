@@ -687,47 +687,100 @@ test('a source reload waits for an active dependency refresh before any retireme
   assert.deepEqual(probes, ['placement', 'sync:list', 'sync:list', 'sync:flush']);
 });
 
-test('a reload whose replacement fails readiness after retirement restarts the incumbent revision', async t => {
-  // P03 ORCH 2026-11-17: retirement is followed only by start and readiness;
-  // when that fails, the reload restarts the still-prepared incumbent revision.
-  const { rootDir, stackName, runtimeStatePath, markerPath } = await createRestartPreflightFixture(t, 'run.mjs');
-  const sourceRoot = join(dirname(runtimeStatePath), 'source-runtime');
-  await mkdir(sourceRoot, { recursive: true });
-  const selection = join(sourceRoot, 'selected-server.json');
-  const entries = {};
-  for (const name of ['incumbent', 'replacement']) {
-    entries[name] = join(dirname(markerPath), `${name}/main.mjs`);
-    await mkdir(dirname(entries[name]), { recursive: true });
-    await writeFile(entries[name], '');
-  }
-  // Preparation recorded the incumbent's selection, then activated the replacement.
-  await writeFile(selection, JSON.stringify({ entrypoint: entries.incumbent }));
-  const { recordSourceSelectionRollback } = await import('./runtime/shared/source_selection_rollback.mjs');
-  await recordSourceSelectionRollback({ stackBaseDir: dirname(runtimeStatePath) });
-  await writeFile(selection, JSON.stringify({ entrypoint: entries.replacement }));
-  // Inert runner fixture: it records what each launch would serve, then exits
-  // before readiness (a replacement that cannot become ready).
-  await writeFile(join(rootDir, 'scripts', 'run.mjs'), `import {appendFile, readFile} from 'node:fs/promises';
-    const selected = JSON.parse(await readFile(${JSON.stringify(selection)}, 'utf8')).entrypoint;
-    await appendFile(${JSON.stringify(markerPath)}, JSON.stringify({ selected,
-      rollback: process.env.HAPPIER_STACK_SOURCE_SELECTION_ROLLBACK ?? null }) + '\\n');
-    process.exit(1);`);
-  const healthy = { code: 0, out: JSON.stringify([{ name: 'remote', paused: false, status: 'watching', successfulCycles: 1,
-    alpha: { connected: true, scanned: true }, beta: { connected: true, scanned: true } }]) };
-  await assert.rejects(stackEnvRunner.runStackScriptWithStackEnv({
-    rootDir, stackName, scriptPath: 'run.mjs', background: true,
-    args: ['--restart', '--no-daemon', '--no-ui', '--no-browser'],
-    extraEnv: { HAPPIER_STACK_PREPARED_SOURCE_RELOAD: '1' },
-  }, {
-    runCaptureResult: async () => ({ ok: true, out: 'HSTACK_QA_HOST={"platform":"linux","arch":"x64","remote":true}\n', err: '' }),
-    runProcess: async () => healthy,
-  }), { code: 'ESOURCERELOADROLLBACKFAILED' });
-  const launches = (await readFile(markerPath, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
-  assert.deepEqual(launches, [
-    { selected: entries.replacement, rollback: null },
-    { selected: entries.incumbent, rollback: '1' },
-  ]);
-});
+for (const failReplacement of [true, false]) {
+  test(failReplacement ? 'failed source activation restores the incumbent HTTP service and export'
+    : 'two prepared source activations overlap on one host and both serve the shared export', async t => {
+    const { rootDir, stackName, runtimeStatePath, incumbent } = await createRestartPreflightFixture(t, 'run.mjs');
+    const stacksRoot = dirname(dirname(runtimeStatePath));
+    const { recordSourceSelectionRollback } = await import('./runtime/shared/source_selection_rollback.mjs');
+    await rm(join(dirname(runtimeStatePath), 'dev-targets.json'));
+    const sharedExport = join(stacksRoot, 'source-bundles', 'web-fixture', 'web');
+    await mkdir(sharedExport, { recursive: true });
+    await writeFile(join(sharedExport, 'index.html'), 'shared export');
+
+    const prepare = async (name, port) => {
+      const baseDir = join(stacksRoot, name);
+      const statePath = join(baseDir, 'stack.runtime.json');
+      const selection = join(baseDir, 'source-runtime', 'selected-ui.json');
+      const incumbentExport = join(baseDir, 'incumbent-export');
+      await mkdir(dirname(selection), { recursive: true });
+      await mkdir(incumbentExport, { recursive: true });
+      await writeFile(join(incumbentExport, 'index.html'), name);
+      if (name !== stackName) {
+        await writeFile(join(baseDir, 'env'), await readFile(join(dirname(runtimeStatePath), 'env')));
+        await writeFile(statePath, JSON.stringify({ ...incumbent, stackName: name, ports: { server: port } }));
+      }
+      await writeFile(selection, JSON.stringify({ entrypoint: 'index.html', uiDir: incumbentExport }));
+      return { name, baseDir, selection, port };
+    };
+    const first = await prepare(stackName, incumbent.ports.server);
+    const stacks = [first];
+    if (!failReplacement) {
+      stacks.push(await prepare('restart-peer', await pickNextFreeTcpPort(first.port + 1)));
+    }
+    // Only the runner process is substituted. Both starts go through real
+    // port selection, incumbent rollback, readiness and retirement.
+    await writeFile(join(rootDir, 'scripts', 'run.mjs'), `
+      import { createServer } from 'node:http';
+      import { dirname, join } from 'node:path';
+      import { readFile, writeFile, readdir } from 'node:fs/promises';
+      import { recordStackRuntimeUpdate } from ${JSON.stringify(new URL('./utils/stack/runtime_state.mjs', import.meta.url).href)};
+      const statePath = process.env.HAPPIER_STACK_RUNTIME_STATE_PATH;
+      const baseDir = dirname(statePath);
+      const selected = JSON.parse(await readFile(join(baseDir, 'source-runtime', 'selected-ui.json'), 'utf8'));
+      if (${failReplacement} && selected.uiDir === ${JSON.stringify(sharedExport)}) process.exit(1);
+      const index = await readFile(join(selected.uiDir, selected.entrypoint), 'utf8');
+      const pidFile = join(baseDir, 'fixture-runner.pid');
+      await writeFile(pidFile, String(process.pid));
+      if (selected.uiDir === ${JSON.stringify(sharedExport)}) {
+        // Each replacement must enter activation before either exposes health.
+        await writeFile(join(baseDir, 'activation-entered'), '');
+        const peer = join(dirname(baseDir), baseDir.endsWith('restart-peer') ? ${JSON.stringify(stackName)} : 'restart-peer');
+        while (!(await readdir(peer)).includes('activation-entered')) {
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+      }
+      const server = createServer((request, response) => {
+        if (request.url === '/index.html') return response.end(index);
+        response.setHeader('content-type', 'application/json');
+        if (request.url === '/v1/features/authenticated') return response.writeHead(401).end();
+        response.end(JSON.stringify({ status: 'ok', service: 'happier-server' }));
+      });
+      server.listen(Number(process.env.HAPPIER_STACK_SERVER_PORT), '127.0.0.1', async () => {
+        await recordStackRuntimeUpdate(statePath, { processes: { serverPid: process.pid } });
+      });
+    `);
+    const launch = ({ name }, restart) => stackEnvRunner.runStackScriptWithStackEnv({
+      rootDir, stackName: name, scriptPath: 'run.mjs', background: true,
+      args: [...(restart ? ['--restart'] : []), '--reuse-source-runtime', '--no-dev-targets', '--no-daemon', '--no-browser', '--ui=export'],
+      extraEnv: { ...(restart ? { HAPPIER_STACK_PREPARED_SOURCE_RELOAD: '1' } : {}), HAPPIER_STACK_STOP_AUTO_SWEEP: '0' },
+    });
+    const readIndex = async ({ port }) => {
+      const response = await fetch(`http://127.0.0.1:${port}/index.html`);
+      assert.equal(response.status, 200);
+      return await response.text();
+    };
+    try {
+      for (const stack of stacks) {
+        assert.deepEqual(await launch(stack, false), { readiness: 'ready' });
+        assert.equal(await readIndex(stack), stack.name);
+        await recordSourceSelectionRollback({ stackBaseDir: stack.baseDir });
+        await writeFile(stack.selection, JSON.stringify({ entrypoint: 'index.html', uiDir: sharedExport }));
+      }
+      if (failReplacement) await assert.rejects(launch(first, true), { code: 'ESOURCERELOADROLLEDBACK' });
+      else assert.deepEqual(await Promise.all(stacks.map(stack => launch(stack, true))), [{ readiness: 'ready' }, { readiness: 'ready' }]);
+      for (const stack of stacks) {
+        assert.equal(await readIndex(stack), failReplacement ? stack.name : 'shared export');
+        await assert.rejects(readFile(join(stack.baseDir, 'source-runtime', 'rollback.json')), { code: 'ENOENT' });
+      }
+    } finally {
+      for (const stack of stacks) {
+        const pid = Number(await readFile(join(stack.baseDir, 'fixture-runner.pid'), 'utf8').catch(() => ''));
+        if (pid > 1 && isPidAlive(pid)) process.kill(pid, 'SIGTERM');
+      }
+    }
+  });
+}
 
 test('a restart retires browsers only after it launched the replacement, never on the stop critical path', async t => {
   // P03 ORCH 2026-11-18: browser cleanup across every QA host (including an
