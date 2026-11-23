@@ -17,6 +17,7 @@ import type { DeploySuggestionCatalogV1 } from '@happier-dev/protocol/deployment
 import { listDeploymentTargetsFromManifestsV1, readDeploymentTargetDisplayNameV1, readPluginActionCredentialPurposeV1 } from '@happier-dev/deployments';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 
+import type { InputFieldOptionsState } from '@/components/sessions/actions/inputFieldOptionsStore';
 import { readDeploymentRefusal, type DeploymentRefusalReason } from './deploymentActionOutcome';
 import { formatContentDigestPrefix } from '@/utils/formatContentDigestPrefix';
 
@@ -390,7 +391,9 @@ export function disclosePlatformFields(
   return disclosed.length === fields.length ? fields : disclosed;
 }
 
-type PlatformFieldChoices = Readonly<{ status: 'loading' | 'ready' | 'failed'; options: readonly unknown[]; errorCode?: string; nextCursor?: string }>;
+type PlatformFieldChoices = Readonly<Pick<InputFieldOptionsState, 'status' | 'errorCode' | 'diagnostic' | 'nextCursor'> & {
+  options: readonly unknown[];
+}>;
 
 /**
  * The disclosed choices the sheet draws, and the one failed read it says once. A failed read stops the list: the
@@ -403,19 +406,21 @@ export function drawPlatformFields<Field extends EffectiveActionInputField>(
   values: Readonly<Record<string, unknown>>,
   choicesOf: (field: Field) => PlatformFieldChoices,
   paged: (field: Field) => boolean,
-): Readonly<{ fields: readonly Field[]; failure: Readonly<{ code: string }> | null; canCheck: boolean }> {
+): Readonly<{ fields: readonly Field[]; failure: Readonly<{ code: string; field: Field; diagnostic?: InputFieldOptionsState['diagnostic'] }> | null; canCheck: boolean }> {
   const drawn: Field[] = [];
   // Check reads the provider for the chosen project: a failed choices read or no choice at all can only fail again.
   const answered = fields.length === 0
     || fields.some((field) => readHappierActionInputPath(values as Record<string, unknown>, field.path) !== undefined);
   for (const field of fields) {
     const choices = choicesOf(field);
-    if (choices.status === 'failed') return { fields: drawn, failure: { code: choices.errorCode ?? 'unknown_error' }, canCheck: false };
+    if (choices.status === 'failed') return { fields: drawn, failure: {
+      code: choices.errorCode ?? 'unknown_error', field, ...(choices.diagnostic ? { diagnostic: choices.diagnostic } : {}),
+    }, canCheck: false };
     const value = readHappierActionInputPath(values as Record<string, unknown>, field.path);
     if (field.required && !field.allowCustomValue && (field.widget === 'select' || field.widget === 'multiselect')
       && value === undefined && choices.status === 'ready' && choices.options.length === 0
       && choices.nextCursor === undefined && !paged(field)) {
-      return { fields: drawn, failure: { code: 'provider_options_empty' }, canCheck: false };
+      return { fields: drawn, failure: { code: 'provider_options_empty', field }, canCheck: false };
     }
     // An answered choice that offers nothing else is not a row: it would repeat the value beside it (the sole
     // Cloudflare account under its connection, the Worker under its name) (PAGE-ACCEPT-176 R8-D4, R10-D6).

@@ -26,6 +26,8 @@ import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plug
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { DeploymentSourceMethodV1Schema, type DeploymentSourceMethodV1 } from '@happier-dev/deployments/contracts/v1';
 import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
+import { readDeploymentRefusalRecovery } from './deploymentPresentation';
 import type { DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
 import {
@@ -433,6 +435,8 @@ export function DeploymentPlatformTargetEditor(
   // One failed read is said once, at the sheet; an optional choice this target has nothing for is not drawn.
   const drawn = drawPlatformFields(fields, values, (field) => options.state(field), (field) => (cursors[field.path]?.length ?? 0) > 0);
   const visibleFields = usesDraftBranch ? drawn.fields.filter(field => field.path !== 'productionBranch') : drawn.fields;
+  const optionRefusal = drawn.failure;
+  const optionRecovery = optionRefusal && readDeploymentRefusalRecovery(optionRefusal.code, optionRefusal);
   const missingField = fields.find(field => {
     const value = getValueAtPath(values, field.path);
     return field.required && (value == null || (typeof value === 'string' && value.trim() === ''));
@@ -907,21 +911,27 @@ export function DeploymentPlatformTargetEditor(
                     );
                   })
                 : null}
+              {draft && optionRefusal ? (
+                <SurfaceStateCard testID="project-deployments.platform.choicesFailed"
+                  size="line" kind="error"
+                  title={optionRefusal.field.title ?? optionRefusal.field.path}
+                  reason={optionRecovery?.remedy ?? t('projects.deployments.platformLink.choicesFailedBody')}
+                  diagnosticCode={optionRefusal.diagnostic?.reason ?? optionRefusal.code}
+                  action={optionRecovery && (props.onOpenRecoveryDestination || optionRecovery.nextAction.destination === 'machines') ? {
+                    label: optionRecovery.nextAction.label,
+                    onPress: () => {
+                      if (props.onOpenRecoveryDestination) {
+                        onClose();
+                        props.onOpenRecoveryDestination(optionRecovery.nextAction.destination);
+                      } else router.pushRetainingCurrent(SETTINGS_ROUTES.machines);
+                    },
+                  } : { label: t('common.retry'), onPress: () => options.retry() }}
+                />
+              ) : null}
             </ItemGroup>
-            {props.onPrepared && create && draft && !connectionNeeded && missingField ? (
+            {props.onPrepared && create && draft && !connectionNeeded && missingField && !drawn.failure ? (
               <SurfaceStateCard testID="project-deployments.platform.reviewMissing" size="line" kind="unavailable"
                 title={t('projects.deployments.platformLink.reviewMissing', { field: missingField.title ?? t('projects.deployments.branch') })} />
-            ) : null}
-            {draft && drawn.failure ? (
-              <SurfaceStateCard
-                testID="project-deployments.platform.choicesFailed"
-                size="line"
-                kind="error"
-                title={t('projects.deployments.platformLink.choicesFailed', { platform: target.title })}
-                reason={t('projects.deployments.platformLink.choicesFailedBody')}
-                diagnosticCode={drawn.failure.code}
-                action={{ label: t('common.retry'), onPress: () => options.retry() }}
-              />
             ) : null}
             {/* One cause, one message: a failed choices read is the sheet's message, not a stale Check result too. */}
             {drawn.failure ? null : <DeploymentPlatformInspectState outcome={outcome}

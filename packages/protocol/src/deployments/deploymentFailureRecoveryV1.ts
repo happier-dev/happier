@@ -1,6 +1,7 @@
 import { DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION } from './resolvePublishTargetRecommendation.js';
 import { z } from '../zodRuntimePolicy.js';
 import { isRecord } from '../common/records.js';
+import { ActionRefusalDiagnosticV1Schema } from '../actions/actionRefusalDiagnostic.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { projectActionFailureRecoveryV1 } from '../actions/actionExecutionResult.js';
 import { OpenProjectInputV1Schema, OpenProjectRefusalV1Schema, type OpenProjectInputV1 } from '../projects/openProjectV1.js';
@@ -136,6 +137,8 @@ const recoveries = {
     source_changed: recovery('The project source changed after preparation. Reload it and review the deployment from the current source.', 'source', 'Reload project source'),
     source_identity_mismatch: recovery('The source no longer matches the reviewed repository. Choose the intended repository and prepare a new review.', 'source', 'Check repository'),
     target_mismatch: recovery('The selected machine or target no longer matches this review. Choose the intended target and review again.', 'settings', 'Choose target'),
+    own_reachable_machine_absent: recovery('Happier could not reach an eligible Machine to load these choices. Open Machines and bring one online.', 'machines', 'Open Machines'),
+    plugin_options_declaration_absent: recovery('The connected Machine does not publish the option reader for this target. Open Machines and update Happier on the Machine with the target plugin.', 'machines', 'Open Machines'),
     target_unavailable: recovery('The selected target is unavailable. Reconnect it or link another target to this Environment.', 'settings', 'Open targets'),
     client_required: recovery('This change needs a connected Happier client. Open the Environment on a connected device to continue.', 'machines', 'Check connected machines'),
     home_unreachable: recovery('Happier cannot reach this Home. Reconnect to the Home, then reload the Environment.', 'machines', 'Check Home connection'),
@@ -371,7 +374,9 @@ function recoveryFor(details: Record<string, unknown>, errorCode?: string, reque
     // A recorded typed cause (an unconfirmed transition's Home refusal) is more specific than the outcome code it settled as.
     const failureCause = isRecord(details.failureCause) ? details.failureCause
         : isRecord(failure?.failureCause) ? failure.failureCause : undefined;
-    const codes = [sourceAdmission?.reason, failure?.reason, failureCause?.errorCode, failure?.code, details.reason, details.code, errorCode];
+    const diagnostic = ActionRefusalDiagnosticV1Schema.safeParse(details.diagnostic).data;
+    const codes = [sourceAdmission?.reason, failure?.reason, failureCause?.errorCode, failure?.code,
+        diagnostic?.reason, details.reason, details.code, errorCode];
     const code = codes.find((candidate): candidate is keyof typeof recoveries =>
         typeof candidate === 'string' && Object.hasOwn(recoveries, candidate));
     if (code === 'deployment_docker_socket_access_denied' && typeof details.dockerEndpoint === 'string'

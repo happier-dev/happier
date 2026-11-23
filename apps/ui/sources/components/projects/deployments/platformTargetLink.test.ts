@@ -411,7 +411,7 @@ describe('platform choice disclosure', () => {
     const account = [field('account')];
     const draw = (status: 'loading' | 'ready' | 'failed', options: readonly unknown[], paged = false) =>
       drawPlatformFields(account, {}, () => ({ status, options, errorCode: 'plugin_action_generation_retired' }), () => paged);
-    expect(draw('failed', []).failure).toEqual({ code: 'plugin_action_generation_retired' });
+    expect(draw('failed', []).failure).toMatchObject({ code: 'plugin_action_generation_retired', field: { path: 'account' } });
     expect(draw('loading', []).failure).toBeNull();
     expect(draw('ready', [])).toMatchObject({ failure: { code: 'provider_options_empty' }, canCheck: false });
     expect(draw('ready', [], true).failure).toBeNull();
@@ -468,7 +468,7 @@ describe('platform choice disclosure', () => {
     };
     const drawn = drawPlatformFields(fields, { account: 'team-1' }, (entry: { path: string }) => states[entry.path]!, () => false);
     expect(drawn.fields.map((entry: { path: string }) => entry.path)).toEqual(['account']);
-    expect(drawn.failure).toEqual({ code: 'provider_response_invalid' });
+    expect(drawn.failure).toMatchObject({ code: 'provider_response_invalid', field: { path: 'note' } });
     // A Check after a failed read can only repeat the same cause.
     expect(drawn.canCheck).toBe(false);
   });

@@ -1,4 +1,5 @@
 import { getActionSpec, type PublicActionResultById } from '@happier-dev/protocol/actions/actionSpecs';
+import { ActionRefusalDiagnosticV1Schema, type ActionRefusalReasonV1 } from '@happier-dev/protocol/actions/actionRefusalDiagnostic';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
@@ -13,6 +14,7 @@ export type InputFieldOptionsState = Readonly<Pick<PublicActionResultById['actio
     options: readonly ActionFieldOption[];
     status: 'loading' | 'ready' | 'failed';
     errorCode?: string;
+    diagnostic?: Readonly<{ reason: ActionRefusalReasonV1 }>;
     requestId?: string;
     /** With `missing_option_dependency`: the draft path the choices wait on, as the options owner names it. */
     requiredDraftPath?: string;
@@ -112,11 +114,14 @@ function load(read: InputOptionsRead, entry: ReadEntry, callerContext?: ActionEx
         const errorCode = error instanceof WorkflowActionError ? error.rawCode ?? 'action_failed' : 'action_failed';
         const details = error instanceof WorkflowActionError ? error.rawDetails : undefined;
         const requestId = error instanceof WorkflowActionError ? error.requestId : undefined;
+        const diagnostic = details !== null && typeof details === 'object' && 'diagnostic' in details
+            ? ActionRefusalDiagnosticV1Schema.safeParse(details.diagnostic).data : undefined;
         const requiredDraftPath = errorCode === 'missing_option_dependency' && typeof details === 'object' && details !== null
             && typeof (details as { requiredDraftPath?: unknown }).requiredDraftPath === 'string'
             ? (details as { requiredDraftPath: string }).requiredDraftPath : undefined;
         entry.state = { status: 'failed', options: entry.state.options, errorCode,
             ...(requestId === undefined ? {} : { requestId }),
+            ...(diagnostic === undefined ? {} : { diagnostic }),
             ...(requiredDraftPath === undefined ? {} : { requiredDraftPath }) };
         entry.projection.state = entry.state;
         entry.listeners.forEach((listener) => listener());

@@ -403,10 +403,16 @@ function surfaceAction(card: { props: React.ComponentProps<typeof SurfaceStateCa
   return action;
 }
 
-it('keeps a settled empty required choice visible with a typed reason and Retry', async () => {
-  const pluginId = 'com.example.empty-deploy';
+it.each(['empty provider choices', 'out-of-date Account relay', 'out-of-date relay in the inline editor'] as const)('offers one recovery for %s', async scenario => {
+  const guided = scenario === 'out-of-date relay in the inline editor';
+  const stale = scenario !== 'empty provider choices';
+  const openRecovery = vi.fn();
+  const { router } = await import('expo-router');
+  const { SETTINGS_ROUTES } = await import('@/components/settings/catalog/routes');
+  const { DeploymentPlatformTargetEditor } = await import('./DeploymentPlatformTargetSheet');
+  const pluginId = stale ? 'com.example.stale-deploy' : 'com.example.empty-deploy';
   const authored = createDeploymentTargetsTestPlugin(pluginId, undefined, { emptyChoices: true });
-  const serverId = await homes.addHome({ name: 'Empty choices', serverUrl: 'https://empty-choices.test',
+  const serverId = await homes.addHome({ name: 'Target options', serverUrl: stale ? 'https://stale-choices.test' : 'https://empty-choices.test',
     serverIdentityId: `srv_${'e'.repeat(32)}`, accountId: 'owner', currentAccount: true });
   const context = await captureLazyActionAccountContext(serverId);
   const installed = await installPortableAccountPluginReleaseForTest({ manifest: authored.manifest,
@@ -427,7 +433,7 @@ it('keeps a settled empty required choice visible with a typed reason and Retry'
     familiesById: { inputTypes: { family: 'inputTypes', entriesById: {
       [buildQualifiedPluginContributionKey(typeRef)]: { id: buildQualifiedPluginContributionKey(typeRef), pluginId,
         pluginVersion: authored.manifest.version, definition },
-    } } }, resourcesById: { [buildQualifiedPluginContributionKey(resourceRef)]: {
+    } } }, resourcesById: stale ? {} : { [buildQualifiedPluginContributionKey(resourceRef)]: {
       pluginId, id: resource.id, resourceKind: resource.kind, scope: resource.scope,
       execution: resource.execution, accountRuntimeDeclared: true,
     } } });
@@ -449,16 +455,26 @@ it('keeps a settled empty required choice visible with a typed reason and Retry'
         fieldPath: input.fieldPath ?? null, optionsSourceId: input.optionsSourceId ?? null,
         ...(page !== null && typeof page === 'object' ? page : {}) });
     } });
-    const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
-    await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { id: 'environment', revision: 4, definition: { kind: 'repository' }, projectSourceId: '' },
-      ownerAccountId: 'owner', lifetime: context.accountLifetime, actions: createDeploymentActions(context.accountLifetime, ''), onApproval: () => {},
-      initialTargetKey: `${pluginId}/beta` }));
+    const editor = { name: 'Site', environment: { id: 'environment', revision: 4, definition: { kind: 'repository' as const }, projectSourceId: '' },
+      ownerAccountId: 'owner', lifetime: context.accountLifetime, actions: createDeploymentActions(context.accountLifetime, ''),
+      onApproval: () => {}, initialTargetKey: `${pluginId}/beta` };
+    const screen = await renderScreen(<ModalProvider>{guided
+      ? <DeploymentPlatformTargetEditor {...editor} onPrepared={() => {}} onClose={() => {}} /> : null}</ModalProvider>);
+    if (!guided) await act(async () => showDeploymentPlatformTargetSheet({ ...editor, onOpenRecoveryDestination: openRecovery }));
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(screen.root.findAllByType(ConnectedAccountPurposeTargetChooser)).toHaveLength(1); });
     await act(async () => screen.root.findByType(ConnectedAccountPurposeTargetChooser).props.onChange({ kind: 'account',
       account: { service: DEPLOYMENT_TARGETS_TEST_SERVICE, accountId: 'cloud-account' } }, null));
     const failure = () => screen.root.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'project-deployments.platform.choicesFailed');
-    await waitForHomeGovernance(async () => { await act(async () => {}); expect(failure()?.props.diagnosticCode).toBe('provider_options_empty'); });
-    expect(screen.findByTestId('project-deployments.platform.check')?.props.disabled).toBe(true);
+    const expectedCode = stale ? 'plugin_options_declaration_absent' : 'provider_options_empty';
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(failure()?.props.diagnosticCode).toBe(expectedCode); });
+    if (!guided) expect(screen.findByTestId('project-deployments.platform.check')?.props.disabled).toBe(true);
+    if (stale) {
+      await act(async () => { await surfaceAction(failure()).onPress(); });
+      if (guided) expect(router.push).toHaveBeenLastCalledWith(SETTINGS_ROUTES.machines);
+      else expect(openRecovery).toHaveBeenCalledExactlyOnceWith('machines');
+      expect(optionReads).toBe(0);
+      return;
+    }
     const readsBeforeRetry = optionReads;
     await act(async () => { await surfaceAction(failure()).onPress(); });
     await waitForHomeGovernance(async () => { await act(async () => {});
