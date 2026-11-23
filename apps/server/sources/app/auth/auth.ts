@@ -13,7 +13,8 @@ import { projectDeploymentNativeAdmissionV1,
     projectExternalActionDeploymentMetadataReceiptIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isDeploymentDomainChildActionIdV1, isDeploymentChildRootActionIdV1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol';
 import { isDeploymentBackupReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, isDeploymentControllerSetActionIdV1,
-    DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1,
+    DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
+    DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
     isDeploymentReceiptObservationActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EmbedConfigV1Schema, StoredEmbedConfigV1Schema, type EmbedConfigV1 } from '@happier-dev/protocol/embed';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -147,8 +148,8 @@ export type VerifiedApiTokenPrincipal = Readonly<{
 }>;
 
 export type ExternalActionExecutionAuthorizationMintInput =
-    | Omit<Extract<ExternalActionExecutionAuthorizationBindingV1, { authentication: unknown }>, 'custodianAccountId' | 'installationId' | 'managedAccountExecutor'>
-    | Omit<Extract<ExternalActionExecutionAuthorizationBindingV1, { credentialId: string }>, 'custodianAccountId' | 'installationId' | 'managedAccountExecutor'>;
+    | Omit<Extract<ExternalActionExecutionAuthorizationBindingV1, { authentication: unknown }>, 'custodianAccountId' | 'installationId' | 'managedAccountExecutor' | 'deploymentObservationReceiptId'>
+    | Omit<Extract<ExternalActionExecutionAuthorizationBindingV1, { credentialId: string }>, 'custodianAccountId' | 'installationId' | 'managedAccountExecutor' | 'deploymentObservationReceiptId'>;
 
 export type VerifiedAuthToken = Readonly<{
     userId: string;
@@ -775,12 +776,15 @@ class AuthModule {
             reviewedPublication = admittedCandidate;
         }
         let metadataEnvironmentId: string | undefined;
+        let deploymentObservationReceiptId: string | undefined;
         try {
             metadataEnvironmentId = projectExternalActionDeploymentMetadataEnvironmentIdV1(input.actionId, inputRecord);
             // A receipt read by its own id binds that receipt's real Environment. The
             // storage read still authorizes the actor in that Environment; nothing widens.
             const receiptId = projectExternalActionDeploymentMetadataReceiptIdV1(input.actionId, inputRecord);
-            if (receiptId !== undefined) {
+            if (input.actionId === DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1) {
+                deploymentObservationReceiptId = receiptId;
+            } else if (receiptId !== undefined) {
                 const receipt = await db.deployment.findUnique({ where: { id: receiptId }, select: { environmentId: true } });
                 if (!receipt) throw refuse('metadata_receipt');
                 metadataEnvironmentId = receipt.environmentId;
@@ -888,6 +892,7 @@ class AuthModule {
             ...(managedAccountExecutor ? { managedAccountExecutor } : {}),
             ...(automationId ? { automationId } : {}),
             ...(environmentId ? { environmentId } : {}),
+            ...(deploymentObservationReceiptId ? { deploymentObservationReceiptId } : {}),
             ...((nativeAdmission && 'kind' in nativeAdmission && nativeAdmission.kind === 'promote' || ingressUpdateRoot || configureRoot || telemetryRoot || domainRoot && (isDeploymentDomainNativeAdmissionV1(nativeAdmission) || isDeploymentDomainDnsNativeAdmissionV1(nativeAdmission))
                 || nativeMemberRoot && nativeAdmission && 'kind' in nativeAdmission
                     && (nativeAdmission.kind === 'restart' || nativeAdmission.kind === 'restore' || nativeAdmission.kind === 'backup'))

@@ -1043,15 +1043,20 @@ export function projectExternalActionDeploymentMetadataEnvironmentIdV1(actionId:
     ? actionId === DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 && readRecord(input)?.environmentId === undefined ? undefined
       : z.looseObject({ environmentId: DeploymentIdentifierV1Schema }).parse(input).environmentId : undefined;
 }
-/** A receipt read by its own id names no Environment; Home binds the receipt's real Environment at issuance. */
+/** Only a bare receipt lookup or an exact receipt observation exposes the receipt operand. */
 export function projectExternalActionDeploymentMetadataReceiptIdV1(actionId: string, input: unknown): string | undefined {
-  return actionId === DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 && readRecord(input)?.environmentId === undefined
+  return actionId === DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1
+    || actionId === DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 && readRecord(input)?.environmentId === undefined
     ? z.looseObject({ deploymentId: DeploymentIdentifierV1Schema }).parse(input).deploymentId : undefined;
 }
 export function projectExternalActionDeploymentMetadataEnvelopeReceiptIdV1(input: Readonly<{
   actionId: string; envelope: ExternalActionRequestEnvelope;
 }>): string | undefined {
   if (input.envelope.v === 1) return projectExternalActionDeploymentMetadataReceiptIdV1(input.actionId, input.envelope.input);
+  if (input.actionId === DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1) {
+    return projectExternalActionDeploymentMetadataReceiptIdV1(input.actionId,
+      { deploymentId: input.envelope.deploymentMetadataReceiptId });
+  }
   if (input.envelope.deploymentMetadataReceiptId === undefined) return undefined;
   if (input.actionId !== DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 || input.envelope.deploymentMetadataEnvironmentId !== undefined) {
     throw new TypeError('Unexpected metadata receipt');
@@ -1479,6 +1484,8 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     deploymentTelemetryRead: z.optional(DeploymentTelemetryReadFactsV1Schema),
     /** Home's editor decision for the exact database target of an admitted write. */
     deploymentDatabaseEditor: z.optional(z.enum(['allowed', 'editing_off', 'not_an_editor'])),
+    /** Home-signed receipt operand for Observe continuation. */
+    deploymentObservationReceiptId: z.optional(DeploymentIdentifierV1Schema),
     presetPreparationAdmission: z.optional(z.union([ManagedMachinePresetPrepareInputV1Schema, ManagedMachinePresetRevisionInputV1Schema])),
     deploymentPreparationAdmission: z.optional(DeploymentPreparationAdmissionV1Schema),
     /** Home decides child dispatch once at mint; only the signed binding carries this authority. */
@@ -1618,6 +1625,10 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
   }
   if (value.approvalDecisionAdmission && value.actionId !== 'approval.request.decide') {
     context.addIssue({ code: 'custom', path: ['approvalDecisionAdmission'], message: 'Approval admission binds only its decision Action' });
+  }
+  if (value.deploymentObservationReceiptId !== undefined && (value.actionId !== DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1
+    || value.environmentId === undefined || value.target.kind !== 'machine' || value.target.machineId !== value.machineId)) {
+    context.addIssue({ code: 'custom', path: ['deploymentObservationReceiptId'], message: 'Observe binds its Environment and exact receipt on the admitted controller.' });
   }
   if (value.automationId !== undefined && value.actionId !== 'workflow.trigger.run_now') {
     context.addIssue({ code: 'custom', path: ['automationId'], message: 'Automation admission binds only run-now' });

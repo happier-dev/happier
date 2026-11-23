@@ -9980,11 +9980,11 @@ describe('deployment children retain their controller Action authority', () => {
         const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
             accountId: f.account.id, authentication, actionId, machineId: f.controller.id, target, requestId,
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, {
-                input: envelope.v === 1 ? input : { environmentId: metadataEnvironmentId },
+                input: envelope.v === 1 ? input : { environmentId: metadataEnvironmentId,
+                    deploymentId: envelope.deploymentMetadataReceiptId },
             });
         expect(authorization.binding.environmentId).toBe(f.environment.id);
         expect(authorization.binding.requestEnvelopeDigest).not.toBe(f.authorization.binding.requestEnvelopeDigest);
-        const path = `/v1/deployments/environments/${f.environment.id}/deployments/${f.receipt.id}/transitions`;
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
             const readEnvironment = (environmentId = f.environment.id, effectActionId: string = actionId) => {
                 const get = getActionSpec('deployments.environments.get');
@@ -10006,19 +10006,31 @@ describe('deployment children retain their controller Action authority', () => {
             expect(metadata.json()).toMatchObject({ ok: true, environment: { id: f.environment.id } });
             expect((await readEnvironment(f.environment.id, 'deployments.environments.get')).statusCode).toBe(200);
             expect((await readEnvironment(crypto.randomUUID())).statusCode).toBe(401);
-            const settle = async (machine = f.controller, deploymentId = f.receipt.id, state: 'failed' | 'running' = 'failed') => {
-                const body = signedStage(f, machine, state, f.receipt.revision);
-                return app.inject({ method: 'POST', url: path, payload: { ...body, deploymentId }, headers: {
+            const settle = async (machine = f.controller, receipt = f.receipt, state: 'failed' | 'running' = 'failed') => {
+                const body = signedStage({ ...f, receipt }, machine, state, receipt.revision);
+                const path = `/v1/deployments/environments/${f.environment.id}/deployments/${receipt.id}/transitions`;
+                return app.inject({ method: 'POST', url: path, payload: body, headers: {
                     [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
                     [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
                     [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
                     [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
                         effectActionId: actionId, target, installationId: machine.installationId, requestId,
-                        method: 'POST', path, body: { ...body, deploymentId }, privateKey: machine.keys.secretKey }),
+                        method: 'POST', path, body, privateKey: machine.keys.secretKey }),
                 } });
             };
             expect((await settle(f.builder)).statusCode).toBe(401);
-            expect((await settle(f.controller, crypto.randomUUID())).statusCode).toBe(401);
+            const sibling = await db.deployment.create({ data: { ...f.receipt, id: crypto.randomUUID(),
+                requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(),
+                requestedAt: new Date(f.receipt.requestedAt.getTime() + 1) } });
+            expect.soft((await settle(f.controller, sibling)).statusCode).toBe(401);
+            expect.soft(await db.deployment.findUniqueOrThrow({ where: { id: sibling.id } })).toEqual(sibling);
+            await db.deployment.delete({ where: { id: sibling.id } });
+            await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'outcome_unknown', settledAt: new Date() } });
+            expect.soft((await settle()).statusCode).toBe(401);
+            expect.soft(await db.deployment.findUniqueOrThrow({ where: { id: f.receipt.id } }))
+                .toMatchObject({ state: 'outcome_unknown', revision: f.receipt.revision });
+            await db.deployment.update({ where: { id: f.receipt.id }, data: { state: f.receipt.state,
+                revision: f.receipt.revision, settledAt: f.receipt.settledAt } });
             const response = await settle();
             expect(response.statusCode, response.body).toBe(200);
             expect(DeploymentReceiptResultV1Schema.parse(response.json())).toMatchObject({ ok: true, state: 'failed' });
@@ -10027,7 +10039,7 @@ describe('deployment children retain their controller Action authority', () => {
             expect(replay.statusCode, replay.body).toBe(200);
             expect(DeploymentReceiptResultV1Schema.parse(replay.json())).toMatchObject({ ok: true, state: 'failed' });
             // Any other transition after settlement is still not admitted.
-            expect((await settle(f.controller, f.receipt.id, 'running')).statusCode).toBe(401);
+            expect((await settle(f.controller, f.receipt, 'running')).statusCode).toBe(401);
         }, { authentication: 'real' });
     });
 

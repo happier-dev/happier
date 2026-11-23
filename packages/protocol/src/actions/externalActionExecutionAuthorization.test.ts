@@ -301,6 +301,29 @@ it.each(['plain', 'e2ee'] as const)('binds native teardown to its explicit Envir
     { actionId, machineId: target.machineId, envelope })).toBe(false);
 });
 
+it.each(['plain', 'e2ee'] as const)('requires a signed exact receipt on Observe before starting controller work (%s)', mode => {
+  const actionId = 'deployments.receipts.observe';
+  const target = { kind: 'machine', machineId: 'receiver' } as const;
+  const requestId = 'observation-root';
+  const input = { serverId: 'srv_binding', environmentId: 'environment', deploymentId: 'receipt' };
+  const authentication = { kind: 'account', tokenEpoch: 1 } as const;
+  const envelope = mode === 'plain' ? { v: 1, requestId, target, input } as const
+    : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: { serverIdentityId: input.serverId, accountId: 'actor', actionId, requestId, target, authentication },
+      input, material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(9) },
+      randomBytes: size => new Uint8Array(size).fill(2) });
+  const { binding } = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'proof', binding: {
+    accountId: 'actor', custodianAccountId: 'actor', authentication, serverIdentityId: input.serverId,
+    machineId: target.machineId, installationId: 'installation', actionId, requestId, target,
+    environmentId: input.environmentId, deploymentObservationReceiptId: input.deploymentId,
+    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+  } });
+  const selected = { actionId, machineId: target.machineId, envelope };
+  expect(isExternalActionAuthorizationBoundToEnvelope(binding, selected)).toBe(true);
+  expect.soft(isExternalActionAuthorizationBoundToEnvelope({ ...binding, deploymentObservationReceiptId: undefined }, selected)).toBe(false);
+  expect(isExternalActionAuthorizationBoundToEnvelope({ ...binding, deploymentObservationReceiptId: 'another-receipt' }, selected)).toBe(false);
+});
+
 it.each(['plain', 'e2ee'] as const)('leaves an ordinary qualified Action outside deployment read admission (%s)', mode => {
   const actionId = 'action.invoke';
   const target = { kind: 'machine', machineId: 'receiver' } as const;

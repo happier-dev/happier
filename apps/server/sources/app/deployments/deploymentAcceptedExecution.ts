@@ -25,7 +25,8 @@ export type DeploymentReceiptContinuation = Readonly<{
     observedSettlementState?: string;
 }>;
 type AcceptedReceiptBinding = Pick<ExternalActionExecutionAuthorizationBindingV1, 'accountId' | 'machineId' | 'actionId' | 'requestId' | 'target'>
-    & Partial<Pick<ExternalActionExecutionAuthorizationBindingV1, 'requestEnvelopeDigest' | 'installationId' | 'environmentId' | 'workflowActionOrigin' | 'deploymentPreparationAdmission'>>;
+    & Partial<Pick<ExternalActionExecutionAuthorizationBindingV1, 'requestEnvelopeDigest' | 'installationId' | 'environmentId'
+        | 'workflowActionOrigin' | 'deploymentPreparationAdmission' | 'deploymentObservationReceiptId'>>;
 
 /** Builder custody belongs only to the persisted native own-server target. */
 export function isOwnServerDeploymentTarget(target: AcceptedTarget): boolean {
@@ -110,7 +111,9 @@ export async function readAcceptedDeploymentReceiptInTx(tx: Tx, binding: Accepte
             || binding.environmentId !== undefined && binding.environmentId !== continuation.environmentId)) return null;
     const operation = deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission);
     const observing = binding.actionId === DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1;
-    if (!operation && !observing || observing && !continuation) return null;
+    if (!operation && !observing || observing && (!continuation
+        || binding.deploymentObservationReceiptId !== continuation.deploymentId)) return null;
+    const observedState = continuation?.observedSettlementState;
     const originalRequest = operation ? { operation, acceptedRequestEnvelopeDigest: binding.requestEnvelopeDigest } : {};
     if (binding.workflowActionOrigin && binding.workflowActionOrigin.requestId !== binding.requestId) return null;
     const workflowRun = binding.workflowActionOrigin ? {
@@ -127,8 +130,11 @@ export async function readAcceptedDeploymentReceiptInTx(tx: Tx, binding: Accepte
         // A fresh signed root can release its requester's interrupted slot on
         // the captured controller, without borrowing the old execution root.
         // Overlapping observers: the slower one reaches the transition owner's same-state replay, never another outcome.
-        ...(observing ? { state: { in: [...deploymentInProgressStates(), 'outcome_unknown',
-            ...(continuation?.observedSettlementState ? [continuation.observedSettlementState] : [])] } }
+        ...(observing ? { OR: [
+            { state: { in: [...deploymentInProgressStates(),
+                ...(observedState && observedState !== 'outcome_unknown' ? [observedState] : [])] } },
+            { state: 'outcome_unknown', targetLink: { sourceKind: 'plugin' } },
+        ] }
             : continuation?.interruptedSettlement ? { OR: [
             originalRequest,
             { state: { in: deploymentInProgressStates() } },

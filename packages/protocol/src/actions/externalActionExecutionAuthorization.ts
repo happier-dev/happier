@@ -19,6 +19,7 @@ import { SessionRequesterInstallationSealedBootstrapV1Schema } from '../sessions
 import { DeploymentChildRoutingV1Schema, type DeploymentChildRoutingV1 } from '../deployments/deploymentChildRoutingV1.js';
 import { DeploymentChildExecutionProofV1Schema, type DeploymentChildExecutionProofV1 } from '../deployments/deploymentChildExecutionProofV1.js';
 import { readDeploymentArchiveRpcEffectV1 } from '../deployments/deploymentArchiveRpcV1.js';
+import { DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 export type { DeploymentChildExecutionProofV1 } from '../deployments/deploymentChildExecutionProofV1.js';
 import type { ApprovalRequesterConfirmationV1 } from '../approvals/approvalRequestV1.js';
 import { ManagedCredentialInstallInputV1Schema } from '../machines/managed/credentialDeliveryV1.js';
@@ -35,6 +36,7 @@ import { ExternalActionRequestEnvelopeSchema, ExternalActionRequestIdV1Schema, E
   projectExternalActionDeploymentNativeEnvelopeAdmissionV1,
   projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1,
   projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1,
+  projectExternalActionDeploymentMetadataEnvelopeReceiptIdV1,
   projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1,
   projectExternalActionProjectSessionDefaultsEnvelopeAdmissionV1,
   projectExternalActionProjectSourceCheckoutEnvelopeIdV1,
@@ -138,6 +140,8 @@ export function isExternalActionAuthorizationBoundToEnvelope(binding: ExternalAc
       && binding.requestEnvelopeDigest === computeExternalActionRequestEnvelopeDigestV1(input.envelope)
       && binding.discussionId === projectExternalActionDiscussionEnvelopeIdV1(input)
       && (metadataEnvironmentId === undefined || binding.environmentId === metadataEnvironmentId)
+      && (input.actionId !== DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1
+        || binding.deploymentObservationReceiptId === projectExternalActionDeploymentMetadataEnvelopeReceiptIdV1(input))
       && sameStrictJsonValue(binding.deploymentReadAdmission, projectExternalActionDeploymentReadEnvelopeAdmissionV1(input))
       && sameStrictJsonValue(binding.projectSessionDefaultsAdmission, projectExternalActionProjectSessionDefaultsEnvelopeAdmissionV1(input))
       && binding.projectSourceCheckoutId === projectExternalActionProjectSourceCheckoutEnvelopeIdV1(input)
