@@ -36,7 +36,7 @@ beforeEach(async () => {
     const text = await import('@/text');
     const { en } = await import('@/text/translations/homeGovernanceTranslations.shared');
     const { readRecord } = await import('@happier-dev/protocol/inputs/inputRecords');
-    vi.spyOn(text, 't').mockImplementation((key, ...params) => {
+    vi.spyOn(text, 't').mockImplementation((key, ...params: unknown[]) => {
         if (!key.startsWith('homeGovernance.')) return key;
         const value = key.split('.').slice(1).reduce<unknown>((row, segment) => readRecord(row)[segment], en);
         if (typeof value === 'function') return value(params[0]);
@@ -184,6 +184,10 @@ async function mountErasureRefusal(blocker: AccountErasureDeploymentBlockerV1 | 
     homeHttp.answer(homeId, `/v1/deployments/environments/${environment.id}`, {
         body: { ok: true, environment, targetLinks: [] },
     });
+    homeHttp.answer(homeId, 'GET /v1/deployments/environments', { select: (_raw, request) => {
+        const ids = new URL(request.url).searchParams.getAll('environmentIds');
+        return { body: { ok: true, items: ids.includes(environment.id) ? [environment] : [], nextCursor: null } };
+    } });
     await runtime.setActiveServer({ serverId: homeId, scope: 'device' });
     const connection = await import('@/sync/runtime/orchestration/connectionManager');
     await connection.switchConnectionToActiveServer();

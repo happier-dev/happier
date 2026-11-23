@@ -109,7 +109,7 @@ function ConfirmationReviewModal(props: ConfirmationReviewModalProps) {
     <ListPresentationProvider value="page" pageInsets="contained">
       <View testID="actions.confirmation-review" style={styles.body}>
         {notice ? <View accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.challenge}>
-          <Text variant="body" emphasis="semibold">{notice.title}</Text>
+          <Text variant="body" emphasis="semiBold">{notice.title}</Text>
           <Text variant="body">{notice.body}</Text>
         </View> : <ActionConfirmationReviewFacts
           actionId={props.actionId}
