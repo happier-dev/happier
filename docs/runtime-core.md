@@ -1979,6 +1979,8 @@ POSIX natural-root uncertainty preserves the original exit waiter, cancellation 
 
 ### Session process custody (0.3 development)
 
+Exec startup refusals name the working folder if it cannot be resolved during preparation or disappears before the process starts. The existing refusal carries the typed preparation or spawn cause. The folder is shown in the refusal to the caller.
+
 The Exec supervisor exposes two native facts on one `PluginProcessHandle`:
 `waitForExit()` returns root termination at Node's `exit` (or spawn failure),
 while `wait()` returns captured stdout and stderr only after Node's `close`.

@@ -41,10 +41,12 @@ import {
     PluginExecClientError,
     createPluginExecClientExitError,
     createPluginExecClientAbortError,
+    execWorkingDirectoryRefusalMessage,
+    projectPluginExecSpawnFailure,
     sanitizeExecDiagnosticText,
 } from '../../exec/errors';
 import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/runtimeLimitMeasurement';
-import { classifySpawnFailure, spawnFailureMessage, type SpawnFailureLimitsReader } from '@/processes/spawnFailure/classifySpawnFailure';
+import type { SpawnFailureLimitsReader } from '@/processes/spawnFailure/classifySpawnFailure';
 import { validateEnvVarRecordStrict } from '@/terminal/runtime/envVarSanitization';
 import type { ProjectNativeToolchainInput, ProjectNativeToolchainIo, ProjectNativePluginAdapterInput } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 import type { ProjectSecretReferenceEnvironmentInput } from '@/settings/secrets/secretReferenceOverlay';
@@ -580,8 +582,10 @@ export function spawnAuthorizedHostExecLaunchForHost(
         if (!options.retainLaunch) void launch.release();
         // The holder decision refuses before any process starts; keep its typed code.
         if (!spawnAttempted && isPluginError(error)) throw error;
-        const spawnFailure = classifySpawnFailure(error, { syscall: 'spawn', limits: options.readSpawnFailureLimits?.() });
-        throw new PluginError({ code: 'plugin_exec_spawn_failed', message: spawnFailureMessage(spawnFailure, 'Process could not be started'), details: { spawnFailure }, failureCause: projectActionFailureCauseV1(error, 'exec.spawn') }, { cause: error });
+        const failure = projectPluginExecSpawnFailure(error, {
+            cwd: launch.launcherCwd ?? launch.cwd, limits: options.readSpawnFailureLimits?.(),
+        }, 'Process could not be started');
+        throw new PluginError({ code: 'plugin_exec_spawn_failed', ...failure }, { cause: error });
     }
     const recoverFailedNativeLaunch = launch.onNativeLaunchFailure;
     if (recoverFailedNativeLaunch) {
@@ -1878,7 +1882,15 @@ export function createStablePluginExecService(params: Readonly<{
         } catch (error) {
             releaseExecutable();
             if (isPluginError(error)) throw error;
-            return fail('plugin_exec_cwd_unavailable', 'Process working directory could not be resolved', error);
+            const requestedCwd = typeof request.cwd === 'string' ? request.cwd
+                : request.cwd ? request.cwd.relativePath : params.defaultCwd;
+            if (!requestedCwd) return fail('plugin_exec_cwd_unavailable', 'Process working directory could not be resolved', error);
+            throw new PluginError({
+                code: 'plugin_exec_cwd_unavailable',
+                message: execWorkingDirectoryRefusalMessage(requestedCwd),
+                details: { cwd: requestedCwd },
+                failureCause: projectActionFailureCauseV1(error, 'exec.prepare'),
+            }, { cause: error });
         }
         try {
             assertCurrent();

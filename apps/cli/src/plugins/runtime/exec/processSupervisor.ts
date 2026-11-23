@@ -19,7 +19,7 @@ import {
     type ProcessCustodySpawnSpec,
 } from '@/subprocess/supervision/processCustody';
 import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/runtimeLimitMeasurement';
-import { classifySpawnFailure, spawnFailureMessage, type SpawnFailure, type SpawnFailureLimitsReader } from '@/processes/spawnFailure/classifySpawnFailure';
+import type { SpawnFailureLimitsReader } from '@/processes/spawnFailure/classifySpawnFailure';
 import type { OwnerRemainderPort } from '@/daemon/processes/endOwnerRemainder';
 import { parseProcessOwnerTag, PROCESS_OWNER_ENV_KEY, type ProcessOwnerRef } from '@/processes/ownerTag';
 import { observeProcessLaunch } from '@/processes/launchNotification';
@@ -28,6 +28,7 @@ import { logger } from '@/ui/logger';
 import { PROCESS_TERMINATION_GRACE_MS } from '@/subprocess/supervision/terminationPolicy';
 import type { ProviderRedactionLease } from '@/providers/spawn/redaction';
 import { createProcessOutputRedaction } from './processOutputRedaction';
+import { projectPluginExecSpawnFailure } from './errors';
 
 /** Keep the pipe's error event handled while each write returns its own failure. */
 export function createProcessStdinWriter(stdin: Writable): (data: Uint8Array) => Promise<void> {
@@ -185,7 +186,7 @@ function appendBounded(
     };
 }
 
-function failedTermination(error: unknown, spawnFailure?: SpawnFailure): PluginProcessObservedTermination {
+function failedTermination(error: unknown, failure?: ReturnType<typeof projectPluginExecSpawnFailure>): PluginProcessObservedTermination {
     const errorCode = typeof error === 'object'
         && error !== null
         && 'code' in error
@@ -197,8 +198,11 @@ function failedTermination(error: unknown, spawnFailure?: SpawnFailure): PluginP
         diagnostic: Object.freeze({
             code: 'PLUGIN_EXEC_PROCESS_FAILED',
             severity: 'error' as const,
-            message: spawnFailure ? spawnFailureMessage(spawnFailure, 'Process failed after its handle was created') : 'Process failed after its handle was created',
-            ...(errorCode || spawnFailure ? { details: { ...(errorCode ? { errorCode } : {}), ...(spawnFailure ? { spawnFailure } : {}) } } : {}),
+            message: failure?.message ?? 'Process failed after its handle was created',
+            ...(errorCode || failure ? { details: {
+                ...(errorCode ? { errorCode } : {}),
+                ...(failure ? { ...failure.details, failureCause: failure.failureCause } : {}),
+            } } : {}),
         }),
     });
 }
@@ -445,7 +449,10 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
     };
 
     child.once('error', (error) => {
-        freezeObserved(failedTermination(error, classifySpawnFailure(error, { syscall: 'spawn', limits: input.readSpawnFailureLimits?.() })));
+        const failure = projectPluginExecSpawnFailure(error, {
+            cwd: input.cwd, limits: input.readSpawnFailureLimits?.(),
+        }, 'Process failed after its handle was created');
+        freezeObserved(failedTermination(error, failure));
         if (!child.pid) confirmSettlement();
     });
     child.once('exit', (exitCode, signal) => {

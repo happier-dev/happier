@@ -2,7 +2,7 @@ import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actio
 import { describe, expect, it, vi } from 'vitest';
 import { createForegroundPurposeOwnerFixture } from '@/daemon/agentRuntime/prepareForegroundAdmission.connectedServices.testkit';
 import { materializeSessionConnectedAccountProcessEnvironment } from '@/daemon/connectedServices/materialize/processConnectedAccountEnvironment';
-import { mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rmdir, symlink, writeFile } from 'node:fs/promises';
 import { delimiter, dirname, join } from 'node:path';
 import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
@@ -795,6 +795,40 @@ describe('createStablePluginExecService', () => {
                 filesystemRoots: { pluginData, workspace: pluginData, projects: new Map() } }).run(request);
             expect(observed.termination.observed).toEqual({ kind: 'exit', exitCode: 0 });
             expect(new TextDecoder().decode(observed.stdout)).toBe(await realpath(root));
+        });
+    });
+
+    it('names a missing working folder in the typed Exec preparation refusal', async () => {
+        await withTempDir('happier missing process cwd ', async root => {
+            const cwd = join(root, 'missing working folder');
+            const failure = await createService().run({ executable, cwd }).catch((error: unknown) => error);
+            expect(failure).toMatchObject({
+                code: 'plugin_exec_cwd_unavailable', execLaunch: 'notStarted',
+                message: expect.stringContaining(cwd), details: { cwd },
+            });
+            expect(projectActionFailureCauseV1(failure)).toMatchObject({ phase: 'exec.prepare', errorCode: 'ENOENT' });
+        });
+    });
+
+    it('names a missing working folder in the typed Exec spawn failure after authorization', async () => {
+        await withTempDir('happier removed process cwd ', async root => {
+            const cwd = join(await realpath(root), 'removed working folder');
+            await mkdir(cwd);
+            const launch = await authorizePluginExecLaunchForHost(createService(), { executable, cwd });
+            await rmdir(cwd);
+            const supervised = spawnAuthorizedHostExecLaunchForHost(launch);
+            const { termination } = await supervised.handle.wait();
+            expect(termination.observed).toMatchObject({
+                kind: 'failed',
+                diagnostic: {
+                    code: 'PLUGIN_EXEC_PROCESS_FAILED',
+                    message: expect.stringContaining(cwd),
+                    details: {
+                        spawnFailure: { cwd, errno: 'ENOENT' },
+                        failureCause: { phase: 'exec.spawn', errorCode: 'ENOENT' },
+                    },
+                },
+            });
         });
     });
 

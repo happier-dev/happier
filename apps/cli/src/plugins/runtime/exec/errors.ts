@@ -1,6 +1,14 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { trimBugReportTextHeadToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
+
+import {
+    classifySpawnFailure,
+    isSpawnWorkingDirectoryMissing,
+    spawnFailureMessage,
+    type SpawnFailureContext,
+} from '@/processes/spawnFailure/classifySpawnFailure';
 
 import type { ExecClientDiagnosticSanitizerV1 } from './privateContract';
 
@@ -9,6 +17,23 @@ import { sanitizeRpcDiagnosticString } from './diagnostics/sanitize';
 /** Native process settlement is an exec-owner fact, independent of adapter activation. */
 export function isProjectNativeProcessUncertain(error: unknown): boolean {
     return !!error && typeof error === 'object' && 'code' in error && error.code === 'plugin_exec_termination_incomplete';
+}
+
+export function execWorkingDirectoryRefusalMessage(cwd: string): string {
+    return `Process working directory could not be resolved: ${cwd}`;
+}
+
+export function projectPluginExecSpawnFailure(
+    error: unknown,
+    context: Pick<SpawnFailureContext, 'cwd' | 'limits'>,
+    fallback: string,
+) {
+    const spawnFailure = classifySpawnFailure(error, { ...context, syscall: 'spawn' });
+    const { cwd, errno } = spawnFailure;
+    const message = cwd && (errno === 'ENOENT' || errno === 'ENOTDIR') && isSpawnWorkingDirectoryMissing(cwd)
+        ? execWorkingDirectoryRefusalMessage(cwd)
+        : spawnFailureMessage(spawnFailure, fallback);
+    return { message, details: { spawnFailure }, failureCause: projectActionFailureCauseV1(error, 'exec.spawn') };
 }
 
 export type PluginExecClientErrorCode =
