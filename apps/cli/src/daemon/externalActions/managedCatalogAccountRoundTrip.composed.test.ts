@@ -22,6 +22,7 @@ import { MachineSetupApplyInputV1Schema, MachineSetupCombinedPlanInputV1Schema, 
   machineSetupApplyTargetFromPlanV1, ManagedAdmissionOutputV1Schema, ManagedAcceptedV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityActionOutputSchemasV1 } from '@happier-dev/protocol/plugins/availability/actions';
+import { normalizePluginReleaseFactsV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
@@ -3451,7 +3452,14 @@ describe('managed catalog original Account transport', () => {
         Object.assign(nativeObservation, { observedAt: Date.now(), power: intent === 'stop' ? 'stopped' : 'suspended' });
       } });
     const manifest = PluginManifestV2Schema.parse(provisioner.runtimeRegistry.contributes.activationTargets[0]!.manifest);
-    const declaration = createReleaseLessDeclarationV1(manifest);
+    const release = normalizePluginReleaseFactsV1({ ref: { pluginId: manifest.id, version: manifest.version },
+      archiveDigestSha256: `sha256:${'a'.repeat(64)}`, normalizedManifest: manifest,
+      collectionContracts: [], uiSlots: [], packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } });
+    await db.accountPluginRelease.create({ data: { accountId: account.id, pluginId: manifest.id, version: manifest.version,
+      archiveDigestSha256: release.archiveDigestSha256, normalizedManifest: release.normalizedManifest,
+      collectionContracts: [], uiSlots: [], packageAssetArchive: release.packageAssetArchive } });
+    await db.accountPluginIntent.create({ data: { accountId: account.id, pluginId: manifest.id,
+      desiredVersion: manifest.version, enabled: true, writableCollections: [] } });
     await db.machine.create({ data: { id: controller.machineId, accountId: account.id, installationId: controller.installationId,
       installationPublicKey: installation.publicKey, active: true, lastActiveAt: new Date(),
       metadata: mode === 'plain' ? encodePlainMachineStoredContent({}) : 'opaque',
@@ -3464,8 +3472,8 @@ describe('managed catalog original Account transport', () => {
       dataEncryptionKey: mode === 'plain' ? Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') : null } });
     await db.pluginMachineMaterialization.create({ data: { accountId: account.id, serverIdentityId: homeId,
       machineId: controller.machineId, materializationId: controller.installationId, pluginId: manifest.id,
-      version: manifest.version, sourceClass: 'bundledFirstParty', portableRelease: false,
-      archiveDigestSha256: declaration.manifestDigestSha256, uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: new Date() } });
+      version: manifest.version, sourceClass: 'registryPackage', portableRelease: true,
+      archiveDigestSha256: release.archiveDigestSha256, uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: new Date() } });
     const io = channel.server;
     const serverUrl = 'https://deferred-power.example';
     await updateSettings(settings => ({ ...settings, servers: { ...settings.servers, [configuration.activeServerId]: {
@@ -3618,14 +3626,14 @@ describe('managed catalog original Account transport', () => {
     const identityPathDescriptor = Object.getOwnPropertyDescriptor(configuration, 'installationIdentityFile')!;
     Object.defineProperty(configuration, 'installationIdentityFile', { ...identityPathDescriptor, value: identityPath });
     try {
-      const claim = await app.inject({ method: 'POST', url: PluginAvailabilityActionHttpPathsV1['account.plugins.availability.collectionWriters.claim'],
-        headers: { authorization: `Bearer ${token}` }, payload: { manifest } });
-      expect(claim.statusCode, claim.payload).toBe(200);
       const presetId = `deferred-preset-${mode}-${credentialKind}-${intent}`;
-      expect(await executor.execute('machines.presets.create', { id: presetId, homeId, name: 'Deferred guest',
+      const launch = { provider: { pluginId: manifest.id, localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} };
+      const created = await executor.execute('machines.presets.create', { id: presetId, homeId,
         owner: { kind: 'account', accountId: account.id }, controller,
-        launch: { provider: { pluginId: manifest.id, localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
-        retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }, context)).toMatchObject({ ok: true });
+        contentEncryptionMode: 'plain', content: { t: 'plain', v: { v: 1, name: 'Deferred guest', launch } }, recipients: [],
+        retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }, context);
+      expect(created, JSON.stringify(created)).toMatchObject({ ok: true,
+        result: { kind: 'saved', preset: { contentEncryptionMode: mode } } });
       const admitted = ManagedAdmissionOutputV1Schema.parse(await admitManagedAcquire({ custodianAccountId: account.id,
         requesterAccountId: account.id, requestEnvelopeDigest: 'deferred-power-fixture', input: {
           requestId: `deferred-acquire-${mode}-${credentialKind}-${intent}`, continuationPresent: false, input: {
@@ -3637,7 +3645,7 @@ describe('managed catalog original Account transport', () => {
       // The retained native resource is the OS boundary; no VM/process runs in this test.
       await db.managedMachine.update({ where: { id: admitted.machine.id }, data: { allocation: 'bound', creationState: 'active',
         enrolledMachineId: guestId,
-        resource: { contributionRef: admitted.machine.launch.provider, schemaVersion: 1, value: {} } } });
+        resource: { contributionRef: launch.provider, schemaVersion: 1, value: {} } } });
       let intentRevision = 0;
       for (const permitted of [true, false]) {
         const actorAccount = permitted ? account : await createAccount();
