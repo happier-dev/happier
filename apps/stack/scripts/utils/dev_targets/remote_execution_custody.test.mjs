@@ -888,6 +888,44 @@ test('dispatcher death ends a TERM-ignoring payload even though its output reade
   await waitFor(() => !running(payloadPid), 'payload survived its dispatcher');
 });
 
+test('lifeline EOF cancels a detached payload without an owned job scope', { skip: process.platform === 'win32' }, async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-lifeline-detached-' });
+  writeFakeBin({ root, name: 'systemctl', content: '#!/bin/sh\nexit 1\n' });
+  const marker = join(root, 'detached.pid');
+  const worker = `
+    process.on('SIGTERM', () => {});
+    require('node:fs').writeFileSync(process.argv[1], String(process.pid));
+    setInterval(() => {}, 1000);
+  `;
+  const payload = `
+    require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(worker)}, ${JSON.stringify(marker)}], {
+      detached: true, stdio: 'ignore',
+    });
+    setInterval(() => {}, 1000);
+  `;
+  const wrapper = spawnObservedCustody(['run', join(root, 'remote-exec/detached.pid'), 'lifeline-detached',
+    process.execPath, '-e', payload], {
+    env: { ...process.env, TMPDIR: root, PATH: join(root, 'bin') + ':' + process.env.PATH, HAPPIER_REMOTE_EXEC_LIFELINE: '1' },
+    stdio: ['pipe', 'ignore', 'pipe'],
+  });
+  const closed = once(wrapper, 'close');
+  let output = '';
+  wrapper.stderr.on('data', chunk => { output += chunk; });
+  let detachedPid;
+  t.after(async () => {
+    wrapper.stdin.end();
+    if (detachedPid && running(detachedPid)) { try { process.kill(detachedPid, 'SIGKILL'); } catch {} }
+    await closed;
+  });
+  await waitFor(async () => {
+    detachedPid = Number(await readFile(marker, 'utf8').catch(() => '0'));
+    return detachedPid > 0 && running(detachedPid);
+  }, 'detached worker did not start');
+  wrapper.stdin.end();
+  assert.deepEqual(await closed, [130, null], output);
+  await waitFor(() => !running(detachedPid), 'detached worker survived loss of its lifeline');
+});
+
 test('control input survives the native admitted process tree', { skip: process.platform !== 'linux' }, async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-admitted-control-' });
   const native = await installNativeAdmissionFixture({ root, prepareDependencies: true });

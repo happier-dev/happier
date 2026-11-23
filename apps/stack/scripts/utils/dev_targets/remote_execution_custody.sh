@@ -403,12 +403,12 @@ lifetime_token=
 termination_reason=completed
 control_pipe=
 cleanup() {
-  rm -f -- "$pid_file"
   [ -z "$control_pipe" ] || { exec 4>&-; rm -f -- "$control_pipe"; }
   if [ -n "$lifetime_pid" ] && heavyweight_process_is_current "$lifetime_pid" "$lifetime_token"; then
     signal_member "$termination_reason" TERM pid "$lifetime_pid" "$lifetime_pid:$lifetime_token"
   fi
   [ -z "$lifetime_pid" ] || wait "$lifetime_pid" 2>/dev/null || true
+  rm -f -- "$pid_file"
   if [ -n "$command_temp" ]; then
     # Producer custody owns lifetime. Detached descendants can drop TMPDIR;
     # the canonical reaper also checks cwd, descriptors, mappings and inodes.
@@ -423,7 +423,22 @@ cleanup() {
 }
 terminate_command() {
   local reason=${1:-completed}
+  local members owned_scope= detached= recorded_wrapper recorded_child recorded_wrapper_token recorded_child_token
   [ -n "$remote_child_pid" ] || return 0
+  if [ "$reason" != completed ] &&
+      [ "${HAPPIER_STACK_PROCESS_KIND-}:$control_stdin" != browser:1 ] &&
+      { IFS= read -r recorded_wrapper && IFS= read -r recorded_child &&
+        IFS= read -r recorded_wrapper_token && IFS= read -r recorded_child_token; } 2>/dev/null < "$pid_file" &&
+      [ "$recorded_wrapper:$recorded_wrapper_token:$recorded_child" = "$$:$wrapper_token:$remote_child_pid" ] &&
+      heavyweight_process_is_current "$remote_child_pid" "$recorded_child_token"; then
+    # Snapshot before any TERM can reparent a detached shard. This also covers
+    # workers that have no per-execution scope, including inherited Linux scopes.
+    detached=$(descendant_identities "$remote_child_pid" "$remote_child_pid")
+    heavyweight_process_is_current "$remote_child_pid" "$recorded_child_token" || detached=
+  fi
+  if [ "$reason" = lifeline_eof ] && heavyweight_process_is_current "$$" "$wrapper_token"; then
+    signal_member "$reason" TERM pid "$$" "$$:$wrapper_token"
+  fi
   if [ "${HAPPIER_STACK_PROCESS_KIND-}" = browser ] && [ "$control_stdin" = 1 ]; then
     # Browser close owns detached Chromium and may outlive the generic group
     # grace. Reuse its control channel: repeated TERM could also interrupt the
@@ -442,19 +457,23 @@ terminate_command() {
   # The scope, unlike a process group, retains admitted/detached workers.
   # Name only the scope this wrapper could have created; inherited scopes
   # belong to their containing executor and are never cancelled here.
-  local members owned_scope=
   if [ "$reason" != completed ] && owned_scope=$(owned_jobs_scope "$$" "$wrapper_token"); then
     printf '[preferred-execution] stopping owned job scope %s (reason=%s)\n' "$owned_scope" "$reason" >&2
     signal_member "$reason" TERM scope "$owned_scope" '' || true
   fi
   members=$(group_identities "$remote_child_pid")
-  kill -0 -- "-$remote_child_pid" 2>/dev/null || [ -n "$owned_scope" ] || return 0
-  # Job control establishes a group for the command and all its descendants.
-  signal_member "$reason" TERM pgid "$remote_child_pid" "$members"
+  signal_current_descendants "$reason" TERM "$detached"
+  # Detached shards can still need cancellation after the main group exits.
+  if kill -0 -- "-$remote_child_pid" 2>/dev/null; then
+    signal_member "$reason" TERM pgid "$remote_child_pid" "$members"
+  elif [ -z "$owned_scope$detached" ]; then
+    return 0
+  fi
   for ((attempt=0; attempt<20; attempt++)); do
-    kill -0 -- "-$remote_child_pid" 2>/dev/null || [ -n "$owned_scope" ] || return 0
+    kill -0 -- "-$remote_child_pid" 2>/dev/null || [ -n "$owned_scope$detached" ] || return 0
     sleep 0.1
   done
+  signal_current_descendants "$reason" KILL "$detached"
   # The command leader may already have exited. An original member's positive
   # start identity plus its current PGID prevents signaling a recycled group.
   finish_group_cancellation "$remote_child_pid" "$members" "$reason"
@@ -513,7 +532,6 @@ if [ "$lifetime_stdin" = 1 ]; then
     # Leader exit can make the wrapper's wait finish during TERM. Once EOF is
     # observed, cleanup must not interrupt the final KILL of stubborn children.
     trap '' HUP INT TERM PIPE
-    signal_member lifeline_eof TERM pid "$$" "$$:$wrapper_token"
     terminate_command lifeline_eof
     rm -f -- "$pid_file"
   ) <&3 &
