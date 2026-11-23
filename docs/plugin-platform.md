@@ -9301,10 +9301,12 @@ still passes exact-target, input and read-authority admission.
 Group input discovery uses the child that declares each follow-able field;
 child-owned and credential fields are not group inputs. The editor and saved-group
 Add pane send that child's definition to the ordinary options admission owner. In the
-group editor, an unset field shows an inherited value only when the following
-children resolve to one value in the composed group context. The existing
-placeholder carries the reading in text and popup inputs. A short segmented
-choice carries it in the row’s secondary line. Saving a group input persists
+group editor, the configured-input resolver checks each following child against
+the current draft and the opening page context. An unset field shows their
+agreed value or “Several values” if all resolve and disagree. Both readings say
+“Following group” in placeholder ink. Text and popup inputs use their existing
+placeholder. Segmented choices and other controls without that slot use the
+row’s secondary line. Saving a group input persists
 only the explicit bindings. If the shared Action refuses a binding because a following
 widget’s inputs would become invalid, the editor names that widget.
 

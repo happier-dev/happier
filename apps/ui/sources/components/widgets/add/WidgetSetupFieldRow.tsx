@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
-import { Platform, View } from 'react-native';
+import { Platform, View, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierInputField, HappierPressable, happierPageTextMetrics, resolveHappierActionFieldPresentation, resolveHappierChoiceControl } from '@happier-dev/plugin-ui/presentation';
+import { HappierInputField, HappierPressable, happierPageTextMetrics, resolveHappierActionFieldPresentation, resolveHappierChoiceControl, useHappierInputPickerPort } from '@happier-dev/plugin-ui/presentation';
 import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readInputOptionValue } from '@happier-dev/protocol/inputs';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
@@ -13,7 +13,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
-import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
+import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE, useOptionalHappierUiPalette } from '@happier-dev/plugin-ui/environment';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -227,6 +227,8 @@ function ViewerFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>)
 function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>): React.ReactElement {
     const { theme } = useUnistyles();
     const presentationTheme = usePluginUiTheme(theme);
+    const placeholderInk = useOptionalHappierUiPalette(presentationTheme)?.placeholder ?? presentationTheme.colors.mutedText;
+    const picker = useHappierInputPickerPort();
     const { entry, row } = props;
     const choices = entry.field.widget === 'select' || entry.field.widget === 'multiselect';
     const value = props.plainValue ?? (row.kind === 'follows' ? entry.follow?.values[0]?.value : undefined);
@@ -240,12 +242,26 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
         testID: `${props.testID}.option.${index}`,
     })), [choicesOptions, props.testID]);
     const presentation = resolveHappierActionFieldPresentation(entry.field, value, selection);
-    const inherited = row.kind === 'needed' && props.plainValue === undefined && entry.inherited
-        ? t('widgetAdd.inheritedValue', { value: entry.inherited.valueLabel, source: entry.inherited.sourceLabel })
+    const inherited = row.kind === 'needed' && value === undefined && entry.inherited
+        ? t('widgetAdd.inheritedValue', { value: entry.inherited.kind === 'single' ? entry.inherited.valueLabel : t('widgetAdd.severalValues'),
+            source: t('widgetFrame.followingGroup') })
         : undefined;
-    const inheritedSubtitle = inherited !== undefined && entry.field.allowCustomValue !== true
-        && resolveHappierChoiceControl(presentation, options) === 'segmented' ? inherited : undefined;
+    const subtitleOnly = inherited !== undefined && (presentation.kind === 'toggle'
+        || (presentation.kind === 'select' && entry.field.allowCustomValue !== true
+            && (resolveHappierChoiceControl(presentation, options) === 'segmented'
+                || (options.length === 0 && picker?.describe(entry.field) != null))));
+    const inheritedSubtitle = subtitleOnly ? inherited : undefined;
     const placeholder = inheritedSubtitle === undefined ? inherited : undefined;
+    const isInheritedPopup = placeholder !== undefined && presentation.kind === 'select';
+    // RN Web reads the existing placeholder token from CSS rather than the native color prop.
+    const textPlaceholderStyle = Platform.OS === 'web' && placeholder !== undefined && presentation.kind === 'text'
+        ? { ['--happier-placeholder-color' as string]: placeholderInk } as ViewStyle
+        : undefined;
+    // Shared authored choice placeholders can be valid readings in value ink. This row's inherited
+    // popup uses the same placeholder slot with this control's existing placeholder role.
+    const fieldTheme = React.useMemo(() => isInheritedPopup
+        ? { ...presentationTheme, colors: { ...presentationTheme.colors, text: placeholderInk } }
+        : presentationTheme, [isInheritedPopup, placeholderInk, presentationTheme]);
     const field = React.useMemo(() => {
         if (placeholder !== undefined) return { ...entry.field, placeholder };
         // A list input that declares no placeholder would draw as a blank block: say what to type in it.
@@ -264,7 +280,8 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
     }, [props.autoOpen, props.focusRequest]);
     const subtitle = row.kind === 'invalid' && !entry.follow && row.label
         ? `${row.label} · ${rowSubtitle(props)}`
-        : choices || (row.kind === 'needed' && entry.neededHint) ? rowSubtitle(props, inheritedSubtitle) : field.description;
+        : choices || inheritedSubtitle !== undefined || (row.kind === 'needed' && entry.neededHint)
+            ? rowSubtitle(props, inheritedSubtitle) : field.description;
     const titleAccessory = row.kind === 'needed' && field.required ? <NeededTag /> : undefined;
     // The shared field decides how a fixed choice is drawn (two to four short ones are a segmented
     // control, anything else one compact choice field); the row only places them: beside the title when
@@ -301,6 +318,7 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
             // A chosen value that stopped resolving says why; a typed one is still being typed, and the
             // step's line says what is needed.
             subtitle={subtitle}
+            subtitleStyle={inheritedSubtitle !== undefined && subtitle === inheritedSubtitle ? { color: placeholderInk } : undefined}
             subtitleLines={0}
             titleAccessory={titleAccessory}
             showChevron={false}
@@ -310,7 +328,7 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
             // The label stands at the top of its row beside a control that grows taller (a segmented choice, a field).
             contentAlign="start"
             rightElement={(
-                <View ref={controlHost} collapsable={false}>
+                <View ref={controlHost} collapsable={false} style={textPlaceholderStyle}>
                 <HappierInputField<JsonValue>
                     frame="none"
                     leading={entry.follow ? <WidgetBindingControl {...props} /> : undefined}
@@ -329,7 +347,7 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
                     keyForOption={(_option, index) => String(index)}
                     controlTestID={`${props.testID}.input`}
                     testID={`${props.testID}.control`}
-                    theme={presentationTheme}
+                    theme={fieldTheme}
                     onChange={(next) => { const value = readInputOptionValue(next);
                         props.onChange(value === undefined ? { kind: 'clear' } : { kind: 'pin', value }); }}
                 />

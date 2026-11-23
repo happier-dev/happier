@@ -11,17 +11,17 @@ import type {
   WidgetLayoutGroupV1,
   WidgetSurfaceRefV1,
 } from '@happier-dev/protocol/widgets';
-import { composeWidgetGroupContextV1, isSameWidgetDefinitionV1, projectWidgetBindingInputV1, widgetCandidateDefinitionV1 } from '@happier-dev/protocol/widgets';
+import { composeWidgetGroupContextV1, isSameWidgetDefinitionV1, resolveConfiguredWidgetInputs, widgetCandidateDefinitionV1 } from '@happier-dev/protocol/widgets';
 
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
+import { describeHostInputTypePickerValue } from '@/components/sessions/actions/hostInputTypePickerForm';
 import { Typography } from '@/constants/Typography';
 import { WidgetSetupPopover } from '@/components/widgets/add/WidgetSetupPopover';
-import type { WidgetSetupField, WidgetSetupSubmitResult } from '@/components/widgets/add/widgetSetupModel';
+import type { WidgetSetup, WidgetSetupInheritedReading, WidgetSetupSubmitResult, WidgetSetupValue } from '@/components/widgets/add/widgetSetupModel';
 import {
   buildWidgetCandidateSetup,
   runWidgetSetupCommand,
-  WIDGET_SESSION_CONTEXT_SLOT,
   widgetDefinitionOfCandidate,
   widgetProvidedContext,
   type WidgetSurfaceContext,
@@ -39,42 +39,66 @@ import { WIDGET_GROUP_ICON } from './widgetGroupMenu';
 
 const NO_FIELDS: readonly never[] = [];
 
-/** Read the children’s bindings through the same context composition and projection as execution. */
-function readInheritedGroupFields(
+/** The opening page is fixed. Each draft uses the same composed inputs the following children read. */
+function createGroupInheritedReader(
   group: WidgetLayoutGroupV1,
   candidates: readonly (WidgetCandidate | null)[],
   surfaceOwner: WidgetSurfaceRefV1['owner'] | undefined,
   context: WidgetSurfaceContext,
   labels: WidgetBindingValueLabels,
-): ReadonlyMap<string, (NonNullable<WidgetSetupField['inherited']> & { value: JsonValue }) | null> {
-  const composed = composeWidgetGroupContextV1({ providedContext: widgetProvidedContext(context), surfaceOwner, groupBindings: group.context });
-  const readings = new Map<string, (NonNullable<WidgetSetupField['inherited']> & { value: JsonValue }) | null>();
-  for (const [index, { instance }] of group.children.entries()) {
-    const fields = candidates[index]?.inputs?.fields.filter(field => field.contextMode !== 'own'
-      && !field.connectedAccountOptions && !group.context?.[field.path] && instance.bindings[field.path]?.kind === 'context');
-    if (!fields?.length) continue;
-    const projected = projectWidgetBindingInputV1({ instance, fields, context: composed, viewerValues: {} });
-    for (const field of fields) {
-      const binding = instance.bindings[field.path];
-      if (binding?.kind !== 'context') continue;
-      const value = readInputPath(projected, field.path) as JsonValue | undefined;
-      const prior = readings.get(field.path);
-      if (value === undefined || prior === null || prior && !sameStrictJsonValue(prior.value, value)) {
-        readings.set(field.path, null);
-        continue;
+  fields: WidgetSetup['fields'],
+): NonNullable<WidgetSetup['readInherited']> {
+  const providedContext = widgetProvidedContext(context);
+  const children = group.children.flatMap(({ instance }, index) => {
+    const descriptor = candidates[index];
+    if (!descriptor?.inputs) return [];
+    const paths = descriptor.inputs.fields
+      .filter(field => field.contextMode !== 'own' && !field.connectedAccountOptions && instance.bindings[field.path]?.kind === 'context')
+      .map(field => field.path);
+    return paths.length ? [{ instance, descriptor, paths }] : [];
+  });
+  // Names describe the resolver's returned values. They never choose a slot or an input.
+  const namedValues: WidgetSetupValue[] = [
+    ...Object.values(context.slots ?? {}).flatMap(slot => slot.value ? [slot.value] : []),
+    ...(context.session ? [{ value: context.session.ref, label: context.session.label }] : []),
+    ...Object.entries(group.context ?? {}).flatMap(([slot, binding]) => {
+      const label = labels[slot];
+      return label && binding.kind === 'value' ? [{ value: binding.value, label }] : [];
+    }),
+  ];
+
+  return bindings => {
+    const composed = composeWidgetGroupContextV1({ providedContext, surfaceOwner, groupBindings: bindings });
+    const values = new Map<string, { kind: 'single'; value: JsonValue } | { kind: 'several' | 'missing' }>();
+    for (const { instance, descriptor, paths } of children) {
+      const unset = paths.filter(path => bindings[path] === undefined);
+      if (!unset.length) continue;
+      const resolved = resolveConfiguredWidgetInputs({ instance, descriptor, providedContext: composed, viewerValues: {} });
+      for (const path of unset) {
+        const value = resolved.status === 'ready' ? readInputPath(resolved.input, path) as JsonValue | undefined : undefined;
+        const previous = values.get(path);
+        if (value === undefined) values.set(path, { kind: 'missing' });
+        else if (!previous) values.set(path, { kind: 'single', value });
+        else if (previous.kind === 'single' && !sameStrictJsonValue(previous.value, value)) values.set(path, { kind: 'several' });
       }
-      const groupBinding = group.context?.[binding.slot];
-      const surfaceSlot = groupBinding?.kind === 'context' ? groupBinding.slot : binding.slot;
-      const offer = context.slots?.[surfaceSlot];
-      const session = surfaceSlot === WIDGET_SESSION_CONTEXT_SLOT ? context.session : undefined;
-      const valueLabel = groupBinding?.kind === 'value'
-        ? labels[binding.slot] ?? describeWidgetBindingValue(value) : session?.label ?? offer?.value?.label;
-      const sourceLabel = groupBinding?.kind === 'value' ? t('widgetFrame.followingGroup')
-        : session ? t('widgetAdd.thisSession') : offer?.label;
-      readings.set(field.path, prior ?? (valueLabel && sourceLabel ? { value, valueLabel, sourceLabel } : null));
     }
-  }
-  return readings;
+
+    const readings = new Map<string, WidgetSetupInheritedReading>();
+    for (const { field } of fields) {
+      const result = values.get(field.path);
+      if (result?.kind === 'several') readings.set(field.path, { kind: 'several' });
+      if (result?.kind !== 'single') continue;
+      const { value } = result;
+      const option = field.options?.find(option => sameStrictJsonValue(option.value, value));
+      const typedLabel = field.inputType && 'hostType' in field.inputType
+        ? describeHostInputTypePickerValue(field.inputType, value) : null;
+      const matchingNames = new Set(namedValues.filter(entry => sameStrictJsonValue(entry.value, value)).map(entry => entry.label));
+      const valueLabel = option?.label ?? typedLabel ?? (matchingNames.size === 1 ? [...matchingNames][0] : null)
+        ?? describeWidgetBindingValue(value);
+      if (valueLabel) readings.set(field.path, { kind: 'single', valueLabel });
+    }
+    return readings;
+  };
 }
 
 /**
@@ -172,13 +196,9 @@ export function useWidgetGroupInputsEditor(
           t('widgetAdd.saveFailed'),
         ),
     });
-    const inherited = readInheritedGroupFields(group, input.candidates, scope?.owner, context, labels);
     return {
       ...setup,
-      fields: setup.fields.map(entry => {
-        const reading = inherited.get(entry.field.path);
-        return reading ? { ...entry, inherited: { valueLabel: reading.valueLabel, sourceLabel: reading.sourceLabel } } : entry;
-      }),
+      readInherited: createGroupInheritedReader(group, input.candidates, scope?.owner, context, labels, setup.fields),
       initial: { bindings },
       title: t('widgetFrame.groupInputsTitle', { group: input.title }),
       hint: t('widgetFrame.groupInputsHint'),

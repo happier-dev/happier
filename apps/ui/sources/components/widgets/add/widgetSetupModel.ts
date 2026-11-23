@@ -41,11 +41,13 @@ export type WidgetSetupContextOffer = Readonly<{
 }>;
 
 /** One input as the step draws it: the neutral field plus what this surface can offer for it. */
+export type WidgetSetupInheritedReading = Readonly<{ kind: 'single'; valueLabel: string }> | Readonly<{ kind: 'several' }>;
+
 export type WidgetSetupField = Readonly<{
     field: InputFieldHint;
     follow?: WidgetSetupContextOffer;
-    /** The group's opening reading for children that follow it. This never supplies a draft value. */
-    inherited?: Readonly<{ valueLabel: string; sourceLabel: string }>;
+    /** What the children inherit in the current group draft. This never supplies a draft value. */
+    inherited?: WidgetSetupInheritedReading;
     /**
      * The value is each viewer's own (a connected account on a shared surface): every viewer reads
      * with their own connection for this purpose, so the step shows it and never asks for it.
@@ -98,6 +100,8 @@ export type WidgetSetup = Readonly<{
     widthChoices?: ReadonlyArray<Readonly<{ width: WidgetGroupWidthV1; unavailableReason?: string }>>;
     /** The binder's answer for a draft (pure; re-run on every change). */
     resolve: (draft: WidgetSetupDraft) => WidgetBindingResolutionV1;
+    /** Presentation-only readings for group fields, from the children's binder and the opening page snapshot. */
+    readInherited?: (bindings: WidgetInputBindingsV1) => ReadonlyMap<string, WidgetSetupInheritedReading>;
     /**
      * The real widget at the draft's bindings; mounted only while the step is open and the draft
      * resolves. It returns nothing when it cannot read with the bound target's own authority.

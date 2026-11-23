@@ -4,7 +4,7 @@ import { act } from 'react-test-renderer';
 import { HappierInputPickerProvider, HappierValidationMessage } from '@happier-dev/plugin-ui/presentation';
 import type { ResolvedInputTypeV1 } from '@happier-dev/protocol/inputs/runtime';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { flattenTestStyle, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createInputTypePickerPort } from '@/components/sessions/actions/inputTypePickerPort';
 import { selectBuiltinWidgetCandidates } from '@/components/widgets/widgetCatalog';
 import { buildWidgetCandidateSetup } from '@/components/widgets/surface/widgetSurfaceSetup';
@@ -25,7 +25,9 @@ vi.mock('@/components/ui/popover/Popover', async (importOriginal) =>
     (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal as never) as never);
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
-vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({ translate: (key: string) => key }));
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
+    translate: (key, params) => key === 'widgetAdd.inheritedValue' ? `${params?.value} (${params?.source})` : key,
+}));
 
 afterEach(() => { standardCleanup(); });
 
@@ -45,6 +47,85 @@ const declared: ResolvedInputTypeV1 = {
 const review = { repositoryId: 'example/review-assistant' };
 
 describe('widget setup fields share the typed-field owners', () => {
+    describe('inherited group readings', () => {
+        const single = { kind: 'single', valueLabel: 'Resolved value' } as const;
+        const several = { kind: 'several' } as const;
+        const singleReading = 'Resolved value (widgetFrame.followingGroup)';
+        const severalReading = 'widgetAdd.severalValues (widgetFrame.followingGroup)';
+        const choices = [{ value: 'one', label: 'One' }, { value: 'two', label: 'Two' }];
+        const longChoices = [{ value: 'one', label: 'First long option' }, { value: 'two', label: 'Second long option' }];
+        const port = createInputTypePickerPort({ resolveType: () => declared, canOpenPicker: () => true, openPicker: async () => null });
+        const props = { row: { kind: 'needed' }, options: [], optionsStatus: 'ready', plainValue: undefined,
+            phone: false, onChange: vi.fn(), testID: 'inherited' } as const;
+        const colorOf = (screen: Awaited<ReturnType<typeof renderScreen>>, reading: string) =>
+            screen.root.findAll(node => typeof node.type === 'string' && node.children.includes(reading))
+                .map(node => flattenTestStyle(node.props.style).color).find(color => typeof color === 'string')?.toLowerCase();
+        const render = (entry: WidgetSetupField, options: typeof choices = [], value?: string) =>
+            <HappierInputPickerProvider port={port}>
+                <WidgetSetupFieldRow {...props} entry={entry} options={options} plainValue={value}
+                    row={value === undefined ? props.row : { kind: 'pinned', value, label: 'First long option' }} />
+            </HappierInputPickerProvider>;
+        const text = { path: 'field', title: 'Field', widget: 'text', placeholder: 'Authored prompt' } as const;
+        const quietInk = async () => {
+            const screen = await renderScreen(render({ field: text }));
+            const color = screen.findByTestId('inherited.input')?.props.placeholderTextColor;
+            await screen.unmount();
+            expect(color).toBeTypeOf('string');
+            return color.toLowerCase();
+        };
+
+        it.each(['text', 'integer', 'text_list', 'json'] as const)(
+            'uses existing placeholder ink for one, several and unbound %s inputs', async widget => {
+                const field = { ...text, widget };
+                const screen = await renderScreen(render({ field, inherited: single }));
+                expect(screen.findByTestId('inherited.input')?.props.placeholder).toBe(singleReading);
+                expect(screen.findByTestId('inherited.input')?.props.placeholderTextColor?.toLowerCase()).toBe(await quietInk());
+                await screen.update(render({ field, inherited: several }));
+                expect(screen.findByTestId('inherited.input')?.props.placeholder).toBe(severalReading);
+                await screen.update(render({ field }));
+                expect(screen.findByTestId('inherited.input')?.props.placeholder).toBe('Authored prompt');
+            },
+        );
+
+        it.each(['select', 'multiselect'] as const)(
+            'keeps inherited %s readings in placeholder ink and a chosen reading in value ink', async widget => {
+                const field = { ...text, widget };
+                const quiet = await quietInk();
+                const screen = await renderScreen(render({ field, inherited: single }, longChoices));
+                expect(colorOf(screen, singleReading)).toBe(quiet);
+                await screen.update(render({ field, inherited: several }, longChoices));
+                expect(colorOf(screen, severalReading)).toBe(quiet);
+                await screen.update(render({ field }, longChoices));
+                expect(colorOf(screen, 'Authored prompt')).toBeTypeOf('string');
+                await screen.update(render({ field: { ...field, widget: 'select' }, inherited: single }, longChoices, 'one'));
+                expect(colorOf(screen, 'First long option')).toBeTypeOf('string');
+                expect(colorOf(screen, 'First long option')).not.toBe(quiet);
+                expect(colorOf(screen, singleReading)).toBeUndefined();
+            },
+        );
+
+        it.each([
+            { widget: 'select', options: choices, control: 'inherited.control.segmented' },
+            { widget: 'boolean', options: [], control: 'inherited.input' },
+            { widget: 'select', inputType: repositoryInputTypeRef, options: [], control: 'inherited.control-picker' },
+        ] as const)('uses the existing secondary line for $control with no placeholder slot', async ({ widget, options, control, ...rest }) => {
+            const field = { ...text, widget, description: 'Original secondary line', ...rest };
+            const quiet = await quietInk();
+            const screen = await renderScreen(render({ field, inherited: single }, [...options]));
+            expect(screen.findByTestId(control)).not.toBeNull();
+            expect(colorOf(screen, singleReading)).toBe(quiet);
+            if (options.length > 0) {
+                const { HappierSegmentedChoice } = await import('@happier-dev/plugin-ui/presentation');
+                expect(screen.findByType(HappierSegmentedChoice).props.segments.every((segment: { selected: boolean }) => !segment.selected)).toBe(true);
+            }
+            await screen.update(render({ field, inherited: several }, [...options]));
+            expect(colorOf(screen, severalReading)).toBe(quiet);
+            await screen.update(render({ field }, [...options]));
+            expect(colorOf(screen, 'Original secondary line')).toBeDefined();
+            expect(colorOf(screen, singleReading)).toBeUndefined();
+        });
+    });
+
     it('keeps an invalid own pin named while the public field offers repair choices', async () => {
         const { Item } = await import('@/components/ui/lists/Item');
         const onChange = vi.fn();

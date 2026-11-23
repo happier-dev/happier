@@ -126,6 +126,9 @@ export function WidgetSetupStep(props: Readonly<{
     // this request; only an applied Add offers an intentional additional copy.
     const [completion, setCompletion] = React.useState<'added' | 'approvalPending' | null>(null);
     const resolution = React.useMemo(() => setup.resolve(draft), [draft, setup]);
+    const { readInherited } = setup;
+    const { bindings } = draft;
+    const inherited = React.useMemo(() => readInherited?.(bindings), [readInherited, bindings]);
     const blocker = describeWidgetSetupBlocker(setup.fields, resolution);
     // Finishable once nothing blocks; a per-viewer input is each viewer's own and never blocks.
     const finishable = completion !== 'approvalPending' && widgetSetupBlockingIssues(setup.fields, resolution).length === 0
@@ -284,11 +287,12 @@ export function WidgetSetupStep(props: Readonly<{
                     const row = describeWidgetSetupRow({ entry, draft, resolution, options: values, pickedOptions: pickedOptions[entry.field.path] });
                     const binding = draft.bindings[entry.field.path];
                     const field = facts ? { ...entry.field, required: facts.required } : entry.field;
+                    const reading = inherited?.get(field.path);
                     return (
                         <WidgetSetupFieldRow
                             key={entry.field.path}
                             testID={`${props.testID}.field.${entry.field.path}`}
-                            entry={field === entry.field ? entry : { ...entry, field }}
+                            entry={field === entry.field && !reading ? entry : { ...entry, field, ...(reading ? { inherited: reading } : {}) }}
                             row={row}
                             options={values}
                             optionsStatus={state.status}

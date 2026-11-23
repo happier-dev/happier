@@ -18973,6 +18973,7 @@ const widgetAddTranslations = { ja: {
         yoursFailed: 'ウィジェットを読み込めませんでした',
         invalidValue: '見つかりません',
         inheritedValue: ({ value, source }) => `${value}（${source}）`,
+        severalValues: "複数の値",
         groupChildInputsInvalid: ({ widget }) => `グループを保存する前に、${widget} の入力を確認してください。`,
         inputsInvalid: 'このウィジェットの入力を確認してください',
         inputsUnavailable: '選択した入力を利用できません',

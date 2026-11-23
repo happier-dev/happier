@@ -150,7 +150,6 @@ it('shows inherited values as placeholders without setting group overrides', asy
       context: { period: { kind: 'value', value: 'Today' } },
       children: [{ kind: 'widget', instance: { v: 1, id: 'summary', definition, bindings: {
         project: { kind: 'context', slot: 'project' }, period: { kind: 'context', slot: 'period' },
-        basis: { kind: 'context', slot: 'basis' },
       } } }],
     },
     candidates: [candidate], title: 'Usage', scope: { serverId: 'home', accountId: 'actor', owner: { kind: 'home' } },
@@ -167,7 +166,7 @@ it('shows inherited values as placeholders without setting group overrides', asy
   }
   const screen = await renderScreen(<WidgetSetupStep setup={popover.props.setup()} phone={false} testID="edit" onDone={popover.props.onDone ?? popover.props.onRequestClose} />);
   const project = screen.findByTestId('edit.field.project.input')!;
-  expect(project.props.placeholder).toBe('widgetAdd.inheritedValue(value=Example project,source=This page)');
+  expect(project.props.placeholder).toBe('widgetAdd.inheritedValue(value=Example project,source=widgetFrame.followingGroup)');
   expect(project.props.value).toBe('');
   const period = screen.findByTestId('edit.field.period.input')!;
   expect(period.props.value).toBe('Today');
@@ -184,22 +183,26 @@ describe('group inherited readings', () => {
     icon: 'squares-four', homeDefault: 'available', target: 'app', definition,
     inputs: { fields: [
       { path: 'period', title: 'Period', widget: 'text', contextMode: 'follow' },
+      { path: 'calendar', title: 'Calendar', widget: 'text', contextMode: 'follow' },
+      { path: 'count', title: 'Count', widget: 'integer', contextMode: 'follow' },
       { path: 'projects', title: 'Projects', widget: 'multiselect', contextMode: 'follow',
         options: [{ value: 'one', label: 'One' }, { value: 'two', label: 'Two' }] },
       { path: 'basis', title: 'Cost basis', widget: 'select', contextMode: 'follow',
         options: [{ value: 'auto', label: 'Automatic' }, { value: 'reported', label: 'Reported' }] },
     ] },
+    inputSchema: { type: 'object', properties: { count: { type: 'number' } } },
   };
   const slots = {
     period: { label: 'This page', value: { value: 'Today', label: 'Today' } },
     calendar: { label: 'This calendar', value: { value: 'Yesterday', label: 'Yesterday' } },
+    otherCalendar: { label: 'Other calendar', value: { value: 'Yesterday', label: 'Yesterday' } },
     basis: { label: 'This page', value: { value: 'auto', label: 'Automatic' } },
     projects: { label: 'This page', value: { value: [], label: 'All projects' } },
     work: { label: 'This project area', value: { value: ['one', 'two'], label: '2 projects' } },
   } satisfies NonNullable<WidgetSurfaceContext['slots']>;
   const follow = (slot: string) => ({ kind: 'context', slot } as const);
   const pin = (value: string) => ({ kind: 'value', value } as const);
-  const inherited = (value: string, source: string) => `widgetAdd.inheritedValue(value=${value},source=${source})`;
+  const inherited = (value: string) => `widgetAdd.inheritedValue(value=${value},source=widgetFrame.followingGroup)`;
 
   const mount = async (children: readonly WidgetInputBindingsV1[], bindings: WidgetInputBindingsV1 = {}) => {
     const setInputs = vi.fn(async (): Promise<WidgetSetupSubmitResult> => ({ ok: true }));
@@ -224,7 +227,7 @@ describe('group inherited readings', () => {
 
   it('shows the same-slot inherited reading under the short choice and saves no overrides', async () => {
     const { screen, setInputs } = await mount([{ basis: follow('basis') }]);
-    expect(screen.getTextContent()).toContain(inherited('Automatic', 'This page'));
+    expect(screen.getTextContent()).toContain(inherited('Automatic'));
     const control = screen.findByType(HappierSegmentedChoice);
     expect(control.props.segments.map((segment: { selected: boolean }) => segment.selected)).toEqual([false, false]);
     await screen.pressByTestIdAsync('edit.submit');
@@ -232,9 +235,12 @@ describe('group inherited readings', () => {
   });
 
   it.each([
-    ['uses the child’s declared slot', [{ period: follow('calendar') }], inherited('Yesterday', 'This calendar')],
-    ['ignores a pinned child while showing what the following child reads', [{ period: pin('Monday') }, { period: follow('calendar') }], inherited('Yesterday', 'This calendar')],
-    ['makes no claim for competing child contexts', [{ period: follow('period') }, { period: follow('calendar') }], undefined],
+    ['uses the child’s declared slot', [{ period: follow('calendar') }], inherited('Yesterday')],
+    ['agrees when two children use the same slot', [{ period: follow('calendar') }, { period: follow('calendar') }], inherited('Yesterday')],
+    ['ignores a pinned child while showing what the following child reads', [{ period: pin('Monday') }, { period: follow('calendar') }], inherited('Yesterday')],
+    ['names competing child contexts without identifying a value', [{ period: follow('period') }, { period: follow('calendar') }], inherited('widgetAdd.severalValues')],
+    ['makes no claim when a child is unresolved even if other children disagree', [{ period: follow('period') }, { period: follow('missing') }, { period: follow('calendar') }], undefined],
+    ['leaves an incomplete inherited reading empty', [{ period: follow('period') }, { period: follow('missing') }], undefined],
     ['makes no claim when the followed slot has nothing to inherit', [{ period: follow('missing') }], undefined],
   ] as const)('%s', async (_name, children, expected) => {
     const { screen } = await mount(children);
@@ -243,10 +249,30 @@ describe('group inherited readings', () => {
     expect(input.props.placeholder).toBe(expected);
   });
 
+  it.each([['calendar', 'otherCalendar'], ['otherCalendar', 'calendar']])('uses one attribution with slots %s and %s', async (a, b) => {
+    const { screen } = await mount([{ period: follow(a) }, { period: follow(b) }]);
+    expect(screen.findByTestId('edit.field.period.input')?.props.placeholder).toBe(inherited('Yesterday'));
+  });
+
+  it('updates the inherited Period when Calendar is pinned in the same draft', async () => {
+    const { screen, setInputs } = await mount([{ period: follow('calendar'), calendar: follow('calendar') }]);
+    const reading = () => screen.findByTestId('edit.field.period.input')?.props.placeholder;
+    expect(reading()).toContain('Yesterday');
+    await act(async () => screen.changeTextByTestId('edit.field.calendar.input', 'Today'));
+    expect(reading()).toBe(inherited('Today'));
+    await screen.pressByTestIdAsync('edit.submit');
+    expect(setInputs).toHaveBeenCalledWith({ calendar: pin('Today') });
+  });
+
+  it('does not name a text value the numeric child rejects', async () => {
+    const { screen } = await mount([{ count: follow('calendar') }]);
+    expect(screen.findByTestId('edit.field.count.input')?.props.placeholder).toBeUndefined();
+  });
+
   it('uses the one inherited list to read a count of two Projects in a popup field', async () => {
     const { screen } = await mount([{ projects: follow('work') }]);
     expect(screen.findByTestId('edit.field.projects.control.trigger')?.props.accessibilityLabel)
-      .toBe(`Projects: ${inherited('2 projects', 'This project area')}`);
+      .toBe(`Projects: ${inherited('2 projects')}`);
   });
 
   it('shows a set short choice as selected radios with no inherited claim', async () => {

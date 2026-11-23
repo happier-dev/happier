@@ -18532,6 +18532,7 @@ const widgetAddTranslations = { de: {
         yoursFailed: 'Deine Widgets konnten nicht geladen werden',
         invalidValue: 'nicht gefunden',
         inheritedValue: ({ value, source }) => `${value} (${source})`,
+        severalValues: "Mehrere Werte",
         groupChildInputsInvalid: ({ widget }) => `Prüfe die Eingaben für ${widget}, bevor du die Gruppe speicherst.`,
         inputsInvalid: 'Überprüfe die Eingaben dieses Widgets',
         inputsUnavailable: 'Eine ausgewählte Eingabe ist nicht verfügbar',
