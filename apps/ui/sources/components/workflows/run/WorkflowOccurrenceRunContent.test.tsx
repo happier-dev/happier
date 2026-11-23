@@ -66,9 +66,9 @@ installAutomationScreensCommonModuleMocks({
     text: {
         translate: (key: string, params?: Record<string, unknown>) => {
             if (key === 'runs.runLabel') return `run ${String(params?.runId ?? '')}`;
-            if (key === 'automations.detail.runMeta.scheduled') return `Scheduled: ${String(params?.time ?? '')}`;
-            if (key === 'automations.detail.runMeta.occurred') return `Occurred: ${String(params?.time ?? '')}`;
-            if (key === 'automations.detail.runMeta.invoked') return `Invoked: ${String(params?.time ?? '')}`;
+            if (key === 'automations.detail.runMeta.scheduled') return 'Scheduled';
+            if (key === 'automations.detail.runMeta.occurred') return 'Occurred';
+            if (key === 'automations.detail.runMeta.invoked') return 'Invoked';
             if (key === 'automations.detail.runMeta.admitted') return `Admitted: ${String(params?.time ?? '')}`;
             if (key === 'automations.detail.runMeta.causeTitle') return 'Cause';
             if (key === 'automations.detail.runMeta.cause.pluginEvent') return 'Event';
@@ -429,6 +429,10 @@ describe('canonical Run page occurrence target', () => {
             expect.objectContaining({ label: 'Observation source' }),
             expect.objectContaining({ value: 'happier.scm.github/pull-request-opened-v1' }),
         ]));
+        // When it happened is a fact: its label, the time as the value (DESIGN-ACCEPT-6 NF-10).
+        const occurred = screen.findAllByProps({ title: 'Occurred' }).find(node => typeof node.props.detail === 'string');
+        expect(occurred?.props.detail).toEqual(expect.any(String));
+        expect(screen.getTextContent()).not.toContain('Occurred:');
         expect(harness.requestsFor(LIST_PATH)).toHaveLength(0);
         expect(harness.requestsFor(DETAIL_PATH)).toHaveLength(1);
     });

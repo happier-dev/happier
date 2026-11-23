@@ -269,6 +269,22 @@ describe('WorkflowInvocationDetail canonical request cards', () => {
         expect(text).toContain('Error');
         expect(text).toContain('503');
     });
+    // DESIGN-ACCEPT-6 NF-10: the step pane leads with one filled action, never Investigate and Run again both filled.
+    it('fills one action in a failed step pane that offers Investigate and Run again', async () => {
+        const onRunAgain = vi.fn();
+        const screen = await renderDetail({ progress: null, lifecycle: 'failed', onRunAgain, noChoicesNext: 'run_again',
+            investigationSubject: { kind: 'workflowRun', serverId, runId: 'failed-run' },
+            recovery: projectWorkflowInvocationRecovery({ run: createWorkflowRunSummaryFixture({ state: 'failed' }),
+                invocation: createWorkflowInvocationIndexFixture({ lifecycle: 'failed' }), progress: null, machineHomeDirectory: null }) });
+        try {
+            const runAgain = screen.findByTestId('workflow-run-recovery-run-again');
+            expect(runAgain).not.toBeNull();
+            const agentActions = screen.findAllByType(AgentActionButton);
+            expect(agentActions).toHaveLength(1);
+            const filled = [runAgain!.props.display !== 'secondary', agentActions[0]!.props.emphasis !== 'secondary'];
+            expect(filled.filter(Boolean)).toHaveLength(1);
+        } finally { await screen.unmount(); }
+    });
     it('explains the Machine source-runtime repair before offering another launch', async () => {
         const progress: WorkflowProgressEnvelopeV1 = { kind: 'happier.workflow-progress.v1', blockKind: 'step',
             invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: 'leaf',

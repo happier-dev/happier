@@ -23,6 +23,11 @@ export type HappierTriggerRowBodyProps = Readonly<{
   enabled: boolean;
   attention: boolean;
   multiline?: boolean;
+  /**
+   * How many lines the quiet line may take, 0 for no limit. Every host draws it at this allowance, so a plain event line
+   * wraps as a lifecycle line beside it does instead of losing its end.
+   */
+  subtitleLines: number;
   presentation?: 'sheet' | 'column';
   onPress?: () => void;
   toggle: ReactNode;
@@ -81,6 +86,9 @@ export type HappierTriggerRowProps = Readonly<{
   host?: HappierTriggerRowHost;
 }>;
 
+/** A trigger's quiet line wraps once before it ends; a multiline row lets it run. */
+const SUBTITLE_LINES = 2;
+
 const TRAILING_CONTROLS = Object.freeze({ flexDirection: 'row', alignItems: 'center', gap: 8 } as const);
 
 function DefaultRow(props: HappierTriggerRowBodyProps) {
@@ -91,7 +99,7 @@ function DefaultRow(props: HappierTriggerRowBodyProps) {
     subtitleContent={props.subtitle ? <HappierText variant="micro" tone={props.attention ? 'attention' : props.enabled ? 'secondary' : 'muted'}>{props.subtitle}</HappierText> : undefined}
     accessibilityLabel={props.accessibilityLabel}
     icon={props.icon} onPress={props.onPress} accessory={accessory} accessoryOutsidePressable
-    titleNumberOfLines={props.multiline ? 0 : 1} subtitleNumberOfLines={props.multiline ? 0 : 2}
+    titleNumberOfLines={props.multiline ? 0 : 1} subtitleNumberOfLines={props.subtitleLines}
     density={props.presentation === 'column' ? 'compact' : undefined} showDivider={props.showDivider === true} />;
 }
 
@@ -142,7 +150,7 @@ export function HappierTriggerRow(props: HappierTriggerRowProps) {
       accessibilityLabel={props.qualifierAccessibilityLabel
         ? [props.title, lead, props.qualifierAccessibilityLabel, outcome?.text, provenance].filter(Boolean).join('. ')
         : undefined}
-      enabled={props.enabled} attention={props.attention === true} multiline={props.multiline}
+      enabled={props.enabled} attention={props.attention === true} multiline={props.multiline} subtitleLines={props.multiline ? 0 : SUBTITLE_LINES}
       presentation={props.presentation} icon={props.icon} onPress={props.onPress} toggle={toggleOnActions ? null : toggle}
       menu={toggleOnActions ? undefined : props.menu} showDivider={props.showDivider} />
     {props.actions ? <View testID={`${props.testID}-actions`} style={actionsStyle ?? {

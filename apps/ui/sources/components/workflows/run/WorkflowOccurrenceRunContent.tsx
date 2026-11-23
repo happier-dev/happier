@@ -53,28 +53,22 @@ function formatDate(ms: number, unknownLabel: string): string {
     }
 }
 
+/** When the cause happened, as a fact: its label and the time beside it. */
 function formatRunCauseTime(
     cause: AutomationRunCause,
     unknownLabel: string,
-): string {
+): Readonly<{ label: string; time: string }> {
     switch (cause.kind) {
         case 'trigger':
             if (cause.triggerKind === 'schedule') {
-                return t('automations.detail.runMeta.scheduled', {
-                    time: formatDate(cause.evidence.scheduledFor, unknownLabel),
-                });
+                return { label: t('automations.detail.runMeta.scheduled'),
+                    time: formatDate(cause.evidence.scheduledFor, unknownLabel) };
             }
-            return t('automations.detail.runMeta.occurred', {
-                time: formatDate(cause.occurredAt, unknownLabel),
-            });
+            return { label: t('automations.detail.runMeta.occurred'), time: formatDate(cause.occurredAt, unknownLabel) };
         case 'manual':
-            return t('automations.detail.runMeta.invoked', {
-                time: formatDate(cause.invokedAt, unknownLabel),
-            });
+            return { label: t('automations.detail.runMeta.invoked'), time: formatDate(cause.invokedAt, unknownLabel) };
         case 'conversation':
-            return t('automations.detail.runMeta.occurred', {
-                time: formatDate(cause.occurredAt, unknownLabel),
-            });
+            return { label: t('automations.detail.runMeta.occurred'), time: formatDate(cause.occurredAt, unknownLabel) };
     }
 }
 
@@ -811,6 +805,7 @@ function WorkflowOccurrenceCauseAndHistory({ run, events: runHistory }: Readonly
         : null;
     const triggerCause = run?.cause.kind === 'trigger' ? run.cause : null;
     const triggerRetired = run?.triggerRetired === true;
+    const causeTime = formatRunCauseTime(run.cause, unknownDate);
     const technicalLines = [
         ...(triggerCause ? [{ key: 'trigger', label: t('automations.detail.runMeta.triggerIdentityTitle'),
             value: t('automations.detail.runMeta.triggerIdentity', { id: triggerCause.triggerId, revision: triggerCause.triggerRevision }) }] : []),
@@ -832,7 +827,8 @@ function WorkflowOccurrenceCauseAndHistory({ run, events: runHistory }: Readonly
                                 mode="info"
                             />
                             <Item
-                                title={formatRunCauseTime(run.cause, unknownDate)}
+                                title={causeTime.label}
+                                detail={causeTime.time}
                                 showChevron={false}
                                 mode="info"
                             />

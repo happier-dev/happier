@@ -13,6 +13,8 @@ export type WorkflowRunInvestigationSubject = Extract<TriageFailureSubjectV1, { 
 export function WorkflowRunFailureAgentActions(props: Readonly<{
     subject: WorkflowRunInvestigationSubject;
     testIDPrefix: string;
+    /** Whether Investigate leads its card or the card's recovery action does (one filled action per card). */
+    emphasis?: 'primary' | 'secondary';
 }>) {
     const investigation = useInvestigateFailure(props.subject, { agentActions: 'withDefault' });
     const compact = useDeviceType() === 'phone';
@@ -26,6 +28,7 @@ export function WorkflowRunFailureAgentActions(props: Readonly<{
             actions={investigation.actions ?? fallback}
             pending={investigation.pending}
             compact={compact}
+            {...(props.emphasis === undefined ? {} : { emphasis: props.emphasis })}
             onLaunch={(mode, actionId) => { void investigation.launch(mode, actionId); }}
         />
         {investigation.showOutcome && investigation.outcome ? <InvestigationOutcomeBanner

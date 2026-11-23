@@ -327,8 +327,6 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
         replacement: replacementOffered, restore: restoreOffered, reviewed: reviewedNewRunOffered, another: anotherAgentOffered,
         offered: offeredChoices, choiceOffered, noChoices, waitLine,
     } = resolveWorkflowRecoveryChoices(recovery, props);
-    const choiceDisplay = (choice: (typeof offeredChoices)[number]) => offeredChoices[0] === choice
-        ? props.recoveryPrimaryDisplay ?? 'default' : 'secondary';
     // Only this attempt's recorded failure explains what happened. Connectivity only affects recovery.
     const failureCause = recovery.failureCause ?? null;
     const usageLimitWait = recovery.usageLimitWait ?? null;
@@ -352,6 +350,14 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
         && props.onRunAgain !== undefined;
     // A failure only a Machine setting can fix leads to that setting; Run again stays beside it, quieter.
     const remedy = noChoices && props.onOpenMachineRemedy !== undefined ? recovery.remedy ?? null : null;
+    // One filled action in this card (DESIGN-ACCEPT-6 NF-10): the first recovery choice, else the Machine remedy, else
+    // Run again, unless the page already leads with it; otherwise Investigate. Everything else stays secondary.
+    const paneLead = (props.recoveryPrimaryDisplay ?? 'default') === 'secondary' ? 'investigate'
+        : offeredChoices.length > 0 ? 'choice'
+            : remedy !== null ? 'remedy'
+                : runAgainShown && recovery.repairGuidance == null ? 'runAgain' : 'investigate';
+    const choiceDisplay = (choice: (typeof offeredChoices)[number]) =>
+        paneLead === 'choice' && offeredChoices[0] === choice ? 'default' : 'secondary';
     const noChoicesLine = !noChoices ? null : waitLine ?? resolveNoChoicesLine(runAgainShown ? null : props.noChoicesNext ?? null);
     // A failed step's own result is the detail of what went wrong; it waits one quiet tap away in its card.
     const failureDetails = props.lifecycle === 'failed' && props.finalResult == null && props.waitPrompt == null
@@ -499,7 +505,8 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                         {props.investigationSubject && (failureCause !== null || props.lifecycle === 'failed'
                             || props.lifecycle === 'outcome_uncertain') ? (
                             <SectionContentRow>
-                                <WorkflowRunFailureAgentActions subject={props.investigationSubject} testIDPrefix={testIDPrefix} />
+                                <WorkflowRunFailureAgentActions subject={props.investigationSubject} testIDPrefix={testIDPrefix}
+                                    emphasis={paneLead === 'investigate' ? 'primary' : 'secondary'} />
                             </SectionContentRow>
                         ) : null}
                         {recovery.remainingNotStartedSiblingCount === null
@@ -825,7 +832,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                                         <RoundButton
                                             testID={`${testIDPrefix}-recovery-remedy-${remedy}`}
                                             size="small"
-                                            display={props.recoveryPrimaryDisplay ?? 'default'}
+                                            display={paneLead === 'remedy' ? 'default' : 'secondary'}
                                             title={formatWorkflowFailureRemedyLabel(remedy)}
                                             onPress={() => props.onOpenMachineRemedy?.(remedy)}
                                         />
@@ -834,7 +841,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                                         <RoundButton
                                             testID={`${testIDPrefix}-recovery-run-again`}
                                             size="small"
-                                            display={remedy !== null || recovery.repairGuidance != null ? 'secondary' : props.recoveryPrimaryDisplay ?? 'default'}
+                                            display={paneLead === 'runAgain' ? 'default' : 'secondary'}
                                             title={t('workflows.run.runAgain')}
                                             onPress={props.onRunAgain}
                                         />

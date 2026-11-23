@@ -102,7 +102,7 @@ const triggerRowHost: HappierTriggerRowHost = {
         ) : (
             <Item testID={props.testID} title={props.titleContent ?? props.title}
                 accessibilityLabel={props.accessibilityLabel ?? (props.titleContent ? [props.title, props.subtitleText].filter(Boolean).join('. ') : undefined)}
-                icon={props.icon} {...(props.multiline ? { titleLines: 0, subtitleLines: 0 } : {})}
+                icon={props.icon} subtitleLines={props.subtitleLines} {...(props.multiline ? { titleLines: 0 } : {})}
                 {...(props.subtitle ? { subtitle: props.subtitle } : {})}
                 {...(props.attention ? { subtitleStyle: workStatusWordStyle('attention') }
                     : { dimmed: !props.enabled })}
