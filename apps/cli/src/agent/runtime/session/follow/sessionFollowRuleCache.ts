@@ -4,15 +4,20 @@ import { openSessionFollowRuleContentV1 } from '@happier-dev/protocol/sessions/f
 import type { OpenedSessionFollowRuleV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
 import type { SessionAutoFollowPreferencesV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 
+type RuleContentUnavailableReason = Extract<ReturnType<typeof openSessionFollowRuleContentV1>, { status: 'unavailable' }>['reason'];
+type RuleReadUnavailable = Readonly<{
+  status: 'unavailable';
+  reason: RuleContentUnavailableReason | 'account-retired' | 'rules-changed' | 'private-rules-unavailable';
+}>;
 export type SessionFollowRuleCacheSnapshot = Readonly<{ status: 'available'; rules: readonly OpenedSessionFollowRuleV1[]; defaultPreferences?: SessionAutoFollowPreferencesV1 }>
-  | Readonly<{ status: 'unavailable'; reason: string }>;
+  | RuleReadUnavailable;
 export type SessionFollowRuleInvalidation = Readonly<{ full: boolean; receiverSessionIds?: readonly string[]; continuityReset?: true }>;
 
 /** The admitted daemon owns this cache for one captured Account lifetime. */
 export function createSessionFollowRuleCache(input: Readonly<{
   signal: AbortSignal; isCurrent: () => boolean;
   subscribeInvalidation: (listener: (change?: SessionFollowRuleInvalidation) => void) => () => void;
-  read: () => Promise<Readonly<{ mode: 'plain' | 'e2ee'; material: AccountScopedCryptoMaterial | null; rules: readonly SessionFollowRuleV1[]; defaultPreferences?: SessionAutoFollowPreferencesV1 }> | null>;
+  read: () => Promise<Readonly<{ mode: 'plain' | 'e2ee'; material: AccountScopedCryptoMaterial | null; rules: readonly SessionFollowRuleV1[]; defaultPreferences?: SessionAutoFollowPreferencesV1 }> | RuleReadUnavailable | null>;
   onObserved?: (rules: readonly OpenedSessionFollowRuleV1[]) => void;
 }>) {
   type Observation = Readonly<{ snapshot: SessionFollowRuleCacheSnapshot; revision: number; mode?: 'plain' | 'e2ee' }>;
@@ -23,7 +28,7 @@ export function createSessionFollowRuleCache(input: Readonly<{
   let pending: Promise<Observation> | null = null;
   let refreshing: Promise<Observation> | null = null;
   const current = () => !retired && !input.signal.aborted && input.isCurrent();
-  const unavailable = (reason: string): Observation => ({ revision, snapshot: { status: 'unavailable', reason } });
+  const unavailable = (reason: RuleReadUnavailable['reason']): Observation => ({ revision, snapshot: { status: 'unavailable', reason } });
   const invalidate = () => { revision++; loaded = null; };
   // Run/Discussion progress wakes consumers without changing rule configuration.
   // Unqualified notifications still withdraw the snapshot, including requester resets.
@@ -55,6 +60,7 @@ export function createSessionFollowRuleCache(input: Readonly<{
         if (!current()) return unavailable('account-retired');
         if (revision !== observedRevision || pending !== work) return unavailable('rules-changed');
         if (!source) return unavailable('private-rules-unavailable');
+        if ('status' in source) return unavailable(source.reason);
         const rules: OpenedSessionFollowRuleV1[] = [];
         for (const row of source.rules) {
           const admitted = definitions.get(row.ruleId);

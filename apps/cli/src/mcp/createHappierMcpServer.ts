@@ -411,7 +411,7 @@ export function createHappierMcpServer(
         } : undefined,
       ),
       ...(client.enqueueSessionEventCommitted ? {
-        postSessionUpdate: (report: SessionUpdatePostInputV1) => client.enqueueSessionEventCommitted!({ type: 'worker-report', ...report }),
+        postSessionUpdate: (report: SessionUpdatePostInputV1, eventId?: string) => client.enqueueSessionEventCommitted!({ type: 'worker-report', ...report }, eventId),
       } : {}),
       ...cryptoContext,
       rawSession,

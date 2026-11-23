@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { UpdateContainerSchema } from "@happier-dev/protocol/updates";
+import { buildAgentEventLocalId } from "@happier-dev/protocol/sessions/messages/transcriptRawRecordV1";
 
 import { createSessionPublisherPresence } from "@/app/presence/sessionPublisherPresence";
 import { sessionUpdateHandler } from "@/app/api/socket/sessionUpdateHandler";
@@ -93,5 +94,45 @@ describe("transcript observation batches on SQLite", () => {
         const second = await send([observation(`ok-${randomUUID()}`, 30), observation(refused, 31), observation(after, 32)]);
         expect(second.acks.map(ack => ack.ok)).toEqual([true, false]);
         expect(await db.sessionMessage.count({ where: { sessionId: session.id, localId: after } })).toBe(0);
+    });
+
+    it("returns the original WorkerUpdate for a replay with fresh ciphertext and timestamps", async () => {
+        const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "e2ee" }, select: { id: true } });
+        const machineId = randomUUID();
+        await db.machine.create({ data: { id: machineId, accountId: owner.id, metadata: "{}" } });
+        const session = await db.session.create({
+            data: { accountId: owner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "e2ee" },
+            select: { id: true },
+        });
+        await db.accessKey.create({ data: { accountId: owner.id, machineId, sessionId: session.id, data: "encrypted" } });
+        const socket = createAuthenticatedFakeSocket();
+        sessionUpdateHandler(owner.id, socket as never,
+            { connectionType: "session-scoped", socket, userId: owner.id, sessionId: session.id } as never,
+            { presence: createSessionPublisherPresence(), binding: { accountId: owner.id, machineId, sessionId: session.id } });
+        await getSocketHandler(socket, "session-runtime-activity-snapshot")({
+            sessionId: session.id,
+            mutationId: `runtime-activity-snapshot:${session.id}`,
+            snapshot: { state: "idle", activeCount: 0 },
+        }, () => {});
+
+        const localId = buildAgentEventLocalId("worker-report", ["original-action-id"]);
+        const observe = async (content: string, time: number) => {
+            const acks: unknown[] = [];
+            await getSocketHandler(socket, "transcript-observation-v1")({
+                v: 1, sessionId: session.id, localId, messageRole: "event", content,
+                createdAt: time, updatedAt: time, provenance: { kind: "non_dependent", source: "background" },
+            }, (ack: unknown) => acks.push(ack));
+            return acks[0];
+        };
+        const firstTime = Date.parse("2026-11-23T07:00:00.000Z");
+        const first = await observe("original-opaque-ciphertext", firstTime);
+        expect(first).toMatchObject({ ok: true, didWrite: true, id: expect.any(String), seq: expect.any(Number), localId });
+        expect(await observe("fresh-opaque-ciphertext", firstTime + 100)).toEqual({
+            ...(first as Record<string, unknown>), didWrite: false,
+        });
+        await expect(db.sessionMessage.findMany({ where: { sessionId: session.id }, select: {
+            localId: true, content: true, sourceCreatedAt: true, sourceUpdatedAt: true,
+        } })).resolves.toEqual([{ localId, content: { t: "encrypted", c: "original-opaque-ciphertext" },
+            sourceCreatedAt: new Date(firstTime), sourceUpdatedAt: new Date(firstTime) }]);
     });
 });

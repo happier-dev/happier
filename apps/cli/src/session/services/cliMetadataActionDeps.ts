@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions';
+import * as z from 'zod/mini';
 import { createSessionAgentTitleWriteGuard, SessionAgentTitleUpdateDenied } from '@/agent/permissions/codingPromptTitlePermission';
 import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import type { ResolvedSessionTransport } from '../actions/cliActionDeps/types';
@@ -22,6 +25,25 @@ import type { updateSessionMetadataForTarget } from '@/session/services/updateSe
 import type { fetchSessionById, setSessionAttentionStanding, setSessionOrganizationPin, setSessionManager } from '@/session/transport/http/sessionsHttp';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+
+// The Action identity survives attempts. Socket request IDs still identify
+// individual calls and cancellation, and older bare input remains accepted.
+const SessionUpdatePostRpcRequestV1Schema = z.strictObject({
+  actionRequestId: ExternalActionRequestIdV1Schema,
+  input: z.unknown(),
+});
+
+export function mapSessionUpdatePostRpcRequest(input: unknown) {
+  if (!input || typeof input !== 'object' || !('actionRequestId' in input)) return { accepted: true as const, input };
+  const request = SessionUpdatePostRpcRequestV1Schema.safeParse(input);
+  if (!request.success || !Object.hasOwn(input, 'input')) {
+    return { accepted: false as const, response: {
+      ok: false, errorCode: 'invalid_action_transport_input', error: 'invalid_action_transport_input',
+    } };
+  }
+  return { accepted: true as const, ...request.data };
+}
+
 type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionUpdatePost' | 'sessionManagerSet' | 'sessionOrganizationPinSet' | 'sessionAttentionSet' | 'sessionApprovalReviewerSet' | 'sessionStateFieldSet' | 'currentSessionPresentationApply'>;
 
 export function createCliMetadataActionDeps(
@@ -69,7 +91,10 @@ export function createCliMetadataActionDeps(
             context, actionId: 'session.update.post',
           });
           if (!transport.ok) return { ok: false, errorCode: transport.code, error: transport.code };
-          return await callSessionActionRpc(transport, 'session.update.post', input, context);
+          const request = context.authority === 'present_user' && context.actionRequestId
+            ? { input, actionRequestId: context.actionRequestId }
+            : input;
+          return await callSessionActionRpc(transport, 'session.update.post', request, context);
         });
       }
       const { fetchSessionById } = await import("@/session/transport/http/sessionsHttp");
@@ -89,7 +114,10 @@ export function createCliMetadataActionDeps(
         return { ok: false, errorCode: 'session_update_deliverable_scope_mismatch', error: 'session_update_deliverable_scope_mismatch' };
       }
       context.signal?.throwIfAborted();
-      const committed = await params.postSessionUpdate(report.data);
+      // Transcript local IDs normalize punctuation. Hash the opaque Action
+      // identity so distinct request IDs cannot collapse during normalization.
+      const eventId = context.actionRequestId ? createHash('sha256').update(context.actionRequestId).digest('hex') : undefined;
+      const committed = await params.postSessionUpdate(report.data, eventId);
       if (!committed.persisted || !committed.localId) return { ok: false, errorCode: 'session_update_not_committed', error: 'session_update_not_committed' };
       return { sessionId: params.sessionId, localId: committed.localId, persisted: true };
     },

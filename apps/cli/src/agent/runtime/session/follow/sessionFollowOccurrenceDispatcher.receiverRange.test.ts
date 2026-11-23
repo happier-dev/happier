@@ -139,6 +139,8 @@ it.each([undefined, 'checkout'])('reads filter facts and Project encryption once
       content: { t: 'plain', v: { role: 'agent', content: { type: 'event', id: `goal-${index}`, data: { type: 'goal-changed' } } } } }));
     let projectKey = 'payments';
     let addTagAtOriginal17 = false;
+    const projectFacet = { include: [{ serverId, projectKey: 'payments' }],
+      exclude: [{ serverId, projectKey: 'blocked-project' }] };
     let holdAdmission = false;
     let invalidate: ((change?: SessionFollowRuleInvalidation) => void) | undefined;
     const gets: string[] = [], posts: string[] = [];
@@ -146,7 +148,7 @@ it.each([undefined, 'checkout'])('reads filter facts and Project encryption once
     const rule = { ruleId: 'project-rule', version: 1, receiver: { kind: 'session', sessionId: destinationSessionId },
       content: { t: 'plain', v: { v: 1, enabled: true, filter: normalizeSessionListFilterV1({ homeServerIds: [serverId],
         scope: 'all_accessible', startedBy: ['you', 'agents', 'triggers'],
-        projects: { include: [{ serverId, projectKey: 'payments' }], exclude: [] } }), policy: { preset: 'quiet' } } } };
+        projects: projectFacet }), policy: { preset: 'quiet' } } } };
     vi.spyOn(axios, 'get').mockImplementation(async url => {
       const path = new URL(String(url)).pathname;
       gets.push(path);
@@ -210,7 +212,11 @@ it.each([undefined, 'checkout'])('reads filter facts and Project encryption once
       expect(posts).toHaveLength(settledPosts);
       // A new pass must observe real Project changes instead of retaining its
       // predecessor's positive match or borrowing an installed Account's facts.
-      projectKey = 'other-project';
+      if (stampedProjectKey) {
+        rule.version++;
+        rule.content.v.filter = normalizeSessionListFilterV1({ ...rule.content.v.filter,
+          projects: { ...projectFacet, exclude: [{ serverId, projectKey: 'payments' }] } });
+      } else projectKey = 'other-project';
       rows.push(...rows.map(row => ({ ...row, id: `${row.id}-next`, localId: `${row.localId}-next`, seq: row.seq + 32 })));
       source.seq = 64;
       invalidate?.({ full: true });
@@ -222,6 +228,10 @@ it.each([undefined, 'checkout'])('reads filter facts and Project encryption once
       for (let index = 0; index < 10; index++) await pass();
       expect(posts.length - missedPosts, 'zero candidates settle this original for this receiver').toBe(0);
       projectKey = 'payments';
+      if (stampedProjectKey) {
+        rule.version++;
+        rule.content.v.filter = normalizeSessionListFilterV1({ ...rule.content.v.filter, projects: projectFacet });
+      }
       invalidate?.({ full: true });
       addTagAtOriginal17 = true;
       await pass();
@@ -914,25 +924,40 @@ it.each([
   { entry: 'source', restriction: 'section' }, { entry: 'source', restriction: 'other-home-section' },
   { entry: 'source', restriction: 'section-moved' },
   { entry: 'source', restriction: 'missing-section' }, { entry: 'source', restriction: 'future-core' },
-  { entry: 'source', restriction: 'future-extension' },
+  { entry: 'source', restriction: 'future-extension' }, { entry: 'source', restriction: 'encrypted-under' },
 ] as const)('admits only freshly matching rule originals while retaining discovery candidates ($entry, $restriction)', async ({ entry, restriction }) => {
   const log = vi.spyOn(logger, 'debug').mockImplementation(() => {});
   const authoredLocalId = 'private-authored-follow-source-id';
   const sourceSessionId = 'c111111111111111111111111';
   const destinationSessionId = 'c222222222222222222222222';
   const token = 'e30.eyJzdWIiOiJhY2NvdW50LTEifQ.signature';
-  const rule = { ruleId: 'new-rule', version: 0, receiver: { kind: 'session' as const, sessionId: destinationSessionId },
-    inception: { accountChangeCursor: 5, createdAt: 100 },
-    content: { t: 'plain' as const, v: { v: 1 as const, enabled: true, filter: {
+  const underSessionId = 'c333333333333333333333333';
+  const unrelatedRoot = 'c444444444444444444444444';
+  const encrypted = restriction === 'encrypted-under';
+  const material = encrypted ? { type: 'legacy' as const, secret: new Uint8Array(32).fill(19) } : null;
+  const credentials = { token, encryption: material };
+  const keySnapshot = createAutomationAccountEncryptionMaterialSnapshotV1(credentials);
+  const receiver = { kind: 'session' as const, sessionId: destinationSessionId };
+  const definition = { v: 1 as const, enabled: true, filter: {
       ...normalizeSessionListFilterV1({ homeServerIds: ['home'], scope: 'all_accessible' }),
       ...(restriction.includes('section') ? { sections: { include: [{ serverId: restriction === 'other-home-section' ? 'other-home' : 'home', sectionId: 'section-a' }], exclude: [] } } : {}),
       ...(restriction === 'future-core' ? { futureCore: { value: 'narrow' } } : {}),
       ...(restriction === 'future-extension' ? { extensions: { 'acme.future': { kind: 'future', value: true } } } : {}),
-    },
-      policy: { preset: 'important' as const } } } };
-  const source = { ...createSessionNotificationContextFixture(sourceSessionId), encryptionMode: 'plain', dataEncryptionKey: null,
-    metadata: JSON.stringify({ path: '/work', host: 'host', machineId: 'source-machine' }), ownerAccountId: 'account-1',
-    archivedAt: null, active: true, seq: 2, origin: { kind: 'none' as const } };
+      ...(encrypted ? { underSessionId } : {}),
+    }, policy: { preset: 'important' as const } };
+  const rule = { ruleId: 'new-rule', version: 0, receiver, inception: { accountChangeCursor: 5, createdAt: 100 },
+    content: material ? sealSessionFollowRuleContentV1({ ruleId: 'new-rule', receiver, definition, mode: 'e2ee', material })
+      : { t: 'plain' as const, v: definition } };
+  const otherRuleId = 'unrelated-subtree-rule';
+  const privateRules = material ? [rule, { ...rule, ruleId: otherRuleId,
+    content: sealSessionFollowRuleContentV1({ ruleId: otherRuleId, receiver, mode: 'e2ee', material,
+      definition: { ...definition, filter: { ...definition.filter, underSessionId: unrelatedRoot } } }) }] : [rule];
+  const sourceTurn = { id: 'child-native-turn', status: 'completed' as const };
+  const metadata = { path: '/work', host: 'host', machineId: 'source-machine' };
+  const source = { ...createSessionNotificationContextFixture(sourceSessionId), encryptionMode: encrypted ? 'e2ee' : 'plain',
+    dataEncryptionKey: null, metadata: material ? encodeBase64(encryptLegacy(metadata, material.secret)) : JSON.stringify(metadata),
+    ownerAccountId: 'account-1', archivedAt: null, active: true, seq: encrypted ? 1 : 2, origin: { kind: 'none' as const },
+    ...(encrypted ? { latestTurnId: sourceTurn.id, latestTurnStatus: sourceTurn.status } : {}) };
   const destination = { ...source, id: destinationSessionId, seq: 0 };
   let readable = false;
   let releaseSource!: () => void;
@@ -949,7 +974,9 @@ it.each([
     const path = parsed.pathname;
     if (path.endsWith('/follows/sessions')) { sourceLists++; return { status: 200, data: { sources: [] } }; }
     if (path === '/v1/account/encryption/currentness') return { status: 200,
-      data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
+      data: createAccountEncryptionCurrentnessFixture({ mode: encrypted ? 'e2ee' : 'plain',
+        contentKeyFingerprint: keySnapshot ? convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+          keySnapshot.contentPublicKeyFingerprint) : null }) };
     if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
     if (path === '/v2/session-organization') {
       placementReads++;
@@ -965,7 +992,7 @@ it.each([
       if (!options?.params?.destinationSessionId) configurationReads++;
       if (entry === 'overlapping-receiver') return { status: 200, data: { rules: [] } };
       const demanded = options?.params?.destinationSessionId;
-      return { status: 200, data: { rules: [rule], ...(demanded ? { sourceRanges: { status: 'available', sources: [{
+      return { status: 200, data: { rules: privateRules, ...(demanded ? { sourceRanges: { status: 'available', sources: [{
         sourceSessionId, delivered: { ...SESSION_FOLLOW_ZERO_FRONTIER_V1, transcriptSeq: 1 }, throughSeq: 2,
       }] } } : {}) } };
     }
@@ -992,6 +1019,14 @@ it.each([
   vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
     const path = new URL(String(url)).pathname;
     if (path === '/v2/sessions/lookup-by-tags') return { status: 200, data: { sessions: [] } };
+    if (path === '/v2/sessions/read-batch' && encrypted) {
+      expect(body).toMatchObject({ sessionIds: [sourceSessionId], includeTurns: false });
+      const root = (body as { underSessionId: string }).underSessionId;
+      expect([underSessionId, unrelatedRoot]).toContain(root);
+      const detail = root === underSessionId ? { status: 200, body: { session: source } }
+        : { status: 404, body: { error: 'not_found' } };
+      return { status: 200, data: { results: [{ sessionId: sourceSessionId, detail }] } };
+    }
     if (path.endsWith('/follows/occurrence-routes')) return { status: 200,
       data: { ok: true, v: 1, sourceSessionId, originalCreatedAt: 200, routes: entry === 'overlapping-receiver' ? [{
         sourceSessionId, destinationSessionId, relation: 'follower', policy: { preset: 'important' },
@@ -1001,7 +1036,7 @@ it.each([
       data: { didWrite: true, message: { localId: 'accepted-original', seq: 1 } } }; }
     throw new Error(`Unexpected POST ${path}`);
   });
-  const dispatcher = createSessionFollowOccurrenceDispatcher({ accountId: 'account-1', credentials: { token, encryption: null },
+  const dispatcher = createSessionFollowOccurrenceDispatcher({ accountId: 'account-1', credentials,
     serverId: 'home', serverHttpBaseUrl: 'http://home.test', machineId: entry === 'source' ? 'source-machine' : 'receiver-machine', installationId: 'installation',
     signal: new AbortController().signal, isCurrent: async () => true, subscribeInvalidation: () => () => {},
     resolveSourceKeyContext: async () => null, isPersonalCurrent: () => false, dispatchPersonal: async () => {} });
@@ -1017,8 +1052,9 @@ it.each([
         observed: { ...SESSION_FOLLOW_ZERO_FRONTIER_V1, transcriptSeq: 2 } }] : [] })
       : dispatcher.dispatch(SessionFollowRuleSourceOccurrenceV1Schema.parse({ sourceSessionId,
           sourcePublisher: { machineId: 'source-machine', publisherGeneration: '1', committedFenceMs: 1 },
-          sourceMessage: { localId: authoredLocalId, seq: 2 }, evidence: { v: 1, ownerAccountId: 'account-1',
-            event: { kind: 'goal_changed' }, facts: { serverId: 'home', kind: 'session', source: 'persisted' } } }));
+          ...(encrypted ? { sourceTurn } : { sourceMessage: { localId: authoredLocalId, seq: 2 } }),
+          evidence: { v: 1, ownerAccountId: 'account-1',
+            event: { kind: encrypted ? 'finished' : 'goal_changed' }, facts: { serverId: 'home', kind: 'session', source: 'persisted' } } }));
     await dispatch();
     expect(pending).toEqual([]);
     readable = true;
@@ -1042,6 +1078,13 @@ it.each([
     })();
     if (entry === 'source') expect({ configurationReads, preferenceReads },
       'proved source originals reuse push-owned configuration').toEqual({ configurationReads: 0, preferenceReads: 0 });
+    if (encrypted) {
+      expect(pending).toEqual([expect.objectContaining({
+        localId: deriveSessionFollowInputLocalIdV1({ destinationSessionId, original: { sourceSessionId, sourceTurn } }),
+        followSources: [expect.objectContaining({ sourceSessionId, sourceTurn, rule: { ruleId: 'new-rule', ruleVersion: 0 } })],
+      })]);
+      return;
+    }
     const refuses = ['other-home-section', 'missing-section', 'section-moved', 'future-core', 'future-extension'].includes(restriction);
     if (refuses) {
       expect(pending).toEqual([]);

@@ -1179,7 +1179,31 @@ async function reconcileExistingTrustedLocalIdInTx(params: Readonly<{
         (existing.sidechainId ?? null) !== params.sidechainId
         || !parsedExistingProvenance.success
         || !isDeepStrictEqual(parsedExistingProvenance.data, params.provenance)
-        || existing.sourceCreatedAt?.getTime() !== params.sourceCreatedAt.getTime()
+    ) {
+        return { status: "reconciled", result: { ok: false, error: "invalid-params" } };
+    }
+
+    // Worker updates are original publications. An Action replay can reseal
+    // the report with fresh source timestamps; return its existing receipt.
+    if (params.sidechainId === null && resolvedRole === "event" && existing.messageRole === "event"
+        && params.provenance.kind === "non_dependent" && params.provenance.source === "background"
+        && readPublishedOriginalFollowEvent(params.content, params.localId, createPlainTranscriptRecordReader(params.content))?.kind === "update_posted"
+        && readPublishedOriginalFollowEvent(existing.content, existing.localId, createPlainTranscriptRecordReader(existing.content))?.kind === "update_posted") {
+        return {
+            status: "reconciled",
+            result: {
+                ok: true,
+                didWrite: false,
+                didUpdate: false,
+                badgeAttentionChanged: false,
+                message: toSessionMessageWriteRow(existing),
+                recipientCursors: [],
+            },
+        };
+    }
+
+    if (
+        existing.sourceCreatedAt?.getTime() !== params.sourceCreatedAt.getTime()
         || existing.sourceUpdatedAt === null
         || params.sourceUpdatedAt.getTime() < existing.sourceUpdatedAt.getTime()
     ) {

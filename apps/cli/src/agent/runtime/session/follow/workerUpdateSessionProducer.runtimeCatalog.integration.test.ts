@@ -150,6 +150,10 @@ async function fixture(status: 'completed' | 'failed' | 'cancelled' | 'running' 
       const content = SessionStoredMessageContentSchema.parse(request.content);
       if (content.t !== 'plain') throw new Error('Expected plain producer fixture');
       const target = request.sessionId === workerId ? messages : leadMessages;
+      const alreadyCommitted = target.find(row => row.localId === request.localId);
+      if (alreadyCommitted) return SessionTranscriptObservationAckV1Schema.parse({ ok: true, status: 'observed',
+        id: `message-${alreadyCommitted.seq}`, seq: alreadyCommitted.seq, localId: request.localId,
+        didWrite: false, ingestedAt: alreadyCommitted.createdAt });
       const seq = request.sessionId === workerId ? observation.observed.transcriptSeq + 1 : target.length + 1;
       target.push({ seq, createdAt: seq, localId: request.localId, messageRole: request.messageRole, content });
       if (request.sessionId === workerId) {
@@ -234,35 +238,23 @@ async function fixture(status: 'completed' | 'failed' | 'cancelled' | 'running' 
     }
     return workerSession;
   };
-  const publisher = createCliActionDeps({ token: credentials.token, credentials, sessionId: workerId,
-    mode: 'plain', ctx: null, serverId: 'worker-home', serverHttpBaseUrl: origin,
-    postSessionUpdate: (report) => getWorkerSession().enqueueSessionEventCommitted({ type: 'worker-report', ...report }),
-  });
-  const publicationExecutor = createActionExecutor(publisher);
   const makeReconciler = () => {
     const reconcile = createSessionFollowContextReconciler({ session, hydrateObservation, maxFollowContextUtf8Bytes: 8192 });
     return (options: Parameters<typeof reconcile>[0]) => reconcile({ ...options, followDeliveries });
   };
   return { observation, observations, admission, followDeliveries, acknowledgements, acknowledgementState, row, messages, leadMessages, session, makeReconciler,
     commitEvent: (event: Parameters<ApiSessionClient['enqueueSessionEventCommitted']>[0]) => getWorkerSession().enqueueSessionEventCommitted(event),
-    postViaRpc: (report: unknown, callerSessionId?: string) => getWorkerSession().rpcHandlerManager.invokeLocal('session.update.post', report, {
-      localActionContext: { surface: 'ui', authority: 'present_user' },
+    postViaRpc: (report: unknown, callerSessionId?: string, actionRequestId?: string) => getWorkerSession().rpcHandlerManager.invokeLocal('session.update.post', report, {
+      localActionContext: { surface: 'ui', authority: 'present_user', actionRequestId },
       ...(callerSessionId ? { rpcContext: { sessionActionOrigin: {
         v: 1 as const, caller: { kind: 'session' as const, sessionId: callerSessionId, starterDepth: 0, turnDepth: 0 },
         sourceTurnId: 'original-turn', requestId: 'original-publication', callerPermissionMode: null,
       } } } : {}),
     }),
-    publish: async (report: SessionUpdatePostInputV1) => {
-      const result = await publicationExecutor.execute('session.update.post', report, {
-        surface: 'agent', authority: 'account_automation', defaultSessionId: workerId,
-      });
-      expect(result).toMatchObject({ ok: true });
-      return result.ok ? result.result : result;
-    },
-    publishViaCli: (report: SessionUpdatePostInputV1) => createActionExecutor(createCliActionDeps({
+    publishViaCli: (report: SessionUpdatePostInputV1, actionRequestId?: string) => createActionExecutor(createCliActionDeps({
       token: credentials.token, credentials, sessionId: workerId, mode: 'plain', ctx: null,
       serverId: 'worker-home', serverHttpBaseUrl: origin,
-    })).execute('session.update.post', report, { surface: 'cli', authority: 'present_user' }),
+    })).execute('session.update.post', report, { surface: 'cli', authority: 'present_user', actionRequestId }),
     reconcile: makeReconciler(), followObserveRequests };
 }
 
@@ -323,13 +315,21 @@ describe('session WorkerUpdate producer through Follow', () => {
     delete f.row.manager;
     const report = { summary: 'A finding before completion', deliverables: [
       { kind: 'workspace_file' as const, sessionId: workerId, path: 'docs/finding.md' },
+      { kind: 'artifact' as const, artifactId: 'document-1' },
     ] };
-    const result = await f.postViaRpc(report);
+    const requestId = 'same-update/request';
+    const result = await f.postViaRpc(report, undefined, requestId);
     expect(result).toMatchObject({ sessionId: workerId, persisted: true, localId: expect.any(String) });
-    expect(f.messages.at(-1)?.content).toMatchObject({ t: 'plain', v: { role: 'agent',
+    const original = f.messages.at(-1);
+    expect(original).toMatchObject({ seq: 2, messageRole: 'event', localId: (result as { localId: string }).localId });
+    const content = SessionStoredMessageContentSchema.parse(original?.content);
+    if (content.t !== 'plain') throw new Error('Expected plain original');
+    expect(TranscriptRawRecordV1Schema.parse(content.v)).toMatchObject({ role: 'agent',
       content: { type: 'event', data: TranscriptRawAgentEventV1Schema.parse({ type: 'worker-report', ...report }) },
-    } });
+    });
     const stored = f.messages.length;
+    expect(await f.postViaRpc(report, undefined, requestId)).toEqual(result);
+    expect(f.messages).toHaveLength(stored);
     expect(await f.postViaRpc({ ...report, sessionId: 'another-source' }))
       .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
     // The bound Session cannot read a foreign caller's private approval profile.
@@ -337,13 +337,18 @@ describe('session WorkerUpdate producer through Follow', () => {
     expect(await f.postViaRpc(report, 'another-source'))
       .toMatchObject({ ok: false, errorCode: 'approval_context_unavailable' });
     expect(f.messages).toHaveLength(stored);
+    const distinct = await f.postViaRpc(report, undefined, 'same-update:request');
+    expect(distinct).toMatchObject({ sessionId: workerId, persisted: true, localId: expect.any(String) });
+    expect(distinct).not.toEqual(result);
+    expect(f.messages).toHaveLength(stored + 1);
   });
   it('posts a CLI original through the bound source RPC and retains source ownership guards', async () => {
     const f = await fixture('running');
     const report = { summary: 'CLI finding before completion', deliverables: [
       { kind: 'workspace_file' as const, sessionId: workerId, path: 'docs/cli-finding.md' },
     ] };
-    const result = await f.publishViaCli(report);
+    const requestId = 'same-cli-update-request';
+    const result = await f.publishViaCli(report, requestId);
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: {
       sessionId: workerId, persisted: true, localId: expect.any(String),
     } });
@@ -351,6 +356,7 @@ describe('session WorkerUpdate producer through Follow', () => {
       content: { type: 'event', data: TranscriptRawAgentEventV1Schema.parse({ type: 'worker-report', ...report }) },
     } });
     const stored = f.messages.length;
+    expect(await f.publishViaCli(report, requestId)).toEqual(result);
     expect(await f.publishViaCli({ summary: 'Unowned', deliverables: [
       { kind: 'workspace_file', sessionId: 'another-source', path: 'docs/foreign.md' },
     ] })).toMatchObject({ ok: false, errorCode: 'session_update_deliverable_scope_mismatch' });
@@ -429,22 +435,6 @@ describe('session WorkerUpdate producer through Follow', () => {
     f.observation.observed.turn = null;
     f.followDeliveries.splice(0);
     expect(await f.reconcile({ signal: new AbortController().signal, deliveryIntent: 'wake' })).toBeNull();
-  });
-  it('commits a published report as a strict original event before returning its receipt', async () => {
-    const f = await fixture('running');
-    const report = { summary: 'Partial finding', deliverables: [
-      { kind: 'workspace_file' as const, sessionId: workerId, path: 'docs/result.md' },
-      { kind: 'artifact' as const, artifactId: 'document-1' },
-    ] };
-    const result = await f.publish(report);
-    expect(result).toMatchObject({ sessionId: workerId, persisted: true, localId: expect.any(String) });
-    if (!result || typeof result !== 'object' || !('localId' in result)) throw new Error('Expected committed original receipt');
-    const original = f.messages.at(-1)!;
-    expect(original).toMatchObject({ seq: 2, localId: result.localId, messageRole: 'event' });
-    const content = SessionStoredMessageContentSchema.parse(original.content);
-    if (content.t !== 'plain') throw new Error('Expected plain original');
-    expect(TranscriptRawRecordV1Schema.parse(content.v)).toMatchObject({ role: 'agent',
-      content: { type: 'event', data: TranscriptRawAgentEventV1Schema.parse({ type: 'worker-report', ...report }) } });
   });
   it.each([['lead', 'accepted'], ['other-lead', 'accepted'], ['lead', 'rejected']] as const)(
     'preserves the final original independently of a prior send (%s/%s)', async (target, status) => {

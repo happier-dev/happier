@@ -1,5 +1,6 @@
 import { actionStartTargetUnavailableV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { mapSessionUpdatePostRpcRequest } from '@/session/services/cliMetadataActionDeps';
 import { registerDiscussionAgentPublisher } from '@/discussions/discussionAgentPublisher';
 import { registerSessionMessageReplyObservation } from '@/rpc/handlers/sessionMessageReply';
 import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
@@ -803,7 +804,7 @@ export function registerSessionClientRuntimeHandlers(
         getCurrentSessionMetadata: params.getSessionMetadata,
         getCurrentSessionProjectKey: () => parentSessionForTools?.getProjectKey(),
         ...(parentSessionForTools ? {
-            postSessionUpdate: async (report: SessionUpdatePostInputV1) => await parentSessionForTools.enqueueSessionEventCommitted({ type: 'worker-report', ...report }),
+            postSessionUpdate: async (report: SessionUpdatePostInputV1, eventId?: string) => await parentSessionForTools.enqueueSessionEventCommitted({ type: 'worker-report', ...report }, eventId),
             sessionMessageReplyPublisher: parentSessionForTools,
         } : {}),
         getCurrentSessionSkillItems: () => params.getCurrentSessionSkillItems
@@ -957,6 +958,8 @@ export function registerSessionClientRuntimeHandlers(
                 }),
             };
         },
+        mapRequestForMethod: ({ actionId, input }) => actionId === 'session.update.post'
+            ? mapSessionUpdatePostRpcRequest(input) : { accepted: true, input },
         actionIds: [...ROLE_ACTION_IDS_V1.filter((actionId) => actionId.startsWith('session.')), 'skills.read', 'session.update.post', 'session.message.reply'],
     });
     registerSessionRoleConfigurationHandler({

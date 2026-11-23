@@ -95,10 +95,10 @@ type ActionSpecRpcHandlerParams<TActionId extends ActionId> = Readonly<{
         isAlias: boolean;
         input: unknown;
     }>) => Readonly<
-        | { accepted: true; input: unknown }
+        | { accepted: true; input: unknown; actionRequestId?: string }
         | { accepted: false; response: unknown }
     > | Promise<Readonly<
-        | { accepted: true; input: unknown }
+        | { accepted: true; input: unknown; actionRequestId?: string }
         | { accepted: false; response: unknown }
     >>;
 }>;
@@ -370,7 +370,7 @@ export function registerActionSpecRpcHandlers<TActionId extends ActionId = Actio
                 method,
                 isAlias,
                 input,
-            }) ?? { accepted: true as const, input };
+            }) ?? { accepted: true as const, input, actionRequestId: undefined };
             if (!mappedRequest.accepted) {
                 return mappedRequest.response;
             }
@@ -451,7 +451,8 @@ export function registerActionSpecRpcHandlers<TActionId extends ActionId = Actio
                 signal?: AbortSignal;
                 runActionOperation?: ActionExecutorContext['runActionOperation'];
             }>): Promise<ActionExecuteResult> => {
-                const actionRequestId = context?.localActionContext?.actionRequestId ?? context?.transportRequestId;
+                const actionRequestId = context?.localActionContext?.actionRequestId
+                    ?? mappedRequest.actionRequestId ?? context?.transportRequestId;
                 return await dispatchActionFromRpc({
                     actionId: typedActionId,
                     input: semanticInput,

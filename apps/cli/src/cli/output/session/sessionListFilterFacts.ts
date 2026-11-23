@@ -6,7 +6,7 @@ import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/session
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { readSessionMetadataViews } from '@/session/transport/encryption/sessionEncryptionContext';
 import { projectCliSessionAwarenessFromPresentationV1, type CliSessionAwarenessParams } from './sessionAwareness';
-import { fetchSessionOrganizationPlacementBatches } from '@/session/transport/http/sessionsHttp';
+import { fetchSessionOrganizationPlacementBatches, fetchSessionSnapshotsBatch } from '@/session/transport/http/sessionsHttp';
 import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { StoredCredentials } from '@/persistence';
@@ -56,18 +56,33 @@ export async function readCliSessionListFilterFactsV1(input: CliSessionAwareness
     ? [...filter.projects.include, ...filter.projects.exclude].map(project => project.serverId) : []))];
   const projectsRequired = (await Promise.all(projectHomes.map(home => isServerProfileHomeIdentity(input.serverId, home))))
     .some(admitted => admitted);
-  const [projects, tags] = await Promise.allSettled([
+  const roots = new Set(relevantFilters.flatMap(filter => filter.underSessionId ? [filter.underSessionId] : []));
+  const [projects, tags, ...subtreeReads] = await Promise.allSettled([
     projectsRequired ? readProjectAccountRows({ credentials: input.credentials, serverId, signal: input.signal,
       selection: { kinds: ['workspace-ref'], serverId },
       sessionCustody: { accountId: input.accountId, serverId: input.serverId, serverHttpBaseUrl: input.serverHttpBaseUrl,
         isCurrent: input.isCurrent } }) : Promise.resolve(undefined),
     readCliSessionListOrganizationAssignmentsV1({ ...input, filters: relevantFilters, serverId, sessionIds: [input.row.id] }),
-  ]);
+    ...Array.from(roots, async root => {
+      // The same Home subtree owner serves selector and Board membership. Ask
+      // about this source only, including transitive managed descendants.
+      const result = await fetchSessionSnapshotsBatch({ token: input.credentials.token, serverUrl: input.serverHttpBaseUrl,
+        sessionIds: [input.row.id], underSessionId: root, accessProjectionVersion: 1, includeTurns: false, signal: input.signal });
+      return [root, result.get(input.row.id)?.detail?.status] as const;
+    }),
+  ] as const);
   if (input.signal.aborted || !await input.isCurrent()) return null;
   // Profile aliases qualify caller filters, never stored Workspace identities.
   const workspaceRefs = projects.status === 'fulfilled' ? projects.value?.workspaceRefs.filter(ref => ref.serverId === serverId) : undefined;
   const placement = tags.status === 'fulfilled' ? tags.value?.get(input.row.id) : undefined;
+  const underSessionMembership = new Map<string, boolean>();
+  for (const read of subtreeReads) {
+    if (read.status !== 'fulfilled') continue;
+    const [root, status] = read.value;
+    if (status === 200 || status === 404) underSessionMembership.set(root, status === 200);
+  }
   return { ...knownFacts, workspaceRefs: workspaceRefs ?? knownFacts.workspaceRefs,
+    ...(roots.size ? { underSessionMembership } : {}),
     ...(placement === undefined ? {} : { tagIds: placement.tagIds,
       section: placement.folderId === null ? null : { serverId, sectionId: placement.folderId } }) };
 }

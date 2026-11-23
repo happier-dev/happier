@@ -122,6 +122,8 @@ export type SessionListFilterFactsV1 = SessionCoordinatorFactsV1 & Readonly<{
     attentionRequired?: boolean;
     scopeMatches?: Partial<Readonly<Record<SessionListScopeV1, boolean>>>;
     underSessionMatches?: boolean;
+    /** One source matched against rules with different server-proved subtree roots. */
+    underSessionMembership?: ReadonlyMap<string, boolean>;
     metadata?: unknown;
     /** When presentation metadata differs, only the opened owner view may establish Project identity. */
     projectMetadata?: unknown;
@@ -228,7 +230,8 @@ const builtInSessionWorkFilterFields: EntityFilterRegistryV1<SessionListFilterV1
     sessionField('show', 'domain', (value, facts) => known(value === 'both' || (value === 'runs') === (facts.kind === 'run'))),
     sessionField('startedBy', 'set', (values, facts) => matchSessionListStartedByV1(values, facts.startedBy)),
     sessionField('scope', 'domain', (value, facts) => known(facts.scopeMatches?.[value]), { active: value => value !== 'all_accessible' }),
-    sessionField('underSessionId', 'domain', (_value, facts) => known(facts.underSessionMatches)),
+    sessionField('underSessionId', 'domain', (value, facts) =>
+        known(facts.underSessionMembership ? facts.underSessionMembership.get(value) : facts.underSessionMatches)),
     sessionField('attention', 'boolean', (_value, facts) => known(facts.attentionRequired), { listOnly: true, active: value => value !== 'any' }),
     sessionField('source', 'domain', (value, facts) => known(facts.source === undefined ? undefined : value === facts.source), { active: value => value !== 'all' }),
     sessionField('bot', 'domain', (value, facts) => matchSessionBotFilterV1(facts.metadata, value), { sessionOnly: true }),

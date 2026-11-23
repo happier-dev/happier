@@ -114,6 +114,7 @@ export function createAccountSessionFollowRuleCache(input: Readonly<{
         },
         resolveAccountEncryptionMaterial: async () => createAutomationAccountEncryptionMaterialSnapshotV1(input.credentials),
       });
+      if (encryption.kind === 'retry') return { status: 'unavailable', reason: 'encryption-material-unavailable' };
       if (encryption.kind !== 'available' || !identity || !await current()) return null;
       // The installed credential fence does not observe Account mode/key
       // transitions. Retain this read's witness through the same shared channel

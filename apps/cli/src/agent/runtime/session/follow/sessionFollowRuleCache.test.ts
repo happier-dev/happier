@@ -498,6 +498,18 @@ describe('Account Follow rule cache', () => {
       expect(await cache.read()).toMatchObject({ status: 'unavailable' });
     } finally { cache.dispose(); http.mockRestore(); }
   });
+  it('reports missing Account encryption material before reading private Follow rules', async () => {
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'bob' })).toString('base64url')}.signature`;
+    const http = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200,
+      data: createAccountEncryptionCurrentnessFixture({ mode: 'e2ee', contentKeyFingerprint: 'fixture-content-key' }) });
+    const cache = createAccountSessionFollowRuleCache({ accountId: 'bob', credentials: { token, encryption: null },
+      serverHttpBaseUrl: 'https://locked-rule-account.test', signal: new AbortController().signal,
+      subscribeInvalidation: () => () => {} });
+    try {
+      expect(await cache.read()).toEqual({ status: 'unavailable', reason: 'encryption-material-unavailable' });
+      expect(http.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(['/v1/account/encryption/currentness']);
+    } finally { cache.dispose(); }
+  });
   it('opens once, shares concurrent demand, and reloads only after the existing change feed invalidates', async () => {
     let reads = 0;
     let invalidate = () => {};

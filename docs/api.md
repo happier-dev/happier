@@ -2022,8 +2022,13 @@ has progress, without creating per-source Follow edges. The range starts at rule
 creation; editing preserves inception and accepted progress. Millisecond ties are
 included because original records have no finer ordering witness. Unavailable
 source access or a pruned change frontier remains explicitly incomplete.
+The source daemon evaluates rule conditions with the same Session filter used by
+preview and selection. For an Under Session rule, it reads exact managed-subtree
+membership for that source from the same Home query that serves the selector.
 An unreadable or mode-inconsistent row fails the read;
-it never becomes an empty rule set. Other Accounts cannot read these definitions.
+it never becomes an empty rule set. The daemon holds progress and reports the
+opening failure, including when current Account encryption material is unavailable.
+Other Accounts cannot read these definitions.
 Restricted Session runtimes and scoped API tokens cannot use these private rule routes;
 ordinary Account credentials and unrestricted Account API tokens retain access.
 `POST /v2/account/session-follow-rules/personal-progress` uses that same private
@@ -2435,7 +2440,9 @@ In 0.3 development source, `session.update.post` publishes an original update
 from the hosting Session without requiring a manager. Its input contains a
 summary and optional deliverable references; its successful result names the
 source Session and committed local message id with `persisted: true`. The
-registered Session Action uses that Session's captured Home. Foreign workspace
+registered Session Action uses that Session's captured Home. Replaying the same
+Action request returns the original local id and preserves the committed update.
+Foreign workspace
 references and direct workflow-step publication are refused; workflow steps use
 their existing draft/review path. Persistence does not establish follower delivery.
 

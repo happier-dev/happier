@@ -275,7 +275,7 @@ export type CliActionDepsParams = Readonly<{
   projectWorkerAccountAction?: ActionExecutorDeps['projectWorkerAction'];
   stageWorkStateMutation?: (mutation: import('@/api/session/client/transport/mutations/sessionClientDurableMutationTypes').DaemonWorkStateFieldMutation, options?: Readonly<{ signal?: AbortSignal }>) => Promise<void>;
   stageSessionStateMutation?: (mutation: import('@/api/session/client/transport/mutations/sessionClientDurableMutationTypes').RegisteredSessionStateFieldMutationV1) => Promise<void>;
-  postSessionUpdate?: (report: SessionUpdatePostInputV1) => Promise<Readonly<{ persisted: boolean; localId?: string }>>;
+  postSessionUpdate?: (report: SessionUpdatePostInputV1, eventId?: string) => Promise<Readonly<{ persisted: boolean; localId?: string }>>;
   sessionId: string;
   /** Current authenticated receiver/source socket; no authored destination override. */
   sessionMessageReplyPublisher?: Pick<ApiSessionClient, 'sessionId' | 'mutateSessionMessageReply' | 'publishSessionMessageReply'>;
