@@ -410,7 +410,7 @@ describe('Run a workflow trigger inputs', () => {
         expect(screen.findByTestId('event-workflow-trigger:saved:event-row-configure-event')?.props.accessibilityLabel)
             .toBe('workflows.triggers.card.source: workflows.triggers.popover.editEvent');
         expect(screen.findByTestId('event-workflow-trigger:saved:event-row-starts.trigger')?.props.accessibilityLabel)
-            .toBe('workflows.triggers.card.when: workflows.triggers.kind.pluginEvent');
+            .toBe('workflows.triggers.card.when: Issue opened');
         await toggleTrigger(screen, 'event-workflow-trigger:saved:event-row');
         expect(change).toHaveBeenCalledWith({ adds: [], updates: { 'event-row': { enabled: false } }, removes: [] });
         await removeTrigger(screen, 'event-workflow-trigger:saved:event-row');

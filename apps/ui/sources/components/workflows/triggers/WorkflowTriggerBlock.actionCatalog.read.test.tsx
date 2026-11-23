@@ -163,7 +163,7 @@ describe('Action trigger catalog read presentation', () => {
                 whenKinds={['turnEnds']} sessionId={null} workflowOptions={[]}
                 initial={{ when: { kind: 'turnEnds' }, then: { kind: 'doAction', actionId: null, input: {} }, enabled: true }}
                 machineId={null} serverId={serverId} onSubmit={vi.fn()} /> : <WorkflowActionBlockEditor
-                block={{ kind: 'action', id: 'notify', actionId: 'notifications.notify_me', input: {} }}
+                block={{ kind: 'action', id: 'missing', actionId: 'example.tools/actions/missing', input: {} }}
                 draft={createWorkflowEditorDraft({ draftId: 'catalog-step', blocks: [] })}
                 ordinal={1} total={1} actions={[]} onSelect={vi.fn()} onChangeBlock={vi.fn()}
                 composerScope={{ kind: 'machine', machineId: null, serverId }} testIDPrefix="catalog-step" />);

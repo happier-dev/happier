@@ -307,11 +307,12 @@ it.each(variants)('captures D6 source surfaces beside their existing Work-row re
                     runSummaryAvailable: false, lastRunWord: null, lastRunAt: null, needsYouCount: null } }} /></section>
         </div>
     </main>);
-    // The real RN-web PressResponder consumes a DOM gesture, unlike the native test adapter.
-    await act(async () => {
-        screen.findHostByTestId('automation-event-picker')?.props.onClick(new MouseEvent('click'));
-        screen.findHostByTestId('capture-workflow-trigger:saved:morning')?.props.onClick(new MouseEvent('click'));
-    });
+    // RN-web's event picker has a DOM click port. The saved schedule is already an editable card.
+    const eventPicker = screen.findHostByTestId('automation-event-picker');
+    expect(eventPicker?.props.onClick).toBeTypeOf('function');
+    await act(async () => { eventPicker!.props.onClick(new MouseEvent('click')); });
+    expect(screen.findByTestId('automation-event-picker-options')).not.toBeNull();
+    expect(screen.findByTestId('capture-workflow-trigger:saved:morning-starts.trigger')).not.toBeNull();
     const body = renderToStaticMarkup(<>{hostTree(screen.tree.toJSON())}</>);
     const runRows = screen.findAllByTestId(`workflow-run-row:${run.id}`);
     const labels = runRows.map(row => row.props.accessibilityLabel).filter((label): label is string => typeof label === 'string');

@@ -85,7 +85,7 @@ describe('approval field semantics shared by card and page', () => {
     async (anatomy) => {
       const { describeApprovalActionFields } =
         await import('./approvalFieldValues');
-      const { ActionApprovalFieldsCard } =
+      const { ActionApprovalFieldsCard, ApprovalTechnicalDetails } =
         await import('./ActionApprovalFieldsCard');
       for (const kind of ['account', 'team', 'group']) {
         const principal = {
@@ -108,12 +108,22 @@ describe('approval field semantics shared by card and page', () => {
             })}
           />,
         );
-        // Typed audiences use the exact principal reading. An unavailable optional
-        // name keeps the full literal, including when its id resembles a Session.
+        // An unresolved Group is unavailable in the readable summary. Its exact
+        // submitted identity remains in Technical details alongside the other IDs.
         await waitForHomeGovernance(() => expect(readRenderedText(screen)).not.toContain('common.loading'));
         const text = await readRenderedTextWithRowContent(screen);
-        expect(text).toContain(JSON.stringify(principal));
+        const literal = JSON.stringify(principal);
+        expect(screen.findByType(ApprovalTechnicalDetails).props.lines).toContainEqual(
+          expect.objectContaining({ key: 'principal', value: literal }),
+        );
+        if (kind === 'group') {
+          expect(text).toContain('common.unavailable');
+          expect(text).not.toContain(literal);
+        } else {
+          expect(text).toContain(literal);
+        }
         expect(text).not.toContain('Kind');
+        await screen.unmount();
       }
       const value = {
         kind: 'session',
