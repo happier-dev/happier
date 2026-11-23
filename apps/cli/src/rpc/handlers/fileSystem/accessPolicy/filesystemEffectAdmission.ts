@@ -6,6 +6,7 @@ import { logger } from '@/ui/logger';
 import type { FilesystemEffectFailureDetailsV1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import type { CapabilitiesDetectRequest } from '@/capabilities/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol/deployments/deploymentArchiveRpcV1';
 import { readWorkspaceSourcePlacement, runWithWorkspaceSourceDemand, selectWorkspaceSource,
   type WorkspaceSource, type WorkspaceSourcePlacement, type WorkspaceTargetSourceResolver } from '@/workspaces/source/workspaceSource';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions';
@@ -250,6 +251,12 @@ export function createFilesystemEffectRpcRegistrar(
     registrar.registerHandler<TRequest, unknown>(method, async (input, context) => {
       if (method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY && addressesManagedBrowseDirectory(input)) {
         // The finite managed browser admits its own source before reading the directory.
+        return handler(input, context);
+      }
+      if (context?.workspaceSyncSourceExecution?.externalActionExecution.deploymentChildExecution
+        && readDeploymentArchiveRpcEffectV1(method)) {
+        // Ingress verified this finite child of an admitted deployment. Its Action
+        // admission decides once: the requester's identity, else the exact archive path.
         return handler(input, context);
       }
       // The source is chosen once here; every consumer the handler reaches reads it.
