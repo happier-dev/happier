@@ -143,14 +143,16 @@ describe('SCM batched work evidence', () => {
                 git(['commit', '-m', 'feature change']);
                 const headSha = git(['rev-parse', 'HEAD']);
 
-                const nameWithOwner = 'owner/repository';
+                const repositoryOwner = 'owner';
+                const nameWithOwner = `${repositoryOwner}/repository`;
                 const cloneUrl = `https://github.com/${nameWithOwner}.git`;
+                const qualifiedHead = `${repositoryOwner}:${branchName}`;
                 const listings: { head: string | null; state: string | null }[] = [];
                 const forge = createGithubForgeHttpFixture({ nameWithOwner, cloneUrl, listPullRequests: query => {
                     const head = query.get('head');
                     const state = query.get('state');
                     listings.push({ head, state });
-                    if (head !== branchName || state !== 'closed' || scenario === 'empty') return [];
+                    if (head !== qualifiedHead || state !== 'closed' || scenario === 'empty') return [];
                     const row: ScmPullRequestSummary = {
                         provider: forge.provider, number: 1, title: 'Merged change', state: 'merged',
                         url: `https://github.com/${nameWithOwner}/pull/1`,
@@ -169,7 +171,7 @@ describe('SCM batched work evidence', () => {
                 const response = ScmWorkEvidenceReadResponseSchema.parse(await call(RPC_METHODS.SCM_WORK_EVIDENCE_READ,
                     { sessions: [{ sessionId, cwd, turnIds: [turnId] }] },
                     { kind: 'scm.workEvidence.admitted', admissions: [{ kind: 'session.write', sessionId }] }));
-                expect(new Set(listings.map(({ head, state }) => `${head}:${state}`))).toEqual(new Set(['main:closed', 'main:open']));
+                expect(new Set(listings.map(({ head, state }) => `${head}:${state}`))).toEqual(new Set([`${qualifiedHead}:closed`, `${qualifiedHead}:open`]));
                 const result = response.sessions[0];
                 expect(result.status).toBe('partial');
                 expect(new Set(result.evidence?.map(row => row.pullRequest.number))).toEqual(new Set(scenario === 'empty' ? [] : [1]));
