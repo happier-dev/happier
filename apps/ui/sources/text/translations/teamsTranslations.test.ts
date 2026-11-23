@@ -38,6 +38,16 @@ const COINCIDENTAL_TRANSLATIONS: Readonly<Record<string, readonly string[]>> = {
     'teams.credentials.usage.breakdown.session': ['fr'],
     'teams.credentials.limits.subject.member': ['de'],
     'teams.credentials.limits.maximumLabel': ['de', 'fr'],
+    // These nouns have the same spelling in the listed languages.
+    'teams.overview.shared.kinds.sessions': ['ca', 'fr'],
+    'teams.overview.shared.kinds.discussions': ['ca', 'fr'],
+    'teams.overview.shared.kinds.projectDocuments': ['ca', 'fr'],
+    'teams.overview.shared.kinds.machines': ['fr'],
+    'teams.overview.shared.kinds.accountCollections': ['fr'],
+    'teams.overview.shared.kinds.prompts': ['de'],
+    'teams.settings.memberDefaults.model': ['ca', 'pl'],
+    'teams.settings.memberDefaults.machine': ['fr'],
+    'teams.join.setupPage.previewMachineTitle': ['fr'],
     // These are the public protocol names exposed by their vendors, not UI prose.
     'teams.credentials.requestPolicy.protocol.openaiResponses': ['fr', 'es', 'de', 'it', 'pt', 'ca', 'pl', 'ru', 'ja', 'zhHans', 'zhHant'],
     'teams.credentials.requestPolicy.protocol.openaiChatCompletions': ['fr', 'es', 'de', 'it', 'pt', 'ca', 'pl', 'ru', 'ja', 'zhHans', 'zhHant'],

@@ -17356,6 +17356,8 @@ const polish: TeamsTranslationRoot = {
                 statusQueued: 'W kolejce',
                 statusOpening: 'Otwieranie…',
                 statusReady: 'Gotowe',
+                repositoryReadyNotice: ({ repository }) => `Repozytorium ${repository} jest gotowe`,
+                repositoryReadyStart: ({ repository }) => `Rozpocznij w ${repository}`,
                 statusApproval: 'Czeka na zatwierdzenie',
                 statusFailed: 'Nie udało się otworzyć',
                 partial: 'Niektóre kroki konfiguracji nadal wymagają uwagi',
@@ -17405,11 +17407,11 @@ const polish: TeamsTranslationRoot = {
         },
         credentials: {
             unavailableShort: {
-                brokerOffline: 'Broker offline',
+                brokerOffline: 'Broker niedostępny',
                 sourceRemoved: 'Źródło usunięte',
                 updateNeeded: 'Wymaga aktualizacji',
                 notAllowed: 'Niedozwolone',
-                homeOffline: 'Home offline',
+                homeOffline: 'Home niedostępny',
                 askOwner: 'Zapytaj właściciela',
             },
             recovery: {
@@ -17660,6 +17662,7 @@ const polish: TeamsTranslationRoot = {
                     month: 'Miesięcznie',
                 },
                 maximumLabel: 'Maksimum',
+                remaining: ({ remaining }) => `Pozostało: ${remaining}`,
                 maximumPlaceholder: 'Maksimum na okres',
                 maximumInvalid: 'Wpisz liczbę całkowitą większą od zera.',
                 maximumInvalidCost: 'Wpisz kwotę większą od zera.',
